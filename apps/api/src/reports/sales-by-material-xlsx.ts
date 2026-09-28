@@ -27,9 +27,19 @@ const FIGURE_HEADER = [
   'Costo/kg compra (S/)',
   'Precio/kg venta (S/)',
   'Margen/kg (S/)',
+  'Precio/ML venta (S/)',
+  'Costo/ML (S/)',
+  'Ganancia/ML (S/)',
+  'Cantidad vendida',
+  'Unidad',
+  'Costo prom./unidad (S/)',
 ];
 
-function figureCells(f: SalesMaterialFiguresDto): (number | null)[] {
+/** C06: un cociente sin divisor (cantidad o ML en 0) va como «—», nunca 0 ni vacío. */
+const DASH = '—';
+const orDash = (value: string | null): number | string => num(value) ?? DASH;
+
+function figureCells(f: SalesMaterialFiguresDto): (number | string | null)[] {
   return [
     num(f.metersSold),
     num(f.theoreticalKg),
@@ -42,6 +52,12 @@ function figureCells(f: SalesMaterialFiguresDto): (number | null)[] {
     num(f.costPerKgPen),
     num(f.pricePerKgPen),
     num(f.marginPerKgPen),
+    orDash(f.pricePerMeterPen),
+    orDash(f.costPerMeterPen),
+    orDash(f.marginPerMeterPen),
+    orDash(f.qty),
+    f.unit ?? DASH,
+    orDash(f.costPerUnitPen),
   ];
 }
 
@@ -52,7 +68,7 @@ export function salesByMaterialXlsx(report: SalesByMaterialDto): {
   const main: Sheet = {
     name: 'Ventas por material',
     header: ['Tipo', 'Espesor (mm)', 'Color', ...FIGURE_HEADER],
-    widths: [22, 12, 16, 12, 16, 14, 15, 13, 17, 21, 14, 18, 18, 14],
+    widths: [22, 12, 16, 12, 16, 14, 15, 13, 17, 21, 14, 18, 18, 14, 18, 14, 16, 16, 8, 20],
     rows: [],
   };
   for (const sub of report.subtotals) {

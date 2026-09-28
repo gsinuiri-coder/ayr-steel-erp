@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   businessToday,
@@ -8,6 +8,7 @@ import {
   salesByMaterialQuerySchema,
   salesMarginQuerySchema,
   Role,
+  type DocumentProfitabilityDto,
   type SalesByMaterialDto,
   type SalesByMaterialQuery,
   type CoilMonthReportDto,
@@ -24,6 +25,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
 import { coilMonthXlsx } from './coil-month-xlsx';
+import { DocumentProfitabilityService } from './document-profitability.service';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { kardexPepsToDto } from './kardex-peps-dto';
 import { kardexPepsXlsx } from './kardex-peps-xlsx';
@@ -52,6 +54,7 @@ export class ReportsController {
     private readonly salesByMaterial: SalesByMaterialService,
     private readonly kardexPeps: KardexPepsService,
     private readonly kardexSheet: KardexSheetService,
+    private readonly documentProfitability: DocumentProfitabilityService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -155,6 +158,18 @@ export class ReportsController {
     @Res() res: Response,
   ): Promise<void> {
     sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(query)));
+  }
+
+  /**
+   * C06. Rentabilidad de un comprobante, línea por línea. Solo ADMINISTRADOR: lleva costos (un
+   * VENDEDOR recibe 403, D-244). Nunca va en el PDF ni en lo que se envía a SUNAT: es otra ruta.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('documents/:id/profitability')
+  documentProfitabilityReport(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<DocumentProfitabilityDto> {
+    return this.documentProfitability.profitability(id);
   }
 
   /**

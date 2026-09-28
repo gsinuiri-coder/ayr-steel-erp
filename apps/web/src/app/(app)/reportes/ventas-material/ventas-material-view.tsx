@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  PROFIT_SOURCES_NOTICE,
   Role,
   SALES_MATERIAL_KINDS,
   SALES_MATERIAL_KIND_LABELS,
@@ -36,7 +37,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { api } from '@/lib/api';
-import { formatDate, formatMoney, formatQty } from '@/lib/format';
+import { formatDate, formatMoney, formatQty, unitSymbol } from '@/lib/format';
 import {
   KARDEX_RANGE_LABELS,
   kardexCustomPatch,
@@ -213,9 +214,9 @@ export function VentasMaterialView() {
         <p className="text-xs text-destructive">La fecha «Desde» es posterior a «Hasta».</p>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        La utilidad costea los kilos de bobina consumidos; no coincide con el margen de Ventas y
-        margen, que costea al promedio del producto.
+      {/* C06: el aviso de los dos reportes, en palabras del dueño. */}
+      <p className="text-xs text-muted-foreground" data-testid="aviso-costeo">
+        {PROFIT_SOURCES_NOTICE}
       </p>
 
       {report.isPending && validRange && <Skeleton className="h-64 w-full" />}
@@ -246,12 +247,19 @@ export function VentasMaterialView() {
                   <TableHead className="text-right">Costo/kg compra</TableHead>
                   <TableHead className="text-right">Precio/kg venta</TableHead>
                   <TableHead className="text-right">Margen/kg</TableHead>
+                  {/* C06: por metro lineal y por unidad de venta. */}
+                  <TableHead className="text-right">Precio/ML venta</TableHead>
+                  <TableHead className="text-right">Costo/ML</TableHead>
+                  <TableHead className="text-right">Ganancia/ML</TableHead>
+                  <TableHead className="text-right" title="Costo ÷ cantidad vendida">
+                    Costo prom./unidad
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.rows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-muted-foreground">
+                    <TableCell colSpan={17} className="text-muted-foreground">
                       No hay ventas trazables de Coberturas Aluzinc en ese rango.
                     </TableCell>
                   </TableRow>
@@ -406,12 +414,24 @@ function FigureCells({ figures }: { figures: SalesMaterialFiguresDto }) {
       <TableCell className="text-right">{perKg(figures.costPerKgPen)}</TableCell>
       <TableCell className="text-right">{perKg(figures.pricePerKgPen)}</TableCell>
       <TableCell className="text-right">{perKg(figures.marginPerKgPen)}</TableCell>
+      <TableCell className="text-right">{perKg(figures.pricePerMeterPen)}</TableCell>
+      <TableCell className="text-right">{perKg(figures.costPerMeterPen)}</TableCell>
+      <TableCell className="text-right">{perKg(figures.marginPerMeterPen)}</TableCell>
+      <TableCell className="text-right">{perUnit(figures.costPerUnitPen, figures.unit)}</TableCell>
     </>
   );
 }
 
+/** Un cociente: sin divisor (cantidad o metros en 0), «—», nunca 0 ni NaN. */
 function perKg(value: string | null): string {
   return value === null ? '—' : formatMoney(value, 'PEN', 4);
+}
+
+/** C06: costo promedio por unidad de venta, con su unidad («S/ 10.0000 /m»). */
+function perUnit(value: string | null, unit: string | null): string {
+  if (value === null || unit === null) return '—';
+  const symbol = unitSymbol(unit);
+  return symbol === '' ? perKg(value) : `${perKg(value)} /${symbol}`;
 }
 
 function KindGroup({

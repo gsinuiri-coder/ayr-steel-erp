@@ -114,7 +114,7 @@ export function metersOf(
   return null;
 }
 
-function kgPerMeterOf(g: Geometry): Decimal | null {
+export function kgPerMeterOf(g: Geometry): Decimal | null {
   if (g.widthMm === null || g.thicknessMm === null || g.densityFactor === null) return null;
   const value = kgPerMeter({
     widthMm: g.widthMm,
@@ -124,28 +124,46 @@ function kgPerMeterOf(g: Geometry): Decimal | null {
   return value.isZero() ? null : value;
 }
 
-interface Accumulator {
+export interface Accumulator {
   meters: Decimal;
   theoreticalKg: Decimal;
   realKg: Decimal;
   sales: Decimal;
   cost: Decimal;
+  /** Cantidad en la unidad de venta (C06: costo promedio por unidad). */
+  qty: Decimal;
+  /**
+   * La unidad de venta de lo acumulado; `null` si todavía no hay nada, `'MIXED'` si se
+   * mezclan unidades (un subtotal o el total): ahí el costo por unidad no significa nada.
+   */
+  unit: string | null;
 }
 
-const emptyAcc = (): Accumulator => ({
+export const emptyAcc = (): Accumulator => ({
   meters: ZERO,
   theoreticalKg: ZERO,
   realKg: ZERO,
   sales: ZERO,
   cost: ZERO,
+  qty: ZERO,
+  unit: null,
 });
 
-function addAcc(into: Accumulator, from: Accumulator): void {
+export function addAcc(into: Accumulator, from: Accumulator): void {
   into.meters = into.meters.plus(from.meters);
   into.theoreticalKg = into.theoreticalKg.plus(from.theoreticalKg);
   into.realKg = into.realKg.plus(from.realKg);
   into.sales = into.sales.plus(from.sales);
   into.cost = into.cost.plus(from.cost);
+  into.qty = into.qty.plus(from.qty);
+  if (from.unit !== null) {
+    into.unit = into.unit === null || into.unit === from.unit ? from.unit : 'MIXED';
+  }
+}
+
+/** Un cociente que solo existe con divisor distinto de 0; si no, `null` («—» en pantalla y Excel). */
+export function per(value: Decimal, divisor: Decimal): string | null {
+  return divisor.isZero() ? null : toFixedString(value.div(divisor), 'MONEY');
 }
 
 export function figures(acc: Accumulator): SalesMaterialFiguresDto {
@@ -153,7 +171,15 @@ export function figures(acc: Accumulator): SalesMaterialFiguresDto {
   const hasReal = !acc.realKg.isZero();
   const costPerKg = hasReal ? acc.cost.div(acc.realKg) : null;
   const pricePerKg = hasReal ? acc.sales.div(acc.realKg) : null;
+  const unitKnown = acc.unit !== null && acc.unit !== 'MIXED';
   return {
+    // C06: por metro lineal y por unidad de venta. Sin metros o sin cantidad, `null`.
+    pricePerMeterPen: per(acc.sales, acc.meters),
+    costPerMeterPen: per(acc.cost, acc.meters),
+    marginPerMeterPen: per(acc.sales.minus(acc.cost), acc.meters),
+    unit: unitKnown ? acc.unit : null,
+    qty: unitKnown ? toFixedString(acc.qty, 'KG') : null,
+    costPerUnitPen: unitKnown ? per(acc.cost, acc.qty) : null,
     metersSold: toFixedString(acc.meters, 'KG'),
     theoreticalKg: toFixedString(acc.theoreticalKg, 'KG'),
     realKg: toFixedString(acc.realKg, 'KG'),
@@ -204,15 +230,133 @@ export function traceFraction(
   return { fraction: ONE, reason: null };
 }
 
+/** Lo que una bobina puso en una línea del comprobante (su parte del consumo de la línea). */
+export interface TracedCoil {
+  coilId: string;
+  code: string;
+  thicknessMm: string;
+  colorLabel: string;
+  kg: Decimal;
+  cost: Decimal;
+}
+
+/** El costeo de **una** línea de comprobante con el motor de D-354. */
+export interface LineTrace {
+  /** Lo trazado de la línea (`null` si no se trazó nada). */
+  traced: Accumulator | null;
+  /** Las bobinas de lo trazado. */
+  coils: TracedCoil[];
+  /** La parte no trazable, con su motivo (puede haber una junto a lo trazado). */
+  untraceable: SalesMaterialUntraceableDto[];
+}
+
+/**
+ * **El cuerpo del motor, por línea** (C06): «Ventas por material» lo suma por tipo × espesor ×
+ * color, y la rentabilidad de cada comprobante lo muestra línea por línea. Es la misma función
+ * para los dos, así que el comprobante aporta a «Ventas por material» exactamente lo que dice su
+ * sección de rentabilidad (el cuadre que fija el test).
+ */
+export function traceLine(
+  line: InvoiceLine & { kind: SalesMaterialKind },
+  facts: Map<string, OrderLineFacts>,
+  usageByLine: Map<string, CoilUsage[]>,
+): LineTrace {
+  const out: LineTrace = { traced: null, coils: [], untraceable: [] };
+  const convertible = metersOf(line);
+  const meters = convertible ?? ZERO;
+  const perMeter = kgPerMeterOf(line.geometry);
+  // En una bobina entera el teórico son sus propios kilos: su ML se sacó de ellos.
+  const theoretical =
+    line.kind === 'BOBINA'
+      ? toDecimal(line.qty)
+      : perMeter === null
+        ? ZERO
+        : meters.times(perMeter);
+  const sales = toDecimal(line.salesPen);
+
+  const pushUntraceable = (reason: SalesMaterialUntraceableReason, share: Decimal): void => {
+    out.untraceable.push({
+      kind: line.kind,
+      thicknessMm: line.thicknessMm,
+      colorLabel: line.colorLabel,
+      reason,
+      documentId: line.documentId,
+      documentNumber: line.documentNumber,
+      issueDate: line.issueDate,
+      orderCode: line.orderSeq === null ? null : salesOrderCode(line.orderSeq),
+      sku: line.sku,
+      metersSold: toFixedString(meters.times(share), 'KG'),
+      salesPen: toFixedString(sales.times(share), 'MONEY'),
+    });
+  };
+
+  // Sin metros no hay ML, teórico ni una base de producción en la misma unidad: se declara.
+  if (convertible === null) {
+    pushUntraceable('SIN_METRO', ONE);
+    return out;
+  }
+  if (line.salesOrderItemId === null) {
+    pushUntraceable('SIN_PEDIDO', ONE);
+    return out;
+  }
+  const lineFacts = facts.get(line.salesOrderItemId);
+  const lineUsage = usageByLine.get(line.salesOrderItemId) ?? [];
+  // Base del prorrateo: lo producido; en una bobina entera, los kilos que salieron de ella.
+  const baseQty =
+    line.kind === 'BOBINA'
+      ? lineUsage.reduce((acc, u) => acc.plus(toDecimal(u.kg)), ZERO)
+      : lineFacts === undefined
+        ? ZERO
+        : toDecimal(lineFacts.producedQty);
+
+  const { fraction, reason } = traceFraction(line.kind, lineFacts, baseQty);
+  if (reason !== null) pushUntraceable(reason, ONE.minus(fraction));
+  if (fraction.isZero()) return out;
+
+  // Parte de la base que le toca a esta línea del comprobante.
+  const share = toDecimal(line.qty).times(fraction).div(baseQty);
+  const acc: Accumulator = {
+    meters: meters.times(fraction),
+    theoreticalKg: theoretical.times(fraction),
+    realKg: ZERO,
+    sales: sales.times(fraction),
+    cost: ZERO,
+    qty: toDecimal(line.qty).times(fraction),
+    unit: line.unit,
+  };
+  for (const u of lineUsage) {
+    const kg = toDecimal(u.kg).times(share);
+    const cost = toDecimal(u.costPen).times(share);
+    acc.realKg = acc.realKg.plus(kg);
+    acc.cost = acc.cost.plus(cost);
+    out.coils.push({
+      coilId: u.coilId,
+      code: u.code,
+      thicknessMm: u.thicknessMm,
+      colorLabel: u.colorLabel,
+      kg,
+      cost,
+    });
+  }
+  out.traced = acc;
+  return out;
+}
+
+/** Las filas de consumo agrupadas por línea de pedido (la forma que `traceLine` lee). */
+export function usageByOrderLine(usage: CoilUsage[]): Map<string, CoilUsage[]> {
+  const byLine = new Map<string, CoilUsage[]>();
+  for (const u of usage) {
+    const found = byLine.get(u.salesOrderItemId) ?? [];
+    found.push(u);
+    byLine.set(u.salesOrderItemId, found);
+  }
+  return byLine;
+}
+
 export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDto {
   const { query, lines, facts, usage } = input;
 
-  const usageByLine = new Map<string, CoilUsage[]>();
-  for (const u of usage) {
-    const found = usageByLine.get(u.salesOrderItemId) ?? [];
-    found.push(u);
-    usageByLine.set(u.salesOrderItemId, found);
-  }
+  const usageByLine = usageByOrderLine(usage);
 
   // El cuadre se calcula antes de filtrar: responde a «Ventas y margen», que no filtra.
   let roofingSales = ZERO;
@@ -251,61 +395,13 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
   let untraceableSales = ZERO;
 
   for (const line of visible) {
-    const convertible = metersOf(line);
-    const meters = convertible ?? ZERO;
-    const perMeter = kgPerMeterOf(line.geometry);
-    // En una bobina entera el teórico son sus propios kilos: su ML se sacó de ellos.
-    const theoretical =
-      line.kind === 'BOBINA'
-        ? toDecimal(line.qty)
-        : perMeter === null
-          ? ZERO
-          : meters.times(perMeter);
-    const sales = toDecimal(line.salesPen);
-
-    const pushUntraceable = (reason: SalesMaterialUntraceableReason, share: Decimal): void => {
-      const part = sales.times(share);
-      untraceableSales = untraceableSales.plus(part);
-      untraceable.push({
-        kind: line.kind,
-        thicknessMm: line.thicknessMm,
-        colorLabel: line.colorLabel,
-        reason,
-        documentId: line.documentId,
-        documentNumber: line.documentNumber,
-        issueDate: line.issueDate,
-        orderCode: line.orderSeq === null ? null : salesOrderCode(line.orderSeq),
-        sku: line.sku,
-        metersSold: toFixedString(meters.times(share), 'KG'),
-        salesPen: toFixedString(part, 'MONEY'),
-      });
-    };
-
-    // Sin metros no hay ML, teórico ni una base de producción en la misma unidad: se declara.
-    if (convertible === null) {
-      pushUntraceable('SIN_METRO', ONE);
-      continue;
+    const trace = traceLine(line, facts, usageByLine);
+    for (const u of trace.untraceable) {
+      untraceableSales = untraceableSales.plus(toDecimal(u.salesPen));
+      untraceable.push(u);
     }
-    if (line.salesOrderItemId === null) {
-      pushUntraceable('SIN_PEDIDO', ONE);
-      continue;
-    }
-    const lineFacts = facts.get(line.salesOrderItemId);
-    const lineUsage = usageByLine.get(line.salesOrderItemId) ?? [];
-    // Base del prorrateo: lo producido; en una bobina entera, los kilos que salieron de ella.
-    const baseQty =
-      line.kind === 'BOBINA'
-        ? lineUsage.reduce((acc, u) => acc.plus(toDecimal(u.kg)), ZERO)
-        : lineFacts === undefined
-          ? ZERO
-          : toDecimal(lineFacts.producedQty);
+    if (trace.traced === null) continue;
 
-    const { fraction, reason } = traceFraction(line.kind, lineFacts, baseQty);
-    if (reason !== null) pushUntraceable(reason, ONE.minus(fraction));
-    if (fraction.isZero()) continue;
-
-    // Parte de la base que le toca a esta línea del comprobante.
-    const share = toDecimal(line.qty).times(fraction).div(baseQty);
     const key = `${line.kind}|${toDecimal(line.thicknessMm).toFixed(2)}|${line.colorLabel}`;
     const row: RowState = rows.get(key) ?? {
       kind: line.kind,
@@ -316,18 +412,7 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
       coils: new Map(),
     };
     row.lineCount += 1;
-    const acc: Accumulator = {
-      meters: meters.times(fraction),
-      theoreticalKg: theoretical.times(fraction),
-      realKg: ZERO,
-      sales: sales.times(fraction),
-      cost: ZERO,
-    };
-    for (const u of lineUsage) {
-      const kg = toDecimal(u.kg).times(share);
-      const cost = toDecimal(u.costPen).times(share);
-      acc.realKg = acc.realKg.plus(kg);
-      acc.cost = acc.cost.plus(cost);
+    for (const u of trace.coils) {
       const coil = row.coils.get(u.coilId) ?? {
         dto: {
           coilId: u.coilId,
@@ -338,11 +423,11 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
         kg: ZERO,
         cost: ZERO,
       };
-      coil.kg = coil.kg.plus(kg);
-      coil.cost = coil.cost.plus(cost);
+      coil.kg = coil.kg.plus(u.kg);
+      coil.cost = coil.cost.plus(u.cost);
       row.coils.set(u.coilId, coil);
     }
-    addAcc(row.acc, acc);
+    addAcc(row.acc, trace.traced);
     rows.set(key, row);
   }
 

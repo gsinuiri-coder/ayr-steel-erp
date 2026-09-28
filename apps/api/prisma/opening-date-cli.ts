@@ -202,8 +202,14 @@ async function main(): Promise<void> {
       signature: string;
     };
     console.warn('Ejecutando…');
-    const done = summarize(await service.execute(actor, expected.signature));
+    const executed = await service.execute(actor, expected.signature);
+    const done = summarize(executed);
     console.warn(`Listo, con auditoría. Totales: ${JSON.stringify(done.totals)}`);
+    // D-360: se cuentan aparte; su auditoría lleva la fecha real de ejecución.
+    const terminated = executed.terminatedCoils ?? [];
+    console.warn(
+      `Bobinas terminadas automáticamente al registrar salidas faltantes (D-360): ${String(terminated.length)}${terminated.length > 0 ? ` — ${terminated.join(', ')}` : ''}`,
+    );
   } finally {
     await app.close();
   }

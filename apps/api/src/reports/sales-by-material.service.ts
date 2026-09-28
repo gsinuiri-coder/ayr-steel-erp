@@ -20,7 +20,7 @@ import {
 /** Los mismos estados «ya es una venta» que usa «Ventas y margen» (`LIVE_STATUSES` allá). */
 const LIVE = (): Prisma.Sql => Prisma.join([...LIVE_DOCUMENT_STATUSES]);
 
-interface LineRow {
+export interface LineRow {
   document_id: string;
   number: string | null;
   doc_type: string;
@@ -78,78 +78,11 @@ const ROOFING_KIND_TO_MATERIAL: Record<string, SalesMaterialKind> = {
 const str = (v: Prisma.Decimal | null): string | null => (v === null ? null : v.toString());
 
 /**
- * D-354 — «Ventas por material» (Coberturas Aluzinc). Solo lectura, solo ADMINISTRADOR.
- *
- * **De dónde sale cada número:**
- *
- * - *Venta y ML*: las líneas de los comprobantes vivos con `issue_date` en el rango, el mismo
- *   universo que «Ventas y margen» (`LIVE_DOCUMENT_STATUSES`, sin archivados ni guías). Una nota de
- *   crédito resta en cantidad y en importe; si no apunta a la línea del pedido, la hereda de la
- *   línea que afecta.
- * - *Peso real y costo*: los movimientos de kardex de **bobina** que produjeron para la línea de
- *   pedido —la salida de cada reporte de sus OP (`refType=PRODUCTION`, `refId` = el reporte) y
- *   el despunte al cerrarlas (`refType=SCRAP`, `refId` = la OP, D-089)—, netos de reversas. En
- *   una bobina entera, su salida por despacho (`refType=SALE`). Se prorratean por lo facturado
- *   ÷ lo producido de la línea (`traceFraction`).
- *
- * Presupuesto de consultas: **cuatro, fijas**, sin importar cuántas líneas entren en el rango
- * (una sola si el rango no trae ninguna línea de pedido).
+ * Las columnas y los cruces de una línea de comprobante que el motor necesita. Los comparten el
+ * rango de «Ventas por material» y la rentabilidad de un comprobante (C06), para que las dos
+ * lecturas no puedan describir la misma línea de dos maneras.
  */
-@Injectable()
-export class SalesByMaterialService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async report(query: SalesByMaterialQuery): Promise<SalesByMaterialDto> {
-    const rows = await this.invoiceLines(query);
-    const itemIds = [
-      ...new Set(rows.map((r) => r.sales_order_item_id).filter((v): v is string => v !== null)),
-    ];
-    const [invoiced, facts, usage] =
-      itemIds.length === 0
-        ? [[], [], []]
-        : await Promise.all([
-            this.invoicedByItem(itemIds),
-            this.factsByItem(itemIds),
-            this.coilUsage(itemIds),
-          ]);
-
-    const invoicedById = new Map(invoiced.map((r) => [r.sales_order_item_id, r.qty.toString()]));
-    const factsById = new Map<string, OrderLineFacts>();
-    for (const id of itemIds) {
-      const f = facts.find((r) => r.id === id);
-      factsById.set(id, {
-        invoicedQty: invoicedById.get(id) ?? '0',
-        producedQty: f === undefined ? '0' : f.produced.toString(),
-        orderCount: f === undefined ? 0 : Number(f.order_count),
-        dispatchedQty: f === undefined ? '0' : f.dispatched.toString(),
-      });
-    }
-
-    return assembleSalesByMaterial({
-      query,
-      lines: rows.map(toInvoiceLine),
-      facts: factsById,
-      usage: usage.map((u): CoilUsage => ({
-        salesOrderItemId: u.sales_order_item_id,
-        coilId: u.coil_id,
-        code: u.code,
-        thicknessMm: u.thickness_mm.toFixed(2),
-        colorLabel: colorLabelOf(u.color_name, u.finish_kind as FinishKind),
-        kg: u.kg.toString(),
-        costPen: u.cost_pen.toString(),
-      })),
-    });
-  }
-
-  /**
-   * 1. Las líneas del rango: productos de Coberturas Aluzinc, y ventas de bobina entera
-   *    (`BOB…`, línea `trading`) cuya bobina es de Coberturas Aluzinc. La geometría de la
-   *    bobina viaja para la bobina entera (su ML se saca de sus kilos).
-   */
-  private invoiceLines(query: SalesByMaterialQuery): Promise<LineRow[]> {
-    const live = LIVE();
-    return this.prisma.$queryRaw<LineRow[]>`
-      SELECT
+const LINE_COLUMNS = Prisma.sql`
         fd."id" AS "document_id",
         fd."number",
         fd."doc_type"::text AS "doc_type",
@@ -173,11 +106,12 @@ export class SalesByMaterialService {
         c."thickness_mm" AS "c_thickness",
         cf."density_factor" AS "c_density",
         cf."kind"::text AS "c_finish_kind",
-        cc."name" AS "c_color"
-      FROM "fiscal_document_items" fdi
+        cc."name" AS "c_color"`;
+
+/** Los cruces de `LINE_COLUMNS`, desde `fiscal_document_items fdi` y `products p`. */
+const LINE_JOINS = Prisma.sql`
       JOIN "fiscal_documents" fd ON fd."id" = fdi."document_id"
-      JOIN "products" p ON p."id" = fdi."product_id"
-      JOIN "business_lines" blp ON blp."id" = p."business_line_id"
+      LEFT JOIN "business_lines" blp ON blp."id" = p."business_line_id"
       LEFT JOIN "fiscal_document_items" afi ON afi."id" = fdi."affected_item_id"
       LEFT JOIN "sales_order_items" soi
         ON soi."id" = COALESCE(fdi."sales_order_item_id", afi."sales_order_item_id")
@@ -188,17 +122,145 @@ export class SalesByMaterialService {
         ON soi."reserve_item_type"::text = 'COIL' AND c."id"::text = soi."reserve_item_id"::text
       LEFT JOIN "business_lines" blc ON blc."id" = c."business_line_id"
       LEFT JOIN "finishes" cf ON cf."id" = c."finish_id"
-      LEFT JOIN "colors" cc ON cc."id" = c."color_id"
+      LEFT JOIN "colors" cc ON cc."id" = c."color_id"`;
+
+/**
+ * **Qué línea entra al motor de D-354**: un producto de Coberturas Aluzinc, o la venta de una
+ * bobina entera (`BOB…`, línea `trading`) cuya bobina es de Coberturas Aluzinc.
+ */
+const IN_ENGINE = Prisma.sql`(
+          blp."code"::text = 'metallic-roofing'
+          OR (blp."code"::text = 'trading' AND UPPER(p."sku") LIKE 'BOB%'
+              AND blc."code"::text = 'metallic-roofing')
+        )`;
+
+/** Lo de cada línea de pedido que el motor lee (consultas 2 a 4). */
+export interface EngineFacts {
+  facts: Map<string, OrderLineFacts>;
+  usage: CoilUsage[];
+}
+
+/**
+ * D-354 — «Ventas por material» (Coberturas Aluzinc). Solo lectura, solo ADMINISTRADOR.
+ *
+ * **De dónde sale cada número:**
+ *
+ * - *Venta y ML*: las líneas de los comprobantes vivos con `issue_date` en el rango, el mismo
+ *   universo que «Ventas y margen» (`LIVE_DOCUMENT_STATUSES`, sin archivados ni guías). Una nota de
+ *   crédito resta en cantidad y en importe; si no apunta a la línea del pedido, la hereda de la
+ *   línea que afecta.
+ * - *Peso real y costo*: los movimientos de kardex de **bobina** que produjeron para la línea de
+ *   pedido —la salida de cada reporte de sus OP (`refType=PRODUCTION`, `refId` = el reporte) y
+ *   el despunte al cerrarlas (`refType=SCRAP`, `refId` = la OP, D-089)—, netos de reversas. En
+ *   una bobina entera, su salida por despacho (`refType=SALE`). Se prorratean por lo facturado
+ *   ÷ lo producido de la línea (`traceFraction`).
+ *
+ * Presupuesto de consultas: **cuatro, fijas**, sin importar cuántas líneas entren en el rango
+ * (una sola si el rango no trae ninguna línea de pedido).
+ */
+@Injectable()
+export class SalesByMaterialService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async report(query: SalesByMaterialQuery): Promise<SalesByMaterialDto> {
+    const rows = await this.invoiceLines(query);
+    const { facts, usage } = await this.engineFacts(
+      rows.map((r) => r.sales_order_item_id).filter((v): v is string => v !== null),
+    );
+    return assembleSalesByMaterial({ query, lines: rows.map(toInvoiceLine), facts, usage });
+  }
+
+  /**
+   * Consultas 2 a 4 para esas líneas de pedido: tres fijas, o ninguna si no hay líneas. La
+   * comparten el reporte y la rentabilidad de un comprobante (C06).
+   */
+  async engineFacts(orderItemIds: readonly string[]): Promise<EngineFacts> {
+    const itemIds = [...new Set(orderItemIds)];
+    const [invoiced, facts, usage] =
+      itemIds.length === 0
+        ? [[], [], []]
+        : await Promise.all([
+            this.invoicedByItem(itemIds),
+            this.factsByItem(itemIds),
+            this.coilUsage(itemIds),
+          ]);
+
+    const invoicedById = new Map(invoiced.map((r) => [r.sales_order_item_id, r.qty.toString()]));
+    const factsById = new Map<string, OrderLineFacts>();
+    for (const id of itemIds) {
+      const f = facts.find((r) => r.id === id);
+      factsById.set(id, {
+        invoicedQty: invoicedById.get(id) ?? '0',
+        producedQty: f === undefined ? '0' : f.produced.toString(),
+        orderCount: f === undefined ? 0 : Number(f.order_count),
+        dispatchedQty: f === undefined ? '0' : f.dispatched.toString(),
+      });
+    }
+    return {
+      facts: factsById,
+      usage: usage.map((u): CoilUsage => ({
+        salesOrderItemId: u.sales_order_item_id,
+        coilId: u.coil_id,
+        code: u.code,
+        thicknessMm: u.thickness_mm.toFixed(2),
+        colorLabel: colorLabelOf(u.color_name, u.finish_kind as FinishKind),
+        kg: u.kg.toString(),
+        costPen: u.cost_pen.toString(),
+      })),
+    };
+  }
+
+  /**
+   * C06 — **todas** las líneas de un comprobante vivo y de sus notas de crédito vivas, con las
+   * mismas columnas que la consulta 1 y dos más: si la línea entra al motor (`in_engine`) y si es
+   * de una nota de crédito que afecta a este comprobante (`is_credit`). Las líneas sin producto
+   * (texto libre) también vienen: no entran al motor y se costean por el despacho.
+   */
+  documentLines(documentId: string): Promise<DocumentLineRow[]> {
+    const live = LIVE();
+    return this.prisma.$queryRaw<DocumentLineRow[]>`
+      SELECT
+        ${LINE_COLUMNS},
+        fdi."id" AS "item_id",
+        fdi."line_number",
+        fdi."description",
+        fdi."sales_order_item_id" AS "own_order_item_id",
+        blp."code"::text AS "line_code",
+        COALESCE(${IN_ENGINE}, false) AS "in_engine",
+        (fd."id" <> ${documentId}::uuid) AS "is_credit"
+      FROM "fiscal_document_items" fdi
+      LEFT JOIN "products" p ON p."id" = fdi."product_id"
+      ${LINE_JOINS}
+      WHERE fd."archived_at" IS NULL
+        AND fd."status"::text IN (${live})
+        AND (
+          fd."id" = ${documentId}::uuid
+          OR (fd."doc_type" = 'NOTA_CREDITO' AND fd."affected_document_id" = ${documentId}::uuid)
+        )
+      ORDER BY (fd."id" <> ${documentId}::uuid) ASC, fd."issue_date" ASC, fd."number" ASC,
+        fdi."line_number" ASC
+    `;
+  }
+
+  /**
+   * 1. Las líneas del rango: productos de Coberturas Aluzinc, y ventas de bobina entera
+   *    (`BOB…`, línea `trading`) cuya bobina es de Coberturas Aluzinc. La geometría de la
+   *    bobina viaja para la bobina entera (su ML se saca de sus kilos).
+   */
+  private invoiceLines(query: SalesByMaterialQuery): Promise<LineRow[]> {
+    const live = LIVE();
+    return this.prisma.$queryRaw<LineRow[]>`
+      SELECT
+        ${LINE_COLUMNS}
+      FROM "fiscal_document_items" fdi
+      JOIN "products" p ON p."id" = fdi."product_id"
+      ${LINE_JOINS}
       WHERE fd."archived_at" IS NULL
         AND fd."doc_type" <> 'GUIA_REMISION_REMITENTE'
         AND fd."status"::text IN (${live})
         AND fd."issue_date" >= ${toDateOnly(query.from)}::date
         AND fd."issue_date" <= ${toDateOnly(query.to)}::date
-        AND (
-          blp."code"::text = 'metallic-roofing'
-          OR (blp."code"::text = 'trading' AND UPPER(p."sku") LIKE 'BOB%'
-              AND blc."code"::text = 'metallic-roofing')
-        )
+        AND ${IN_ENGINE}
       ORDER BY fd."issue_date" ASC, fd."number" ASC, fdi."line_number" ASC
     `;
   }
@@ -313,7 +375,23 @@ export class SalesByMaterialService {
   }
 }
 
-function toInvoiceLine(r: LineRow): InvoiceLine {
+/** Una línea de `documentLines`: las columnas del motor y las propias del comprobante. */
+export interface DocumentLineRow extends Omit<LineRow, 'sku' | 'unit'> {
+  /** Sin producto (línea de texto libre): `null`. */
+  sku: string | null;
+  unit: string | null;
+  item_id: string;
+  line_number: number;
+  description: string;
+  /** La línea de pedido **propia** de la línea (sin heredar la de la línea que afecta). */
+  own_order_item_id: string | null;
+  /** Código de la línea de negocio del producto (`services` no lleva inventario). */
+  line_code: string | null;
+  in_engine: boolean;
+  is_credit: boolean;
+}
+
+export function toInvoiceLine(r: LineRow): InvoiceLine {
   const isCoilSale = r.is_coil_sale;
   const kind: SalesMaterialKind | null = isCoilSale
     ? 'BOBINA'

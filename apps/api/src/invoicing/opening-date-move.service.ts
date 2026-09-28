@@ -46,6 +46,8 @@ export interface OpeningDateMovePlan {
   dispatch: InvoiceDispatchPlan;
   /** Costo promedio vigente por ítem: el de la salida (una salida sale al promedio, D-028). */
   avgCost: Map<string, Decimal>;
+  /** D-360: bobinas que el paso 2 dejó en 0 y se terminaron solas (solo en la ejecución). */
+  terminatedCoils?: string[];
 }
 
 /**
@@ -264,12 +266,15 @@ export class OpeningDateMoveService {
       );
 
     // Paso 2: una transacción por línea de despacho.
+    const terminatedCoils: string[] = [];
     for (const out of plan.added.filter((a) => a.action === 'ADD')) {
-      await this.prisma.$transaction(
+      const added = await this.prisma.$transaction(
         (tx) => this.dispatches.addMissingMovementInTx(tx, actor, out.id, ADDED_OUT_REASON),
         { timeout: 60_000 },
       );
+      terminatedCoils.push(...added.terminatedCoils);
     }
+    plan.terminatedCoils = terminatedCoils;
 
     // Paso 3: una transacción por comprobante, cada uno comparando su plan con el del dry-run.
     for (const inv of plan.dispatch.invoices) {

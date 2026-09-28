@@ -113,7 +113,7 @@ un vendedor, cargar datos de prueba y romperlos sin consecuencias.
 ```
 pnpm env:demo    # escribe .env.demo con la conexión a la rama demo (no se commitea)
 pnpm db:demo     # migraciones + seed en demo
-pnpm dev:demo    # levanta api :3000 + web :3001 contra demo
+pnpm dev:demo    # levanta api :3000 + web :3001 contra demo, solo en 127.0.0.1
 ```
 
 `pnpm dev:demo` **no toca** `apps/api/.env`: inyecta la conexión por variables de entorno al
@@ -135,9 +135,33 @@ cubierto por el `.env.*` del `.gitignore`.
   sandbox de Nubefact comprobantes de clientes reales clonados de `production`.
 
 **Las credenciales de los usuarios de `demo` son las de `production`** (es un clon: mismos
-hashes de contraseña). Lo único propio es la sesión del ADMINISTRADOR de `.env.demo`
-(`JWT_SECRET`/`ADMIN_PASSWORD` generados por `pnpm env:demo`, nunca los de producción) — un
-vendedor real no puede entrar a `demo` con su contraseña real sin que alguien se la dé.
+hashes de contraseña). Lo único propio es el ADMINISTRADOR de `.env.demo` (`JWT_SECRET` y
+`ADMIN_PASSWORD` generados por `pnpm env:demo`, nunca los de producción): `db-demo.mjs` le
+reemplaza el hash con `SEED_ADMIN_FOR_TESTS: '1'` (`scripts/db-demo.mjs:42`), así que la deuda
+anotada en `docs/handoff/rf-s3.md` (§pendientes, punto 6) está resuelta.
+
+**Riesgo vigente (2026-09-28, D-362): cualquier usuario real entra a `demo` con su contraseña
+real.** Todos los demás usuarios conservan el hash de producción, y demo tiene hoy datos reales
+del cliente (restablecida desde `production` el 2026-09-28). Hasta el 2026-09-28 además era
+alcanzable desde la red local: `pnpm run dev` levanta web y API en todas las interfaces (`next
+dev` imprimía `Network: http://192.168.18.50:3001`).
+
+**Mitigación vigente: demo solo escucha en `127.0.0.1`.** `pnpm dev:demo` ya no usa `pnpm run dev`:
+levanta el API con `BIND_HOST=127.0.0.1` (`apps/api/src/config/env.ts`; por defecto `0.0.0.0`, así
+que Cloud Run y `dev:local` no cambian) y el web con `next dev -H 127.0.0.1`, que habla con el API
+por `API_URL=http://127.0.0.1:3000`. Mientras demo sea solo local, nadie entra desde otra máquina
+y el reseteo manual de los usuarios reales no hace falta. **No se publica demo en ningún host ni
+túnel** hasta que exista D-362 (backlog): resetear la contraseña de todos los usuarios al
+restablecer demo. Si alguna vez hiciera falta antes, la vía es la pantalla Usuarios con el
+administrador de demo, uno por uno (`UsersService.update`: hash nuevo, cambio obligatorio,
+auditoría y sesiones revocadas).
+
+Verificado en vivo el 2026-09-28: el web escucha solo en `127.0.0.1:3001` (`netstat`) y no responde
+por la IP de la red local. **Pendiente, sin bloquear nada:** la verificación en vivo del bind del
+API (`127.0.0.1:3000`), en el próximo `pnpm dev:demo` desde el checkout principal —la prueba del
+2026-09-28 corrió desde un worktree cuyo `.env.demo` tenía la conexión anterior al
+restablecimiento, y el API no llegó a arrancar—. Hasta entonces lo cubren el test del esquema
+(`apps/api/src/config/env.spec.ts`) y `app.listen(env.PORT, env.BIND_HOST)` en `main.ts`.
 
 ### Demo tiene secretos propios, y eso no es opcional
 

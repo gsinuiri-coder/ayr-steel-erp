@@ -61,7 +61,7 @@ el mismo proceso y, salvo que se lo aísle a propósito, el mismo contexto de qu
 Reglas de convivencia, sin excepción:
 
 1. **Un solo agente escritor por worktree y por rama.** Dos sesiones de Claude Code no comparten
-   directorio. Cada sesión vive en su worktree: `ayr-steel-erp-<rama>`. Los worktrees se
+   directorio. Cada sesión vive en su worktree: `ayr-<corto>` (§3.5). Los worktrees se
    conservan como práctica vigente aunque haya un solo agente: la suite E2E completa solo entra
    con builds de producción, y eso exige un worktree aislado del checkout principal.
 2. **El revisor nunca es el autor. Estándar de revisión (desde 2026-09-26), en cada entrega:**
@@ -255,13 +255,20 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
   delimitador va entre comillas simples (`<<'EOF'`) para desactivar expansión.
 - Si un comando externo falla tres veces, documentar el bloqueo en `docs/PROGRESO.md` y seguir
   con lo que no dependa de él.
+- **Worktrees con nombre corto: `../ayr-<corto>`, de no más de ~25 caracteres** (p. ej.
+  `../ayr-c06`). Windows corta las rutas en 260 caracteres y `pnpm` anida los paquetes muy hondo
+  en `node_modules/.pnpm`: con `../ayr-c06`, el `index.mjs` de `@radix-ui/react-dismissable-layer`
+  ya mide ~247, y con `../ayr-steel-erp-fix-import-compras` (26 caracteres más) `next dev` no lo
+  resolvía. `core.longpaths` ya está en `true` en el repo y no alcanza: el límite lo pone la
+  resolución de módulos, no git. `next dev` suelto necesita `@ayr/shared` compilado; `pnpm dev` lo
+  compila solo (`dependsOn ^build`).
 
 ---
 
 ## 4. Git, ramas y commits
 
 - Rama por ventana: `rf-s4`, `chore/agents`, `hotfix-401`… siempre desde `origin/main`.
-- Worktree por sesión: `git worktree add ../ayr-steel-erp-<rama> <rama>`.
+- Worktree por sesión: `git worktree add ../ayr-<corto> <rama>` (nombre corto, §3.5).
 - **Conventional commits en español**: `feat(sales): …`, `fix(catalog): …`, `docs(progreso): …`.
 - Commits chicos y temáticos; el handoff lista la secuencia al cierre.
 - Al cerrar el worktree: eliminarlo junto con la rama local. La rama remota la borra el dueño.

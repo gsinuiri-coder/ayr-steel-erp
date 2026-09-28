@@ -61,6 +61,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { sellerWhere } from '../auth/seller-scope';
+import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from '../coils/coil-auto-terminate';
 import { openFilmIfSealed, resealIfOpenedBy } from '../coils/coil-film';
 import { CoilOperationsService } from '../coils/coil-operations.service';
 import { CoilsService } from '../coils/coils.service';
@@ -830,6 +831,17 @@ export class RoofingProductionService {
         entity: 'production_orders',
         entityId: orderId,
         after: { consumptionId, coilCode: consumption.coil.code, filmResealed: resealed },
+      });
+      // D-360: si al bajarla está en exactamente 0, se termina (red de seguridad: bajar exige consumo 0).
+      await autoTerminateEmptyCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: [consumption.coilId],
+        cause: {
+          kind: 'COIL_RELEASE',
+          refId: orderId,
+          label: `bajada de ${productionOrderCode(order.seq)}`,
+        },
+        operationDate: this.operationDate.resolve(actor, undefined),
       });
     });
 
@@ -2045,6 +2057,19 @@ export class RoofingProductionService {
       ? await releaseRemainingReservation(tx, order.reservationId)
       : new Decimal(0);
 
+    // D-360: las bobinas que el cierre bajó y quedaron en exactamente 0 se terminan solas (el
+    // reporte y el despunte no las terminan: estaban montadas). Reabrir la orden las reabre.
+    await autoTerminateEmptyCoils(tx, this.audit, {
+      actorId: actor.id,
+      coilIds: rows.map((r) => r.coilId),
+      cause: {
+        kind: 'PRODUCTION_ORDER_CLOSE',
+        refId: orderId,
+        label: `cierre de ${productionOrderCode(order.seq)}`,
+      },
+      operationDate,
+    });
+
     const outputQty = reports.reduce(
       (acc, r) =>
         acc.plus(r.metersM === null ? new Decimal(r.pieces) : toDecimal(r.metersM.toString())),
@@ -2389,6 +2414,28 @@ export class RoofingProductionService {
           rows.map((r) => r.coilId),
           'reabrir la orden',
         );
+        // D-360: las bobinas que el cierre terminó solas vuelven a estar vigentes; las que se
+        // terminaron por otra causa siguen bloqueando la reapertura, como antes.
+        const reopened = await reopenAutoTerminatedCoils(tx, this.audit, {
+          actorId: actor.id,
+          coilIds: rows.map((r) => r.coilId),
+          cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
+          // Revisión C06: también la que terminó el lote después de que esta OP la dejara en 0.
+          zeroedBy: {
+            refIds: [
+              orderId,
+              ...(
+                await tx.productionReport.findMany({
+                  where: { productionOrderId: orderId },
+                  select: { id: true },
+                })
+              ).map((r) => r.id),
+            ],
+          },
+          label: `reapertura de ${productionOrderCode(order.seq)}`,
+          operationDate,
+        });
+        const reopenedIds = new Set(reopened.reopened.map((c) => c.id));
 
         const lastOwnByCoil = new Map<string, bigint>();
         for (const movement of own) {
@@ -2400,7 +2447,7 @@ export class RoofingProductionService {
         }
         for (const row of rows) {
           await this.coils.lockCoil(tx, row.coilId);
-          if (row.coil.status !== CoilStatus.OPEN) {
+          if (row.coil.status !== CoilStatus.OPEN && !reopenedIds.has(row.coilId)) {
             throw new BadRequestException(
               `La bobina ${row.coil.code} ya no está disponible (${row.coil.status}): no se puede reabrir la orden`,
             );
@@ -2532,6 +2579,10 @@ export class RoofingProductionService {
         where: { productionOrderId: orderId },
       });
 
+      const held = await tx.productionOrderConsumption.findMany({
+        where: { productionOrderId: orderId, releasedAt: null },
+        select: { coilId: true },
+      });
       const released = await tx.productionOrderConsumption.updateMany({
         where: { productionOrderId: orderId, releasedAt: null },
         data: { releasedAt: new Date() },
@@ -2556,6 +2607,17 @@ export class RoofingProductionService {
             this.thicknessToleranceMm(),
           )
         : false;
+      // D-360: si al bajarla está en exactamente 0, se termina (red de seguridad: anular exige cero reportes).
+      await autoTerminateEmptyCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: held.map((h) => h.coilId),
+        cause: {
+          kind: 'PRODUCTION_ORDER_CANCEL',
+          refId: orderId,
+          label: `anulación de ${productionOrderCode(order.seq)}`,
+        },
+        operationDate: this.operationDate.resolve(actor, undefined),
+      });
 
       await this.audit.write(tx, {
         actorId: actor.id,

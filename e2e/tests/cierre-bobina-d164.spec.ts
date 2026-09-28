@@ -293,9 +293,14 @@ test.describe('D-164 — el cierre de una bobina liquida su remanente', () => {
       qtyKg: '200',
       reason: 'Se dio por consumida entera (prueba E2E)',
     });
-    expect((await getJson<CoilDto>(api, `/api/coils/${coil.id}`)).availableKg).toBe('0.000');
+    const emptied = await getJson<CoilDto>(api, `/api/coils/${coil.id}`);
+    expect(emptied.availableKg).toBe('0.000');
+    // D-360: la merma que la deja en 0 la termina sola, sin kardex. Para declarar lo que quedó
+    // se reabre (no hay ajuste que revertir, así que no pide motivo) y se vuelve a terminar.
+    expect(emptied.status).toBe('CLOSED');
+    await postJson<CoilDto>(api, `/api/coils/${coil.id}/status`, { status: 'OPEN' });
 
-    // Al cerrarla, planta encuentra 12 kg que el kardex no conocía. Da de alta material, así
+    // Al terminarla, planta encuentra 12 kg que el kardex no conocía. Da de alta material, así
     // que exige motivo igual que la baja.
     const closed = await postJson<CoilDto>(api, `/api/coils/${coil.id}/status`, {
       status: 'CLOSED',
