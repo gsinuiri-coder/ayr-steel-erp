@@ -14,6 +14,12 @@ const figures = {
   costPerKgPen: null,
   pricePerKgPen: null,
   marginPerKgPen: null,
+  pricePerMeterPen: null,
+  costPerMeterPen: null,
+  marginPerMeterPen: null,
+  unit: null,
+  qty: null,
+  costPerUnitPen: null,
 };
 
 const coil = (id: string, kg: string, cost: string) => ({

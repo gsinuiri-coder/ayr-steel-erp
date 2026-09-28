@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  PROFIT_SOURCES_NOTICE,
   BUSINESS_LINE_LABELS,
   FISCAL_DOC_TYPE_LABELS,
   Role,
@@ -60,6 +61,10 @@ export function VentasMargenView() {
           <h1 className="text-lg font-semibold">Ventas y margen</h1>
           <p className="text-xs text-muted-foreground">
             Comprobantes emitidos en el rango, sin IGV. Costo de venta desde el kardex.
+          </p>
+          {/* C06: el aviso de los dos reportes, en palabras del dueño. */}
+          <p className="text-xs text-muted-foreground" data-testid="aviso-costeo">
+            {PROFIT_SOURCES_NOTICE}
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">

@@ -101,6 +101,18 @@ export const salesMaterialFiguresSchema = z.object({
   /** Venta sin IGV ÷ peso real. */
   pricePerKgPen: z.string().nullable(),
   marginPerKgPen: z.string().nullable(),
+  /** C06: venta sin IGV ÷ ML vendido. Null sin metros («—»). */
+  pricePerMeterPen: z.string().nullable(),
+  /** C06: costo ÷ ML vendido. */
+  costPerMeterPen: z.string().nullable(),
+  /** C06: (venta − costo) ÷ ML vendido. */
+  marginPerMeterPen: z.string().nullable(),
+  /** C06: unidad de venta de lo sumado (`MTR`, `NIU`, `KGM`); null si se mezclan unidades. */
+  unit: z.string().nullable(),
+  /** C06: cantidad vendida en esa unidad; null si se mezclan unidades. */
+  qty: z.string().nullable(),
+  /** C06: costo promedio por unidad de venta (costo ÷ cantidad); null con cantidad 0 o unidades mezcladas. */
+  costPerUnitPen: z.string().nullable(),
 });
 export type SalesMaterialFiguresDto = z.infer<typeof salesMaterialFiguresSchema>;
 

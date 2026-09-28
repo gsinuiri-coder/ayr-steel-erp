@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { InventoryModule } from '../inventory/inventory.module';
+import { DocumentProfitabilityService } from './document-profitability.service';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { KardexPepsService } from './kardex-peps.service';
 import { KardexSheetService } from './kardex-sheet.service';
@@ -18,6 +19,7 @@ import { SalesMarginService } from './sales-margin.service';
     SalesByMaterialService,
     KardexPepsService,
     KardexSheetService,
+    DocumentProfitabilityService,
   ],
 })
 export class ReportsModule {}

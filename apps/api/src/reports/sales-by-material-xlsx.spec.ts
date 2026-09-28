@@ -14,6 +14,12 @@ const F = (sales: string, realKg: string, cost: string): SalesMaterialFiguresDto
   costPerKgPen: '2.5000',
   pricePerKgPen: '12.5000',
   marginPerKgPen: '10.0000',
+  pricePerMeterPen: '30.0000',
+  costPerMeterPen: '6.0000',
+  marginPerMeterPen: '24.0000',
+  unit: 'MTR',
+  qty: '10.000',
+  costPerUnitPen: '6.0000',
 });
 
 const coil = (code: string, kg: string, cost: string) => ({
@@ -92,6 +98,41 @@ describe('salesByMaterialXlsx (D-354)', () => {
     expect(main.find((r) => r[0] === 'Venta no trazable (S/)')![1]).toBe(500);
     const untraceable = sheet(buffer, 'No trazable');
     expect(untraceable[1]).toContain('Sin producción aún');
+  });
+
+  it('C06: por ML y costo por unidad; sin divisor, «—» (nunca 0 ni vacío)', () => {
+    const noDivisor: SalesByMaterialDto = {
+      ...REPORT,
+      total: {
+        ...F('400.0000', '32.000', '80.0000'),
+        pricePerMeterPen: null,
+        costPerMeterPen: null,
+        marginPerMeterPen: null,
+        unit: null,
+        qty: null,
+        costPerUnitPen: null,
+      },
+    };
+    const main = sheet(salesByMaterialXlsx(noDivisor).buffer, 'Ventas por material');
+    const header = main[0]!;
+    const col = (name: string) => header.indexOf(name);
+    const first = main[1]!;
+    expect(first[col('Precio/ML venta (S/)')]).toBe(30);
+    expect(first[col('Costo/ML (S/)')]).toBe(6);
+    expect(first[col('Ganancia/ML (S/)')]).toBe(24);
+    expect(first[col('Unidad')]).toBe('MTR');
+    expect(first[col('Costo prom./unidad (S/)')]).toBe(6);
+    const total = main.find((r) => r[0] === 'Total')!;
+    for (const name of [
+      'Precio/ML venta (S/)',
+      'Costo/ML (S/)',
+      'Ganancia/ML (S/)',
+      'Cantidad vendida',
+      'Unidad',
+      'Costo prom./unidad (S/)',
+    ]) {
+      expect(total[col(name)]).toBe('—');
+    }
   });
 
   it('la hoja del modal desglosa bobina × tipo sumando las filas del mismo tipo', () => {

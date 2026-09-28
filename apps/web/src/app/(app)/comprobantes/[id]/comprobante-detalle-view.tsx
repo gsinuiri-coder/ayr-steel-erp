@@ -80,6 +80,7 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatches';
 import { DispatchAtIssueDate } from './dispatch-at-issue-date';
+import { DocumentProfitability } from './document-profitability';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -1002,6 +1003,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <span className="font-semibold">Total {formatMoney(d.totalPen)}</span>
         </div>
       </Section>
+
+      {/* C06: la ganancia de este comprobante, solo para ADMINISTRADOR (una guía no es venta). */}
+      {isAdmin && !isDispatchNote && <DocumentProfitability documentId={d.id} />}
 
       {/*
         RF-86/RF-87: la cobranza vive en el comprobante porque el saldo es del comprobante
