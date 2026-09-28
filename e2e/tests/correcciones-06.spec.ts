@@ -318,6 +318,27 @@ test.describe('Correcciones 06', () => {
       });
       // D-170 por la regla común de D-360: vendida entera y en 0, terminada.
       expect((await coilOf(api, coil.id)).status).toBe('CLOSED');
+      // Sin asiento de cierre: el kardex de la bobina es su entrada y la salida de la venta.
+      const kardex = await movementsOf(api, coil.id);
+      expect(kardex.map((m) => [m.type, m.refType])).toEqual([
+        ['IN', 'PURCHASE'],
+        ['OUT', 'SALE'],
+      ]);
+      // La reserva COIL de la venta se consume antes de la salida y de la terminación: no es
+      // una anomalía. Una sola terminación, por el despacho, y ningún aviso de anomalía.
+      const audit = await getJson<{ items: { after: Record<string, unknown> | null }[] }>(
+        api,
+        `/api/audit?entityType=coils&entityId=${coil.id}`,
+      );
+      const auto = audit.items.filter((e) => e.after?.autoTerminated !== undefined);
+      expect(auto).toHaveLength(1);
+      expect(auto[0]!.after).toEqual(
+        expect.objectContaining({
+          status: 'CLOSED',
+          autoTerminated: { kind: 'DISPATCH', refId: dispatch.id },
+          closedByDispatch: expect.stringMatching(/^DES-\d{6}$/) as unknown,
+        }),
+      );
 
       // D-213: el comprobante declara el despacho que cubre; sin eso no hay costo (D-205).
       const draft = await postJson<{ id: string }>(api, '/api/invoicing/documents', {
