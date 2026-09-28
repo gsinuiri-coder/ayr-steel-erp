@@ -135,9 +135,19 @@ cubierto por el `.env.*` del `.gitignore`.
   sandbox de Nubefact comprobantes de clientes reales clonados de `production`.
 
 **Las credenciales de los usuarios de `demo` son las de `production`** (es un clon: mismos
-hashes de contraseña). Lo único propio es la sesión del ADMINISTRADOR de `.env.demo`
-(`JWT_SECRET`/`ADMIN_PASSWORD` generados por `pnpm env:demo`, nunca los de producción) — un
-vendedor real no puede entrar a `demo` con su contraseña real sin que alguien se la dé.
+hashes de contraseña). Lo único propio es el ADMINISTRADOR de `.env.demo` (`JWT_SECRET` y
+`ADMIN_PASSWORD` generados por `pnpm env:demo`, nunca los de producción): `db-demo.mjs` le
+reemplaza el hash con `SEED_ADMIN_FOR_TESTS: '1'` (`scripts/db-demo.mjs:42`), así que la deuda
+anotada en `docs/handoff/rf-s3.md` (§pendientes, punto 6) está resuelta.
+
+**Riesgo vigente (2026-09-28, D-362): cualquier usuario real entra a `demo` con su contraseña
+real.** Todos los demás usuarios conservan el hash de producción, y demo tiene hoy datos reales
+del cliente (restablecida desde `production` el 2026-09-28). Hasta que exista el reseteo de todas
+las contraseñas al restablecer demo (D-362, backlog), la única mitigación es resetearlas a mano
+desde Usuarios con el administrador de demo, una por una (`UsersService.update`: hash nuevo,
+cambio obligatorio, auditoría y sesiones revocadas). Demo se sirve con `pnpm dev:demo` desde la
+máquina del dueño: `next dev` escucha también en la red local, así que mientras está levantada es
+alcanzable desde esa red.
 
 ### Demo tiene secretos propios, y eso no es opcional
 
