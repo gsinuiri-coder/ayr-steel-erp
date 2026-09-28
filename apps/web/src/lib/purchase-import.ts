@@ -43,6 +43,7 @@ export function toDocumentInput(doc: ReviewDocument): PurchaseImportDocumentInpu
       qty: l.qty,
       unit: l.unit,
       unitPrice: l.unitPrice,
+      lineAmount: l.lineAmount,
       finishCode: l.finishCode,
       finishId: l.chosenFinishId ?? null,
       color: l.color,
@@ -140,4 +141,20 @@ export function newSuppliersOf(docs: readonly PurchaseImportDocumentDto[]): stri
       byRuc.set(d.supplierRuc, `${d.newSupplier.name} (${d.newSupplierCode ?? ''})`);
   }
   return [...byRuc.values()];
+}
+
+/**
+ * D-359 (mismo criterio que D-169 en cotizaciones): editar la cantidad o el precio de una fila en el
+ * preview la recalcula desde cantidad × precio, así que su importe del papel **se vacía** —se ve en
+ * la columna— en vez de quedar mandando sobre números que ya no son los del papel. Una fila que solo
+ * trae importe (sin precio) no tiene con qué recalcularse: editar su cantidad conserva el importe y el
+ * unitario se vuelve a derivar. Cualquier otro campo se edita tal cual.
+ */
+export function lineEditPatch(
+  line: Pick<ReviewLine, 'unitPrice'>,
+  field: 'qty' | 'unitPrice' | 'lineAmount' | (string & {}),
+  value: string,
+): Partial<ReviewLine> {
+  const recalculates = field === 'unitPrice' || (field === 'qty' && line.unitPrice.trim() !== '');
+  return recalculates ? { [field]: value, lineAmount: '' } : { [field]: value };
 }

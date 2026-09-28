@@ -3,6 +3,7 @@ import type { PurchaseImportDocumentDto } from '@ayr/shared';
 import {
   documentStatus,
   errorsOf,
+  lineEditPatch,
   lineShape,
   mergeChoices,
   newSuppliersOf,
@@ -52,6 +53,7 @@ function dto(over: Partial<PurchaseImportDocumentDto> = {}): PurchaseImportDocum
         qty: '1',
         unit: '',
         unitPrice: '10',
+        lineAmount: '72.03',
         finishCode: 'GALV',
         finishId: 'f-resuelto',
         finishLabel: null,
@@ -148,3 +150,25 @@ function only<T>(items: readonly T[]): T {
   if (first === undefined) throw new Error('lista vacía');
   return first;
 }
+
+describe('D-359 — el importe del papel en el preview', () => {
+  it('viaja al revalidar y al confirmar', () => {
+    const input = toDocumentInput(only(mergeChoices([dto()], [])));
+    expect(input.lines[0]?.lineAmount).toBe('72.03');
+  });
+
+  it('editar la cantidad o el precio vacía el importe (la fila se recalcula); otro campo no', () => {
+    const priced = { unitPrice: '0.144068' };
+    expect(lineEditPatch(priced, 'qty', '600')).toEqual({ qty: '600', lineAmount: '' });
+    expect(lineEditPatch(priced, 'unitPrice', '0.15')).toEqual({
+      unitPrice: '0.15',
+      lineAmount: '',
+    });
+    expect(lineEditPatch(priced, 'description', 'Tornillo')).toEqual({ description: 'Tornillo' });
+    expect(lineEditPatch(priced, 'lineAmount', '72.03')).toEqual({ lineAmount: '72.03' });
+  });
+
+  it('una fila con solo importe conserva el importe al cambiar la cantidad', () => {
+    expect(lineEditPatch({ unitPrice: '' }, 'qty', '600')).toEqual({ qty: '600' });
+  });
+});

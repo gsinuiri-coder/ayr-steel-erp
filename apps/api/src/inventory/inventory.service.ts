@@ -118,6 +118,14 @@ export interface RecordMovementInput {
   unit: string;
   /** Obligatorio en `IN`. En `OUT` se ignora: manda el promedio ponderado vigente. */
   unitCost?: string;
+  /**
+   * D-359: el valor total de una **entrada**, cuando es un dato y no `qty × unitCost`: la recepción
+   * de una compra entra por el subtotal sin IGV del papel (× TC), que un unitario de cuatro
+   * decimales no reproduce. El movimiento guarda este total y el promedio pondera con él; el
+   * `unitCost` es el derivado para mostrar, y tiene que ser `totalCost / qty` redondeado a la
+   * escala de la columna (si no, se rechaza: serían dos costos distintos para el mismo movimiento).
+   */
+  totalCost?: string;
   refType: InventoryRefType;
   refId?: string;
   /** Motivo escrito por el usuario (merma, ajuste). Se guarda tal cual en el kardex. */
@@ -204,6 +212,10 @@ export class InventoryService {
     if (!qty.isFinite() || qty.lte(0)) {
       throw new BadRequestException('La cantidad de un movimiento debe ser mayor a cero');
     }
+    if (input.totalCost !== undefined && input.type !== 'IN') {
+      // D-359: solo una entrada trae su valor; una salida sale al costo promedio vigente.
+      throw new BadRequestException('Una salida sale al costo promedio: no lleva total propio');
+    }
 
     // D-134: **bobinas antes que saldos**, siempre. El guardrail del agregado bloquea las
     // bobinas compatibles para poder comprobar la invariante sin ventana de carrera, y
@@ -227,6 +239,7 @@ export class InventoryService {
     let unitCost: Decimal;
     let newQty: Decimal;
     let newAvgCost: Decimal;
+    let totalCost: Decimal;
 
     if (input.type === 'IN') {
       if (input.unitCost === undefined) {
@@ -236,12 +249,15 @@ export class InventoryService {
       if (unitCost.isNegative()) {
         throw new BadRequestException('El costo unitario no puede ser negativo');
       }
+      // D-359: el total del documento, si viene, manda; el unitario tiene que ser el suyo.
+      totalCost = input.totalCost === undefined ? qty.times(unitCost) : toDecimal(input.totalCost);
+      if (input.totalCost !== undefined) assertTotalMatchesUnit(totalCost, qty, unitCost);
       newQty = balance.qty.plus(qty);
-      // Promedio ponderado (D-028). Con saldo previo <= 0 el promedio anterior no
-      // aporta información: el costo de la entrada pasa a ser el promedio.
+      // Promedio ponderado (D-028), sobre el **valor** que entra. Con saldo previo <= 0 el
+      // promedio anterior no aporta información: el costo de la entrada pasa a ser el promedio.
       newAvgCost = balance.qty.lte(0)
-        ? unitCost
-        : balance.qty.times(balance.avgCost).plus(qty.times(unitCost)).div(newQty);
+        ? totalCost.div(qty)
+        : balance.qty.times(balance.avgCost).plus(totalCost).div(newQty);
     } else {
       if (qty.gt(balance.qty)) {
         throw new BadRequestException(
@@ -250,6 +266,7 @@ export class InventoryService {
       }
       // Una salida no cambia el costo promedio; sale valorizada al promedio vigente.
       unitCost = balance.avgCost;
+      totalCost = qty.times(unitCost);
       newQty = balance.qty.minus(qty);
       newAvgCost = balance.avgCost;
     }
@@ -310,7 +327,7 @@ export class InventoryService {
         qty: toFixedString(qty, 'KG'),
         unit: input.unit,
         unitCost: toFixedString(unitCost, 'MONEY'),
-        totalCost: toFixedString(qty.times(unitCost), 'MONEY'),
+        totalCost: toFixedString(totalCost, 'MONEY'),
         refType: input.refType,
         refId: input.refId ?? null,
         notes: input.notes ?? null,
@@ -1354,4 +1371,23 @@ function describeTypeKey(typeKey: string): string {
   const separator = typeKey.lastIndexOf('-');
   if (separator <= 0) return typeKey;
   return `Acabado ${typeKey.slice(0, separator)} · ${typeKey.slice(separator + 1)} mm`;
+}
+
+/** Media unidad de la cuarta decimal: lo más que redondear el unitario a la columna puede mover. */
+const UNIT_COST_ROUNDING = new Decimal('0.00005');
+
+/**
+ * D-359: una entrada con total propio tiene que traer **su** unitario (`totalCost / qty` redondeado
+ * a la escala de la columna). Si no, el kardex mostraría un unitario que no es el del valor que
+ * guardó, y el promedio saldría de un número distinto del que se ve.
+ */
+function assertTotalMatchesUnit(totalCost: Decimal, qty: Decimal, unitCost: Decimal): void {
+  if (totalCost.isNegative()) {
+    throw new BadRequestException('El costo total de una entrada no puede ser negativo');
+  }
+  if (totalCost.div(qty).minus(unitCost).abs().gt(UNIT_COST_ROUNDING)) {
+    throw new BadRequestException(
+      `El costo unitario ${unitCost.toFixed(4)} no corresponde al total ${totalCost.toFixed(4)} de ${qty.toFixed(3)}`,
+    );
+  }
 }

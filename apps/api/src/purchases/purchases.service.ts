@@ -69,6 +69,7 @@ import { parseInvoiceXml } from './invoice-xml';
 import {
   computeDueDate,
   computeTotals,
+  receptionCost,
   daysBetween,
   paidAmount,
   purchaseBalance,
@@ -193,7 +194,15 @@ export class PurchasesService {
     actor: RequestUser,
     input: CreatePurchaseInput,
     exchange: { rate: Decimal; source: ExchangeRateSource },
-    options: { importBatchId?: string; externalCodes?: readonly (string | null)[] } = {},
+    options: {
+      importBatchId?: string;
+      externalCodes?: readonly (string | null)[];
+      /**
+       * D-359: el valor sin IGV y el IGV del papel por línea, que se guardan tal cual. Solo lo
+       * pasa el importador; por HTTP no existe (el formulario siempre deriva de cantidad × precio).
+       */
+      paperAmounts?: readonly { subtotal: string; igv: string }[];
+    } = {},
   ): Promise<Purchase> {
     const [supplier, businessLine] = await Promise.all([
       tx.supplier.findUnique({ where: { id: input.supplierId } }),
@@ -217,7 +226,7 @@ export class PurchasesService {
     await this.assertCuttingOrderLinkIsValid(tx, actor, input, businessLine.id);
 
     const { rate, source } = exchange;
-    const totals = computeTotals(input);
+    const totals = computeTotals(input, options.paperAmounts);
     const dueDate = computeDueDate(input);
 
     try {
@@ -440,6 +449,9 @@ export class PurchasesService {
               currency: purchase.currency,
               exchangeRate: purchase.exchangeRate.toFixed(4),
               unitCostPerKg: item.unitPrice.toFixed(4),
+              // D-359: la bobina entra por el subtotal sin IGV de su línea (el importe del papel),
+              // no por kilos × unitario de cuatro decimales, que no lo reproduce.
+              totalCost: item.subtotal.toFixed(4),
               // D-328 (sustituye el default de D-117): la bobina comprada nace **vigente y
               // sellada**. «Cerrada por defecto» era el proxy de «con el film puesto»; ahora el
               // film es su propio eje y la bobina no nace terminada. Una línea que traiga un
@@ -463,11 +475,9 @@ export class PurchasesService {
               qty: item.qty.toFixed(3),
               unit: item.unit,
               // El kardex se lleva siempre en soles (D-042): una compra en USD y otra en
-              // PEN del mismo producto tienen que promediar sobre la misma escala.
-              unitCost: toFixedString(
-                toDecimal(item.unitPrice.toString()).times(purchase.exchangeRate.toString()),
-                'MONEY',
-              ),
+              // PEN del mismo producto tienen que promediar sobre la misma escala. D-359: entra por
+              // el subtotal sin IGV de la línea × TC, al céntimo; el unitario se deriva de ahí.
+              ...receptionCost(item.subtotal, item.qty, purchase.exchangeRate),
               refType: 'PURCHASE',
               refId: purchase.id,
               actorId: actor.id,
@@ -995,23 +1005,37 @@ export class PurchasesService {
     if (qtyKg.lte(0) || amountPen.isZero()) return null;
     const coil = await tx.coil.findUnique({
       where: { id: coilId },
-      select: { weightKg: true, exchangeRate: true, unitCostPerKg: true },
+      select: {
+        weightKg: true,
+        exchangeRate: true,
+        unitCostPerKg: true,
+        totalCost: true,
+        totalCostPen: true,
+      },
     });
     if (!coil) return null;
 
     const exchangeRate = toDecimal(coil.exchangeRate.toString());
     const deltaPerKg = amountPen.div(qtyKg).div(exchangeRate);
-    const newUnitCost = Decimal.max(
-      toDecimal(coil.unitCostPerKg.toString()).plus(deltaPerKg),
+    const oldUnitCost = toDecimal(coil.unitCostPerKg.toString());
+    const newUnitCost = Decimal.max(oldUnitCost.plus(deltaPerKg), new Decimal(0));
+    // D-359: el total de la bobina puede ser el del papel (no `peso × unitario`): se le **suma** lo
+    // que la imputación agrega, en vez de recalcularlo desde el peso y perderlo.
+    const deltaTotal = newUnitCost.minus(oldUnitCost).times(coil.weightKg.toString());
+    const totalCost = Decimal.max(
+      toDecimal(coil.totalCost.toString()).plus(deltaTotal),
       new Decimal(0),
     );
-    const totalCost = toDecimal(coil.weightKg.toString()).times(newUnitCost);
+    const totalCostPen = Decimal.max(
+      toDecimal(coil.totalCostPen.toString()).plus(deltaTotal.times(exchangeRate)),
+      new Decimal(0),
+    );
     await tx.coil.update({
       where: { id: coilId },
       data: {
         unitCostPerKg: toFixedString(newUnitCost, 'MONEY'),
         totalCost: toFixedString(totalCost, 'MONEY'),
-        totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
+        totalCostPen: toFixedString(totalCostPen, 'MONEY'),
       },
     });
     return { from: coil.unitCostPerKg.toFixed(4), to: toFixedString(newUnitCost, 'MONEY') };

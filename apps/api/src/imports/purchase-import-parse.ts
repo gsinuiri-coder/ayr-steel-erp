@@ -169,6 +169,7 @@ function lineOf(
     qty: isCoil ? kg || qty : qty,
     unit: field('unit'),
     unitPrice: field('unitPrice'),
+    lineAmount: field('lineAmount'),
     finishCode: field('finishCode'),
     finishId: null,
     color: field('color'),

@@ -24,6 +24,7 @@ import { useSession } from '@/lib/session';
 import {
   documentStatus,
   errorsOf,
+  lineEditPatch,
   lineShape,
   mergeChoices,
   newSuppliersOf,
@@ -714,6 +715,7 @@ function DocumentCard({
                     </>
                   )}
                   <th className="py-2 pr-2 text-right font-medium">Precio unit. sin IGV</th>
+                  <th className="py-2 pr-2 text-right font-medium">Importe sin IGV</th>
                   {shape === 'COIL' && <th className="py-2 pr-2 font-medium">Código externo</th>}
                   <th className="py-2 pr-2 text-right font-medium">Subtotal</th>
                   <th className="py-2 font-medium" />
@@ -837,7 +839,7 @@ function LineRow({
         value={line[field]}
         disabled={disabled}
         onChange={(e) => {
-          onEdit({ [field]: e.target.value });
+          onEdit(lineEditPatch(line, field, e.target.value));
         }}
       />
     </td>
@@ -918,6 +920,7 @@ function LineRow({
           </>
         )}
         {text('unitPrice', 'Precio', 'w-24', 'text-right')}
+        {text('lineAmount', 'Importe sin IGV', 'w-24', 'text-right')}
         {shape === 'COIL' && text('externalCode', 'Código externo', 'w-28')}
         <td className="py-2 pr-2 text-right text-xs tabular-nums">{line.subtotal ?? '—'}</td>
         <td className="py-2">
@@ -929,7 +932,7 @@ function LineRow({
       {line.issues.length > 0 && (
         <tr>
           <td />
-          <td colSpan={12} className="pb-2 text-xs text-destructive">
+          <td colSpan={13} className="pb-2 text-xs text-destructive">
             {line.issues.map((i) => i.message).join(' · ')}
           </td>
         </tr>
@@ -960,4 +963,5 @@ type LineTextField =
   | 'description'
   | 'unit'
   | 'unitPrice'
+  | 'lineAmount'
   | 'externalCode';

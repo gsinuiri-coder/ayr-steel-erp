@@ -6,13 +6,15 @@ import {
   commercialColorToken,
   currencyOf,
   Decimal,
+  cents,
   money,
   MAX_PURCHASE_IMPORT_LINES,
   MAX_VALUE,
   newSupplierCodeSchema,
+  importRoundingTolerance,
   normalizeDecimal,
+  normalizeIgvRate,
   paymentTermsOf,
-  PURCHASE_IMPORT_TOTAL_TOLERANCE,
   purchaseDocTypeOf,
   purchaseTypeOf,
   serviceKindOf,
@@ -98,6 +100,11 @@ export interface ValidatedDocument {
   /** El alta lista para `createInTx`, o `null` si el comprobante tiene errores. */
   input: CreatePurchaseInput | null;
   externalCodes: (string | null)[];
+  /**
+   * D-359: los importes del papel por línea (sin IGV y su IGV, en la moneda del comprobante), en el
+   * orden de `input.items`. `createInTx` los guarda tal cual en vez de recalcularlos del unitario.
+   */
+  amounts: { subtotal: string; igv: string }[];
 }
 
 /** La clave con la que se busca una compra viva: la misma tupla del índice único parcial (D-132). */
@@ -297,8 +304,8 @@ export function validateDocument(
     }
   }
 
-  const igvText =
-    doc.igvRate === '' ? DEFAULT_IGV : (normalizeDecimal(doc.igvRate.replace('%', '')) ?? '');
+  // D-359: `18`, `18%` y `0.18` (una celda con formato de porcentaje) son la misma tasa.
+  const igvText = doc.igvRate === '' ? DEFAULT_IGV : (normalizeIgvRate(doc.igvRate) ?? '');
   const igvRate = igvText === '' ? null : toDecimal(igvText);
   if (igvRate === null || igvRate.gt(100))
     error('igvRate', `«${doc.igvRate}» no es una tasa de IGV (0 a 100)`);
@@ -311,32 +318,32 @@ export function validateDocument(
     validateLine(line, index, { type, businessLine }, ctx),
   );
 
-  // Totales con `Decimal` (D-003), en la moneda del comprobante.
+  // Totales con `Decimal` (D-003), en la moneda del comprobante (D-359).
   const lineSubtotals = lines.map((l) => l.subtotal);
   const allPriced = lineSubtotals.every((s): s is Decimal => s !== null) && igvRate !== null;
-  let subtotal: Decimal | null = null;
-  let igv: Decimal | null = null;
-  let total: Decimal | null = null;
+  let amounts: LineAmounts[] = [];
   if (allPriced) {
-    const rate = igvRate.div(100);
-    subtotal = lineSubtotals.reduce((acc, s) => acc.plus(s), new Decimal(0));
-    igv = lineSubtotals.reduce((acc, s) => acc.plus(money(s.times(rate))), new Decimal(0));
-    total = subtotal.plus(igv);
-    if (doc.documentTotal !== '') {
-      const fileTotal = normalizeDecimal(doc.documentTotal);
-      if (fileTotal === null) {
-        warning('documentTotal', `«${doc.documentTotal}» no es un importe: no se comparó`);
-      } else {
-        const diff = toDecimal(fileTotal).minus(total);
-        if (diff.abs().gt(PURCHASE_IMPORT_TOTAL_TOLERANCE)) {
-          warning(
-            'documentTotal',
-            `El total del archivo (${toDecimal(fileTotal).toFixed(2)}) no cuadra con el recalculado (${total.toFixed(2)}): diferencia ${diff.toFixed(2)}`,
-          );
-        }
-      }
+    const fileTotal = doc.documentTotal === '' ? null : normalizeDecimal(doc.documentTotal);
+    if (doc.documentTotal !== '' && fileTotal === null) {
+      warning('documentTotal', `«${doc.documentTotal}» no es un importe: no se comparó`);
+    }
+    const paper = paperAmounts({
+      subtotals: lineSubtotals,
+      igvRate,
+      qtys: lines.map((l) => l.qty ?? '0'),
+      documentTotal: fileTotal,
+    });
+    amounts = paper.amounts;
+    if (paper.mismatch !== null) {
+      error(
+        'documentTotal',
+        `El total del archivo con IGV (${paper.mismatch.file}) no cuadra con el recalculado con IGV (${paper.mismatch.computed}): diferencia ${paper.mismatch.diff}`,
+      );
     }
   }
+  const subtotal = allPriced ? sumOf(amounts.map((a) => a.subtotal)) : null;
+  const igv = allPriced ? sumOf(amounts.map((a) => a.igv)) : null;
+  const total = subtotal !== null && igv !== null ? subtotal.plus(igv) : null;
 
   const lineErrors = lines.some((l) => l.dto.issues.some((i) => i.severity === 'error'));
   const hasErrors = issues.some((i) => i.severity === 'error') || lineErrors;
@@ -363,7 +370,7 @@ export function validateDocument(
     paymentTerms === null ||
     igvRate === null
   ) {
-    return { dto, input: null, externalCodes: [] };
+    return { dto, input: null, externalCodes: [], amounts: [] };
   }
   const input: CreatePurchaseInput = {
     // Un proveedor nuevo todavía no tiene id: lo pone la confirmación después de crearlo.
@@ -420,9 +427,17 @@ export function validateDocument(
         });
       }
     }
-    return { dto, input: null, externalCodes: [] };
+    return { dto, input: null, externalCodes: [], amounts: [] };
   }
-  return { dto, input, externalCodes: lines.map((l) => l.externalCode) };
+  return {
+    dto,
+    input,
+    externalCodes: lines.map((l) => l.externalCode),
+    amounts: amounts.map((a) => ({
+      subtotal: a.subtotal.toFixed(4),
+      igv: a.igv.toFixed(4),
+    })),
+  };
 }
 
 const PLACEHOLDER_ID = '00000000-0000-4000-8000-000000000000';
@@ -430,6 +445,7 @@ const PLACEHOLDER_ID = '00000000-0000-4000-8000-000000000000';
 interface ValidatedLine {
   dto: PurchaseImportLineDto;
   subtotal: Decimal | null;
+  qty: string | null;
   item: CreatePurchaseInput['items'][number] | null;
   externalCode: string | null;
 }
@@ -458,9 +474,17 @@ function validateLine(
         : 'La cantidad es obligatoria y mayor que cero',
     );
   }
+  // D-359: el importe sin IGV de la línea, si el papel lo trae, manda; si no, el precio unitario con
+  // **todos** sus decimales. Uno de los dos tiene que venir.
   const unitPrice = normalizeDecimal(line.unitPrice);
-  if (unitPrice === null || toDecimal(unitPrice).lte(0)) {
-    error('unitPrice', 'El precio unitario sin IGV es obligatorio y mayor que cero');
+  const lineAmount = normalizeDecimal(line.lineAmount);
+  if (line.lineAmount !== '' && (lineAmount === null || toDecimal(lineAmount).lte(0))) {
+    error('lineAmount', 'El importe sin IGV de la línea tiene que ser un número mayor que cero');
+  } else if (lineAmount === null && (unitPrice === null || toDecimal(unitPrice).lte(0))) {
+    error(
+      'unitPrice',
+      'El precio unitario sin IGV es obligatorio y mayor que cero (o el importe sin IGV de la línea)',
+    );
   }
 
   let product: ProductRef | null = null;
@@ -499,12 +523,19 @@ function validateLine(
     error('finishCode', 'Solo una compra de bobinas lleva acabado');
   }
 
-  const subtotal =
-    qty !== null && unitPrice !== null
-      ? // Con los mismos redondeos con que se guarda la línea (kg 3, dinero 4): el preview no
-        // muestra un total distinto del que va a quedar (autorrevisión, P2).
-        money(toDecimal(toDecimal(qty).toFixed(3)).times(toDecimal(unitPrice).toFixed(4)))
-      : null;
+  const priced = lineSubtotalOf(qty, unitPrice, lineAmount);
+  const subtotal = priced?.subtotal ?? null;
+  // Con los dos datos, el importe manda; pero un precio que no se parece al importe es otra columna
+  // pegada donde no iba (el precio con IGV en la de sin IGV): error de la línea, con las dos cifras.
+  if (priced !== null && lineAmount !== null && unitPrice !== null && qty !== null) {
+    const fromPrice = money(toDecimal(qty).times(unitPrice));
+    if (fromPrice.minus(priced.subtotal).abs().gt(priceTolerance(qty, unitPrice))) {
+      error(
+        'lineAmount',
+        `El importe sin IGV (${priced.subtotal.toFixed(2)}) no cuadra con cantidad × precio (${fromPrice.toFixed(2)})`,
+      );
+    }
+  }
   // Topes de las columnas (`MAX_VALUE`): un número fuera de rango es error de la fila y no un 500
   // por desborde al grabar (autorrevisión, P1).
   if (qty !== null && toDecimal(qty).gt(MAX_VALUE.KG))
@@ -527,14 +558,15 @@ function validateLine(
     subtotal: subtotal?.toFixed(2) ?? null,
     issues,
   };
-  if (issues.length > 0 || qty === null || unitPrice === null || unit === null) {
-    return { dto, subtotal, item: null, externalCode: null };
+  if (issues.length > 0 || qty === null || priced === null || unit === null) {
+    return { dto, subtotal, qty, item: null, externalCode: null };
   }
   const item: CreatePurchaseInput['items'][number] = {
     description: description.slice(0, 240),
     qty: toDecimal(qty).toFixed(3),
     unit,
-    unitPrice: toDecimal(unitPrice).toFixed(4),
+    // D-359: cuatro decimales solo para mostrar (D-255); el importe guardado es `subtotal`.
+    unitPrice: priced.unitPrice.toFixed(4),
     ...(product ? { productId: product.id } : {}),
     ...(finish ? { finishId: finish.id } : {}),
     ...(header.type === 'COIL' && thickness !== null
@@ -545,9 +577,99 @@ function validateLine(
   return {
     dto,
     subtotal,
+    qty,
     item,
     externalCode: header.type === 'COIL' && line.externalCode !== '' ? line.externalCode : null,
   };
+}
+
+/**
+ * D-359: el importe sin IGV de una línea y el unitario que se muestra. El importe del papel, si
+ * viene, **es** el subtotal; si no, cantidad × precio con todos los decimales del precio. Los dos, en
+ * céntimos: es la escala del papel (`cents`). El unitario se deriva del importe: nunca al revés (D-255).
+ */
+export function lineSubtotalOf(
+  qty: string | null,
+  unitPrice: string | null,
+  lineAmount: string | null,
+): { subtotal: Decimal; unitPrice: Decimal } | null {
+  if (qty === null || toDecimal(qty).lte(0)) return null;
+  const q = toDecimal(toDecimal(qty).toFixed(3));
+  if (lineAmount !== null && toDecimal(lineAmount).gt(0)) {
+    const subtotal = cents(lineAmount);
+    return { subtotal, unitPrice: money(subtotal.div(q)) };
+  }
+  if (unitPrice === null || toDecimal(unitPrice).lte(0)) return null;
+  return { subtotal: cents(q.times(unitPrice)), unitPrice: money(unitPrice) };
+}
+
+/**
+ * D-359 (autorrevisión, P1): cuánto puede separarse `cantidad × precio` del importe sin que el precio
+ * sea de otra columna. El precio escrito con **d** decimales ya viene redondeado a media unidad de su
+ * último decimal, así que la cota es `cantidad × 0,5 × 10^-d` (0.98 en 4 520 kg explica hasta S/ 22.60),
+ * y nunca menos que la de D-169. El precio con IGV en la columna sin IGV (un 18 % de más) sigue fuera.
+ */
+function priceTolerance(qty: string, unitPrice: string): Decimal {
+  const decimals = unitPrice.split('.')[1]?.length ?? 0;
+  const perUnit = new Decimal(5).times(new Decimal(10).pow(-(decimals + 1)));
+  return Decimal.max(importRoundingTolerance([qty]), toDecimal(qty).times(perUnit));
+}
+
+export interface LineAmounts {
+  subtotal: Decimal;
+  igv: Decimal;
+}
+
+/**
+ * D-359 (mismo criterio que D-169/D-255): **el total del comprobante del archivo es con IGV y
+ * manda.** El IGV de cada línea se calcula en céntimos (`cents(subtotal × tasa)`) y
+ * el total recalculado se compara con el del papel. Si la diferencia entra en la tolerancia de
+ * redondeo de D-169 (`importRoundingTolerance`), se absorbe en el IGV de la **última línea** —el
+ * IGV del papel es la resta total − valor— y la compra queda con el total exacto del papel; el
+ * valor sin IGV (la base del costo) no se toca. En un comprobante sin IGV (tasa 0, exonerado) no
+ * hay IGV donde absorberlo: va al valor de la última línea. Si la diferencia es mayor, `mismatch`
+ * trae las dos cifras con IGV para el error. El ajuste no se guarda: se deriva de lo guardado.
+ */
+export function paperAmounts(input: {
+  subtotals: readonly Decimal[];
+  igvRate: Decimal;
+  qtys: readonly string[];
+  documentTotal: string | null;
+}): { amounts: LineAmounts[]; mismatch: { file: string; computed: string; diff: string } | null } {
+  const rate = input.igvRate.div(100);
+  const amounts = input.subtotals.map((subtotal) => ({
+    subtotal,
+    igv: cents(subtotal.times(rate)),
+  }));
+  if (input.documentTotal === null || amounts.length === 0) return { amounts, mismatch: null };
+  const computed = sumOf(amounts.map((a) => a.subtotal.plus(a.igv)));
+  const file = cents(input.documentTotal);
+  const diff = file.minus(computed);
+  if (diff.isZero()) return { amounts, mismatch: null };
+  const tolerance = importRoundingTolerance([...input.qtys]);
+  const last = amounts[amounts.length - 1];
+  const absorbed =
+    last === undefined
+      ? null
+      : input.igvRate.isZero()
+        ? { subtotal: last.subtotal.plus(diff), igv: last.igv }
+        : { subtotal: last.subtotal, igv: last.igv.plus(diff) };
+  if (
+    diff.abs().gt(tolerance) ||
+    absorbed === null ||
+    absorbed.subtotal.lte(0) ||
+    absorbed.igv.isNegative()
+  ) {
+    return {
+      amounts,
+      mismatch: { file: file.toFixed(2), computed: computed.toFixed(2), diff: diff.toFixed(2) },
+    };
+  }
+  return { amounts: [...amounts.slice(0, -1), absorbed], mismatch: null };
+}
+
+function sumOf(values: readonly Decimal[]): Decimal {
+  return values.reduce((acc, v) => acc.plus(v), new Decimal(0));
 }
 
 /**

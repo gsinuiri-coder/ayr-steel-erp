@@ -56,6 +56,7 @@ function document(over: Partial<PurchaseImportDocumentInput> = {}): PurchaseImpo
         qty: '1',
         unit: 'NIU',
         unitPrice: '100',
+        lineAmount: '',
         finishCode: '',
         finishId: null,
         color: '',
