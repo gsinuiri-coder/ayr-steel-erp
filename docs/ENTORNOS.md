@@ -156,6 +156,13 @@ restablecer demo. Si alguna vez hiciera falta antes, la vía es la pantalla Usua
 administrador de demo, uno por uno (`UsersService.update`: hash nuevo, cambio obligatorio,
 auditoría y sesiones revocadas).
 
+Verificado en vivo el 2026-09-28: el web escucha solo en `127.0.0.1:3001` (`netstat`) y no responde
+por la IP de la red local. **Pendiente, sin bloquear nada:** la verificación en vivo del bind del
+API (`127.0.0.1:3000`), en el próximo `pnpm dev:demo` desde el checkout principal —la prueba del
+2026-09-28 corrió desde un worktree cuyo `.env.demo` tenía la conexión anterior al
+restablecimiento, y el API no llegó a arrancar—. Hasta entonces lo cubren el test del esquema
+(`apps/api/src/config/env.spec.ts`) y `app.listen(env.PORT, env.BIND_HOST)` en `main.ts`.
+
 ### Demo tiene secretos propios, y eso no es opcional
 
 `.env.demo` lleva su **propio** `JWT_SECRET` y su **propia** contraseña de administrador,
