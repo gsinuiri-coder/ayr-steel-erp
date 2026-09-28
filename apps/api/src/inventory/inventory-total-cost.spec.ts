@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { InventoryStrategy, Prisma } from '@prisma/client';
-import { Decimal, money } from '@ayr/shared';
+import { cents, Decimal } from '@ayr/shared';
 import { ENV } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { receptionCost } from '../purchases/purchase-math';
@@ -93,27 +93,28 @@ describe('InventoryService.record — totalCost de una entrada (D-359)', () => {
       .mockResolvedValue(undefined as never);
   });
 
-  // Bobina de 4 520 kg a 0.980123 USD/kg (seis decimales) con TC 3.745.
-  const subtotalUsd = money(new Decimal('4520').times('0.980123')); // 4430.1560
+  // Bobina de 4 520 kg a 0.980123 USD/kg (seis decimales) con TC 3.745: subtotal 4 430.16 (céntimos).
+  const subtotalUsd = cents(new Decimal('4520').times('0.980123'));
   const tc = new Prisma.Decimal('3.745');
 
-  it('el kardex queda en subtotal × TC exacto, con el unitario derivado', async () => {
+  it('el kardex queda en subtotal × TC al céntimo, con el unitario derivado', async () => {
     const f = fakeTx();
     const cost = receptionCost(subtotalUsd, new Prisma.Decimal('4520'), tc);
-    expect(cost).toEqual({ totalCost: '16590.9342', unitCost: '3.6706' });
+    // 4430.16 × 3.745 = 16590.9492 → 16590.95.
+    expect(cost).toEqual({ totalCost: '16590.9500', unitCost: '3.6706' });
     await service.record(f.tx, entry(cost));
-    expect(f.movements[0]).toMatchObject({ unitCost: '3.6706', totalCost: '16590.9342' });
+    expect(f.movements[0]).toMatchObject({ unitCost: '3.6706', totalCost: '16590.9500' });
     // Con el unitario de cuatro decimales (0.9801 → 3.6705 en soles) habría entrado 16590.66.
     expect(f.balance.avgCost).toBe('3.6706');
   });
 
   it('el promedio pondera con el total del papel, no con qty × unitario', async () => {
     const f = fakeTx();
-    await service.record(f.tx, entry({ qty: '1000.000', unitCost: '3.0000' }));
-    await service.record(f.tx, entry({ qty: '3.000', unitCost: '0.3333', totalCost: '1.0000' }));
-    // (1000 × 3 + 1.00) / 1003 = 2.99202…; con qty × unitario sería (3000 + 0.9999) / 1003.
-    expect(f.balance.avgCost).toBe(money(new Decimal(3001).div(1003)).toFixed(4));
-    expect(f.movements[1]).toMatchObject({ totalCost: '1.0000' });
+    await service.record(f.tx, entry({ qty: '2.000', unitCost: '0.0000' }));
+    await service.record(f.tx, entry({ qty: '2.000', unitCost: '0.0001', totalCost: '0.0001' }));
+    // Con el total: 0.0001 / 4 = 0.000025 → 0.0000. Con qty × unitario: 0.0002 / 4 → 0.0001.
+    expect(f.balance.avgCost).toBe('0.0000');
+    expect(f.movements[1]).toMatchObject({ totalCost: '0.0001', unitCost: '0.0001' });
   });
 
   it('un producto terminado en soles entra por su subtotal', async () => {

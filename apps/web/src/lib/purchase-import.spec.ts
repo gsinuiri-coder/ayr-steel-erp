@@ -158,9 +158,17 @@ describe('D-359 — el importe del papel en el preview', () => {
   });
 
   it('editar la cantidad o el precio vacía el importe (la fila se recalcula); otro campo no', () => {
-    expect(lineEditPatch('qty', '600')).toEqual({ qty: '600', lineAmount: '' });
-    expect(lineEditPatch('unitPrice', '0.15')).toEqual({ unitPrice: '0.15', lineAmount: '' });
-    expect(lineEditPatch('description', 'Tornillo')).toEqual({ description: 'Tornillo' });
-    expect(lineEditPatch('lineAmount', '72.03')).toEqual({ lineAmount: '72.03' });
+    const priced = { unitPrice: '0.144068' };
+    expect(lineEditPatch(priced, 'qty', '600')).toEqual({ qty: '600', lineAmount: '' });
+    expect(lineEditPatch(priced, 'unitPrice', '0.15')).toEqual({
+      unitPrice: '0.15',
+      lineAmount: '',
+    });
+    expect(lineEditPatch(priced, 'description', 'Tornillo')).toEqual({ description: 'Tornillo' });
+    expect(lineEditPatch(priced, 'lineAmount', '72.03')).toEqual({ lineAmount: '72.03' });
+  });
+
+  it('una fila con solo importe conserva el importe al cambiar la cantidad', () => {
+    expect(lineEditPatch({ unitPrice: '' }, 'qty', '600')).toEqual({ qty: '600' });
   });
 });

@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import {
   Decimal,
+  cents,
   money,
   PURCHASE_IMPORT_COLUMNS,
   type CoilDto,
@@ -175,11 +176,11 @@ test('D-359 — el total del papel manda al importar, al editar y al recibir', a
   const goodsPurchase = await purchaseOf(goodsDoc);
   expect(goodsPurchase).toMatchObject({
     status: 'DRAFT',
-    subtotal: '72.0340',
-    igv: '12.9660',
+    subtotal: '72.0300',
+    igv: '12.9700',
     total: '85.0000',
   });
-  expect(goodsPurchase.items[0]).toMatchObject({ unitPrice: '0.1441', subtotal: '72.0340' });
+  expect(goodsPurchase.items[0]).toMatchObject({ unitPrice: '0.1441', subtotal: '72.0300' });
 
   // Corregir el número no recalcula los importes.
   const renumbered = await api.patch(`/api/purchases/${goodsPurchase.id}/document`, {
@@ -187,8 +188,8 @@ test('D-359 — el total del papel manda al importar, al editar y al recibir', a
   });
   expect(renumbered.ok(), await renumbered.text()).toBe(true);
   expect(await getJson<PurchaseRow>(api, `/api/purchases/${goodsPurchase.id}`)).toMatchObject({
-    subtotal: '72.0340',
-    igv: '12.9660',
+    subtotal: '72.0300',
+    igv: '12.9700',
     total: '85.0000',
   });
 
@@ -202,7 +203,7 @@ test('D-359 — el total del papel manda al importar, al editar y al recibir', a
     type: 'IN',
     qty: '500.000',
     unitCost: '0.1441',
-    totalCost: '72.0340',
+    totalCost: '72.0300',
   });
 
   // La bobina en dólares: importe del papel, y kardex = subtotal × TC al céntimo.
@@ -215,7 +216,8 @@ test('D-359 — el total del papel manda al importar, al editar y al recibir', a
   );
   const received = coils.items.find((c) => c.purchaseId === coilPurchase.id);
   expect(received).toBeDefined();
-  const expectedPen = money(new Decimal('4430.16').times('3.745'));
+  // 4430.16 × 3.745 = 16590.9492 → al céntimo.
+  const expectedPen = cents(new Decimal('4430.16').times('3.745'));
   expect(received!.totalCost).toBe('4430.1600');
   expect(received!.totalCostPen).toBe(expectedPen.toFixed(4));
   const coilMoves = await getJson<{ items: Movement[] }>(

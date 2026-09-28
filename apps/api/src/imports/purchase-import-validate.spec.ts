@@ -549,8 +549,8 @@ describe('validateDocument — D-359 el total del papel manda', () => {
     expect(errors(r)).toEqual([]);
     expect(warnings(r)).toEqual([]);
     expect(r.input?.igvRate).toBe('18.0000');
-    // 500 × 0.144068 = 72.034 con todos los decimales; el IGV absorbe el redondeo.
-    expect(r.amounts).toEqual([{ subtotal: '72.0340', igv: '12.9660' }]);
+    // 500 × 0.144068 = 72.034 con todos los decimales → 72.03, como el papel; IGV 12.97; total 85.00.
+    expect(r.amounts).toEqual([{ subtotal: '72.0300', igv: '12.9700' }]);
     expect(r.dto.total).toBe('85.00');
     // El unitario guardado es de cuatro decimales, solo para mostrar.
     expect(r.input?.items[0]?.unitPrice).toBe('0.1441');
@@ -581,8 +581,8 @@ describe('validateDocument — D-359 el total del papel manda', () => {
 
   it('un precio con más de cuatro decimales se usa entero', () => {
     const r = validateDocument(goods({ qty: '2500', unitPrice: '3.050847' }), ctx());
-    // 2500 × 3.050847 = 7627.1175; redondeado a cuatro decimales el precio habría dado 7627.25.
-    expect(r.amounts[0]?.subtotal).toBe('7627.1175');
+    // 2500 × 3.050847 = 7627.1175 → 7627.12; con el precio a cuatro decimales habría dado 7627.25.
+    expect(r.amounts[0]?.subtotal).toBe('7627.1200');
   });
 
   it('una diferencia de céntimos se absorbe en el IGV de la última línea', () => {
@@ -678,6 +678,25 @@ describe('D-359 — xlsx con la tasa en formato de porcentaje', () => {
     expect(errors(r)).toEqual([]);
     expect(warnings(r)).toEqual([]);
     expect(r.dto.total).toBe('85.00');
-    expect(r.amounts).toEqual([{ subtotal: '72.0340', igv: '12.9660' }]);
+    expect(r.amounts).toEqual([{ subtotal: '72.0300', igv: '12.9700' }]);
+  });
+});
+
+describe('D-359 — precio del papel con pocos decimales y el importe', () => {
+  it('un precio de dos decimales junto al importe no es «otra columna» (autorrevisión, P1)', () => {
+    const r = validateDocument(
+      doc({ lines: [coilLine({ qty: '4520', unitPrice: '0.98', lineAmount: '4430,16' })] }),
+      ctx(),
+    );
+    expect(errors(r)).toEqual([]);
+    expect(r.amounts[0]?.subtotal).toBe('4430.1600');
+  });
+
+  it('el precio con IGV en la columna sin IGV sigue siendo error', () => {
+    const r = validateDocument(
+      doc({ lines: [coilLine({ qty: '4520', unitPrice: '1.16', lineAmount: '4430,16' })] }),
+      ctx(),
+    );
+    expect(errors(r).join(' ')).toMatch(/no cuadra con cantidad × precio/);
   });
 });

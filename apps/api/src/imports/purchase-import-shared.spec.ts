@@ -113,6 +113,8 @@ describe('normalizeIgvRate (D-359)', () => {
     ['0.18', '18'],
     ['0,18', '18'],
     ['0.105', '10.5'],
+    // Con el signo escrito, el número ya está en puntos (autorrevisión).
+    ['0.18%', '0.18'],
     ['10', '10'],
     ['0', '0'],
     ['abc', null],

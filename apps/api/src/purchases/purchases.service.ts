@@ -1005,23 +1005,37 @@ export class PurchasesService {
     if (qtyKg.lte(0) || amountPen.isZero()) return null;
     const coil = await tx.coil.findUnique({
       where: { id: coilId },
-      select: { weightKg: true, exchangeRate: true, unitCostPerKg: true },
+      select: {
+        weightKg: true,
+        exchangeRate: true,
+        unitCostPerKg: true,
+        totalCost: true,
+        totalCostPen: true,
+      },
     });
     if (!coil) return null;
 
     const exchangeRate = toDecimal(coil.exchangeRate.toString());
     const deltaPerKg = amountPen.div(qtyKg).div(exchangeRate);
-    const newUnitCost = Decimal.max(
-      toDecimal(coil.unitCostPerKg.toString()).plus(deltaPerKg),
+    const oldUnitCost = toDecimal(coil.unitCostPerKg.toString());
+    const newUnitCost = Decimal.max(oldUnitCost.plus(deltaPerKg), new Decimal(0));
+    // D-359: el total de la bobina puede ser el del papel (no `peso × unitario`): se le **suma** lo
+    // que la imputación agrega, en vez de recalcularlo desde el peso y perderlo.
+    const deltaTotal = newUnitCost.minus(oldUnitCost).times(coil.weightKg.toString());
+    const totalCost = Decimal.max(
+      toDecimal(coil.totalCost.toString()).plus(deltaTotal),
       new Decimal(0),
     );
-    const totalCost = toDecimal(coil.weightKg.toString()).times(newUnitCost);
+    const totalCostPen = Decimal.max(
+      toDecimal(coil.totalCostPen.toString()).plus(deltaTotal.times(exchangeRate)),
+      new Decimal(0),
+    );
     await tx.coil.update({
       where: { id: coilId },
       data: {
         unitCostPerKg: toFixedString(newUnitCost, 'MONEY'),
         totalCost: toFixedString(totalCost, 'MONEY'),
-        totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
+        totalCostPen: toFixedString(totalCostPen, 'MONEY'),
       },
     });
     return { from: coil.unitCostPerKg.toFixed(4), to: toFixedString(newUnitCost, 'MONEY') };

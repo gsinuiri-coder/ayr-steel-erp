@@ -338,14 +338,17 @@ function thousandsGrouped(intPart: string, sep: string): boolean {
  * D-359: la tasa de IGV como la escribe una persona o la guarda Excel. `18`, `18%` y `0.18` son la
  * misma tasa: una celda con formato de porcentaje guarda `0,18`, y se leía como 0,18 %, lo que
  * dejaba el IGV en céntimos y el total del papel «descuadrado» en todos los comprobantes. Un valor
- * mayor que 0 y menor que 1 es una fracción; `0` sigue siendo 0 (exonerado). Devuelve la tasa en
+ * mayor que 0 y menor que 1 **sin** el signo % es una fracción; `0` sigue siendo 0 (exonerado). Devuelve la tasa en
  * puntos porcentuales, o `null` si no es un número.
  */
 export function normalizeIgvRate(raw: string): string | null {
-  const text = normalizeDecimal(raw.trim().replace(/%$/, ''));
+  const trimmed = raw.trim();
+  // Con el signo escrito, el número ya está en puntos: `0.18%` es 0,18 % y no se reinterpreta.
+  const percentSign = trimmed.endsWith('%');
+  const text = normalizeDecimal(trimmed.replace(/%$/, ''));
   if (text === null) return null;
   const rate = toDecimal(text);
-  return (rate.gt(0) && rate.lt(1) ? rate.times(100) : rate).toFixed();
+  return (!percentSign && rate.gt(0) && rate.lt(1) ? rate.times(100) : rate).toFixed();
 }
 
 /** `F001-00012345` → `{ series: 'F001', number: '00012345' }`. */

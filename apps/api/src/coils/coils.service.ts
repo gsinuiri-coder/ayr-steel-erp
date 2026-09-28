@@ -22,6 +22,7 @@ import {
   productionOrderCode,
   salesOrderCode,
   toDateOnly,
+  cents,
   money,
   toDecimal,
   toFixedString,
@@ -157,7 +158,7 @@ export class CoilsService {
       input.totalCost === undefined ? weightKg.times(unitCostPerKg) : money(input.totalCost);
     // D-359: con un total del papel, el kardex entra por ese total en soles y el unitario se deriva.
     const kardexTotalPen =
-      input.totalCost === undefined ? undefined : money(totalCost.times(exchangeRate));
+      input.totalCost === undefined ? undefined : cents(totalCost.times(exchangeRate));
 
     // El partido reserva los correlativos de golpe y precarga proveedor y acabado: sin
     // eso, cada hija repetía cuatro consultas y otro `UPDATE suppliers`, que retiene el
@@ -188,7 +189,7 @@ export class CoilsService {
         exchangeRate: toFixedString(exchangeRate, 'RATE'),
         unitCostPerKg: toFixedString(unitCostPerKg, 'MONEY'),
         totalCost: toFixedString(totalCost, 'MONEY'),
-        totalCostPen: toFixedString(totalCost.times(exchangeRate), 'MONEY'),
+        totalCostPen: toFixedString(kardexTotalPen ?? totalCost.times(exchangeRate), 'MONEY'),
         status: input.status ?? CoilStatus.OPEN,
         parentCoilId: input.parentCoilId ?? null,
         splitId: input.splitId ?? null,

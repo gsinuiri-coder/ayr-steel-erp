@@ -839,7 +839,7 @@ function LineRow({
         value={line[field]}
         disabled={disabled}
         onChange={(e) => {
-          onEdit(lineEditPatch(field, e.target.value));
+          onEdit(lineEditPatch(line, field, e.target.value));
         }}
       />
     </td>

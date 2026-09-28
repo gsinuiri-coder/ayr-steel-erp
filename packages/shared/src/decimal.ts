@@ -39,6 +39,12 @@ export const money = (v: DecimalInput): Decimal => roundTo(v, 'MONEY');
 export const kg = (v: DecimalInput): Decimal => roundTo(v, 'KG');
 export const mm = (v: DecimalInput): Decimal => roundTo(v, 'MM');
 export const rate = (v: DecimalInput): Decimal => roundTo(v, 'RATE');
+/**
+ * D-359: un importe **del papel** (valor, IGV o total de un comprobante): céntimos, que es la escala
+ * en la que se imprime. La columna guarda cuatro decimales (`money`), pero un documento legal no.
+ */
+export const cents = (v: DecimalInput): Decimal =>
+  toDecimal(v).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 
 /** Serializa para transporte/persistencia con la escala fija (string, nunca number). */
 export function toFixedString(value: DecimalInput, scale: ScaleKey): string {

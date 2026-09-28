@@ -1,5 +1,6 @@
+import { BadRequestException } from '@nestjs/common';
 import { Currency, type CoilStatus, type Prisma } from '@prisma/client';
-import { Decimal, money, toDecimal, type CreatePurchaseInput } from '@ayr/shared';
+import { cents, Decimal, money, toDecimal, type CreatePurchaseInput } from '@ayr/shared';
 
 /**
  * Aritmética de compras (D-030, D-038, D-039). Funciones puras, sin base de datos ni
@@ -67,7 +68,9 @@ export function computeTotals(
   paperAmounts?: readonly { subtotal: string; igv: string }[],
 ): PurchaseTotals {
   if (paperAmounts !== undefined && paperAmounts.length !== input.items.length) {
-    throw new Error('Los importes del papel no corresponden a las líneas de la compra');
+    throw new BadRequestException(
+      'Los importes del papel no corresponden a las líneas de la compra',
+    );
   }
   const igvRate = toDecimal(input.igvRate).div(HUNDRED);
   const items = input.items.map((item, index) => {
@@ -165,7 +168,7 @@ export function receptionCost(
   qty: Prisma.Decimal | Decimal,
   exchangeRate: Prisma.Decimal | Decimal,
 ): { unitCost: string; totalCost: string } {
-  const totalPen = money(toDecimal(subtotal.toString()).times(exchangeRate.toString()));
+  const totalPen = cents(toDecimal(subtotal.toString()).times(exchangeRate.toString()));
   return {
     unitCost: money(totalPen.div(qty.toString())).toFixed(4),
     totalCost: totalPen.toFixed(4),

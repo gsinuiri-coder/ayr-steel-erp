@@ -6,6 +6,7 @@ import {
   commercialColorToken,
   currencyOf,
   Decimal,
+  cents,
   money,
   MAX_PURCHASE_IMPORT_LINES,
   MAX_VALUE,
@@ -528,12 +529,7 @@ function validateLine(
   // pegada donde no iba (el precio con IGV en la de sin IGV): error de la línea, con las dos cifras.
   if (priced !== null && lineAmount !== null && unitPrice !== null && qty !== null) {
     const fromPrice = money(toDecimal(qty).times(unitPrice));
-    if (
-      fromPrice
-        .minus(priced.subtotal)
-        .abs()
-        .gt(importRoundingTolerance([qty]))
-    ) {
+    if (fromPrice.minus(priced.subtotal).abs().gt(priceTolerance(qty, unitPrice))) {
       error(
         'lineAmount',
         `El importe sin IGV (${priced.subtotal.toFixed(2)}) no cuadra con cantidad × precio (${fromPrice.toFixed(2)})`,
@@ -589,8 +585,8 @@ function validateLine(
 
 /**
  * D-359: el importe sin IGV de una línea y el unitario que se muestra. El importe del papel, si
- * viene, **es** el subtotal (a la escala de dinero de la columna); si no, cantidad × precio con
- * todos los decimales del precio. El unitario se deriva del importe: nunca al revés (D-255).
+ * viene, **es** el subtotal; si no, cantidad × precio con todos los decimales del precio. Los dos, en
+ * céntimos: es la escala del papel (`cents`). El unitario se deriva del importe: nunca al revés (D-255).
  */
 export function lineSubtotalOf(
   qty: string | null,
@@ -600,11 +596,23 @@ export function lineSubtotalOf(
   if (qty === null || toDecimal(qty).lte(0)) return null;
   const q = toDecimal(toDecimal(qty).toFixed(3));
   if (lineAmount !== null && toDecimal(lineAmount).gt(0)) {
-    const subtotal = money(lineAmount);
+    const subtotal = cents(lineAmount);
     return { subtotal, unitPrice: money(subtotal.div(q)) };
   }
   if (unitPrice === null || toDecimal(unitPrice).lte(0)) return null;
-  return { subtotal: money(q.times(unitPrice)), unitPrice: money(unitPrice) };
+  return { subtotal: cents(q.times(unitPrice)), unitPrice: money(unitPrice) };
+}
+
+/**
+ * D-359 (autorrevisión, P1): cuánto puede separarse `cantidad × precio` del importe sin que el precio
+ * sea de otra columna. El precio escrito con **d** decimales ya viene redondeado a media unidad de su
+ * último decimal, así que la cota es `cantidad × 0,5 × 10^-d` (0.98 en 4 520 kg explica hasta S/ 22.60),
+ * y nunca menos que la de D-169. El precio con IGV en la columna sin IGV (un 18 % de más) sigue fuera.
+ */
+function priceTolerance(qty: string, unitPrice: string): Decimal {
+  const decimals = unitPrice.split('.')[1]?.length ?? 0;
+  const perUnit = new Decimal(5).times(new Decimal(10).pow(-(decimals + 1)));
+  return Decimal.max(importRoundingTolerance([qty]), toDecimal(qty).times(perUnit));
 }
 
 export interface LineAmounts {
@@ -614,7 +622,7 @@ export interface LineAmounts {
 
 /**
  * D-359 (mismo criterio que D-169/D-255): **el total del comprobante del archivo es con IGV y
- * manda.** El IGV de cada línea se calcula como en `PurchasesService` (`money(subtotal × tasa)`) y
+ * manda.** El IGV de cada línea se calcula en céntimos (`cents(subtotal × tasa)`) y
  * el total recalculado se compara con el del papel. Si la diferencia entra en la tolerancia de
  * redondeo de D-169 (`importRoundingTolerance`), se absorbe en el IGV de la **última línea** —el
  * IGV del papel es la resta total − valor— y la compra queda con el total exacto del papel; el
@@ -631,11 +639,11 @@ export function paperAmounts(input: {
   const rate = input.igvRate.div(100);
   const amounts = input.subtotals.map((subtotal) => ({
     subtotal,
-    igv: money(subtotal.times(rate)),
+    igv: cents(subtotal.times(rate)),
   }));
   if (input.documentTotal === null || amounts.length === 0) return { amounts, mismatch: null };
   const computed = sumOf(amounts.map((a) => a.subtotal.plus(a.igv)));
-  const file = money(input.documentTotal);
+  const file = cents(input.documentTotal);
   const diff = file.minus(computed);
   if (diff.isZero()) return { amounts, mismatch: null };
   const tolerance = importRoundingTolerance([...input.qtys]);
