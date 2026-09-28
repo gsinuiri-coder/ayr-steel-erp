@@ -25,10 +25,10 @@ están en `local-data/corr05/` del checkout principal.
 
 ## Dónde quedó cada punto
 
-| Punto | Milestone | Estado   | Dónde |
-| ----- | --------- | -------- | ----- |
-| 1     | M4        | En curso |       |
-| 2     | M5        | En curso |       |
-| 3     | M3        | En curso |       |
-| 4     | M2        | En curso |       |
-| 5     | M1        | En curso |       |
+| Punto | Milestone | Estado    | Dónde                          |
+| ----- | --------- | --------- | ------------------------------ |
+| 1     | M4        | Entregado | D-357                          |
+| 2     | M5        | Entregado | D-358                          |
+| 3     | M3        | Entregado | D-356                          |
+| 4     | M2        | Entregado | D-355                          |
+| 5     | M1        | Entregado | D-354 (guía del cliente §1.22) |

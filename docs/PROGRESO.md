@@ -207,6 +207,63 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
   validar), `cancel(…, { onlyDraft })`, la recepción que copia `external_code` a la bobina (**toca kardex**
   solo por pasar por `receive()` de siempre), la purga D-350 (**borrado físico**) y el lock de D-348.
 
+- **Correcciones 05** (2026-09-27, rama `feat/correcciones-05`, PR #48). D-354 a D-358. **Dos pases, los dos por
+  subagentes** —autorrevisión y segundo modelo con `model: sonnet` y contexto limpio—, así que **ninguno vale
+  como pase independiente** (`docs/revision/correcciones-05-autorrevision.md`: 0 P0, 2 P1;
+  `docs/revision/correcciones-05-segundo-modelo.md`: 0 P0, 1 P1; los tres resueltos antes del deploy; P2
+  tomados o anotados en cada informe). **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-27, motivo: esquema de un
+  solo agente). Piezas de riesgo: **no escriben nada** —son lecturas—, pero leen kardex para decir costos: el
+  SQL de `SalesByMaterialService.coilUsage` (qué movimientos de bobina son de qué línea de pedido: reportes
+  por `refId` = reporte, despunte por `refId` = OP, venta de bobina por `dispatch_items.movement_id`) y el
+  prorrateo `traceFraction`; y `monthPresence` del reporte mensual (qué bobina se lista, se resume o
+  desaparece; los totales generales no cambian).
+
+## Ventana de Correcciones 05 (2026-09-27, sin migración)
+
+PR #48 (merge `9a7208a`). SHA desplegado `63134cc`. UAT: `docs/uat/correcciones-05.md`. Guía del cliente:
+`docs/cliente/revision-2026-09-25.md` §1.22. Texto del cliente: `docs/cliente/correcciones-05.md`. OK del dueño
+comando por comando.
+
+- **CI del PR #48 sobre `63134cc`:** lint/typecheck/unit, E2E completo del runner, smoke con Neon `ci`, análisis
+  estático y SonarCloud en SUCCESS. Cobertura de las líneas nuevas del API medida contra el lcov: 95,3 %.
+- **Sin migración, sin respaldo Neon** (`git diff 8eeae71..63134cc -- apps/api/prisma` vacío).
+- **Migraciones:** `migrations-status` → al día (81); `pnpm db:prod` → «No pending migrations». `migrate diff` =
+  el drift conocido exacto (5 defaults de `operation_date`, 5 FK recreadas, 2 índices, un renombre).
+- **API (Cloud Run):** `pnpm deploy:api --web-origin …` desde el worktree con `AYR_ENV_SETUP`:
+  **`ayr-steel-erp-api-00063-qwp`**, 100 % del tráfico, label `git-sha=63134cc`, `/health` 200, los **14**
+  nombres y los 9 secretos con versión explícita (`DATABASE_URL:7`, `DIRECT_URL:6`, `JWT_SECRET:6`, resto `:5`).
+- **Smoke con la web vieja** en verde (catálogo 175 filas). **Merge** con `--match-head-commit 63134cc…`;
+  Vercel en `success`. **Smoke contra `v2.mareliac.pe`** en verde. **Runtime:** `git diff --quiet 63134cc
+origin/main -- apps packages …` → **exit 0**.
+- **Verificación de solo lectura (admin efímero borrado; salidas en `local-data/corr05/verif/`):**
+  - **M1 agosto:** Coberturas S/ 68 781.10 (20 628.698 kg reales, 21 470.999 teóricos), Bobinas S/ 108 900.84
+    (32 721 kg), Planchas S/ 105 084.75 (30 688.612 kg reales, 28 506.240 teóricos); total trazable
+    S/ 282 766.69, costo S/ 250 239.23, utilidad S/ 32 527.45; **0 no trazables**; accesorios sin ventas en
+    agosto. **Cuadre:** Coberturas Aluzinc S/ 173 865.8430 = la fila de la línea en Ventas y margen (0 pedidos
+    fuera de sus totales), bobinas enteras S/ 108 900.8422 = la fila de Comercialización (todo es `BOB…`);
+    filas + no trazable = cuadre; en las 12 filas los kg del modal suman el peso real.
+  - **M1 septiembre:** 0 en los dos reportes. No hay comprobantes de septiembre: los 33 vivos de producción
+    son de agosto (22 facturas, 11 boletas).
+  - **M2 agosto:** saldo fin **283 602.000 kg** (no 291 636): **bajó 8 034 kg por datos, no por el cambio**
+    —dos ventas de bobina entera grabadas el 2026-09-26 a las 20:41 y 20:51, después de la verificación de
+    D-340, con fecha de operación de agosto (D-278): `SALDO-ALZ-AZUL-5002-0.38-4194-7` (4 194 kg) y
+    `SALDO-ALZ-ROJO-3020-0.38-3840-12` (3 840 kg)—. D-355 no puede mover el total (solo deja fuera bobinas con
+    cierre ≤ 0). 71 listadas, ninguna con 0 kg; 8 terminadas o agotadas (32 721 kg: las bobinas vendidas
+    enteras); cuadre 0 + 324 623 − 41 021 = 283 602.
+  - **M2 septiembre:** saldo fin **171 650.418 kg** (= 179 684.418 de D-340 − los mismos 8 034); inicio =
+    cierre de agosto; 55 listadas (39 selladas, 16 abiertas), ninguna con 0 kg; 27 terminadas o agotadas
+    (113 357 kg); **las dos anuladas** (`XSY-…-4544-9`, `IMPO-…-4240-1`, alta y anulación el 22-09 y el
+    21-09) no figuran en ningún lado.
+  - **M3:** Inventario → Coberturas Aluzinc: 12 tipos, **55 406.024 m** de ML teórico del disponible
+    (171 650.418 kg). `XSY-…-4544-4`: peso 4 544 kg → 1 213.063 m (peso inicial), disponible 206.325 kg →
+    55.080 m.
+  - **M4:** 33 de 43 pedidos con comprobante (p. ej. `PED-000043` → `FFA1-00001350`).
+  - **M5:** 32 de 33 comprobantes con despacho declarado (p. ej. `FFA1-00001404` → `DES-000018`, por D-278);
+    ninguno «Del pedido» en producción hoy (el caso se probó en unitarios y E2E); 1 sin despacho ni pedido.
+- **Rollback (no usado):** tráfico a `00062-8st`; sin migración.
+- **Deuda anotada:** «Ventas y margen» sigue con su `LIVE_STATUSES` local (idéntico a
+  `LIVE_DOCUMENT_STATUSES`); unificarlo es un cambio de una línea en otra sesión.
+
 ## Ventana del importador de compras (2026-09-27, con migración)
 
 PR #46 (merge `5796eb1`). SHA desplegado `5778fb3`. Handoff: `docs/handoff/import-compras.md`. UAT:
