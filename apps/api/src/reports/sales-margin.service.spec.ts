@@ -1,6 +1,6 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
-import { salesMarginQuerySchema } from '@ayr/shared';
+import { LIVE_DOCUMENT_STATUSES, salesMarginQuerySchema } from '@ayr/shared';
 import { SalesMarginService } from './sales-margin.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -61,11 +61,13 @@ interface Seeds {
 
 async function buildService(
   seeds: Seeds,
-): Promise<{ service: SalesMarginService; calls: string[] }> {
+): Promise<{ service: SalesMarginService; calls: string[]; params: unknown[][] }> {
   const calls: string[] = [];
-  const queryRaw = jest.fn((strings: TemplateStringsArray) => {
+  const params: unknown[][] = [];
+  const queryRaw = jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join(' ');
     calls.push(sql);
+    params.push(values);
     if (sql.includes('BOOL_OR')) {
       return Promise.resolve(
         (seeds.pending ?? []).map((p) => ({
@@ -117,10 +119,34 @@ async function buildService(
     providers: [SalesMarginService, { provide: PrismaService, useValue: { $queryRaw: queryRaw } }],
   }).compile();
 
-  return { service: module.get(SalesMarginService), calls };
+  return { service: module.get(SalesMarginService), calls, params };
 }
 
 describe('SalesMarginService', () => {
+  it('los estados vivos son LIVE_DOCUMENT_STATUSES, el mismo corte que Ventas por material', async () => {
+    // C06: la copia local se unificó porque era literalmente este conjunto; si alguien cambia
+    // la constante compartida, los dos reportes se mueven juntos y este test lo dice.
+    expect([...LIVE_DOCUMENT_STATUSES].sort()).toEqual(
+      ['ACCEPTED', 'ISSUED', 'SEND_ERROR', 'VOID_PENDING'].sort(),
+    );
+    const { service, calls, params } = await buildService({
+      documents: [{ id: 'd1', subtotal: '10.0000' }],
+      pending: [{ orderId: 'o1', pending: false }],
+    });
+    await service.salesMargin(RANGE);
+    const liveLists = params
+      .flat()
+      .filter(
+        (v): v is { values: unknown[]; strings: string[] } =>
+          typeof v === 'object' && v !== null && 'values' in v && 'strings' in v,
+      )
+      .map((v) => v.values);
+    // Documentos, fuera de rango y pendientes de despacho: las tres consultas que cortan por estado.
+    expect(liveLists).toHaveLength(3);
+    for (const list of liveLists) expect(list).toEqual([...LIVE_DOCUMENT_STATUSES]);
+    expect(calls.some((sql) => sql.includes("IN ('ISSUED'"))).toBe(false);
+  });
+
   it('la venta va sin IGV y la nota de crédito resta', async () => {
     const { service } = await buildService({
       documents: [

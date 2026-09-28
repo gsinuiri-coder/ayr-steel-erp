@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   Decimal,
+  LIVE_DOCUMENT_STATUSES,
   salesOrderCode,
   toDateOnly,
   toDecimal,
@@ -17,7 +18,8 @@ import { fromDbLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * Estados en los que un comprobante **ya es una venta**.
+ * Estados en los que un comprobante **ya es una venta**: `LIVE_DOCUMENT_STATUSES`, el mismo corte
+ * que «Ventas por material» (C06 unificó la copia local, que era literalmente el mismo conjunto).
  *
  * `ISSUED` y `SEND_ERROR` cuentan porque el correlativo ya está tomado y el documento
  * existe para la empresa aunque el PSE todavía no conteste (D-073); `VOID_PENDING` también,
@@ -25,7 +27,7 @@ import { PrismaService } from '../prisma/prisma.service';
  * viva. Quedan afuera `DRAFT` (no existe), `REJECTED` (terminal: se reemite con otro
  * correlativo, D-072), `VOIDED` y `ANNULLED` (D-110).
  */
-const LIVE_STATUSES = ['ISSUED', 'ACCEPTED', 'SEND_ERROR', 'VOID_PENDING'] as const;
+const LIVE = (): Prisma.Sql => Prisma.join([...LIVE_DOCUMENT_STATUSES]);
 
 interface DocumentRow {
   id: string;
@@ -98,7 +100,7 @@ export class SalesMarginService {
   async salesMargin(query: SalesMarginQuery): Promise<SalesMarginDto> {
     const from = toDateOnly(query.from);
     const to = toDateOnly(query.to);
-    const live = Prisma.join([...LIVE_STATUSES]);
+    const live = LIVE();
 
     // 1. Los comprobantes del rango. La guía de remisión no es una venta y no entra.
     const documents = await this.prisma.$queryRaw<DocumentRow[]>`
@@ -297,7 +299,7 @@ export class SalesMarginService {
         FROM "fiscal_document_items" fdi
         JOIN "fiscal_documents" fd ON fd."id" = fdi."document_id"
         WHERE fd."archived_at" IS NULL
-          AND fd."status"::text IN ('ISSUED', 'ACCEPTED', 'SEND_ERROR', 'VOID_PENDING')
+          AND fd."status"::text IN (${LIVE()})
           AND fdi."sales_order_item_id" IS NOT NULL
         GROUP BY fdi."sales_order_item_id"
       ) inv ON inv."id" = soi."id"
