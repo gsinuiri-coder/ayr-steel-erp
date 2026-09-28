@@ -178,6 +178,7 @@ describe('ReportsController', () => {
     expect(rolesOf('kardexSheetXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
+    expect(rolesOf('coilsPdfFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
   });
 
   it('/reports/coils muestra costos a ADMINISTRADOR y a planta, y a nadie más', async () => {
@@ -201,6 +202,18 @@ describe('ReportsController', () => {
     expect(reports.coilsByMonth).toHaveBeenCalledWith({ month: '2026-08' }, true);
     expect(res.headers['Content-Disposition']).toBe(
       'attachment; filename="reporte-bobinas-2026-08.xlsx"',
+    );
+  });
+
+  it('el PDF del reporte mensual usa el mismo mes y enmascara para quien no ve costos (D-355)', async () => {
+    const { controller, reports } = build();
+    reports.coilsByMonth.mockResolvedValue(COIL_MONTH);
+    const res = fakeResponse();
+    await controller.coilsPdfFile(actor(Role.VENDEDOR), { month: '2026-08' }, res);
+    expect(reports.coilsByMonth).toHaveBeenCalledWith({ month: '2026-08' }, false);
+    expect(res.headers['Content-Type']).toBe('application/pdf');
+    expect(res.headers['Content-Disposition']).toBe(
+      'attachment; filename="reporte-bobinas-2026-08.pdf"',
     );
   });
 

@@ -1,6 +1,7 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  businessToday,
   coilMonthReportQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
@@ -21,6 +22,7 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
 import { coilMonthXlsx } from './coil-month-xlsx';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { kardexPepsToDto } from './kardex-peps-dto';
@@ -73,6 +75,24 @@ export class ReportsController {
     @Res() res: Response,
   ): Promise<void> {
     sendXlsx(res, coilMonthXlsx(await this.reports.coilsByMonth(query, canSeeCosts(actor))));
+  }
+
+  /** D-355. El PDF del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('coils/pdf')
+  async coilsPdfFile(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const report = await this.reports.coilsByMonth(query, canSeeCosts(actor));
+    const buffer = await buildCoilMonthReportPdf(report, businessToday());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="reporte-bobinas-${report.month}.pdf"`,
+    );
+    res.send(buffer);
   }
 
   /**

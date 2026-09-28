@@ -84,7 +84,7 @@ export function ReporteBobinasView() {
               }}
             />
           </div>
-          {/* D-355: descarga directa contra el API (patrón D-149), del mismo mes que se ve. */}
+          {/* D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve. */}
           <HeaderActions
             primary={['xlsx']}
             actions={[
@@ -92,6 +92,11 @@ export function ReporteBobinasView() {
                 key: 'xlsx',
                 label: 'Descargar Excel',
                 download: `/api/reports/coils/xlsx?month=${month}`,
+              },
+              {
+                key: 'pdf',
+                label: 'Descargar PDF',
+                download: `/api/reports/coils/pdf?month=${month}`,
               },
             ]}
           />
