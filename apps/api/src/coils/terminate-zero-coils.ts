@@ -153,3 +153,74 @@ export function formatUndo(
   ];
   return `${lines.join('\n')}\n`;
 }
+
+/** Una bobina en la foto: lo que prueba que ni el lote ni su reversa tocan el kardex. */
+export interface CoilSnapshotRow {
+  code: string;
+  status: CoilStatus;
+  /** Saldo de kardex; `null` si no tiene fila de saldo. */
+  qtyKg: string | null;
+  movements: number;
+  lastMovementId: string | null;
+}
+
+/**
+ * **Foto de solo lectura** de un conjunto de bobinas: estado, saldo, cantidad de movimientos de
+ * kardex y el último. Antes del lote (dry-run), después (ejecución) y después del `--undo`, las
+ * tres tienen que coincidir en todo salvo el estado. Tres consultas.
+ */
+export async function snapshotCoils(
+  tx: Prisma.TransactionClient,
+  coilIds: readonly string[],
+): Promise<CoilSnapshotRow[]> {
+  const ids = [...new Set(coilIds)];
+  if (ids.length === 0) return [];
+  const [coils, balances, moves] = await Promise.all([
+    tx.coil.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, code: true, status: true },
+      orderBy: { code: 'asc' },
+    }),
+    tx.inventoryBalance.findMany({
+      where: { itemType: 'COIL', itemId: { in: ids } },
+      select: { itemId: true, qty: true },
+    }),
+    tx.inventoryMovement.groupBy({
+      by: ['itemId'],
+      where: { itemType: 'COIL', itemId: { in: ids } },
+      _count: { _all: true },
+      _max: { id: true },
+    }),
+  ]);
+  return coils.map((c) => {
+    const b = balances.find((x) => x.itemId === c.id);
+    const m = moves.find((x) => x.itemId === c.id);
+    return {
+      code: c.code,
+      status: c.status,
+      qtyKg: b === undefined ? null : b.qty.toFixed(3),
+      movements: m?._count._all ?? 0,
+      lastMovementId: m?._max.id?.toString() ?? null,
+    };
+  });
+}
+
+/** La foto como texto: una fila por bobina y el resumen (estados y movimientos). */
+export function formatSnapshot(rows: CoilSnapshotRow[], title: string): string {
+  const byStatus = new Map<string, number>();
+  let movements = 0;
+  for (const r of rows) {
+    byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1);
+    movements += r.movements;
+  }
+  const lines = [
+    `Foto «${title}» — ${String(rows.length)} bobinas`,
+    ...rows.map(
+      (r) =>
+        `  ${r.code}\t${r.status}\t${r.qtyKg ?? 'sin fila'} kg\t${String(r.movements)} mov.\túltimo ${r.lastMovementId ?? '-'}`,
+    ),
+    `Por estado: ${[...byStatus].map(([k, n]) => `${k} ${String(n)}`).join(', ') || '—'}`,
+    `Movimientos de kardex: ${String(movements)}`,
+  ];
+  return `${lines.join('\n')}\n`;
+}

@@ -3,10 +3,12 @@ import {
   BATCH_LABEL,
   coilsOfBatch,
   executeTerminateZeroCoils,
+  formatSnapshot,
   formatTerminatePlan,
   formatUndo,
   planTerminateZeroCoils,
   planUndoTerminateZeroCoils,
+  snapshotCoils,
   undoTerminateZeroCoils,
 } from './terminate-zero-coils';
 
@@ -47,7 +49,18 @@ function fakeTx(opts: {
     productionOrderConsumption: { findMany: jest.fn().mockResolvedValue([]) },
     reservation: { groupBy: jest.fn().mockResolvedValue([]) },
     quotationReservation: { groupBy: jest.fn().mockResolvedValue([]) },
-    inventoryMovement: { findMany: jest.fn().mockResolvedValue([]) },
+    inventoryMovement: {
+      findMany: jest.fn().mockResolvedValue([]),
+      groupBy: jest.fn((args: { where: { itemId: { in: string[] } } }) =>
+        Promise.resolve(
+          args.where.itemId.in.map((id, i) => ({
+            itemId: id,
+            _count: { _all: 2 },
+            _max: { id: BigInt(200 + i) },
+          })),
+        ),
+      ),
+    },
     auditLog: {
       findMany: jest.fn((args: { where: { entityId?: { in: string[] }; after?: unknown } }) =>
         Promise.resolve(
@@ -66,6 +79,44 @@ const batchClose = (entityId: string, kind = 'BATCH', refId = BATCH) => ({
   entityId,
   action: 'coils.close',
   after: { status: 'CLOSED', autoTerminated: { kind, refId } },
+});
+
+describe('foto de las bobinas del lote (D-360)', () => {
+  it('estado, saldo, movimientos y el último; la foto no escribe nada', async () => {
+    const { tx, raw } = fakeTx({
+      open: [{ id: 'a', code: 'IMPO-A', qty: '0' }],
+      closed: [{ id: 'b', code: 'IMPO-B' }],
+    });
+    const rows = await snapshotCoils(tx, ['a', 'b', 'a']);
+    expect(rows).toEqual([
+      {
+        code: 'IMPO-A',
+        status: CoilStatus.OPEN,
+        qtyKg: '0.000',
+        movements: 2,
+        lastMovementId: '200',
+      },
+      {
+        code: 'IMPO-B',
+        status: CoilStatus.CLOSED,
+        qtyKg: '0.000',
+        movements: 2,
+        lastMovementId: '201',
+      },
+    ]);
+    expect(raw.coil.updateMany).not.toHaveBeenCalled();
+    const text = formatSnapshot(rows, 'antes — rama demo');
+    expect(text).toContain('Foto «antes — rama demo» — 2 bobinas');
+    expect(text).toContain('Por estado: OPEN 1, CLOSED 1');
+    expect(text).toContain('Movimientos de kardex: 4');
+  });
+
+  it('sin bobinas: vacía, sin consultas', async () => {
+    const { tx, raw } = fakeTx({ open: [] });
+    expect(await snapshotCoils(tx, [])).toEqual([]);
+    expect(raw.coil.findMany).not.toHaveBeenCalled();
+    expect(formatSnapshot([], 'x')).toContain('Movimientos de kardex: 0');
+  });
 });
 
 describe('terminación única (D-360)', () => {

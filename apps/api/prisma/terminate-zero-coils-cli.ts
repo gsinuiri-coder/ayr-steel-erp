@@ -25,11 +25,14 @@ import { AppModule } from '../src/app.module';
 import { AuditService } from '../src/audit/audit.service';
 import { assertExternalOutputsOff } from '../src/common/external-outputs';
 import {
+  coilsOfBatch,
   executeTerminateZeroCoils,
+  formatSnapshot,
   formatTerminatePlan,
   formatUndo,
   planTerminateZeroCoils,
   planUndoTerminateZeroCoils,
+  snapshotCoils,
   undoTerminateZeroCoils,
 } from '../src/coils/terminate-zero-coils';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -38,6 +41,8 @@ import { assertExecuteAllowed } from './cli-gate';
 const execute = process.argv.includes('--execute');
 const undoFlag = process.argv.indexOf('--undo');
 const undoBatch = undoFlag === -1 ? undefined : process.argv[undoFlag + 1];
+const reportFlag = process.argv.indexOf('--report');
+const reportBatch = reportFlag === -1 ? undefined : process.argv[reportFlag + 1];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function save(name: string, text: string): string {
@@ -58,6 +63,10 @@ async function main(): Promise<void> {
   if (undoFlag !== -1 && (undoBatch === undefined || !UUID.test(undoBatch))) {
     throw new Error('--undo necesita el lote de la corrida (un UUID)');
   }
+  if (reportFlag !== -1 && (reportBatch === undefined || !UUID.test(reportBatch))) {
+    throw new Error('--report necesita el lote de la corrida (un UUID)');
+  }
+  if (reportFlag !== -1 && execute) throw new Error('--report es de solo lectura: sin --execute');
 
   const prisma = new PrismaClient();
   const actorEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
@@ -76,6 +85,30 @@ async function main(): Promise<void> {
     const db = app.get(PrismaService);
     const audit = app.get(AuditService);
     const operationDate = businessToday();
+
+    // Foto de solo lectura de las bobinas de un lote: después del lote, o después del --undo.
+    if (reportBatch !== undefined) {
+      const text = await db.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+          const coils = await coilsOfBatch(tx, reportBatch);
+          return formatSnapshot(
+            await snapshotCoils(
+              tx,
+              coils.map((c) => c.id),
+            ),
+            `lote ${reportBatch} — rama ${branch}`,
+          );
+        },
+        { timeout: 120_000 },
+      );
+      console.warn(text);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      console.warn(
+        `Foto en ${save(`terminar-cero-foto-${branch}-${reportBatch}-${stamp}.txt`, text)}`,
+      );
+      return;
+    }
 
     if (undoBatch !== undefined) {
       if (!execute) {
@@ -113,11 +146,17 @@ async function main(): Promise<void> {
       const plan = await db.$transaction(
         async (tx) => {
           await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-          return planTerminateZeroCoils(tx);
+          const found = await planTerminateZeroCoils(tx);
+          // La foto «antes»: las que se terminarían, con su saldo y su kardex.
+          const before = await snapshotCoils(
+            tx,
+            found.terminate.map((c) => c.id),
+          );
+          return { found, before };
         },
         { timeout: 120_000 },
       );
-      const text = formatTerminatePlan(plan, { branch, mode: 'dry-run' });
+      const text = `${formatTerminatePlan(plan.found, { branch, mode: 'dry-run' })}\n${formatSnapshot(plan.before, `antes — rama ${branch}`)}`;
       console.warn(text);
       console.warn(`Lista en ${save(`terminar-cero-dry-run-${branch}.txt`, text)}`);
       console.warn('Dry-run: no se escribió nada.');
@@ -133,6 +172,9 @@ async function main(): Promise<void> {
     const text = formatTerminatePlan(done, { branch, mode: 'ejecutado', batchId });
     console.warn(text);
     console.warn(`Lista en ${save(`terminar-cero-execute-${branch}-${batchId}.txt`, text)}`);
+    console.warn(
+      `Foto: pnpm terminate:zero-coils --report ${batchId} --branch ${branch}${branch === 'production' ? ' --confirm-production' : ''}`,
+    );
     console.warn(
       `Reversa: pnpm terminate:zero-coils --undo ${batchId} --execute --branch ${branch}${branch === 'production' ? ' --confirm-production' : ''}`,
     );
