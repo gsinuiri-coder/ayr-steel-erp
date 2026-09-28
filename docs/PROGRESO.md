@@ -228,6 +228,67 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
   con `totalCost`, `PurchasesService.receive` (toda compra entra ahora por `cents(subtotal × TC)`) y
   `bumpCoilDocumentCost` (suma el delta). Y los importes del papel del importador (`paperAmounts`).
 
+- **Correcciones 06** (2026-09-28, rama `feat/correcciones-06`, PR #52). D-360, D-361 y D-362 (esta al backlog).
+  **Dos pases, los dos por subagentes** —autorrevisión y segundo modelo con `model: sonnet` y contexto limpio—, así
+  que **ninguno vale como pase independiente** (`docs/revision/correcciones-06-autorrevision.md`: 0 P0, 3 P1;
+  `docs/revision/correcciones-06-segundo-modelo.md`: 0 P0, 1 P1; los cuatro resueltos antes del deploy en
+  `8646462`). **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-28, motivo: esquema de un solo agente). Piezas de riesgo:
+  `coils/coil-auto-terminate.ts` —**cambia el estado de bobinas** dentro de las transacciones de merma, partido,
+  recepción de corte, venta entera, salida faltante de D-285 y cierre/anulación/liberación de OP (nunca escribe
+  kardex)— y su reapertura por la auditoría (`autoTerminated`/`zeroedBy`), que ahora corre en la reapertura de OP,
+  la anulación de merma, `revertSplit` y la reversa de recepción de corte; la CLI `terminate:zero-coils` (lote y
+  `--undo`); y, de solo lectura, `traceLine` (el cuerpo del motor de Ventas por material, extraído) y la
+  rentabilidad por comprobante (`document-profitability*`).
+
+## Ventana de Correcciones 06 (2026-09-28, sin migración)
+
+PR #52 (merge `8adb9cd`). SHA desplegado `3659b24`. Handoff: `docs/handoff/correcciones-06.md`. UAT:
+`docs/uat/correcciones-06.md`. Guía del cliente: `docs/cliente/revision-2026-09-25.md` §1.24. Evidencia de los
+ensayos: `docs/revision/correcciones-06-ensayo-demo.md`. OK del dueño comando por comando.
+
+- **PASO 0 (producción, solo lectura):** 0 bobinas con saldo negativo; 82 vigentes, 27 en exactamente 0, 0
+  omitidas; 0 comprobantes que caerían en «sin despacho declarado» (los 20 con líneas fuera del motor lo tienen).
+- **CI del PR #52 sobre `3659b24`:** lint/typecheck/unit, E2E completo del runner, smoke con Neon `ci` y
+  SonarCloud en SUCCESS. Cobertura de líneas nuevas del API medida contra el lcov: 92,3 % (antes de las
+  correcciones de la revisión).
+- **Demo restablecida** desde `production` (con OK del dueño): `db:reset-dev` (reset en el lugar, misma rama
+  `br-solitary-smoke-aegbos8k`, contraseña rotada), `env:demo`, `db:demo`. Demo estaba varias migraciones atrás
+  (le faltaba `coils.film_sealed`, D-328).
+- **Ensayos:** lote y `--undo` en demo (27 terminadas → 27 reabiertas, 70/70/70 movimientos; lote
+  `27d117ad-46b4-49a9-b03d-1382565e41bc`); reapertura de OP en la rama `ensayo-c06-20260928` (`COT-000084` →
+  `PED-000044` → `OP-000029`, bobina `IMPO-ALZ-AZUL-5002-0.28-4016-28`: `CLOSED 0` → `OPEN 3 999.711` → `CLOSED
+0`). Detalle en la evidencia.
+- **Respaldo Neon:** `respaldo-pre-c06-20260928` (`br-purple-wind-aehyx2u0`, padre `production`), en silencio.
+- **Migraciones:** `migrations-status` → al día (81). `migrate diff` = el drift conocido exacto (10 tablas: 5
+  defaults de `operation_date`, 5 FK recreadas, 2 índices, un renombre). Sin migración en la sesión.
+- **API:** **`ayr-steel-erp-api-00065-4sn`**, 100 % del tráfico, `git-sha=3659b24`, `/health` 200 (db ok), los
+  14 nombres y los 9 secretos con versión explícita (`DATABASE_URL:7`, `DIRECT_URL:6`, `JWT_SECRET:6`, resto
+  `:5`). Smoke con la web vieja en verde (catálogo 175). **Merge** con `--match-head-commit`; Vercel `success`;
+  smoke contra `v2.mareliac.pe` en verde; `git diff --quiet 3659b24 origin/main -- apps packages …` → exit 0.
+- **Terminación única (D-360):** dry-run → 27, 0 omitidas, foto «antes» 27 vigentes / **70** movimientos →
+  OK del dueño → `--execute`: **lote `964e7464-2684-4103-8d0a-f5ecc836c693`**, 27 terminadas → `--report`: 27
+  terminadas / **70** movimientos, **iguales bobina por bobina** (saldo, movimientos, último movimiento) →
+  conteo final: **0 vigentes en 0 kg**. Reversa si hiciera falta: `pnpm terminate:zero-coils --undo
+964e7464-2684-4103-8d0a-f5ecc836c693 --execute --branch production --confirm-production`.
+- **Verificación de solo lectura (admin efímero borrado):** Σ rentabilidad de los 33 comprobantes de agosto =
+  Ventas por material de agosto al céntimo (venta S/ 282 766.6852, costo S/ 250 239.2319, 84 038.310 kg); tres
+  facturas: `FFA1-00001352` (coberturas, margen 18,54 %), `FFA1-00001321` (6 bobinas enteras, 0,08 %),
+  `FFA1-00001356` (UPVC por `DES-000004`, 15,71 %), todas las líneas completas; columnas por ML de agosto
+  (coberturas 9,8568 / 8,2483 / 1,6086 por ML).
+- **Rollback (no usado):** tráfico a `00064-7jr`; la terminación se deshace con el `--undo` de arriba; sin
+  migración.
+- **Backlog (2026-09-28):**
+  - **D-362:** al restablecer demo, resetear la contraseña de **todos** los usuarios (CLI chica sobre
+    `UsersService.update`). Demo tiene datos reales del cliente desde el 2026-09-28; mitigación vigente: solo
+    `127.0.0.1` (ENTORNOS §demo). Falta verificar en vivo el bind del API de demo en el próximo `pnpm dev:demo`
+    desde el checkout principal.
+  - **Codificación rota en `PROGRESO.md`:** el texto viejo tiene mojibake (UTF-8 leído como Latin-1: «decisiÃ³n»,
+    «dueÃ±o»). Se ve al menos desde unas líneas antes y en toda la sección «Backlog heredado»
+    (`PROGRESO.md:7502` al escribir esta entrada); hay además un byte nulo cerca del offset 833 299 que hace que `grep` trate el archivo como binario.
+    Tarea: reconvertir esas secciones a UTF-8 en una sesión de limpieza, sin tocar el contenido.
+  - Un checkout recién instalado necesita `prisma generate` en `apps/api` antes de cualquier CLI (visto al
+    verificar la CLI desde un worktree limpio).
+
 ## Hotfix del importador de compras (2026-09-28, sin migración)
 
 PR #50 (merge `f37fc1a`). SHA desplegado `9cde4c5`. Handoff: `docs/handoff/import-compras-totales.md`. OK del
