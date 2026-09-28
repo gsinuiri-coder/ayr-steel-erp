@@ -24,8 +24,8 @@ async function bootstrap(): Promise<void> {
   });
   app.enableShutdownHooks();
 
-  await app.listen(env.PORT, '0.0.0.0');
-  Logger.log(`API escuchando en http://localhost:${env.PORT}`, 'Bootstrap');
+  await app.listen(env.PORT, env.BIND_HOST);
+  Logger.log(`API escuchando en http://${env.BIND_HOST}:${env.PORT}`, 'Bootstrap');
 }
 
 bootstrap().catch((err: unknown) => {

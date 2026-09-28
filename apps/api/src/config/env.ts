@@ -8,6 +8,12 @@ import { z } from 'zod';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
+  /**
+   * Interfaz en la que escucha el API. `0.0.0.0` por defecto (Cloud Run y el día a día); `pnpm
+   * dev:demo` la ata a `127.0.0.1` porque demo es copia de datos reales con los hashes de
+   * producción (C06, riesgo anotado en ENTORNOS §demo).
+   */
+  BIND_HOST: z.string().ip().default('0.0.0.0'),
   DATABASE_URL: z.string().url(),
   DIRECT_URL: z.string().url(),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET debe tener al menos 32 caracteres'),

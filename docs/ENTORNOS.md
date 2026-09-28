@@ -113,7 +113,7 @@ un vendedor, cargar datos de prueba y romperlos sin consecuencias.
 ```
 pnpm env:demo    # escribe .env.demo con la conexión a la rama demo (no se commitea)
 pnpm db:demo     # migraciones + seed en demo
-pnpm dev:demo    # levanta api :3000 + web :3001 contra demo
+pnpm dev:demo    # levanta api :3000 + web :3001 contra demo, solo en 127.0.0.1
 ```
 
 `pnpm dev:demo` **no toca** `apps/api/.env`: inyecta la conexión por variables de entorno al
@@ -142,12 +142,19 @@ anotada en `docs/handoff/rf-s3.md` (§pendientes, punto 6) está resuelta.
 
 **Riesgo vigente (2026-09-28, D-362): cualquier usuario real entra a `demo` con su contraseña
 real.** Todos los demás usuarios conservan el hash de producción, y demo tiene hoy datos reales
-del cliente (restablecida desde `production` el 2026-09-28). Hasta que exista el reseteo de todas
-las contraseñas al restablecer demo (D-362, backlog), la única mitigación es resetearlas a mano
-desde Usuarios con el administrador de demo, una por una (`UsersService.update`: hash nuevo,
-cambio obligatorio, auditoría y sesiones revocadas). Demo se sirve con `pnpm dev:demo` desde la
-máquina del dueño: `next dev` escucha también en la red local, así que mientras está levantada es
-alcanzable desde esa red.
+del cliente (restablecida desde `production` el 2026-09-28). Hasta el 2026-09-28 además era
+alcanzable desde la red local: `pnpm run dev` levanta web y API en todas las interfaces (`next
+dev` imprimía `Network: http://192.168.18.50:3001`).
+
+**Mitigación vigente: demo solo escucha en `127.0.0.1`.** `pnpm dev:demo` ya no usa `pnpm run dev`:
+levanta el API con `BIND_HOST=127.0.0.1` (`apps/api/src/config/env.ts`; por defecto `0.0.0.0`, así
+que Cloud Run y `dev:local` no cambian) y el web con `next dev -H 127.0.0.1`, que habla con el API
+por `API_URL=http://127.0.0.1:3000`. Mientras demo sea solo local, nadie entra desde otra máquina
+y el reseteo manual de los usuarios reales no hace falta. **No se publica demo en ningún host ni
+túnel** hasta que exista D-362 (backlog): resetear la contraseña de todos los usuarios al
+restablecer demo. Si alguna vez hiciera falta antes, la vía es la pantalla Usuarios con el
+administrador de demo, uno por uno (`UsersService.update`: hash nuevo, cambio obligatorio,
+auditoría y sesiones revocadas).
 
 ### Demo tiene secretos propios, y eso no es opcional
 
