@@ -286,6 +286,33 @@ function dispatchLine(
   };
 }
 
+/**
+ * Una línea de nota de crédito que no es de Coberturas Aluzinc: **resta su venta con costo 0**
+ * (revisión C06, P1). Si hubo devolución, el costo de lo devuelto ya volvió por la reversa del
+ * despacho y el comprobante lo refleja; si fue un descuento, no hay costo que devolver. En los
+ * dos casos, restar la venta y nada de costo es lo que hace verdadero el neto.
+ */
+function creditLine(row: DocumentLineRow): LineResult {
+  const sales = toDecimal(row.subtotal_pen.toString());
+  const qty = toDecimal(row.qty.toString());
+  const sum: Sum = {
+    acc: { ...emptyAcc(), sales, qty, unit: row.unit },
+    kg: false,
+    meters: false,
+    any: true,
+  };
+  return {
+    engine: false,
+    sum,
+    dto: finish(row, sum, {
+      costBasis: null,
+      costBasisDetail: null,
+      status: 'NO_COST',
+      note: 'Nota de crédito: resta la venta; el costo de lo devuelto vuelve por la reversa del despacho',
+    }),
+  };
+}
+
 export function assembleDocumentProfitability(
   input: AssembleProfitabilityInput,
 ): DocumentProfitabilityDto {
@@ -302,24 +329,19 @@ export function assembleDocumentProfitability(
     invoicedByItem.set(item, (invoicedByItem.get(item) ?? ZERO).plus(toDecimal(r.qty.toString())));
   }
 
+  // Una nota de crédito vista por sí misma no tiene despacho propio: sus líneas fuera del
+  // motor van como las acreditadas de su comprobante.
+  const isCreditNote = input.document.docType === 'NOTA_CREDITO';
   const ownResults = own.map((row) =>
     row.in_engine
       ? engineLine(row, input.engine, usageByLine)
-      : dispatchLine(row, input, invoicedByItem),
+      : isCreditNote
+        ? creditLine(row)
+        : dispatchLine(row, input, invoicedByItem),
   );
-  const creditResults = credit.map((row): LineResult => {
-    if (row.in_engine) return engineLine(row, input.engine, usageByLine);
-    return {
-      engine: false,
-      sum: emptySum(),
-      dto: finish(row, emptySum(), {
-        costBasis: null,
-        costBasisDetail: null,
-        status: 'NO_COST',
-        note: 'Nota de crédito: el costo de lo devuelto vuelve por la reversa del despacho',
-      }),
-    };
-  });
+  const creditResults = credit.map((row): LineResult =>
+    row.in_engine ? engineLine(row, input.engine, usageByLine) : creditLine(row),
+  );
 
   const total = emptySum();
   const material = emptySum();

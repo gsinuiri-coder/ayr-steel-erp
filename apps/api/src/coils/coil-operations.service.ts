@@ -352,9 +352,21 @@ export class CoilOperationsService {
           },
         });
         // La madre vuelve a estar disponible: el partido la había cerrado al dejarla en
-        // cero, y ahora tiene otra vez su peso.
+        // cero, y ahora tiene otra vez su peso. D-360: si la terminó el partido (o el lote,
+        // con el partido como el movimiento que la dejó en 0), por el helper, con su auditoría.
         if (coil.status === CoilStatus.CLOSED) {
-          await tx.coil.update({ where: { id: coil.id }, data: { status: CoilStatus.OPEN } });
+          const back = await reopenAutoTerminatedCoils(tx, this.audit, {
+            actorId: actor.id,
+            coilIds: [coil.id],
+            cause: { kind: 'SPLIT', refId: splitId },
+            zeroedBy: { refIds: [splitId] },
+            label: 'reversa del partido que la había dejado en 0',
+            operationDate,
+          });
+          // Un cierre anterior a D-360 no tiene esa auditoría: se reabre como siempre (RF-16).
+          if (back.reopened.length === 0 && back.skipped.length === 0) {
+            await tx.coil.update({ where: { id: coil.id }, data: { status: CoilStatus.OPEN } });
+          }
         }
 
         // Igual que el partido, y por lo mismo: las hijas se anulan y la madre recupera
@@ -511,6 +523,7 @@ export class CoilOperationsService {
         actorId: actor.id,
         coilIds: [movement.itemId],
         cause: { kind: 'SCRAP', refId: movementId.toString() },
+        zeroedBy: { movementIds: [movementId.toString()] },
         label: 'anulación de la merma que la había dejado en 0',
         operationDate,
       });

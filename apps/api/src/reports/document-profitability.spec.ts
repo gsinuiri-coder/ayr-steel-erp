@@ -379,18 +379,42 @@ describe('assembleDocumentProfitability (C06)', () => {
     // Facturado neto de la línea: 100 − 20 = 80, todo producido: el comprobante traza entero.
     expect(doc.total.costPen).toBe('1000.0000');
     // La NC resta en venta y en costo (el motor le da su parte con signo).
-    expect(doc.credited!.total.salesPen).toBe('-600.0000');
+    expect(doc.credited!.lines[0]!.salesPen).toBe('-600.0000');
     expect(doc.credited!.total.costPen).toBe('-200.0000');
+    // Revisión C06 (P1): la línea de reventa acreditada resta su venta con costo 0.
     expect(doc.credited!.lines[1]).toEqual(
-      expect.objectContaining({ status: 'NO_COST', costBasis: null, uncostedSalesPen: '-50.0000' }),
-    );
-    expect(doc.net).toEqual(
       expect.objectContaining({
-        salesPen: '2400.0000',
-        costPen: '800.0000',
-        profitPen: '1600.0000',
+        status: 'NO_COST',
+        costBasis: null,
+        salesPen: '-50.0000',
+        costPen: '0.0000',
+        uncostedSalesPen: '0.0000',
       }),
     );
+    expect(doc.credited!.total.salesPen).toBe('-650.0000');
+    expect(doc.net).toEqual(
+      expect.objectContaining({
+        salesPen: '2350.0000',
+        costPen: '800.0000',
+        profitPen: '1550.0000',
+      }),
+    );
+  });
+
+  it('una nota de crédito vista por sí misma: su reventa resta la venta, sin buscar despacho', () => {
+    const doc = assembleDocumentProfitability({
+      document: { id: NC, number: 'FC01-1', docType: 'NOTA_CREDITO' },
+      rows: [
+        row({ doc: NC, engine: false, sku: 'UPVC-1', unit: 'NIU', qty: '-1', subtotal: '-50' }),
+      ],
+      engine: engineFacts({}),
+      declared: new Map(),
+      hasDeclaredDispatch: false,
+    });
+    expect(doc.lines[0]).toEqual(
+      expect.objectContaining({ status: 'NO_COST', salesPen: '-50.0000', costPen: '0.0000' }),
+    );
+    expect(doc.credited).toBeNull();
   });
 
   it('un comprobante que no es venta viva no calcula nada', () => {
@@ -475,6 +499,15 @@ describe('DocumentProfitabilityService (C06)', () => {
     });
     await tradingOnly.service.profitability(DOC);
     expect(tradingOnly.calls).toHaveLength(2);
+  });
+
+  it('una nota de crédito no consulta despachos', async () => {
+    const b = await build({
+      doc: { docType: 'NOTA_CREDITO' },
+      rows: [row({ engine: false, unit: 'NIU', qty: '1', subtotal: '10' })],
+    });
+    await b.service.profitability(DOC);
+    expect(b.calls.some((c) => c.includes('"dispatched_qty"'))).toBe(false);
   });
 
   it('404 si no existe; no aplica a guías, archivados ni anulados, y no consulta más', async () => {

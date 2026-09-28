@@ -832,7 +832,7 @@ export class RoofingProductionService {
         entityId: orderId,
         after: { consumptionId, coilCode: consumption.coil.code, filmResealed: resealed },
       });
-      // D-360: bajada y en 0 (la agotó otra orden mientras esta la tenía montada): se termina.
+      // D-360: si al bajarla está en exactamente 0, se termina (red de seguridad: bajar exige consumo 0).
       await autoTerminateEmptyCoils(tx, this.audit, {
         actorId: actor.id,
         coilIds: [consumption.coilId],
@@ -2420,6 +2420,18 @@ export class RoofingProductionService {
           actorId: actor.id,
           coilIds: rows.map((r) => r.coilId),
           cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
+          // Revisión C06: también la que terminó el lote después de que esta OP la dejara en 0.
+          zeroedBy: {
+            refIds: [
+              orderId,
+              ...(
+                await tx.productionReport.findMany({
+                  where: { productionOrderId: orderId },
+                  select: { id: true },
+                })
+              ).map((r) => r.id),
+            ],
+          },
           label: `reapertura de ${productionOrderCode(order.seq)}`,
           operationDate,
         });
@@ -2595,7 +2607,7 @@ export class RoofingProductionService {
             this.thicknessToleranceMm(),
           )
         : false;
-      // D-360: una bobina bajada que quedó en 0 (la agotó otra orden) se termina.
+      // D-360: si al bajarla está en exactamente 0, se termina (red de seguridad: anular exige cero reportes).
       await autoTerminateEmptyCoils(tx, this.audit, {
         actorId: actor.id,
         coilIds: held.map((h) => h.coilId),

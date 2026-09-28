@@ -527,7 +527,7 @@ export class ProductionService {
         data: { releasedAt: new Date() },
       });
       await this.recomputeStatus(tx, orderId);
-      // D-360: liberado y en 0 (otra orden lo agotó mientras este lo retenía): se termina.
+      // D-360: si al liberarlo está en exactamente 0, se termina (red de seguridad: liberar exige consumo 0).
       await autoTerminateEmptyCoils(tx, this.audit, {
         actorId: actor.id,
         coilIds: [consumption.coilId],
@@ -1199,6 +1199,18 @@ export class ProductionService {
           actorId: actor.id,
           coilIds: rows.map((r) => r.coilId),
           cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
+          // Revisión C06: también la que terminó el lote después de que esta OP la dejara en 0.
+          zeroedBy: {
+            refIds: [
+              orderId,
+              ...(
+                await tx.productionReport.findMany({
+                  where: { productionOrderId: orderId },
+                  select: { id: true },
+                })
+              ).map((r) => r.id),
+            ],
+          },
           label: `reapertura de ${productionOrderCode(order.seq)}`,
           operationDate,
         });
@@ -1355,7 +1367,7 @@ export class ProductionService {
           cancelledAt: new Date(),
         },
       });
-      // D-360: un fleje liberado que quedó en 0 (lo agotó otra orden) se termina.
+      // D-360: si al liberarlo está en exactamente 0, se termina (red de seguridad: anular exige cero reportes).
       await autoTerminateEmptyCoils(tx, this.audit, {
         actorId: actor.id,
         coilIds: held.map((h) => h.coilId),

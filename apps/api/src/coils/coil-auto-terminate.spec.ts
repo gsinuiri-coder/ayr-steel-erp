@@ -363,6 +363,70 @@ describe('reopenAutoTerminatedCoils (D-360)', () => {
     ]);
   });
 
+  it('revisión C06: reabre la que terminó otra causa (el lote) si el movimiento en 0 es el que se anula', async () => {
+    const { tx, raw, audit } = fakeTx(
+      [
+        { id: 'batch', status: CoilStatus.CLOSED },
+        { id: 'manual', status: CoilStatus.CLOSED },
+      ],
+      [
+        {
+          entityId: 'batch',
+          action: 'coils.close',
+          after: {
+            autoTerminated: { kind: 'BATCH', refId: 'lote-1' },
+            zeroedBy: { movementId: '77', refType: 'SCRAP', refId: 'batch' },
+          },
+        },
+        // Un cierre manual con el mismo movimiento en 0 no se deshace por la reversa.
+        {
+          entityId: 'manual',
+          action: 'coils.close',
+          after: { zeroedBy: { movementId: '77', refType: 'SCRAP', refId: 'x' } },
+        },
+      ],
+    );
+    const result = await reopenAutoTerminatedCoils(tx, audit as never, {
+      actorId: 'u1',
+      coilIds: ['batch', 'manual'],
+      cause: { kind: 'SCRAP', refId: '77' },
+      zeroedBy: { movementIds: ['77'] },
+      targetStatus: CoilStatus.IN_THIRD_PARTY,
+      label: 'anulación de la merma',
+      operationDate: '2026-09-28',
+    });
+    expect(result.reopened.map((c) => c.id)).toEqual(['batch']);
+    expect(raw.coil.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['batch'] }, status: CoilStatus.CLOSED },
+      data: { status: CoilStatus.IN_THIRD_PARTY },
+    });
+  });
+
+  it('también por la referencia del movimiento en 0 (la OP, el partido, la recepción)', async () => {
+    const { tx, audit } = fakeTx(
+      [{ id: 'c', status: CoilStatus.CLOSED }],
+      [
+        {
+          entityId: 'c',
+          action: 'coils.close',
+          after: {
+            autoTerminated: { kind: 'BATCH', refId: 'lote-1' },
+            zeroedBy: { movementId: '9', refType: 'SCRAP', refId: 'op-1' },
+          },
+        },
+      ],
+    );
+    const result = await reopenAutoTerminatedCoils(tx, audit as never, {
+      actorId: 'u1',
+      coilIds: ['c'],
+      cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: 'op-1' },
+      zeroedBy: { refIds: ['op-1'] },
+      label: 'reapertura',
+      operationDate: '2026-09-28',
+    });
+    expect(result.reopened.map((c) => c.id)).toEqual(['c']);
+  });
+
   it('sin bobinas, o sin historial de esta causa: nada', async () => {
     const empty = fakeTx([]);
     expect(

@@ -255,6 +255,16 @@ export interface AutoReopenInput {
   actorId: string;
   coilIds: readonly string[];
   cause: Pick<AutoTerminateCause, 'kind' | 'refId'>;
+  /**
+   * Revisión C06 (P1): lo que esta reversa **anula**, para reconocer como propia una
+   * terminación de otra causa cuyo `zeroedBy` es uno de estos movimientos o referencias. Es
+   * el caso de la bobina que la terminación única (lote) terminó después de que esta misma
+   * merma o esta misma OP la dejara en 0: la terminación referencia la operación por el
+   * movimiento que la dejó en 0, y la reversa la reabre igual.
+   */
+  zeroedBy?: { movementIds?: readonly string[]; refIds?: readonly string[] };
+  /** Estado al que vuelve (por defecto vigente); la reversa de corte la devuelve al tercero. */
+  targetStatus?: CoilStatus;
   /** Qué la reabre, en palabras: «reapertura de OP-000123». */
   label: string;
   operationDate: string;
@@ -284,7 +294,7 @@ export async function reopenAutoTerminatedCoils(
 /** Qué reabriría la reversa. **Solo lee** (dos consultas). */
 export async function planAutoReopen(
   tx: Prisma.TransactionClient,
-  input: Pick<AutoReopenInput, 'coilIds' | 'cause'>,
+  input: Pick<AutoReopenInput, 'coilIds' | 'cause' | 'zeroedBy'>,
 ): Promise<AutoReopenResult> {
   const result: AutoReopenResult = { reopened: [], skipped: [] };
   const ids = [...new Set(input.coilIds)].filter((id) => id !== '');
@@ -304,7 +314,9 @@ export async function planAutoReopen(
     if (row.entityId === null) continue;
     byCoil.set(row.entityId, [...(byCoil.get(row.entityId) ?? []), row]);
   }
-  const touched = ids.filter((id) => (byCoil.get(id) ?? []).some((r) => isCause(r, input.cause)));
+  const mine = (row: { action: string; after: Prisma.JsonValue }): boolean =>
+    isCause(row, input.cause) || isZeroedBy(row, input.zeroedBy);
+  const touched = ids.filter((id) => (byCoil.get(id) ?? []).some(mine));
   if (touched.length === 0) return result;
 
   const coils = await tx.coil.findMany({
@@ -317,7 +329,7 @@ export async function planAutoReopen(
     const planned = { id: coil.id, code: coil.code };
     if (coil.status !== CoilStatus.CLOSED) {
       result.skipped.push({ ...planned, reason: 'NOT_CLOSED' });
-    } else if (last?.action !== 'coils.close' || !isCause(last, input.cause)) {
+    } else if (last?.action !== 'coils.close' || !mine(last)) {
       result.skipped.push({ ...planned, reason: 'OTHER_CAUSE' });
     } else {
       result.reopened.push(planned);
@@ -332,10 +344,11 @@ async function applyAutoReopen(
   input: AutoReopenInput,
   result: AutoReopenResult,
 ): Promise<void> {
+  const target = input.targetStatus ?? CoilStatus.OPEN;
   if (result.reopened.length > 0) {
     await tx.coil.updateMany({
       where: { id: { in: result.reopened.map((c) => c.id) }, status: CoilStatus.CLOSED },
-      data: { status: CoilStatus.OPEN },
+      data: { status: target },
     });
   }
   for (const coil of result.reopened) {
@@ -346,7 +359,7 @@ async function applyAutoReopen(
       entityId: coil.id,
       before: { status: CoilStatus.CLOSED },
       after: {
-        status: CoilStatus.OPEN,
+        status: target,
         reason: `Reabierta automáticamente: ${input.label} (D-360)`,
         adjustment: null,
         operationDate: input.operationDate,
@@ -368,6 +381,26 @@ async function applyAutoReopen(
       },
     });
   }
+}
+
+/** La terminación automática cuyo movimiento en 0 es uno de los que anula esta reversa. */
+function isZeroedBy(
+  row: { action: string; after: Prisma.JsonValue },
+  zeroedBy: AutoReopenInput['zeroedBy'],
+): boolean {
+  if (zeroedBy === undefined || row.action !== 'coils.close') return false;
+  const after = row.after;
+  if (after === null || typeof after !== 'object' || Array.isArray(after)) return false;
+  const record = after as Record<string, unknown>;
+  // Solo terminaciones automáticas: un cierre manual no se deshace por una reversa.
+  if (record.autoTerminated === undefined || record.autoTerminated === null) return false;
+  const z = record.zeroedBy;
+  if (z === null || typeof z !== 'object' || Array.isArray(z)) return false;
+  const { movementId, refId } = z as Record<string, unknown>;
+  return (
+    (typeof movementId === 'string' && (zeroedBy.movementIds ?? []).includes(movementId)) ||
+    (typeof refId === 'string' && (zeroedBy.refIds ?? []).includes(refId))
+  );
 }
 
 function isCause(

@@ -79,10 +79,13 @@ async function main(): Promise<void> {
 
     if (undoBatch !== undefined) {
       if (!execute) {
-        const plan = await db.$transaction(async (tx) => {
-          await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-          return planUndoTerminateZeroCoils(tx, undoBatch);
-        });
+        const plan = await db.$transaction(
+          async (tx) => {
+            await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+            return planUndoTerminateZeroCoils(tx, undoBatch);
+          },
+          { timeout: 120_000 },
+        );
         const text = formatUndo(plan, { branch, mode: 'dry-run', batchId: undoBatch });
         console.warn(text);
         console.warn(
@@ -107,10 +110,13 @@ async function main(): Promise<void> {
     }
 
     if (!execute) {
-      const plan = await db.$transaction(async (tx) => {
-        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-        return planTerminateZeroCoils(tx);
-      });
+      const plan = await db.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+          return planTerminateZeroCoils(tx);
+        },
+        { timeout: 120_000 },
+      );
       const text = formatTerminatePlan(plan, { branch, mode: 'dry-run' });
       console.warn(text);
       console.warn(`Lista en ${save(`terminar-cero-dry-run-${branch}.txt`, text)}`);
@@ -128,7 +134,7 @@ async function main(): Promise<void> {
     console.warn(text);
     console.warn(`Lista en ${save(`terminar-cero-execute-${branch}-${batchId}.txt`, text)}`);
     console.warn(
-      `Reversa: pnpm terminate:zero-coils --undo ${batchId} --execute --branch ${branch}`,
+      `Reversa: pnpm terminate:zero-coils --undo ${batchId} --execute --branch ${branch}${branch === 'production' ? ' --confirm-production' : ''}`,
     );
   } finally {
     await app.close();

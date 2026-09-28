@@ -61,7 +61,8 @@ export class DocumentProfitabilityService {
       .filter((r) => r.in_engine)
       .map((r) => r.sales_order_item_id)
       .filter((v): v is string => v !== null);
-    const needsDispatch = rows.some((r) => !r.is_credit && !r.in_engine);
+    const needsDispatch =
+      doc.docType !== FiscalDocType.NOTA_CREDITO && rows.some((r) => !r.is_credit && !r.in_engine);
     const [engine, declared] = await Promise.all([
       this.material.engineFacts(engineItems),
       needsDispatch ? this.declaredSales(documentId) : Promise.resolve([]),
