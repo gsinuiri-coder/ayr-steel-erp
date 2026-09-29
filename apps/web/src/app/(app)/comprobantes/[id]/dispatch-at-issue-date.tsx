@@ -87,7 +87,9 @@ export function DispatchAtIssueDate({
           <Input
             type="date"
             value={dispatchDate ?? defaultFirstDate}
-            onChange={(event) => setDispatchDate(event.target.value || undefined)}
+            onChange={(event) => {
+              setDispatchDate(event.target.value || undefined);
+            }}
             aria-label="Fecha de despacho"
           />
         </label>
