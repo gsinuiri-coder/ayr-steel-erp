@@ -2,6 +2,10 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-09-29 — D-363, seguimiento del PR #58
+
+La lectura autorizada de producción encontró 44 `ACCEPTED` (2 pendientes D-285, 1 sin despacho declarado) y 7 `ANNULLED` (0 pendientes D-285, 7 en el conteo bruto sin despacho). D-363 corrige el conteo bruto con `LIVE_DOCUMENT_STATUSES`; el detalle visual ya usaba esa lista blanca. Se agregó E2E de un comprobante manual anulado y regresión del `--undo` del tool de fechas, sin modificar ni ejecutar ese tool. `BBV1-00000341` y `BBV1-00000347` siguen `BLOQUEADO-RECOSTEO`, sin cambios. Lint, typecheck, unit, formato y el E2E focalizado pasaron. CI del commit final está en curso. Sin merge ni escritura en Neon.
+
 ## Registro de riesgo — piezas revisadas por el dueño (2026-09-26; antes «PENDIENTE DE REVISIÓN INDEPENDIENTE»)
 
 **2026-09-26: el dueño hizo la revisión humana de todas las piezas de esta lista y confirmó que quedó todo
