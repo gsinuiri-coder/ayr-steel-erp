@@ -33,7 +33,9 @@ export function groupHistoryByOrder(rows: readonly ProductionOrderListItemDto[])
   }
   return [...byKey.entries()].map(([key, orders]) => {
     const first = orders[0];
-    const meterOrders = orders.filter((o) => o.planMeters !== null || o.metersReported !== null);
+    const meterOrders = orders.filter(
+      (o) => o.planMeters !== null || o.planMetersReported !== null,
+    );
     return {
       key,
       salesOrderId: first?.salesOrderId ?? null,
@@ -52,7 +54,7 @@ export function groupHistoryByOrder(rows: readonly ProductionOrderListItemDto[])
         meterOrders.length === 0
           ? null
           : meterOrders
-              .reduce((sum, o) => sum.plus(toDecimal(o.metersReported ?? '0')), toDecimal('0'))
+              .reduce((sum, o) => sum.plus(toDecimal(o.planMetersReported ?? '0')), toDecimal('0'))
               .toFixed(3),
       status: deriveGroupStatus(orders.map((o) => o.status)),
     };

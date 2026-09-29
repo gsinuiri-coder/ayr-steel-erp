@@ -13,6 +13,7 @@ function op(overrides: Partial<ProductionOrderListItemDto>): ProductionOrderList
     operationDate: '2026-09-10',
     planMeters: null,
     metersReported: null,
+    planMetersReported: null,
     ...overrides,
   } as ProductionOrderListItemDto;
 }
@@ -36,12 +37,19 @@ describe('deriveGroupStatus (D-291)', () => {
 describe('groupHistoryByOrder (D-291)', () => {
   it('una fila por pedido, con cerradas/total y ML plan/reportado sumados como Decimal', () => {
     const groups = groupHistoryByOrder([
-      op({ id: 'a', status: 'CLOSED', planMeters: '10.500', metersReported: '10.500' }),
+      op({
+        id: 'a',
+        status: 'CLOSED',
+        planMeters: '10.500',
+        metersReported: '10.500',
+        planMetersReported: '10.500',
+      }),
       op({
         id: 'b',
         status: 'IN_PROGRESS',
         planMeters: '4.250',
         metersReported: '0.100',
+        planMetersReported: '0.100',
         operationDate: '2026-09-12',
       }),
       op({ id: 'c', salesOrderId: 'so-2', salesOrderCode: 'PED-000002' }),
@@ -55,6 +63,25 @@ describe('groupHistoryByOrder (D-291)', () => {
     expect(first?.reportedMeters).toBe('10.600');
     expect(first?.date).toBe('2026-09-12');
     expect(first?.status).toBe('IN_PROGRESS');
+  });
+
+  it('suma una plancha NIU con una cobertura a medida sin perder los metros de la plancha', () => {
+    const [group] = groupHistoryByOrder([
+      op({
+        id: 'plancha',
+        planMeters: '60.000',
+        metersReported: null,
+        planMetersReported: '60.000',
+      }),
+      op({
+        id: 'medida',
+        planMeters: '42.000',
+        metersReported: '42.000',
+        planMetersReported: '42.000',
+      }),
+    ]);
+    expect(group?.planMeters).toBe('102.000');
+    expect(group?.reportedMeters).toBe('102.000');
   });
 
   it('las corridas a stock (sin pedido) forman su propio grupo y no tienen ML', () => {

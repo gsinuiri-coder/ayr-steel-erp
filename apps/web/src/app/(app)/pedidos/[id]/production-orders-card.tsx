@@ -153,7 +153,7 @@ export function ProductionOrdersCard({
                 <TableCell className="text-right tabular-nums">
                   {o.planMeters !== null ? (
                     <>
-                      {formatQty(o.metersReported ?? '0.000', 'm')}
+                      {formatQty(o.planMetersReported ?? '0.000', 'm')}
                       <span className="text-muted-foreground">
                         {' '}
                         de {formatQty(o.planMeters, 'm')}
