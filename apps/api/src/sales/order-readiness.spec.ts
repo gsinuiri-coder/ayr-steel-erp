@@ -55,6 +55,16 @@ describe('avance de una OP desde los largos guardados', () => {
       }),
     ).toEqual({ status: 'CLOSED', orderedMl: '12', reportedMl: '5.000' });
   });
+
+  it('sin reserva ni reportes devuelve cero para el avance', () => {
+    expect(
+      readinessOrderFromProduction({ status: 'DRAFT', reports: [], reservation: null }),
+    ).toEqual({
+      status: 'DRAFT',
+      orderedMl: '0.000',
+      reportedMl: '0.000',
+    });
+  });
 });
 
 describe('deriveOrderReadiness', () => {
