@@ -7,14 +7,19 @@ import { assertExternalOutputsOff } from '../src/common/external-outputs';
 import { OperationDateService } from '../src/common/operation-date.service';
 import type { Env } from '../src/config/env';
 import { InvoiceDispatchService } from '../src/invoicing/invoice-dispatch.service';
-import { assertInspectionArgs, inspectUndispatchedInvoices } from '../src/invoicing/undispatched-inventory';
+import {
+  assertInspectionArgs,
+  inspectUndispatchedInvoices,
+} from '../src/invoicing/undispatched-inventory';
 import type { PrismaService } from '../src/prisma/prisma.service';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   assertInspectionArgs(args);
   assertExecuteAllowed(false);
-  assertExternalOutputsOff(process.env, (line) => { console.error(line); });
+  assertExternalOutputsOff(process.env, (line) => {
+    console.error(line);
+  });
   const branch = process.env.AYR_CLI_BRANCH;
   if (!branch) throw new Error('Ejecutá este subcomando mediante runApiCli');
 
@@ -30,22 +35,35 @@ async function main(): Promise<void> {
       undefined as never,
       operationDate,
     );
-    const inspection = await db.$transaction(async (tx) => {
-      await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-      return inspectUndispatchedInvoices(tx, dispatch, branch);
-    }, { timeout: 300_000 });
+    const inspection = await db.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+        return inspectUndispatchedInvoices(tx, dispatch, branch);
+      },
+      { timeout: 300_000 },
+    );
 
-    console.warn(`Rama ${inspection.branch}; foto ${inspection.snapshotUtc}; transacción READ ONLY`);
+    console.warn(
+      `Rama ${inspection.branch}; foto ${inspection.snapshotUtc}; transacción READ ONLY`,
+    );
     console.warn('Estado | Comprobantes | Pendientes D-285 | Sin despacho declarado');
     for (const c of inspection.counts)
       console.warn(`${c.status} | ${c.documents} | ${c.pending} | ${c.withoutDeclaredDispatch}`);
-    console.warn('\nComprobante | Fecha | Estado | Líneas sin despacho | Veredicto | Compras a mover');
+    console.warn(
+      '\nComprobante | Fecha | Estado | Líneas sin despacho | Veredicto | Compras a mover',
+    );
     if (inspection.rows.length === 0) console.warn('(ninguno)');
     for (const row of inspection.rows) {
-      const lines = row.lines.map((line) =>
-        `${line.sku} ${line.qty} [${line.action} ${line.operationDate}${line.reason ? `: ${line.reason}` : ''}]`).join('; ');
+      const lines = row.lines
+        .map(
+          (line) =>
+            `${line.sku} ${line.qty} [${line.action} ${line.operationDate}${line.reason ? `: ${line.reason}` : ''}]`,
+        )
+        .join('; ');
       const purchases = row.purchases.map((p) => `${p.document} (${p.id})`).join(', ');
-      console.warn(`${row.number} | ${row.issueDate} | ${row.status} | ${lines} | ${row.verdict} | ${purchases || '—'}`);
+      console.warn(
+        `${row.number} | ${row.issueDate} | ${row.status} | ${lines} | ${row.verdict} | ${purchases || '—'}`,
+      );
     }
   } finally {
     await db.$disconnect();

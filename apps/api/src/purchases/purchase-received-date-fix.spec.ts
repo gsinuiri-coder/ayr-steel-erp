@@ -196,7 +196,12 @@ describe('undo de lote', () => {
       Number(inventory.reverse.mock.invocationCallOrder[0]),
     );
     expect(tx.inventoryMovement.findFirst).toHaveBeenCalledWith({
-      where: { itemType: 'PRODUCT', itemId: 'product-1', id: { gt: 1n }, NOT: { id: { in: [4n] } } },
+      where: {
+        itemType: 'PRODUCT',
+        itemId: 'product-1',
+        id: { gt: 1n },
+        NOT: { id: { in: [4n] } },
+      },
       select: { id: true },
     });
     expect(tx.purchase.update).toHaveBeenCalledWith({

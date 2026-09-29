@@ -369,8 +369,10 @@ export async function undoPurchaseReceivedDates(
     },
     select: { id: true, reversalOfId: true },
   });
-  if (ownReversals.length !== oldMovementIds.length ||
-      new Set(ownReversals.map((m) => m.reversalOfId?.toString())).size !== oldMovementIds.length)
+  if (
+    ownReversals.length !== oldMovementIds.length ||
+    new Set(ownReversals.map((m) => m.reversalOfId?.toString())).size !== oldMovementIds.length
+  )
     throw new Error('Reversas del lote incompletas; no se puede deshacer');
   const ownReversalIds = ownReversals.map((m) => m.id);
   await lockPlanItems(tx, [...lastBatchMovementByItem.keys()], toleranceMm);

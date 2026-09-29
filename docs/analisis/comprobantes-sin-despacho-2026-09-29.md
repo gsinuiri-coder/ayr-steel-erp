@@ -8,21 +8,21 @@ El plan de D-278/D-285 distribuye lo facturado neto entre despachos emitidos (`a
 
 ## Conteo por estado en demo
 
-| Estado | Comprobantes | Pendientes en el plan D-285 | Con líneas de pedido y sin despacho declarado |
-| --- | ---: | ---: | ---: |
-| `ACCEPTED` | 33 | 0 | 0 |
-| `ANNULLED` | **0** | **0** | **0** |
-| `VOIDED` | **0** | **0** | **0** |
-| Otros | 0 | 0 | 0 |
-| **Total** | **33** | **0** | **0** |
+| Estado     | Comprobantes | Pendientes en el plan D-285 | Con líneas de pedido y sin despacho declarado |
+| ---------- | -----------: | --------------------------: | --------------------------------------------: |
+| `ACCEPTED` |           33 |                           0 |                                             0 |
+| `ANNULLED` |        **0** |                       **0** |                                         **0** |
+| `VOIDED`   |        **0** |                       **0** |                                         **0** |
+| Otros      |            0 |                           0 |                                             0 |
+| **Total**  |       **33** |                       **0** |                                         **0** |
 
 No hay versiones archivadas de facturas o boletas en este clon. Los 33 comprobantes `ACCEPTED` tienen sus líneas cubiertas por despachos `ISSUED`; el plan D-285 devuelve `[]`. **El conteo de anulados/void sin despacho es cero en demo:** esta foto no reproduce el caso `FFA1-00001389` observado después en producción. El plan D-285 ya filtra estados vivos; si otro aviso incluye anulados en producción, hay que localizar ese lector concreto antes de cambiarlo. La columna «sin despacho declarado» es una comprobación separada: ausencia de `Dispatch.invoiceId` vigente en un documento con líneas de pedido; por D-205, no equivale por sí sola a pendiente operativo.
 
 ## No anulados pendientes y veredicto
 
-| Comprobante | Fecha | Líneas sin despacho | Veredicto | Compras a mover |
-| --- | --- | --- | --- | --- |
-| **Ninguno en demo** | — | 0 | — | — |
+| Comprobante         | Fecha | Líneas sin despacho | Veredicto | Compras a mover |
+| ------------------- | ----- | ------------------- | --------- | --------------- |
+| **Ninguno en demo** | —     | 0                   | —         | —               |
 
 Resultado por clases: **DESPACHABLE: 0; BLOQUEADO-FECHA-COMPRA: 0; BLOQUEADO-APERTURA: 0; BLOQUEADO-RECOSTEO: 0**. No hay una línea pendiente sobre la que simular una salida. La apertura `IMPORT` se fechó efectivamente el 2026-08-01 en D-285; el 15-09 fue su fecha original de carga. La fecha de salida que usa D-285 es la más tardía entre emisión y último parte de producción; el detalle del comando muestra esa decisión cuando existe una línea pendiente.
 

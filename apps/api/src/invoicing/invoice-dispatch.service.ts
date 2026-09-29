@@ -704,7 +704,10 @@ export class InvoiceDispatchService {
     const dated = dropSameDayReversals(
       movements.map((m) => ({
         ...m,
-        date: sim.movedPurchaseEntries?.get(m.id.toString()) ?? moved.get(m.id.toString()) ?? day(m.operationDate),
+        date:
+          sim.movedPurchaseEntries?.get(m.id.toString()) ??
+          moved.get(m.id.toString()) ??
+          day(m.operationDate),
       })),
     ).sort((a, b) =>
       a.date !== b.date
