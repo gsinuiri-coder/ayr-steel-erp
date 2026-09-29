@@ -248,14 +248,8 @@ export async function executePurchaseReceivedDates(
     });
     const replacementIds: string[] = [];
     for (const m of original) {
-      await inventory.reverse(
-        tx,
-        m.id,
-        actorId,
-        `Corrección de fecha recibida ${batchId}`,
-        c.currentDate,
-        true,
-      );
+      // Primero entra el reemplazo: una reversa transitoria podría dejar el saldo por
+      // debajo de lo reservado, aunque el estado final conserve exactamente la cantidad.
       const created = await inventory.record(tx, {
         businessLineId: m.businessLineId,
         itemType: m.itemType,
@@ -273,6 +267,14 @@ export async function executePurchaseReceivedDates(
         notes: `Fecha recibida corregida; lote ${batchId}`,
       });
       if (!created) throw new Error('La línea no genera kardex');
+      await inventory.reverse(
+        tx,
+        m.id,
+        actorId,
+        `Corrección de fecha recibida ${batchId}`,
+        c.currentDate,
+        true,
+      );
       replacementIds.push(created.id.toString());
       if (m.itemType === 'COIL')
         await tx.coil.update({
@@ -345,8 +347,10 @@ export async function undoPurchaseReceivedDates(
   // puede recostear esa salida o dejar negativo un día anterior. Preflight de TODO el
   // lote antes de la primera reversa: el undo nunca opera a medias.
   const lastBatchMovementByItem = new Map<string, bigint>();
+  const oldMovementIds: bigint[] = [];
   for (const log of logs) {
     const a = parseFixAudit(log.after);
+    oldMovementIds.push(...a.oldMovementIds.map(BigInt));
     for (const id of a.movementIds) {
       const movement = await tx.inventoryMovement.findUniqueOrThrow({ where: { id: BigInt(id) } });
       const itemKey = key(movement);
@@ -354,11 +358,26 @@ export async function undoPurchaseReceivedDates(
       if (movement.id > previous) lastBatchMovementByItem.set(itemKey, movement.id);
     }
   }
+  // La ejecución ingresa primero y reversa después. Esas reversas también tienen IDs
+  // posteriores a las nuevas entradas: son parte del lote, no actividad de terceros.
+  const ownReversals = await tx.inventoryMovement.findMany({
+    where: {
+      reversalOfId: { in: oldMovementIds },
+      type: 'OUT',
+      refType: 'PURCHASE',
+      notes: `Corrección de fecha recibida ${batchId}`,
+    },
+    select: { id: true, reversalOfId: true },
+  });
+  if (ownReversals.length !== oldMovementIds.length ||
+      new Set(ownReversals.map((m) => m.reversalOfId?.toString())).size !== oldMovementIds.length)
+    throw new Error('Reversas del lote incompletas; no se puede deshacer');
+  const ownReversalIds = ownReversals.map((m) => m.id);
   await lockPlanItems(tx, [...lastBatchMovementByItem.keys()], toleranceMm);
   for (const [itemKey, lastId] of lastBatchMovementByItem) {
     const [itemType, itemId] = itemKey.split(':') as [InventoryMovement['itemType'], string];
     const newer = await tx.inventoryMovement.findFirst({
-      where: { itemType, itemId, id: { gt: lastId } },
+      where: { itemType, itemId, id: { gt: lastId }, NOT: { id: { in: ownReversalIds } } },
       select: { id: true },
     });
     if (newer) throw new Error(`Undo bloqueado: ${itemKey} tiene movimientos posteriores al lote`);
@@ -371,14 +390,7 @@ export async function undoPurchaseReceivedDates(
       throw new Error(`La compra ${a.purchaseId} cambió; no se puede deshacer`);
     for (const id of [...a.movementIds].reverse()) {
       const m = await tx.inventoryMovement.findUniqueOrThrow({ where: { id: BigInt(id) } });
-      await inventory.reverse(
-        tx,
-        m.id,
-        actorId,
-        `Undo fecha recibida ${batchId}`,
-        a.destinationDate,
-        true,
-      );
+      // El undo conserva la misma invariante de reservas: reingresa primero el saldo viejo.
       await inventory.record(tx, {
         businessLineId: m.businessLineId,
         itemType: m.itemType,
@@ -395,6 +407,14 @@ export async function undoPurchaseReceivedDates(
         confirmBackdate: true,
         notes: `Undo fecha recibida; lote ${batchId}`,
       });
+      await inventory.reverse(
+        tx,
+        m.id,
+        actorId,
+        `Undo fecha recibida ${batchId}`,
+        a.destinationDate,
+        true,
+      );
       if (m.itemType === 'COIL')
         await tx.coil.update({
           where: { id: m.itemId },

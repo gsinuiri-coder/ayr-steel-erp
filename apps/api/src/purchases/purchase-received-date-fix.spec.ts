@@ -3,6 +3,7 @@ import type { InventoryService } from '../inventory/inventory.service';
 import type { AuditService } from '../audit/audit.service';
 import {
   classifyReceivedDate,
+  executePurchaseReceivedDates,
   selectSafeCases,
   undoPurchaseReceivedDates,
   type MovementForClassification,
@@ -77,8 +78,48 @@ describe('clasificación de fechas recibidas', () => {
   });
 });
 
+describe('ejecución del lote', () => {
+  it('ingresa antes de reversar para no perforar una reserva vigente', async () => {
+    const m = {
+      ...entry(),
+      businessLineId: 'line-1',
+      unit: 'NIU',
+      unitCost: new Prisma.Decimal('2'),
+      totalCost: new Prisma.Decimal('8'),
+    } as InventoryMovement;
+    const expected = classifyReceivedDate(target, [m], [m])!;
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'balance' }]),
+      purchase: {
+        findMany: jest.fn().mockResolvedValue([target]),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      inventoryMovement: { findMany: jest.fn().mockResolvedValue([m]) },
+      coil: { update: jest.fn() },
+    };
+    const inventory = {
+      record: jest.fn().mockResolvedValue({ id: 2n }),
+      reverse: jest.fn().mockResolvedValue({}),
+    };
+    const audit = { write: jest.fn().mockResolvedValue({}) };
+    await executePurchaseReceivedDates(
+      tx as unknown as Prisma.TransactionClient,
+      inventory as unknown as InventoryService,
+      audit as unknown as AuditService,
+      'actor-1',
+      'batch-1',
+      [expected],
+      '0.01',
+      [target.id],
+    );
+    expect(inventory.record.mock.invocationCallOrder[0]).toBeLessThan(
+      Number(inventory.reverse.mock.invocationCallOrder[0]),
+    );
+  });
+});
+
 describe('undo de lote', () => {
-  it('reversa la nueva entrada, reingresa en la fecha original y restaura receivedAt exacto', async () => {
+  it('reingresa en la fecha original, reversa la nueva entrada y restaura receivedAt exacto', async () => {
     const batchId = '785e282e-9713-4a1f-a817-9f6b941be6e4';
     const oldReceivedAt = '2026-09-28T00:23:29.921Z';
     const movement = {
@@ -114,6 +155,7 @@ describe('undo de lote', () => {
       },
       inventoryMovement: {
         findUniqueOrThrow: jest.fn().mockResolvedValue(movement),
+        findMany: jest.fn().mockResolvedValue([{ id: 4n, reversalOfId: 1n }]),
         findFirst: jest.fn().mockResolvedValue(null),
       },
       coil: { update: jest.fn() },
@@ -150,6 +192,13 @@ describe('undo de lote', () => {
         refId: target.id,
       }),
     );
+    expect(inventory.record.mock.invocationCallOrder[0]).toBeLessThan(
+      Number(inventory.reverse.mock.invocationCallOrder[0]),
+    );
+    expect(tx.inventoryMovement.findFirst).toHaveBeenCalledWith({
+      where: { itemType: 'PRODUCT', itemId: 'product-1', id: { gt: 1n }, NOT: { id: { in: [4n] } } },
+      select: { id: true },
+    });
     expect(tx.purchase.update).toHaveBeenCalledWith({
       where: { id: target.id },
       data: { receivedAt: new Date(oldReceivedAt) },
@@ -179,7 +228,8 @@ describe('undo de lote', () => {
         findUniqueOrThrow: jest
           .fn()
           .mockResolvedValue({ id: 3n, itemType: 'PRODUCT', itemId: 'product-1' }),
-        findFirst: jest.fn().mockResolvedValue({ id: 4n }),
+        findMany: jest.fn().mockResolvedValue([{ id: 4n, reversalOfId: 1n }]),
+        findFirst: jest.fn().mockResolvedValue({ id: 5n }),
       },
       purchase: { findUniqueOrThrow: jest.fn(), update: jest.fn() },
     };
