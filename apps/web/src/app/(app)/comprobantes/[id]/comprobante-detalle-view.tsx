@@ -1529,7 +1529,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           }
         }}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Nota de crédito sobre {d.number}</DialogTitle>
             <DialogDescription>
