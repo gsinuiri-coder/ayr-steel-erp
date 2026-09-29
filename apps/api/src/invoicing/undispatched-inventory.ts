@@ -1,4 +1,5 @@
 import { DispatchStatus, FiscalDocType, type Prisma } from '@prisma/client';
+import { LIVE_DOCUMENT_STATUSES } from '@ayr/shared';
 import {
   planPurchaseReceivedDates,
   type ReceivedDateCase,
@@ -57,7 +58,11 @@ export function countUndispatchedByStatus(
     documents: documents.filter((d) => d.status === status).length,
     pending: rows.filter((r) => r.status === status).length,
     withoutDeclaredDispatch: documents.filter(
-      (d) => d.status === status && d.items.length > 0 && d.dispatchesInvoiced.length === 0,
+      (d) =>
+        d.status === status &&
+        LIVE_DOCUMENT_STATUSES.some((live) => live === d.status) &&
+        d.items.length > 0 &&
+        d.dispatchesInvoiced.length === 0,
     ).length,
   }));
 }

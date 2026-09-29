@@ -190,4 +190,37 @@ test.describe('D-278 — despacho a la fecha del comprobante', () => {
       });
     }
   });
+
+  test('D-363: un comprobante anulado no muestra el aviso de líneas sin despacho', async ({
+    page,
+  }) => {
+    const scenario = await setupOrderScenario(api);
+    const trail: string[] = [];
+    try {
+      const invoice = await registeredInvoice(api, scenario, today());
+      trail.push(invoice.id);
+      await loginAsAdmin(page);
+      await page.goto(`/comprobantes/${invoice.id}`);
+      await expect(page.getByTestId('dispatch-at-issue-date')).toBeVisible({ timeout: 60_000 });
+
+      await postJson(api, `/api/invoicing/documents/${invoice.id}/annul`, {
+        reason: 'Regresión D-363: comprobante manual anulado',
+      });
+      await page.reload();
+      await expect(page.getByTestId('dispatch-at-issue-date')).toHaveCount(0);
+      expect(
+        (await getJson<PlanDto>(api, `/api/dispatches/at-issue-date/${invoice.id}`)).lines,
+      ).toHaveLength(0);
+    } finally {
+      await purgeInvoicingTrail(api, {
+        documentIds: trail,
+        orderIds: [scenario.order.id],
+        coilIds: [scenario.coil.id],
+        purchaseId: scenario.purchaseId,
+        supplierId: scenario.supplier.id,
+        finish: scenario.finish,
+        productIds: [scenario.product.id],
+      });
+    }
+  });
 });

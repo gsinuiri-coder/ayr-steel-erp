@@ -119,11 +119,12 @@ describe('ejecución del lote', () => {
 });
 
 describe('undo de lote', () => {
-  it('reingresa en la fecha original, reversa la nueva entrada y restaura receivedAt exacto', async () => {
+  it('ignora la reversa propia posterior y restaura la fecha y receivedAt exactos', async () => {
     const batchId = '785e282e-9713-4a1f-a817-9f6b941be6e4';
     const oldReceivedAt = '2026-09-28T00:23:29.921Z';
     const movement = {
       ...entry(),
+      id: 3n,
       businessLineId: 'line-1',
       unit: 'NIU',
       unitCost: new Prisma.Decimal('2'),
@@ -154,9 +155,19 @@ describe('undo de lote', () => {
         update: jest.fn().mockResolvedValue({}),
       },
       inventoryMovement: {
-        findUniqueOrThrow: jest.fn().mockResolvedValue(movement),
+        findUniqueOrThrow: jest.fn(({ where }: { where: { id: bigint } }) => {
+          if (where.id !== 3n) throw new Error('Se pidió un movimiento distinto del reemplazo');
+          return movement;
+        }),
         findMany: jest.fn().mockResolvedValue([{ id: 4n, reversalOfId: 1n }]),
-        findFirst: jest.fn().mockResolvedValue(null),
+        // El ID 4 es la reversa que emitió el propio execute después de la entrada 3.
+        // Una consulta sin la exclusión lo ve como «movimiento posterior» y bloquea el undo.
+        findFirst: jest.fn(
+          ({ where }: { where: { id: { gt: bigint }; NOT?: { id: { in: bigint[] } } } }) =>
+            [{ id: 4n }].find(
+              (row) => row.id > where.id.gt && !where.NOT?.id.in.includes(row.id),
+            ) ?? null,
+        ),
       },
       coil: { update: jest.fn() },
     };
@@ -199,7 +210,7 @@ describe('undo de lote', () => {
       where: {
         itemType: 'PRODUCT',
         itemId: 'product-1',
-        id: { gt: 1n },
+        id: { gt: 3n },
         NOT: { id: { in: [4n] } },
       },
       select: { id: true },
@@ -234,7 +245,13 @@ describe('undo de lote', () => {
           .fn()
           .mockResolvedValue({ id: 3n, itemType: 'PRODUCT', itemId: 'product-1' }),
         findMany: jest.fn().mockResolvedValue([{ id: 4n, reversalOfId: 1n }]),
-        findFirst: jest.fn().mockResolvedValue({ id: 5n }),
+        findFirst: jest.fn(
+          ({ where }: { where: { id: { gt: bigint }; NOT?: { id: { in: bigint[] } } } }) =>
+            [
+              { id: 4n, type: 'OUT', refType: 'PURCHASE' },
+              { id: 5n, type: 'OUT', refType: 'SALE' },
+            ].find((row) => row.id > where.id.gt && !where.NOT?.id.in.includes(row.id)) ?? null,
+        ),
       },
       purchase: { findUniqueOrThrow: jest.fn(), update: jest.fn() },
     };

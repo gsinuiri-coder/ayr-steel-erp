@@ -58,7 +58,7 @@ describe('inventario de comprobantes sin despacho', () => {
     }).not.toThrow();
   });
 
-  it('cuenta ANNULLED y VOIDED aparte, fuera del plan operativo', () => {
+  it('cuenta ANNULLED y VOIDED aparte, sin incluirlos en el aviso sin despacho', () => {
     const counts = countUndispatchedByStatus(
       [
         { status: 'ACCEPTED', items: [{}], dispatchesInvoiced: [] },
@@ -69,8 +69,8 @@ describe('inventario de comprobantes sin despacho', () => {
     );
     expect(counts).toEqual([
       { status: 'ACCEPTED', documents: 1, pending: 1, withoutDeclaredDispatch: 1 },
-      { status: 'ANNULLED', documents: 1, pending: 0, withoutDeclaredDispatch: 1 },
-      { status: 'VOIDED', documents: 1, pending: 0, withoutDeclaredDispatch: 1 },
+      { status: 'ANNULLED', documents: 1, pending: 0, withoutDeclaredDispatch: 0 },
+      { status: 'VOIDED', documents: 1, pending: 0, withoutDeclaredDispatch: 0 },
     ]);
   });
 
