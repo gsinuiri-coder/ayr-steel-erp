@@ -1,4 +1,4 @@
-import { Decimal } from '@ayr/shared';
+import { businessToday, Decimal } from '@ayr/shared';
 
 /**
  * D-278: despacho a la fecha del comprobante, la parte que se decide sin base.
@@ -66,6 +66,8 @@ export interface PlanInvoice {
   number: string;
   salesOrderId: string;
   issueDate: string;
+  /** D-364: fecha elegida por el usuario; sin valor conserva el default D-285. */
+  dispatchDate?: string;
   lines: PlanInvoiceLine[];
 }
 
@@ -82,6 +84,30 @@ export interface PlannedLine {
   action: PlanAction;
   operationDate: string;
   reason: string | null;
+  firstValidDate: string | null;
+}
+
+/** Busca entre los hechos existentes y hoy el primer día que conserva el kardex no negativo. */
+function firstValidDate(
+  kardex: PlanItemKardex,
+  outs: readonly { date: string; qty: Decimal }[],
+  qty: Decimal,
+  from: string,
+): string | null {
+  const today = businessToday();
+  const dates = [
+    from,
+    today,
+    ...kardex.movements
+      .map((movement) => movement.date)
+      .filter((date) => date >= from && date <= today),
+  ]
+    .filter((date, index, all) => all.indexOf(date) === index)
+    .sort((a, b) => a.localeCompare(b));
+  return (
+    dates.find((date) => firstNegativeDate(kardex.movements, [...outs, { date, qty }]) === null) ??
+    null
+  );
 }
 
 export interface PlannedInvoice {
@@ -152,10 +178,14 @@ export function planInvoiceDispatches(
         lineNumber: line.lineNumber,
         sku: line.sku,
         qty: line.qty,
+        // D-364 permite elegir una fecha, pero no adelanta el stock producido: el parte sigue
+        // siendo el piso de la salida aunque la fecha elegida quede antes de la emisión.
         operationDate:
-          line.notBefore !== undefined && line.notBefore !== null && line.notBefore > inv.issueDate
+          line.notBefore !== undefined &&
+          line.notBefore !== null &&
+          line.notBefore > (inv.dispatchDate ?? inv.issueDate)
             ? line.notBefore
-            : inv.issueDate,
+            : (inv.dispatchDate ?? inv.issueDate),
       };
       if (!line.target.ok) {
         return {
@@ -164,6 +194,7 @@ export function planInvoiceDispatches(
           itemKey: null,
           action: 'REVIEW',
           reason: line.target.reason,
+          firstValidDate: null,
         };
       }
       const { itemKey, reserveQty, held } = line.target;
@@ -177,6 +208,7 @@ export function planInvoiceDispatches(
             itemKey: null,
             action: 'REVIEW',
             reason: `Hay ${left.toFixed(3)} ${held.unit} fabricados y reservados para la línea y se facturaron ${reserveQty.toFixed(3)}: falta producir`,
+            firstValidDate: null,
           };
         }
       }
@@ -199,6 +231,7 @@ export function planInvoiceDispatches(
           itemKey,
           action: 'REVIEW',
           reason: `La bobina está en el inventario inicial (${kardex.openingDate}) y el comprobante es anterior`,
+          firstValidDate: null,
         };
       }
       if (kardex.openingDate !== null && base.operationDate < kardex.openingDate) {
@@ -209,6 +242,7 @@ export function planInvoiceDispatches(
           itemKey,
           action: 'BEFORE_OPENING',
           reason: `Entregado antes del inventario inicial (${kardex.openingDate})`,
+          firstValidDate: null,
         };
       }
       const outs = outsByItem.get(itemKey) ?? [];
@@ -221,11 +255,19 @@ export function planInvoiceDispatches(
           itemKey,
           action: 'REVIEW',
           reason: `Una salida el ${base.operationDate} deja el kardex negativo el ${negativeOn}`,
+          firstValidDate: firstValidDate(kardex, outs, reserveQty, base.operationDate),
         };
       }
       outsByItem.set(itemKey, candidate);
       consumeHeld();
-      return { ...base, reserveQty, itemKey, action: 'DISPATCH', reason: null };
+      return {
+        ...base,
+        reserveQty,
+        itemKey,
+        action: 'DISPATCH',
+        reason: null,
+        firstValidDate: null,
+      };
     }),
   }));
 }

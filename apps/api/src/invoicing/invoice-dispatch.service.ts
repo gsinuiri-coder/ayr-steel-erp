@@ -45,6 +45,7 @@ export const AT_ISSUE_DATE_REASON = 'despacho a la fecha del comprobante';
 export const BEFORE_OPENING_REASON = 'entregado antes del inventario inicial';
 export const AFTER_PRODUCTION_REASON =
   'despacho a la fecha del último parte de producción (posterior al comprobante)';
+export const USER_CHOSEN_DATE_REASON = 'despacho en fecha elegida por el usuario';
 
 export interface PlanItemInfo {
   key: string;
@@ -64,6 +65,8 @@ export interface PlanSimulation {
   /** Proyección de solo lectura: fecha destino de entradas PURCHASE ya clasificadas como seguras. */
   movedPurchaseEntries?: ReadonlyMap<string, string>;
   priorOuts?: ReadonlyMap<string, readonly { date: string; qty: Decimal }[]>;
+  /** D-364: fecha candidata del despacho rápido, ya validada por OperationDateService. */
+  dispatchDate?: string;
 }
 
 export interface InvoiceDispatchPlan {
@@ -76,9 +79,10 @@ function day(value: Date): string {
 }
 
 /**
- * Las notas con que este servicio firma cada despacho que crea (D-278, D-285). Son también la
- * marca de «lo creó el despacho a la fecha del comprobante» que D-288 usa para re-fecharlo: un
- * despacho manual enlazado al comprobante lleva la nota que le puso quien lo registró.
+ * Las notas con que este servicio firma cada despacho que crea (D-278, D-285). Las tres
+ * automáticas son también la marca que D-288 usa para re-fecharlas al corregir la emisión. Una
+ * fecha elegida en D-364 queda diferenciada: expresa una salida física deliberadamente distinta
+ * y D-288 no puede reemplazarla en silencio por la fecha de emisión nueva.
  */
 export const atIssueDateNotes = {
   atIssueDate: (number: string) => `Despacho a la fecha del comprobante ${number} (D-278)`,
@@ -86,12 +90,18 @@ export const atIssueDateNotes = {
     `Despacho de ${number} a la fecha del último parte de producción (D-285)`,
   beforeOpening: (number: string) =>
     `Entregado antes del inventario inicial — comprobante ${number} (D-278)`,
+  userChosenDate: (number: string) =>
+    `Despacho de ${number} con fecha elegida por el usuario (D-364)`,
 };
 
 /** D-288: ¿este despacho lo creó «Despachar a la fecha del comprobante» para `number`? */
 export function isAtIssueDateDispatch(notes: string | null, number: string | null): boolean {
   if (notes === null || number === null) return false;
-  return Object.values(atIssueDateNotes).some((note) => note(number) === notes);
+  return [
+    atIssueDateNotes.atIssueDate,
+    atIssueDateNotes.afterProduction,
+    atIssueDateNotes.beforeOpening,
+  ].some((note) => note(number) === notes);
 }
 
 export { REDATE_REASON } from './invoice-dispatch-plan';
@@ -111,7 +121,8 @@ function sumByLine(
 }
 
 /**
- * D-278: despacho de lo facturado y no despachado, a la fecha del comprobante.
+ * D-364: despacho de lo facturado y no despachado, con el default de fecha de D-285 o una
+ * fecha elegida que sigue pasando por el kardex.
  *
  * Todo lo que escribe pasa por `DispatchesService.createInTx` —y de ahí por
  * `InventoryService.record` (regla dura 8)—: un despacho de recojo (sin guía) fechado el día de
@@ -129,12 +140,18 @@ export class InvoiceDispatchService {
     private readonly operationDate: OperationDateService,
   ) {}
 
-  /** Qué haría el botón «Despachar a la fecha del comprobante», sin escribir nada. */
-  async preview(actor: RequestUser, invoiceId: string): Promise<InvoiceDispatchPlanDto> {
+  /** Qué haría el botón de despacho rápido, sin escribir nada. */
+  async preview(
+    actor: RequestUser,
+    invoiceId: string,
+    requestedDate?: string,
+  ): Promise<InvoiceDispatchPlanDto> {
+    const dispatchDate =
+      requestedDate === undefined ? undefined : this.operationDate.resolve(actor, requestedDate);
     const plan = await this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-        return this.buildPlan(tx, { id: invoiceId });
+        return this.buildPlan(tx, { id: invoiceId }, { dispatchDate });
       },
       { timeout: 30_000 },
     );
@@ -148,11 +165,17 @@ export class InvoiceDispatchService {
   async executeForInvoice(
     actor: RequestUser,
     invoiceId: string,
+    requestedDate?: string,
   ): Promise<InvoiceDispatchResultDto> {
-    return this.prisma.$transaction((tx) => this.executeInTx(tx, actor, invoiceId), {
-      // Un despacho por comprobante, con los locks de bobina y saldo de siempre.
-      timeout: 60_000,
-    });
+    const dispatchDate =
+      requestedDate === undefined ? undefined : this.operationDate.resolve(actor, requestedDate);
+    return this.prisma.$transaction(
+      (tx) => this.executeInTx(tx, actor, invoiceId, undefined, dispatchDate),
+      {
+        // Un despacho por comprobante, con los locks de bobina y saldo de siempre.
+        timeout: 60_000,
+      },
+    );
   }
 
   /** D-288: los despachos vigentes que cubren el comprobante, marcando los re-fechables. */
@@ -273,6 +296,7 @@ export class InvoiceDispatchService {
     actor: RequestUser,
     invoiceId: string,
     expected?: PlannedInvoice,
+    dispatchDate?: string,
   ): Promise<InvoiceDispatchResultDto> {
     const exists = await tx.fiscalDocument.findUnique({
       where: { id: invoiceId },
@@ -288,7 +312,7 @@ export class InvoiceDispatchService {
         SELECT "id" FROM "sales_orders" WHERE "id" = ${exists.salesOrderId}::uuid FOR UPDATE
       `;
     }
-    const plan = await this.buildPlan(tx, { id: invoiceId });
+    const plan = await this.buildPlan(tx, { id: invoiceId }, { dispatchDate });
     const invoice = plan.invoices[0];
     if (invoice === undefined) {
       throw new BadRequestException('El comprobante no tiene líneas facturadas sin despachar');
@@ -329,24 +353,32 @@ export class InvoiceDispatchService {
     for (const l of toDispatch)
       byDate.set(l.operationDate, [...(byDate.get(l.operationDate) ?? []), l]);
     for (const [operationDate, lines] of [...byDate].sort(([a], [b]) => a.localeCompare(b))) {
+      const userChosenDate = dispatchDate !== undefined;
       const afterProduction = operationDate !== invoice.issueDate;
+      const reason = userChosenDate
+        ? USER_CHOSEN_DATE_REASON
+        : afterProduction
+          ? AFTER_PRODUCTION_REASON
+          : AT_ISSUE_DATE_REASON;
       const id = await this.dispatches.createInTx(
         tx,
         actor,
         {
           ...base,
           dispatchDate: operationDate,
-          notes: afterProduction
-            ? atIssueDateNotes.afterProduction(invoice.number)
-            : atIssueDateNotes.atIssueDate(invoice.number),
+          notes: userChosenDate
+            ? atIssueDateNotes.userChosenDate(invoice.number)
+            : afterProduction
+              ? atIssueDateNotes.afterProduction(invoice.number)
+              : atIssueDateNotes.atIssueDate(invoice.number),
           items: lines.map((l) => ({
             salesOrderItemId: l.orderItemId,
             qty: l.qty.toFixed(3),
           })),
         },
         {
-          movementNote: `${afterProduction ? AFTER_PRODUCTION_REASON : AT_ISSUE_DATE_REASON} ${invoice.number}`,
-          auditReason: afterProduction ? AFTER_PRODUCTION_REASON : AT_ISSUE_DATE_REASON,
+          movementNote: `${reason} ${invoice.number}`,
+          auditReason: reason,
         },
       );
       await this.dispatches.linkInvoiceInTx(tx, id, invoice.invoiceId);
@@ -358,7 +390,13 @@ export class InvoiceDispatchService {
         actor,
         {
           ...base,
-          notes: atIssueDateNotes.beforeOpening(invoice.number),
+          dispatchDate: beforeOpening[0]?.operationDate ?? invoice.issueDate,
+          // D-364: aunque no emita SALE, una fecha elegida también es una decisión física y
+          // D-288 no puede convertirla luego en «fecha de emisión» al corregir el comprobante.
+          notes:
+            dispatchDate !== undefined
+              ? atIssueDateNotes.userChosenDate(invoice.number)
+              : atIssueDateNotes.beforeOpening(invoice.number),
           items: beforeOpening.map((l) => ({
             salesOrderItemId: l.orderItemId,
             qty: l.qty.toFixed(3),
@@ -396,9 +434,11 @@ export class InvoiceDispatchService {
           operationDate: l.operationDate,
           reason:
             l.action === 'DISPATCH'
-              ? l.operationDate === invoice.issueDate
-                ? AT_ISSUE_DATE_REASON
-                : AFTER_PRODUCTION_REASON
+              ? dispatchDate !== undefined
+                ? USER_CHOSEN_DATE_REASON
+                : l.operationDate === invoice.issueDate
+                  ? AT_ISSUE_DATE_REASON
+                  : AFTER_PRODUCTION_REASON
               : l.action === 'BEFORE_OPENING'
                 ? BEFORE_OPENING_REASON
                 : l.reason,
@@ -754,7 +794,11 @@ export class InvoiceDispatchService {
       });
     }
 
-    const planned = planInvoiceDispatches(planInputs, kardex, sim.priorOuts);
+    const planned = planInvoiceDispatches(
+      planInputs.map((input) => ({ ...input, dispatchDate: sim.dispatchDate })),
+      kardex,
+      sim.priorOuts,
+    );
     return {
       invoices: planned.map((p) => ({
         ...p,
@@ -790,6 +834,7 @@ function toPlanDto(
       action: l.action,
       operationDate: l.operationDate,
       reason: l.reason,
+      firstValidDate: l.firstValidDate,
     })),
   };
 }
