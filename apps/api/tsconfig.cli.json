@@ -16,7 +16,8 @@
     "prisma/opening-date-cli.ts",
     "prisma/dispatch-redate-cli.ts",
     "prisma/purge-cancelled-quotations-cli.ts",
-    "prisma/terminate-zero-coils-cli.ts"
+    "prisma/terminate-zero-coils-cli.ts",
+    "prisma/fix-purchase-received-dates-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

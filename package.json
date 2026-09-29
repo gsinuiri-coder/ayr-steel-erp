@@ -58,6 +58,7 @@
     "backfill:seller-scope": "node scripts/backfill-seller-scope.mjs",
     "backfill:film": "node scripts/backfill-film.mjs",
     "terminate:zero-coils": "node scripts/terminate-zero-coils.mjs",
+    "fix:purchase-received-dates": "node scripts/fix-purchase-received-dates.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },
   "devDependencies": {
