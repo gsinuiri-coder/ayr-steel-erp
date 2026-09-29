@@ -52,7 +52,9 @@ export function countUndispatchedByStatus(
   }[],
   rows: readonly { status: string }[],
 ): UndispatchedInspection['counts'] {
-  const statuses = [...new Set([...documents.map((d) => d.status), 'ANNULLED', 'VOIDED'])].sort();
+  const statuses = [...new Set([...documents.map((d) => d.status), 'ANNULLED', 'VOIDED'])].sort(
+    (a, b) => a.localeCompare(b),
+  );
   return statuses.map((status) => ({
     status,
     documents: documents.filter((d) => d.status === status).length,
