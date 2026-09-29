@@ -17,7 +17,8 @@
     "prisma/dispatch-redate-cli.ts",
     "prisma/purge-cancelled-quotations-cli.ts",
     "prisma/terminate-zero-coils-cli.ts",
-    "prisma/fix-purchase-received-dates-cli.ts"
+    "prisma/fix-purchase-received-dates-cli.ts",
+    "prisma/inspect-undispatched-invoices-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

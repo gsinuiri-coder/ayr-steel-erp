@@ -61,6 +61,8 @@ export interface PlanItemInfo {
  */
 export interface PlanSimulation {
   movedOpening?: ReadonlyMap<string, string>;
+  /** Proyección de solo lectura: fecha destino de entradas PURCHASE ya clasificadas como seguras. */
+  movedPurchaseEntries?: ReadonlyMap<string, string>;
   priorOuts?: ReadonlyMap<string, readonly { date: string; qty: Decimal }[]>;
 }
 
@@ -702,7 +704,7 @@ export class InvoiceDispatchService {
     const dated = dropSameDayReversals(
       movements.map((m) => ({
         ...m,
-        date: moved.get(m.id.toString()) ?? day(m.operationDate),
+        date: sim.movedPurchaseEntries?.get(m.id.toString()) ?? moved.get(m.id.toString()) ?? day(m.operationDate),
       })),
     ).sort((a, b) =>
       a.date !== b.date

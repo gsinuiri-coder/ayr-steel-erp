@@ -59,6 +59,7 @@
     "backfill:film": "node scripts/backfill-film.mjs",
     "terminate:zero-coils": "node scripts/terminate-zero-coils.mjs",
     "fix:purchase-received-dates": "node scripts/fix-purchase-received-dates.mjs",
+    "inspect:undispatched-invoices": "node scripts/inspect-undispatched-invoices.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },
   "devDependencies": {

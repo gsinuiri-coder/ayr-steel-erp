@@ -240,6 +240,29 @@ beforeEach(() => {
 });
 
 describe('InvoiceDispatchService (D-278)', () => {
+  it('proyecta una entrada PURCHASE segura en agosto sin escribir y destraba firstNegativeDate', async () => {
+    const tx = fakeTx({
+      invoices: [{
+        id: 'F1', number: 'FFA1-1', issueDate: '2026-08-20',
+        items: [{ id: 'fi-1', orderItemId: 'l1', qty: '4' }],
+      }],
+      orderItems: [{ ...MIXED.orderItems[0]!, qty: '4', reserveQty: '4' }],
+      movements: [{
+        itemType: 'PRODUCT', itemId: 'upvc', type: 'IN', qty: '4',
+        refType: 'PURCHASE', date: '2026-09-27',
+      }],
+      balances: [{ itemType: 'PRODUCT', itemId: 'upvc', qty: '4', avgCost: '1' }],
+    });
+    const { svc } = service(tx);
+    const before = await svc.buildPlan(tx as never, {});
+    expect(before.invoices[0]!.lines[0]!.action).toBe('REVIEW');
+    const after = await svc.buildPlan(tx as never, {}, {
+      movedPurchaseEntries: new Map([['1', '2026-08-20']]),
+    });
+    expect(after.invoices[0]!.lines[0]!.action).toBe('DISPATCH');
+    expect(tx.inventoryMovement.findMany).toHaveBeenCalledTimes(2);
+  });
+
   it('planAll: excepción para lo anterior a la carga inicial, salida prorrateada para la bobina', async () => {
     const tx = fakeTx(MIXED);
     const { svc } = service(tx);
