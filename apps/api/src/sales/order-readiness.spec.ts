@@ -1,4 +1,61 @@
-import { deriveOrderReadiness, deriveOrderStage, orderStageWhere } from './order-readiness';
+import { Decimal } from '@ayr/shared';
+import {
+  deriveOrderReadiness,
+  deriveOrderStage,
+  orderStageWhere,
+  readinessOrderFromProduction,
+} from './order-readiness';
+
+describe('avance de una OP desde los largos guardados', () => {
+  it('una plancha acumula dos reportes sin meters_m y conserva el denominador existente', () => {
+    const order = readinessOrderFromProduction({
+      status: 'IN_PROGRESS',
+      reports: [
+        { metersM: null, piecesDetail: [{ lengthMm: new Decimal('6000.00'), qty: 2 }] },
+        { metersM: null, piecesDetail: [{ lengthMm: new Decimal('3500.00'), qty: 2 }] },
+      ],
+      reservation: {
+        salesOrderItem: {
+          reserveQty: new Decimal('88.000'),
+        },
+      },
+    });
+
+    expect(order).toEqual({ status: 'IN_PROGRESS', orderedMl: '88', reportedMl: '19.000' });
+  });
+
+  it('una cobertura a medida conserva la suma de sus largos reportados', () => {
+    const order = readinessOrderFromProduction({
+      status: 'CLOSED',
+      reports: [
+        {
+          metersM: new Decimal('20.000'),
+          piecesDetail: [{ lengthMm: new Decimal('5000'), qty: 4 }],
+        },
+      ],
+      reservation: {
+        salesOrderItem: {
+          reserveQty: new Decimal('90.000'),
+        },
+      },
+    });
+    expect(order.reportedMl).toBe('20.000');
+  });
+
+  it('un accesorio conserva los metros directos sin detalle de largos', () => {
+    expect(
+      readinessOrderFromProduction({
+        status: 'CLOSED',
+        reports: [{ metersM: new Decimal('5.000'), piecesDetail: [] }],
+        reservation: {
+          salesOrderItem: {
+            reserveQty: new Decimal('12.000'),
+          },
+        },
+      }),
+    ).toEqual({ status: 'CLOSED', orderedMl: '12', reportedMl: '5.000' });
+  });
+});
 
 describe('deriveOrderReadiness', () => {
   it.each([

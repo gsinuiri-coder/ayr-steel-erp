@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { Decimal, toDecimal, type OrderStage, type SalesOrderStatus } from '@ayr/shared';
+import { sumReportedMeters } from '../production/reported-meters';
 
 export const ORDER_READINESS = [
   'SIN_PRODUCCION',
@@ -13,6 +14,26 @@ export interface ReadinessOrder {
   status: 'DRAFT' | 'IN_PROGRESS' | 'CLOSED' | 'CANCELLED';
   orderedMl: string;
   reportedMl: string;
+}
+
+interface ProgressOrder {
+  status: ReadinessOrder['status'];
+  reports: readonly {
+    metersM: Prisma.Decimal | null;
+    piecesDetail: readonly { lengthMm: Prisma.Decimal; qty: number }[];
+  }[];
+  reservation: {
+    salesOrderItem: { reserveQty: Prisma.Decimal } | null;
+  } | null;
+}
+
+/** Proyección de lectura: conserva el denominador existente y deriva los metros reportados. */
+export function readinessOrderFromProduction(order: ProgressOrder): ReadinessOrder {
+  return {
+    status: order.status,
+    orderedMl: order.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000',
+    reportedMl: (sumReportedMeters(order.reports) ?? new Decimal(0)).toFixed(3),
+  };
 }
 
 /** Estado derivado RF-S3c: sólo OP vivas, Decimal y sin persistir una columna/enum. */

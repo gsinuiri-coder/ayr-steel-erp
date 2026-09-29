@@ -630,8 +630,10 @@ export const productionOrderSchema = z.object({
   scrapKg: z.string().nullable(),
   /** Solo en coberturas cerradas: los kilos que planta declaró que la bobina consumió (D-089). */
   consumedDeclaredKg: z.string().nullable(),
-  /** Metros lineales buenos acumulados de los reportes vigentes. Null en drywall. */
+  /** Metros que entraron al kardex en MTR; null para una plancha NIU y drywall. */
   metersReported: z.string().nullable(),
+  /** Metros de avance desde largos reportados o metros directos; null en drywall. */
+  planMetersReported: z.string().nullable(),
   /**
    * D-146/D-148: metros lineales que el plan de corte encarga (`Σ cantidad × largo`). Null
    * en drywall, que no tiene plan de largos. Va en el DTO —y no derivado de `items` en la

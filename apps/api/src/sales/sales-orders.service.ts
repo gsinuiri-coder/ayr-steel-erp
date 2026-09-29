@@ -86,7 +86,12 @@ import {
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
 } from '@ayr/shared';
-import { deriveOrderReadiness, deriveOrderStage, orderStagesWhere } from './order-readiness';
+import {
+  deriveOrderReadiness,
+  deriveOrderStage,
+  orderStagesWhere,
+  readinessOrderFromProduction,
+} from './order-readiness';
 import {
   shortfallAudit,
   splitReservable,
@@ -2780,7 +2785,10 @@ export class SalesOrdersService {
         },
         reports: {
           where: { status: 'ACTIVE' },
-          select: { metersM: true },
+          select: {
+            metersM: true,
+            piecesDetail: { select: { lengthMm: true, qty: true } },
+          },
         },
       },
     });
@@ -2794,21 +2802,7 @@ export class SalesOrdersService {
         ? 'EN_COLA'
         : null;
 
-    const readinessOrders = ops.map((op) => {
-      const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
-      const reportedMl = op.reports
-        .reduce(
-          (sum, r) => (r.metersM ? sum.plus(toDecimal(r.metersM.toString())) : sum),
-          new Decimal(0),
-        )
-        .toFixed(3);
-
-      return {
-        status: op.status,
-        orderedMl,
-        reportedMl,
-      };
-    });
+    const readinessOrders = ops.map(readinessOrderFromProduction);
     const readiness = deriveOrderReadiness(readinessOrders);
 
     return { queueStatus, readiness };
@@ -2905,9 +2899,18 @@ export class SalesOrdersService {
         status: true,
         kind: true,
         reservation: {
-          select: { salesOrderId: true, salesOrderItem: { select: { reserveQty: true } } },
+          select: {
+            salesOrderId: true,
+            salesOrderItem: { select: { reserveQty: true } },
+          },
         },
-        reports: { where: { status: 'ACTIVE' }, select: { metersM: true } },
+        reports: {
+          where: { status: 'ACTIVE' },
+          select: {
+            metersM: true,
+            piecesDetail: { select: { lengthMm: true, qty: true } },
+          },
+        },
       },
     });
 
@@ -2926,16 +2929,7 @@ export class SalesOrdersService {
           ? 'EN_COLA'
           : null;
 
-      const readinessOrders = orderOps.map((op) => {
-        const orderedMl = op.reservation?.salesOrderItem?.reserveQty?.toString() ?? '0.000';
-        const reportedMl = op.reports
-          .reduce(
-            (sum, r) => (r.metersM ? sum.plus(toDecimal(r.metersM.toString())) : sum),
-            new Decimal(0),
-          )
-          .toFixed(3);
-        return { status: op.status, orderedMl, reportedMl };
-      });
+      const readinessOrders = orderOps.map(readinessOrderFromProduction);
       const readiness = deriveOrderReadiness(readinessOrders);
       contextByOrderId.set(row.id, { queueStatus, readiness });
     }

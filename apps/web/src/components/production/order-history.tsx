@@ -474,12 +474,13 @@ function CoilOverflow({
 }
 
 function producedLabel(order: ProductionOrderListItemDto): string {
+  if (order.planMeters !== null) {
+    return `${formatQty(order.planMetersReported ?? '0.000', 'm')} / ${formatQty(order.planMeters, 'm')}`;
+  }
   if (order.metersReported === null) {
     return order.targetPieces === null
       ? `${String(order.piecesReported)} pzs`
       : `${String(order.piecesReported)} / ${String(order.targetPieces)} pzs`;
   }
-  return order.planMeters === null
-    ? `${formatQty(order.metersReported, 'm')} · ${String(order.piecesReported)} pzs`
-    : `${formatQty(order.metersReported, 'm')} / ${formatQty(order.planMeters, 'm')}`;
+  return `${formatQty(order.metersReported, 'm')} · ${String(order.piecesReported)} pzs`;
 }

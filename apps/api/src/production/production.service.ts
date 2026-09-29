@@ -64,6 +64,7 @@ import {
   productionCost,
   type StripAllocationRow,
 } from './production-math';
+import { sumReportedMeters } from './reported-meters';
 
 const ORDER_RELATIONS = {
   businessLine: { select: { code: true } },
@@ -168,7 +169,14 @@ const LIST_RELATIONS = {
       coil: { select: { code: true } },
     },
   },
-  reports: { select: { pieces: true, metersM: true, status: true } },
+  reports: {
+    select: {
+      pieces: true,
+      metersM: true,
+      status: true,
+      piecesDetail: { select: { lengthMm: true, qty: true } },
+    },
+  },
 } satisfies Prisma.ProductionOrderInclude;
 
 type OrderForList = Prisma.ProductionOrderGetPayload<{ include: typeof LIST_RELATIONS }>;
@@ -1681,8 +1689,7 @@ export class ProductionService {
       new Decimal(0),
     );
 
-    // D-083: los metros solo existen en una cobertura a medida. `null` en drywall y en una
-    // plancha de catálogo es la señal de que la unidad del producto son piezas.
+    // D-083: metersReported conserva la unidad de kardex; el avance del plan lee largos.
     const reportedMeters = activeReports.some((r) => r.metersM !== null)
       ? activeReports.reduce(
           (acc, r) =>
@@ -1690,6 +1697,8 @@ export class ProductionService {
           new Decimal(0),
         )
       : null;
+    const planMetersReported =
+      order.kind === ProductionOrderKind.ROOFING ? sumReportedMeters(activeReports) : null;
     const salesOrder = order.reservation?.salesOrder ?? null;
 
     return {
@@ -1721,6 +1730,12 @@ export class ProductionService {
       notes: order.notes,
       piecesReported: activeReports.reduce((acc, r) => acc + r.pieces, 0),
       metersReported: reportedMeters === null ? null : toFixedString(reportedMeters, 'KG'),
+      planMetersReported:
+        planMetersReported === null
+          ? order.kind === ProductionOrderKind.ROOFING
+            ? '0.000'
+            : null
+          : planMetersReported.toFixed(3),
       // D-148: lo que el plan de corte encarga. Null en drywall, que no tiene plan de largos.
       planMeters:
         order.kind === ProductionOrderKind.ROOFING
