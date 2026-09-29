@@ -39,9 +39,9 @@ El undo tiene una guarda adicional: rechaza **todo** el lote antes de escribir s
 
 ## Ejecución futura por el dueño
 
-**Recomendación:** ejecutar **solo estas siete compras** tras un dry-run fresco de producción que confirme que siguen seguras y después del respaldo `respaldo-pre-fechas-2026-09-29`. No ejecutar las dos excluidas ni inferir que el comprobante ausente ya quedó despachable. El dueño da OK comando por comando en su ventana; esta corrida no ejecuta ninguno de los siguientes comandos contra producción.
+**Recomendación al cierre del ensayo demo (superada por el diagnóstico productivo de abajo):** ejecutar **solo estas siete compras** si el dry-run fresco de producción confirmaba que seguían seguras y después del respaldo `respaldo-pre-fechas-2026-09-29`. No ejecutar las dos excluidas ni inferir que el comprobante ausente ya quedó despachable. El dueño dio OK comando por comando; el dry-run productivo detectó una tercera exclusión, por lo que estos comandos de siete **ya no deben ejecutarse**.
 
-Comandos exactos en PowerShell, desde este worktree. El dry-run genera `local-data/fechas-recibidas-production.json` con un plan congelado; la ejecución vuelve a clasificar y aborta sin escribir si el plan cambió. `--only` impide ampliar el lote aunque aparezcan nuevas compras seguras.
+Comandos del plan original de siete en PowerShell, conservados como registro de lo autorizado. **No usar tras el resultado de la ventana descrita abajo.** El dry-run genera `local-data/fechas-recibidas-production.json` con un plan congelado; la ejecución vuelve a clasificar y aborta sin escribir si el plan cambió. `--only` impide ampliar el lote aunque aparezcan nuevas compras seguras.
 
 ```powershell
 Set-Location 'C:\Users\User\Documents\workspace\ayr\ayr-fechas'
@@ -52,3 +52,9 @@ pnpm fix:purchase-received-dates --branch production --confirm-production --undo
 ```
 
 El tercer comando es la reversa, solo si el dueño decide deshacer el lote. El lote conserva historial append-only. El `--confirm-production` también es obligatorio para el dry-run por el gate `runApiCli`.
+
+## Ventana de producción del 2026-09-29: ejecución detenida
+
+Con el OK del dueño se creó la rama Neon `respaldo-pre-fechas-2026-09-29` (`br-lingering-hill-aen93dl1`), hija de `production` (`br-steep-night-ae8n7t1k`). El dry-run fresco con el `--only` de siete **abortó sin escribir**: `NF1-1` dejó de ser segura. Una lectura de los nueve candidatos confirmó **seis seguras y tres excluidas**. La nueva salida es `inventory_movements.id = 368`, `SALE` de **100 unidades** de `AUTOPERF10X1`, fechada **2026-08-17**. `NF1-1` iría al 2026-08-03 y podría recostear esa salida; se excluye junto a `E001-262` y `F013-942`. Las otras seis conservaron clasificación segura en esa lectura.
+
+El segundo dry-run fue solo diagnóstico, batchId `6f601daa-6bcc-4c53-a8ad-122a5c0c30bc`; su plan se apartó de la ruta que usa `--execute` y quedó en `local-data/fechas-recibidas-production-diagnostico-20260929.json`. **No se ejecutó ninguna corrección en producción, no hubo undo y no se intentó el despacho.** La instrucción autorizada era ejecutar las siete, no reducir el lote unilateralmente. Para seguir, hace falta un nuevo alcance explícito de seis y otro dry-run fresco inmediatamente anterior a su execute; el comando de siete de la sección anterior ya no procede.
