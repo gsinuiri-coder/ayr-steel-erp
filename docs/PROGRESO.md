@@ -16,8 +16,22 @@ E2E completo, análisis estático y smoke Neon `ci`). Desde un worktree aislado 
 alcanzó health 200 y falló por cliente Prisma sin generar en el worktree nuevo (infraestructura
 local). Tras `pnpm --filter @ayr/api db:generate`, el smoke completo pasó: health, login,
 5 líneas de negocio, 176 productos, 120 filas de inventario valorizado, 5 bobinas, reporte
-mensual y PSE apagado. El admin efímero se eliminó. No se desplegó la rama del gate PSE
-`fix/pse-correlativos-100`; su PR #63 sigue en borrador y su CI anterior a este apunte pasó.
+mensual y PSE apagado. El admin efímero se eliminó. La rama del gate PSE
+`fix/pse-correlativos-100` se publicó después como PR #63.
+
+**PR #63 publicado el 2026-09-30.** El dueño confirmó UAT de #62 y revisión de la entrega.
+La CI del PR pasó en `18a4eb5` (calidad, E2E completo, análisis estático y smoke Neon `ci`).
+No hay cambios de schema ni migraciones respecto de `22fdfe7`; las nueve versiones de secretos
+coincidieron con el deploy anterior. `pnpm deploy:api` creó
+`ayr-steel-erp-api-00068-44h`: servicio y revisión con `git-sha=18a4eb5`, 100 % del tráfico.
+El smoke previo con la web anterior pasó. Con el OK individual D-232, `main` avanzó directamente
+de `22fdfe7` a `18a4eb5`; GitHub marcó PR #63 como integrado sin commit de merge adicional y
+Vercel publicó **Production** desde el mismo SHA. `pnpm smoke:prod --base-url
+https://v2.mareliac.pe` pasó después: health 200, login, 5 líneas, 176 productos, 120 filas
+de inventario, 5 bobinas, reporte mensual, PSE apagado; el admin efímero se eliminó. La
+comparación de runtime entre el SHA desplegado y `origin/main` quedó vacía. La [CI de `main`
+en `18a4eb5`](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/36782561987)
+terminó verde: calidad, E2E Playwright completo, análisis estático y smoke/migraciones Neon `ci`.
 
 El gate `pnpm e2e:pse` local falló **12/12**: el offset de D-202 llevó las cinco series a
 `40776980`, mientras Nubefact conservaba `F001=39420975`, `B001=39420976` y
@@ -40,9 +54,8 @@ contener solo casos `@pse`. La autorrevisión final detectó que el gate podía 
 PSE en su primera corrida: ahora exige que URL y token locales coincidan con las claves demo
 explícitas de `.env.setup` antes de reservar. `pnpm test:scripts` pasó 47/47 tras la corrección;
 unitarios API en serie 1966/1966;
-unitarios web 88/88. Lint, typecheck y build pasaron. La CI de PR #63 pasó en `f713d7b`;
-este apunte documental aún no está publicado. Pendiente: revisión del dueño y autorización
-individual de cualquier deploy de esa rama.
+unitarios web 88/88. Lint, typecheck y build pasaron. La CI de PR #63 pasó en `18a4eb5`;
+la revisión del dueño y el deploy quedaron completados como se describe arriba.
 
 QA común con builds de producción y Docker/MinIO local: primer pase de 462 casos en 49,0 min:
 452 passed, 6 failed, 3 skipped, 1 flaky. Los seis rojos se localizaron en
@@ -66,7 +79,8 @@ contingencia sin credenciales PSE y el gate separado ya pasó 12/12.
 Un diagnóstico del flaky de paginación en un pase anterior imprimió cookies de sesión de
 `ayr_local_e2e` en la salida del agente. Eran sesiones locales efímeras, sin credenciales de
 producción. Se invalidaron con el reset de esa base en la siguiente corrida y se evitó volver
-a imprimir contextos de error completos. No hubo escritura en Neon `production`.
+a imprimir contextos de error completos. El gate PSE no escribió en Neon `production`; los
+smokes posteriores solo crearon y borraron el admin efímero previsto.
 
 ## 2026-09-29 — D-364, fecha editable del despacho rápido
 

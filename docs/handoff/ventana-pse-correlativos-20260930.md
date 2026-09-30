@@ -2,10 +2,9 @@
 
 ## 1. Resumen
 
-Rama `fix/pse-correlativos-100` desde `origin/main` `22fdfe7`, en `../ayr-dep30`.
-El gate local PSE quedó verde con el avance de 100 por serie decidido por el dueño.
-El desfase previo de #62 quedó cerrado: la API de producción corre `git-sha=22fdfe7`, igual
-que `main`. Esta rama del gate PSE aún no se desplegó.
+PR #63 (`fix/pse-correlativos-100`) integrado en `main` por avance directo al SHA `18a4eb5`.
+El gate local PSE quedó verde con el avance de 100 por serie decidido por el dueño. El desfase
+previo de #62 se cerró en `22fdfe7`; el release final de #63 dejó API y web en `18a4eb5`.
 
 ## 2. Hecho
 
@@ -15,6 +14,16 @@ que `main`. Esta rama del gate PSE aún no se desplegó.
   `ayr-steel-erp-api-00067-qqg`, con label `git-sha=22fdfe7` en servicio y revisión, 100 % del
   tráfico. `pnpm smoke:prod` pasó completo tras generar Prisma Client en el worktree de release;
   el primer intento falló solo por esa dependencia local. El admin efímero se eliminó.
+- El dueño validó el UAT de #62 y revisó la entrega. CI de PR #63 verde en `18a4eb5`.
+  Sin migraciones nuevas ni cambios de código de producto respecto de `22fdfe7`; las nueve
+  versiones de secretos coincidieron con la revisión anterior.
+- Deploy de API de #63 a `ayr-steel-erp-api-00068-44h`, label `git-sha=18a4eb5` en servicio y
+  revisión, 100 % del tráfico. Smoke previo con web vieja verde. Con OK individual D-232,
+  `main` avanzó directamente al mismo SHA; GitHub marcó PR #63 como integrado y Vercel publicó
+  Production desde ese SHA. `pnpm smoke:prod --base-url https://v2.mareliac.pe` pasó completo
+  después del push; el admin efímero se eliminó. Diff de runtime contra `origin/main` vacío.
+  CI de `main` verde en `18a4eb5`, run `36782561987`: calidad, E2E Playwright completo,
+  análisis estático y smoke/migraciones Neon `ci`.
 - El gate `pnpm e2e:pse` guarda en el checkout principal los últimos correlativos de F001,
   B001, FC01 y T001 respaldados por Nubefact, inicia la siguiente corrida 100 después y
   conserva `BC01: null`. BC01 queda inactiva solo en Docker E2E PSE.
@@ -25,7 +34,7 @@ que `main`. Esta rama del gate PSE aún no se desplegó.
   en otra cuenta.
 - El gate completo pasó 12/12 en 6,1 min. Últimos confirmados: `F001=39421294`,
   `B001=39421285`, `FC01=39421282`, `T001=39431233`; BC01 sigue desconocido.
-- La suite común conserva el offset por reloj de D-202. No hubo escrituras en producción.
+- La suite común conserva el offset por reloj de D-202. El gate PSE no escribió en producción.
 - La QA común detectó y corrigió un reintento defectuoso del selector de cliente en
   `e2e/helpers/ui.ts` y una suposición de menos de 200 clientes en
   `selector-cliente-f8s3c.spec.ts`. Los seis casos afectados y la regresión de buscador abierto
@@ -44,21 +53,19 @@ que `main`. Esta rama del gate PSE aún no se desplegó.
 Commits locales de esta entrega, en orden: `fix(e2e): avanzar correlativos PSE por serie`
 (`ee1e4e6`), `test(e2e): estabilizar selectores y tabla de bobinas` (`bb94ea2`),
 `docs(pse): registrar decisión, revisión y QA` (`f713d7b`), y
-`docs(deploy): registrar cierre del desfase de #62` (este apunte).
+`docs(deploy): registrar cierre del desfase de #62` (`18a4eb5`). Este cierre posterior es solo
+documental y se agrega después de verificar la CI de `main`.
 
 ## 4. Bloqueos / pendientes
 
 - BC01: falta un último correlativo verificable y una boleta aceptada para ensayar su nota de
   crédito. Los demás casos PSE ya pasaron.
-- Revisión final del dueño y aprobaciones separadas para push, merge y deploy. Cada operación
-  sensible requiere comando exacto y OK explícito en la sesión.
-- La rama está publicada en PR #63 en borrador. Su CI pasó sobre `f713d7b`; el deploy de esta
-  rama y la revisión final del dueño siguen pendientes. El desfase anterior de #62 ya se cerró.
-- Git desregistró el worktree temporal `../ayr-r62`, pero Windows dejó su directorio con
-  `node_modules`. La política automática bloqueó `Remove-Item -Recurse`; se verificó que no hay
-  `local-data/` en ese directorio.
+- El dueño borró el residuo de `../ayr-r62`. También se retiraron `../ayr-fechadesp`,
+  `../ayr-fechas` y `../ayr-log` después de comprobar que sus trabajos se integraron; los cinco
+  archivos de `ayr-fechas/local-data/` se copiaron al checkout principal y se verificaron por
+  tamaño y hash antes del borrado. Los otros worktrees conservan trabajo o PR abiertos.
 - Sonnet no completó su pase por límite mensual de Claude Code; el segundo modelo disponible
-  revisó el diff y el informe indica la sustitución. Falta la revisión final del dueño.
+  revisó el diff y el informe indica la sustitución. El dueño confirmó la revisión final.
 
 ## 5. Cómo verificar
 
@@ -83,6 +90,6 @@ invalidaron con el siguiente reset de `ayr_local_e2e`, sin credenciales de produ
 
 ## 6. Siguiente sesión
 
-Para PR #63, solicitar la revisión del dueño y aprobación de las operaciones de publicación
-que falten; no confundirlo con el despliegue ya cerrado de `main` `22fdfe7`. Cada comando
-sensible exige su propio OK. No correr `e2e:prod`.
+No hay otra tarea autorizada en esta ventana. `BC01` permanece inactiva en el gate PSE hasta
+conocer su último correlativo y contar con una boleta aceptada; cualquier cambio posterior
+requiere una decisión del dueño. No correr `e2e:prod`.
