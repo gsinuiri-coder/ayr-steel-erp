@@ -6,8 +6,18 @@
 
 Ventana de API para `main` `22fdfe7`: CI verde; respaldo de `production`
 `respaldo-pre-deploy-20260930` (`br-summer-salad-aeal2b09`, padre `production`); 81 migraciones
-al día y `migrate diff` igual al drift conocido. La revisión activa previa de Cloud Run es
-`ayr-steel-erp-api-00066-6gt` (`git-sha=df520e0`, 100 %). No se ejecutó deploy.
+al día y `migrate diff` igual al drift conocido. Antes de cerrar el desfase de #62, la revisión
+activa de Cloud Run era `ayr-steel-erp-api-00066-6gt` (`git-sha=df520e0`, 100 %).
+
+**Desfase #62 cerrado el 2026-09-30.** La CI de `main` en `22fdfe7` terminó verde (calidad,
+E2E completo, análisis estático y smoke Neon `ci`). Desde un worktree aislado fijado en ese SHA,
+`pnpm deploy:api` desplegó `ayr-steel-erp-api-00067-qqg`; el servicio y la revisión llevan
+`git-sha=22fdfe7` y esa revisión recibe el 100 % del tráfico. El primer `pnpm smoke:prod`
+alcanzó health 200 y falló por cliente Prisma sin generar en el worktree nuevo (infraestructura
+local). Tras `pnpm --filter @ayr/api db:generate`, el smoke completo pasó: health, login,
+5 líneas de negocio, 176 productos, 120 filas de inventario valorizado, 5 bobinas, reporte
+mensual y PSE apagado. El admin efímero se eliminó. No se desplegó la rama del gate PSE
+`fix/pse-correlativos-100`; su PR #63 sigue en borrador y su CI anterior a este apunte pasó.
 
 El gate `pnpm e2e:pse` local falló **12/12**: el offset de D-202 llevó las cinco series a
 `40776980`, mientras Nubefact conservaba `F001=39420975`, `B001=39420976` y
@@ -30,8 +40,9 @@ contener solo casos `@pse`. La autorrevisión final detectó que el gate podía 
 PSE en su primera corrida: ahora exige que URL y token locales coincidan con las claves demo
 explícitas de `.env.setup` antes de reservar. `pnpm test:scripts` pasó 47/47 tras la corrección;
 unitarios API en serie 1966/1966;
-unitarios web 88/88. Lint, typecheck y build pasaron. Pendiente: CI, revisión del dueño y
-autorización individual del deploy.
+unitarios web 88/88. Lint, typecheck y build pasaron. La CI de PR #63 pasó en `f713d7b`;
+este apunte documental aún no está publicado. Pendiente: revisión del dueño y autorización
+individual de cualquier deploy de esa rama.
 
 QA común con builds de producción y Docker/MinIO local: primer pase de 462 casos en 49,0 min:
 452 passed, 6 failed, 3 skipped, 1 flaky. Los seis rojos se localizaron en

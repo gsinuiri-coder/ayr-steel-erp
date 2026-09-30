@@ -4,12 +4,17 @@
 
 Rama `fix/pse-correlativos-100` desde `origin/main` `22fdfe7`, en `../ayr-dep30`.
 El gate local PSE quedó verde con el avance de 100 por serie decidido por el dueño.
-La API de producción aún corre `git-sha=df520e0`; no se desplegó esta entrega.
+El desfase previo de #62 quedó cerrado: la API de producción corre `git-sha=22fdfe7`, igual
+que `main`. Esta rama del gate PSE aún no se desplegó.
 
 ## 2. Hecho
 
 - Respaldo Neon `respaldo-pre-deploy-20260930` (`br-summer-salad-aeal2b09`), 81 migraciones al
   día y `migrate diff` igual al drift conocido antes de la ventana.
+- CI de `main` `22fdfe7` verde. Deploy de API desde ese SHA a
+  `ayr-steel-erp-api-00067-qqg`, con label `git-sha=22fdfe7` en servicio y revisión, 100 % del
+  tráfico. `pnpm smoke:prod` pasó completo tras generar Prisma Client en el worktree de release;
+  el primer intento falló solo por esa dependencia local. El admin efímero se eliminó.
 - El gate `pnpm e2e:pse` guarda en el checkout principal los últimos correlativos de F001,
   B001, FC01 y T001 respaldados por Nubefact, inicia la siguiente corrida 100 después y
   conserva `BC01: null`. BC01 queda inactiva solo en Docker E2E PSE.
@@ -38,7 +43,8 @@ La API de producción aún corre `git-sha=df520e0`; no se desplegó esta entrega
 
 Commits locales de esta entrega, en orden: `fix(e2e): avanzar correlativos PSE por serie`
 (`ee1e4e6`), `test(e2e): estabilizar selectores y tabla de bobinas` (`bb94ea2`),
-`docs(pse): registrar decisión, revisión y QA` (este handoff).
+`docs(pse): registrar decisión, revisión y QA` (`f713d7b`), y
+`docs(deploy): registrar cierre del desfase de #62` (este apunte).
 
 ## 4. Bloqueos / pendientes
 
@@ -46,7 +52,11 @@ Commits locales de esta entrega, en orden: `fix(e2e): avanzar correlativos PSE p
   crédito. Los demás casos PSE ya pasaron.
 - Revisión final del dueño y aprobaciones separadas para push, merge y deploy. Cada operación
   sensible requiere comando exacto y OK explícito en la sesión.
-- CI y smoke de producción pendientes hasta publicar la rama y desplegar un SHA coincidente.
+- La rama está publicada en PR #63 en borrador. Su CI pasó sobre `f713d7b`; el deploy de esta
+  rama y la revisión final del dueño siguen pendientes. El desfase anterior de #62 ya se cerró.
+- Git desregistró el worktree temporal `../ayr-r62`, pero Windows dejó su directorio con
+  `node_modules`. La política automática bloqueó `Remove-Item -Recurse`; se verificó que no hay
+  `local-data/` en ese directorio.
 - Sonnet no completó su pase por límite mensual de Claude Code; el segundo modelo disponible
   revisó el diff y el informe indica la sustitución. Falta la revisión final del dueño.
 
@@ -73,6 +83,6 @@ invalidaron con el siguiente reset de `ayr_local_e2e`, sin credenciales de produ
 
 ## 6. Siguiente sesión
 
-Continuar esta ventana autorizada: publicar la rama con aprobación, comprobar CI, solicitar
-aprobación del merge a `main`, luego del deploy de API, y correr `pnpm smoke:prod` desde el SHA
-desplegado. No correr `e2e:prod`.
+Para PR #63, solicitar la revisión del dueño y aprobación de las operaciones de publicación
+que falten; no confundirlo con el despliegue ya cerrado de `main` `22fdfe7`. Cada comando
+sensible exige su propio OK. No correr `e2e:prod`.
