@@ -95,7 +95,7 @@ export default defineConfig({
         {
           command: isCI ? 'pnpm --filter @ayr/api start' : 'pnpm --filter @ayr/api exec nest start',
           url: `${API_ORIGIN}/health`,
-          reuseExistingServer: !isCI,
+          reuseExistingServer: !isCI && !runsPse,
           timeout: 180_000,
           env: {
             PORT: API_PORT,
@@ -124,7 +124,7 @@ export default defineConfig({
         {
           command: isCI ? 'pnpm --filter @ayr/web start' : 'pnpm --filter @ayr/web dev',
           url: 'http://localhost:3001/login',
-          reuseExistingServer: !isCI && !process.env.E2E_API_PORT,
+          reuseExistingServer: !isCI && !runsPse && !process.env.E2E_API_PORT,
           timeout: 180_000,
           env: { API_URL: API_ORIGIN },
         },

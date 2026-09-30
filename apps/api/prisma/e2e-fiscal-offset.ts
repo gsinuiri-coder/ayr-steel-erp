@@ -1,31 +1,11 @@
 /**
- * Adelanta el correlativo de todas las series fiscales de la base de PRUEBAS a un punto de
- * partida propio de esta corrida (D-202). Corre desde `e2e/global-setup.ts`, **solo después
- * de un reset** y del seed, y solo contra una base de la lista blanca de `test-db-guard.ts`.
+ * Adelanta el correlativo de las series fiscales de la base de PRUEBAS tras reset y seed.
+ * El guard de `test-db-guard.ts` impide tocar una base con historia. La suite común conserva
+ * D-202: `10 000 000 + (epoch en segundos mod 80 000 000)`.
  *
- * **Por qué.** El reset vacía `fiscal_series` y el seed la vuelve a crear con correlativo `0`,
- * así que toda corrida emitía `F001-00000001`, `F001-00000002`… La cuenta demo de Nubefact, en
- * cambio, **recuerda** los números que ya recibió: la segunda corrida chocaba contra los de la
- * primera y el gate `pnpm e2e:pse` exigía vaciar la cuenta hasta 0 exacto antes de cada
- * ventana, aunque quedara cupo. Con un punto de partida por corrida, dos corridas no reusan
- * números y el cupo de 50 comprobantes vuelve a ser la única restricción real.
- *
- * **La base sale del reloj, en segundos**: `10 000 000 + (epoch en segundos mod 80 000 000)`.
- * - En segundos y no en minutos: una corrida local y una de CI que arrancan en el mismo minuto
- *   partirían del mismo número. En segundos, dos corridas separadas por `n` segundos solo se
- *   pisan si una emite más de `n` comprobantes de una misma serie, y el propio arranque de la
- *   suite (build, reset, seed) tarda más que el cupo entero de la cuenta demo.
- * - El módulo mantiene el número en ocho dígitos, que es lo que SUNAT admite y lo que valida
- *   `createFiscalSeriesSchema` (`max(99_999_999)`): el tope es 90 000 000 y queda margen de
- *   sobra para lo que emite una corrida. Da la vuelta cada ~2,5 años (la próxima, el
- *   2028-04-22): **después de una vuelta la garantía no vale** contra números que la cuenta
- *   demo haya recibido en la vuelta anterior, así que en esa fecha hay que vaciarla una vez.
- * - El piso de 10 000 000 deja fuera de rango los números bajos que cualquier otra cosa que
- *   hable con la cuenta demo pueda haber usado empezando desde 1.
- *
- * Nunca contra una base con historia: el correlativo es un hecho fiscal. Por eso solo toca
- * series que están **por debajo** del punto de partida, y el llamador solo lo invoca tras un
- * reset.
+ * D-365: `pnpm e2e:pse` recibe una base por serie, 100 después del último correlativo usado.
+ * El reloj saltaba cientos de miles entre ventanas y Nubefact admite solo los 200 siguientes
+ * al último registrado, incluso después de limpiar la cuenta demo.
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
@@ -40,16 +20,52 @@ function runCorrelativeBase(nowMs: number): number {
 
 async function main(): Promise<void> {
   const label = assertTestDatabase();
-  const base = runCorrelativeBase(Date.now());
   const prisma = new PrismaClient();
   try {
-    const { count } = await prisma.fiscalSeries.updateMany({
-      where: { correlative: { lt: base } },
-      data: { correlative: base },
-    });
-    console.warn(
-      `Correlativos de ${label}: ${String(count)} series parten de ${String(base)} en esta corrida.`,
-    );
+    if (process.env.E2E_PSE === '1') {
+      const bases = JSON.parse(process.env.E2E_PSE_BASES ?? 'null') as Record<
+        string,
+        unknown
+      > | null;
+      const rows = await prisma.fiscalSeries.findMany({ select: { series: true } });
+      const enabled = rows.filter((row) => row.series !== 'BC01');
+      if (
+        !bases ||
+        rows.length !== enabled.length + 1 ||
+        enabled.length !== Object.keys(bases).length ||
+        enabled.some(
+          (row) => !Number.isSafeInteger(bases[row.series]) || Number(bases[row.series]) < 0,
+        )
+      ) {
+        throw new Error('Faltan bases PSE válidas para las series fiscales de prueba');
+      }
+      // BC01 queda inactiva hasta conocer su último correlativo en Nubefact.
+      const disabled = await prisma.fiscalSeries.updateMany({
+        where: { series: 'BC01' },
+        data: { isActive: false },
+      });
+      if (disabled.count !== 1) throw new Error('No se pudo desactivar BC01 en el gate PSE');
+      for (const row of enabled) {
+        const base = Number(bases[row.series]);
+        const { count } = await prisma.fiscalSeries.updateMany({
+          where: { series: row.series, correlative: { lt: base } },
+          data: { correlative: base },
+        });
+        if (count !== 1) throw new Error(`No se pudo fijar la base PSE de ${row.series}`);
+      }
+      console.warn(
+        `Correlativos de ${label}: ${String(enabled.length)} series usan bases PSE de +100; BC01 inactiva.`,
+      );
+    } else {
+      const base = runCorrelativeBase(Date.now());
+      const { count } = await prisma.fiscalSeries.updateMany({
+        where: { correlative: { lt: base } },
+        data: { correlative: base },
+      });
+      console.warn(
+        `Correlativos de ${label}: ${String(count)} series parten de ${String(base)} en esta corrida.`,
+      );
+    }
   } finally {
     await prisma.$disconnect();
   }
