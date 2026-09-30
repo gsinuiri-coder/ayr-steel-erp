@@ -1,5 +1,5 @@
 import { Reflector } from '@nestjs/core';
-import { Role } from '@ayr/shared';
+import { invoiceDispatchDateSchema, Role } from '@ayr/shared';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { DispatchesController } from './dispatches.controller';
 
@@ -24,6 +24,37 @@ describe('DispatchesController — roles del despacho a la fecha del comprobante
       Role.VENDEDOR,
       Role.SUPERVISOR_PLANTA,
     ]);
+  });
+
+  it('D-364 delega la fecha elegida tanto en preview como en ejecución', async () => {
+    const invoiceDispatch = {
+      preview: jest.fn().mockResolvedValue({ lines: [] }),
+      executeForInvoice: jest.fn().mockResolvedValue({ dispatchIds: [] }),
+    };
+    const controller = new DispatchesController({} as never, {} as never, invoiceDispatch as never);
+    const actor = { id: 'admin', role: Role.ADMINISTRADOR } as never;
+
+    await controller.previewAtIssueDate(actor, '00000000-0000-4000-8000-000000000001', {
+      dispatchDate: '2026-09-29',
+    });
+    await controller.executeAtIssueDate(actor, '00000000-0000-4000-8000-000000000001', {
+      dispatchDate: '2026-09-29',
+    });
+
+    expect(invoiceDispatch.preview).toHaveBeenCalledWith(
+      actor,
+      '00000000-0000-4000-8000-000000000001',
+      '2026-09-29',
+    );
+    expect(invoiceDispatch.executeForInvoice).toHaveBeenCalledWith(
+      actor,
+      '00000000-0000-4000-8000-000000000001',
+      '2026-09-29',
+    );
+  });
+
+  it('D-364 rechaza una fecha de operación que no existe antes de planificar', () => {
+    expect(invoiceDispatchDateSchema.safeParse({ dispatchDate: '2026-09-31' }).success).toBe(false);
   });
 });
 

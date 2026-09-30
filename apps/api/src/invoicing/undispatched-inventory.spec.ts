@@ -27,6 +27,7 @@ const invoice = (action: PlannedInvoice['lines'][number]['action']): PlannedInvo
       action,
       operationDate: '2026-08-20',
       reason: action === 'REVIEW' ? 'Una salida deja el kardex negativo el 2026-08-20' : null,
+      firstValidDate: null,
     },
   ],
 });

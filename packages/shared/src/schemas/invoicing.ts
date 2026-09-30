@@ -19,7 +19,7 @@ import {
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyFields, idempotencyKeySchema } from './idempotency';
-import { backdatableFields } from './operation';
+import { backdatableFields, operationDateSchema } from './operation';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 import { businessToday } from '../business-date';
@@ -851,6 +851,13 @@ export type CreateDispatchInput = z.infer<typeof createDispatchSchema>;
  * salida (el comprobante es anterior al inventario inicial del ítem); `REVIEW` no se toca.
  */
 export const INVOICE_DISPATCH_ACTIONS = ['DISPATCH', 'BEFORE_OPENING', 'REVIEW'] as const;
+/** D-364: fecha candidata del despacho rápido; omitirla conserva el cálculo automático D-285. */
+export const invoiceDispatchDateSchema = z.object({
+  // D-364 escribe una fecha de operación: a diferencia de una emisión, esta sí debe rechazar
+  // un día inexistente antes de que el plan compare cadenas o Prisma lo normalice.
+  dispatchDate: operationDateSchema.optional(),
+});
+export type InvoiceDispatchDateInput = z.infer<typeof invoiceDispatchDateSchema>;
 export const invoiceDispatchPlanSchema = z.object({
   invoiceId: z.string().uuid(),
   lines: z.array(
@@ -862,6 +869,8 @@ export const invoiceDispatchPlanSchema = z.object({
       action: z.enum(INVOICE_DISPATCH_ACTIONS),
       operationDate: z.string(),
       reason: z.string().nullable(),
+      /** D-364: primera fecha candidata que pasa el mismo guard cronológico, si existe. */
+      firstValidDate: z.string().nullable(),
     }),
   ),
 });

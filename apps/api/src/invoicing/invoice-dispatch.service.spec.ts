@@ -509,10 +509,15 @@ describe('InvoiceDispatchService (D-278)', () => {
 
 describe('D-288 — re-fechar el despacho a la fecha del comprobante', () => {
   it('la marca: solo las notas de este servicio y del mismo comprobante', () => {
-    for (const note of Object.values(atIssueDateNotes)) {
+    for (const note of [
+      atIssueDateNotes.atIssueDate,
+      atIssueDateNotes.afterProduction,
+      atIssueDateNotes.beforeOpening,
+    ]) {
       expect(isAtIssueDateDispatch(note('FFA1-1'), 'FFA1-1')).toBe(true);
       expect(isAtIssueDateDispatch(note('FFA1-1'), 'FFA1-2')).toBe(false);
     }
+    expect(isAtIssueDateDispatch(atIssueDateNotes.userChosenDate('FFA1-1'), 'FFA1-1')).toBe(false);
     expect(isAtIssueDateDispatch('Despacho del camión de la mañana', 'FFA1-1')).toBe(false);
     expect(isAtIssueDateDispatch(null, 'FFA1-1')).toBe(false);
     expect(isAtIssueDateDispatch(atIssueDateNotes.atIssueDate('FFA1-1'), null)).toBe(false);
@@ -551,6 +556,7 @@ describe('D-288 — re-fechar el despacho a la fecha del comprobante', () => {
         action,
         operationDate: '2026-08-19',
         reason: action === 'REVIEW' ? 'deja el kardex negativo' : null,
+        firstValidDate: null,
       },
     ],
     dispatchIds: action === 'REVIEW' ? [] : ['nuevo'],
@@ -578,6 +584,7 @@ describe('D-288 — re-fechar el despacho a la fecha del comprobante', () => {
             action: l.action,
             operationDate: '2026-08-19',
             reason: l.action === 'REVIEW' ? 'deja el kardex negativo' : null,
+            firstValidDate: null,
           })),
         },
       ],

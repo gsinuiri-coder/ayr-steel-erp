@@ -177,6 +177,53 @@ describe('planInvoiceDispatches — fecha del parte de producción (D-285)', () 
     );
     expect(plan[0]?.lines[0]?.action).toBe('REVIEW');
   });
+
+  it('D-364: BBV1-341 y BBV1-347 pasan al elegir una fecha posterior con saldo', () => {
+    const bbv341 = invoice('BBV1-341', '2026-08-03', [{ itemKey: 'AUTOPERF10X1', qty: '100' }]);
+    const bbv347 = invoice('BBV1-347', '2026-08-14', [
+      { itemKey: 'AUTOPERF10X1', qty: '500' },
+      { itemKey: 'AUTOPERF12X212', qty: '500' },
+    ]);
+    bbv341.dispatchDate = '2026-09-29';
+    bbv347.dispatchDate = '2026-09-29';
+    const plan = planInvoiceDispatches(
+      [bbv341, bbv347],
+      new Map([
+        ['AUTOPERF10X1', kardex(null, [['2026-09-29', 600]])],
+        ['AUTOPERF12X212', kardex(null, [['2026-09-29', 500]])],
+      ]),
+    );
+    expect(plan.flatMap((row) => row.lines)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: 'DISPATCH', operationDate: '2026-09-29' }),
+      ]),
+    );
+    expect(plan.flatMap((row) => row.lines).every((line) => line.action === 'DISPATCH')).toBe(true);
+  });
+
+  it('D-364: bobina reingresada y producción reportada hoy permiten despachar hoy', () => {
+    const inv = invoice('F-REINGRESO', '2026-08-20', [{ itemKey: 'PRODUCT:PERFIL', qty: '12' }]);
+    inv.dispatchDate = '2026-09-29';
+    inv.lines[0]!.notBefore = '2026-09-29';
+    const plan = planInvoiceDispatches(
+      [inv],
+      new Map([['PRODUCT:PERFIL', kardex(null, [['2026-09-29', 12]])]]),
+    );
+    expect(plan[0]?.lines[0]).toMatchObject({ action: 'DISPATCH', operationDate: '2026-09-29' });
+  });
+
+  it('D-364: una fecha elegida que deja negativo permanece bloqueada y propone la primera válida', () => {
+    const inv = invoice('F-BLOQUEADO', '2026-08-03', [{ itemKey: 'A', qty: '100' }]);
+    inv.dispatchDate = '2026-08-03';
+    const plan = planInvoiceDispatches(
+      [inv],
+      new Map([['A', kardex(null, [['2026-09-15', 100]])]]),
+    );
+    expect(plan[0]?.lines[0]).toMatchObject({
+      action: 'REVIEW',
+      firstValidDate: '2026-09-15',
+    });
+  });
 });
 
 describe('planInvoiceDispatches — cupo de lo fabricado y reservado (D-287)', () => {

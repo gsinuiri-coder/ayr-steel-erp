@@ -1,6 +1,10 @@
-﻿# Progreso por fase
+# Progreso por fase
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
+
+## 2026-09-29 — D-364, fecha editable del despacho rápido
+
+En la rama `feat/fecha-despacho-editable`, el despacho rápido de D-285 conserva por defecto `max(fecha de emisión, último parte de producción)` y permite elegir otra fecha de operación. Preview y ejecución vuelven a planificar con la fecha elegida y mantienen el bloqueo cronológico de saldo negativo; la operación pasa por el mismo piso histórico, fecha no futura y rol ADMINISTRADOR de toda retrofecha. D-210 no cambia porque valida la fecha fiscal de emisión, no la salida de kardex. Pruebas cubren BBV1-341/347 a una fecha posterior válida, producción de hoy y una fecha negativa bloqueada. Build-only: sin lecturas ni escrituras de producción. El despliegue requerido es API antes que web. Commit `9f89455`, PR #62 abierto sin merge; typecheck y unitarios completos verdes. La E2E local fue detenida tras timeouts ajenos de alcance comercial y queda a confirmar en CI limpio.
 
 ## 2026-09-29 — D-363, seguimiento del PR #58
 

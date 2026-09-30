@@ -12,6 +12,8 @@ import {
   type InvoiceDispatchPlanDto,
   type InvoiceDispatchResultDto,
   type InvoiceLinkedDispatchesDto,
+  invoiceDispatchDateSchema,
+  type InvoiceDispatchDateInput,
   type PaginatedResult,
   type ReverseDispatchInput,
   type TransportSuggestionsDto,
@@ -53,7 +55,8 @@ export class DispatchesController {
   }
 
   /**
-   * D-278: qué haría «Despachar a la fecha del comprobante». Solo lectura, y solo
+   * D-364: qué haría el despacho rápido con la fecha por defecto D-285 o la que eligió el
+   * usuario. Solo lectura, y solo
    * ADMINISTRADOR como el POST (D-287: la web ya lo mostraba solo al administrador, pero el
    * endpoint lo leía cualquier rol del controlador). Rutas fijas antes de `:id`, por el mismo
    * motivo que `transport-suggestions`.
@@ -63,8 +66,9 @@ export class DispatchesController {
   previewAtIssueDate(
     @CurrentUser() actor: RequestUser,
     @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
+    @Query(new ZodValidationPipe(invoiceDispatchDateSchema)) query: InvoiceDispatchDateInput,
   ): Promise<InvoiceDispatchPlanDto> {
-    return this.invoiceDispatch.preview(actor, invoiceId);
+    return this.invoiceDispatch.preview(actor, invoiceId, query.dispatchDate);
   }
 
   /**
@@ -80,17 +84,18 @@ export class DispatchesController {
   }
 
   /**
-   * D-278: despacha lo facturado y no despachado con fecha de operación = fecha de emisión.
-   * Retrofechar sigue siendo privilegio de ADMINISTRADOR (D-124): `OperationDateService`
-   * rechaza a cualquier otro rol cuando la emisión no es de hoy.
+   * D-364: despacha lo facturado y no despachado en la fecha calculada o elegida. Retrofechar
+   * sigue siendo privilegio de ADMINISTRADOR (D-124): `OperationDateService` rechaza a cualquier
+   * otro rol cuando la fecha elegida no es de hoy.
    */
   @Post('at-issue-date/:invoiceId')
   @Roles(Role.ADMINISTRADOR)
   executeAtIssueDate(
     @CurrentUser() actor: RequestUser,
     @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
+    @Body(new ZodValidationPipe(invoiceDispatchDateSchema)) body: InvoiceDispatchDateInput,
   ): Promise<InvoiceDispatchResultDto> {
-    return this.invoiceDispatch.executeForInvoice(actor, invoiceId);
+    return this.invoiceDispatch.executeForInvoice(actor, invoiceId, body.dispatchDate);
   }
 
   @Get()
