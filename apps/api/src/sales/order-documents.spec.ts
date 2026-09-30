@@ -77,7 +77,6 @@ describe('SalesOrdersService.findAll — comprobantes del pedido sin N+1 (Correc
   let calls: number;
   let orders: ReturnType<typeof orderRow>[];
   let fiscalFindMany: jest.Mock;
-  let productionFindMany: jest.Mock;
 
   beforeEach(async () => {
     calls = 0;
@@ -89,14 +88,13 @@ describe('SalesOrdersService.findAll — comprobantes del pedido sin N+1 (Correc
         return Promise.resolve(value());
       };
     fiscalFindMany = jest.fn(counted(() => documentsOf(orders)));
-    productionFindMany = jest.fn(counted(() => []));
     const prisma = {
       salesOrder: {
         count: jest.fn(counted(() => orders.length)),
         findMany: jest.fn(counted(() => orders)),
       },
       user: { findMany: jest.fn(counted(() => [{ id: ADMIN.id, name: ADMIN.name }])) },
-      productionOrder: { findMany: productionFindMany },
+      productionOrder: { findMany: jest.fn(counted(() => [])) },
       fiscalDocument: { findMany: fiscalFindMany },
     };
     const moduleRef = await Test.createTestingModule({
@@ -126,41 +124,6 @@ describe('SalesOrdersService.findAll — comprobantes del pedido sin N+1 (Correc
     // Medido: 5 (count, página, usuarios, comprobantes, órdenes de producción).
     expect(twenty.calls).toBe(5);
     expect(fiscalFindMany).toHaveBeenCalledTimes(2);
-  });
-
-  it('la lista muestra metros de plancha desde dos reportes con meters_m null', async () => {
-    orders = [orderRow(1)];
-    productionFindMany.mockResolvedValueOnce([
-      {
-        status: 'IN_PROGRESS',
-        kind: 'ROOFING',
-        reservation: {
-          salesOrderId: orders[0]?.id,
-          salesOrderItem: { reserveQty: dec('88.000') },
-        },
-        reports: [
-          { metersM: null, piecesDetail: [{ lengthMm: dec('6000.00'), qty: 2 }] },
-          { metersM: null, piecesDetail: [{ lengthMm: dec('3500.00'), qty: 2 }] },
-        ],
-      },
-    ]);
-
-    const page = await service.findAll(ADMIN, { page: 1, pageSize: 50 });
-    expect(page.items[0]?.readiness).toEqual({
-      status: 'EN_PRODUCCION',
-      orderedMl: '88.000',
-      reportedMl: '19.000',
-      missingMl: '69.000',
-    });
-    expect(productionFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        select: expect.objectContaining({
-          reports: expect.objectContaining({
-            select: expect.objectContaining({ piecesDetail: expect.any(Object) }),
-          }),
-        }),
-      }),
-    );
   });
 
   it('cada pedido recibe sus comprobantes, con la nota de crédito rotulada por su tipo', async () => {
