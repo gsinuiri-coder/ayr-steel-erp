@@ -498,7 +498,12 @@ function CoilsDialog({
         if (!next) onClose();
       }}
     >
-      <DialogContent className="max-w-3xl">
+      {/* `sm:max-w-*` (no una clase de ancho sin prefijo): `cn()` no desduplica un
+          `max-w-3xl` sin variante contra el `sm:max-w-sm` por defecto de DialogContent —
+          conviven y `sm:max-w-sm` gana en cascada desde 640px, dejando el modal en 384px
+          pese al 3xl. Mismo bug en `comprobante-detalle-view.tsx` (nota de crédito), fuera
+          de este reporte y sin tabla de desglose: no se toca en esta entrega. */}
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
@@ -524,6 +529,11 @@ function CoilsDialog({
             Desglosado
           </FilterChip>
         </div>
+        {/* La fórmula va en una línea de texto, no en los headers: con espesor, color, tipo,
+            kg y costo, un header con la fórmula no entra en una línea y satura la tabla. */}
+        <p className="text-xs text-muted-foreground">
+          Peso real y Costo prod. de la fila salen de sumar Kg consumidos y Costo de estas bobinas.
+        </p>
         <div className="max-h-[60vh] overflow-auto rounded-md border">
           <Table data-testid="bobinas-usadas">
             <TableHeader>
