@@ -2,6 +2,61 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-09-30 — D-365, correlativos del gate PSE
+
+Ventana de API para `main` `22fdfe7`: CI verde; respaldo de `production`
+`respaldo-pre-deploy-20260930` (`br-summer-salad-aeal2b09`, padre `production`); 81 migraciones
+al día y `migrate diff` igual al drift conocido. La revisión activa previa de Cloud Run es
+`ayr-steel-erp-api-00066-6gt` (`git-sha=df520e0`, 100 %). No se ejecutó deploy.
+
+El gate `pnpm e2e:pse` local falló **12/12**: el offset de D-202 llevó las cinco series a
+`40776980`, mientras Nubefact conservaba `F001=39420975`, `B001=39420976` y
+`T001=39431027` (recuperado de los errores guardados) y rechazó
+correlativos fuera de los 200 siguientes. El dueño confirmó que limpiar la cuenta demo no
+reinicia la numeración y decidió avanzar 100 desde el último usado por cada serie (D-365).
+La prueba focalizada posterior aceptó `F001-39421076` y `FC01-39421076`; registró
+`B001-39421077` como pendiente de SUNAT. No pudo emitir una nota `BC01` porque el dominio
+exige que la boleta afectada esté `ACCEPTED`. Por eso `BC01` queda inactiva solo en el gate PSE
+y su último valor se conserva como desconocido (`null`). La corrección queda en la rama
+`fix/pse-correlativos-100`; la suite común mantiene D-202.
+La primera repetición del gate pasó 11/12: el caso de archivos falló por falta de R2 local,
+clasificado como infraestructura. Se conciliaron las emisiones respaldadas por Nubefact sin
+avanzar el estado a ciegas. Se habilitó MinIO local y la siguiente corrida completa de
+`pnpm e2e:pse` pasó **12/12, 0 fallidos, 0 omitidos** (6,1 min). Últimos correlativos confirmados:
+`F001=39421294`, `B001=39421285`, `FC01=39421282`, `T001=39431233`; `BC01=null`.
+El estado queda en `local-data/e2e-pse-correlatives.json` del checkout principal, ignorado por git.
+Antes de reservar el siguiente bloque se comprueba lectura y escritura en MinIO; el reporte debe
+contener solo casos `@pse`. La autorrevisión final detectó que el gate podía heredar otra cuenta
+PSE en su primera corrida: ahora exige que URL y token locales coincidan con las claves demo
+explícitas de `.env.setup` antes de reservar. `pnpm test:scripts` pasó 47/47 tras la corrección;
+unitarios API en serie 1966/1966;
+unitarios web 88/88. Lint, typecheck y build pasaron. Pendiente: CI, revisión del dueño y
+autorización individual del deploy.
+
+QA común con builds de producción y Docker/MinIO local: primer pase de 462 casos en 49,0 min:
+452 passed, 6 failed, 3 skipped, 1 flaky. Los seis rojos se localizaron en
+`e2e/helpers/ui.ts#chooseOption`: una búsqueda de cliente que tarda más que el primer clic deja
+el diálogo abierto y el reintento pulsa el campo detrás del overlay (fallo de prueba). Se
+reusa el diálogo de búsqueda abierto y se añadió un caso que lo deja abierto antes del
+reintento. El flaky
+de `selector-cliente-f8s3c.spec.ts` asumía que había menos de 200 clientes activos tras
+centenares de tests; ahora desactiva todas las páginas de clientes de prueba. Cinco specs
+afectados más el selector pasaron **25/25** en la primera corrida focalizada con builds de
+producción. Un segundo pase completo detectó que el helper también debe distinguir el buscador
+`Elegir · ...` de un diálogo de negocio que lo contiene; se corrigió. El tercer pase completo
+detectó el mismo defecto de reintento en `chooseProductWithStock`; se corrigió y sus tres specs
+afectados pasaron **13/13** en focalizado. La regresión de buscador ya abierto pasó 3/3 en su
+archivo. **Pase completo final:** `460 passed, 0 failed, 1 flaky, 3 skipped` en 44,4 min,
+exit 0. Los dos flujos de producto y el selector de cliente pasaron dentro de ese pase. El
+flaky fue una lectura de celdas entre renderizados de la tabla de bobinas; se ajustó la espera
+y el spec pasó 1/1 después. Los 3 skipped dependen de un PSE disponible; la corrida común usa
+contingencia sin credenciales PSE y el gate separado ya pasó 12/12.
+
+Un diagnóstico del flaky de paginación en un pase anterior imprimió cookies de sesión de
+`ayr_local_e2e` en la salida del agente. Eran sesiones locales efímeras, sin credenciales de
+producción. Se invalidaron con el reset de esa base en la siguiente corrida y se evitó volver
+a imprimir contextos de error completos. No hubo escritura en Neon `production`.
+
 ## 2026-09-29 — D-364, fecha editable del despacho rápido
 
 En la rama `feat/fecha-despacho-editable`, el despacho rápido de D-285 conserva por defecto `max(fecha de emisión, último parte de producción)` y permite elegir otra fecha de operación. Preview y ejecución vuelven a planificar con la fecha elegida y mantienen el bloqueo cronológico de saldo negativo; la operación pasa por el mismo piso histórico, fecha no futura y rol ADMINISTRADOR de toda retrofecha. D-210 no cambia porque valida la fecha fiscal de emisión, no la salida de kardex. Pruebas cubren BBV1-341/347 a una fecha posterior válida, producción de hoy y una fecha negativa bloqueada. Build-only: sin lecturas ni escrituras de producción. El despliegue requerido es API antes que web. Commit `9f89455`, PR #62 abierto sin merge; typecheck y unitarios completos verdes. La E2E local fue detenida tras timeouts ajenos de alcance comercial y queda a confirmar en CI limpio.

@@ -345,14 +345,13 @@ cuenta DEMO».
 - Se corren aparte con **`pnpm e2e:pse`**, que pone `E2E_PSE=1` y con eso la suite corre
   exactamente el complemento. **Si la cuenta demo está cerca de los 50, antes hay que vaciarla**
   en el panel de Nubefact.
-- **La numeración ya no obliga a vaciarla hasta 0 (D-202).** El reset deja las series en 0 y la
-  cuenta demo recuerda los números que ya recibió, así que cada corrida volvía a mandar
-  `F001-00000001` y chocaba con la anterior. Ahora `e2e/global-setup.ts`, tras el reset y el
-  seed, corre `apps/api/prisma/e2e-fiscal-offset.ts`, que adelanta todas las series a
-  `10 000 000 + (epoch en segundos mod 80 000 000)`: dos corridas no reusan números. El cupo de
-  50 sigue siendo real; lo que deja de ser bloqueante es la numeración.
-- El flag va por **entorno y no por `--grep`** porque un `--grep` de la línea de comandos pisa a
-  `grep` pero **no** a `grepInvert`: con bandera, `e2e:pse` habría corrido cero casos.
+- **Numeración (D-365).** La cuenta demo conserva sus últimos correlativos al vaciarla. Tras
+  reset y seed, `apps/api/prisma/e2e-fiscal-offset.ts` usa para el gate PSE una base por serie,
+  calculada 100 después del último valor confirmado y guardada en
+  `local-data/e2e-pse-correlatives.json`. La suite común sigue usando el reloj de D-202.
+- El flag va por **entorno y no por `--grep`** porque un `--grep` de la línea de comandos pisa
+  el `grep` del gate. El wrapper rechaza opciones de Playwright y comprueba que el reporte
+  contenga solo casos `@pse`.
 
 **Por qué por etiqueta y no ampliando `probePse`.** La sonda ya saltea estos casos cuando no hay
 PSE atado o falta el RUC del receptor: eso es _en este entorno no se puede llegar a una
@@ -443,17 +442,20 @@ con su resultado.
 3. **Migraciones pendientes** en `production`: `node scripts/migrations-status.mjs --branch
 production`. Si alguna muta datos, se dice en `PROGRESO.md` cuál y qué hace.
 4. **Gate PSE: `pnpm e2e:pse`** en local.
+   - **Cuenta:** el gate verifica que `apps/api/.env` coincida con
+     `NUBEFACT_DEMO_URL`/`NUBEFACT_DEMO_TOKEN` de `.env.setup` antes de reservar correlativos.
+   - **Archivos:** levantar MinIO local (`docker compose --profile storage up -d minio`) y
+     verificar el bucket `ayr-e2e`; el gate fuerza `R2_*` a este bucket, nunca al real.
    - **Cupo:** si la cuenta demo de Nubefact está cerca de los 50 comprobantes, el dueño la
      vacía antes. Sigue en el checklist porque el cupo es real.
-   - **Numeración: ya no es bloqueante (D-202).** Cada corrida parte de su propio correlativo,
-     así que no hace falta dejar la cuenta en 0 exacto para no chocar con números viejos. Un
-     rojo de «documento ya existe» después de D-202 **no** se acepta por clasificación: es un
-     defecto.
-   - **Rollover: el 2028-04-22.** El offset de D-202 es
-     `10 000 000 + (epoch en segundos mod 80 000 000)`, y ese rango da la vuelta ese día: a
-     partir de ahí los correlativos vuelven a empezar y hay que **vaciar la cuenta demo una
-     vez** para que no choquen con números ya usados. Cita exacta en D-202
-     (`docs/ARQUITECTURA.md` §0.2).
+   - **Numeración (D-365).** Limpiar la cuenta demo no reinicia el último correlativo por serie.
+     Nubefact solo admite los 200 números siguientes. `pnpm e2e:pse` usa los cuatro últimos
+     valores conocidos de `local-data/e2e-pse-correlatives.json` y empieza 100 después de cada uno;
+     `BC01` queda inactiva en este gate mientras no se conozca su último valor;
+     actualiza ese archivo únicamente cuando el gate pasa. Ante un rojo se concilia el archivo
+     con Nubefact antes de repetir. Ver `e2e/README.md`. Un rojo de «documento ya existe» o
+     «correlativo fuera del rango permitido» no se acepta como verde.
+   - El offset por reloj de D-202 y su rollover de 2028 aplican a E2E sin PSE, no a este gate.
 5. **Deploy:** `pnpm deploy:api` y verificar `/health`; web por push a `main` (Vercel).
 6. **`pnpm smoke:prod`** (solo lectura, D-126). Nunca `pnpm e2e:prod`.
 
