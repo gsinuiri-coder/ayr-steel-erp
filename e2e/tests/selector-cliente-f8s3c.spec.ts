@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { adminApi, adminCredentials, getJson } from '../helpers/api';
 import { createCustomer } from '../helpers/sales';
 import { uniqueDocumentNumber } from '../helpers/production';
+import { chooseOption } from '../helpers/ui';
 
 /**
  * F8-S3c/M4 — el selector de cliente de `/cotizaciones/nueva` siempre abre el buscador
@@ -34,22 +35,23 @@ async function loginAsAdmin(page: Page) {
   await expect(page).toHaveURL(/\/(cambiar-contrasena)?$/, { timeout: 60_000 });
 }
 
-/**
- * Deja el maestro sin ningún cliente propio activo. `isActive desc` en el orden de
- * `/customers` (D-113) pone a todos los activos primero, así que una sola página de
- * `MAX_PAGE_SIZE` los trae completos mientras no haya más de 200 —cómodo para una base de
- * pruebas recién reseteada—. El del sistema sale en la lista pero su `PATCH` lo rechaza
- * (D-077): se ignora ese único fallo esperado y se deja pasar cualquier otro.
- */
+/** Deja el maestro sin clientes propios activos, incluso tras una suite con más de 200. */
 async function emptyCustomerMaster(api: APIRequestContext): Promise<void> {
-  const list = await getJson<{ items: { id: string; isActive: boolean }[] }>(
-    api,
-    '/api/customers?pageSize=200',
-  );
-  for (const c of list.items) {
-    if (!c.isActive) continue;
-    await api.patch(`/api/customers/${c.id}`, { data: { isActive: false } });
+  for (let pass = 0; pass < 20; pass += 1) {
+    // La lista ordena activos primero; al desactivarlos, la misma página trae los siguientes.
+    const list = await getJson<{
+      items: { id: string; isActive: boolean; docNumber: string }[];
+    }>(api, '/api/customers?pageSize=200');
+    const active = list.items.filter((c) => c.isActive && c.docNumber !== '00000000');
+    if (active.length === 0) return;
+    for (const c of active) {
+      const response = await api.patch(`/api/customers/${c.id}`, {
+        data: { isActive: false },
+      });
+      expect(response.ok(), await response.text()).toBe(true);
+    }
   }
+  throw new Error('No se pudo vaciar el maestro de clientes de prueba');
 }
 
 test.describe('F8-S3c/M4 — el selector de cliente siempre abre el buscador', () => {
@@ -145,5 +147,22 @@ test.describe('F8-S3c/M4 — el selector de cliente siempre abre el buscador', (
     await page.keyboard.press('Enter');
     await expect(reopened).toBeHidden();
     await expect(field).toContainText(b.docNumber);
+  });
+
+  test('reutiliza el diálogo de búsqueda si quedó abierto tras un intento', async ({
+    page,
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const customer = await createCustomer(api);
+    await loginAsAdmin(page);
+    await page.goto('/cotizaciones/nueva');
+
+    const field = page.getByLabel('Cliente', { exact: true });
+    await field.click();
+    await expect(page.getByRole('dialog', { name: 'Elegir · Cliente' })).toBeVisible();
+    await chooseOption(page, field, `${customer.name} — ${customer.docNumber}`, customer.docNumber);
+    await expect(field).toContainText(customer.docNumber);
+    await api.dispose();
   });
 });

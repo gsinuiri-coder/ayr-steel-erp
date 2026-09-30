@@ -148,4 +148,30 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
       await purgeRoofingTrail(api, trail);
     }
   });
+
+  test('reutiliza el picker de producto si quedó abierto tras un intento', async ({ page }) => {
+    const s = await setupRoofingScenario(api, { weightKg: '80.8' });
+    const customer = await createCustomer(api);
+    const trail = trailOf(s);
+    try {
+      await loginAsAdmin(page);
+      await page.goto('/cotizaciones/nueva');
+      await chooseOption(
+        page,
+        page.getByLabel('Cliente', { exact: true }),
+        `${customer.name} — ${customer.docNumber}`,
+        customer.docNumber,
+      );
+      await page.getByLabel('Línea de negocio de la línea 1').click();
+      await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
+
+      const field = page.getByLabel('Producto de la línea 1');
+      await field.click();
+      await expect(page.getByRole('dialog', { name: /^Elegir producto · / })).toBeVisible();
+      await chooseProductWithStock(page, field, s.product.sku);
+      await expect(field).toContainText(s.product.sku);
+    } finally {
+      await purgeRoofingTrail(api, trail);
+    }
+  });
 });

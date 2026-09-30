@@ -79,8 +79,10 @@ export async function chooseOption(
           if (await isNativeSelect(field)) {
             await field.selectOption({ label: optionLabel }, { timeout: 2_000 });
           } else {
-            await field.click({ timeout: 2_000 });
-            const modal = page.getByRole('dialog');
+            const modal = page.getByRole('dialog', { name: /^Elegir · / });
+            // Si la búsqueda tardó más que el intento anterior, el diálogo sigue abierto.
+            // Reusarlo evita pulsar el campo que quedó detrás del overlay.
+            if (!(await modal.isVisible())) await field.click({ timeout: 2_000 });
             await modal.getByLabel('Filtrar opciones').fill(searchText, { timeout: 2_000 });
             // El botón de la fila no siempre dice «Seleccionar» — F8-S3c/M4 le puso «Elegir»
             // al campo de cliente (`actionLabel`) — así que se busca por la fila, no por el
@@ -88,7 +90,7 @@ export async function chooseOption(
             await modal
               .getByRole('row', { name: optionLabel })
               .getByRole('button')
-              .click({ timeout: 2_000 });
+              .click({ timeout: 5_000 });
           }
         } catch {
           // El maestro todavía no llegó (la opción no existe) o el campo cambió de forma
@@ -126,12 +128,13 @@ export async function chooseProductWithStock(
       async () => {
         if ((await productField.textContent())?.includes(sku)) return true;
         try {
-          await productField.click({ timeout: 2_000 });
-          const modal = page.getByRole('dialog');
+          const modal = page.getByRole('dialog', { name: /^Elegir producto · / });
+          // Si la fila tardó en cargar, el modal puede seguir abierto tras el timeout previo.
+          if (!(await modal.isVisible())) await productField.click({ timeout: 2_000 });
           await modal.getByLabel('Filtrar productos').fill(sku, { timeout: 2_000 });
           await modal
             .getByRole('button', { name: `Elegir ${sku}`, exact: true })
-            .click({ timeout: 2_000 });
+            .click({ timeout: 5_000 });
         } catch {
           // La página se remontó a mitad de camino (modal cerrado, campo repintado) o el
           // producto todavía no llegó: se reintenta desde el principio.
