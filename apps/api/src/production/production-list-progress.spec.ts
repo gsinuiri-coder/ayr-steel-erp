@@ -91,6 +91,7 @@ describe('ProductionService.findAll — avance en metros de plancha', () => {
       expect.objectContaining({
         include: expect.objectContaining({
           reports: expect.objectContaining({
+            where: { status: 'ACTIVE' },
             select: expect.objectContaining({ piecesDetail: expect.any(Object) }),
           }),
         }),
@@ -124,5 +125,72 @@ describe('ProductionService.findAll — avance en metros de plancha', () => {
 
     expect(rows[0]).toMatchObject({ metersReported: '5.999', planMetersReported: '5.999' });
     expect(rows[1]).toMatchObject({ metersReported: null, planMetersReported: '0.000' });
+  });
+
+  it('mantiene dos consultas de cliente Prisma al listar 500 OP', async () => {
+    const findMany = jest
+      .fn()
+      .mockResolvedValue(
+        Array.from({ length: 500 }, (_, index) => ({ ...order('ROOFING', []), id: `op-${index}` })),
+      );
+    const userFindMany = jest.fn().mockResolvedValue([]);
+    const service = new ProductionService(
+      { productionOrder: { findMany }, user: { findMany: userFindMany } } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    expect(await service.findAll({})).toHaveLength(500);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(userFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('lee todos los vigentes si 200 reversas llenaron el historial acotado del detalle', async () => {
+    const reversed = Array.from({ length: 200 }, (_, index) => ({
+      id: `reversed-${index}`,
+      status: 'REVERTED',
+      pieces: 1,
+      metersM: null,
+      piecesDetail: [{ lineNumber: 1, lengthMm: D('3000'), qty: 1 }],
+      theoreticalKg: D('1'),
+      consumedKg: null,
+      rawMaterialWarning: false,
+      materialCostPen: D('1'),
+      unitCostPen: D('1'),
+      notes: null,
+      operationDate: new Date('2026-09-20T00:00:00Z'),
+      createdAt: new Date('2026-09-20T00:00:00Z'),
+      createdById: 'actor-1',
+      revertedAt: new Date('2026-09-20T00:00:00Z'),
+    }));
+    const activeFindMany = jest
+      .fn()
+      .mockResolvedValue([{ metersM: null, piecesDetail: [{ lengthMm: D('6000'), qty: 1 }] }]);
+    const service = new ProductionService(
+      {
+        productionOrder: { findUnique: jest.fn().mockResolvedValue(order('ROOFING', reversed)) },
+        productionReport: { findMany: activeFindMany },
+        inventoryBalance: { findMany: jest.fn().mockResolvedValue([]) },
+        inventoryMovement: { findMany: jest.fn().mockResolvedValue([]) },
+        user: { findMany: jest.fn().mockResolvedValue([]) },
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    const detail = await service.findOne('ROOFING-1');
+
+    expect(detail.planMetersReported).toBe('6.000');
+    expect(activeFindMany).toHaveBeenCalledTimes(1);
+    expect(activeFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { productionOrderId: 'ROOFING-1', status: 'ACTIVE' },
+        select: expect.objectContaining({ piecesDetail: expect.any(Object) }),
+      }),
+    );
   });
 });

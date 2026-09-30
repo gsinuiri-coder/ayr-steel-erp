@@ -170,6 +170,8 @@ const LIST_RELATIONS = {
     },
   },
   reports: {
+    // El listado solo agrega reportes vigentes; las reversas no deben arrastrar largos.
+    where: { status: ProductionReportStatus.ACTIVE },
     select: {
       pieces: true,
       metersM: true,
@@ -1461,8 +1463,26 @@ export class ProductionService {
       ...order.reports.map((r) => r.createdById),
     ]);
 
+    const listItem = this.toListItem(order, actors);
+    // El detalle conserva un historial acotado de reportes. Si las reversas ocupan
+    // ese cupo, consultar los vigentes aparte evita truncar el avance del plan.
+    if (
+      order.kind === ProductionOrderKind.ROOFING &&
+      order.reports.length === MAX_ORDER_REPORTS &&
+      order.reports.some((r) => r.status === ProductionReportStatus.REVERTED)
+    ) {
+      const activeReports = await this.prisma.productionReport.findMany({
+        where: { productionOrderId: id, status: ProductionReportStatus.ACTIVE },
+        select: {
+          metersM: true,
+          piecesDetail: { select: { lengthMm: true, qty: true } },
+        },
+      });
+      listItem.planMetersReported = sumReportedMeters(activeReports)?.toFixed(3) ?? '0.000';
+    }
+
     return {
-      ...this.toListItem(order, actors),
+      ...listItem,
       items: order.items.map((i) => ({
         lineNumber: i.lineNumber,
         lengthMm: i.lengthMm.toFixed(2),
