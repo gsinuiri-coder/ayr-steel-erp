@@ -74,7 +74,7 @@ test.describe('D-278 — despacho a la fecha del comprobante', () => {
     await api.dispose();
   });
 
-  test('el comprobante sin despacho ofrece el botón; despachar saca la bobina a la fecha de emisión y atiende el pedido', async ({
+  test('el comprobante sin despacho conserva el default D-285; despachar atiende el pedido', async ({
     page,
   }) => {
     const scenario = await setupOrderScenario(api);
@@ -92,8 +92,9 @@ test.describe('D-278 — despacho a la fecha del comprobante', () => {
       await page.goto(`/comprobantes/${invoice.id}`);
       const card = page.getByTestId('dispatch-at-issue-date');
       await expect(card).toContainText('sin despacho registrado', { timeout: 60_000 });
-      await card.getByRole('button', { name: 'Despachar a la fecha del comprobante' }).click();
-      await expect(page.getByText(/despachada\(s\) a la fecha del comprobante/)).toBeVisible();
+      await expect(card.getByLabel('Fecha de despacho')).toHaveValue(today());
+      await card.getByRole('button', { name: 'Despachar en la fecha seleccionada' }).click();
+      await expect(page.getByText(/despachada\(s\) en la fecha seleccionada/)).toBeVisible();
       await expect(card).toBeHidden();
 
       const dispatches = await getJson<{ items: { id: string; status: string }[] }>(
