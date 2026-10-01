@@ -2,10 +2,48 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — Ventana cc07 (D-373 desplegada, D-374 aplicada, PR #68, sin migración)
+
+Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individual del dueño
+(D-251/D-232). Runbook con resultados: `docs/handoff/ventana-cc07.md`.
+
+- **Prechecks:** PR #68 (HEAD `3bf6de5`) sobre `44dda31`, con CI verde (E2E **470 passed, 0 failed, 3
+  skipped**; smoke Neon `ci` **36 passed**) y sin diff en `apps/api/prisma`.
+- **API:** `pnpm deploy:api --web-origin …` desde `3bf6de5` → **`ayr-steel-erp-api-00071-bll`**, 100 % del
+  tráfico, `/health` 200. Smoke con web vieja y API nueva en verde.
+- **Merge del #68:** `main` = **`f2806bc`**, diff de runtime vacío. Vercel Production `success`. `smoke:prod`
+  verde contra `vercel.app` y `v2.mareliac.pe`. Vuelta atrás: `00070-vb9`.
+- **Reactivación de BBV1-00000341** (el dueño, por la interfaz, 13:39 UTC). Foto `READ ONLY`: `ACCEPTED` y
+  evento `invoicing.document.reactivate` con la copia de la anulación (`annulledAt`, `annulledById`,
+  `annulReason «mal despacho»`, `statusBeforeAnnul ACCEPTED`).
+  - **Primer intento:** el dueño no veía «Reactivar». Se resolvió con una recarga
+    forzada (probablemente la pestaña tenía la web anterior).
+- **Despachos:**
+  - 341 → **DES-000052 el 18/08**, las dos líneas, en la fecha que sugería el aviso. El plan era la L1 el
+    03/08; ver la nota del runbook.
+  - 347 → **DES-000053 el 27/09**, por D-374 punto 4.
+- **D-374 aprobada y registrada.** El dueño eligió no cambiar la herramienta de fechas (que excluye NF1-1) y
+  aplicar la primera fecha válida. No se corrió ninguna corrección de compras, así que no hizo falta el
+  respaldo `respaldo-pre-d374-20261001`.
+- **Fotos `READ ONLY`** (13:43 y 13:58 UTC, `local-data/d374/`): sin días negativos, ningún costo de salida
+  cambiado, y **ninguna línea facturada sin despacho en todo el sistema**.
+- **F001-00043612:** la corrección y el undo del 29/09 son del lote de fechas de esa ventana (cuenta del
+  dueño, vía CLI). Se deshizo porque su comprobante objetivo, FFA1-00001389, estaba anulado. Sigue
+  recibida el 27/09 por decisión del dueño.
+- **Limpieza:**
+  - la foto de `../ayr-cc07/local-data/` se copió y verificó en `local-data/despacho-pre-inventario/`;
+  - se borraron los worktrees `../ayr-cc06`, `../ayr-reactiva` y `../ayr-cc07`, y sus ramas locales
+    mergeadas;
+  - las remotas siguen.
+- **Pendientes:**
+  - 341 tiene su salida el 18/08 y no el 03/08;
+  - falta el cambio de la herramienta (D-374 punto 3);
+  - la fecha sugerida del despacho se pierde sin `?despacho=` (detalle en el análisis §8).
+
 ## 2026-10-01 — cc07: D-373, reactivar un comprobante manual anulado por error
 
-Rama `cc07/reactivar-comprobante` desde `origin/main` = `f6085db`, en el worktree `../ayr-cc07`. **PR sin
-merge ni deploy.** Runbook: `docs/handoff/ventana-cc07.md`; guion UAT: `docs/uat/cc07.md`.
+Rama `cc07/reactivar-comprobante` desde `origin/main` = `f6085db`, en el worktree `../ayr-cc07`. **Desplegada en la ventana cc07** (arriba); el texto que sigue es el de la entrega:
+runbook `docs/handoff/ventana-cc07.md`; guion UAT `docs/uat/cc07.md`.
 
 - **D-373 aprobada por el dueño** sobre el informe `docs/analisis/reactivar-comprobante-2026-10-01.md`,
   con ajustes: casilla «sigue vigente en Nubefact/SUNAT», copia de los campos de anulación en la
