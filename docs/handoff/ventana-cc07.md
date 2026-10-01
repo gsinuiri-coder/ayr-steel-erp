@@ -4,7 +4,7 @@
 la sesión (D-251/D-232). El agente propone el comando exacto y espera; no encadena comandos de
 producción.
 
-- PR: rama `cc07/reactivar-comprobante` (enlace en `docs/PROGRESO.md`).
+- PR: https://github.com/gsinuiri-coder/ayr-steel-erp/pull/68, rama `cc07/reactivar-comprobante`.
 - **Sin migración.** No hay `db:prod`, `migrate diff` ni `migrate deploy`. El respaldo Neon
   pre-ventana es opcional y lo decide el dueño por nombre (no hay escritura masiva; la única
   escritura de datos la hace el dueño por la interfaz). Nombre sugerido: `respaldo-pre-cc07-<fecha>`.
@@ -17,7 +17,9 @@ producción.
 
 1. **Confirmar en Nubefact/SUNAT que `BBV1-00000341` sigue vigente** (que nunca se comunicó su
    baja). Es lo que la casilla del modal afirma; el ERP no lo puede saber de un manual.
-2. **Eliminar el borrador del reingreso de PED-000048.** Es la BOLETA en borrador, sin número,
+2. **Eliminar el borrador del reingreso de PED-000048.** La foto de las 11:48 UTC del 2026-10-01 ya
+   no lo encuentra (el pedido no tiene borradores): **verificarlo en la interfaz** y, si sigue ahí,
+   descartarlo. Es la BOLETA en borrador, sin número,
    creada el 2026-10-01 a las 01:20 (Lima). Comprobantes → buscar `PED-000048` → fila «Borrador» →
    detalle → **Descartar borrador**, con motivo (p. ej. «Reingreso de BBV1-00000341: se reactiva
    el original»). Mientras exista, la reactivación se rechaza con «Hay 1 borrador(es) de
@@ -29,7 +31,7 @@ Desde el checkout principal (`ayr-steel-erp`), el único con `.env.setup`:
 
 ```sh
 git fetch
-gh pr checks <PR>                                # todo verde, Sonar incluido
+gh pr checks 68                                 # todo verde, Sonar incluido
 git rev-parse origin/cc07/reactivar-comprobante  # = <SHA>
 git log --oneline origin/main..origin/cc07/reactivar-comprobante
 git diff --name-only origin/main origin/cc07/reactivar-comprobante -- apps/api/prisma
@@ -62,7 +64,7 @@ Resumen D-232: commits del PR, sin migración, D-373, autorrevisión y segundo m
 corregidos, CI verde con la suite E2E completa, revisión del dueño.
 
 ```sh
-AYR_OWNER_PUSH=1 gh pr merge <PR> --merge
+AYR_OWNER_PUSH=1 gh pr merge 68 --merge
 git fetch
 git diff --quiet <SHA> origin/main -- apps packages Dockerfile .gcloudignore package.json pnpm-lock.yaml pnpm-workspace.yaml
                                                  # exit 0
@@ -81,14 +83,17 @@ Esperar el deploy de Vercel y correr `pnpm smoke:prod --base-url https://v2.mare
      líneas refacturadas, rastro de PSE). Avisar al agente.
 3. La pantalla pasa al detalle de 341 con el aviso **«Comprobante reactivado: queda pendiente de
    despacho»** y la fecha de despacho en **03/08/2026** (la del comprobante).
-4. **Antes de pulsar**, leer la lista de líneas del aviso:
-   - Línea 1 `UPVC36MT` 12 debería decir «Sale del almacén».
-   - Línea 2 `AUTOPERF10X1` 100: en la foto del 2026-09-29 su salida al 2026-08-03 dejaba negativo
-     el kardex (`BLOQUEADO-RECOSTEO`). Si dice «No se despacha — … negativo …», **esa línea no se
-     despacha a esa fecha**. No elegir otra fecha sin decisión del dueño (regla: la salida va con
-     la fecha del comprobante); se registra el caso y se decide aparte.
-5. **Despachar en la fecha seleccionada.** Despacha las líneas que salen; las de revisión quedan
-   pendientes.
+4. **Antes de pulsar**, leer la lista de líneas del aviso. Lo esperado según la foto del
+   2026-10-01 a las 11:48 UTC (`docs/analisis/despacho-pre-inventario-2026-10-01.md`):
+   - **Línea 1** `UPVC36MT` 12: «Sale del almacén». Está en la carga inicial del 01/08 y cabe el
+     03/08. **Se despacha a la fecha del comprobante.**
+   - **Línea 2** `AUTOPERF10X1` 100: «No se despacha — … negativo …». Su compra NF1-1 (emitida el
+     03/08) se recibió con fecha 27/09. **Esta línea espera D-374:** no se elige otra fecha ni se
+     fuerza nada. Cuando D-374 esté aprobada e implementada, primero se corrige la fecha de
+     recepción de NF1-1 y después se despacha al 03/08.
+   - Si la línea 1 no dice «Sale del almacén», **no pulsar** y avisar al agente.
+5. **Despachar en la fecha seleccionada.** Despacha solo la línea 1. La línea 2 queda pendiente y el
+   aviso sigue en el detalle con ella sola.
 6. Verificar:
    - el detalle de 341 dice **Aceptado** y su saldo volvió a cuentas por cobrar;
    - el despacho nuevo tiene fecha 03/08/2026 y el kardex de `UPVC36MT` muestra la salida de 12 con

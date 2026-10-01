@@ -28,8 +28,16 @@ merge ni deploy.** Runbook: `docs/handoff/ventana-cc07.md`; guion UAT: `docs/uat
   completa la corre la CI del PR.
 - **Revisiones:** ver `docs/revision/cc07-autorrevision.md` y `docs/revision/cc07-segundo-modelo.md`.
   **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01).
-- **Requisitos del dueño antes de reactivar 341:** confirmar en Nubefact que sigue vigente y descartar el
-  borrador del reingreso de PED-000048 (runbook §0).
+- **Requisitos del dueño antes de reactivar 341:** confirmar en Nubefact que sigue vigente (el dueño lo
+  confirmó el 2026-10-01: todo es manual) y descartar el borrador del reingreso de PED-000048 (runbook §0;
+  la foto de las 11:48 UTC ya no lo encuentra).
+- **PR:** https://github.com/gsinuiri-coder/ayr-steel-erp/pull/68, sin merge.
+- **Diagnóstico de 341 línea 2** (`docs/analisis/despacho-pre-inventario-2026-10-01.md`, foto de producción
+  `READ ONLY` del 2026-10-01 11:48 UTC, con OK del dueño). El negativo no viene del inventario inicial
+  (fechado el 01/08; `AUTOPERF10X1` y `AUTOPERF12X212` no están en él): la compra NF1-1 (03/08) se
+  recibió con fecha 27/09 y F001-00043612 (12/08) también. **D-374 propuesta, sin implementar:** corregir
+  primero la fecha de recepción y despachar a la fecha del comprobante, o en la primera fecha válida
+  (D-364). 341 L1 se despacha a su fecha; 341 L2 y 347 esperan D-374.
 
 ## 2026-10-01 — Ventana cc06 (D-368..D-371, PR #65 y #66, sin migración)
 
