@@ -2,6 +2,41 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — Ventana LOG-3 (D-366, PR #64)
+
+El dueño aprobó la revisión de la entrega y validó en producción la tarjeta del pedido y el
+historial de planta: los metros de plancha coinciden con `cantidad × largo` de los reportes
+vigentes y el estado del pedido no cambió. La PR #64 entró por avance directo de `main`
+`7212b0f` a `fb81958` con el OK específico D-232 del dueño. Los cinco commits incluyen el
+cálculo, sus pruebas, el aislamiento de `readiness`, el filtro de reportes vigentes y el
+cierre documental de la implementación. No hubo migraciones, backfill ni escrituras de
+reportes o kardex.
+
+Antes del deploy se creó desde `production` el respaldo Neon
+`respaldo-pre-log3-20260930` (`br-super-wave-aeoucd2y`, padre
+`br-steep-night-ae8n7t1k`), verificado en estado `ready`. `migrate status` mostró **81/81**
+migraciones aplicadas; `migrate diff` mostró exactamente el drift conocido: cinco defaults
+de `operation_date`, cinco FK recreadas, dos índices y un renombre, sin diferencias nuevas.
+El gate PSE anterior pasó 12/12 y no hubo cambios en el código PSE ni en su wrapper desde
+ese SHA. Las nueve versiones de secretos habilitadas coincidían con las de la revisión API
+anterior.
+
+Con aprobación individual D-251, `pnpm deploy:api` desde `fb81958` creó la revisión de Cloud
+Run `ayr-steel-erp-api-00069-sq4`, activa con **100 %** del tráfico; servicio y plantilla
+llevan `git-sha=fb81958`. `/health` respondió 200 con BD sana. El smoke contra la web
+anterior pasó antes del push a `main`. Después, Vercel publicó Production desde el mismo SHA
+(`dpl_9r6StrQvSAXBFc1DCWxaE7d7bq89`) y `v2.mareliac.pe` apuntó a ese despliegue en estado
+`READY`. El segundo `pnpm smoke:prod --base-url https://v2.mareliac.pe` pasó: health 200,
+login, 5 líneas, 176 productos, 120 filas de inventario valorizado, 5 bobinas, reporte
+mensual y PSE apagado. El administrador efímero se eliminó en ambas corridas.
+
+La [CI de `main` para `fb81958`](https://github.com/gsinuiri-coder/ayr-steel-erp/actions/runs/36817761530)
+terminó verde en sus cuatro jobs: calidad/unitarios, análisis estático, E2E Playwright
+(**461 passed, 3 skipped, 0 failed**) y smoke Neon `ci` (**36 passed, 2 skipped, 0 failed**;
+esquema al día). La revisión del dueño y el UAT de la app quedaron aprobados. `readiness`
+y el plan cero del accesorio MTR siguen fuera de D-366 según la decisión registrada,
+sin trabajo adicional autorizado.
+
 ## 2026-09-30 — D-366, LOG-3: metros visibles de planchas
 
 La siguiente ventana aprobada por el dueño toma el arreglo de lectura del PR #57. Esa rama
@@ -27,8 +62,9 @@ detalle y ocultar un reporte vigente posterior; el listado cargaba largos de tod
 revertidos. Se corrigieron en `2346bd8`: el listado filtra `ACTIVE` en Prisma y el detalle
 recupera todos los vigentes si el historial acotado contiene reversas. Un test cubre 200
 reversas más un vigente y otro verifica dos llamadas de cliente Prisma al listar 500 OP. El
-segundo modelo (gpt-6-astra, Sonnet no disponible) revisó el diff reducido antes de este ajuste,
-sin P0/P1/P2; su informe declara expresamente ese límite. Los dos hallazgos finales están en
+segundo modelo (gpt-6-astra, Sonnet no disponible) revisó el diff reducido antes de este ajuste
+y reevaluó el diff completo después de `2346bd8`, sin P0/P1/P2 nuevos. Esa reevaluación
+reutilizó su contexto anterior, como declara el informe. Los dos hallazgos finales están en
 `docs/revision/log3-metros-plancha-autorrevision.md`, corregidos y comprobados por QA.
 
 QA local: `pnpm lint`, `pnpm typecheck` y `pnpm build` verdes. API 160 suites y 1 975 unitarios;
