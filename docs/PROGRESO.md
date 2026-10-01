@@ -2,6 +2,34 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — Ventana cc06 (D-368..D-371, PR #65 y #66, sin migración)
+
+Ventana de madrugada (05:15–05:40 Lima), con corte a las 07:30 fijado por el dueño; terminó antes.
+Cada paso sensible con OK individual del dueño (D-251/D-232).
+
+- **Prechecks:** PR #65 (`feat/cc06-ui`, HEAD `270d361`) contenía `a1fa929`, CI completa en verde sobre
+  ese HEAD y diff vacío en `apps/api/prisma/`: **sin migración**, sin `migrate diff`/`db:prod`, sin
+  respaldo Neon (no hubo escrituras). Producción antes: `git-sha=fb81958`, revisión
+  `ayr-steel-erp-api-00069-sq4` (100 %), alineada en runtime con `a1fa929`.
+- **Compatibilidad API nueva + web vieja, verificada antes del deploy:** compras solo agrega
+  `PATCH`/`DELETE /purchases/:id/items/:itemId`; Ventas por material solo agrega campos por bobina
+  (ningún schema `.strict()`, la web no hace `parse` de respuestas); el import de cotizaciones cambia
+  `severity` de `warning` a `error` (valor que la web vieja ya maneja).
+- **API:** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+  desde `270d361` en el checkout principal → revisión **`ayr-steel-erp-api-00070-vb9`**, 100 % del
+  tráfico, `git-sha=270d361`, `/health` 200. El runbook no traía `--web-origin`: la primera corrida
+  falló sin tocar nada.
+- **Smoke con web vieja + API nueva** (desde `../ayr-cc06` en `270d361`, `AYR_ENV_SETUP`): verde.
+- **Merge del #65:** `main` = `2b75f89`; `git diff --quiet 270d361 origin/main -- apps packages …` exit 0.
+  Vercel publicó Production desde `2b75f89` (unos 2 min). `smoke:prod` verde contra
+  `ayr-steel-erp-web.vercel.app` y contra `v2.mareliac.pe`: health 200, login, 5 líneas, 176 productos,
+  120 filas de inventario valorizado, 5 bobinas, reporte mensual y PSE apagado; admin efímero borrado.
+- **Merge del #66** (solo docs, informe de reactivar comprobante): `main` = **`f6085db`**. El runtime
+  sigue igual a `270d361`.
+- **Stash** `cc06-wip-duplicados-import-2026-09-29` borrado de `../ayr-cc06`.
+- **Verificación a ojo** (runbook §4): la hace el dueño en paralelo.
+- **Nota para el cliente** sobre el cambio del peso teórico: `docs/handoff/ventana-cc06.md`.
+
 ## 2026-10-01 — cc06: M0 duplicados de cotización, M1 desglose de Ventas por material, M2 líneas de compras en borrador (D-368..D-372)
 
 Rama `feat/cc06-ui` desde `origin/main` = `a1fa929`, en el worktree `../ayr-cc06`. **PR sin merge ni
@@ -29,7 +57,7 @@ deploy.** Handoff: `docs/handoff/cc06-m0-m2.md`; guion UAT: `docs/uat/cc06.md`.
 - **Revisiones (AGENTS §2, regla 2):** `docs/revision/cc06-autorrevision.md` (1 P0, 2 P1) y
   `docs/revision/cc06-segundo-modelo.md` (Sonnet, contexto limpio: 0 P0, 2 P1). Coinciden en el P0/P1 de
   accesorios con teórico 0 y en `receive` con líneas viejas; todo P0/P1 corregido en `3403e1c` y
-  verificado. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01).
+  verificado. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01); desplegada en la ventana cc06 con su OK.
 - **Deploy (cuando el dueño lo autorice):** sin migración. **API antes que web**, en ventana nocturna.
 
 ## 2026-10-01 — Ventana LOG-3 (D-366, PR #64)
@@ -446,7 +474,7 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
 
 - **cc06** (2026-10-01, rama `feat/cc06-ui`). D-368..D-371 (D-372 al backlog). Dos pases por subagentes
   (`docs/revision/cc06-autorrevision.md`, `docs/revision/cc06-segundo-modelo.md`); **ninguno vale como
-  pase independiente**. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01). Piezas de riesgo:
+  pase independiente**. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01); desplegada en la ventana cc06 con su OK. Piezas de riesgo:
   `PurchasesService.receive` —**toca kardex**: ahora relee las líneas dentro de su transacción tras el
   claim—; `updateItem`/`deleteItem` de compras en borrador (reescriben importes y totales de la cabecera,
   sin kardex); y, de solo lectura, la consulta `coilUsage` de Ventas por material (metros por bobina desde

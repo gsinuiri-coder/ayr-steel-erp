@@ -1,6 +1,24 @@
 # Runbook — deploy de cc06 (D-368..D-371)
 
-**Estado: PREPARADO, sin ejecutar.** Ventana **nocturna**. Cada paso marcado **[OK]** espera el OK
+**Estado: EJECUTADO el 2026-10-01, 05:15–05:40 Lima** (de madrugada, con corte a las 07:30; terminó
+antes). Resultado:
+
+| Qué                           | Valor                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- |
+| Revisión API anterior         | `ayr-steel-erp-api-00069-sq4` (`git-sha=fb81958`)                                               |
+| Revisión API nueva            | **`ayr-steel-erp-api-00070-vb9`**, 100 % del tráfico, `git-sha=270d361`, `/health` 200          |
+| Smoke web vieja + API nueva   | verde (8/8)                                                                                     |
+| Merge #65                     | `main` = `2b75f89`; diff de runtime contra `270d361` vacío (exit 0)                             |
+| Web (Vercel Production)       | publicada desde `2b75f89`; smoke verde contra `ayr-steel-erp-web.vercel.app` y `v2.mareliac.pe` |
+| Merge #66 (solo docs)         | `main` = **`f6085db`**                                                                          |
+| Stash `cc06-wip-duplicados-…` | borrado                                                                                         |
+| Verificación a ojo (§4)       | la hace el dueño                                                                                |
+
+El paso 1 de abajo no traía `--web-origin`, que `deploy-api.mjs` exige; ya está corregido.
+
+---
+
+Plan original. Ventana **nocturna**. Cada paso marcado **[OK]** espera el OK
 explícito del dueño en la sesión (D-251/D-232). El agente propone el comando exacto y espera; no
 encadena comandos de producción.
 
@@ -40,7 +58,7 @@ cmd /c gcloud run services describe ayr-steel-erp-api --project ayr-steel-erp --
 
 ```sh
 git checkout --detach <SHA>                      # el script etiqueta con el HEAD
-pnpm deploy:api                                  # lleva --update-labels git-sha=<SHA corto>
+pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app   # git-sha=<SHA corto>
 git checkout main
 ```
 
