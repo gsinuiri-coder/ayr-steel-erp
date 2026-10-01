@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { cents } from '@ayr/shared';
 
 /**
  * PDF de la cotización (D-068). Plantilla simple y deliberadamente austera: encabezado con
@@ -63,11 +64,17 @@ const COLS = {
   total: { x: 426, width: 73 },
 } as const;
 
-/** `1234.5000` → `1 234.50`: dos decimales y separador de miles, como se lee un precio. */
-function formatMoney(value: string): string {
-  const [intPart = '0', decPart = '0000'] = value.split('.');
+/**
+ * `1234.5000` → `1 234.50`: dos decimales y separador de miles, como se lee un precio.
+ *
+ * **Redondea al céntimo (HALF_UP, `cents`), no trunca** (P-14): cortar los decimales imprimía
+ * 2 806.3172 como «2 806.31» mientras la web mostraba 2,806.32 para la misma cotización. Es
+ * formato de presentación, no aritmética: el monto guardado no cambia.
+ */
+export function formatMoney(value: string): string {
+  const [intPart = '0', decPart = '00'] = cents(value).toFixed(2).split('.');
   const withSeparators = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return `${withSeparators}.${decPart.slice(0, 2).padEnd(2, '0')}`;
+  return `${withSeparators}.${decPart}`;
 }
 
 /** `100.000` → `100`, `12.500` → `12.5`: sin ceros de relleno a la derecha. */
