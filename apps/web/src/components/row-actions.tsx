@@ -30,15 +30,21 @@ export function RowActions({
   /** Cómo se llama la fila (su código o nombre), para el `aria-label` del menú. */
   label: string;
   actions: readonly HeaderAction[];
-  /** Clave de la acción principal. Por defecto, la primera visible que no sea destructiva. */
-  primary?: string;
+  /**
+   * Clave de la acción principal. Por defecto, la primera visible que no sea destructiva.
+   * `null`: ninguna principal, todo va al menú «⋯» (D-373, una acción rara y de administrador
+   * que no merece botón propio en cada fila).
+   */
+  primary?: string | null;
 }) {
   const visible = actions.filter((a) => a.show !== false);
   if (visible.length === 0) return null;
   const main =
-    visible.find((a) => a.key === primary && !a.destructive) ??
-    visible.find((a) => !a.destructive) ??
-    null;
+    primary === null
+      ? null
+      : (visible.find((a) => a.key === primary && !a.destructive) ??
+        visible.find((a) => !a.destructive) ??
+        null);
   const rest = visible.filter((a) => a !== main);
   const regular = rest.filter((a) => !a.destructive);
   const destructive = rest.filter((a) => a.destructive);
