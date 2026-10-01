@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { RequestUser } from '../auth/auth.types';
 import { InvoicingService } from './invoicing.service';
 
@@ -34,7 +34,10 @@ function build(linked: { id: string; seq: number; atIssueDate: boolean }[]) {
   const prisma = {
     $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
   };
-  const audit = { write: jest.fn().mockResolvedValue(undefined) };
+  const audit = {
+    write: jest.fn().mockResolvedValue(undefined),
+    log: jest.fn().mockResolvedValue(undefined),
+  };
   const invoiceDispatch = {
     linkedInTx: jest.fn().mockResolvedValue(linked),
     redateInTx: jest.fn().mockResolvedValue({ reversed: ['DES-000019'], created: ['nuevo'] }),
@@ -91,5 +94,37 @@ describe('InvoicingService.updateManualIssueDate — despachos a la fecha del co
     await svc.updateManualIssueDate(ADMIN, 'F1', input);
     expect(tx.fiscalDocument.update).toHaveBeenCalled();
     expect(invoiceDispatch.redateInTx).not.toHaveBeenCalled();
+  });
+
+  it('D-376: si el re-fechado dejaría el kardex negativo, no se re-fecha, se avisa y queda auditado fuera de la transacción', async () => {
+    const { svc, invoiceDispatch, audit } = build(AUTO);
+    invoiceDispatch.redateInTx.mockRejectedValueOnce(
+      new BadRequestException(
+        'No se puede re-fechar el despacho a la fecha nueva: línea 1: Una salida el 2026-08-19 deja el kardex negativo el 2026-08-19',
+      ),
+    );
+    await expect(
+      svc.updateManualIssueDate(ADMIN, 'F1', { ...input, redateDispatches: true }),
+    ).rejects.toThrow(/deja el kardex negativo/);
+    // La auditoría de afuera (`log`, sin la transacción que se deshizo).
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'invoicing.dispatch.redate-rejected',
+        entityId: 'F1',
+        after: expect.objectContaining({
+          issueDate: '2026-08-19',
+          reason: expect.stringMatching(/kardex negativo/) as unknown,
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('otro error (no un rechazo de D-288) no deja la auditoría de rechazo', async () => {
+    const { svc, invoiceDispatch, audit } = build(AUTO);
+    invoiceDispatch.redateInTx.mockRejectedValueOnce(new Error('se cayó la base'));
+    await expect(
+      svc.updateManualIssueDate(ADMIN, 'F1', { ...input, redateDispatches: true }),
+    ).rejects.toThrow('se cayó la base');
+    expect(audit.log).not.toHaveBeenCalled();
   });
 });

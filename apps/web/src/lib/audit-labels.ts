@@ -47,6 +47,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'invoicing.dispatch.create': 'Despacho creado',
   'invoicing.dispatch.reverse': 'Despacho revertido',
   'invoicing.dispatch.redate': 'Despacho re-fechado con la fecha de emisión corregida',
+  'invoicing.dispatch.redate-rejected':
+    'Re-fechado del despacho rechazado (dejaba el kardex negativo u otro bloqueo)',
   'invoicing.dispatch-note.create': 'Guía de remisión creada',
   'invoicing.document.correct': 'Comprobante corregido y reemitido',
   'invoicing.document.create': 'Comprobante creado',
