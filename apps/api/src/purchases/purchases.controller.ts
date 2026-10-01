@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -23,6 +24,7 @@ import {
   reversePaymentSchema,
   Role,
   updatePurchaseDocumentSchema,
+  updatePurchaseItemSchema,
   type BackdatableInput,
   type CancelPurchaseInput,
   type CreatePurchaseInput,
@@ -35,6 +37,7 @@ import {
   type ReversePaymentInput,
   type SupplierStatementDto,
   type UpdatePurchaseDocumentInput,
+  type UpdatePurchaseItemInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -133,6 +136,29 @@ export class PurchasesController {
     @Body(new ZodValidationPipe(updatePurchaseDocumentSchema)) body: UpdatePurchaseDocumentInput,
   ): Promise<PurchaseDto> {
     return this.purchases.updateDocument(actor, id, body);
+  }
+
+  /** D-371: corregir una línea de una compra en borrador (cantidad y costo unitario). */
+  @Patch(':id/items/:itemId')
+  @Roles(Role.ADMINISTRADOR)
+  updateItem(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body(new ZodValidationPipe(updatePurchaseItemSchema)) body: UpdatePurchaseItemInput,
+  ): Promise<PurchaseDto> {
+    return this.purchases.updateItem(actor, id, itemId, body);
+  }
+
+  /** D-371: quitar una línea de una compra en borrador (nunca la última). */
+  @Delete(':id/items/:itemId')
+  @Roles(Role.ADMINISTRADOR)
+  deleteItem(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+  ): Promise<PurchaseDto> {
+    return this.purchases.deleteItem(actor, id, itemId);
   }
 
   @Post(':id/payments')

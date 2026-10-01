@@ -104,6 +104,8 @@ export function CompraDetalleView({ id }: { id: string }) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [editingDocument, setEditingDocument] = useState(false);
   const [reversingPaymentId, setReversingPaymentId] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<PurchaseItemView | null>(null);
+  const [deletingItem, setDeletingItem] = useState<PurchaseItemView | null>(null);
   // F8-S1/M1: `PaymentForm` es un componente hijo con su propio `useMutation` — sin esto,
   // el `busy` de más abajo no sabía que "Guardar pago" estaba en vuelo, y "Recibir"/
   // "Anular"/"Editar documento" seguían habilitados mientras se registraba el pago.
@@ -191,6 +193,33 @@ export function CompraDetalleView({ id }: { id: string }) {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo anular el pago'),
   });
 
+  // D-371: corregir o quitar una línea de una compra en borrador.
+  const updateItem = useMutation({
+    mutationFn: ({ itemId, qty, unitPrice }: { itemId: string; qty: string; unitPrice: string }) =>
+      api<PurchaseDto>(`/purchases/${id}/items/${itemId}`, {
+        method: 'PATCH',
+        body: { qty, unitPrice },
+      }),
+    onSuccess: () => {
+      toast.success('Línea corregida: los totales de la compra se recalcularon');
+      setEditingItem(null);
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo corregir la línea'),
+  });
+  const deleteItem = useMutation({
+    mutationFn: (itemId: string) =>
+      api<PurchaseDto>(`/purchases/${id}/items/${itemId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      toast.success('Línea eliminada: los totales de la compra se recalcularon');
+      setDeletingItem(null);
+      invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo eliminar la línea'),
+  });
+
   if (purchase.isPending) return <Skeleton className="h-64 w-full" />;
   if (purchase.isError || !purchase.data) {
     return <p className="text-destructive">No se pudo cargar la compra.</p>;
@@ -200,6 +229,9 @@ export function CompraDetalleView({ id }: { id: string }) {
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const canReceive = user.role === Role.ADMINISTRADOR || user.role === Role.SUPERVISOR_PLANTA;
   const hasBalance = isPositiveDecimal(p.balance);
+  // D-371: las líneas se corrigen solo en borrador (sin kardex) y sin pagos vigentes.
+  const hasLivePayments = p.payments.some((payment) => !payment.reversedAt);
+  const canEditItems = isAdmin && p.status === 'DRAFT' && !hasLivePayments;
   // F8-S1/M1: recibir, anular, corregir el número y anular un pago cambian la misma
   // compra; un `busy` combinado evita que dos de estas corran a la vez sobre ella.
   const busy =
@@ -207,6 +239,8 @@ export function CompraDetalleView({ id }: { id: string }) {
     cancel.isPending ||
     updateDocument.isPending ||
     reversePayment.isPending ||
+    updateItem.isPending ||
+    deleteItem.isPending ||
     paymentPending;
 
   return (
@@ -389,11 +423,12 @@ export function CompraDetalleView({ id }: { id: string }) {
                 <TableHead className="text-right">Precio unitario</TableHead>
                 <TableHead className="text-right">Valor de venta</TableHead>
                 {p.type === PurchaseType.COIL && <TableHead>Bobina</TableHead>}
+                {canEditItems && <TableHead />}
               </TableRow>
             </TableHeader>
             <TableBody>
               {p.items.map((item) => (
-                <TableRow key={item.id}>
+                <TableRow key={item.id} data-testid="linea-compra">
                   <TableCell>{item.lineNumber}</TableCell>
                   <TableCell>
                     {item.productSku ? `${item.productSku} — ` : ''}
@@ -424,10 +459,47 @@ export function CompraDetalleView({ id }: { id: string }) {
                       )}
                     </TableCell>
                   )}
+                  {canEditItems && (
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        aria-label={`Editar la línea ${String(item.lineNumber)}`}
+                        onClick={() => {
+                          setEditingItem(item);
+                        }}
+                      >
+                        Editar
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy || p.items.length <= 1}
+                        title={
+                          p.items.length <= 1
+                            ? 'Es la única línea: una compra sin líneas se anula'
+                            : undefined
+                        }
+                        aria-label={`Eliminar la línea ${String(item.lineNumber)}`}
+                        onClick={() => {
+                          setDeletingItem(item);
+                        }}
+                      >
+                        Eliminar
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          {isAdmin && p.status === 'DRAFT' && hasLivePayments && (
+            <p className="px-4 py-2 text-xs text-muted-foreground">
+              Las líneas no se editan mientras la compra tenga pagos vigentes: anula los pagos
+              primero.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -592,6 +664,55 @@ export function CompraDetalleView({ id }: { id: string }) {
         }}
       />
 
+      <PurchaseItemDialog
+        item={editingItem}
+        currency={p.currency}
+        pending={updateItem.isPending}
+        onClose={() => {
+          setEditingItem(null);
+        }}
+        onConfirm={(qty, unitPrice) => {
+          if (editingItem) updateItem.mutate({ itemId: editingItem.id, qty, unitPrice });
+        }}
+      />
+
+      <Dialog
+        open={deletingItem !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingItem(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar la línea {deletingItem?.lineNumber}</DialogTitle>
+            <DialogDescription>
+              {deletingItem?.description}. La compra está en borrador: no hay kardex que revertir.
+              Los totales se recalculan y queda registrado en la auditoría.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeletingItem(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              pending={deleteItem.isPending}
+              pendingText="Eliminando…"
+              onClick={() => {
+                if (deletingItem) deleteItem.mutate(deletingItem.id);
+              }}
+            >
+              Sí, eliminar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <ReasonDialog
         open={reversingPaymentId !== null}
         onOpenChange={(open) => {
@@ -698,6 +819,107 @@ function DocumentNumberDialog({
             }}
           >
             {pending ? 'Guardando…' : 'Guardar'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type PurchaseItemView = PurchaseDto['items'][number];
+
+const QTY_PATTERN = /^\d+(\.\d{1,3})?$/;
+const PRICE_PATTERN = /^\d+(\.\d{1,4})?$/;
+
+/**
+ * D-371 — corregir cantidad y costo unitario de una línea de una compra en borrador. El
+ * producto, la moneda y el TC no se tocan; el API recalcula la línea y los totales con la misma
+ * cuenta del alta.
+ */
+function PurchaseItemDialog({
+  item,
+  currency,
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  item: PurchaseItemView | null;
+  currency: Currency;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: (qty: string, unitPrice: string) => void;
+}) {
+  const [qty, setQty] = useState('');
+  const [unitPrice, setUnitPrice] = useState('');
+
+  // Cada apertura arranca de lo guardado, no de lo que se intentó la vez anterior.
+  useEffect(() => {
+    if (item) {
+      setQty(item.qty);
+      setUnitPrice(item.unitPrice);
+    }
+  }, [item]);
+
+  const qtyOk = QTY_PATTERN.test(qty.trim()) && isPositiveDecimal(qty.trim());
+  const priceOk = PRICE_PATTERN.test(unitPrice.trim()) && isPositiveDecimal(unitPrice.trim());
+
+  return (
+    <Dialog
+      open={item !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Editar la línea {item?.lineNumber}</DialogTitle>
+          <DialogDescription>
+            {item?.description}. La compra está en borrador: solo cambian la cantidad y el costo
+            unitario ({CURRENCY_LABELS[currency]}), y los totales se recalculan. Queda registrado en
+            la auditoría.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-1.5">
+            <Label htmlFor="item-qty">Cantidad ({item ? unitLabel(item.unit) : ''})</Label>
+            <Input
+              id="item-qty"
+              inputMode="decimal"
+              value={qty}
+              onChange={(e) => {
+                setQty(e.target.value);
+              }}
+            />
+            {!qtyOk && <p className="text-xs text-destructive">Mayor a cero, hasta 3 decimales</p>}
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="item-price">Precio unitario sin IGV</Label>
+            <Input
+              id="item-price"
+              inputMode="decimal"
+              value={unitPrice}
+              onChange={(e) => {
+                setUnitPrice(e.target.value);
+              }}
+            />
+            {!priceOk && (
+              <p className="text-xs text-destructive">Mayor a cero, hasta 4 decimales</p>
+            )}
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button
+            disabled={!qtyOk || !priceOk}
+            pending={pending}
+            pendingText="Guardando…"
+            onClick={() => {
+              onConfirm(qty.trim(), unitPrice.trim());
+            }}
+          >
+            Guardar
           </Button>
         </DialogFooter>
       </DialogContent>
