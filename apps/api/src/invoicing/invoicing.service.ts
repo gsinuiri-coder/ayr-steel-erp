@@ -587,6 +587,7 @@ export class InvoicingService {
             archivedAt: null,
           },
           _sum: { totalPen: true },
+          _count: { _all: true },
         }),
         tx.fiscalDocument.aggregate({
           where: {
@@ -596,6 +597,7 @@ export class InvoicingService {
             archivedAt: null,
           },
           _sum: { totalPen: true },
+          _count: { _all: true },
         }),
       ]);
       const orderTotal = toDecimal(orderTotalPen);
@@ -604,6 +606,8 @@ export class InvoicingService {
         committed: (existing._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
         credited: (creditNotes._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
         newTotal: totals.total,
+        // D-377: cada documento —comprobante o nota— redondea su total al céntimo por su cuenta.
+        committedCount: existing._count._all + creditNotes._count._all,
       });
       if (cap.exceeds) {
         throw new BadRequestException(

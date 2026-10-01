@@ -35,7 +35,8 @@ describe('exceedsOrderTotal — tope de facturación por pedido (HOTFIX-401/M2, 
       orderTotal,
       committed: '1180.0000',
       credited: '0',
-      newTotal: '0.0100',
+      newTotal: '0.0300',
+      committedCount: 1,
     });
     expect(r.exceeds).toBe(true);
   });
@@ -46,27 +47,30 @@ describe('exceedsOrderTotal — tope de facturación por pedido (HOTFIX-401/M2, 
       committed: '1180.0000',
       credited: '295.0000',
       newTotal: '295.0000',
+      committedCount: 2,
     });
     expect(r.exceeds).toBe(false);
     expect(r.net.toFixed(4)).toBe('885.0000');
   });
 
-  it('pero no por más de lo acreditado', () => {
+  it('pero no por más de lo acreditado (más allá del céntimo por documento)', () => {
     const r = exceedsOrderTotal({
       orderTotal,
       committed: '1180.0000',
       credited: '295.0000',
-      newTotal: '295.0001',
+      newTotal: '295.0400',
+      committedCount: 2,
     });
     expect(r.exceeds).toBe(true);
   });
 
-  it('llegar exacto al total del pedido se permite (el tope es estricto)', () => {
+  it('llegar exacto al total del pedido se permite', () => {
     const r = exceedsOrderTotal({
       orderTotal,
       committed: '880.0000',
       credited: '0',
       newTotal: '300.0000',
+      committedCount: 1,
     });
     expect(r.exceeds).toBe(false);
   });
@@ -77,8 +81,32 @@ describe('exceedsOrderTotal — tope de facturación por pedido (HOTFIX-401/M2, 
       committed: '1180.0000',
       credited: '0',
       newTotal: '1180.0000',
+      committedCount: 1,
     });
     expect(r.exceeds).toBe(true);
+  });
+
+  it('D-377: un pedido anterior a R2 (35.4354) se factura entero al céntimo (35.44)', () => {
+    const r = exceedsOrderTotal({
+      orderTotal: '35.4354',
+      committed: '0',
+      credited: '0',
+      newTotal: '35.4400',
+      committedCount: 0,
+    });
+    expect(r.exceeds).toBe(false);
+  });
+
+  it('D-377: facturar en partes suma un céntimo de más por redondeo y se permite', () => {
+    // Pedido de dos líneas de 0.25: 0.50 + céntimo(0.09) = 0.59. Cada parte: 0.25 + 0.05 = 0.30.
+    const r = exceedsOrderTotal({
+      orderTotal: '0.5900',
+      committed: '0.3000',
+      credited: '0',
+      newTotal: '0.3000',
+      committedCount: 1,
+    });
+    expect(r.exceeds).toBe(false);
   });
 });
 
