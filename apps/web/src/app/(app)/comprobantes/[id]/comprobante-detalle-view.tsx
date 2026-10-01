@@ -20,6 +20,9 @@ import {
   addDays,
   businessToday,
   shiftDate,
+  Decimal,
+  hasCollectibleBalance,
+  payableBalance,
   toDecimal,
   type CreditNoteReason,
   type CustomerPaymentDto,
@@ -547,7 +550,18 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     !isDispatchNote &&
     d.docType !== 'NOTA_CREDITO' &&
     (d.status === 'ISSUED' || d.status === 'SEND_ERROR' || d.status === 'ACCEPTED') &&
-    toDecimal(d.balancePen).gt(0);
+    // D-377 (arreglo A): una cola de diezmilésimas no es saldo que cobrar.
+    hasCollectibleBalance(d.balancePen);
+  // D-377: el monto del cobro va al céntimo y hasta el saldo cobrable (`payableBalance`, D-169),
+  // la misma regla que aplica el API.
+  const payable = payableBalance(d.balancePen);
+  const payAmountError = !isPositiveDecimal(payAmount)
+    ? null
+    : toDecimal(payAmount.trim()).decimalPlaces() > 2
+      ? 'El monto va con hasta dos decimales (céntimos)'
+      : toDecimal(payAmount.trim()).gt(payable)
+        ? `Excede el saldo pendiente (S/ ${payable.toFixed(2)})`
+        : null;
   const canCreateCreditNote =
     typedCreditQty.length === validCreditQty.length && (isFullReason || validCreditQty.length > 0);
 
@@ -1030,7 +1044,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  setPayAmount(d.balancePen);
+                  // D-377: el cobro se precarga al céntimo; nadie transfiere S/ 117.9999.
+                  setPayAmount(
+                    toDecimal(d.balancePen).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2),
+                  );
                   setPayOpen(true);
                 }}
               >
@@ -1448,6 +1465,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   setPayAmount(e.target.value);
                 }}
               />
+              {payAmountError !== null && (
+                <p className="text-destructive text-xs">{payAmountError}</p>
+              )}
             </div>
             <div className="space-y-1">
               <Label>Medio de pago</Label>
@@ -1491,13 +1511,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               Cancelar
             </Button>
             <Button
-              disabled={
-                busy ||
-                !isPositiveDecimal(payAmount) ||
-                toDecimal(isPositiveDecimal(payAmount) ? payAmount : '0').gt(
-                  toDecimal(d.balancePen),
-                )
-              }
+              disabled={busy || !isPositiveDecimal(payAmount) || payAmountError !== null}
               pending={addPayment.isPending}
               pendingText="Registrando…"
               onClick={() => {
