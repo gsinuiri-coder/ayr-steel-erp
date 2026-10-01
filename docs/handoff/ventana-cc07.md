@@ -1,6 +1,30 @@
 # Runbook — deploy de cc07 (D-373, reactivar comprobante anulado) y reactivación de BBV1-00000341
 
-**Estado: PREPARADO, sin ejecutar.** Cada paso marcado **[OK]** espera el OK explícito del dueño en
+**Estado: EJECUTADO el 2026-10-01, de día** (el cliente no usaba la app). Resultado:
+
+| Qué                         | Valor                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------- |
+| Revisión API anterior       | `ayr-steel-erp-api-00070-vb9` (`git-sha=270d361`)                                                 |
+| Revisión API nueva          | **`ayr-steel-erp-api-00071-bll`**, 100 %, `git-sha=3bf6de5`, `/health` 200                        |
+| Smoke web vieja + API nueva | verde (8/8)                                                                                       |
+| Merge #68                   | `main` = **`f2806bc`**; diff de runtime contra `3bf6de5` vacío                                    |
+| Web (Vercel Production)     | publicada; smoke verde contra `ayr-steel-erp-web.vercel.app` y `v2.mareliac.pe`                   |
+| Reactivación de 341         | el dueño, 13:39 UTC; auditoría con la copia de la anulación verificada por foto `READ ONLY`       |
+| Despacho de 341             | **DES-000052, 18/08**, L1 `UPVC36MT` 12 y L2 `AUTOPERF10X1` 100 (ver nota)                        |
+| Despacho de 347             | **DES-000053, 27/09**, L1 `AUTOPERF10X1` 500 y L2 `AUTOPERF12X212` 500 (D-374 punto 4)            |
+| Foto final (13:58 UTC)      | sin días negativos, ningún costo cambiado, **ninguna línea facturada sin despacho en el sistema** |
+
+**Nota sobre 341.** El plan era despachar la L1 el 03/08 y que la L2 esperara D-374. El dueño
+despachó las dos el 18/08, que era la fecha sugerida en el aviso. El detalle se abrió **sin**
+`?despacho=fecha-comprobante` tras una recarga forzada, así que el campo traía el default D-364
+(la primera fecha en que caben todas las líneas). Para seguir con D-374 punto 3 había que cambiar
+la herramienta de fechas, porque excluye NF1-1. El dueño eligió la opción B: aceptar el 18/08 y
+despachar 347 en la primera fecha válida. Fotos: `local-data/d374/antes.json` y `despues.json`
+(checkout principal, ignorado por git).
+
+---
+
+Plan original. Cada paso marcado **[OK]** espera el OK explícito del dueño en
 la sesión (D-251/D-232). El agente propone el comando exacto y espera; no encadena comandos de
 producción.
 

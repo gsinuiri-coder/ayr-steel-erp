@@ -159,5 +159,51 @@ En la misma foto:
 
 ## 7. Numeración
 
-D-374 queda **reservada** para esta propuesta. La fila de `docs/ARQUITECTURA.md` §0.2 se escribe
-cuando el dueño la apruebe, igual que se hizo con D-373.
+D-374 se reservó para esta propuesta y su fila de `docs/ARQUITECTURA.md` §0.2 se escribió al aprobarla
+(ver §8), igual que con D-373.
+
+## 8. Aprobación y aplicación (ventana cc07, 2026-10-01)
+
+**D-374 aprobada por el dueño** y registrada en `docs/ARQUITECTURA.md` §0.2. El dueño confirmó estas
+fechas reales:
+
+- NF1-1 se recibió el 03/08.
+- NF1-2 se queda en el 18/08.
+- F001-00043612 no se toca.
+
+Qué pasó en la ventana:
+
+- **341 se despachó completo el 18/08** (DES-000052). El dueño usó la fecha que sugería el aviso.
+  Tras una recarga forzada, el detalle se abrió sin `?despacho=fecha-comprobante`, así que el campo
+  mostraba el default de D-364 y no la fecha del comprobante.
+- **La herramienta de fechas excluye NF1-1.** Corregir NF1-1 al 03/08 (punto 3) habría exigido
+  cambiar la herramienta, porque excluye toda compra con una salida posterior, y NF1-1 ya tenía dos
+  (17/08 y 18/08). El dueño eligió **no cambiarla** y aplicar el punto 4: **347 L1 y L2 salieron el
+  27/09** (DES-000053), su primera fecha válida.
+- **Fotos `READ ONLY`, antes (13:43 UTC) y después (13:58 UTC):**
+  - ninguna salida existente cambió de costo (`AUTOPERF10X1` 0,055, `AUTOPERF12X212` 0,1441,
+    `UPVC36MT` 43,2203);
+  - no hay días negativos;
+  - no queda ninguna línea facturada sin despacho en todo el sistema.
+
+**Sobre F001-00043612.** La corrección al 12/08 (29/09, 13:20:32 UTC) y su undo (13:27:56 UTC) los
+hizo la CLI `fix:purchase-received-dates` con la cuenta administradora del dueño, en la ventana de
+fechas del 29/09, con su OK. Era parte de un lote de seis compras corregidas para poder despachar
+FFA1-00001389. Ese comprobante resultó **anulado**, así que el despacho no procedía y se deshizo el
+lote entero (`docs/analisis/fechas-recibidas-compras-2026-09-29.md`). La compra sigue recibida con
+fecha 27/09. Como el dueño decidió no tocarla, 347 L2 salió en esa fecha.
+
+**Pendientes:**
+
+1. Hoy 341 tiene su salida el 18/08 y no el 03/08 de su comprobante. Llevarla al 03/08 exige:
+   - revertir DES-000052, que es append-only;
+   - corregir NF1-1 con la herramienta ampliada;
+   - volver a despachar.
+
+   Solo se hace si el dueño lo decide.
+
+2. El cambio de la herramienta del punto 3 (aceptar una salida posterior cuando su costo no cambia)
+   no está implementado.
+3. **UI:** la fecha sugerida del despacho depende de `?despacho=fecha-comprobante` en la URL, que se
+   pierde al recargar o al entrar al detalle por otro camino. Conviene sugerir siempre la fecha del
+   comprobante cuando el stock alcanza.
