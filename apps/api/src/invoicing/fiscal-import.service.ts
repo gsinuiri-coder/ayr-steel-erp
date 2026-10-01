@@ -1,14 +1,27 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { FiscalDocumentOrigin, FiscalDocumentStatus } from '@prisma/client';
-import { LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES } from '@ayr/shared';
+import {
+  FiscalDocType,
+  FiscalDocumentOrigin,
+  FiscalDocumentStatus,
+  Role,
+  type Prisma,
+} from '@prisma/client';
+import {
+  Decimal,
+  LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
+  salesOrderCode,
+  toDecimal,
+} from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { invoicedByOrderItem } from './invoicing-net';
 
 /**
  * La anulación **interna** de un comprobante que el ERP no emitió electrónicamente
@@ -140,4 +153,272 @@ export class FiscalImportService {
       return updated;
     });
   }
+
+  /**
+   * D-373: deshace una anulación interna hecha **por error**. La anulación solo cambió el estado
+   * (no tocó kardex, reservas, cobros ni despachos), así que reactivar es devolver el estado
+   * `ACCEPTED`; lo que hay que comprobar es lo que otros pudieron hacer mientras estuvo anulado.
+   *
+   * Los `CHECK` de la fila obligan a vaciar `annulled_at`, `annulled_by_id` y `annul_reason` al
+   * volver a `ACCEPTED`: la constancia de la anulación queda en la auditoría, que guarda una
+   * copia de esos campos (sin migración).
+   *
+   * No despacha nada: el comprobante vuelve a «sin despacho declarado» y se despacha aparte
+   * con D-364, a la fecha del comprobante.
+   */
+  async reactivateExternal(
+    actor: RequestUser,
+    id: string,
+    input: { reason: string; confirmStillValid: boolean },
+  ): Promise<{ id: string; number: string | null }> {
+    if (actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException('Solo un administrador puede reactivar un comprobante anulado');
+    }
+    if (!input.confirmStillValid) {
+      throw new BadRequestException(
+        'Confirma que el comprobante sigue vigente en Nubefact/SUNAT (que no se comunicó su baja) antes de reactivarlo',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // El mismo lock que la anulación: una anulación, una reactivación o un cobro simultáneos
+      // sobre esta fila esperan a que esta transacción termine y ven el estado ya cambiado.
+      await tx.$queryRaw`
+        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
+      `;
+      const document = await tx.fiscalDocument.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          number: true,
+          origin: true,
+          status: true,
+          archivedAt: true,
+          annulledAt: true,
+          annulledById: true,
+          annulReason: true,
+          sendAttempts: true,
+          lastAttemptAt: true,
+          providerTicket: true,
+          providerResponse: true,
+          sunatHash: true,
+          xmlKey: true,
+          cdrKey: true,
+          voidRequestedAt: true,
+          voidedAt: true,
+          salesOrder: { select: { seq: true } },
+          items: { select: { qty: true, salesOrderItemId: true } },
+        },
+      });
+      if (!document) throw new NotFoundException('Comprobante no encontrado');
+      const label = document.number ?? 'El comprobante';
+
+      if (document.origin === FiscalDocumentOrigin.ISSUED_HERE) {
+        throw new BadRequestException(
+          'Este comprobante lo emitió el ERP: no se reactiva desde acá, se resuelve ante SUNAT',
+        );
+      }
+      // Idempotencia de una transición de estado (D-182): el segundo intento ve el estado ya
+      // cambiado y no repite nada.
+      if (document.status === FiscalDocumentStatus.ACCEPTED) {
+        throw new ConflictException(`${label} ya está vigente`);
+      }
+      if (document.status !== FiscalDocumentStatus.ANNULLED || document.annulledAt === null) {
+        throw new BadRequestException(
+          `Solo se reactiva un comprobante anulado; este está ${document.status}`,
+        );
+      }
+      if (document.archivedAt !== null) {
+        throw new BadRequestException(
+          'Esta versión ya fue reemplazada por una reimportación posterior: no se reactiva',
+        );
+      }
+
+      // Un manual o importado nunca habla con el PSE. Cualquier rastro de envío o de baja dice
+      // que este documento tuvo otra vida fuera del ERP, y reactivarlo afirmaría algo que no
+      // sabemos.
+      if (
+        document.sendAttempts > 0 ||
+        document.lastAttemptAt !== null ||
+        document.providerTicket !== null ||
+        document.providerResponse !== null ||
+        document.sunatHash !== null ||
+        document.xmlKey !== null ||
+        document.cdrKey !== null ||
+        document.voidRequestedAt !== null ||
+        document.voidedAt !== null
+      ) {
+        throw new BadRequestException(
+          `${label} tiene rastro de envío al PSE o de comunicación de baja: no se reactiva desde acá`,
+        );
+      }
+
+      // El estado anterior a la anulación sale de su auditoría. La anulación solo acepta
+      // `ACCEPTED`, pero se lee igual: es la copia que la reactivación guarda.
+      const annulEvent = await tx.auditLog.findFirst({
+        where: { entity: 'fiscal_documents', entityId: id, action: 'invoicing.import.annul' },
+        orderBy: [{ at: 'desc' }, { id: 'desc' }],
+        select: { before: true },
+      });
+      const statusBeforeAnnul = statusOf(annulEvent?.before);
+      if (statusBeforeAnnul !== FiscalDocumentStatus.ACCEPTED) {
+        throw new BadRequestException(
+          `${label} no tiene en la auditoría una anulación desde «aceptado»: no se puede reactivar`,
+        );
+      }
+
+      const annulledAt = document.annulledAt;
+      const payments = await tx.customerPayment.count({
+        where: {
+          documentId: id,
+          OR: [{ reversedAt: null }, { createdAt: { gt: annulledAt } }],
+        },
+      });
+      if (payments > 0) {
+        throw new BadRequestException(
+          `${label} tiene cobros vigentes o registrados después de su anulación: revísalos antes de reactivarlo`,
+        );
+      }
+      const creditNotes = await tx.fiscalDocument.findMany({
+        where: {
+          affectedDocumentId: id,
+          archivedAt: null,
+          OR: [
+            { status: { in: [...SHARED_LIVE_DOCUMENT_STATUSES] } },
+            { createdAt: { gt: annulledAt } },
+          ],
+        },
+        select: { number: true },
+      });
+      if (creditNotes.length > 0) {
+        throw new BadRequestException(
+          `${label} tiene notas de crédito vivas o posteriores a su anulación (${creditNotes
+            .map((n) => n.number ?? 'borrador')
+            .join(', ')}): no se reactiva`,
+        );
+      }
+
+      const orderItemIds = [
+        ...new Set(document.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []))),
+      ];
+      if (orderItemIds.length > 0) {
+        await assertLinesNotReinvoiced(tx, id, label, document.items, orderItemIds);
+        const drafts = await tx.fiscalDocument.count({
+          where: {
+            id: { not: id },
+            status: FiscalDocumentStatus.DRAFT,
+            items: { some: { salesOrderItemId: { in: orderItemIds } } },
+          },
+        });
+        if (drafts > 0) {
+          const order = document.salesOrder
+            ? ` del pedido ${salesOrderCode(document.salesOrder.seq)}`
+            : '';
+          throw new ConflictException(
+            `Hay ${String(drafts)} borrador(es) de comprobante sobre las mismas líneas${order}: elimínalo(s) primero y vuelve a reactivar`,
+          );
+        }
+      }
+
+      // Verificación de versión además del lock: solo cambia si sigue anulado.
+      const changed = await tx.fiscalDocument.updateMany({
+        where: { id, status: FiscalDocumentStatus.ANNULLED },
+        data: {
+          status: FiscalDocumentStatus.ACCEPTED,
+          annulledAt: null,
+          annulledById: null,
+          annulReason: null,
+        },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException(`${label} cambió mientras se reactivaba: vuelve a intentarlo`);
+      }
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.document.reactivate',
+        entity: 'fiscal_documents',
+        entityId: id,
+        reason: input.reason,
+        // La copia de lo que la fila deja de guardar (D-373): sin esto, la anulación solo
+        // quedaría en su propio evento y nada diría que se deshizo.
+        before: {
+          status: FiscalDocumentStatus.ANNULLED,
+          statusBeforeAnnul,
+          annulledAt: annulledAt.toISOString(),
+          annulledById: document.annulledById,
+          annulReason: document.annulReason,
+        },
+        after: {
+          status: FiscalDocumentStatus.ACCEPTED,
+          reason: input.reason,
+          number: document.number,
+          confirmedStillValid: true,
+        },
+      });
+      return { id, number: document.number };
+    });
+  }
+}
+
+/** El `status` de un `before` de auditoría, si lo trae. */
+function statusOf(json: Prisma.JsonValue | undefined): string | null {
+  if (json === null || json === undefined || typeof json !== 'object' || Array.isArray(json)) {
+    return null;
+  }
+  const status = json.status;
+  return typeof status === 'string' ? status : null;
+}
+
+/**
+ * D-373: si otro comprobante vivo facturó las líneas mientras este estuvo anulado, reactivarlo
+ * las facturaría dos veces. La misma cuenta que `assertStillAvailable` al emitir, con un mensaje
+ * que nombra a los comprobantes que las tomaron.
+ */
+async function assertLinesNotReinvoiced(
+  tx: Prisma.TransactionClient,
+  id: string,
+  label: string,
+  items: readonly { qty: Prisma.Decimal; salesOrderItemId: string | null }[],
+  orderItemIds: readonly string[],
+): Promise<void> {
+  const [orderItems, invoiced] = await Promise.all([
+    tx.salesOrderItem.findMany({
+      where: { id: { in: [...orderItemIds] } },
+      select: { id: true, lineNumber: true, qty: true },
+    }),
+    invoicedByOrderItem(tx, orderItemIds, { excludeDocumentId: id }),
+  ]);
+  const requested = new Map<string, Decimal>();
+  for (const item of items) {
+    if (!item.salesOrderItemId) continue;
+    requested.set(
+      item.salesOrderItemId,
+      (requested.get(item.salesOrderItemId) ?? new Decimal(0)).plus(toDecimal(item.qty.toString())),
+    );
+  }
+  const overflowing = orderItems.filter((o) => {
+    const available = toDecimal(o.qty.toString()).minus(invoiced.get(o.id)?.qty ?? new Decimal(0));
+    return (requested.get(o.id) ?? new Decimal(0)).gt(available);
+  });
+  if (overflowing.length === 0) return;
+
+  const others = await tx.fiscalDocument.findMany({
+    where: {
+      id: { not: id },
+      archivedAt: null,
+      status: { in: [...SHARED_LIVE_DOCUMENT_STATUSES] },
+      docType: { not: FiscalDocType.NOTA_CREDITO },
+      items: { some: { salesOrderItemId: { in: overflowing.map((o) => o.id) } } },
+    },
+    select: { number: true },
+  });
+  const lines = overflowing.map((o) => String(o.lineNumber)).join(', ');
+  const names = others.map((o) => o.number ?? 'sin número').join(', ');
+  const where = names ? ` en ${names}` : '';
+  throw new ConflictException(
+    overflowing.length === 1
+      ? `La línea ${lines} del pedido ya se volvió a facturar${where}: reactivar ${label} la facturaría dos veces`
+      : `Las líneas ${lines} del pedido ya se volvieron a facturar${where}: reactivar ${label} las facturaría dos veces`,
+  );
 }

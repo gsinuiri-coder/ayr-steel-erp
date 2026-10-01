@@ -28,6 +28,7 @@ import {
   updateFiscalSeriesSchema,
   updateInvoicingSettingsSchema,
   voidDocumentSchema,
+  reactivateDocumentSchema,
   type CreateCreditNoteInput,
   type CreateCustomerPaymentInput,
   type CreateFiscalSeriesInput,
@@ -49,6 +50,7 @@ import {
   type UpdateFiscalSeriesInput,
   type UpdateInvoicingSettingsInput,
   type VoidDocumentInput,
+  type ReactivateDocumentInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -430,6 +432,21 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(voidDocumentSchema)) body: VoidDocumentInput,
   ): Promise<FiscalDocumentDto> {
     await this.fiscalImport.annulExternal(actor, id, body.reason);
+    return this.invoicing.findOne(id);
+  }
+
+  /**
+   * D-373: reactiva un comprobante manual o importado anulado por error. Motivo y casilla
+   * «sigue vigente en Nubefact/SUNAT» obligatorios; no despacha nada.
+   */
+  @Post('documents/:id/reactivate')
+  @Roles(Role.ADMINISTRADOR)
+  async reactivate(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reactivateDocumentSchema)) body: ReactivateDocumentInput,
+  ): Promise<FiscalDocumentDto> {
+    await this.fiscalImport.reactivateExternal(actor, id, body);
     return this.invoicing.findOne(id);
   }
 }
