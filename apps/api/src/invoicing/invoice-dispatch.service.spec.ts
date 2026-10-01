@@ -618,6 +618,7 @@ describe('D-288 — re-fechar el despacho a la fecha del comprobante', () => {
         operationDate: '2026-08-19',
         reason: action === 'REVIEW' ? 'deja el kardex negativo' : null,
         firstValidDate: null,
+        restorableReservation: null,
       },
     ],
     dispatchIds: action === 'REVIEW' ? [] : ['nuevo'],

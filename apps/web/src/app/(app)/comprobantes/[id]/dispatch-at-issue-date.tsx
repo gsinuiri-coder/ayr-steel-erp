@@ -2,11 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import type { InvoiceDispatchPlanDto, InvoiceDispatchResultDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { formatDate } from '@/lib/format';
+import { LINK_CLASSNAME } from '@/lib/utils';
+import { restoreReservationHref } from '@/lib/restore-reservation';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -134,6 +137,22 @@ export function DispatchAtIssueDate({
               Línea {l.lineNumber} · {l.sku} · {l.qty}: {ACTION_LABELS[l.action]}
               {l.action === 'REVIEW' && l.reason ? ` — ${l.reason}` : ''}
               {l.firstValidDate ? ` · Primera fecha válida: ${formatDate(l.firstValidDate)}` : ''}
+              {l.restorableReservation !== null && (
+                // D-379: la reserva de lo fabricado se liberó a mano; se repone desde el pedido.
+                <span data-testid="dispatch-restore-reservation" className="block">
+                  La reserva de esta línea se liberó a mano.{' '}
+                  <Link
+                    href={restoreReservationHref(
+                      l.restorableReservation.salesOrderId,
+                      l.restorableReservation.reservationId,
+                    )}
+                    className={LINK_CLASSNAME}
+                  >
+                    Restaurar reserva
+                  </Link>{' '}
+                  y volver acá para despacharla.
+                </span>
+              )}
             </li>
           ))}
         </ul>

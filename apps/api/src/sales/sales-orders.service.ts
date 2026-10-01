@@ -128,6 +128,15 @@ import {
 } from './sales-lines';
 import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
 import { reservationDispatches } from './reservation-dispatches';
+import {
+  fabricatedReleaseBlock,
+  latestReleaseEvents,
+  RESERVATION_LINE_SELECT,
+  RESERVATION_RESTORE_ACTION,
+  restorableReservationIds,
+  restoreBlock,
+  restoreQty,
+} from './reservation-restore';
 import { liveDocumentsByOrder } from './order-documents';
 import { salesOrderOrderBy } from '../common/list-orderings';
 
@@ -2361,6 +2370,11 @@ export class SalesOrdersService {
           status: true,
           salesOrderId: true,
           shortfallQty: true,
+          itemType: true,
+          itemId: true,
+          qty: true,
+          unit: true,
+          salesOrderItem: { select: RESERVATION_LINE_SELECT },
           productionOrders: {
             where: {
               status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
@@ -2379,6 +2393,10 @@ export class SalesOrdersService {
           'La reserva ya fue consumida por una orden de producción: no hay nada que liberar',
         );
       }
+      // D-379: la reserva de lo ya fabricado de una línea que se fabrica contra el pedido es el
+      // único camino de despacho de esa línea. Liberarla la dejaba sin despacho posible.
+      const fabricated = fabricatedReleaseBlock(reservation, reservation.salesOrderItem);
+      if (fabricated !== null) throw new BadRequestException(fabricated);
       // Mismo bloqueo que anular el pedido, y por el mismo motivo: si se libera el material
       // que una OP ya tiene montado, otro pedido lo puede reservar y el reporte de esa OP
       // queda trabado contra la invariante, sin culpa de planta.
@@ -2414,12 +2432,155 @@ export class SalesOrdersService {
       });
     });
 
+    return this.reservationDto(reservationId);
+  }
+
+  /**
+   * D-379: «Restaurar reserva». Vuelve a `ACTIVA` una reserva de producto terminado que un
+   * administrador liberó a mano, por lo que prometía al liberarse sin pasar de lo que a la línea
+   * le queda por despachar. Pasa por la misma comprobación de disponible que la reserva original
+   * (`lockAvailability`: físico menos lo reservado vivo, bajo el lock del saldo) y, si no alcanza,
+   * rechaza con el faltante. No mueve kardex.
+   *
+   * Solo una liberada **a mano**: las que cerró un despacho, la producción o la anulación del
+   * pedido no se restauran (`restoreBlock`). La auditoría guarda los campos de la liberación que
+   * la fila vacía, como D-373 con la anulación.
+   */
+  async restoreReservation(
+    actor: RequestUser,
+    reservationId: string,
+    reason: string,
+  ): Promise<ReservationDto> {
+    if (actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException('Solo un administrador restaura una reserva');
+    }
+    await this.prisma.$transaction(
+      async (tx) => {
+        const head = await tx.reservation.findUnique({
+          where: { id: reservationId },
+          select: { salesOrderId: true },
+        });
+        if (!head) throw new NotFoundException('Reserva no encontrada');
+        // El mismo orden de locks que el resto del pedido: primero el pedido, después la fila de
+        // la reserva y al final el saldo del ítem (`lockAvailability`).
+        const order = await this.lockOrder(tx, head.salesOrderId);
+        await tx.$queryRaw`
+          SELECT "id" FROM "reservations" WHERE "id" = ${reservationId}::uuid FOR UPDATE
+        `;
+        const reservation = await tx.reservation.findUniqueOrThrow({
+          where: { id: reservationId },
+          select: {
+            id: true,
+            status: true,
+            itemType: true,
+            itemId: true,
+            qty: true,
+            unit: true,
+            releasedAt: true,
+            releasedById: true,
+            salesOrderItemId: true,
+            salesOrderItem: { select: RESERVATION_LINE_SELECT },
+          },
+        });
+        const events = await latestReleaseEvents(tx, [reservationId]);
+        const lastRelease = events.get(reservationId) ?? null;
+        const block = restoreBlock(
+          { ...reservation, salesOrder: { status: order.status } },
+          lastRelease?.action ?? null,
+        );
+        if (block !== null) throw new BadRequestException(block);
+
+        const line = reservation.salesOrderItem;
+        const dispatched = await tx.dispatchItem.aggregate({
+          where: {
+            salesOrderItemId: reservation.salesOrderItemId,
+            itemType: reservation.itemType,
+            itemId: reservation.itemId,
+            dispatch: { status: 'ISSUED' },
+          },
+          _sum: { reserveQty: true },
+        });
+        const qty = restoreQty({
+          reservationQty: reservation.qty,
+          reservationUnit: reservation.unit,
+          line,
+          dispatchedOnItem: toDecimal((dispatched._sum.reserveQty ?? 0).toString()),
+        });
+        if (qty.lte(0)) {
+          throw new BadRequestException(
+            `A la línea ${String(line.lineNumber)} no le queda nada por despachar: no hay reserva que restaurar`,
+          );
+        }
+
+        const product = await tx.product.findUniqueOrThrow({
+          where: { id: reservation.itemId },
+          select: { sku: true, businessLineId: true },
+        });
+        const availability = await this.inventory.lockAvailability(tx, {
+          businessLineId: product.businessLineId,
+          itemType: reservation.itemType,
+          itemId: reservation.itemId,
+          unit: reservation.unit,
+        });
+        if (qty.gt(availability.available)) {
+          throw new BadRequestException(
+            `Línea ${String(line.lineNumber)}: ${product.sku} tiene ${availability.available.toFixed(3)} ${availability.unit} disponibles ` +
+              `(${availability.qty.toFixed(3)} físicos menos ${availability.reserved.toFixed(3)} ya reservados) ` +
+              `y la reserva necesita ${qty.toFixed(3)}: faltan ${qty.minus(availability.available).toFixed(3)}.`,
+          );
+        }
+
+        const restored = await tx.reservation.updateMany({
+          where: { id: reservationId, status: ReservationStatus.RELEASED },
+          data: {
+            status: ReservationStatus.ACTIVE,
+            qty: qty.toFixed(3),
+            releasedAt: null,
+            releasedById: null,
+          },
+        });
+        if (restored.count !== 1) {
+          throw new ConflictException('La reserva cambió de estado mientras se restauraba');
+        }
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: RESERVATION_RESTORE_ACTION,
+          entity: 'reservations',
+          entityId: reservationId,
+          reason,
+          before: {
+            status: ReservationStatus.RELEASED,
+            qty: toDecimal(reservation.qty.toString()).toFixed(3),
+            // Los campos de la liberación que la fila vacía: quedan acá y en el evento anterior.
+            releasedAt: reservation.releasedAt?.toISOString() ?? null,
+            releasedById: reservation.releasedById,
+            releaseReason: lastRelease?.reason ?? null,
+          },
+          after: {
+            status: ReservationStatus.ACTIVE,
+            qty: qty.toFixed(3),
+            unit: reservation.unit,
+            salesOrder: salesOrderCode(order.seq),
+            lineNumber: line.lineNumber,
+            sku: product.sku,
+            reason,
+          },
+        });
+      },
+      { timeout: 60_000, maxWait: 15_000 },
+    );
+    return this.reservationDto(reservationId);
+  }
+
+  /** Una reserva como DTO, con su etiqueta, su despacho y si se puede restaurar (D-379). */
+  private async reservationDto(reservationId: string): Promise<ReservationDto> {
     const row = await this.prisma.reservation.findUniqueOrThrow({
       where: { id: reservationId },
       include: {
         salesOrder: {
           select: {
             seq: true,
+            status: true,
             customer: { select: { name: true } },
             items: { select: { productId: true } },
           },
@@ -2436,8 +2597,12 @@ export class SalesOrdersService {
         },
       },
     });
-    const labels = await this.reserveLabels([row]);
-    return this.toReservationDto(row, labels, await reservationDispatches(this.prisma, [row]));
+    const [labels, dispatches, restorable] = await Promise.all([
+      this.reserveLabels([row]),
+      reservationDispatches(this.prisma, [row]),
+      restorableReservationIds(this.prisma, [row]),
+    ]);
+    return this.toReservationDto(row, labels, dispatches, restorable);
   }
 
   // -------------------------------------------------------------------------
@@ -2990,8 +3155,15 @@ export class SalesOrdersService {
         // Correcciones 05 / M4: los comprobantes vivos, junto al estado del pedido.
         liveDocumentsByOrder(this.prisma, [id]),
       ]);
+    // D-379: qué reservas liberadas a mano se pueden restaurar desde la línea.
+    const restorable = await restorableReservationIds(
+      this.prisma,
+      row.reservations.map((r) => ({ ...r, salesOrder: { status: row.status } })),
+    );
+    const dto = this.toDto(row, labels, actors, context, dispatches);
     return {
-      ...this.toDto(row, labels, actors, context, dispatches),
+      ...dto,
+      reservations: dto.reservations.map((r) => ({ ...r, restorable: restorable.has(r.id) })),
       priceChanges,
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
       documents: documentsByOrder.get(id) ?? [],
@@ -3718,6 +3890,7 @@ export class SalesOrdersService {
         salesOrder: {
           select: {
             seq: true,
+            status: true,
             customer: { select: { name: true } },
             items: { select: { productId: true } },
           },
@@ -3737,8 +3910,11 @@ export class SalesOrdersService {
       take: 500,
     });
     const labels = await this.reserveLabels(rows);
-    const dispatches = await reservationDispatches(this.prisma, rows);
-    return rows.map((r) => this.toReservationDto(r, labels, dispatches));
+    const [dispatches, restorable] = await Promise.all([
+      reservationDispatches(this.prisma, rows),
+      restorableReservationIds(this.prisma, rows),
+    ]);
+    return rows.map((r) => this.toReservationDto(r, labels, dispatches, restorable));
   }
 
   // -------------------------------------------------------------------------
@@ -3846,6 +4022,8 @@ export class SalesOrdersService {
     row: ReservationRow,
     labels: Map<string, { label: string; name: string }>,
     dispatches: ReadonlyMap<string, { id: string; code: string }> = new Map(),
+    /** D-379: ids de las reservas liberadas a mano que se pueden restaurar. */
+    restorable: ReadonlySet<string> = new Set(),
   ): ReservationDto {
     const op = row.productionOrders[0];
     const dispatch = dispatches.get(row.id);
@@ -3874,6 +4052,7 @@ export class SalesOrdersService {
       createdAt: row.createdAt.toISOString(),
       consumedAt: row.consumedAt?.toISOString() ?? null,
       releasedAt: row.releasedAt?.toISOString() ?? null,
+      restorable: restorable.has(row.id),
     };
   }
 

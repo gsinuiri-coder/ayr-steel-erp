@@ -36,6 +36,7 @@ import {
   createSalesOrderSchema,
   quotationQuerySchema,
   releaseReservationSchema,
+  restoreReservationSchema,
   releaseTemporaryReservationSchema,
   reservationQuerySchema,
   updateSalesSettingsSchema,
@@ -64,6 +65,7 @@ import {
   type QuotationQuery,
   type QuotationStockShortageDto,
   type ReleaseReservationInput,
+  type RestoreReservationInput,
   type ReservationDto,
   type ReservationQuery,
   type SalesOrderDto,
@@ -547,5 +549,16 @@ export class SalesController {
     @Body(new ZodValidationPipe(releaseReservationSchema)) body: ReleaseReservationInput,
   ): Promise<ReservationDto> {
     return this.orders.releaseReservation(actor, id, body.reason);
+  }
+
+  /** D-379: restaurar una reserva de producto liberada a mano. Solo ADMINISTRADOR, con motivo. */
+  @Post('reservations/:id/restore')
+  @Roles(Role.ADMINISTRADOR)
+  restoreReservation(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(restoreReservationSchema)) body: RestoreReservationInput,
+  ): Promise<ReservationDto> {
+    return this.orders.restoreReservation(actor, id, body.reason);
   }
 }

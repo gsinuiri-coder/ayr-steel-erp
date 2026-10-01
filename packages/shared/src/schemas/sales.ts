@@ -383,6 +383,12 @@ export const reservationSchema = z.object({
   createdAt: z.string(),
   consumedAt: z.string().nullable(),
   releasedAt: z.string().nullable(),
+  /**
+   * D-379: la reserva se liberó **a mano** y se puede restaurar: producto terminado, con
+   * cantidad, de un pedido vivo, y su último evento es la liberación manual. Las cerradas por
+   * despacho, por producción o por anular el pedido no lo son.
+   */
+  restorable: z.boolean(),
 });
 export type ReservationDto = z.infer<typeof reservationSchema>;
 
@@ -396,6 +402,10 @@ export type ReservationQuery = z.infer<typeof reservationQuerySchema>;
 /** Liberación manual de una reserva (D-054): solo ADMINISTRADOR, siempre con motivo. */
 export const releaseReservationSchema = z.object({ reason: reasonSchema });
 export type ReleaseReservationInput = z.infer<typeof releaseReservationSchema>;
+
+/** D-379: restaurar una reserva liberada a mano. Solo ADMINISTRADOR, siempre con motivo. */
+export const restoreReservationSchema = z.object({ reason: reasonSchema });
+export type RestoreReservationInput = z.infer<typeof restoreReservationSchema>;
 
 // --------------------------------------------------------------------------
 // D-065 — líneas de cotización y de pedido
