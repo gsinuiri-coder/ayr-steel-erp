@@ -197,8 +197,8 @@ describe('SalesByMaterialService (D-354)', () => {
         {
           item: 'soi-1',
           coil: 'B-26',
-          kg: '96.000',
-          cost: '240.0000',
+          kg: '240.000',
+          cost: '600.0000',
           thickness: '0.28',
           width: '1200.00',
           meters: '90.000',
@@ -210,11 +210,11 @@ describe('SalesByMaterialService (D-354)', () => {
     expect(row.theoreticalKg).toBe('237.384');
     expect(row.theoreticalKg).not.toBe(KG_PER_M.times(90).toFixed(3));
     const coil = row.coils[0]!;
-    expect(coil).toMatchObject({ thicknessMm: '0.28', theoreticalKg: '237.384', kg: '96.000' });
+    expect(coil).toMatchObject({ thicknessMm: '0.28', theoreticalKg: '237.384', kg: '240.000' });
     expect(coil.documents.map((doc) => [doc.documentNumber, doc.kg, doc.meters])).toEqual([
-      ['F001-1', '64.000', '60.000'],
-      ['F001-2', '42.667', '40.000'],
-      ['F001-3', '-10.667', '-10.000'],
+      ['F001-1', '160.000', '60.000'],
+      ['F001-2', '106.667', '40.000'],
+      ['F001-3', '-26.667', '-10.000'],
     ]);
   });
 

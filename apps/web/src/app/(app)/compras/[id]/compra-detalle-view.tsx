@@ -665,6 +665,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       />
 
       <PurchaseItemDialog
+        key={editingItem?.id ?? 'sin-linea'}
         item={editingItem}
         currency={p.currency}
         pending={updateItem.isPending}
@@ -849,19 +850,21 @@ function PurchaseItemDialog({
   onClose: () => void;
   onConfirm: (qty: string, unitPrice: string) => void;
 }) {
-  const [qty, setQty] = useState('');
-  const [unitPrice, setUnitPrice] = useState('');
-
-  // Cada apertura arranca de lo guardado, no de lo que se intentó la vez anterior.
-  useEffect(() => {
-    if (item) {
-      setQty(item.qty);
-      setUnitPrice(item.unitPrice);
-    }
-  }, [item]);
+  // Cada apertura arranca de lo guardado: quien lo usa le pone `key` por línea, así que el
+  // estado nace con los valores de la línea (sin un render vacío que muestre el error).
+  const [qty, setQty] = useState(item?.qty ?? '');
+  const [unitPrice, setUnitPrice] = useState(item?.unitPrice ?? '');
 
   const qtyOk = QTY_PATTERN.test(qty.trim()) && isPositiveDecimal(qty.trim());
   const priceOk = PRICE_PATTERN.test(unitPrice.trim()) && isPositiveDecimal(unitPrice.trim());
+  // Guardar sin cambios recalcularía la línea como cantidad × precio y pisaría el importe del
+  // papel de una compra importada (D-359): sin cambios no hay nada que guardar.
+  const unchanged =
+    item !== null &&
+    qtyOk &&
+    priceOk &&
+    new Decimal(qty.trim()).equals(new Decimal(item.qty)) &&
+    new Decimal(unitPrice.trim()).equals(new Decimal(item.unitPrice));
 
   return (
     <Dialog
@@ -912,7 +915,7 @@ function PurchaseItemDialog({
             Cancelar
           </Button>
           <Button
-            disabled={!qtyOk || !priceOk}
+            disabled={!qtyOk || !priceOk || unchanged}
             pending={pending}
             pendingText="Guardando…"
             onClick={() => {

@@ -43,12 +43,16 @@ describe('reglas de D-371', () => {
     }).not.toThrow();
   });
 
-  it('la tasa de IGV sale de los totales de la compra, redondeada a dos decimales', () => {
+  it('la tasa de IGV sale de los totales y se ajusta a 18 o 0; si no es estándar, no se edita', () => {
     expect(impliedIgvRatePct('3000.0000', '540.0000').toFixed(2)).toBe('18.00');
-    // Tres líneas con redondeo a céntimo por línea: el cociente no es exacto y se absorbe.
+    // Redondeo a céntimo por línea o importes del papel (D-359): el ruido se absorbe.
     expect(impliedIgvRatePct('100.0001', '18.0000').toFixed(2)).toBe('18.00');
+    expect(impliedIgvRatePct('1000.0000', '179.9500').toFixed(2)).toBe('18.00');
     expect(impliedIgvRatePct('500.0000', '0.0000').toFixed(2)).toBe('0.00');
     expect(impliedIgvRatePct('0', '0').toFixed(2)).toBe('0.00');
+    // Una línea de céntimos (0.03 con IGV 0.01 = 33 %) no inventa una tasa.
+    expect(() => impliedIgvRatePct('0.0300', '0.0100')).toThrow(/tasa de IGV estándar/);
+    expect(() => impliedIgvRatePct('1000.0000', '100.0000')).toThrow(/10.00 %/);
   });
 
   it('la línea nueva usa la cuenta del alta y la cabecera suma sus líneas a su TC', () => {
@@ -173,6 +177,14 @@ describe('PurchasesService.updateItem / deleteItem (D-371)', () => {
     );
   });
 
+  it('guardar sin cambios no recalcula ni audita (no pisa el importe del papel, D-359)', async () => {
+    const { service, tx, audit } = build({ items: TWO_LINES });
+    await service.updateItem(ACTOR, 'pu-1', 'it-1', { qty: '1000', unitPrice: '3.0000' });
+    expect(tx.purchaseItem.update).not.toHaveBeenCalled();
+    expect(tx.purchase.update).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalled();
+  });
+
   it('una compra recibida no se toca: ni la línea ni la cabecera', async () => {
     const { service, tx } = build({ status: PurchaseStatus.RECEIVED, items: TWO_LINES });
     await expect(
@@ -215,5 +227,64 @@ describe('PurchasesService.updateItem / deleteItem (D-371)', () => {
     const single = build({ items: [TWO_LINES[0]!] });
     await expect(single.service.deleteItem(ACTOR, 'pu-1', 'it-1')).rejects.toThrow(/única línea/);
     expect(single.tx.purchaseItem.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('PurchasesService.receive frente a D-371', () => {
+  it('relee las líneas después del claim: recibe con la corrección confirmada, no con la foto vieja', async () => {
+    const stale = {
+      id: 'it-1',
+      lineNumber: 1,
+      qty: d('1000.000'),
+      unitPrice: d('3.0000'),
+      subtotal: d('3000.0000'),
+      finishId: 'fin-1',
+      colorId: null,
+      widthMm: d('1200.00'),
+      thicknessMm: d('0.30'),
+      coilStatus: null,
+      externalCode: null,
+    };
+    const fresh = { ...stale, qty: d('950.000'), subtotal: d('2850.0000') };
+    const purchase = {
+      id: 'pu-1',
+      type: 'COIL',
+      status: PurchaseStatus.DRAFT,
+      businessLineId: 'bl-1',
+      supplierId: 'sup-1',
+      currency: 'PEN',
+      exchangeRate: d('1.0000'),
+      items: [stale],
+    };
+    const tx = {
+      purchase: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      purchaseItem: { findMany: jest.fn().mockResolvedValue([fresh]) },
+    };
+    const coils = { create: jest.fn().mockResolvedValue({ id: 'coil-1' }) };
+    const prisma = {
+      purchase: { findUnique: jest.fn().mockResolvedValue(purchase) },
+      $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+    };
+    const service = new PurchasesService(
+      prisma as never,
+      { write: jest.fn().mockResolvedValue(undefined) } as never,
+      {} as never,
+      coils as never,
+      {} as never,
+      {} as never,
+      { resolve: jest.fn().mockReturnValue('2026-10-01') } as never,
+    );
+    const internals = service as unknown as Record<string, jest.Mock>;
+    internals.applyLandedCost = jest.fn().mockResolvedValue(null);
+    internals.applyCuttingOrderCost = jest.fn().mockResolvedValue(null);
+    jest.spyOn(service, 'findOne').mockResolvedValue({ id: 'pu-1' } as never);
+
+    await service.receive(ACTOR, 'pu-1');
+
+    expect(coils.create).toHaveBeenCalledTimes(1);
+    expect(coils.create).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ weightKg: '950.000', totalCost: '2850.0000' }),
+    );
   });
 });

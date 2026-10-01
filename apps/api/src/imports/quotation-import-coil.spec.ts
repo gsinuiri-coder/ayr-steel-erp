@@ -291,6 +291,7 @@ describe('QuotationImportService.confirm — lo que viaja a la cotización', () 
     const { service, quotations } = build();
     const tx = {
       $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
       quotation: {
         findFirst: jest.fn().mockResolvedValue(null),
         findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 2 }),
@@ -336,6 +337,7 @@ describe('QuotationImportService.confirm — lo que viaja a la cotización', () 
     const { service, quotations } = build();
     const tx = {
       $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
       quotation: {
         findFirst: jest.fn().mockResolvedValue(null),
         findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 3 }),
@@ -436,6 +438,7 @@ describe('D-368 — comprobante con cotización relacionada', () => {
     const findFirst = jest.fn().mockResolvedValue({ seq: 7 });
     const tx = {
       $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
       quotation: { findFirst, findUniqueOrThrow: jest.fn() },
     };
     (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
@@ -468,21 +471,29 @@ describe('D-368 — comprobante con cotización relacionada', () => {
       select: { seq: true },
     });
     expect(quotations.createInTx).not.toHaveBeenCalled();
+    // El lock por número se toma antes de revalidar (dos confirmaciones simultáneas).
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
-  it('la foto de duplicados agrupa por número y solo devuelve los repetidos', async () => {
+  it('la foto de duplicados agrupa por número y solo devuelve dos o más no anuladas', async () => {
     const { service, prisma } = build();
     prisma.quotation.findMany.mockResolvedValue([
+      // Re-cotizado: una anulada y una viva no es un duplicado.
       { seq: 1, status: 'CONFIRMED', notes: `${MARK}F001-1` },
       { seq: 2, status: 'CANCELLED', notes: `${MARK}F001-1\nre-cotizada` },
       { seq: 3, status: 'CONFIRMED', notes: `${MARK}F001-12` },
+      // Duplicado de verdad: dos vivas; la anulada va como contexto.
+      { seq: 4, status: 'EMITTED', notes: `${MARK}F001-2` },
+      { seq: 5, status: 'CONFIRMED', notes: `${MARK}F001-2` },
+      { seq: 6, status: 'CANCELLED', notes: `${MARK}F001-2` },
     ]);
     await expect(service.duplicateInvoices()).resolves.toEqual([
       {
-        invoice: 'F001-1',
+        invoice: 'F001-2',
         quotations: [
-          { code: 'COT-000001', status: 'CONFIRMED' },
-          { code: 'COT-000002', status: 'CANCELLED' },
+          { code: 'COT-000004', status: 'EMITTED' },
+          { code: 'COT-000005', status: 'CONFIRMED' },
+          { code: 'COT-000006', status: 'CANCELLED' },
         ],
       },
     ]);

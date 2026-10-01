@@ -550,7 +550,7 @@ function MaterialBreakdownDialog({
                           variant="ghost"
                           size="icon-sm"
                           aria-expanded={open}
-                          aria-controls={panelId}
+                          aria-controls={open ? panelId : undefined}
                           aria-label={`${open ? 'Ocultar' : 'Ver'} comprobantes de ${coil.code}`}
                           onClick={() => {
                             toggle(coil.coilId);
@@ -569,7 +569,14 @@ function MaterialBreakdownDialog({
                       <TableCell className="text-right">{coil.thicknessMm}</TableCell>
                       <TableCell>{coil.colorLabel}</TableCell>
                       <TableCell>{coil.typeKey}</TableCell>
-                      <TableCell className="text-right">{formatQty(coil.kg, 'kg')}</TableCell>
+                      <TableCell className="text-right">
+                        {formatQty(coil.kg, 'kg')}
+                        {/* Lo que suma al peso teórico de la fila, para poder verificarlo. */}
+                        <div className="text-xs text-muted-foreground">
+                          teórico {formatQty(coil.theoreticalKg, 'kg')} ·{' '}
+                          {formatQty(coil.meters, 'm')}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right">
                         {formatMoney(coil.costPen)}
                         <div className="text-xs text-muted-foreground">

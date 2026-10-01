@@ -42,16 +42,30 @@ export function assertCanDeleteLine(lineCount: number): void {
   }
 }
 
+/** Las tasas que el alta aplica a una compra: 18 estándar, 0 exonerado. */
+const STANDARD_IGV_RATES_PCT = [new Decimal(18), new Decimal(0)];
+/** Holgura, en puntos, para absorber el redondeo a céntimos de cada línea. */
+const IGV_RATE_TOLERANCE_PCT = new Decimal('0.1');
+
 /**
  * La tasa de IGV de la compra, en puntos, leída de sus propios totales. La compra no la guarda:
- * el alta aplica una sola tasa a todas las líneas (18 estándar, 0 exonerado), así que
- * `igv ÷ subtotal` la devuelve; se redondea a dos decimales para absorber el redondeo a
- * céntimos de cada línea. Sin subtotal, 0.
+ * el alta aplica una sola tasa a todas las líneas, así que `igv ÷ subtotal` la devuelve con el
+ * ruido del redondeo por línea (o de los importes del papel, D-359). Se ajusta a la tasa
+ * estándar más cercana dentro de 0,1 puntos; si no cae cerca de ninguna, la compra no se
+ * corrige desde acá: recalcular con una tasa que nunca existió inventaría un IGV.
  */
 export function impliedIgvRatePct(subtotal: DecimalInput, igv: DecimalInput): Decimal {
   const base = toDecimal(subtotal);
-  if (base.isZero()) return new Decimal(0);
-  return toDecimal(igv).div(base).times(HUNDRED).toDecimalPlaces(2);
+  const raw = base.isZero() ? new Decimal(0) : toDecimal(igv).div(base).times(HUNDRED);
+  const standard = STANDARD_IGV_RATES_PCT.find((rate) =>
+    raw.minus(rate).abs().lte(IGV_RATE_TOLERANCE_PCT),
+  );
+  if (standard === undefined) {
+    throw new BadRequestException(
+      `La compra no tiene una tasa de IGV estándar (sale ${raw.toFixed(2)} %): no se recalcula desde acá; anúlala y regístrala de nuevo`,
+    );
+  }
+  return standard;
 }
 
 /** Los importes de una línea con su cantidad y costo nuevos: la misma cuenta que el alta. */

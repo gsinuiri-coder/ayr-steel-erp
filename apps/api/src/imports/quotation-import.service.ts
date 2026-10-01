@@ -103,8 +103,13 @@ export class QuotationImportService {
       quotations.push({ code: quotationCode(row.seq), status: row.status });
       grouped.set(invoice, quotations);
     }
+    // Un comprobante re-cotizado (la anterior anulada, una viva) no es un duplicado: solo cuenta
+    // si quedan dos o más cotizaciones no anuladas. La anulada se sigue listando como contexto.
     return [...grouped.entries()]
-      .filter(([, quotations]) => quotations.length > 1)
+      .filter(
+        ([, quotations]) =>
+          quotations.filter((q) => q.status !== QuotationStatus.CANCELLED).length > 1,
+      )
       .map(([invoice, quotations]) => ({ invoice, quotations }));
   }
 
@@ -711,6 +716,10 @@ export class QuotationImportService {
             }
             // D-368: el preview pudo quedar viejo (otra pestaña, otro usuario confirmando el
             // mismo archivo); se revalida acá, dentro de la transacción y con la misma regla.
+            // El lock por número serializa dos confirmaciones simultáneas del mismo
+            // comprobante: la segunda espera el commit de la primera y entonces la ve (en READ
+            // COMMITTED cada sentencia lee lo ya confirmado). Se suelta al cerrar la transacción.
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quotation-import:${documentKey}`}))`;
             const existing = await tx.quotation.findFirst({
               where: QuotationImportService.relatedQuotationWhere([documentKey]),
               select: { seq: true },

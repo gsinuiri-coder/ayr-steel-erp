@@ -1,5 +1,11 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { Decimal, businessToday, type SalesByMaterialDto, type SalesMarginDto } from '@ayr/shared';
+import {
+  Decimal,
+  businessToday,
+  canonicalAccessorySku,
+  type SalesByMaterialDto,
+  type SalesMarginDto,
+} from '@ayr/shared';
 import { adminApi, adminCredentials, getItems, getJson, postJson } from '../helpers/api';
 import { createInvoice, dispatchOrder, purgeInvoicingTrail } from '../helpers/invoicing';
 import { createCustomer } from '../helpers/sales';
@@ -213,6 +219,78 @@ test.describe('D-354 — Ventas por material', () => {
       await expect(
         docs.getByRole('link', { name: invoice.number ?? 'Sin número' }),
       ).toHaveAttribute('href', `/comprobantes/${invoice.id}`);
+    } finally {
+      await purgeInvoicingTrail(api, { documentIds }).catch(() => undefined);
+      await purgeRoofingTrail(api, trail);
+    }
+  });
+
+  test('D-369: accesorio reportado en metros (sin largos): teórico de la bobina, no cero', async () => {
+    const scenario = await setupRoofingScenario(api, { weightKg: '900' });
+    const customer = await createCustomer(api);
+    const accessory = await postJson<{ id: string }>(api, '/api/catalog', {
+      businessLineId: scenario.product.businessLineId,
+      sku: canonicalAccessorySku(scenario.product.thicknessMm ?? '0.50', scenario.color.code),
+      name: 'Accesorio E2E D-369',
+      unit: 'MTR',
+      source: 'MANUFACTURED',
+      listPricePen: '30',
+      finishId: scenario.product.finishId,
+      colorId: scenario.product.colorId,
+      thicknessMm: scenario.product.thicknessMm,
+      widthMm: scenario.product.widthMm,
+      roofingKind: 'ACCESORIO',
+    });
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id, accessory.id],
+      coilIds: [scenario.coil.id],
+      purchaseIds: [scenario.purchaseId],
+      productionOrderIds: [],
+      orderIds: [],
+      quotationIds: [],
+    };
+    const documentIds: string[] = [];
+    try {
+      const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
+        customerId: customer.id,
+        issueDate: businessToday(),
+        items: [{ productId: accessory.id, qty: '25.000', unitPricePen: '60' }],
+      });
+      trail.quotationIds = [quotation.id];
+      const order = await postJson<{ id: string; items: { id: string; qty: string }[] }>(
+        api,
+        `/api/sales/quotations/${quotation.id}/confirm`,
+      );
+      trail.orderIds = [order.id];
+      const reservation = (await reservationsOf(api, order.id))[0]!;
+      const op = await roofingOrder(api, reservation.id);
+      trail.productionOrderIds = [op.id];
+      await mountCoil(api, op.id, { coilId: scenario.coil.id });
+      // D-343: el accesorio se reporta en metros; el reporte no lleva detalle de largos.
+      await postJson(api, `/api/production/roofing/${op.id}/report`, {
+        meters: '25.000',
+        piecesCount: 4,
+      });
+      const item = order.items[0]!;
+      const invoice = await invoiceManual(api, {
+        customerId: customer.id,
+        salesOrderId: order.id,
+        items: [{ salesOrderItemId: item.id, qty: item.qty }],
+      });
+      documentIds.push(invoice.id);
+
+      const report = await byMaterial(
+        api,
+        `kind=ACCESORIO&color=${encodeURIComponent(scenario.color.name)}`,
+      );
+      expect(report.rows).toHaveLength(1);
+      const row = report.rows[0]!;
+      // 25 m × 1000 mm × 0.50 mm × 8.0000 ÷ 1000, sin el 1 %.
+      expect(row.theoreticalKg).toBe('100.000');
+      expect(row.coils[0]).toMatchObject({ meters: '25.000', theoreticalKg: '100.000' });
     } finally {
       await purgeInvoicingTrail(api, { documentIds }).catch(() => undefined);
       await purgeRoofingTrail(api, trail);

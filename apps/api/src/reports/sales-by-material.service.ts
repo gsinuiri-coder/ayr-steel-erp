@@ -374,7 +374,8 @@ export class SalesByMaterialService {
       -- Un reporte de coberturas sale de un solo rollo; la salida original es la que no es
       -- reversa (la de un reporte revertido queda fuera por el estado del reporte).
       report_coil AS (
-        SELECT DISTINCT ops."item_id", pr."id" AS "report_id", m."item_id" AS "coil_id"
+        SELECT DISTINCT ops."item_id", pr."id" AS "report_id", pr."meters_m",
+          m."item_id" AS "coil_id"
         FROM "production_reports" pr
         JOIN ops ON ops."op_id" = pr."production_order_id"
         JOIN "inventory_movements" m
@@ -382,11 +383,18 @@ export class SalesByMaterialService {
          AND m."item_type" = 'COIL' AND m."type" = 'OUT' AND m."reversal_of_id" IS NULL
         WHERE pr."status" = 'ACTIVE'
       ),
+      -- La misma precedencia que reportMeters (production/reported-meters.ts): los metros directos del reporte (a medida y
+      -- accesorio, que no lleva detalle de largos, D-343) y, si no hay, la suma de sus largos
+      -- (plancha NIU, D-366).
       meters AS (
         SELECT rc."item_id", rc."coil_id",
-          SUM(p."qty" * p."length_mm") / 1000 AS "meters"
+          SUM(COALESCE(
+            rc."meters_m",
+            (SELECT SUM(p."qty" * p."length_mm") / 1000
+             FROM "production_report_pieces" p WHERE p."report_id" = rc."report_id"),
+            0
+          )) AS "meters"
         FROM report_coil rc
-        JOIN "production_report_pieces" p ON p."report_id" = rc."report_id"
         GROUP BY rc."item_id", rc."coil_id"
       ),
       totals AS (
@@ -409,7 +417,7 @@ export class SalesByMaterialService {
         t."kg",
         t."cost_pen",
         mt."meters",
-        ib."avg_cost"
+        NULLIF(ib."avg_cost", 0) AS "avg_cost"
       FROM totals t
       JOIN "coils" c ON c."id"::text = t."coil_id"::text
       JOIN "finishes" f ON f."id" = c."finish_id"

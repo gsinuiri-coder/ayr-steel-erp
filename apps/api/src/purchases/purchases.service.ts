@@ -415,6 +415,9 @@ export class PurchasesService {
       const { purchase, items } = await this.lockDraftForItemEdit(tx, id);
       const item = items.find((i) => i.id === itemId);
       if (!item) throw new NotFoundException('Línea de compra no encontrada');
+      // Sin cambios no se recalcula: hacerlo pisaría el importe del papel de una línea
+      // importada (D-359) con cantidad × precio, y dejaría una auditoría vacía.
+      if (item.qty.equals(input.qty) && item.unitPrice.equals(input.unitPrice)) return;
 
       const rate = impliedIgvRatePct(purchase.subtotal.toString(), purchase.igv.toString());
       const amounts = editedLineAmounts(input.qty, input.unitPrice, rate);
@@ -593,8 +596,16 @@ export class PurchasesService {
         if (claimed.count === 0) {
           throw new ConflictException('La compra ya fue recibida o anulada por otra operación');
         }
+        // D-371: las líneas se releen **después** del claim. Una corrección de líneas en
+        // borrador (que toma el mismo lock) pudo confirmarse entre la lectura de arriba y este
+        // punto; recibir con la foto vieja daría de alta bobinas o kardex con cantidades que
+        // ya no son las de la compra.
+        const items = await tx.purchaseItem.findMany({
+          where: { purchaseId: purchase.id },
+          orderBy: { lineNumber: 'asc' },
+        });
 
-        for (const item of purchase.items) {
+        for (const item of items) {
           if (purchase.type === PurchaseType.COIL) {
             await this.coils.create(tx, {
               businessLineId: purchase.businessLineId,
@@ -666,7 +677,7 @@ export class PurchasesService {
           before: { status: purchase.status },
           after: {
             status: PurchaseStatus.RECEIVED,
-            items: purchase.items.length,
+            items: items.length,
             operationDate,
             ...(landed ? { landedCost: landed } : {}),
             ...(cuttingCost ? { cuttingCost } : {}),
