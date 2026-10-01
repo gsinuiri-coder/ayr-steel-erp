@@ -2,6 +2,36 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — Ventana cc08 (D-375 desplegada y aplicada, PR #70, sin migración)
+
+Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individual del dueño
+(D-251/D-232). Detalle en `docs/handoff/ventana-cc08.md`.
+
+- **CI del PR #70** sobre `a54b6ed`: lint, typecheck y unitarios (API 2048), Sonar, E2E **476 passed, 0
+  failed, 3 skipped**, smoke Neon `ci` **36 passed**. El #60 se cerró en favor del #70.
+- **Respaldo:** `respaldo-pre-cc08-20261001` (`br-proud-glade-aev4qddf`), `ready`.
+- **API:** **`ayr-steel-erp-api-00072-hgh`** (`git-sha=a54b6ed`) al 100 %. Smoke con la web vieja en verde.
+  Vuelta atrás: `00071-bll`.
+- **Merge del #70:** `main` = **`5f19a25`**, diff de runtime vacío. Vercel `success`; smoke verde contra
+  `vercel.app` y `v2.mareliac.pe`.
+- **Restauración:**
+  - dry-run `READ ONLY`: 9 bobinas, todas EN_SU_FECHA; lote `1cf26c13-75f5-4402-be61-fd6c841d5b39`
+    congelado **solo con `IMPO-ALZ-AZUL-5002-0.28-4150-23`**;
+  - execute con OK: **EN_SU_FECHA el 28/09**, movimiento 468, 4150 kg a 2,6938, compra 118-315630.
+- **Foto posterior `READ ONLY`:**
+  - la bobina está `OPEN` con el film sellado;
+  - 4150 kg continuos desde el 14/08 (nunca 8300) y sin días negativos;
+  - saldo vigente 4150 a 2,6938;
+  - ningún otro movimiento escrito en el kardex;
+  - evento `coils.restore` con lote y motivo.
+- **Limpieza:** el `local-data/` del worktree se copió y verificó en el checkout principal. Worktree
+  `../ayr-cc08` y su rama local borrados.
+- **Pendientes:**
+  - las otras 8 bobinas anuladas (posibles duplicados físicos de sus gemelas activas) esperan decisión
+    del dueño, bobina por bobina;
+  - la fecha sugerida del despacho sin `?despacho=` (paso 4 de cc08, sacrificado);
+  - el worktree `../ayr-kardex` (rama `diag/desanular-bobina` del #60, cerrado) sigue en disco.
+
 ## 2026-10-01 — cc08: D-375, restaurar bobina anulada de compra (reemplaza el PR #60)
 
 Rama `cc08/desanular-bobina` desde `main` = `0702a46`, en el worktree `../ayr-cc08`. Runbook:
