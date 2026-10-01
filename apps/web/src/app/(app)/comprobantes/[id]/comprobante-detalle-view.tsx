@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -80,6 +80,7 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatches';
 import { DispatchAtIssueDate } from './dispatch-at-issue-date';
+import { DISPATCH_AT_DOCUMENT_DATE } from '@/components/invoicing/reactivate-document-dialog';
 import { DocumentProfitability } from './document-profitability';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -93,6 +94,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const { user } = useSession();
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
+  // D-373: al reactivar se llega con `?despacho=fecha-comprobante`: el despacho D-364 arranca
+  // con la fecha del comprobante.
+  const suggestDocumentDate = useSearchParams().get('despacho') === DISPATCH_AT_DOCUMENT_DATE;
   const [voidOpen, setVoidOpen] = useState(false);
   const [annulOpen, setAnnulOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -803,7 +807,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       {d.salesOrderId &&
         (d.docType === 'FACTURA' || d.docType === 'BOLETA') &&
         LIVE_DOCUMENT_STATUSES.includes(d.status) &&
-        isAdmin && <DispatchAtIssueDate documentId={d.id} salesOrderId={d.salesOrderId} />}
+        isAdmin && (
+          <DispatchAtIssueDate
+            documentId={d.id}
+            salesOrderId={d.salesOrderId}
+            suggestedDate={suggestDocumentDate ? d.issueDate : undefined}
+          />
+        )}
       {/*
         Lo que un comprobante importado sí y no admite, dicho una vez y arriba, en vez de
         dejar que el usuario lo descubra botón por botón. D-150: la importación ya no existe,

@@ -50,6 +50,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'invoicing.document.create': 'Comprobante creado',
   'invoicing.document.discard-draft': 'Borrador de comprobante descartado',
   'invoicing.document.issue': 'Comprobante emitido',
+  'invoicing.document.reactivate': 'Comprobante importado/manual reactivado (anulado por error)',
   'invoicing.document.register-manual': 'Comprobante manual registrado',
   'invoicing.document.retry': 'Reintento de envío de comprobante',
   'invoicing.document.update-issue-date': 'Fecha de emisión de comprobante manual corregida',

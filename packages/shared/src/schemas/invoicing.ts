@@ -416,6 +416,17 @@ export type CreateCreditNoteInput = z.infer<typeof createCreditNoteSchema>;
 export const voidDocumentSchema = z.object({ reason: reasonSchema });
 export type VoidDocumentInput = z.infer<typeof voidDocumentSchema>;
 
+/**
+ * D-373: reactivar un comprobante manual o importado anulado por error. `confirmStillValid` es
+ * la casilla «sigue vigente en Nubefact/SUNAT»: llega como booleano y el servicio rechaza el
+ * `false` con su propio mensaje, para que la regla no dependa de un literal de Zod.
+ */
+export const reactivateDocumentSchema = z.object({
+  reason: reasonSchema,
+  confirmStillValid: z.boolean(),
+});
+export type ReactivateDocumentInput = z.infer<typeof reactivateDocumentSchema>;
+
 /** D-073: interruptor de contingencia y umbral de alerta. Solo ADMINISTRADOR. */
 export const updateInvoicingSettingsSchema = z.object({
   manualByDefault: z.boolean().optional(),

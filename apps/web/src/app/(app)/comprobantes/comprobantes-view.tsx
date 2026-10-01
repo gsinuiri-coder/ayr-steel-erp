@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   FISCAL_DOC_TYPE_LABELS,
@@ -16,6 +17,12 @@ import {
   type FiscalDocumentQuery,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { useSession } from '@/lib/session';
+import { RowActions } from '@/components/row-actions';
+import {
+  canReactivate,
+  ReactivateDocumentDialog,
+} from '@/components/invoicing/reactivate-document-dialog';
 import { formatDate, formatMoney } from '@/lib/format';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -65,6 +72,7 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
 /** RF-70: listado de comprobantes electrónicos, con el aviso de contingencia (D-073). */
 export function ComprobantesView() {
+  const { user } = useSession();
   // D-289: filtros, búsqueda y página viven en la URL. `origin` (D-153) separa lo que el ERP
   // emitió de lo que solo registró.
   const [url, setUrl] = useUrlState({
@@ -119,6 +127,8 @@ export function ComprobantesView() {
   });
 
   const rows = documents.data?.items ?? [];
+  const isAdmin = user.role === Role.ADMINISTRADOR;
+  const [reactivating, setReactivating] = useState<FiscalDocumentListItemDto | null>(null);
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -302,6 +312,11 @@ export function ComprobantesView() {
                 >
                   Estado
                 </SortableTableHead>
+                {isAdmin && (
+                  <TableHead className="w-10">
+                    <span className="sr-only">Acciones</span>
+                  </TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -375,11 +390,33 @@ export function ComprobantesView() {
                       </Badge>
                     )}
                   </TableCell>
+                  {isAdmin && (
+                    <TableCell className="w-10">
+                      {/* D-373: «Reactivar» vive en el menú de la fila, solo en lo que la API acepta. */}
+                      <RowActions
+                        label={d.number ?? 'Borrador'}
+                        primary={null}
+                        actions={[
+                          {
+                            key: 'reactivate',
+                            label: 'Reactivar',
+                            show: canReactivate(d),
+                            onSelect: () => {
+                              setReactivating(d);
+                            },
+                          },
+                        ]}
+                      />
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground">
+                  <TableCell
+                    colSpan={isAdmin ? 10 : 9}
+                    className="text-center text-muted-foreground"
+                  >
                     No hay comprobantes que coincidan.
                   </TableCell>
                 </TableRow>
@@ -396,6 +433,15 @@ export function ComprobantesView() {
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
           disabled={documents.isFetching}
+        />
+      )}
+      {reactivating && (
+        <ReactivateDocumentDialog
+          document={reactivating}
+          open
+          onOpenChange={(open) => {
+            if (!open) setReactivating(null);
+          }}
         />
       )}
     </RoleGate>

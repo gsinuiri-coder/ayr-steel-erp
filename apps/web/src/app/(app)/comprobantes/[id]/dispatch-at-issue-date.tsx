@@ -28,12 +28,18 @@ const ACTION_LABELS: Record<InvoiceDispatchPlanDto['lines'][number]['action'], s
 export function DispatchAtIssueDate({
   documentId,
   salesOrderId,
+  suggestedDate,
 }: {
   documentId: string;
   salesOrderId: string;
+  /**
+   * D-373: fecha con la que arranca el campo en vez del default de D-285. La pasa el detalle
+   * después de reactivar un comprobante: su salida va con la fecha del comprobante.
+   */
+  suggestedDate?: string;
 }) {
   const queryClient = useQueryClient();
-  const [dispatchDate, setDispatchDate] = useState<string | undefined>(undefined);
+  const [dispatchDate, setDispatchDate] = useState<string | undefined>(suggestedDate);
   const [defaultDates, setDefaultDates] = useState<Record<number, string>>({});
   const plan = useQuery({
     queryKey: ['fiscal-document', documentId, 'dispatch-at-issue-date', dispatchDate],
@@ -63,13 +69,23 @@ export function DispatchAtIssueDate({
     },
   });
 
+  // D-373 (autorrevisión cc07): con una fecha sugerida, el plan de arriba ya viene con esa fecha
+  // y no sirve para rotular el default de D-285; se pide aparte, sin fecha (misma clave que el
+  // plan por defecto, así que comparte su caché).
+  const defaultPlan = useQuery({
+    queryKey: ['fiscal-document', documentId, 'dispatch-at-issue-date', undefined],
+    queryFn: () => api<InvoiceDispatchPlanDto>(`/dispatches/at-issue-date/${documentId}`),
+    enabled: suggestedDate !== undefined,
+  });
+
   const lines = plan.data?.lines ?? [];
   useEffect(() => {
-    if (dispatchDate !== undefined || plan.data === undefined) return;
+    const source = suggestedDate !== undefined ? defaultPlan.data : plan.data;
+    if ((suggestedDate === undefined && dispatchDate !== undefined) || source === undefined) return;
     setDefaultDates(
-      Object.fromEntries(plan.data.lines.map((line) => [line.lineNumber, line.operationDate])),
+      Object.fromEntries(source.lines.map((line) => [line.lineNumber, line.operationDate])),
     );
-  }, [dispatchDate, plan.data]);
+  }, [suggestedDate, dispatchDate, plan.data, defaultPlan.data]);
   if (lines.length === 0) return null;
   const actionable = lines.some((l) => l.action !== 'REVIEW');
   const defaultFirstDate = defaultDates[lines[0]?.lineNumber ?? 0] ?? lines[0]?.operationDate ?? '';
@@ -82,6 +98,13 @@ export function DispatchAtIssueDate({
           pueden despachar con la fecha de operación calculada, o elegir una posterior donde el
           stock exista.
         </p>
+        {suggestedDate !== undefined && (
+          <p data-testid="dispatch-suggested-date">
+            Comprobante reactivado: queda <strong>pendiente de despacho</strong>. La fecha sugerida
+            es la del comprobante ({formatDate(suggestedDate)}), para que su salida quede en el
+            kardex con esa fecha.
+          </p>
+        )}
         <label className="grid max-w-xs gap-1 text-sm font-medium">
           Fecha de despacho
           <Input
