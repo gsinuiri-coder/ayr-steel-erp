@@ -2,6 +2,38 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — cc08: D-375, restaurar bobina anulada de compra (reemplaza el PR #60)
+
+Rama `cc08/desanular-bobina` desde `main` = `0702a46`, en el worktree `../ayr-cc08`. Runbook:
+`docs/handoff/ventana-cc08.md`.
+
+- **#60 retomado.**
+  - Se corrigió su único error de lint.
+  - Su clasificador de dos veredictos se reemplazó por el de D-375: contaba como «ajenos» los pares
+    que se anulan entre sí.
+  - `inspect:cancelled-purchase-coils` imprime ahora el mismo plan que la restauración.
+- **Fotos de producción `READ ONLY`** (14:21, 14:22, 14:37 y 15:08 UTC, con OK del dueño): **9
+  bobinas** anuladas de compra, las 9 `EN_SU_FECHA`. 8 tienen una gemela activa del mismo peso y
+  especificación (posible duplicado físico).
+- **Decisiones del dueño:**
+  - por ahora se restaura **solo `IMPO-ALZ-AZUL-5002-0.28-4150-23`**;
+  - se restaura aunque la compra esté anulada;
+  - una salida revertida no bloquea;
+  - «en su fecha» es la **fecha de la salida de anulación** (la AZUL: 28/09), para no duplicar el
+    saldo histórico;
+  - el guard de fecha de salida de bobinas es global.
+- **Pruebas** (worktree):
+  - lint, typecheck y format en verde;
+  - `pnpm test`: API 2048, web 87;
+  - unitarios de D-375: 24;
+  - E2E `restaurar-bobina-d375`, **6 passed** con `E2E_API_PORT=3010` y `ayr_local_e2e`: en su
+    fecha desde el menú, dos veces, a hoy con producción retrofechada rechazada, salidas vivas
+    bloqueadas, compra anulada y 403.
+- **Revisiones:** `docs/revision/cc08-autorrevision.md` y `docs/revision/cc08-segundo-modelo.md`. Los P1
+  de las dos (fecha que duplicaba el saldo, landed cost, undo sobre una bobina en corte) quedaron
+  corregidos. **PENDIENTE DE REVISIÓN DEL DUEÑO.**
+- **Paso 4 (fecha sugerida del despacho sin `?despacho=`):** sacrificado, no entra antes de la ventana.
+
 ## 2026-10-01 — Ventana cc07 (D-373 desplegada, D-374 aplicada, PR #68, sin migración)
 
 Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individual del dueño

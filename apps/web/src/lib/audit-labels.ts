@@ -15,6 +15,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'catalog.price-list-import.confirm': 'Carga masiva de precios de lista confirmada',
   'catalog.price-list-import.revert': 'Carga masiva de precios de lista revertida',
   'coils.cancel': 'Anulación de bobina',
+  'coils.restore': 'Bobina anulada restaurada (D-375)',
+  'coils.restore.undo': 'Restauración de bobina deshecha (D-375)',
   'coils.close': 'Bobina terminada',
   'coils.auto-terminate-skipped': 'Bobina en 0 no terminada (anomalía)',
   'coils.auto-reopen-skipped': 'Reversa sin reabrir la bobina',

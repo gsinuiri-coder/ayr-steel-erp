@@ -3,6 +3,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { CoilFilmService } from './coil-film.service';
 import { CoilOperationsService } from './coil-operations.service';
 import { CoilsController } from './coils.controller';
+import { CoilRestoreService } from './coil-restore.service';
 import { CoilsService } from './coils.service';
 
 /**
@@ -13,7 +14,7 @@ import { CoilsService } from './coils.service';
 @Module({
   imports: [InventoryModule],
   controllers: [CoilsController],
-  providers: [CoilsService, CoilOperationsService, CoilFilmService],
+  providers: [CoilsService, CoilOperationsService, CoilFilmService, CoilRestoreService],
   exports: [CoilsService, CoilOperationsService],
 })
 export class CoilsModule {}

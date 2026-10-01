@@ -226,6 +226,9 @@ export class InventoryService {
     }
     const balance = await this.lockBalance(tx, input);
     const operationDate = input.operationDate ?? businessToday();
+    if (input.itemType === InventoryItemType.COIL && input.type === 'OUT') {
+      await assertCoilOutNotBeforeEntry(tx, input.itemId, operationDate);
+    }
     await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
 
     if (balance.unit !== input.unit && !balance.qty.isZero()) {
@@ -1388,6 +1391,36 @@ function assertTotalMatchesUnit(totalCost: Decimal, qty: Decimal, unitCost: Deci
   if (totalCost.div(qty).minus(unitCost).abs().gt(UNIT_COST_ROUNDING)) {
     throw new BadRequestException(
       `El costo unitario ${unitCost.toFixed(4)} no corresponde al total ${totalCost.toFixed(4)} de ${qty.toFixed(3)}`,
+    );
+  }
+}
+
+/**
+ * D-375: ninguna salida de una bobina puede tener fecha anterior a su primer ingreso **vivo**
+ * (no revertido). Una bobina restaurada a hoy recibe su ingreso hoy; sin esto, la producción
+ * con fecha anterior —con el acuse de retrofecha— dejaba el kardex negativo en esos días.
+ */
+export async function assertCoilOutNotBeforeEntry(
+  tx: Prisma.TransactionClient,
+  coilId: string,
+  operationDate: string,
+): Promise<void> {
+  const firstEntry = await tx.inventoryMovement.findFirst({
+    where: {
+      itemType: InventoryItemType.COIL,
+      itemId: coilId,
+      type: 'IN',
+      reversalOfId: null,
+      reversals: { none: {} },
+    },
+    orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
+    select: { operationDate: true },
+  });
+  if (!firstEntry) return;
+  const entryDate = fromDateOnly(firstEntry.operationDate);
+  if (operationDate < entryDate) {
+    throw new BadRequestException(
+      `Una salida de esta bobina no puede tener fecha anterior a ${entryDate}, la fecha de su ingreso al kardex`,
     );
   }
 }

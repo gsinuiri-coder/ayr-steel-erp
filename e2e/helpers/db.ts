@@ -203,3 +203,20 @@ export async function setQuotationSellerForTest(
     await db.$disconnect();
   }
 }
+
+/**
+ * D-375: deja anulada una bobina **que tiene salidas vivas**. Ninguna ruta del API produce ese
+ * estado (anular exige que no queden movimientos vivos), y es justo el que la restauración
+ * tiene que bloquear.
+ */
+export async function setCoilCancelledForTest(coilId: string): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE "coils" SET "status" = 'CANCELLED' WHERE "id" = $1::uuid`,
+      coilId,
+    );
+  } finally {
+    await db.$disconnect();
+  }
+}
