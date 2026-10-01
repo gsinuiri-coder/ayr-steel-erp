@@ -2,7 +2,7 @@
 
 Sesión de **solo diagnóstico**, rama `fix/investigacion-log`, desde `origin/main` en `bc0c331`. No se
 cambió código. Origen: `docs/analisis/ux-recorrido-2026-09-28.md` §5 (PR #54, todavía abierto),
-filas LOG-3 (D-379) y LOG-2 (D-377). Orden del dueño: LOG-3 primero.
+filas LOG-3 (propuesta P-16; en el informe original D-379, hoy resuelta como D-366) y LOG-2 (propuesta P-14; antes D-377). Orden del dueño: LOG-3 primero.
 
 ## Resumen para la reunión
 
