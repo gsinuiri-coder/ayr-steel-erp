@@ -500,7 +500,7 @@ describe('InvoiceDispatchService (D-278)', () => {
         ],
       };
       const tx = fakeTx(f);
-      const { svc, dispatches } = service(tx);
+      const { svc, dispatches, audit } = service(tx);
       await svc.executeForInvoice(ADMIN, 'F1', requested);
 
       const [, , input, opts] = dispatches.createInTx.mock.calls[0]!;
@@ -511,6 +511,22 @@ describe('InvoiceDispatchService (D-278)', () => {
           ? 'despacho en fecha elegida por el usuario'
           : 'despacho a la fecha del comprobante',
       });
+      // Las otras dos ramas leen la misma regla (revisión cc10): el despacho sin salida (antes del
+      // inventario inicial) y el motivo por línea de la auditoría.
+      for (const [, , created] of dispatches.createInTx.mock.calls) {
+        expect(isAtIssueDateDispatch((created as { notes: string }).notes, 'FFA1-1')).toBe(!chosen);
+      }
+      if (!chosen) expect(dispatches.createInTx).toHaveBeenCalledTimes(2); // con salida y sin salida
+      const entry = (
+        audit.write.mock.calls[0] as [
+          unknown,
+          { after: { lines: { action: string; reason: string }[] } },
+        ]
+      )[1];
+      const dispatchLine = entry.after.lines.find((l) => l.action === 'DISPATCH');
+      expect(dispatchLine?.reason).toBe(
+        chosen ? 'despacho en fecha elegida por el usuario' : 'despacho a la fecha del comprobante',
+      );
     },
   );
 
