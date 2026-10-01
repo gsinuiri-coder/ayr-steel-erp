@@ -84,6 +84,22 @@ Sin crear documentos en producción (D-126):
   registrar.
 - **Un PDF de cotización existente:** los importes redondean, no truncan.
 
+## Riesgos conocidos (de las revisiones, aceptados o pendientes del dueño)
+
+- **IGV de cabecera = céntimo(Σ IGV de línea)**, no `Σ valor × 18 %` como decía §5.2 del análisis.
+  Así se conserva el trío del papel de D-255. **Lo confirma el dueño antes del merge** (D-377).
+- **Peso teórico de planchas con un solo redondeo:** cambia el teórico que se usa como referencia
+  del tope de kg declarado. En el caso real de D-246, 4,043.952 pasa a 4,043.916 kg. El tope duro
+  está en metros; el kilo de más solo avisa (D-154).
+- **Notas de crédito parciales:** cada una redondea su cabecera, así que varias pueden acreditar un
+  céntimo más que el comprobante. El saldo queda en cero (nunca negativo en cobranzas) y el arreglo
+  A lo esconde. Si el dueño quiere cerrarlo, la nota que agota el comprobante tomaría el resto, como
+  D-265 en la línea.
+- **Editar un documento anterior a R2** (cotización o pedido) recalcula su cabecera al céntimo:
+  35.4354 pasa a 35.44. No se recalcula nada en lote. El barrido de importados solo corre a mano.
+- **Vista previa de «Nuevo comprobante»:** recalcula `cantidad × unitario`. Con líneas importadas
+  puede diferir un céntimo del total que guarda el API. Viene de antes de R2.
+
 ## Vuelta atrás
 
 - **Código:** sin la web publicada, volver el tráfico a `ayr-steel-erp-api-00073-zmj`. Con la web
