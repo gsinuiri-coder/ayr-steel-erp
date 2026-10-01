@@ -4,6 +4,7 @@ import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import type { RequestUser } from '../auth/auth.types';
 import type { CoilFilmService } from './coil-film.service';
 import type { CoilOperationsService } from './coil-operations.service';
+import type { CoilRestoreService } from './coil-restore.service';
 import { CoilsController } from './coils.controller';
 import type { CoilsService } from './coils.service';
 
@@ -26,6 +27,7 @@ function build() {
     coils as unknown as CoilsService,
     operations as unknown as CoilOperationsService,
     film as unknown as CoilFilmService,
+    {} as unknown as CoilRestoreService,
   );
   return { controller, coils, film };
 }

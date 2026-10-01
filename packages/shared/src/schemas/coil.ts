@@ -295,6 +295,32 @@ export const reverseMovementSchema = z.object({
 export type ReverseMovementInput = z.infer<typeof reverseMovementSchema>;
 
 /**
+ * D-375: restaurar una bobina anulada que vino de una compra. Solo el motivo: el modo (en su
+ * fecha o a hoy) lo decide el clasificador, no el usuario.
+ */
+export const restoreCoilSchema = z.object({ reason: reasonSchema });
+export type RestoreCoilInput = z.infer<typeof restoreCoilSchema>;
+
+/** D-375: cómo se restauraría la bobina, calculado por el API con el mismo clasificador. */
+export const COIL_RESTORE_MODES = ['EN_SU_FECHA', 'A_HOY', 'BLOQUEADA'] as const;
+export type CoilRestoreMode = (typeof COIL_RESTORE_MODES)[number];
+export const coilRestorePlanSchema = z.object({
+  coilId: z.string().uuid(),
+  code: z.string(),
+  mode: z.enum(COIL_RESTORE_MODES),
+  /** Fecha de operación de la entrada que se registraría; null si está bloqueada. */
+  date: z.string().nullable(),
+  /** Fecha de la entrada original que la anulación revirtió. */
+  originalDate: z.string().nullable(),
+  qty: z.string().nullable(),
+  unitCostPen: z.string().nullable(),
+  purchaseDocument: z.string().nullable(),
+  purchaseStatus: z.string().nullable(),
+  reasons: z.array(z.string()),
+});
+export type CoilRestorePlanDto = z.infer<typeof coilRestorePlanSchema>;
+
+/**
  * D-328: abrir el film de una bobina sellada, o volver a sellar una abierta por error. Es un
  * hecho fechado (D-124) y separado del estado `OPEN`/`CLOSED`: no mueve kardex. El motivo es
  * opcional al abrir; al volver a sellar también, pero si se escribe queda en el historial.

@@ -19,7 +19,8 @@
     "prisma/terminate-zero-coils-cli.ts",
     "prisma/fix-purchase-received-dates-cli.ts",
     "prisma/inspect-undispatched-invoices-cli.ts",
-    "prisma/inspect-cancelled-purchase-coils-cli.ts"
+    "prisma/inspect-cancelled-purchase-coils-cli.ts",
+    "prisma/restore-cancelled-coils-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

@@ -16,6 +16,7 @@ import {
   coilQuerySchema,
   createCoilScrapSchema,
   createCoilSplitSchema,
+  restoreCoilSchema,
   reverseMovementSchema,
   Role,
   setCoilStatusSchema,
@@ -25,10 +26,12 @@ import {
   type CoilFilmActionInput,
   type CoilFilmEventDto,
   type CoilQuery,
+  type CoilRestorePlanDto,
   type CoilSplitDto,
   type CreateCoilScrapInput,
   type CreateCoilSplitInput,
   type PaginatedResult,
+  type RestoreCoilInput,
   type ReverseMovementInput,
   type SetCoilStatusInput,
   type UpdateCoilInput,
@@ -39,6 +42,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CoilFilmService } from './coil-film.service';
 import { CoilOperationsService } from './coil-operations.service';
+import { CoilRestoreService } from './coil-restore.service';
 import { CoilsService } from './coils.service';
 
 /**
@@ -58,6 +62,7 @@ export class CoilsController {
     private readonly coils: CoilsService,
     private readonly operations: CoilOperationsService,
     private readonly film: CoilFilmService,
+    private readonly restoration: CoilRestoreService,
   ) {}
 
   @Get()
@@ -215,6 +220,24 @@ export class CoilsController {
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<CoilDto> {
     return this.operations.cancel(actor, id, body);
+  }
+
+  /** D-375: qué haría restaurar esta bobina anulada (modo, fecha y motivo), sin escribir. */
+  @Get(':id/restore-plan')
+  @Roles(Role.ADMINISTRADOR)
+  restorePlan(@Param('id', ParseUUIDPipe) id: string): Promise<CoilRestorePlanDto> {
+    return this.restoration.plan(id);
+  }
+
+  /** D-375: restaurar una bobina anulada que vino de una compra. Motivo obligatorio. */
+  @Post(':id/restore')
+  @Roles(Role.ADMINISTRADOR)
+  restore(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(restoreCoilSchema)) body: RestoreCoilInput,
+  ): Promise<CoilDto> {
+    return this.restoration.restore(actor, id, body.reason);
   }
 }
 
