@@ -51,6 +51,8 @@ export interface InvoiceLine {
   geometry: Geometry;
   thicknessMm: string;
   colorLabel: string;
+  /** Razón social del cliente del comprobante (nivel 2 del desglose, D-370). */
+  customerName: string;
 }
 
 /** Lo que dice cada línea de pedido de sí misma (consultas 2 y 3). */
@@ -70,10 +72,39 @@ export interface CoilUsage {
   salesOrderItemId: string;
   coilId: string;
   code: string;
+  typeKey: string;
   thicknessMm: string;
   colorLabel: string;
   kg: string;
   costPen: string;
+  /** Geometría de **la bobina** (D-369): ancho y densidad cruda de su acabado. */
+  widthMm: string;
+  densityFactor: string;
+  /**
+   * Metros lineales que los reportes vigentes de la línea rolaron de esta bobina (cada reporte
+   * de coberturas sale de un solo rollo). `0` en una bobina vendida entera o si solo aportó
+   * despunte.
+   */
+  meters: string;
+  /** Costo promedio por kg del saldo de kardex de la bobina; `null` sin saldo registrado. */
+  avgCostPen: string | null;
+}
+
+/**
+ * D-369 — kilos teóricos de unos metros con la geometría de la bobina y la densidad **cruda**
+ * del acabado: `ancho × espesor × largo × densidad`, sin el 1 % de merma normal que
+ * `standardDensityFactor` (D-165) le suma a los kilos que planta descuenta. Es el criterio del
+ * cliente: el teórico sale de los datos de la bobina, no del ancho y espesor nominales del SKU.
+ */
+export function coilTheoreticalKg(
+  meters: Decimal,
+  coil: Pick<CoilUsage, 'widthMm' | 'thicknessMm' | 'densityFactor'>,
+): Decimal {
+  return meters
+    .times(toDecimal(coil.widthMm))
+    .times(toDecimal(coil.thicknessMm))
+    .times(toDecimal(coil.densityFactor))
+    .div(1000);
 }
 
 export interface AssembleInput {
@@ -234,10 +265,14 @@ export function traceFraction(
 export interface TracedCoil {
   coilId: string;
   code: string;
+  typeKey: string;
   thicknessMm: string;
   colorLabel: string;
   kg: Decimal;
   cost: Decimal;
+  meters: Decimal;
+  theoreticalKg: Decimal;
+  avgCostPen: string | null;
 }
 
 /** El costeo de **una** línea de comprobante con el motor de D-354. */
@@ -264,14 +299,6 @@ export function traceLine(
   const out: LineTrace = { traced: null, coils: [], untraceable: [] };
   const convertible = metersOf(line);
   const meters = convertible ?? ZERO;
-  const perMeter = kgPerMeterOf(line.geometry);
-  // En una bobina entera el teórico son sus propios kilos: su ML se sacó de ellos.
-  const theoretical =
-    line.kind === 'BOBINA'
-      ? toDecimal(line.qty)
-      : perMeter === null
-        ? ZERO
-        : meters.times(perMeter);
   const sales = toDecimal(line.salesPen);
 
   const pushUntraceable = (reason: SalesMaterialUntraceableReason, share: Decimal): void => {
@@ -317,7 +344,7 @@ export function traceLine(
   const share = toDecimal(line.qty).times(fraction).div(baseQty);
   const acc: Accumulator = {
     meters: meters.times(fraction),
-    theoreticalKg: theoretical.times(fraction),
+    theoreticalKg: ZERO,
     realKg: ZERO,
     sales: sales.times(fraction),
     cost: ZERO,
@@ -327,15 +354,28 @@ export function traceLine(
   for (const u of lineUsage) {
     const kg = toDecimal(u.kg).times(share);
     const cost = toDecimal(u.costPen).times(share);
+    // D-369: el teórico es el de las bobinas, no el del SKU. En una bobina entera son sus
+    // propios kilos (su ML se sacó de ellos); en lo producido, los metros que se rolaron de
+    // cada una con su geometría y la densidad cruda.
+    const coilMeters =
+      line.kind === 'BOBINA'
+        ? meters.times(fraction).times(toDecimal(u.kg)).div(baseQty)
+        : toDecimal(u.meters).times(share);
+    const theoreticalKg = line.kind === 'BOBINA' ? kg : coilTheoreticalKg(coilMeters, u);
     acc.realKg = acc.realKg.plus(kg);
     acc.cost = acc.cost.plus(cost);
+    acc.theoreticalKg = acc.theoreticalKg.plus(theoreticalKg);
     out.coils.push({
       coilId: u.coilId,
       code: u.code,
+      typeKey: u.typeKey,
       thicknessMm: u.thicknessMm,
       colorLabel: u.colorLabel,
       kg,
       cost,
+      meters: coilMeters,
+      theoreticalKg,
+      avgCostPen: u.avgCostPen,
     });
   }
   out.traced = acc;
@@ -379,16 +419,32 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
         l.colorLabel.localeCompare(query.color, 'es', { sensitivity: 'base' }) === 0),
   );
 
+  interface DocState {
+    documentId: string;
+    documentNumber: string | null;
+    issueDate: string;
+    customerName: string;
+    kg: Decimal;
+    meters: Decimal;
+  }
+  interface CoilState {
+    dto: Pick<
+      SalesMaterialCoilDto,
+      'coilId' | 'code' | 'typeKey' | 'thicknessMm' | 'colorLabel' | 'avgCostPen'
+    >;
+    kg: Decimal;
+    cost: Decimal;
+    meters: Decimal;
+    theoreticalKg: Decimal;
+    documents: Map<string, DocState>;
+  }
   interface RowState {
     kind: SalesMaterialKind;
     thicknessMm: string;
     colorLabel: string;
     acc: Accumulator;
     lineCount: number;
-    coils: Map<
-      string,
-      { dto: Omit<SalesMaterialCoilDto, 'kg' | 'costPen'>; kg: Decimal; cost: Decimal }
-    >;
+    coils: Map<string, CoilState>;
   }
   const rows = new Map<string, RowState>();
   const untraceable: SalesMaterialUntraceableDto[] = [];
@@ -413,18 +469,36 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
     };
     row.lineCount += 1;
     for (const u of trace.coils) {
-      const coil = row.coils.get(u.coilId) ?? {
+      const coil: CoilState = row.coils.get(u.coilId) ?? {
         dto: {
           coilId: u.coilId,
           code: u.code,
+          typeKey: u.typeKey,
           thicknessMm: u.thicknessMm,
           colorLabel: u.colorLabel,
+          avgCostPen: u.avgCostPen,
         },
         kg: ZERO,
         cost: ZERO,
+        meters: ZERO,
+        theoreticalKg: ZERO,
+        documents: new Map(),
       };
       coil.kg = coil.kg.plus(u.kg);
       coil.cost = coil.cost.plus(u.cost);
+      coil.meters = coil.meters.plus(u.meters);
+      coil.theoreticalKg = coil.theoreticalKg.plus(u.theoreticalKg);
+      const doc: DocState = coil.documents.get(line.documentId) ?? {
+        documentId: line.documentId,
+        documentNumber: line.documentNumber,
+        issueDate: line.issueDate,
+        customerName: line.customerName,
+        kg: ZERO,
+        meters: ZERO,
+      };
+      doc.kg = doc.kg.plus(u.kg);
+      doc.meters = doc.meters.plus(u.meters);
+      coil.documents.set(line.documentId, doc);
       row.coils.set(u.coilId, coil);
     }
     addAcc(row.acc, trace.traced);
@@ -457,7 +531,23 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
         .map((c) => ({
           ...c.dto,
           kg: toFixedString(c.kg, 'KG'),
+          theoreticalKg: toFixedString(c.theoreticalKg, 'KG'),
+          meters: toFixedString(c.meters, 'KG'),
           costPen: toFixedString(c.cost, 'MONEY'),
+          documents: [...c.documents.values()]
+            .sort(
+              (a, b) =>
+                a.issueDate.localeCompare(b.issueDate) ||
+                (a.documentNumber ?? '').localeCompare(b.documentNumber ?? ''),
+            )
+            .map((d) => ({
+              documentId: d.documentId,
+              documentNumber: d.documentNumber,
+              issueDate: d.issueDate,
+              customerName: d.customerName,
+              kg: toFixedString(d.kg, 'KG'),
+              meters: toFixedString(d.meters, 'KG'),
+            })),
         })),
     };
   });

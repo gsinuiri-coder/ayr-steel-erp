@@ -67,15 +67,40 @@ export const salesByMaterialQuerySchema = z
   .refine((v) => v.from <= v.to, { message: 'El rango termina antes de empezar' });
 export type SalesByMaterialQuery = z.infer<typeof salesByMaterialQuerySchema>;
 
-/** Kilos y costo de una bobina dentro de una fila (el modal «cuántas bobinas»). */
+/**
+ * D-370 — nivel 2 del desglose: lo que un comprobante se llevó de una bobina dentro de una fila.
+ * Una nota de crédito aparece como su propio comprobante, con kilos y metros negativos.
+ */
+export const salesMaterialCoilDocumentSchema = z.object({
+  documentId: z.string().uuid(),
+  documentNumber: z.string().nullable(),
+  issueDate: z.string(),
+  customerName: z.string(),
+  /** Kilos de la bobina atribuidos a las líneas de este comprobante (prorrateados). */
+  kg: z.string(),
+  /** Metros lineales de la bobina atribuidos a esas líneas. */
+  meters: z.string(),
+});
+export type SalesMaterialCoilDocumentDto = z.infer<typeof salesMaterialCoilDocumentSchema>;
+
+/** Kilos y costo de una bobina dentro de una fila (nivel 1 del desglose, D-370). */
 export const salesMaterialCoilSchema = z.object({
   coilId: z.string().uuid(),
   code: z.string(),
-  /** Espesor y color **de la bobina**: por tolerancia pudo usarse otra (0.38 para 0.40). */
+  /** RF-14: tipo de bobina (acabado + espesor), el mismo «Tipo» del listado de bobinas. */
+  typeKey: z.string(),
+  /** Espesor y color **de la bobina**: por tolerancia (±0,02 mm, D-086) pudo usarse otra. */
   thicknessMm: z.string(),
   colorLabel: z.string(),
   kg: z.string(),
+  /** D-369: el teórico de esos metros con la geometría de la bobina, sin el 1 % de D-165. */
+  theoreticalKg: z.string(),
+  meters: z.string(),
+  /** Costo de kardex de los kilos consumidos (el dato principal). */
   costPen: z.string(),
+  /** Costo promedio por kg de la bobina en su saldo de kardex (dato secundario). */
+  avgCostPen: z.string().nullable(),
+  documents: z.array(salesMaterialCoilDocumentSchema),
 });
 export type SalesMaterialCoilDto = z.infer<typeof salesMaterialCoilSchema>;
 
@@ -83,7 +108,11 @@ export type SalesMaterialCoilDto = z.infer<typeof salesMaterialCoilSchema>;
 export const salesMaterialFiguresSchema = z.object({
   /** Metros lineales vendidos (planchas: cantidad × largo; bobina entera: ML teórico). */
   metersSold: z.string(),
-  /** ML × kg/m del ancho, espesor y acabado del producto, con el 1 % de D-165. */
+  /**
+   * D-369: suma del teórico de las bobinas que alimentaron la venta —metros rolados de cada una
+   * × ancho × espesor de **la bobina** × densidad cruda del acabado—, sin el 1 % de D-165. En
+   * una bobina entera, sus propios kilos.
+   */
   theoreticalKg: z.string(),
   /** Kilos de bobina que consumió la producción de esas líneas (prorrateados). */
   realKg: z.string(),

@@ -74,6 +74,7 @@ function row(s: RowSeed): DocumentLineRow {
     line_code: s.lineCode ?? (engine ? 'metallic-roofing' : 'trading'),
     in_engine: engine,
     is_credit: credit,
+    customer_name: 'CLIENTE SAC',
   };
 }
 
@@ -101,6 +102,11 @@ function engineFacts(
       colorLabel: 'ROJO',
       kg: u.kg ?? '0',
       costPen: u.costPen ?? '0',
+      typeKey: 'PREP-0.30',
+      widthMm: '1000.00',
+      densityFactor: '7.8500',
+      meters: u.meters ?? '0',
+      avgCostPen: null,
     })),
   };
 }

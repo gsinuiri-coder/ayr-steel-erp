@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { Decimal, businessToday, type SalesByMaterialDto, type SalesMarginDto } from '@ayr/shared';
-import { adminApi, getItems, getJson, postJson } from '../helpers/api';
+import { adminApi, adminCredentials, getItems, getJson, postJson } from '../helpers/api';
 import { createInvoice, dispatchOrder, purgeInvoicingTrail } from '../helpers/invoicing';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -112,7 +112,9 @@ test.describe('D-354 — Ventas por material', () => {
     await api.dispose();
   });
 
-  test('cobertura producida con despunte: peso real y costo del kardex de la bobina; venta = Ventas y margen', async () => {
+  test('cobertura producida con despunte: peso real y costo del kardex de la bobina; venta = Ventas y margen', async ({
+    page,
+  }) => {
     const scenario = await setupRoofingScenario(api, { weightKg: '900' });
     const customer = await createCustomer(api);
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
@@ -168,8 +170,49 @@ test.describe('D-354 — Ventas por material', () => {
       expect(row.costPen).toBe(outflow.cost.toFixed(4));
       expect(row.coils.map((c) => c.code)).toEqual([scenario.coil.code]);
 
+      // D-369: el teórico sale de la bobina —8 m × 1000 mm × 0.50 mm × 8.0000 ÷ 1000—, sin el
+      // 1 % de D-165 que sí lleva el kilo que planta descontó.
+      expect(row.theoreticalKg).toBe('32.000');
+      expect(theoretical.toFixed(3)).not.toBe('32.000');
+      // D-370: la bobina lleva sus comprobantes, con los kilos y metros que se llevó cada uno.
+      expect(row.coils[0]!.documents).toEqual([
+        expect.objectContaining({
+          documentId: invoice.id,
+          customerName: customer.name,
+          kg: outflow.kg.toFixed(3),
+          meters: '8.000',
+        }),
+      ]);
+
       // Cuadre con Ventas y margen, por comprobante.
       expect(row.salesPen).toBe(await marginDocumentSales(api, invoice.id));
+
+      // En pantalla: sin el botón «Bobinas usadas»; la fila abre el desglose y la bobina, sus
+      // comprobantes, con el número enlazado al detalle.
+      const { email, password } = adminCredentials();
+      await page.goto('/login');
+      await page.getByLabel('Correo electrónico').fill(email);
+      await page.getByLabel('Contraseña', { exact: true }).fill(password);
+      await page.getByRole('button', { name: 'Ingresar' }).click();
+      await expect(page).toHaveURL(/\/(cambiar-contrasena)?$/, { timeout: 60_000 });
+      await page.goto(`/reportes/ventas-material?color=${encodeURIComponent(scenario.color.name)}`);
+      const filas = page.getByTestId('fila-material');
+      await expect(filas).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByRole('button', { name: 'Bobinas usadas' })).toHaveCount(0);
+      await filas.first().click();
+      const dialog = page.getByTestId('desglose-material');
+      await expect(dialog).toBeVisible();
+      const bobina = dialog.getByTestId('bobina-material');
+      await expect(bobina).toHaveCount(1);
+      await expect(bobina).toContainText(scenario.coil.code);
+      await bobina
+        .getByRole('button', { name: `Ver comprobantes de ${scenario.coil.code}` })
+        .click();
+      const docs = dialog.getByTestId('comprobantes-bobina');
+      await expect(docs).toContainText(customer.name);
+      await expect(
+        docs.getByRole('link', { name: invoice.number ?? 'Sin número' }),
+      ).toHaveAttribute('href', `/comprobantes/${invoice.id}`);
     } finally {
       await purgeInvoicingTrail(api, { documentIds }).catch(() => undefined);
       await purgeRoofingTrail(api, trail);

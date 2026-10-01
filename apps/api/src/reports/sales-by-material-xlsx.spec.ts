@@ -29,6 +29,11 @@ const coil = (code: string, kg: string, cost: string) => ({
   colorLabel: 'ROJO',
   kg,
   costPen: cost,
+  typeKey: 'PREP-0.30',
+  theoreticalKg: kg,
+  meters: '0.000',
+  avgCostPen: null,
+  documents: [],
 });
 
 const REPORT: SalesByMaterialDto = {
