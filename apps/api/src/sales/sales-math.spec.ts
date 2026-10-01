@@ -7,10 +7,12 @@ import {
   fixedLengthValuePerMeter,
   IGV_RATE_PCT,
   isQuotationExpired,
+  listValueForPlancha,
   money,
   piecesMeters,
   quotationValidUntil,
   queueSemaphore,
+  roundDocumentTotals,
   salePriceFromValue,
   saleValueFromPrice,
   salesLineTotals,
@@ -104,8 +106,11 @@ describe('salesTotals y documentTotals (D-068)', () => {
     });
   });
 
-  it('un documento de una sola línea coincide con el total de esa línea', () => {
+  it('un documento de una sola línea es esa línea redondeada al céntimo (D-377)', () => {
+    // 7 × 13.33 = 93.31 de valor; la línea guarda 16.7958 de IGV y 110.1058 de total, el
+    // documento 16.80 y 110.11.
     const one = salesLineTotals({ qty: '7.000', unitPricePen: '13.3300' });
+    expect(one.total.toFixed(4)).toBe('110.1058');
     const doc = documentTotals([
       line({
         subtotalPen: one.subtotal.toFixed(4),
@@ -113,7 +118,103 @@ describe('salesTotals y documentTotals (D-068)', () => {
         totalPen: one.total.toFixed(4),
       }),
     ]);
-    expect(doc.totalPen).toBe(one.total.toFixed(4));
+    expect(doc).toEqual({ subtotalPen: '93.3100', igvPen: '16.8000', totalPen: '110.1100' });
+  });
+});
+
+/**
+ * D-377 (R2): el documento se redondea al céntimo **una sola vez**, al final: gravada =
+ * céntimo(Σ valor), IGV = céntimo(Σ valor × 18 %), total = gravada + IGV. La línea no se toca.
+ * Los totales esperados son fijos, los de la tabla del GATE (docs/analisis/decimales-p14).
+ */
+describe('roundDocumentTotals (D-377, R2)', () => {
+  const docOf = (...units: string[]) =>
+    documentTotals(
+      units.map((unitPricePen, i) => {
+        const t = salesLineTotals({ qty: '1.000', unitPricePen });
+        return line({
+          lineNumber: i + 1,
+          unitPricePen,
+          subtotalPen: t.subtotal.toFixed(4),
+          igvPen: t.igv.toFixed(4),
+          totalPen: t.total.toFixed(4),
+        });
+      }),
+    );
+
+  it('tres líneas de valor 10.01 dan 35.44 (IGV céntimo(5.4054) = 5.41), no 35.43 ni 35.4354', () => {
+    expect(docOf('10.0100', '10.0100', '10.0100')).toEqual({
+      subtotalPen: '30.0300',
+      igvPen: '5.4100',
+      totalPen: '35.4400',
+    });
+  });
+
+  it('una línea de valor 10.01 da 11.81 (antes 11.8118)', () => {
+    expect(docOf('10.0100')).toEqual({
+      subtotalPen: '10.0100',
+      igvPen: '1.8000',
+      totalPen: '11.8100',
+    });
+  });
+
+  it('20 planchas a 98.0001 dan 2,312.80 (antes 2,312.8024)', () => {
+    const t = salesLineTotals({ qty: '20.000', unitPricePen: '98.0001' });
+    expect(t.total.toFixed(4)).toBe('2312.8024');
+    expect(roundDocumentTotals(t.subtotal, t.igv).total.toFixed(2)).toBe('2312.80');
+  });
+
+  it('146 × 16.28928 da 2,806.31: gravada 2,378.23 + IGV 428.08 (la línea sigue en 2,806.3172)', () => {
+    const t = salesLineTotals({ qty: '146.000', unitPricePen: '16.28928' });
+    expect(t.subtotal.toFixed(4)).toBe('2378.2349');
+    expect(t.total.toFixed(4)).toBe('2806.3172');
+    const doc = roundDocumentTotals(t.subtotal, t.igv);
+    expect([doc.subtotal.toFixed(2), doc.igv.toFixed(2), doc.total.toFixed(2)]).toEqual([
+      '2378.23',
+      '428.08',
+      '2806.31',
+    ]);
+  });
+
+  it('medio céntimo sube (HALF_UP), en la gravada y en el IGV', () => {
+    // Gravada 10.005 → 10.01; IGV 1.8009 → 1.80.
+    expect(docOf('10.0050')).toEqual({
+      subtotalPen: '10.0100',
+      igvPen: '1.8000',
+      totalPen: '11.8100',
+    });
+    // IGV 0.25 × 18 % = 0.045 exacto → 0.05.
+    expect(docOf('0.2500')).toEqual({
+      subtotalPen: '0.2500',
+      igvPen: '0.0500',
+      totalPen: '0.3000',
+    });
+    // Por debajo del medio céntimo baja: 0.2497 × 18 % = 0.044946 → línea 0.0449 → 0.04.
+    expect(docOf('0.2497').igvPen).toBe('0.0400');
+  });
+
+  it('el IGV suma los IGV de línea: una línea con el trío del papel conserva su IGV (D-255)', () => {
+    // Papel con valor 100.00, IGV 18.01 (IGV como resta) y total 118.01: la cabecera es la del
+    // papel. Recalcular Σ valor × 18 % daba 118.00 y el cobro de 118.01 se rechazaba por exceso.
+    const doc = documentTotals([
+      line({ subtotalPen: '100.0000', igvPen: '18.0100', totalPen: '118.0100' }),
+    ]);
+    expect(doc).toEqual({ subtotalPen: '100.0000', igvPen: '18.0100', totalPen: '118.0100' });
+  });
+
+  it('B1: una plancha cotizada al valor por metro de lista vale la lista exacta', () => {
+    // Lista 98.00 la plancha de 3 m → 32.6667 por metro (así lo siembra el formulario).
+    const perMeter = money(fixedLengthValuePerMeter('3000.00', '98.0000')).toFixed(4);
+    expect(perMeter).toBe('32.6667');
+    expect(listValueForPlancha('3000.00', perMeter, '98.0000').toFixed(4)).toBe('98.0000');
+    // Sin lista, o con otro valor por metro, la cuenta de siempre: largo × valor por metro.
+    expect(listValueForPlancha('3000.00', perMeter, null).toFixed(4)).toBe('98.0001');
+    expect(listValueForPlancha('3000.00', '32.6668', '98.0000').toFixed(4)).toBe('98.0004');
+  });
+
+  it('un total en céntimos es idempotente: volver a redondearlo no lo mueve', () => {
+    const once = roundDocumentTotals('2378.2349', '428.0823');
+    expect(roundDocumentTotals(once.subtotal, once.igv).total.equals(once.total)).toBe(true);
   });
 });
 

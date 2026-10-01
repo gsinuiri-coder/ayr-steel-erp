@@ -1,5 +1,7 @@
 import {
   closingPartTotals,
+  createCustomerPaymentSchema,
+  hasCollectibleBalance,
   type Decimal,
   DERIVED_UNIT_VALUE_DECIMALS,
   derivedUnitValue,
@@ -33,7 +35,8 @@ describe('exceedsOrderTotal — tope de facturación por pedido (HOTFIX-401/M2, 
       orderTotal,
       committed: '1180.0000',
       credited: '0',
-      newTotal: '0.0100',
+      newTotal: '0.0300',
+      committedCount: 1,
     });
     expect(r.exceeds).toBe(true);
   });
@@ -44,27 +47,30 @@ describe('exceedsOrderTotal — tope de facturación por pedido (HOTFIX-401/M2, 
       committed: '1180.0000',
       credited: '295.0000',
       newTotal: '295.0000',
+      committedCount: 2,
     });
     expect(r.exceeds).toBe(false);
     expect(r.net.toFixed(4)).toBe('885.0000');
   });
 
-  it('pero no por más de lo acreditado', () => {
+  it('pero no por más de lo acreditado (más allá del céntimo por documento)', () => {
     const r = exceedsOrderTotal({
       orderTotal,
       committed: '1180.0000',
       credited: '295.0000',
-      newTotal: '295.0001',
+      newTotal: '295.0400',
+      committedCount: 2,
     });
     expect(r.exceeds).toBe(true);
   });
 
-  it('llegar exacto al total del pedido se permite (el tope es estricto)', () => {
+  it('llegar exacto al total del pedido se permite', () => {
     const r = exceedsOrderTotal({
       orderTotal,
       committed: '880.0000',
       credited: '0',
       newTotal: '300.0000',
+      committedCount: 1,
     });
     expect(r.exceeds).toBe(false);
   });
@@ -75,8 +81,32 @@ describe('exceedsOrderTotal — tope de facturación por pedido (HOTFIX-401/M2, 
       committed: '1180.0000',
       credited: '0',
       newTotal: '1180.0000',
+      committedCount: 1,
     });
     expect(r.exceeds).toBe(true);
+  });
+
+  it('D-377: un pedido anterior a R2 (35.4354) se factura entero al céntimo (35.44)', () => {
+    const r = exceedsOrderTotal({
+      orderTotal: '35.4354',
+      committed: '0',
+      credited: '0',
+      newTotal: '35.4400',
+      committedCount: 0,
+    });
+    expect(r.exceeds).toBe(false);
+  });
+
+  it('D-377: facturar en partes suma un céntimo de más por redondeo y se permite', () => {
+    // Pedido de dos líneas de 0.25: 0.50 + céntimo(0.09) = 0.59. Cada parte: 0.25 + 0.05 = 0.30.
+    const r = exceedsOrderTotal({
+      orderTotal: '0.5900',
+      committed: '0.3000',
+      credited: '0',
+      newTotal: '0.3000',
+      committedCount: 1,
+    });
+    expect(r.exceeds).toBe(false);
   });
 });
 
@@ -351,26 +381,63 @@ describe('sumLineTotals (D-169)', () => {
     // 3 500 kg por S/ 4 179.13: el unitario derivado (1.1940) devuelve 4 179.00 al multiplicar.
     const totals = sumLineTotals([{ subtotalPen: '4179.1300', igvPen: '752.2434' }]);
     expect(totals.subtotal.toFixed(4)).toBe('4179.1300');
-    expect(totals.total.toFixed(4)).toBe('4931.3734');
+    // D-377 (R2): la cabecera va al céntimo (era 4 931.3734).
+    expect(totals.igv.toFixed(4)).toBe('752.2400');
+    expect(totals.total.toFixed(4)).toBe('4931.3700');
     // Lo que hacía la cabecera antes, y por trece céntimos de menos:
     expect(salesTotals([{ qty: '3500.000', unitPricePen: '1.1940' }]).subtotal.toFixed(4)).toBe(
       '4179.0000',
     );
   });
 
-  it('suma subtotales e IGV por separado, nunca totales ya redondeados', () => {
-    // El mismo criterio que `documentTotals` en ventas: sumar totales de línea arrastra el
-    // redondeo del IGV de cada una.
+  it('D-377 (R2): redondea al céntimo en el documento, nunca suma totales ya redondeados', () => {
+    // Tres líneas de 10.01: gravada 30.03, IGV céntimo(30.03 × 18 %) = 5.41, total 35.44. Con
+    // céntimo por línea habría sido 35.43; sumando los totales de línea, 35.4354.
     const totals = sumLineTotals([
-      { subtotalPen: '0.0100', igvPen: '0.0018' },
-      { subtotalPen: '0.0100', igvPen: '0.0018' },
+      { subtotalPen: '10.0100', igvPen: '1.8018' },
+      { subtotalPen: '10.0100', igvPen: '1.8018' },
+      { subtotalPen: '10.0100', igvPen: '1.8018' },
     ]);
-    expect(totals.subtotal.toFixed(4)).toBe('0.0200');
-    expect(totals.igv.toFixed(4)).toBe('0.0036');
+    expect(totals.subtotal.toFixed(4)).toBe('30.0300');
+    expect(totals.igv.toFixed(4)).toBe('5.4100');
+    expect(totals.total.toFixed(4)).toBe('35.4400');
   });
 
   it('un documento sin líneas da cero y no NaN', () => {
     expect(sumLineTotals([]).total.toFixed(4)).toBe('0.0000');
+  });
+});
+
+describe('hasCollectibleBalance — arreglo A de cobranzas (D-377)', () => {
+  it('una cola de diezmilésimas no es saldo que cobrar', () => {
+    expect(hasCollectibleBalance('0.0001')).toBe(false);
+    expect(hasCollectibleBalance('0.0049')).toBe(false);
+    expect(hasCollectibleBalance('0.0000')).toBe(false);
+  });
+
+  it('medio céntimo o más sí es saldo (HALF_UP), y lo cobrable es su techo en céntimos', () => {
+    expect(hasCollectibleBalance('0.0050')).toBe(true);
+    expect(hasCollectibleBalance('117.9999')).toBe(true);
+    expect(payableBalance('117.9999').toFixed(2)).toBe('118.00');
+  });
+});
+
+describe('createCustomerPaymentSchema — el cobro va al céntimo (D-377)', () => {
+  const base = { date: '2026-09-30', method: 'CASH' as const };
+  it('acepta hasta dos decimales', () => {
+    expect(createCustomerPaymentSchema.safeParse({ ...base, amountPen: '118' }).success).toBe(true);
+    expect(createCustomerPaymentSchema.safeParse({ ...base, amountPen: '117.5' }).success).toBe(
+      true,
+    );
+    expect(createCustomerPaymentSchema.safeParse({ ...base, amountPen: '117.99' }).success).toBe(
+      true,
+    );
+  });
+
+  it('rechaza fracciones de céntimo, como el saldo crudo de cuatro decimales', () => {
+    const parsed = createCustomerPaymentSchema.safeParse({ ...base, amountPen: '117.9999' });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toContain('dos decimales');
   });
 });
 

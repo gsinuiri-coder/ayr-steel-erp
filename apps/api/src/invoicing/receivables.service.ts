@@ -10,6 +10,7 @@ import {
   businessToday,
   Decimal,
   documentBalance,
+  hasCollectibleBalance,
   payableBalance,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginateInMemory,
@@ -285,7 +286,8 @@ export class ReceivablesService {
 
     for (const doc of documents) {
       const balance = toDecimal(this.balanceOf(doc).toFixed(4));
-      if (balance.lte(0)) continue;
+      // D-377 (arreglo A): un resto de fracciones de céntimo no es deuda.
+      if (!hasCollectibleBalance(balance)) continue;
       const dueDate = doc.dueDate ? doc.dueDate.toISOString().slice(0, 10) : null;
       const overdue = dueDate !== null && dueDate < today;
 

@@ -11,6 +11,7 @@ import {
   POS_PAYMENT_METHODS,
   Role,
   cashSessionCode,
+  cents,
   expectedCash,
   toDecimal,
   totalsByMethod,
@@ -129,7 +130,10 @@ export class CashSessionsService {
         })),
       );
       const counted = toDecimal(input.countedCashPen);
-      const difference = counted.minus(expected);
+      // Al céntimo (P-14): el esperado ya viene en céntimos (`expectedCash`) y la diferencia
+      // también se decide en céntimos, así un contado tipeado con más decimales no deja un
+      // residuo de fracciones de céntimo que obligue a cerrar «con diferencia».
+      const difference = cents(counted.minus(expected));
 
       if (!difference.isZero()) {
         if (!input.notes) {

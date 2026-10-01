@@ -443,7 +443,8 @@ export function CompraDetalleView({ id }: { id: string }) {
                     {formatQty(item.qty, unitLabel(item.unit))}
                   </TableCell>
                   <TableCell className="text-right">
-                    {formatMoney(item.unitPrice, p.currency)}
+                    {/* P-14: el unitario a 4 decimales, la escala con la que se guarda. */}
+                    {formatMoney(item.unitPrice, p.currency, 4)}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatMoney(item.subtotal, p.currency)}

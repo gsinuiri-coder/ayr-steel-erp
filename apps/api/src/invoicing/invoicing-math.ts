@@ -76,13 +76,23 @@ export function exceedsOrderTotal(input: {
   committed: DecimalInput;
   credited: DecimalInput;
   newTotal: DecimalInput;
+  /** D-377: comprobantes en pie del pedido **sin contar el nuevo**. */
+  committedCount: number;
 }): { exceeds: boolean; net: Decimal } {
   const net = toDecimal(input.committed).minus(toDecimal(input.credited));
+  // D-377 (R2): cada documento redondea su total al céntimo una vez, y eso lo mueve a lo sumo
+  // medio céntimo en la gravada y medio en el IGV. Facturar un pedido en partes —o un pedido
+  // anterior a R2, cuyo total quedó con cuatro decimales— puede sumar un céntimo por documento
+  // más que el pedido sin que se haya facturado nada de más. Lo que el tope viene a frenar (un
+  // borrador duplicado) se pasa por el importe entero, no por céntimos.
+  const tolerance = ROUNDING_CENT.times(input.committedCount + 1);
   return {
-    exceeds: net.plus(toDecimal(input.newTotal)).gt(toDecimal(input.orderTotal)),
+    exceeds: net.plus(toDecimal(input.newTotal)).gt(toDecimal(input.orderTotal).plus(tolerance)),
     net,
   };
 }
+
+const ROUNDING_CENT = new Decimal('0.01');
 
 /** Un agregado `_sum` de `fiscal_document_items` agrupado por línea de pedido. */
 export interface ItemSumRow {

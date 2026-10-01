@@ -24,6 +24,7 @@ import {
   documentBalance,
   fiscalDocumentNumber,
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
+  hasCollectibleBalance,
   GRE_TRANSFER_MODES,
   TransferMode,
   IGV_RATE_PCT,
@@ -586,6 +587,7 @@ export class InvoicingService {
             archivedAt: null,
           },
           _sum: { totalPen: true },
+          _count: { _all: true },
         }),
         tx.fiscalDocument.aggregate({
           where: {
@@ -595,6 +597,7 @@ export class InvoicingService {
             archivedAt: null,
           },
           _sum: { totalPen: true },
+          _count: { _all: true },
         }),
       ]);
       const orderTotal = toDecimal(orderTotalPen);
@@ -603,6 +606,8 @@ export class InvoicingService {
         committed: (existing._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
         credited: (creditNotes._sum?.totalPen ?? new Prisma.Decimal(0)).toString(),
         newTotal: totals.total,
+        // D-377: cada documento —comprobante o nota— redondea su total al céntimo por su cuenta.
+        committedCount: existing._count._all + creditNotes._count._all,
       });
       if (cap.exceeds) {
         throw new BadRequestException(
@@ -3088,7 +3093,10 @@ export class InvoicingService {
       orderBy,
       take: DERIVED_FILTER_FETCH_CAP,
     });
-    const pending = (await this.toListDtos(rows)).filter((d) => toDecimal(d.balancePen).gt(0));
+    // D-377 (arreglo A): pendiente es tener algo que cobrar al céntimo, no una cola de diezmilésimas.
+    const pending = (await this.toListDtos(rows)).filter((d) =>
+      hasCollectibleBalance(d.balancePen),
+    );
     // Los despachos, recién sobre la página ya cortada: no sobre todo el universo del tope.
     const page = paginateInMemory(pending, query);
     return { ...page, items: await this.withDispatchLinks(page.items) };
@@ -3319,7 +3327,7 @@ export class InvoicingService {
       paidPen: paid.toFixed(4),
       creditedPen: credited.toFixed(4),
       balancePen: balance,
-      isOverdue: dueDate !== null && dueDate < businessToday() && toDecimal(balance).gt(0),
+      isOverdue: dueDate !== null && dueDate < businessToday() && hasCollectibleBalance(balance),
       detractionCode: row.detractionCode,
       detractionPct: row.detractionPct ? row.detractionPct.toFixed(2) : null,
       detractionAmountPen: row.detractionAmountPen ? row.detractionAmountPen.toFixed(4) : null,

@@ -4,9 +4,11 @@ import {
   POS_PAYMENT_METHODS,
   PosSaleStatus,
   cashSessionCode,
+  cents,
   createPosSaleSchema,
   expectedCash,
   posSaleCode,
+  toDecimal,
   totalsByMethod,
   type CashSaleLike,
 } from '@ayr/shared';
@@ -73,6 +75,28 @@ describe('expectedCash (D-101)', () => {
       sale({ totalPen: '0.1000' }),
     ];
     expect(expectedCash('0.0000', centavos).toFixed(4)).toBe('0.3000');
+  });
+
+  it('redondea al céntimo una sola vez, después de sumar (P-14)', () => {
+    // 3 × 33.3350 = 100.0050 → 100.01. Redondear cada venta antes de sumar daría 3 × 33.34 =
+    // 100.02: el redondeo va al final, sobre la suma.
+    const result = expectedCash('0.0000', [
+      sale({ totalPen: '33.3350' }),
+      sale({ totalPen: '33.3350' }),
+      sale({ totalPen: '33.3350' }),
+    ]);
+    expect(result.toFixed(4)).toBe('100.0100');
+  });
+
+  it('un esperado con fracción de céntimo cuadra con el contado en céntimos (P-14)', () => {
+    // La venta guardó 412.3456 (4 decimales); el cajón tiene 412.35. Sin el redondeo, el
+    // arqueo marcaba un sobrante de S/ 0.0044 imposible de cuadrar con billetes.
+    const expected = expectedCash('0.0000', [sale({ totalPen: '412.3456' })]);
+    expect(expected.toFixed(4)).toBe('412.3500');
+    expect(cents(toDecimal('412.35').minus(expected)).isZero()).toBe(true);
+    // Medio céntimo sube (HALF_UP).
+    expect(expectedCash('0.0000', [sale({ totalPen: '10.0050' })]).toFixed(4)).toBe('10.0100');
+    expect(expectedCash('0.0000', [sale({ totalPen: '10.0049' })]).toFixed(4)).toBe('10.0000');
   });
 
   it('el medio del arqueo es el efectivo y solo el efectivo', () => {

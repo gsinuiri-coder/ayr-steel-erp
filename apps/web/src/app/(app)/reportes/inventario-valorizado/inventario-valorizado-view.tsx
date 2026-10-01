@@ -38,6 +38,13 @@ import { LINK_CLASSNAME } from '@/lib/utils';
  * corte que `/inventario`, que agrupa por `typeKey` (acabado + espesor, sin color) para
  * responder qué hay disponible para vender.
  */
+
+/**
+ * P-14: el costo promedio (por kilo o por unidad) se muestra a 4 decimales, la escala con la
+ * que se guarda; a 2, el costo × la cantidad no reproducía el valor de la fila.
+ */
+const COST_DECIMALS = 4;
+
 export function InventarioValorizadoView() {
   const [open, setOpen] = useState<Set<string>>(new Set());
 
@@ -165,7 +172,9 @@ export function InventarioValorizadoView() {
                         {BUSINESS_LINE_LABELS[p.businessLine]}
                       </TableCell>
                       <TableCell className="text-right">{formatQty(p.qty, p.unit)}</TableCell>
-                      <TableCell className="text-right">{formatMoney(p.avgCostPen)}</TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(p.avgCostPen, 'PEN', COST_DECIMALS)}
+                      </TableCell>
                       <TableCell className="text-right">{formatMoney(p.totalValuePen)}</TableCell>
                     </TableRow>
                   ))}
@@ -255,7 +264,9 @@ function CoilGroupRows({
         </TableCell>
         <TableCell className="text-right">{group.coilCount}</TableCell>
         <TableCell className="text-right">{formatQty(group.qtyKg, 'kg')}</TableCell>
-        <TableCell className="text-right">{formatMoney(group.avgCostPen)}</TableCell>
+        <TableCell className="text-right">
+          {formatMoney(group.avgCostPen, 'PEN', COST_DECIMALS)}
+        </TableCell>
         <TableCell className="text-right font-medium">{formatMoney(group.totalValuePen)}</TableCell>
       </TableRow>
       {/*
@@ -292,7 +303,9 @@ function CoilGroupRows({
               </div>
             </TableCell>
             <TableCell className="text-right">{formatQty(coil.qtyKg, 'kg')}</TableCell>
-            <TableCell className="text-right">{formatMoney(coil.avgCostPen)}</TableCell>
+            <TableCell className="text-right">
+              {formatMoney(coil.avgCostPen, 'PEN', COST_DECIMALS)}
+            </TableCell>
             <TableCell className="text-right">{formatMoney(coil.totalValuePen)}</TableCell>
           </TableRow>
         ))}

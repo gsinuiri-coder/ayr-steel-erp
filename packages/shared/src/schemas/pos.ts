@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { Decimal, decimalStringSchema, MAX_VALUE, toDecimal, type DecimalInput } from '../decimal';
+import {
+  cents,
+  Decimal,
+  decimalStringSchema,
+  MAX_VALUE,
+  toDecimal,
+  type DecimalInput,
+} from '../decimal';
 import { BUSINESS_LINES, DOC_TYPES, PaymentMethod, type PaymentMethod as Method } from '../enums';
 import { reasonSchema } from './coil';
 
@@ -111,11 +118,18 @@ export interface CashSaleLike {
  *
  * Las ventas anuladas no cuentan: su cobro se revirtió, así que ese dinero salió del cajón
  * por el mismo camino por el que entró.
+ *
+ * **Al céntimo** (P-14): `totalPen` se guarda con cuatro decimales, pero en el cajón solo hay
+ * céntimos. Se suma con la escala completa y se redondea **una sola vez** al final (HALF_UP a
+ * 2, `cents`); comparar el contado contra 412.3456 dejaría un faltante de S/ 0.0056 que nadie
+ * puede cuadrar con billetes.
  */
 export function expectedCash(openingAmountPen: DecimalInput, sales: CashSaleLike[]): Decimal {
-  return sales
-    .filter((s) => s.status === PosSaleStatus.ACTIVE && s.method === ARQUEO_METHOD)
-    .reduce((acc, s) => acc.plus(toDecimal(s.totalPen)), toDecimal(openingAmountPen));
+  return cents(
+    sales
+      .filter((s) => s.status === PosSaleStatus.ACTIVE && s.method === ARQUEO_METHOD)
+      .reduce((acc, s) => acc.plus(toDecimal(s.totalPen)), toDecimal(openingAmountPen)),
+  );
 }
 
 /** Totales del turno por medio de pago, solo sobre las ventas vigentes. */

@@ -162,6 +162,16 @@ export function payableBalance(balancePen: DecimalInput): Decimal {
   return toDecimal(balancePen).toDecimalPlaces(2, Decimal.ROUND_CEIL);
 }
 
+/**
+ * D-377 (arreglo A): ¿el comprobante **tiene algo que cobrar**? Su saldo redondeado al céntimo
+ * (HALF_UP) es mayor que cero. Un resto de fracciones de céntimo (S/ 0.0001 de un total de cuatro
+ * decimales cobrado con dos) no es deuda: nadie lo puede pagar, y listarlo dejaba comprobantes
+ * «pendientes» de S/ 0.00 en cobranzas, en los vencidos y en el botón de cobrar.
+ */
+export function hasCollectibleBalance(balancePen: DecimalInput): boolean {
+  return toDecimal(balancePen).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).gt(0);
+}
+
 // --------------------------------------------------------------------------
 // Schemas de entrada — comprobantes
 // --------------------------------------------------------------------------
@@ -214,6 +224,11 @@ function assertIssueDateWindow(issueDate: string, ctx: z.RefinementCtx, path: st
 
 const qtySchema = decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG });
 const moneySchema = decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY });
+/** D-377: el dinero se recibe con dos decimales; un cobro no lleva fracciones de céntimo. */
+const paymentAmountSchema = moneySchema.refine(
+  (v) => toDecimal(v).decimalPlaces() <= 2,
+  'El monto del cobro va con hasta dos decimales (céntimos)',
+);
 const unitStringSchema = z.string().max(20);
 
 /**
@@ -1102,7 +1117,7 @@ export type SalesOrderProgressDto = z.infer<typeof salesOrderProgressSchema>;
 
 export const createCustomerPaymentSchema = z.object({
   date: isoDateSchema,
-  amountPen: moneySchema,
+  amountPen: paymentAmountSchema,
   method: z.enum(PAYMENT_METHODS, {
     errorMap: () => ({ message: 'Medio de pago inválido' }),
   }),

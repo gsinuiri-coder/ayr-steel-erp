@@ -334,7 +334,8 @@ function MonthTable({
                 <TableCell className="text-right">{formatQty(row.closingKg)}</TableCell>
                 {showsCost && (
                   <TableCell className="hidden text-right lg:table-cell">
-                    {row.unitCostPerKg === null ? '—' : formatMoney(row.unitCostPerKg)}
+                    {/* P-14: costo/kg a 4 decimales, la escala con la que se guarda. */}
+                    {row.unitCostPerKg === null ? '—' : formatMoney(row.unitCostPerKg, 'PEN', 4)}
                   </TableCell>
                 )}
                 {showsCost && (

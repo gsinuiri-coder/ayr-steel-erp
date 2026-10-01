@@ -3,7 +3,9 @@ import { DocType, Prisma, QuotationStatus } from '@prisma/client';
 import {
   Decimal,
   defaultRoofingPlan,
+  derivedUnitValue,
   importDocTypeOf,
+  importUnitPriceText,
   EXTERNAL_INVOICE_NOTES_PREFIX,
   externalInvoiceOf,
   IMPORT_ROUNDING_TOLERANCE_PEN,
@@ -287,7 +289,8 @@ export class QuotationImportService {
     const net = parseAmount(field(raw, 'netAmount'));
     const currency = field(raw, 'currency');
     const exchangeRate = parseAmount(field(raw, 'exchangeRate'));
-    let unitPricePen: Decimal | null = null;
+    /** El valor de venta en soles **sin redondear**: de él sale el unitario (P14 §3.5). */
+    let netPenExact: Decimal | null = null;
     let netAmountPen: Decimal | null = null;
     if (net?.gt(0) !== true) {
       issues.push({
@@ -310,8 +313,8 @@ export class QuotationImportService {
         // El redondeo del importe en soles se hace **una sola vez, acá**: es el número que se
         // va a persistir tal cual y contra el que se va a medir el desvío del unitario. Que
         // la conversión a soles ocurra antes que el redondeo es lo de siempre (D-003).
-        netAmountPen = money(isForeign && exchangeRate ? net.times(exchangeRate) : net);
-        unitPricePen = netAmountPen.div(qty);
+        netPenExact = isForeign && exchangeRate ? net.times(exchangeRate) : net;
+        netAmountPen = money(netPenExact);
       }
     }
 
@@ -330,6 +333,15 @@ export class QuotationImportService {
     // de la línea (D-083). Derivarlo del valor sin redondear dejaba las dos cifras separadas
     // por milésimas y el documento entero se caía en el confirm.
     const roundedQty = qty === null ? null : toDecimal(toFixedString(qty, 'KG'));
+    // P14 §3.5: el unitario de la fila es `valor de venta ÷ cantidad` a **diez** decimales, no a
+    // cuatro. En la fila intacta manda el importe y el unitario solo se muestra; en la editada el
+    // importe se recalcula desde él, y con cuatro decimales `146 × 16.2893` se iba a 2 378.2378
+    // donde el papel decía 2 378.23488. Sale del valor sin redondear y de la cantidad que viaja
+    // en la fila, para que `cantidad × unitario` vuelva al mismo importe que la fila sin tocar.
+    const unitPricePen =
+      netPenExact !== null && roundedQty?.gt(0) === true
+        ? derivedUnitValue(roundedQty, netPenExact)
+        : null;
     let pieces: { lengthMm: string; qty: number }[] | undefined;
     if (needsPieces && roundedQty?.gt(0) === true) {
       const plan = defaultRoofingPlan(roundedQty);
@@ -363,7 +375,7 @@ export class QuotationImportService {
       padron,
       productId: product?.id ?? null,
       qty: roundedQty === null ? '' : toFixedString(roundedQty, 'KG'),
-      unitPricePen: unitPricePen === null ? '' : toFixedString(unitPricePen, 'MONEY'),
+      unitPricePen: unitPricePen === null ? '' : importUnitPriceText(unitPricePen),
       // D-169: el importe del papel, en soles y sin IGV. Es lo que se persiste como subtotal.
       // Con trío, el valor es el del trío (redondeado a dos decimales, D-255).
       netAmountPen:
@@ -752,7 +764,9 @@ export class QuotationImportService {
                   unitPricePen: r.unitPricePen,
                   // D-169: el importe del papel manda. `unitPricePen` sigue viajando porque el
                   // comprobante lo necesita, pero el subtotal sale de acá. Ausente en la fila
-                  // que el usuario editó: ahí manda lo que tipeó y el importe se recalcula.
+                  // que el usuario editó: ahí manda lo que tipeó y el importe se recalcula
+                  // como `redondeo(cantidad × unitario)` con el unitario a diez decimales tal
+                  // como llegó (P14 §3.5), sin cortarlo antes a cuatro.
                   ...(r.netAmountPen === undefined ? {} : { netAmountPen: r.netAmountPen }),
                   // D-255: y con el IGV y el total del papel, si la fila los trajo y cuadraban.
                   ...(r.netAmountPen !== undefined &&

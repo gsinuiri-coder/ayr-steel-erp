@@ -14,11 +14,11 @@ import {
   detailsLengths,
   isAccessory,
   fixedLengthMeters,
-  fixedLengthUnitValue,
   fixedLengthValuePerMeter,
   isImportedQuotation,
   isPlausiblePieceLength,
   lineAmounts,
+  listValueForPlancha,
   MAX_QUOTATION_VALIDITY_DAYS,
   MAX_SALES_ITEMS,
   money,
@@ -29,6 +29,7 @@ import {
   salePriceFromValue,
   saleValueFromPrice,
   sellsByFixedLength,
+  roundDocumentTotals,
   toDecimal,
   toFixedString,
   Unit,
@@ -344,12 +345,28 @@ function linePricing(
       amounts: lineAmounts(q, { unitValuePen }),
     };
   }
+  // D-377 (B3): un producto de lista cuyo precio nadie tocó viaja **por su valor de lista**, no
+  // por el precio con IGV sembrado: 11.8118 × 3 no es 10.01 × 3 con IGV, y la línea tiene que
+  // valer lo que dice la lista.
+  const listValuePen = l.kind === 'PRODUCT' ? (product?.listPricePen ?? null) : null;
+  if (listValuePen !== null && l.pricePen.trim() === seededPrice(listValuePen)) {
+    const unitPricePen = toFixedString(listValuePen, 'MONEY');
+    return {
+      payload: { unitPricePen },
+      amounts: lineAmounts(q, { unitValuePen: unitPricePen }),
+    };
+  }
   const unitPriceWithIgvPen = toFixedString(l.pricePen.trim(), 'MONEY');
   if (!toDecimal(unitPriceWithIgvPen).gt(0)) return null;
   return {
     payload: { unitPriceWithIgvPen },
     amounts: lineAmounts(q, { unitPriceWithIgvPen }),
   };
+}
+
+/** D-162/D-377: el precio con IGV que se siembra a partir de un valor sin IGV. */
+function seededPrice(value: Decimal | string): string {
+  return toFixedString(money(salePriceFromValue(value)), 'MONEY');
 }
 
 /**
@@ -382,7 +399,11 @@ function lineValues(
   }
   return {
     valuePerMeterPen: value,
-    unitValuePen: toFixedString(money(fixedLengthUnitValue(product.lengthMm, value)), 'MONEY'),
+    // D-377 (B1): la misma regla que el API, así una plancha sin tocar vale su lista exacta.
+    unitValuePen: toFixedString(
+      listValueForPlancha(product.lengthMm, value, product.listPricePen),
+      'MONEY',
+    ),
   };
 }
 
@@ -662,7 +683,7 @@ export function SalesDocumentForm({
         ? basisChanged
           ? { pricePen: '' }
           : {}
-        : { pricePen: toFixedString(money(salePriceFromValue(perUnitValue)), 'MONEY') }),
+        : { pricePen: seededPrice(perUnitValue) }),
       // Cambiar de producto puede cambiar la forma de la línea (simple ↔ compuesta): el
       // detalle anterior dejaría de significar nada, y la cantidad se recalcula sola.
       pieces: [EMPTY_PIECE],
@@ -766,8 +787,11 @@ export function SalesDocumentForm({
     const t = pricingOf(l)?.amounts;
     return t === undefined ? [] : [t];
   });
-  const subtotal = totals.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0));
-  const igv = totals.reduce((acc, t) => acc.plus(t.igv), new Decimal(0));
+  // D-377 (R2): el total del documento se redondea al céntimo una sola vez, como el API.
+  const documentTotals = roundDocumentTotals(
+    totals.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0)),
+    totals.reduce((acc, t) => acc.plus(t.igv), new Decimal(0)),
+  );
 
   const save = useMutation<QuotationDto | SalesOrderDto, unknown, unknown>({
     mutationFn: (body: unknown) =>
@@ -1241,9 +1265,9 @@ export function SalesDocumentForm({
         </Button>
         {/* D-162: el mismo vocabulario que el PDF y los detalles (D-284: bloque compartido). */}
         <DocumentTotals
-          subtotal={subtotal.toFixed(4)}
-          igv={igv.toFixed(4)}
-          total={subtotal.plus(igv).toFixed(4)}
+          subtotal={documentTotals.subtotal.toFixed(2)}
+          igv={documentTotals.igv.toFixed(2)}
+          total={documentTotals.total.toFixed(2)}
         />
       </DocumentLinesFooter>
 

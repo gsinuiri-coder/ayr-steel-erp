@@ -13,7 +13,7 @@ import {
   describePieces,
   detailsLengths,
   isAccessory,
-  fixedLengthUnitValue,
+  listValueForPlancha,
   importRoundingTolerance,
   isPlausiblePieceLength,
   kgPerMeter,
@@ -28,6 +28,7 @@ import {
   salesLineTotals,
   sellsByFixedLength,
   toDecimal,
+  sumLineTotals,
   toFixedString,
   Unit,
   type LineAmountBasis,
@@ -450,7 +451,7 @@ export async function resolveSalesLines(
     const typedUnitValuePen =
       valuePerMeterPen !== null && product.lengthMm !== null
         ? toFixedString(
-            money(fixedLengthUnitValue(product.lengthMm.toFixed(2), valuePerMeterPen)),
+            listValueForPlancha(product.lengthMm.toFixed(2), valuePerMeterPen, listPricePen),
             'MONEY',
           )
         : (item.unitPricePen ?? listPricePen);
@@ -1005,18 +1006,20 @@ async function resolveSaleCoils(
   return result;
 }
 
-/** Totales del documento: Σ subtotales + Σ IGV, nunca Σ de totales ya redondeados. */
+/**
+ * Totales del documento: Σ subtotales + Σ IGV, nunca Σ de totales ya redondeados, y desde D-377
+ * (R2) redondeados al céntimo en el documento (`sumLineTotals` → `roundDocumentTotals`).
+ */
 export function documentTotals(lines: ResolvedSalesLine[]): {
   subtotalPen: string;
   igvPen: string;
   totalPen: string;
 } {
-  const subtotal = lines.reduce((acc, l) => acc.plus(toDecimal(l.subtotalPen)), toDecimal('0'));
-  const igv = lines.reduce((acc, l) => acc.plus(toDecimal(l.igvPen)), toDecimal('0'));
+  const { subtotal, igv, total } = sumLineTotals(lines);
   return {
     subtotalPen: toFixedString(subtotal, 'MONEY'),
     igvPen: toFixedString(igv, 'MONEY'),
-    totalPen: toFixedString(subtotal.plus(igv), 'MONEY'),
+    totalPen: toFixedString(total, 'MONEY'),
   };
 }
 
