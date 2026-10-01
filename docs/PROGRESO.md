@@ -2,6 +2,34 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — cc07: D-373, reactivar un comprobante manual anulado por error
+
+Rama `cc07/reactivar-comprobante` desde `origin/main` = `f6085db`, en el worktree `../ayr-cc07`. **PR sin
+merge ni deploy.** Runbook: `docs/handoff/ventana-cc07.md`; guion UAT: `docs/uat/cc07.md`.
+
+- **D-373 aprobada por el dueño** sobre el informe `docs/analisis/reactivar-comprobante-2026-10-01.md`,
+  con ajustes: casilla «sigue vigente en Nubefact/SUNAT», copia de los campos de anulación en la
+  auditoría, borradores bloquean sin borrarse, y acción en el menú de la fila.
+- **API:** `POST /invoicing/documents/:id/reactivate` (`FiscalImportService.reactivateExternal`). Sin
+  migración. No despacha.
+- **Web:** «Reactivar» en el menú «⋯» de la fila de /comprobantes (solo admin, solo lo que cumple el
+  alcance); modal con motivo y casilla; al reactivar lleva al detalle con el despacho D-364 sugerido a la
+  fecha del comprobante.
+- **Pruebas (2026-10-01, en el worktree):** unitarios del servicio 28/28 (cada bloqueo, no admin, no
+  manual, nota de crédito, casilla sin marcar, 409 del segundo intento, verificación de versión, orden de
+  locks). E2E local
+  (`E2E_API_PORT=3010`, `ayr_local_e2e` recién reseteada): `reactivar-comprobante-d373` **3 passed** tras las
+  correcciones de las revisiones.
+  Vecinos (`acciones-fila-d327`, `comprobante-manual`, `despacho-fecha-comprobante-d278`,
+  `refechar-despacho-d288`, `m4-anulacion-importado`, `correcciones-03-formularios`): **21 passed, 2
+  failed, 1 skipped**; los 2 rojos son de **infraestructura** (`comprobante-manual`, «Emisión electrónica
+  no habilitada en este entorno»: la API local corre sin `PSE_ENABLED`, camino `send` no tocado). La suite
+  completa la corre la CI del PR.
+- **Revisiones:** ver `docs/revision/cc07-autorrevision.md` y `docs/revision/cc07-segundo-modelo.md`.
+  **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01).
+- **Requisitos del dueño antes de reactivar 341:** confirmar en Nubefact que sigue vigente y descartar el
+  borrador del reingreso de PED-000048 (runbook §0).
+
 ## 2026-10-01 — Ventana cc06 (D-368..D-371, PR #65 y #66, sin migración)
 
 Ventana de madrugada (05:15–05:40 Lima), con corte a las 07:30 fijado por el dueño; terminó antes.
@@ -479,6 +507,12 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
   claim—; `updateItem`/`deleteItem` de compras en borrador (reescriben importes y totales de la cabecera,
   sin kardex); y, de solo lectura, la consulta `coilUsage` de Ventas por material (metros por bobina desde
   los reportes vigentes) y la rentabilidad por comprobante, que comparte el motor.
+
+- **cc07** (2026-10-01, rama `cc07/reactivar-comprobante`). D-373. Autorrevisión y segundo modelo
+  (`docs/revision/cc07-*.md`); **ninguno vale como pase independiente**. **PENDIENTE DE REVISIÓN DEL
+  DUEÑO** (2026-10-01). Pieza de riesgo: `FiscalImportService.reactivateExternal` —**toca datos**: devuelve
+  un comprobante a `ACCEPTED` (vuelve a deber y a contar sus líneas como facturadas); no toca kardex,
+  reservas ni cobros. Locks de pedido y borradores contra el registro concurrente del reingreso (D-373).
 
 ## Recorrido de UX — M2 de Correcciones 06 (2026-09-28, solo docs)
 
