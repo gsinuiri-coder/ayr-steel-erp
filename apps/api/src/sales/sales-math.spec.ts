@@ -161,14 +161,14 @@ describe('roundDocumentTotals (D-377, R2)', () => {
   it('20 planchas a 98.0001 dan 2,312.80 (antes 2,312.8024)', () => {
     const t = salesLineTotals({ qty: '20.000', unitPricePen: '98.0001' });
     expect(t.total.toFixed(4)).toBe('2312.8024');
-    expect(roundDocumentTotals(t.subtotal).total.toFixed(2)).toBe('2312.80');
+    expect(roundDocumentTotals(t.subtotal, t.igv).total.toFixed(2)).toBe('2312.80');
   });
 
   it('146 × 16.28928 da 2,806.31: gravada 2,378.23 + IGV 428.08 (la línea sigue en 2,806.3172)', () => {
     const t = salesLineTotals({ qty: '146.000', unitPricePen: '16.28928' });
     expect(t.subtotal.toFixed(4)).toBe('2378.2349');
     expect(t.total.toFixed(4)).toBe('2806.3172');
-    const doc = roundDocumentTotals(t.subtotal);
+    const doc = roundDocumentTotals(t.subtotal, t.igv);
     expect([doc.subtotal.toFixed(2), doc.igv.toFixed(2), doc.total.toFixed(2)]).toEqual([
       '2378.23',
       '428.08',
@@ -189,16 +189,17 @@ describe('roundDocumentTotals (D-377, R2)', () => {
       igvPen: '0.0500',
       totalPen: '0.3000',
     });
-    // Justo por debajo del medio céntimo baja: 0.2499 × 18 % = 0.044982 → 0.04.
-    expect(docOf('0.2499').igvPen).toBe('0.0400');
+    // Por debajo del medio céntimo baja: 0.2497 × 18 % = 0.044946 → línea 0.0449 → 0.04.
+    expect(docOf('0.2497').igvPen).toBe('0.0400');
   });
 
-  it('el IGV sale de Σ valor, no de Σ IGV de línea ya redondeados', () => {
-    // Cada línea de 0.0025 guarda 0.0005 de IGV (0.00045 → 0.0005): sumados, 10 líneas dan
-    // 0.005 → 0.01. Σ valor × 18 % = 0.0045 → 0.00, que es lo que haría el papel.
-    const doc = docOf(...Array<string>(10).fill('0.0025'));
-    expect(doc.subtotalPen).toBe('0.0300');
-    expect(doc.igvPen).toBe('0.0000');
+  it('el IGV suma los IGV de línea: una línea con el trío del papel conserva su IGV (D-255)', () => {
+    // Papel con valor 100.00, IGV 18.01 (IGV como resta) y total 118.01: la cabecera es la del
+    // papel. Recalcular Σ valor × 18 % daba 118.00 y el cobro de 118.01 se rechazaba por exceso.
+    const doc = documentTotals([
+      line({ subtotalPen: '100.0000', igvPen: '18.0100', totalPen: '118.0100' }),
+    ]);
+    expect(doc).toEqual({ subtotalPen: '100.0000', igvPen: '18.0100', totalPen: '118.0100' });
   });
 
   it('B1: una plancha cotizada al valor por metro de lista vale la lista exacta', () => {
@@ -212,8 +213,8 @@ describe('roundDocumentTotals (D-377, R2)', () => {
   });
 
   it('un total en céntimos es idempotente: volver a redondearlo no lo mueve', () => {
-    const once = roundDocumentTotals('2378.2349');
-    expect(roundDocumentTotals(once.subtotal).total.equals(once.total)).toBe(true);
+    const once = roundDocumentTotals('2378.2349', '428.0823');
+    expect(roundDocumentTotals(once.subtotal, once.igv).total.equals(once.total)).toBe(true);
   });
 });
 

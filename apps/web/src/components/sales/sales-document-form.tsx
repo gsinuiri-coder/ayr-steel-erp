@@ -790,6 +790,7 @@ export function SalesDocumentForm({
   // D-377 (R2): el total del documento se redondea al céntimo una sola vez, como el API.
   const documentTotals = roundDocumentTotals(
     totals.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0)),
+    totals.reduce((acc, t) => acc.plus(t.igv), new Decimal(0)),
   );
 
   const save = useMutation<QuotationDto | SalesOrderDto, unknown, unknown>({

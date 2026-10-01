@@ -103,16 +103,14 @@ export function PosView() {
   const cartLine = cart[0]?.product.businessLine ?? null;
 
   const totals = useMemo(() => {
-    const subtotal = cart.reduce(
-      (acc, line) =>
-        acc.plus(
-          salesLineTotals({ qty: line.qty || '0', unitPricePen: line.unitPricePen || '0' })
-            .subtotal,
-        ),
-      new Decimal(0),
+    const lines = cart.map((line) =>
+      salesLineTotals({ qty: line.qty || '0', unitPricePen: line.unitPricePen || '0' }),
     );
     // D-377 (R2): el comprobante del mostrador se cobra por su total al céntimo.
-    return roundDocumentTotals(subtotal);
+    return roundDocumentTotals(
+      lines.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0)),
+      lines.reduce((acc, t) => acc.plus(t.igv), new Decimal(0)),
+    );
   }, [cart]);
 
   const overGenericCap =

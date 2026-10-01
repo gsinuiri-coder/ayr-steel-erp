@@ -1040,9 +1040,12 @@ export class SalesOrderEditsService {
   ): Promise<{ subtotalPen: string; igvPen: string; totalPen: string }> {
     const sums = await tx.salesOrderItem.aggregate({
       where: { salesOrderId: orderId },
-      _sum: { subtotalPen: true },
+      _sum: { subtotalPen: true, igvPen: true },
     });
-    const { subtotal, igv, total } = roundDocumentTotals((sums._sum.subtotalPen ?? 0).toString());
+    const { subtotal, igv, total } = roundDocumentTotals(
+      (sums._sum.subtotalPen ?? 0).toString(),
+      (sums._sum.igvPen ?? 0).toString(),
+    );
     const totals = {
       subtotalPen: toFixedString(subtotal, 'MONEY'),
       igvPen: toFixedString(igv, 'MONEY'),
