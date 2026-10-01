@@ -30,6 +30,13 @@
     antes del merge.
 - **Corrección del análisis:** la tabla §5.1 decía 2,806.32 para 146 × 16.28928. Con la fórmula
   aprobada el total es 2,806.31 (2,378.23 + 428.08). El runbook lo pone a comprobar contra el PDF.
+- **Verificación:**
+  - CI del PR #74: lint, typecheck y unitarios (API 2080, web 87), Sonar, E2E **477 passed, 0
+    failed, 3 skipped** y smoke Neon `ci` 36 passed.
+  - Local (`PSE_ENABLED=true`, 20 specs de totales y facturación): 86 passed y 1 rojo de
+    infraestructura (`fase5a:100`, el PDF necesita R2, que en local no está configurado).
+  - Revisiones: autorrevisión y segundo modelo en `docs/revision/cc11-*`. Los dos P1 se
+    corrigieron: el trío del papel en la cabecera y las aserciones de E2E a 4 decimales.
 - **Comprobación con PDF: pendiente.** `local-data/nubefact-pdf/` no existe. Es el paso 0 del
   runbook `docs/handoff/ventana-cc11.md`, antes del merge.
 - **Manual nuevo:** `docs/manual/corregir-comprobante-manual.md`, verificado contra el código. Deja
