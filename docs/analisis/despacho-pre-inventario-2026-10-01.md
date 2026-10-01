@@ -173,9 +173,9 @@ fechas reales:
 
 Qué pasó en la ventana:
 
-- **341 se despachó completo el 18/08** (DES-000052). El dueño usó la fecha que sugería el aviso.
-  Tras una recarga forzada, el detalle se abrió sin `?despacho=fecha-comprobante`, así que el campo
-  mostraba el default de D-364 y no la fecha del comprobante.
+- **341 se despachó completo el 18/08** (DES-000052), con una fecha elegida en el campo.
+  **Corrección (cc09):** sin `?despacho=` el campo arranca igual en la fecha del comprobante (D-285).
+  El 18/08 fue la «primera fecha válida» de la línea 2, no un default.
 - **La herramienta de fechas excluye NF1-1.** Corregir NF1-1 al 03/08 (punto 3) habría exigido
   cambiar la herramienta, porque excluye toda compra con una salida posterior, y NF1-1 ya tenía dos
   (17/08 y 18/08). El dueño eligió **no cambiarla** y aplicar el punto 4: **347 L1 y L2 salieron el
@@ -204,6 +204,7 @@ fecha 27/09. Como el dueño decidió no tocarla, 347 L2 salió en esa fecha.
 
 2. El cambio de la herramienta del punto 3 (aceptar una salida posterior cuando su costo no cambia)
    no está implementado.
-3. **UI:** la fecha sugerida del despacho depende de `?despacho=fecha-comprobante` en la URL, que se
-   pierde al recargar o al entrar al detalle por otro camino. Conviene sugerir siempre la fecha del
-   comprobante cuando el stock alcanza.
+3. ~~**UI:** la fecha sugerida del despacho depende de `?despacho=`~~ **Descartado en cc09.** El
+   default ya es la fecha del comprobante. El cambio que lo forzaba se descartó: no movía ninguna
+   salida y además marcaba el despacho como «fecha elegida», con lo que D-288 dejaba de re-fecharlo.
+   Ese mismo defecto existe en el camino `?despacho=` de D-373 y se corrige en el PR de cc10.
