@@ -1,9 +1,14 @@
 import {
   defaultRoofingPlan,
+  derivedUnitValue,
   EXTERNAL_INVOICE_NOTES_PREFIX,
+  importQuotationsSchema,
+  importRowNetPen,
+  importUnitPriceText,
   isImportedQuotation,
   keepImportMarker,
   importDocTypeOf,
+  lineAmounts,
   MAX_PIECE_LENGTH_MM,
   piecesMeters,
   suggestedRoofingPlanText,
@@ -149,5 +154,58 @@ describe('la marca del comprobante externo (D-152/D-163)', () => {
     expect(result?.startsWith(MARKER)).toBe(true);
     // Y sigue siendo reconocible como importada después del recorte, que es todo el punto.
     expect(isImportedQuotation(result)).toBe(true);
+  });
+});
+
+describe('P14 §3.5 — el unitario de la fila conserva sus decimales', () => {
+  /** El caso del dueño: 146 × 16.28928, valor de venta 2 378.23488 → 2 378.2349. */
+  const QTY = '146.000';
+  const UNIT = '16.28928';
+  const NET = '2378.2349';
+
+  const row = (unitPricePen: string) => ({
+    rowNumber: 1,
+    documentKey: 'FFA1-0146',
+    issueDate: '2026-09-30',
+    customerId: '11111111-1111-4111-8111-111111111111',
+    productId: '22222222-2222-4222-8222-222222222222',
+    qty: QTY,
+    unitPricePen,
+  });
+
+  it('el texto del unitario muestra hasta diez decimales y nunca menos de cuatro', () => {
+    expect(importUnitPriceText('16.28928')).toBe('16.28928');
+    expect(importUnitPriceText('100')).toBe('100.0000');
+    expect(importUnitPriceText('2.5')).toBe('2.5000');
+    // 4179.13 ÷ 3500 = 1.19403714285…: diez decimales, al medio hacia arriba.
+    expect(importUnitPriceText(derivedUnitValue('3500', '4179.13'))).toBe('1.1940371429');
+  });
+
+  it('la fila editada da el mismo importe que la intacta: 146 × 16.28928 = 2 378.2349', () => {
+    expect(importRowNetPen(QTY, UNIT)).toBe(NET);
+    // Con el unitario cortado a cuatro —lo de antes— la fila editada se separaba del papel.
+    expect(importRowNetPen(QTY, '16.2893')).toBe('2378.2378');
+    expect(importRowNetPen(QTY, '16,28928')).toBeNull();
+    expect(importRowNetPen('', UNIT)).toBeNull();
+  });
+
+  it('el confirm acepta el unitario con diez decimales y no lo corta a cuatro', () => {
+    const parsed = importQuotationsSchema.parse({ rows: [row(UNIT)] });
+    const [first] = parsed.rows;
+    expect(first?.unitPricePen).toBe(UNIT);
+    expect(first).not.toHaveProperty('netAmountPen');
+    // Lo que hace el alta con la fila sin importe del papel (`unitValuePen`, D-255).
+    const amounts = lineAmounts(first?.qty ?? '', { unitValuePen: first?.unitPricePen ?? '' });
+    expect(amounts.subtotal.toFixed(4)).toBe(NET);
+    // Y es el mismo subtotal que la fila intacta, que viaja con el importe del papel.
+    expect(lineAmounts(QTY, { netAmountPen: NET }).subtotal.toFixed(4)).toBe(NET);
+  });
+
+  it('más de diez decimales se redondean a diez; cero, negativo o ilegible se rechazan', () => {
+    const parsed = importQuotationsSchema.parse({ rows: [row('16.289280000049')] });
+    expect(parsed.rows[0]?.unitPricePen).toBe('16.28928');
+    for (const bad of ['0', '-1', '16,28928', 'abc']) {
+      expect(importQuotationsSchema.safeParse({ rows: [row(bad)] }).success).toBe(false);
+    }
   });
 });

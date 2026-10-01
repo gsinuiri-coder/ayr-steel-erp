@@ -275,6 +275,28 @@ describe('QuotationImportService.preview — importes del papel (R2)', () => {
     expect(row?.igvAmountPen).toBe('');
   });
 
+  it('P14 §3.5: el unitario viaja con sus decimales y el importe del papel no cambia', async () => {
+    // El caso del dueño: 146 × 16.28928 = 2 378.23488. Antes el unitario salía cortado a cuatro
+    // (16.2893), y la fila editada se recalculaba a 2 378.2378.
+    const { service } = build();
+    const [row] = (
+      await service.preview('v.csv', csv([{ sku: 'ZZZ', qty: '146', net: '2378.23488' }]))
+    ).rows;
+    expect(row).toMatchObject({
+      qty: '146.000',
+      unitPricePen: '16.28928',
+      // La fila intacta sigue viajando con el importe del papel, como siempre.
+      netAmountPen: '2378.2349',
+    });
+  });
+
+  it('P14 §3.5: un unitario de cuatro decimales justos se sigue viendo igual', async () => {
+    const { service } = build();
+    const [row] = (await service.preview('v.csv', csv([{ sku: 'ZZZ', qty: '10', net: '1000' }])))
+      .rows;
+    expect(row).toMatchObject({ unitPricePen: '100.0000', netAmountPen: '1000.0000' });
+  });
+
   it('una fila común (no bobina) sigue resolviendo por su SKU exacto', async () => {
     const { service } = build();
     const { rows } = await service.preview(
@@ -366,6 +388,42 @@ describe('QuotationImportService.confirm — lo que viaja a la cotización', () 
     ];
     expect(input.items[0]).not.toHaveProperty('igvAmountPen');
     expect(input.items[0]).not.toHaveProperty('saleCoilId');
+    expect(input.items[0]).not.toHaveProperty('netAmountPen');
+  });
+
+  it('P14 §3.5: la fila editada manda el unitario entero, sin cortarlo a cuatro', async () => {
+    const { service, quotations } = build();
+    const tx = {
+      $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
+      quotation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 4 }),
+      },
+    };
+    (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
+      fn: (t: unknown) => Promise<unknown>,
+    ) => fn(tx);
+    await service.confirm({ id: 'u-1' } as never, {
+      rows: [
+        {
+          rowNumber: 1,
+          documentKey: 'FFA1-0146',
+          issueDate: '2026-08-07',
+          customerId: '11111111-1111-4111-8111-111111111111',
+          productId: '22222222-2222-4222-8222-222222222222',
+          qty: '146.000',
+          unitPricePen: '16.28928',
+        },
+      ],
+    });
+    const [, , input] = quotations.createInTx.mock.calls[0] as [
+      unknown,
+      unknown,
+      { items: Record<string, unknown>[] },
+    ];
+    // El alta recalcula `redondeo(146 × 16.28928)` = 2 378.2349 (ver quotation-import.spec.ts).
+    expect(input.items[0]).toMatchObject({ qty: '146.000', unitPricePen: '16.28928' });
     expect(input.items[0]).not.toHaveProperty('netAmountPen');
   });
 });

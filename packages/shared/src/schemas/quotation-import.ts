@@ -1,11 +1,20 @@
 import { z } from 'zod';
-import { decimalStringSchema, MAX_VALUE, toDecimal, type Decimal } from '../decimal';
+import {
+  Decimal,
+  decimalStringSchema,
+  MAX_VALUE,
+  SCALE,
+  toDecimal,
+  toFixedString,
+  type DecimalInput,
+} from '../decimal';
 import {
   MAX_PIECE_LENGTH_MM,
   MIN_PIECE_LENGTH_MM,
   roofingPiecesSchema,
   type PieceLike,
 } from './roofing';
+import { DERIVED_UNIT_VALUE_DECIMALS } from './sales';
 
 /**
  * Importador masivo de cotizaciones (D-152).
@@ -169,6 +178,72 @@ export function suggestedRoofingPlanText(meters: Decimal | string): string {
 }
 
 // --------------------------------------------------------------------------
+// El unitario de la fila: diez decimales (P14 §3.5)
+// --------------------------------------------------------------------------
+
+/**
+ * P14 §3.5 (decisión del dueño, 2026-10-01): el unitario de una fila del importador viaja y se
+ * edita con **todos sus decimales**, hasta los diez del unitario derivado (D-255,
+ * `DERIVED_UNIT_VALUE_DECIMALS`).
+ *
+ * El archivo no trae unitario: trae el valor de venta, y el unitario sale de dividirlo entre la
+ * cantidad. Cortarlo a cuatro decimales no rompía la fila intacta —ahí manda el importe del
+ * papel (D-169)— pero sí la editada: al tocar la cantidad o el precio el importe se recalcula
+ * desde el unitario, y `146 × 16.2893` daba 2 378.2378 donde el papel decía 2 378.23488
+ * (2 378.2349 a escala de dinero). Con el unitario entero, `146 × 16.28928` vuelve a 2 378.2349.
+ *
+ * Es **solo de esta puerta**: el resto de las rutas sigue recibiendo el unitario a la escala de
+ * dinero (D-003), y la cotización guarda el suyo a cuatro decimales para mostrar.
+ */
+export const IMPORT_UNIT_PRICE_DECIMALS = DERIVED_UNIT_VALUE_DECIMALS;
+
+/** Un unitario tipeado en la fila: punto decimal y hasta diez decimales. */
+export const IMPORT_UNIT_PRICE_PATTERN = /^\d+(\.\d{1,10})?$/;
+
+/**
+ * El unitario de la fila como texto: redondeado a diez decimales (al medio hacia arriba) y sin
+ * los ceros a la derecha que pasen de los cuatro de dinero. `100` → `100.0000`, `16.28928` →
+ * `16.28928`, `4179.13 ÷ 3500` → `1.1940371429`: la fila de siempre se sigue viendo igual y la
+ * que tiene más decimales los muestra.
+ */
+export function importUnitPriceText(value: DecimalInput): string {
+  const fixed = toDecimal(value)
+    .toDecimalPlaces(IMPORT_UNIT_PRICE_DECIMALS, Decimal.ROUND_HALF_UP)
+    .toFixed(IMPORT_UNIT_PRICE_DECIMALS);
+  const [integer = '0', fraction = ''] = fixed.split('.');
+  return `${integer}.${fraction.replace(/0+$/, '').padEnd(SCALE.MONEY, '0')}`;
+}
+
+/**
+ * El importe de una fila **editada** (sin el del papel): `redondeo(cantidad × unitario)` a escala
+ * de dinero, con el unitario tal como está —hasta diez decimales—. Es la misma cuenta que hace el
+ * API con la línea que llega sin `netAmountPen` (`salesLineTotals`), así que lo que la pantalla
+ * muestra es lo que se va a crear. `null` cuando la cantidad o el unitario no son legibles.
+ */
+export function importRowNetPen(qty: string, unitPricePen: string): string | null {
+  const q = qty.trim();
+  const unit = unitPricePen.trim();
+  if (!/^\d+(\.\d+)?$/.test(q) || !IMPORT_UNIT_PRICE_PATTERN.test(unit)) return null;
+  return toFixedString(toDecimal(q).times(toDecimal(unit)), 'MONEY');
+}
+
+/**
+ * El unitario de la fila en el confirm. Mismo contrato que `decimalStringSchema('MONEY')` —un
+ * decimal real, mayor a cero y bajo el tope de la columna— pero a diez decimales en vez de
+ * cuatro (P14 §3.5).
+ */
+const importUnitPriceSchema = z
+  .string({ required_error: 'Este valor es obligatorio' })
+  .trim()
+  .refine((v) => /^-?\d+(\.\d+)?$/.test(v), 'Debe ser un número decimal (ej: 12.5)')
+  .transform((v) => importUnitPriceText(v))
+  .refine((v) => toDecimal(v).gt(0), 'Debe ser mayor a cero')
+  .refine(
+    (v) => toDecimal(v).lte(MAX_VALUE.MONEY),
+    `El valor máximo admitido es ${String(MAX_VALUE.MONEY)}`,
+  );
+
+// --------------------------------------------------------------------------
 // La fila: lo que el preview muestra y lo que vuelve al confirmar
 // --------------------------------------------------------------------------
 
@@ -233,8 +308,11 @@ export const quotationImportRowInputSchema = z.object({
   newCustomer: quotationImportPadronRefSchema.optional(),
   productId: z.string().uuid(),
   qty: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
-  /** Precio unitario **sin IGV y en soles**, ya convertido si el documento venía en dólares. */
-  unitPricePen: decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY }),
+  /**
+   * Precio unitario **sin IGV y en soles**, ya convertido si el documento venía en dólares.
+   * Hasta diez decimales (P14 §3.5): en la fila editada el importe se recalcula desde él.
+   */
+  unitPricePen: importUnitPriceSchema,
   /**
    * D-169: el **importe de la línea tal como está en el papel** (valor de venta, sin IGV, en
    * soles). Es el que se persiste como subtotal; `unitPricePen` es la cuenta derivada.
@@ -246,7 +324,8 @@ export const quotationImportRowInputSchema = z.object({
    *
    * **Opcional, y la ausencia significa algo**: la fila cuya cantidad o cuyo precio el usuario
    * editó en el preview ya no responde al importe del papel, así que viaja sin él y el
-   * importe se recalcula desde lo que esa persona tipeó. Mandarlo igual habría hecho que
+   * importe se recalcula desde lo que esa persona tipeó: `redondeo(cantidad × unitario)`, con el
+   * unitario a diez decimales (P14 §3.5). Mandarlo igual habría hecho que
    * corregir un precio no cambiara el importe —y el rechazo por tolerancia habría culpado al
    * archivo de una diferencia que introdujo la corrección.
    */

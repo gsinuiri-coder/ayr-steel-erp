@@ -90,6 +90,11 @@ const LINE = 'roofing';
 const QTY = '3500.000';
 const NET_AMOUNT = '4179.13';
 const UNIT_PRICE = '1.1940';
+/**
+ * P14 §3.5: el unitario de la **fila del preview** lleva sus diez decimales (`4179.13 ÷ 3500`);
+ * la cotización guarda el suyo a cuatro (`UNIT_PRICE`), que es solo para mostrar.
+ */
+const PREVIEW_UNIT_PRICE = '1.1940371429';
 /** Lo que el recálculo daba, y que ya no se persiste: `3500 × 1.1940`. */
 const RECOMPUTED = '4179.0000';
 
@@ -179,7 +184,7 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       const previewRow = parsed.rows[0]!;
       expect(previewRow.issues.filter((i) => i.severity === 'error')).toEqual([]);
       // El unitario es una cuenta derivada, y es la que pierde información al redondear.
-      expect(previewRow.unitPricePen).toBe(UNIT_PRICE);
+      expect(previewRow.unitPricePen).toBe(PREVIEW_UNIT_PRICE);
       // El importe del papel viaja **aparte**, y es el que manda.
       expect(previewRow.netAmountPen).toBe('4179.1300');
 

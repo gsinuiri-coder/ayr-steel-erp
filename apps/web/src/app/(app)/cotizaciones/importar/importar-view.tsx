@@ -7,7 +7,9 @@ import { toast } from 'sonner';
 import {
   derivedUnitValue,
   describePieces,
-  money,
+  IMPORT_UNIT_PRICE_PATTERN,
+  importRowNetPen,
+  importUnitPriceText,
   piecesMeters,
   suggestedRoofingPlanText,
   MAX_PAGE_SIZE,
@@ -630,11 +632,10 @@ function groupByDocument(
     }
     // Un importe con el precio o la cantidad mal tipeados no se suma: el total de la
     // cabecera diría un número inventado justo cuando hay que compararlo con el papel.
-    if (/^\d+(\.\d+)?$/.test(row.qty.trim()) && /^\d+(\.\d+)?$/.test(row.unitPricePen.trim())) {
-      group.totalPen = group.totalPen.plus(
-        toDecimal(row.qty.trim()).times(toDecimal(row.unitPricePen.trim())),
-      );
-    }
+    // P14 §3.5: y se suma el importe de la línea como lo va a crear el API, redondeado por
+    // línea, no `cantidad × precio` crudo.
+    const lineNet = importRowNetPen(row.qty, row.unitPricePen);
+    if (lineNet !== null) group.totalPen = group.totalPen.plus(toDecimal(lineNet));
   }
 
   const customersLoaded = customerIds.size > 0;
@@ -929,7 +930,8 @@ function ImportRow({
           <Input
             aria-label={`Precio unitario de la fila ${String(raw.rowNumber)}`}
             inputMode="decimal"
-            className="h-9 w-24 text-right text-xs"
+            // P14 §3.5: el unitario lleva hasta diez decimales (`1.1940371429`).
+            className="h-9 w-28 text-right text-xs"
             value={row.unitPricePen}
             disabled={disabled}
             onChange={(e) => {
@@ -1158,16 +1160,19 @@ function resolveRow(
   const saleCoilId = raw.coilLine ? (edit.saleCoilId ?? raw.saleCoilId) : null;
   /**
    * D-255: con el valor de venta tipeado, el unitario **se deriva** de él (`importe ÷
-   * cantidad`, a cuatro decimales para mostrar y para mandar). Mandarlo es lo que mantiene
-   * honesta la comprobación de tolerancia del API: sin él viajaría el unitario del archivo y
-   * el importe nuevo se leería como un desvío del papel.
+   * cantidad`). Mandarlo es lo que mantiene honesta la comprobación de tolerancia del API: sin
+   * él viajaría el unitario del archivo y el importe nuevo se leería como un desvío del papel.
+   *
+   * P14 §3.5: el unitario de la fila vive con **todos sus decimales** (hasta diez), el derivado
+   * y el del preview. Si después se toca la cantidad, el importe sale de ese unitario entero; con
+   * cuatro decimales `146 × 16.2893` daba 2 378.2378 donde la fila intacta decía 2 378.2349.
    */
   const netEdited = edit.netAmountPen !== undefined;
   const netTyped = (edit.netAmountPen ?? '').trim();
   const netValid = netEdited && /^\d+(\.\d{1,4})?$/.test(netTyped) && toDecimal(netTyped).gt(0);
   const unitPricePen = netEdited
     ? netValid && isNumeric(qty) && toDecimal(qty.trim()).gt(0)
-      ? toFixedString(money(derivedUnitValue(qty.trim(), netTyped)), 'MONEY')
+      ? importUnitPriceText(derivedUnitValue(qty.trim(), netTyped))
       : ''
     : (edit.unitPricePen ?? raw.unitPricePen);
   // **Con el producto elegido, no con el del archivo.** Quien exige los largos es la unidad
@@ -1256,13 +1261,13 @@ function resolveRow(
       });
     }
   } else if (
-    !/^\d+(\.\d{1,4})?$/.test(unitPricePen.trim()) ||
+    !IMPORT_UNIT_PRICE_PATTERN.test(unitPricePen.trim()) ||
     toDecimal(unitPricePen.trim()).lte(0)
   ) {
     issues.push({
       field: 'unitPrice',
       severity: 'error',
-      message: 'El precio va con hasta cuatro decimales.',
+      message: 'El precio va con punto y hasta diez decimales, mayor a cero.',
     });
   }
   // D-254: la bobina elegida tiene que alcanzar para la cantidad de la línea.
@@ -1313,13 +1318,11 @@ function resolveRow(
     : untouched && raw.netAmountPen
       ? raw.netAmountPen
       : null;
-  // Lo que muestra el campo: lo tipeado, el importe del papel o `cantidad × precio`.
+  // Lo que muestra el campo: lo tipeado, el importe del papel o `cantidad × precio` — la misma
+  // cuenta que hace el API con la fila editada, con el unitario entero (P14 §3.5).
   const netText = netEdited
     ? (edit.netAmountPen ?? '')
-    : (netAmountPen ??
-      (isNumeric(qty) && /^\d+(\.\d{1,4})?$/.test(unitPricePen.trim())
-        ? toFixedString(money(toDecimal(qty.trim()).times(toDecimal(unitPricePen.trim()))), 'MONEY')
-        : ''));
+    : (netAmountPen ?? (isNumeric(qty) ? (importRowNetPen(qty, unitPricePen) ?? '') : ''));
 
   return {
     raw,
