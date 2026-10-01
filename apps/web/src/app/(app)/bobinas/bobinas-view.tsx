@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
@@ -18,6 +19,9 @@ import {
 } from '@ayr/shared';
 import { coilTone } from '@/components/status-tone';
 import { api } from '@/lib/api';
+import { useSession } from '@/lib/session';
+import { RowActions } from '@/components/row-actions';
+import { canRestoreCoil, RestoreCoilDialog } from '@/components/coils/restore-coil-dialog';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -74,6 +78,9 @@ const VIEW_TAB_LABELS: Record<ViewTab, string> = {
 
 /** Inventario de bobinas por línea (RF-23), con filtros de acabado, espesor y estado. */
 export function BobinasView() {
+  const { user } = useSession();
+  const isAdmin = user.role === Role.ADMINISTRADOR;
+  const [restoring, setRestoring] = useState<CoilDto | null>(null);
   // D-289: pestaña, filtros, búsqueda y página viven en la URL.
   const [url, setUrl] = useUrlState({
     ...URL_PAGINATION_DEFAULTS,
@@ -344,20 +351,25 @@ export function BobinasView() {
               >
                 Estado
               </SortableTableHead>
+              {isAdmin && (
+                <TableHead className="w-10">
+                  <span className="sr-only">Acciones</span>
+                </TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
             {coils.isPending &&
               [0, 1, 2].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={10}>
+                  <TableCell colSpan={isAdmin ? 11 : 10}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {coils.isError && (
               <TableRow>
-                <TableCell colSpan={10} className="text-destructive">
+                <TableCell colSpan={isAdmin ? 11 : 10} className="text-destructive">
                   No se pudieron cargar las bobinas.
                 </TableCell>
               </TableRow>
@@ -398,11 +410,33 @@ export function BobinasView() {
                 <TableCell>
                   <Badge variant={coilTone(c)}>{coilStateLabel(c)}</Badge>
                 </TableCell>
+                {isAdmin && (
+                  <TableCell className="w-10">
+                    {/* D-375: «Restaurar» en el menú de la fila, solo en anuladas de compra. */}
+                    <RowActions
+                      label={c.code}
+                      primary={null}
+                      actions={[
+                        {
+                          key: 'restore',
+                          label: 'Restaurar',
+                          show: canRestoreCoil(c),
+                          onSelect: () => {
+                            setRestoring(c);
+                          },
+                        },
+                      ]}
+                    />
+                  </TableCell>
+                )}
               </TableRow>
             ))}
             {coils.isSuccess && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={10} className="text-center text-muted-foreground">
+                <TableCell
+                  colSpan={isAdmin ? 11 : 10}
+                  className="text-center text-muted-foreground"
+                >
                   No hay bobinas que coincidan con los filtros.
                 </TableCell>
               </TableRow>
@@ -418,6 +452,15 @@ export function BobinasView() {
         onPageSizeChange={setPageSize}
         disabled={coils.isFetching}
       />
+      {restoring && (
+        <RestoreCoilDialog
+          coil={restoring}
+          open
+          onOpenChange={(open) => {
+            if (!open) setRestoring(null);
+          }}
+        />
+      )}
     </RoleGate>
   );
 }
