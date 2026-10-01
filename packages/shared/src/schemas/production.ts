@@ -134,10 +134,18 @@ export function theoreticalKgPerPiece(input: {
   pieceLengthMm: DecimalInput;
   densityFactor: DecimalInput;
 }): Decimal {
+  return roundTo(unroundedKgPerPiece(input), 'KG');
+}
+
+/**
+ * La misma cuenta que `theoreticalKgPerPiece`, **sin redondear**: es el intermedio que
+ * `piecesTheoreticalKg` multiplica por la cantidad antes de redondear una sola vez (P-14).
+ */
+function unroundedKgPerPiece(input: Parameters<typeof theoreticalKgPerPiece>[0]): Decimal {
   const volume = toDecimal(input.widthMm)
     .times(toDecimal(input.thicknessMm))
     .times(toDecimal(input.pieceLengthMm));
-  return roundTo(volume.times(standardDensityFactor(input.densityFactor)).div(1_000_000), 'KG');
+  return volume.times(standardDensityFactor(input.densityFactor)).div(1_000_000);
 }
 
 /** `piezas × kgPerPiece`, redondeado a la escala de kilos (D-003). */
@@ -160,13 +168,18 @@ export interface PieceGeometry {
  * D-146 el número lo necesitan los dos lados: el API para topar el kg declarado de un
  * reporte contra el kilo teórico del plan, y la pantalla de planta para **mostrar** ese
  * mismo tope antes de que nadie tipee. Dos copias de esta cuenta serían dos topes distintos.
+ *
+ * **Un solo redondeo, al final** (P-14): el kilo por pieza entra sin redondear y solo el total
+ * se lleva a la escala de kilos (HALF_UP a 3). Redondear cada pieza y después multiplicar
+ * amplificaba el error por la cantidad: 100 planchas de 13.335737 kg daban 1,333.600
+ * (13.336 × 100) en lugar de 1,333.574.
  */
 export function piecesTheoreticalKg(
   geometry: PieceGeometry,
   pieces: readonly { lengthMm: DecimalInput; qty: number }[],
 ): Decimal {
   const total = pieces.reduce((acc, piece) => {
-    const perPiece = theoreticalKgPerPiece({
+    const perPiece = unroundedKgPerPiece({
       widthMm: geometry.widthMm,
       thicknessMm: geometry.thicknessMm,
       pieceLengthMm: piece.lengthMm,

@@ -15,6 +15,11 @@ import { reportsOutKg } from './roofing-math';
  * Caso real (2026-09-22): IMPO-ALZ-NATURAL-0.28-4010-11, 1 200 mm × 0.28 mm, densidad 7.85,
  * 4 010 kg montados. 253 planchas × 6.00 m = 1 518 m ⇒ 15.984 kg por plancha con el 1 % de
  * D-165 ⇒ 4 043.952 kg teóricos, 33.952 kg más de lo que el rollo tenía.
+ *
+ * P-14: `piecesTheoreticalKg` redondea ahora una sola vez, al final: 15.983856 × 253 =
+ * 4 043.915568 → **4 043.916** (33.916 kg sobre lo montado). Los 4 043.952 de 2026-09-22 salían
+ * de redondear la plancha a 15.984 antes de multiplicar. Los tests que pasan el teórico como
+ * literal conservan el número del caso real: prueban el tope, no la cuenta del kilo.
  */
 
 const REAL_COIL = 'IMPO-ALZ-NATURAL-0.28-4010-11';
@@ -22,8 +27,8 @@ const realGeometry = { widthMm: '1200.00', thicknessMm: '0.28', densityFactor: '
 const realPieces = [{ lengthMm: '6000.00', qty: 253 }];
 
 describe('mountedKgForReport (D-246)', () => {
-  it('reproduce el teórico del caso real', () => {
-    expect(piecesTheoreticalKg(realGeometry, realPieces).toFixed(3)).toBe('4043.952');
+  it('reproduce el teórico del caso real con un solo redondeo (P-14; antes 4043.952)', () => {
+    expect(piecesTheoreticalKg(realGeometry, realPieces).toFixed(3)).toBe('4043.916');
   });
 
   it('caso real: 253 × 6.00 m declarando 4 010 kg PASA y descuenta lo montado', () => {
@@ -38,7 +43,8 @@ describe('mountedKgForReport (D-246)', () => {
     expect(result.kg.toFixed(3)).toBe('4010.000');
     expect(result.capped).toBe(true);
     expect(result.note).toMatch(/rindió más de lo teórico/);
-    expect(result.note).toMatch(/33\.952 kg/);
+    // P-14: 4 043.916 − 4 010 (antes 33.952 con el redondeo por plancha).
+    expect(result.note).toMatch(/33\.916 kg/);
     expect(result.note).toMatch(/No es un error/);
   });
 
@@ -139,13 +145,13 @@ describe('checkDraftRows con el tope de D-246', () => {
     };
   }
 
-  it('caso real en el borrador: la fila con 4 010 kg declarados pasa y sale por lo montado', () => {
+  it('caso real en el borrador: la fila con 4 010 kg declarados pasa y sale por lo montado (teórico P-14: 4043.916, antes 4043.952)', () => {
     const result = checkDraftRows(realState(), [
       { coilId: 'c1', pieces: realPieces, consumedKg: '4010.000' },
     ]);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.rows[0]?.theoreticalKg.toFixed(3)).toBe('4043.952');
+      expect(result.rows[0]?.theoreticalKg.toFixed(3)).toBe('4043.916');
       expect(result.rows[0]?.outKg.toFixed(3)).toBe('4010.000');
     }
   });

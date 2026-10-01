@@ -10,6 +10,7 @@ import {
   roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
+  theoreticalKgPerPiece,
   thicknessWithinTolerance,
 } from '@ayr/shared';
 import {
@@ -36,13 +37,14 @@ describe('roofingTheoreticalKg (D-047)', () => {
     expect(kg.toFixed(3)).toBe('10.989');
   });
 
-  it('suma los largos distintos de un mismo reporte', () => {
+  it('suma los largos distintos de un mismo reporte, con un solo redondeo al final (P-14; antes 64.363)', () => {
     const kg = roofingTheoreticalKg(coil, [
       { lengthMm: '4200.00', qty: 3 },
       { lengthMm: '6000.00', qty: 2 },
     ]);
-    // 3 × 10.989 + 2 × 15.698 = 32.967 + 31.396
-    expect(kg.toFixed(3)).toBe('64.363');
+    // 3 × 10.988901 + 2 × 15.69843 = 32.966703 + 31.39686 = 64.363563 → 64.364. Redondeando
+    // cada plancha primero (3 × 10.989 + 2 × 15.698) daba 64.363.
+    expect(kg.toFixed(3)).toBe('64.364');
   });
 
   it('un rollo más ancho consume más kilo por el mismo largo: el ancho es el de la bobina', () => {
@@ -324,14 +326,26 @@ describe('piecesFromPlanMeters (D-147)', () => {
 });
 
 describe('piecesTheoreticalKg (D-146)', () => {
-  it('es la misma cuenta que usa el API para el kardex', () => {
+  it('es la misma cuenta que usa el API para el kardex, redondeada una sola vez (P-14; antes 109.890)', () => {
     const plan = [{ lengthMm: '4200.00', qty: 10 }];
     expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe(
       roofingTheoreticalKg(coil, plan).toFixed(3),
     );
-    // El kilo se redondea **por plancha** (10.9889 → 10.989) y recién después se suma, que
-    // es lo que hace el kardex: 10 × 10.989.
-    expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe('109.890');
+    // P-14: el kilo por plancha entra sin redondear (10.988901) y solo el total se redondea:
+    // 109.88901 → 109.889. Antes se redondeaba por plancha (10.989) y daba 10 × 10.989 = 109.890.
+    expect(piecesTheoreticalKg(coil, plan).toFixed(3)).toBe('109.889');
+  });
+
+  it('100 planchas de 13.335737 kg dan 1,333.574, no 1,333.600 (P-14: un solo redondeo)', () => {
+    // 1000 × 0.29 × 5800 × (7.85 × 1.01) / 1e6 = 1 682 000 × 7.9285 / 1e6 = 13.335737 kg por
+    // plancha, exacto: el caso del inventario de P-14. Redondear la pieza a 13.336 y
+    // multiplicar por 100 inflaba el total en 26 g.
+    const geometry = { widthMm: '1000.00', thicknessMm: '0.29', densityFactor: '7.8500' };
+    const plan = [{ lengthMm: '5800.00', qty: 100 }];
+    expect(theoreticalKgPerPiece({ ...geometry, pieceLengthMm: '5800.00' }).toFixed(3)).toBe(
+      '13.336',
+    );
+    expect(piecesTheoreticalKg(geometry, plan).toFixed(3)).toBe('1333.574');
   });
 });
 
