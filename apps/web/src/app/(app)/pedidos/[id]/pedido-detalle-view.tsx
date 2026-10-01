@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -22,6 +22,7 @@ import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
+import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -85,6 +86,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
   /** D-379: la reserva liberada a mano que se está por restaurar. */
   const [restoring, setRestoring] = useState<ReservationDto | null>(null);
   const restoreParam = useSearchParams().get(RESTORE_RESERVATION_PARAM);
+  const router = useRouter();
   const restoreParamHandled = useRef(false);
   // D-187: las ediciones del pedido confirmado, hasta su comprobante.
   const [pricing, setPricing] = useState<SalesItemDto | null>(null);
@@ -153,6 +155,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
       toast.success('Reserva restaurada: la línea ya se puede despachar');
       setRestoring(null);
       invalidateSales(queryClient, { orderId: id });
+      // El plan de despacho del comprobante cambia con la reserva: sin esto, volver por
+      // navegación del cliente mostraba la línea «No se despacha» hasta refrescar.
+      invalidateInvoicing(queryClient, { orderId: id });
     },
     onError,
   });
@@ -165,7 +170,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
     restoreParamHandled.current = true;
     const target = order.data.reservations.find((r) => r.id === restoreParam && r.restorable);
     if (target) setRestoring(target);
-  }, [isAdmin, order.data, restoreParam]);
+    // Se consume una vez: sin limpiarlo, un refresco volvía a abrir el diálogo.
+    router.replace(`/pedidos/${id}`, { scroll: false });
+  }, [id, isAdmin, order.data, restoreParam, router]);
 
   /**
    * D-341: reserva lo que hoy alcanza del faltante. Si no alcanza nada, el API lo dice y no
@@ -594,7 +601,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
                     <RowActions
                       label={`línea ${String(item.lineNumber)}`}
                       // D-379: sin ediciones, «Restaurar reserva» queda en el menú ⋯, no como botón.
-                      primary={canEditAsAdmin ? 'price' : null}
+                      // Con ediciones, la principal sigue siendo la de siempre (precio o cantidad).
+                      primary={canEditAsAdmin || canEditAsOwner ? 'price' : null}
                       actions={[
                         {
                           key: 'price',

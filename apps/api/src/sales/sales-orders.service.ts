@@ -129,6 +129,7 @@ import {
 import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
 import { reservationDispatches } from './reservation-dispatches';
 import {
+  fabricatedAliveQty,
   fabricatedReleaseBlock,
   latestReleaseEvents,
   RESERVATION_LINE_SELECT,
@@ -2485,7 +2486,10 @@ export class SalesOrdersService {
         const events = await latestReleaseEvents(tx, [reservationId]);
         const lastRelease = events.get(reservationId) ?? null;
         const block = restoreBlock(
-          { ...reservation, salesOrder: { status: order.status } },
+          {
+            ...reservation,
+            salesOrder: { status: order.status },
+          },
           lastRelease?.action ?? null,
         );
         if (block !== null) throw new BadRequestException(block);
@@ -2505,10 +2509,16 @@ export class SalesOrdersService {
           reservationUnit: reservation.unit,
           line,
           dispatchedOnItem: toDecimal((dispatched._sum.reserveQty ?? 0).toString()),
+          // Autorrevisión cc12 P1-1: lo fabricado vivo de la línea, no lo que la fila guardaba.
+          fabricated: await fabricatedAliveQty(
+            tx,
+            reservation.salesOrderItemId,
+            reservation.itemId,
+          ),
         });
         if (qty.lte(0)) {
           throw new BadRequestException(
-            `A la línea ${String(line.lineNumber)} no le queda nada por despachar: no hay reserva que restaurar`,
+            `A la línea ${String(line.lineNumber)} no le queda nada fabricado sin despachar: no hay reserva que restaurar`,
           );
         }
 
@@ -2585,6 +2595,7 @@ export class SalesOrdersService {
             items: { select: { productId: true } },
           },
         },
+        salesOrderItem: { select: { productId: true, reserveItemType: true, reserveItemId: true } },
         productionOrders: {
           // Solo la OP **viva** (D-084): anular una de coberturas deja `reservation_id`
           // apuntando a la reserva y la devuelve a ACTIVA (D-066), así que con la última a
@@ -3156,9 +3167,15 @@ export class SalesOrdersService {
         liveDocumentsByOrder(this.prisma, [id]),
       ]);
     // D-379: qué reservas liberadas a mano se pueden restaurar desde la línea.
+    const lineById = new Map(row.items.map((i) => [i.id, i]));
     const restorable = await restorableReservationIds(
       this.prisma,
-      row.reservations.map((r) => ({ ...r, salesOrder: { status: row.status } })),
+      row.reservations.flatMap((r) => {
+        const line = lineById.get(r.salesOrderItemId);
+        return line === undefined
+          ? []
+          : [{ ...r, salesOrder: { status: row.status }, salesOrderItem: line }];
+      }),
     );
     const dto = this.toDto(row, labels, actors, context, dispatches);
     return {
@@ -3895,6 +3912,7 @@ export class SalesOrdersService {
             items: { select: { productId: true } },
           },
         },
+        salesOrderItem: { select: { productId: true, reserveItemType: true, reserveItemId: true } },
         productionOrders: {
           // Solo la OP **viva** (D-084): anular una de coberturas deja `reservation_id`
           // apuntando a la reserva y la devuelve a ACTIVA (D-066), así que con la última a

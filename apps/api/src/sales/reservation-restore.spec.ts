@@ -18,6 +18,7 @@ import {
   restoreBlock,
   restoreQty,
 } from './reservation-restore';
+import { upsertItemReservation } from './reservation-transfer';
 import { SalesOrdersService } from './sales-orders.service';
 
 /**
@@ -114,12 +115,30 @@ describe('D-379 — reglas puras', () => {
       id: 'res-prod',
       status: ReservationStatus.RELEASED,
       itemType: InventoryItemType.PRODUCT,
+      itemId: 'cob-rojo',
       qty: new Decimal('48'),
       salesOrder: { status: SalesOrderStatus.CONFIRMED },
+      salesOrderItem: ROOFING_LINE,
       ...over,
     });
     it('una liberada a mano se restaura', () => {
       expect(restoreBlock(candidate(), RESERVATION_RELEASE_ACTION)).toBeNull();
+    });
+    it('no la de un producto de stock: D-379 es la reserva de lo fabricado', () => {
+      expect(
+        restoreBlock(
+          candidate({ itemId: 'perfil', salesOrderItem: STOCK_LINE }),
+          RESERVATION_RELEASE_ACTION,
+        ),
+      ).toContain('reserva de lo fabricado');
+    });
+    it('no si la línea cambió de producto después de liberarla', () => {
+      expect(
+        restoreBlock(
+          candidate({ salesOrderItem: { ...ROOFING_LINE, productId: 'cob-azul' } }),
+          RESERVATION_RELEASE_ACTION,
+        ),
+      ).toContain('ya no vende ese producto');
     });
     it('no si el pedido está anulado (la liberó la anulación)', () => {
       expect(
@@ -172,6 +191,7 @@ describe('D-379 — reglas puras', () => {
           reservationUnit: 'MTR',
           line: ROOFING_LINE,
           dispatchedOnItem: new Decimal(0),
+          fabricated: new Decimal('48'),
         }).toFixed(3),
       ).toBe('48.000');
       expect(
@@ -180,6 +200,7 @@ describe('D-379 — reglas puras', () => {
           reservationUnit: 'MTR',
           line: ROOFING_LINE,
           dispatchedOnItem: new Decimal('30'),
+          fabricated: new Decimal('48'),
         }).toFixed(3),
       ).toBe('18.000');
     });
@@ -190,6 +211,7 @@ describe('D-379 — reglas puras', () => {
           reservationUnit: 'MTR',
           line: ROOFING_LINE,
           dispatchedOnItem: new Decimal('60'),
+          fabricated: new Decimal('100'),
         }).toFixed(3),
       ).toBe('0.000');
       expect(
@@ -198,6 +220,7 @@ describe('D-379 — reglas puras', () => {
           reservationUnit: 'KGM',
           line: ROOFING_LINE,
           dispatchedOnItem: new Decimal('60'),
+          fabricated: new Decimal('100'),
         }).toFixed(3),
       ).toBe('12.000');
     });
@@ -237,8 +260,10 @@ describe('D-379 — reglas puras', () => {
       const base = {
         status: ReservationStatus.RELEASED,
         itemType: InventoryItemType.PRODUCT,
+        itemId: 'cob-rojo',
         qty: new Decimal('48'),
         salesOrder: { status: SalesOrderStatus.CONFIRMED },
+        salesOrderItem: ROOFING_LINE,
       };
       const ids = await restorableReservationIds(
         db([
@@ -389,6 +414,8 @@ describe('D-379 — SalesOrdersService', () => {
         lastAction?: string | null;
         dispatched?: string;
         updated?: number;
+        /** Lo fabricado vivo de la línea (ingresos de producción no revertidos). */
+        fabricated?: string;
       } = {},
     ) {
       const updateMany = jest.fn().mockResolvedValue({ count: over.updated ?? 1 });
@@ -436,6 +463,14 @@ describe('D-379 — SalesOrdersService', () => {
           findUniqueOrThrow: jest
             .fn()
             .mockResolvedValue({ sku: 'COB040ROJO', businessLineId: 'roofing' }),
+        },
+        productionReport: { findMany: jest.fn().mockResolvedValue([{ id: 'rep-1' }]) },
+        inventoryMovement: {
+          findMany: jest
+            .fn()
+            .mockResolvedValue(
+              over.fabricated === '0' ? [] : [{ qty: new Decimal(over.fabricated ?? '48') }],
+            ),
         },
       };
       useTx(tx);
@@ -528,6 +563,23 @@ describe('D-379 — SalesOrdersService', () => {
       expect(updateMany).not.toHaveBeenCalled();
     });
 
+    it('autorrevisión P1-1: liberada y después revertida la producción, restaura solo lo que quedó', async () => {
+      const { updateMany } = restoreTx({ fabricated: '18' });
+      available('348', '300');
+      await service.restoreReservation(ADMIN, 'res-prod', 'x');
+      expect(updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ qty: '18.000' }) as unknown }),
+      );
+    });
+
+    it('revertida entera la producción, no hay nada fabricado que restaurar', async () => {
+      const { updateMany } = restoreTx({ fabricated: '0' });
+      await expect(service.restoreReservation(ADMIN, 'res-prod', 'x')).rejects.toThrow(
+        /no le queda nada fabricado sin despachar/,
+      );
+      expect(updateMany).not.toHaveBeenCalled();
+    });
+
     it('no restaura una que no se liberó a mano', async () => {
       restoreTx({ lastAction: null });
       await expect(service.restoreReservation(ADMIN, 'res-prod', 'x')).rejects.toThrow(
@@ -538,7 +590,7 @@ describe('D-379 — SalesOrdersService', () => {
     it('si ya no queda nada por despachar en la línea, no hay reserva que restaurar', async () => {
       restoreTx({ dispatched: '48' });
       await expect(service.restoreReservation(ADMIN, 'res-prod', 'x')).rejects.toThrow(
-        /no le queda nada por despachar/,
+        /no le queda nada fabricado sin despachar/,
       );
     });
 
@@ -569,5 +621,51 @@ describe('D-379 — SalesOrdersService', () => {
         BadRequestException,
       );
     });
+  });
+});
+
+describe('D-379 — upsertItemReservation no suma la cantidad de una fila liberada', () => {
+  function tx(existing: object | null) {
+    return {
+      reservation: {
+        findUnique: jest.fn().mockResolvedValue(existing),
+        create: jest.fn().mockResolvedValue({ id: 'nueva' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    };
+  }
+  const input = {
+    salesOrderId: 'o-11',
+    salesOrderItemId: 'line-1',
+    itemType: InventoryItemType.PRODUCT,
+    itemId: 'cob-rojo',
+    qty: new Decimal('48'),
+    unit: 'MTR',
+    actorId: 'admin-1',
+  };
+
+  it('una liberada a mano con 48 m vuelve con lo producido ahora, no con 96', async () => {
+    const client = tx({
+      id: 'res-prod',
+      qty: new Decimal('48'),
+      status: ReservationStatus.RELEASED,
+    });
+    await upsertItemReservation(client as never, input);
+    expect(client.reservation.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          qty: '48.000',
+          status: ReservationStatus.ACTIVE,
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('una activa sigue sumando, como antes', async () => {
+    const client = tx({ id: 'res-prod', qty: new Decimal('20'), status: ReservationStatus.ACTIVE });
+    await upsertItemReservation(client as never, input);
+    expect(client.reservation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ qty: '68.000' }) as unknown }),
+    );
   });
 });

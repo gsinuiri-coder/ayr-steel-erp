@@ -117,6 +117,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'sales.quotation.reserve-temporary': 'Reserva temporal de cotización creada',
   'sales.quotation.update': 'Cotización editada',
   'sales.reservation.release': 'Liberación manual de reserva',
+  'sales.reservation.restore': 'Reserva restaurada (D-379)',
   'sales.settings.update': 'Configuración de ventas actualizada',
   'suppliers.create': 'Alta de proveedor',
   'suppliers.update': 'Edición de proveedor',

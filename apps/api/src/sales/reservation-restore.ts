@@ -1,5 +1,8 @@
 import {
   InventoryItemType,
+  InventoryMovementType,
+  InventoryRefType,
+  ProductionReportStatus,
   ReservationStatus,
   SalesOrderStatus,
   type Prisma,
@@ -16,13 +19,15 @@ import { Decimal, toDecimal } from '@ayr/shared';
  *
  * 1. **El bloqueo:** esa reserva no se libera a mano mientras cubra producto fabricado sin
  *    despachar (`fabricatedReleaseBlock`).
- * 2. **La reversa:** una reserva de producto liberada **a mano** se restaura (`restorable`,
- *    `restoreQty`). Una cerrada por despacho, por producción o por anular el pedido, no.
+ * 2. **La reversa:** la reserva de lo fabricado liberada **a mano** se restaura (`restoreBlock`,
+ *    `restoreQty`), topada por lo fabricado vivo de la línea (`fabricatedAliveQty`). Una cerrada
+ *    por despacho, por producción o por anular el pedido, no.
  *
  * Sin migración: lo que separa una liberación manual de las demás ya está en el dato. Es la única
  * que deja `qty` con la cantidad que prometía —cancelar, cambiar cantidad o bobina, la reversa de
- * producción y el cierre de la OP la ponen en cero— y la única que escribe
- * `sales.reservation.release` en `audit_log`.
+ * producción **sobre una reserva activa** y el cierre de la OP la ponen en cero— y la única que
+ * escribe `sales.reservation.release` en `audit_log`. La cantidad guardada no sirve como tope: una
+ * reversa de producción posterior no la toca (por eso existe `fabricatedAliveQty`).
  */
 
 export const RESERVATION_RELEASE_ACTION = 'sales.reservation.release';
@@ -128,8 +133,15 @@ export interface RestorableCandidate {
   id: string;
   status: ReservationStatus;
   itemType: InventoryItemType;
+  itemId: string;
   qty: { toString(): string };
   salesOrder: { status: SalesOrderStatus };
+  /**
+   * La línea **hoy**: qué producto vende y qué reservó al confirmarse. Una reserva de otro
+   * producto ya no la respalda, y una línea que no se fabrica contra el pedido queda fuera de
+   * D-379 (su reserva liberada no deja la línea sin despacho).
+   */
+  salesOrderItem: Pick<ReservationLine, 'productId' | 'reserveItemType' | 'reserveItemId'>;
 }
 
 /**
@@ -152,6 +164,16 @@ export function restoreBlock(
   }
   if (candidate.itemType !== InventoryItemType.PRODUCT) {
     return 'Solo se restaura una reserva de producto terminado';
+  }
+  // La línea cambió de producto después de liberarla (D-187/D-254): la fila vieja no respalda
+  // nada de lo que la línea vende hoy.
+  if (candidate.itemId !== candidate.salesOrderItem.productId) {
+    return 'La línea ya no vende ese producto: su reserva vieja no se restaura';
+  }
+  // D-379 es la reserva de lo fabricado. La de un producto de stock liberada a mano es el uso
+  // normal de D-054 y la línea se sigue despachando del saldo libre.
+  if (!isFabricatedLineReservation(candidate, candidate.salesOrderItem)) {
+    return 'Solo se restaura la reserva de lo fabricado de una línea que se produce contra el pedido';
   }
   // Las demás liberaciones (anular, cambiar cantidad o bobina, revertir o cerrar producción)
   // ponen la cantidad en cero y no escriben `sales.reservation.release`.
@@ -212,9 +234,8 @@ export async function restorableByLine(
       salesOrderItem: { select: RESERVATION_LINE_SELECT },
     },
   });
-  const fabricated = rows.filter((r) => isFabricatedLineReservation(r, r.salesOrderItem));
-  const ok = await restorableReservationIds(db, fabricated);
-  for (const r of fabricated) {
+  const ok = await restorableReservationIds(db, rows);
+  for (const r of rows) {
     if (ok.has(r.id)) {
       out.set(r.salesOrderItemId, { salesOrderId: r.salesOrderId, reservationId: r.id });
     }
@@ -223,18 +244,58 @@ export async function restorableByLine(
 }
 
 /**
- * Cuánto vuelve a prometer la reserva: lo que prometía al liberarse, sin pasar de lo que a la
- * línea le queda por despachar **en la misma unidad**. Si las unidades difieren (una línea que
- * se vende en otra unidad que la del ítem), manda lo que prometía la reserva.
+ * Lo fabricado **vivo** de una línea, en la unidad del producto: los ingresos de producción de
+ * sus reportes vigentes que nadie revirtió. Es el tope real de la reserva de lo fabricado.
+ *
+ * La cantidad que guardaba la reserva al liberarse no alcanza como tope (autorrevisión cc12,
+ * P1-1): si después se revierte la producción, `reduceReservation` no toca una fila liberada
+ * —solo descuenta de una activa— y la reserva queda prometiendo metros que ya no existen.
+ */
+export async function fabricatedAliveQty(
+  db: Prisma.TransactionClient,
+  salesOrderItemId: string,
+  productId: string,
+): Promise<Decimal> {
+  const reports = await db.productionReport.findMany({
+    where: {
+      status: ProductionReportStatus.ACTIVE,
+      productionOrder: { reservation: { salesOrderItemId } },
+    },
+    select: { id: true },
+  });
+  if (reports.length === 0) return new Decimal(0);
+  const entries = await db.inventoryMovement.findMany({
+    where: {
+      type: InventoryMovementType.IN,
+      refType: InventoryRefType.PRODUCTION,
+      itemType: InventoryItemType.PRODUCT,
+      itemId: productId,
+      refId: { in: reports.map((r) => r.id) },
+      reversals: { none: {} },
+    },
+    select: { qty: true },
+  });
+  return entries.reduce<Decimal>((acc, m) => acc.plus(toDecimal(m.qty.toString())), new Decimal(0));
+}
+
+/**
+ * Cuánto vuelve a prometer la reserva: lo que prometía al liberarse, sin pasar de lo fabricado
+ * vivo que todavía no salió (`fabricated − dispatchedOnItem`) ni de lo que a la línea le queda
+ * por despachar en la misma unidad.
  */
 export function restoreQty(input: {
   reservationQty: { toString(): string };
   reservationUnit: string;
   line: Pick<ReservationLine, 'qty' | 'unit'>;
   dispatchedOnItem: Decimal;
+  fabricated: Decimal;
 }): Decimal {
-  const promised = toDecimal(input.reservationQty.toString());
-  if (input.line.unit !== input.reservationUnit) return promised;
-  const pending = toDecimal(input.line.qty.toString()).minus(input.dispatchedOnItem);
-  return Decimal.max(Decimal.min(promised, pending), new Decimal(0));
+  let qty = Decimal.min(
+    toDecimal(input.reservationQty.toString()),
+    input.fabricated.minus(input.dispatchedOnItem),
+  );
+  if (input.line.unit === input.reservationUnit) {
+    qty = Decimal.min(qty, toDecimal(input.line.qty.toString()).minus(input.dispatchedOnItem));
+  }
+  return Decimal.max(qty, new Decimal(0));
 }

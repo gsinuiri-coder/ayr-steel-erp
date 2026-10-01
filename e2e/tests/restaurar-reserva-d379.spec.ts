@@ -165,6 +165,8 @@ test.describe('D-379 — reserva de lo fabricado de una línea contra pedido', (
         (r) => r.id === produced.productReservationId,
       );
       expect(released).toMatchObject({ status: 'RELEASED', restorable: true });
+      // La foto del kardex **antes** de restaurar: la restauración no tiene que moverlo.
+      const beforeRestore = await movementsOf(api, 'PRODUCT', produced.scenario.product.id);
 
       // El comprobante dice por qué la línea no sale y enlaza la acción.
       await loginAsAdmin(page);
@@ -198,8 +200,10 @@ test.describe('D-379 — reserva de lo fabricado de una línea contra pedido', (
         qty: `${String(SHEETS)}.000`,
         restorable: false,
       });
-      // La restauración no mueve el kardex.
-      const beforeDispatch = live(await movementsOf(api, 'PRODUCT', produced.scenario.product.id));
+      // La restauración no movió el kardex: los mismos movimientos que antes de restaurar.
+      const afterRestore = await movementsOf(api, 'PRODUCT', produced.scenario.product.id);
+      expect(afterRestore.map((m) => m.id)).toEqual(beforeRestore.map((m) => m.id));
+      const beforeDispatch = live(afterRestore);
 
       // De vuelta en el comprobante, la línea ya sale: se despacha con la fecha elegida.
       const chosen = today();
