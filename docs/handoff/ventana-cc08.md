@@ -1,9 +1,25 @@
 # Runbook — deploy de cc08 (D-375, restaurar bobina anulada) y restauración de IMPO-ALZ-AZUL-5002-0.28-4150-23
 
-**Estado: PREPARADO, sin ejecutar.** Cada paso marcado **[OK]** espera el OK explícito del dueño
+**Estado: EJECUTADO el 2026-10-01, de día** (el cliente no usaba la app). Resultado:
+
+| Qué                        | Valor                                                                                                      |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Respaldo Neon              | `respaldo-pre-cc08-20261001` (`br-proud-glade-aev4qddf`, hija de `production`), `ready`                    |
+| Revisión API anterior      | `ayr-steel-erp-api-00071-bll` (`git-sha=3bf6de5`)                                                          |
+| Revisión API nueva         | **`ayr-steel-erp-api-00072-hgh`**, 100 %, `git-sha=a54b6ed`, smoke 8/8 con la web vieja                    |
+| Merge #70                  | `main` = **`5f19a25`**, diff de runtime vacío; Vercel `success`; smoke verde en `vercel.app` y `v2`        |
+| Dry-run                    | 9 bobinas EN_SU_FECHA; lote congelado `1cf26c13-75f5-4402-be61-fd6c841d5b39` solo con la AZUL              |
+| Execute                    | AZUL → **EN_SU_FECHA 28/09**, movimiento **468** (4150 kg a 2,6938, compra 118-315630)                     |
+| Foto posterior (READ ONLY) | `OPEN`, film sellado; 4150 kg continuos desde el 14/08; sin días negativos; ningún otro movimiento escrito |
+
+Undo, si hiciera falta: `pnpm restore:cancelled-coils --branch production --confirm-production --undo 1cf26c13-75f5-4402-be61-fd6c841d5b39 --execute --reason "<motivo>"`.
+
+---
+
+Plan original. Cada paso marcado **[OK]** espera el OK explícito del dueño
 (D-251/D-232). El agente propone el comando exacto y espera.
 
-- PR: rama `cc08/desanular-bobina` (reemplaza al #60).
+- PR: https://github.com/gsinuiri-coder/ayr-steel-erp/pull/70 (reemplaza al #60).
 - **Sin migración.**
 - **Orden: respaldo → API → smoke → merge (web) → smoke → dry-run del lote → [OK] → execute →
   foto posterior.**
