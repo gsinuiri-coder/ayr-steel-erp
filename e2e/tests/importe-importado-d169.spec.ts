@@ -206,12 +206,11 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       expect(quotationLine.subtotalPen).not.toBe(RECOMPUTED);
       expect(quotationLine.unitPricePen).toBe(UNIT_PRICE);
       expect(quotationLine.qty).toBe(QTY);
-      // 4179.13 × 18% = 752.2434, y el total arrastra la cola de diezmilésimas. **No es un
-      // defecto**: es lo que pasa cuando el importe del papel no es divisible por la cantidad,
-      // y es exactamente la cola que hacía imposible cobrar el documento.
+      // 4179.13 × 18% = 752.2434 en la línea; la cabecera va al céntimo (D-377, R2): 752.24 y
+      // 4931.37. Antes arrastraba la cola de diezmilésimas, la que hacía imposible cobrarlo.
       expect(quotation.subtotalPen).toBe('4179.1300');
-      expect(quotation.igvPen).toBe('752.2434');
-      expect(quotation.totalPen).toBe('4931.3734');
+      expect(quotation.igvPen).toBe('752.2400');
+      expect(quotation.totalPen).toBe('4931.3700');
 
       // --- 3. El pedido ---
       const order = await postJson<SalesOrderDto>(
@@ -222,7 +221,7 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       trail.orderIds = [order.id];
       const orderLine = order.items[0]!;
       expect(orderLine.subtotalPen).toBe('4179.1300');
-      expect(order.totalPen).toBe('4931.3734');
+      expect(order.totalPen).toBe('4931.3700');
 
       // --- 4. El comprobante ---
       // Línea entera y a su propio precio: el comprobante **copia** el importe del pedido en
@@ -306,16 +305,18 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       });
       trail.documentIds = [draft.id];
 
-      // La cabecera tiene que ser la suma de las líneas. Hoy devuelve 4179.0000 / 4931.2200.
+      // La cabecera tiene que ser la suma de las líneas (antes devolvía 4179.0000 / 4931.2200),
+      // redondeada al céntimo en el documento (D-377, R2): la línea queda en 4931.3734.
       expect(draft.subtotalPen).toBe(draft.items[0]!.subtotalPen);
-      expect(draft.totalPen).toBe(draft.items[0]!.totalPen);
+      expect(draft.items[0]!.totalPen).toBe('4931.3734');
+      expect(draft.totalPen).toBe('4931.3700');
     } finally {
       await purgeInvoicingTrail(api, trail);
       await purgeSalesTrail(api, { quotationIds });
     }
   });
 
-  test('un saldo con cola de diezmilésimas se cobra con los céntimos del papel', async () => {
+  test('una línea con cola de diezmilésimas deja un comprobante al céntimo que se cobra entero', async () => {
     /**
      * **La mitad de D-169 que vive aguas abajo**, y la que se veía como un sistema roto: la
      * cobranza compara el saldo **en céntimos** (`payableBalance`), porque un cobro se hace en
@@ -330,6 +331,10 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
      * arregló la causa (que un importe importado tuviera cola), pero `payableBalance` arregla
      * la **clase entera**, que también alcanza a un precio tipeado a mano. 3 × 39.3333 =
      * 117.9999 de valor; con IGV, 139.2399.
+     *
+     * D-377 (R2): la línea conserva esa cola, pero la cabecera ya nace al céntimo (118.00 +
+     * 21.24 = 139.24), así que el documento nuevo no tiene cola que cobrar. `payableBalance`
+     * sigue cubriendo los comprobantes grabados antes de R2 (unitarios de `invoicing-math`).
      */
     const customer = await createCustomer(api);
     const trail: Parameters<typeof purgeInvoicingTrail>[1] = { documentIds: [] };
@@ -341,8 +346,9 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
         items: [freeLine('3', '39.3333', 'servicio con cola de diezmilésimas')],
       });
       trail.documentIds = [draft.id];
-      expect(draft.subtotalPen).toBe('117.9999');
-      expect(draft.totalPen).toBe('139.2399');
+      expect(draft.items[0]!.subtotalPen).toBe('117.9999');
+      expect(draft.subtotalPen).toBe('118.0000');
+      expect(draft.totalPen).toBe('139.2400');
 
       const issued = await postJson<FiscalDocumentDto>(
         api,
@@ -352,15 +358,14 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
           correlative: Math.floor(Math.random() * 90_000) + 1_000,
         },
       );
-      expect(issued.balancePen).toBe('139.2399');
+      expect(issued.balancePen).toBe('139.2400');
 
       // El cliente transfiere lo que se puede transferir: céntimos.
       const paid = await addPayment(api, issued.id, { amountPen: '139.24' });
       expect(paid.payments).toHaveLength(1);
       expect(paid.payments[0]!.amountPen).toBe('139.2400');
-      // Y el documento queda saldado: el diezmilésimo de más lo absorbe `documentBalance`,
-      // que nunca devuelve negativo.
-      expect(Number(paid.balancePen)).toBeLessThanOrEqual(0);
+      // Y el documento queda saldado exacto.
+      expect(paid.balancePen).toBe('0.0000');
     } finally {
       await purgeInvoicingTrail(api, trail);
     }
@@ -550,7 +555,8 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
 
       // El importe sobrevive: producto, cantidad y precio son los mismos.
       expect(after.items[0]!.subtotalPen).toBe('4179.1300');
-      expect(after.totalPen).toBe('4931.3734');
+      // D-377 (R2): la cabecera, al céntimo.
+      expect(after.totalPen).toBe('4931.3700');
     } finally {
       await purgeSalesTrail(api, { quotationIds });
       await deactivateTrail(api, {

@@ -542,9 +542,10 @@ test.describe('D-162 — la cotización guarda valores sin IGV', () => {
         igvPen: '1.5254',
         totalPen: '10.0000',
       });
+      // D-377 (R2): la cabecera va al céntimo y sigue sumando 10.00.
       expect(quotation).toMatchObject({
-        subtotalPen: '8.4746',
-        igvPen: '1.5254',
+        subtotalPen: '8.4700',
+        igvPen: '1.5300',
         totalPen: '10.0000',
       });
     } finally {
