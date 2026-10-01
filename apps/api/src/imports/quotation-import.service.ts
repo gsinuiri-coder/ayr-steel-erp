@@ -5,6 +5,7 @@ import {
   defaultRoofingPlan,
   importDocTypeOf,
   EXTERNAL_INVOICE_NOTES_PREFIX,
+  externalInvoiceOf,
   IMPORT_ROUNDING_TOLERANCE_PEN,
   MAX_PADRON_LOOKUPS,
   money,
@@ -69,6 +70,44 @@ export class QuotationImportService {
     private readonly padron: DocumentLookupService,
   ) {}
 
+  /**
+   * D-368 — **cotización relacionada** con un comprobante: no anulada y cuya marca es
+   * exactamente ese número (la marca sola, o la marca y el texto del vendedor debajo). Es la
+   * misma regla para el preview y para la revalidación dentro de la transacción: con
+   * `contains`, `F001-1` chocaba con `F001-12`.
+   */
+  private static relatedQuotationWhere(keys: readonly string[]): Prisma.QuotationWhereInput {
+    return {
+      status: { not: QuotationStatus.CANCELLED },
+      OR: keys.flatMap((k) => [
+        { notes: `${EXTERNAL_INVOICE_NOTES_PREFIX}${k}` },
+        { notes: { startsWith: `${EXTERNAL_INVOICE_NOTES_PREFIX}${k}\n` } },
+      ]),
+    };
+  }
+
+  /** Foto solo lectura para decidir qué hacer con duplicados históricos; nunca los corrige. */
+  async duplicateInvoices(): Promise<
+    { invoice: string; quotations: { code: string; status: QuotationStatus }[] }[]
+  > {
+    const rows = await this.prisma.quotation.findMany({
+      where: { notes: { startsWith: EXTERNAL_INVOICE_NOTES_PREFIX } },
+      select: { seq: true, status: true, notes: true },
+      orderBy: { seq: 'asc' },
+    });
+    const grouped = new Map<string, { code: string; status: QuotationStatus }[]>();
+    for (const row of rows) {
+      const invoice = externalInvoiceOf(row.notes);
+      if (invoice === null) continue;
+      const quotations = grouped.get(invoice) ?? [];
+      quotations.push({ code: quotationCode(row.seq), status: row.status });
+      grouped.set(invoice, quotations);
+    }
+    return [...grouped.entries()]
+      .filter(([, quotations]) => quotations.length > 1)
+      .map(([invoice, quotations]) => ({ invoice, quotations }));
+  }
+
   // -------------------------------------------------------------------------
   // Paso 1 — leer el archivo y resolver lo que se pueda
   // -------------------------------------------------------------------------
@@ -113,22 +152,18 @@ export class QuotationImportService {
     const bySku = uniqueBy(products, (p) => p.sku);
     const byDoc = uniqueBy(customers, (c) => c.docNumber);
 
-    // **Aviso de reimportación.** Nada impide subir el mismo archivo dos veces, y el
-    // resultado serían 71 cotizaciones duplicadas sin una sola señal. El dato para detectarlo
-    // ya existe: la nota que el importador escribe. Es un aviso y no un error porque un
-    // comprobante puede legítimamente re-cotizarse (el anterior quedó anulado, por ejemplo).
+    // **Reimportación (D-368).** Nada impide subir el mismo archivo dos veces, y el resultado
+    // serían 71 cotizaciones duplicadas. El dato para detectarlo ya existe: la nota que el
+    // importador escribe. Es un **error** de la fila: un comprobante con una cotización
+    // relacionada no se importa otra vez. Re-cotizarlo sigue siendo posible si la anterior quedó
+    // anulada, porque la anulada no cuenta como relacionada.
     const keys = [...new Set(raw.map((r) => field(r, 'documentKey')).filter((k) => k !== ''))];
     const already = await this.prisma.quotation.findMany({
-      where: {
-        status: { not: QuotationStatus.CANCELLED },
-        OR: keys.map((k) => ({ notes: { contains: `${EXTERNAL_INVOICE_NOTES_PREFIX}${k}` } })),
-      },
+      where: QuotationImportService.relatedQuotationWhere(keys),
       select: { notes: true },
     });
     const importedKeys = new Set(
-      already.flatMap((q) =>
-        keys.filter((k) => q.notes?.includes(`${EXTERNAL_INVOICE_NOTES_PREFIX}${k}`) === true),
-      ),
+      already.map((q) => externalInvoiceOf(q.notes)).filter((k): k is string => k !== null),
     );
 
     // D-158: los documentos del papel que el maestro **no** tiene se consultan contra el
@@ -181,9 +216,9 @@ export class QuotationImportService {
     if (importedKeys.has(field(raw, 'documentKey'))) {
       issues.push({
         field: 'row',
-        severity: 'warning',
+        severity: 'error',
         message:
-          'Ya existe una cotización viva con este comprobante: importarlo otra vez la duplica.',
+          'Ya existe una cotización relacionada con este comprobante: no se puede importar otra vez.',
       });
     }
 
@@ -672,6 +707,17 @@ export class QuotationImportService {
             if (rows.some((r) => r.issueDate !== first.issueDate)) {
               throw new BadRequestException(
                 'Las líneas de este documento traen fechas de emisión distintas.',
+              );
+            }
+            // D-368: el preview pudo quedar viejo (otra pestaña, otro usuario confirmando el
+            // mismo archivo); se revalida acá, dentro de la transacción y con la misma regla.
+            const existing = await tx.quotation.findFirst({
+              where: QuotationImportService.relatedQuotationWhere([documentKey]),
+              select: { seq: true },
+            });
+            if (existing) {
+              throw new BadRequestException(
+                `Ya existe la cotización ${quotationCode(existing.seq)} relacionada con el comprobante ${documentKey}.`,
               );
             }
 
