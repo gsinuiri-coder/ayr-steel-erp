@@ -2,6 +2,54 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-09-30 — D-366, LOG-3: metros visibles de planchas
+
+La siguiente ventana aprobada por el dueño toma el arreglo de lectura del PR #57. Esa rama
+tenía dos commits propios sobre una base 23 commits anterior a `origin/main`; ambos se portaron
+sin conflicto a `fix/log3-current` desde `7212b0f`, en el worktree aislado `../ayr-log3r`.
+La CI de `main` en `7212b0f` terminó verde (run `36784967948`); `origin/main` seguía en ese
+SHA al volver a consultar antes del cierre.
+Una plancha NIU conserva `metersReported=null` porque su kardex va en piezas; el nuevo
+`planMetersReported` suma los largos de los reportes vigentes. Las tarjetas de OP del pedido y
+el historial de planta leen ese avance frente al plan; MTR conserva sus metros directos y
+drywall continúa en piezas. No hay migración, backfill ni escritura de reportes o kardex.
+
+La autorrevisión del diff portado detectó que sumar los nuevos metros al `readiness` del pedido
+los comparaba con `reserveQty`, una magnitud que puede estar en kg, y podía cambiar una OP
+parcial de `LISTO_CON_FALTANTE` a `LISTO`. El segundo modelo confirmó la regresión después de
+reexaminarla. Por decisión del dueño (D-366), se restauraron exactamente los cuatro archivos
+de ventas de `origin/main`; esta entrega corrige solo los metros visibles y deja `readiness`
+para una decisión separada. El accesorio MTR con plan de cero en el listado se identificó como
+anomalía anterior a este diff, fuera del alcance LOG-3.
+
+La autorrevisión final encontró dos casos medios: reversas podían llenar los 200 reportes del
+detalle y ocultar un reporte vigente posterior; el listado cargaba largos de todos los reportes
+revertidos. Se corrigieron en `2346bd8`: el listado filtra `ACTIVE` en Prisma y el detalle
+recupera todos los vigentes si el historial acotado contiene reversas. Un test cubre 200
+reversas más un vigente y otro verifica dos llamadas de cliente Prisma al listar 500 OP. El
+segundo modelo (gpt-6-astra, Sonnet no disponible) revisó el diff reducido antes de este ajuste,
+sin P0/P1/P2; su informe declara expresamente ese límite. Los dos hallazgos finales están en
+`docs/revision/log3-metros-plancha-autorrevision.md`, corregidos y comprobados por QA.
+
+QA local: `pnpm lint`, `pnpm typecheck` y `pnpm build` verdes. API 160 suites y 1 975 unitarios;
+web 15 archivos y 89 unitarios, ambos después del ajuste final. La suite E2E completa del
+worktree, con builds de producción finales, terminó en 131,3 min: **452 passed, 10 failed,
+2 skipped**. Pasaron los flujos de plancha contra pedido, tarjeta de avance en `/planta`,
+tarjeta de OP del pedido, captura de largos y producción/kardex de planchas. Sin push, PR nuevo
+ni deploy; el UAT está preparado para el dueño y el cierre espera CI de la rama y su revisión
+final.
+
+En el E2E local con proxy aparecieron rojos ajenos a LOG-3 en casos de comprobantes y guías:
+la API tiene `PSE_ENABLED` apagado y devuelve «Emisión electrónica no habilitada en este
+entorno». Un caso esperaba otro mensaje de rechazo; los demás intentaban emitir. Se clasifican
+como configuración/prueba de este entorno, sin cambiar el gate PSE ni habilitar emisiones
+externas. Fueron **8 de los 10 fallos**. Los otros dos dependen de R2 ausente en esta corrida:
+`fase5a.spec.ts` espera el PDF de alta, y `fase2a.spec.ts` espera la vista previa XML. La
+repetición aislada de RF-11 con el mismo build falló 1/1; la traza mostró
+`POST /api/purchases/xml/preview` con 503, y `PurchasesService.previewFromXml` guarda el archivo
+en R2 antes de devolver el preview. La CI sí recibe las variables de R2; los dos son
+infraestructura local. No se configuró almacenamiento ni emisión externa para esta suite.
+
 ## 2026-09-30 — D-365, correlativos del gate PSE
 
 Ventana de API para `main` `22fdfe7`: CI verde; respaldo de `production`
