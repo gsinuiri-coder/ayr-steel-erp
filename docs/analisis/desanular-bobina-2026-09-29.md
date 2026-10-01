@@ -119,3 +119,33 @@ Comparte con M2b el motor de corrección de asientos de compra: preflight conser
 re-registro append-only, auditoría y bloqueo si una salida posterior puede recostear. Debe entrar
 en una pista propia con pruebas de seguro/excluido, dry-run en demo, respaldo y ventana de deploy;
 este diagnóstico no implementa esa mutación.
+
+## Foto de producción y decisión (cc08, 2026-10-01)
+
+Hay tres fotos `READ ONLY` del 2026-10-01, tomadas con el OK del dueño:
+
+- 14:21 UTC, la CLI del #60;
+- 14:22 UTC, el detalle por bobina, en `local-data/cc08/insp-production.json`, fuera de git;
+- 14:37 UTC, con el clasificador de D-375.
+
+Son **9** bobinas anuladas de compra. En todas el film está sellado (anular no lo toca) y la
+moneda es PEN.
+
+| Bobina                          | Compra (estado)        |   Kg | Costo/kg | Entrada original | Plan D-375  | Gemela activa con el mismo peso y especificación |
+| ------------------------------- | ---------------------- | ---: | -------: | ---------------- | ----------- | ------------------------------------------------ |
+| IMPO-ALZ-AZUL-5002-0.28-4150-23 | 118-315630 (RECEIVED)  | 4150 |   2,6938 | 14/08            | EN_SU_FECHA | ninguna                                          |
+| IMPO-…-0.28-4240-1              | PRRG1-0001 (CANCELLED) | 4240 |   3,4328 | 21/09            | EN_SU_FECHA | 4240-47 (también anulada)                        |
+| IMPO-…-0.28-3711-45             | PRRG1-0002 (CANCELLED) | 3711 |     3,43 | 01/08            | EN_SU_FECHA | SALDO-…-3711-3 (terminada)                       |
+| IMPO-…-0.28-4240-47             | PRRG1-0002 (CANCELLED) | 4240 |     3,43 | 01/08            | EN_SU_FECHA | 4240-1                                           |
+| IMPO-…-0.28-4786-46             | PRRG1-0002 (CANCELLED) | 4786 |     3,43 | 01/08            | EN_SU_FECHA | SALDO-…-4786-1 (vigente)                         |
+| IMPO-…-0.38-3842-43             | PRRG1-0002 (CANCELLED) | 3842 |     3,43 | 01/08            | EN_SU_FECHA | IMPO-…-3842-36 (vigente, 118-315630)             |
+| IMPO-…-0.38-3866-42             | PRRG1-0002 (CANCELLED) | 3866 |     3,43 | 01/08            | EN_SU_FECHA | SALDO-…-3866-11 (vigente)                        |
+| IMPO-…-0.38-4242-44             | PRRG1-0002 (CANCELLED) | 4242 |     3,43 | 01/08            | EN_SU_FECHA | IMPO-…-4242-40 (vigente, 118-315630)             |
+| XSY-ALZ-ROJO-3020-0.38-4544-9   | E001RG-262 (CANCELLED) | 4544 |   2,7131 | 22/09            | EN_SU_FECHA | XSY-…-4544-4 (vigente, E001-262)                 |
+
+- **El clasificador del #60 se reemplazó.** Contaba como «ajenos» los pares que se anulan entre
+  sí (ventas revertidas, reingresos por corrección de costo) y marcaba 7 EXCLUIDA. El de D-375
+  bloquea solo por salidas **vivas**, por decisión del dueño.
+- **Decisión del dueño:** restaurar por ahora solo la AZUL (`IMPO-ALZ-AZUL-5002-0.28-4150-23`).
+  Las otras ocho pueden ser la **misma bobina física** que su gemela activa; se deciden aparte.
+- **Compras anuladas:** se restaura igual, y la compra no se toca.

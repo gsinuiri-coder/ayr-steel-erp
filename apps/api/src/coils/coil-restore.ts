@@ -16,6 +16,7 @@ import {
 } from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { InventoryService } from '../inventory/inventory.service';
+import { assertStripsNotAssigned } from '../production/production-assignments';
 
 /**
  * D-375 — restaurar una bobina anulada que vino de una compra.
@@ -52,7 +53,14 @@ export type RestoreMovement = Pick<
 >;
 
 export interface RestoreContext {
-  coil: { id: string; code: string; status: CoilStatus; purchaseId: string | null };
+  coil: {
+    id: string;
+    code: string;
+    status: CoilStatus;
+    purchaseId: string | null;
+    /** Fleje o hija de partido/corte: nunca se restaura por acá. */
+    isChild?: boolean;
+  };
   movements: readonly RestoreMovement[];
   activeReservations: number;
   liveChildren: number;
@@ -92,6 +100,11 @@ export function classifyCoilRestore(ctx: RestoreContext): CoilRestoreClassificat
     );
   }
   if (ctx.coil.purchaseId === null) return blocked('La bobina no vino de una compra');
+  if (ctx.coil.isChild) {
+    return blocked(
+      'Es un fleje o una hija de partido o corte: se restaura revirtiendo esa operación',
+    );
+  }
 
   const reversed = reversedIds(ctx.movements);
   // Salidas propias: todo OUT que no sea la reversa de un ingreso. Vivas bloquean, y es lo
@@ -125,6 +138,14 @@ export function classifyCoilRestore(ctx: RestoreContext): CoilRestoreClassificat
   if (liveIns.length > 0) return blocked('La bobina ya tiene un ingreso vivo en el kardex', entry);
   if (ctx.activeReservations > 0) return blocked('La bobina tiene reservas activas', entry);
   if (ctx.liveChildren > 0) return blocked('La bobina tiene flejes hijos vigentes', entry);
+  // Revisión cc08 (P1-2): un ajuste de costo (landed cost) que la anulación de la compra revirtió
+  // no se reaplica al repetir el ingreso; restaurar dejaría la bobina por debajo de su costo.
+  if (ctx.movements.some((m) => m.type === 'ADJUST')) {
+    return blocked(
+      'La bobina tiene ajustes de costo (landed cost) que la restauración no reaplica',
+      entry,
+    );
+  }
 
   const balance = ctx.movements.reduce(
     (acc, m) =>
@@ -192,6 +213,8 @@ export async function loadRestoreContext(
       code: true,
       status: true,
       purchaseId: true,
+      parentCoilId: true,
+      splitId: true,
       businessLineId: true,
       operationDate: true,
       purchase: { select: { series: true, number: true, status: true } },
@@ -221,7 +244,13 @@ export async function loadRestoreContext(
   ]);
   return {
     ctx: {
-      coil: { id: coil.id, code: coil.code, status: coil.status, purchaseId: coil.purchaseId },
+      coil: {
+        id: coil.id,
+        code: coil.code,
+        status: coil.status,
+        purchaseId: coil.purchaseId,
+        isChild: coil.parentCoilId !== null || coil.splitId !== null,
+      },
       movements,
       activeReservations,
       liveChildren,
@@ -387,6 +416,30 @@ export async function undoCoilRestoreBatch(
         `La bobina ${item.coilId} tuvo movimientos después de restaurarse: el lote no se deshace`,
       );
     }
+    // Revisión cc08 (autorrevisión P1-2): enviar a corte o montar un fleje en una OP no mueve
+    // kardex; sin estos chequeos el undo dejaba anulada una bobina que otra operación apunta.
+    const current = await tx.coil.findUnique({
+      where: { id: item.coilId },
+      select: { status: true, code: true },
+    });
+    if (current?.status !== CoilStatus.OPEN) {
+      throw new ConflictException(
+        `La bobina ${current?.code ?? item.coilId} ya no está vigente (${current?.status ?? 'no existe'}): el lote no se deshace`,
+      );
+    }
+    const reservations = await tx.reservation.count({
+      where: {
+        itemType: InventoryItemType.COIL,
+        itemId: item.coilId,
+        status: ReservationStatus.ACTIVE,
+      },
+    });
+    if (reservations > 0) {
+      throw new ConflictException(
+        `La bobina ${current.code} tiene reservas activas: el lote no se deshace`,
+      );
+    }
+    await assertStripsNotAssigned(tx, [item.coilId], 'deshacer su restauración');
   }
   for (const item of items) {
     await inventory.reverse(
@@ -423,7 +476,12 @@ export async function planCoilRestores(
   historicalFloor: string,
 ): Promise<CoilRestorePlanDto[]> {
   const coils = await tx.coil.findMany({
-    where: { status: CoilStatus.CANCELLED, purchaseId: { not: null } },
+    where: {
+      status: CoilStatus.CANCELLED,
+      purchaseId: { not: null },
+      parentCoilId: null,
+      splitId: null,
+    },
     select: { id: true },
     orderBy: { code: 'asc' },
   });

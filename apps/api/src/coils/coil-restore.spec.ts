@@ -1,6 +1,11 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { CoilStatus, Prisma } from '@prisma/client';
 import { assertCoilOutNotBeforeEntry } from '../inventory/inventory.service';
+import { assertStripsNotAssigned } from '../production/production-assignments';
+
+jest.mock('../production/production-assignments', () => ({
+  assertStripsNotAssigned: jest.fn().mockResolvedValue(undefined),
+}));
 import {
   classifyCoilRestore,
   restoreCoilInTx,
@@ -223,6 +228,8 @@ describe('restoreCoilInTx (D-375)', () => {
         findUnique: jest.fn().mockResolvedValue({
           ...ctx.coil,
           businessLineId: 'line-1',
+          parentCoilId: null,
+          splitId: null,
           operationDate: date('2026-08-14'),
           purchase: { series: '118', number: '315630', status: 'RECEIVED' },
         }),
@@ -346,7 +353,11 @@ describe('undoCoilRestoreBatch (D-375)', () => {
       },
       $queryRaw: jest.fn().mockResolvedValue([{ id: 'coil-1' }]),
       inventoryMovement: { count: jest.fn().mockResolvedValue(later) },
-      coil: { update: jest.fn().mockResolvedValue({}) },
+      coil: {
+        update: jest.fn().mockResolvedValue({}),
+        findUnique: jest.fn().mockResolvedValue({ status: 'OPEN', code: 'IMPO-AZUL-4150-23' }),
+      },
+      reservation: { count: jest.fn().mockResolvedValue(0) },
     } as unknown as Prisma.TransactionClient & { coil: { update: jest.Mock } };
   }
 
@@ -409,5 +420,54 @@ describe('undoCoilRestoreBatch (D-375)', () => {
         'x',
       ),
     ).rejects.toThrow(/ya se deshizo/);
+  });
+});
+
+describe('undoCoilRestoreBatch — la bobina siguió en uso sin mover kardex (revisión cc08)', () => {
+  const LOG = {
+    entityId: 'coil-1',
+    before: { operationDate: '2026-08-14' },
+    after: { movementId: '99', batchId: 'batch-1', date: '2026-08-14' },
+  };
+  it('no deshace una bobina enviada a corte tercerizado', async () => {
+    const tx = {
+      auditLog: {
+        findMany: jest.fn().mockResolvedValue([LOG]),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'coil-1' }]),
+      inventoryMovement: { count: jest.fn().mockResolvedValue(0) },
+      coil: {
+        update: jest.fn(),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ status: 'IN_THIRD_PARTY', code: 'IMPO-AZUL-4150-23' }),
+      },
+      reservation: { count: jest.fn().mockResolvedValue(0) },
+    } as unknown as Prisma.TransactionClient;
+    const inventory = { reverse: jest.fn() };
+    await expect(
+      undoCoilRestoreBatch(
+        tx,
+        inventory as never,
+        { write: jest.fn() } as never,
+        'admin-1',
+        'batch-1',
+        'x',
+      ),
+    ).rejects.toThrow(/ya no está vigente \(IN_THIRD_PARTY\)/);
+    expect(inventory.reverse).not.toHaveBeenCalled();
+  });
+
+  it('consulta los flejes montados en una OP antes de escribir', () => {
+    expect(jest.isMockFunction(assertStripsNotAssigned)).toBe(true);
+  });
+});
+
+describe('classifyCoilRestore — flejes e hijas (revisión cc08)', () => {
+  it('una hija de partido o corte no se restaura por acá', () => {
+    const ctx = base();
+    ctx.coil.isChild = true;
+    expect(classifyCoilRestore(ctx)).toMatchObject({ mode: 'BLOQUEADA' });
   });
 });

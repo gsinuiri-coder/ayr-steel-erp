@@ -21,8 +21,16 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 
 /** D-375: la acción solo se ofrece sobre una bobina anulada que vino de una compra. */
-export function canRestoreCoil(c: Pick<CoilDto, 'status' | 'purchaseId'>): boolean {
-  return c.status === 'CANCELLED' && c.purchaseId !== null;
+export function canRestoreCoil(
+  c: Pick<CoilDto, 'status' | 'purchaseId' | 'parentCoilId' | 'splitId'>,
+): boolean {
+  // Un fleje o una hija de partido/corte se restaura revirtiendo esa operación, no por acá.
+  return (
+    c.status === 'CANCELLED' &&
+    c.purchaseId !== null &&
+    c.parentCoilId === null &&
+    c.splitId === null
+  );
 }
 
 const MODE_TEXT: Record<CoilRestorePlanDto['mode'], string> = {
@@ -54,6 +62,9 @@ export function RestoreCoilDialog({
     queryKey: ['coil', coil.id, 'restore-plan'],
     queryFn: () => api<CoilRestorePlanDto>(`/coils/${coil.id}/restore-plan`),
     enabled: open,
+    // El plan puede cambiar (otra pestaña, otro administrador): se pide de nuevo al abrir.
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
   const restore = useMutation({
     mutationFn: (body: { reason: string }) =>

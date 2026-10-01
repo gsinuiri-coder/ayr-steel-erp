@@ -28,6 +28,7 @@ import {
   loadRestoreContext,
   planCoilRestores,
   restoreCoilInTx,
+  toPlanDto,
   undoCoilRestoreBatch,
 } from '../src/coils/coil-restore';
 
@@ -155,14 +156,18 @@ async function main(): Promise<void> {
     if (saved.branch !== branch || !batch || saved.batchId !== batch) {
       throw new Error('Plan de otra rama o lote: corré un dry-run y pasá su --batch');
     }
+    if (saved.selected.length === 0) throw new Error('El plan no tiene bobinas seleccionadas');
     const done = await db.$transaction(
       async (tx) => {
         const results = [];
         for (const planned of saved.selected) {
           // El plan se congeló en el dry-run: si cambió, no se ejecuta nada del lote.
-          const { ctx } = await loadRestoreContext(tx, planned.coilId, floor, true);
-          const now = classifyCoilRestore(ctx);
-          if (now.mode !== planned.mode || now.date !== planned.date) {
+          const { ctx, coil } = await loadRestoreContext(tx, planned.coilId, floor, true);
+          const now = toPlanDto(coil, classifyCoilRestore(ctx));
+          const same = (['mode', 'date', 'originalDate', 'qty', 'unitCostPen'] as const).every(
+            (k) => now[k] === planned[k],
+          );
+          if (!same) {
             throw new Error(
               `${planned.code} cambió desde el dry-run (${planned.mode} ${planned.date ?? ''} → ${now.mode} ${now.date ?? ''}): no se ejecuta el lote`,
             );
