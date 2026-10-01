@@ -164,7 +164,10 @@ function service(tx: ReturnType<typeof fakeTx>) {
     prisma as never,
     dispatches as never,
     audit as never,
-    { historicalLoadStart: '2026-08-01' } as never,
+    {
+      historicalLoadStart: '2026-08-01',
+      resolve: (_actor: unknown, requested?: string) => requested ?? '2026-10-01',
+    } as never,
   );
   return { svc, dispatches, audit, prisma };
 }
@@ -468,6 +471,48 @@ describe('InvoiceDispatchService (D-278)', () => {
     expect(result.dispatchIds).toHaveLength(2);
     expect(result.orderStatus).toBe('FULFILLED');
   });
+
+  it.each([
+    ['la fecha del comprobante (como manda ?despacho=, D-373)', '2026-08-11', false],
+    ['otra fecha', '2026-09-23', true],
+  ])(
+    'una fecha mandada que es %s %s queda como elegida solo si difiere de la emisión (D-288)',
+    async (_label, requested, chosen) => {
+      const f: Fixture = {
+        ...MIXED,
+        movements: [
+          {
+            itemType: 'COIL',
+            itemId: 'bob',
+            type: 'IN',
+            qty: '3866',
+            refType: 'PURCHASE',
+            date: '2026-08-01',
+          },
+          {
+            itemType: 'PRODUCT',
+            itemId: 'upvc',
+            type: 'IN',
+            qty: '970',
+            refType: 'IMPORT',
+            date: '2026-09-22',
+          },
+        ],
+      };
+      const tx = fakeTx(f);
+      const { svc, dispatches } = service(tx);
+      await svc.executeForInvoice(ADMIN, 'F1', requested);
+
+      const [, , input, opts] = dispatches.createInTx.mock.calls[0]!;
+      const notes = (input as { notes: string }).notes;
+      expect(isAtIssueDateDispatch(notes, 'FFA1-1')).toBe(!chosen);
+      expect(opts).toMatchObject({
+        auditReason: chosen
+          ? 'despacho en fecha elegida por el usuario'
+          : 'despacho a la fecha del comprobante',
+      });
+    },
+  );
 
   it('executeInTx para si el plan cambió desde el dry-run, sin escribir', async () => {
     const tx = fakeTx(MIXED);

@@ -347,13 +347,16 @@ export class InvoiceDispatchService {
       transferMode: TransferMode.PICKUP,
     };
     const dispatchIds: string[] = [];
+    // Una fecha mandada que es la del comprobante no es una elección: es el default de D-278. Si
+    // se marcara como elegida, D-288 dejaría de re-fecharla al corregir la emisión (el camino
+    // `?despacho=fecha-comprobante` de D-373 la manda siempre).
+    const userChosenDate = dispatchDate !== undefined && dispatchDate !== invoice.issueDate;
     // D-285: una línea fabricada después de la emisión sale el día de su último parte de
     // producción, así que un comprobante puede dar más de una fecha: un despacho por fecha.
     const byDate = new Map<string, typeof toDispatch>();
     for (const l of toDispatch)
       byDate.set(l.operationDate, [...(byDate.get(l.operationDate) ?? []), l]);
     for (const [operationDate, lines] of [...byDate].sort(([a], [b]) => a.localeCompare(b))) {
-      const userChosenDate = dispatchDate !== undefined;
       const afterProduction = operationDate !== invoice.issueDate;
       const reason = userChosenDate
         ? USER_CHOSEN_DATE_REASON
@@ -393,10 +396,9 @@ export class InvoiceDispatchService {
           dispatchDate: beforeOpening[0]?.operationDate ?? invoice.issueDate,
           // D-364: aunque no emita SALE, una fecha elegida también es una decisión física y
           // D-288 no puede convertirla luego en «fecha de emisión» al corregir el comprobante.
-          notes:
-            dispatchDate !== undefined
-              ? atIssueDateNotes.userChosenDate(invoice.number)
-              : atIssueDateNotes.beforeOpening(invoice.number),
+          notes: userChosenDate
+            ? atIssueDateNotes.userChosenDate(invoice.number)
+            : atIssueDateNotes.beforeOpening(invoice.number),
           items: beforeOpening.map((l) => ({
             salesOrderItemId: l.orderItemId,
             qty: l.qty.toFixed(3),
@@ -434,7 +436,7 @@ export class InvoiceDispatchService {
           operationDate: l.operationDate,
           reason:
             l.action === 'DISPATCH'
-              ? dispatchDate !== undefined
+              ? userChosenDate
                 ? USER_CHOSEN_DATE_REASON
                 : l.operationDate === invoice.issueDate
                   ? AT_ISSUE_DATE_REASON
