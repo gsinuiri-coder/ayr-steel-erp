@@ -414,6 +414,54 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
   `--undo`); y, de solo lectura, `traceLine` (el cuerpo del motor de Ventas por material, extraído) y la
   rentabilidad por comprobante (`document-profitability*`).
 
+## Recorrido de UX — M2 de Correcciones 06 (2026-09-28, solo docs)
+
+Rama `docs/recorrido-ux` desde `origin/main` = `bc0c331` (CI de `main` verde antes de abrirla). Handoff:
+`docs/handoff/correcciones-06-m2.md`. **PR de solo docs, sin mergear.** Sin código de producto ni migración.
+
+- **Entregable:** `docs/analisis/ux-recorrido-2026-09-28.md`: **57 hallazgos de UX** (Alta 0, Media 21, Baja 36)
+  y **3 posibles bugs de lógica** listados aparte sin tocar, con severidad, esfuerzo y D-nnn propuesta
+  (P-01 a P-16, **no** escritas en §0.2). Recorrido con Playwright a 1366×768 y 1920×1080 sobre la base
+  descartable `ayr_local_ux` (no `ayr_local`, que es del dueño), con el flujo completo cotizar → confirmar →
+  producir → despachar → facturar → cobrar por la pantalla, y los menús de VENDEDOR y SUPERVISOR_PLANTA.
+- **D-367 registrada** en §0.2 (regla de producto, sin implementar): «un producto o SKU se crea, de forma
+  interactiva, solo desde Catálogo». Origen: instrucción del dueño en esta sesión; **la razón del cliente la
+  dictó el dueño (relato sin documento en el repo) y está en la fila**. Excepción acotada a D-156. **No
+  alcanza a `ensureCoilSaleProduct`** (SKU canónico, derivado, sin intervención humana; D-257 lo cubre). El
+  «+ Crear» del importador de compras (desplegado el 2026-09-27) **sale por D-367, en la sesión de arreglos**;
+  no se tocó. Precedente: `78f679c` (2026-09-18) quitó la alta de producto del importador de cotizaciones sin
+  D-nnn.
+- **Lo más importante del informe:** (1) el dolor es de anchura y altura a 1366 (columnas Estado y por ML
+  cortadas; la acción principal bajo el pliegue), no de tipografía; el menú lateral ocupa 256 px y su colapso
+  no se recuerda. (2) **LOG-3 (primero de todo):** `metersReported` es `null` en las OP de plancha: el detalle
+  del pedido dice «0.000 m de 60.000 m» en una orden completa. (3) **LOG-2 (segundo):** el valor de la plancha
+  sale 98.0001 y el total interno 3,923.5024: cobrar 3,923.50 deja un saldo de 0.0024 en Cobranzas (D-169
+  permite cobrar 3,923.51, así que cierra con 0.01 más).
+- **Revisiones (estándar de AGENTS §2, regla 2; ninguna vale como pase independiente):**
+  `docs/revision/recorrido-ux-autorrevision.md` (0 P0, 6 P1) y `docs/revision/recorrido-ux-segundo-modelo.md`
+  (Sonnet, contexto limpio: 1 P0, 9 P1). Encontraron **tres hallazgos míos falsos** (DES-1, CAT-1, COT-10),
+  uno mal diagnosticado (PLA-9 era un bug de lógica) y omisiones; todo corregido en el informe y verificado
+  de nuevo. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-09-28, motivo: esquema de un solo agente).
+- **Decisiones del dueño, ya incorporadas (2026-09-28):** razón de D-367 y su alcance (arriba); el «+ Crear»
+  del importador de compras sale; que la UI ofrezca lo que el rol no puede hacer (SUPERVISOR_PLANTA, 403) es un
+  hallazgo propio (P-17) y la sesión de arreglos busca el patrón en toda la app; el texto obsoleto del
+  importador de cotizaciones es Baja y trivial; **PLA-8 no es intencional**: cerrar una OP mueve kardex,
+  declara el consumo y dispara la terminación de bobina, así que lleva confirmación con el resumen de lo que
+  va a consumir (sube a Media); **LOG-3 primero de todo y LOG-2 segundo**, por encima de las 21 Medias.
+- **Pendiente del dueño:** la lista de lo que el cliente validó en UAT **la arma él** (la sección 3.2 del
+  informe queda marcada como pendiente; no se deduce del repo); aceptar o no las P-01 a P-17.
+- **Pendiente de verificar (pedido por el dueño):** `manual_by_default` en producción, solo lectura, para
+  asignar FAC-2 (si vale `true`, se descarta; si vale `false`, Media/S en P-08). **No se hizo**: no hay vía de
+  lectura sin SQL contra producción (prohibido, AGENTS §3.3) ni sin una sesión de administrador de producción;
+  se propone al dueño el comando o la vía exacta.
+- **Cobertura NO ejercida** (lo primero que preguntará la sesión siguiente): **mostrador, corte tercerizado,
+  drywall, importadores con archivo real, anulaciones y reversas, y los otros roles** (solo se probaron los menús
+  de VENDEDOR y SUPERVISOR_PLANTA, no sus flujos), más confirmar con faltante y edición de pedido.
+- **Entorno de la sesión:** worktree `../ayr-ux`, API `:3000` y web `:3001` contra `ayr_local_ux`; los dos
+  servidores están detenidos. Las capturas y las herramientas de medida están copiadas y verificadas en
+  `local-data/c06/ux/` del checkout principal (ignorada por git). **`ayr_local_ux`, el worktree `../ayr-ux` y la
+  rama local se conservan hasta que el dueño lo diga.**
+
 ## Ventana de Correcciones 06 (2026-09-28, sin migración)
 
 PR #52 (merge `8adb9cd`). SHA desplegado `3659b24`. Handoff: `docs/handoff/correcciones-06.md`. UAT:
