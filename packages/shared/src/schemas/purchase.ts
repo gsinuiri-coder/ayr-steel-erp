@@ -444,6 +444,16 @@ export const updatePurchaseDocumentSchema = z.object({
 });
 export type UpdatePurchaseDocumentInput = z.infer<typeof updatePurchaseDocumentSchema>;
 
+/**
+ * D-371 — corregir una línea de una compra en borrador (sin kardex): solo cantidad y costo
+ * unitario. Producto, moneda y TC no se cambian; tampoco se agregan líneas.
+ */
+export const updatePurchaseItemSchema = z.object({
+  qty: decimalStringSchema('KG', { positive: true }),
+  unitPrice: decimalStringSchema('MONEY', { positive: true }),
+});
+export type UpdatePurchaseItemInput = z.infer<typeof updatePurchaseItemSchema>;
+
 /** Pago parcial o total de una compra (D-039). */
 export const createSupplierPaymentSchema = z.object({
   date: isoDateSchema,

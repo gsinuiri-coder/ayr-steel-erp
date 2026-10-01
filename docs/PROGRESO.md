@@ -2,6 +2,36 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — cc06: M0 duplicados de cotización, M1 desglose de Ventas por material, M2 líneas de compras en borrador (D-368..D-372)
+
+Rama `feat/cc06-ui` desde `origin/main` = `a1fa929`, en el worktree `../ayr-cc06`. **PR sin merge ni
+deploy.** Handoff: `docs/handoff/cc06-m0-m2.md`; guion UAT: `docs/uat/cc06.md`.
+
+- **M0 (D-368, punto 4 del cliente):** se recuperó del stash `cc06-wip-duplicados-import-2026-09-29` el
+  trabajo del 2026-09-29 (las tres partes estaban) y se completó: misma regla de «cotización relacionada»
+  (no anulada, marca exacta) en preview y `confirm`, lock por N° en `confirm` y la foto
+  `GET /imports/quotations/duplicates` limitada a dos o más no anuladas. El stash se conserva hasta el merge.
+- **M1 (D-369, D-370, puntos 1 y 5):** el teórico de cada fila sale de las bobinas que alimentaron la
+  venta (metros rolados × ancho × espesor de la bobina × densidad cruda, sin el 1 %); el filtro de filas
+  sigue exacto. Se quitó el botón «Bobinas usadas»: la fila abre un modal de dos niveles (bobinas →
+  comprobantes). Ninguna fila del reporte cae al kg/m del producto: lo que no se traza sigue en
+  «No trazable», así que no hubo que parar por ese motivo. **Cambia los números** del peso teórico y del
+  rendimiento en el reporte y en la rentabilidad por comprobante (C06): es intencional.
+- **M2 (D-371):** editar cantidad y costo unitario, o quitar líneas, de compras en `DRAFT`; última línea y
+  pagos vigentes bloqueados; auditoría antes/después. **M2b (D-372)**, editar compras recibidas, queda en
+  backlog para la pista de kardex.
+- **Pruebas (2026-10-01, en el worktree):** `pnpm lint`, `pnpm typecheck` y `pnpm format:check` verdes;
+  `pnpm test`: API 1991 tests en 161 suites, web 87 en 14 archivos, todo verde. E2E local focalizado
+  (`E2E_API_PORT=3010`, base `ayr_local_e2e`): `ventas-material-d354`, `compras-borrador-lineas-d371`,
+  `correcciones-06`, `import-cotizaciones` e `import-cotizaciones-ui` = **20 passed, 0 failed, 0 skipped**.
+  La suite completa no se corrió en local (la máquina muere por memoria con la suite entera, como en
+  correcciones 04): la corre la CI de la rama, y su resultado va en el handoff.
+- **Revisiones (AGENTS §2, regla 2):** `docs/revision/cc06-autorrevision.md` (1 P0, 2 P1) y
+  `docs/revision/cc06-segundo-modelo.md` (Sonnet, contexto limpio: 0 P0, 2 P1). Coinciden en el P0/P1 de
+  accesorios con teórico 0 y en `receive` con líneas viejas; todo P0/P1 corregido en `3403e1c` y
+  verificado. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01).
+- **Deploy (cuando el dueño lo autorice):** sin migración. **API antes que web**, en ventana nocturna.
+
 ## 2026-10-01 — Ventana LOG-3 (D-366, PR #64)
 
 El dueño aprobó la revisión de la entrega y validó en producción la tarjeta del pedido y el
@@ -413,6 +443,14 @@ m6-segundo-modelo.md`): 0 P0, 2 P1 encontrados por los dos pases de forma indepe
   la anulación de merma, `revertSplit` y la reversa de recepción de corte; la CLI `terminate:zero-coils` (lote y
   `--undo`); y, de solo lectura, `traceLine` (el cuerpo del motor de Ventas por material, extraído) y la
   rentabilidad por comprobante (`document-profitability*`).
+
+- **cc06** (2026-10-01, rama `feat/cc06-ui`). D-368..D-371 (D-372 al backlog). Dos pases por subagentes
+  (`docs/revision/cc06-autorrevision.md`, `docs/revision/cc06-segundo-modelo.md`); **ninguno vale como
+  pase independiente**. **PENDIENTE DE REVISIÓN DEL DUEÑO** (2026-10-01). Piezas de riesgo:
+  `PurchasesService.receive` —**toca kardex**: ahora relee las líneas dentro de su transacción tras el
+  claim—; `updateItem`/`deleteItem` de compras en borrador (reescriben importes y totales de la cabecera,
+  sin kardex); y, de solo lectura, la consulta `coilUsage` de Ventas por material (metros por bobina desde
+  los reportes vigentes) y la rentabilidad por comprobante, que comparte el motor.
 
 ## Recorrido de UX — M2 de Correcciones 06 (2026-09-28, solo docs)
 

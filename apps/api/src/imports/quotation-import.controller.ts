@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Post,
   UploadedFile,
   UseInterceptors,
@@ -42,6 +43,11 @@ const ALLOWED_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 @Roles(Role.ADMINISTRADOR)
 export class QuotationImportController {
   constructor(private readonly imports: QuotationImportService) {}
+
+  @Get('duplicates')
+  duplicateInvoices() {
+    return this.imports.duplicateInvoices();
+  }
 
   /**
    * Lee el archivo y devuelve las filas resueltas contra el maestro. No escribe **nada**:

@@ -34,7 +34,17 @@ interface Seeds {
   lines: LineSeed[];
   invoiced?: Record<string, string>;
   facts?: Record<string, { produced: string; orders?: number; dispatched?: string }>;
-  usage?: { item: string; coil: string; kg: string; cost: string; thickness?: string }[];
+  usage?: {
+    item: string;
+    coil: string;
+    kg: string;
+    cost: string;
+    thickness?: string;
+    /** Metros que los reportes vigentes rolaron de esa bobina (D-369); por defecto ninguno. */
+    meters?: string;
+    width?: string;
+    avgCost?: string | null;
+  }[];
 }
 
 function lineRow(s: LineSeed): Record<string, unknown> {
@@ -64,6 +74,7 @@ function lineRow(s: LineSeed): Record<string, unknown> {
     c_density: coil ? d('7.8500') : null,
     c_finish_kind: coil ? 'PREPINTADO' : null,
     c_color: coil ? 'ROJO' : null,
+    customer_name: 'CLIENTE SAC',
   };
 }
 
@@ -78,11 +89,17 @@ async function build(seeds: Seeds): Promise<{ service: SalesByMaterialService; c
           sales_order_item_id: u.item,
           coil_id: `coil-${u.coil}`,
           code: u.coil,
+          type_key: 'PREP-0.30',
           thickness_mm: d(u.thickness ?? '0.30'),
+          width_mm: d(u.width ?? '1000.00'),
+          density_factor: d('7.8500'),
           finish_kind: 'PREPINTADO',
           color_name: 'ROJO',
           kg: d(u.kg),
           cost_pen: d(u.cost),
+          meters: u.meters === undefined ? null : d(u.meters),
+          avg_cost:
+            u.avgCost === undefined ? d('2.5000') : u.avgCost === null ? null : d(u.avgCost),
         })),
       );
     }
@@ -115,7 +132,9 @@ async function build(seeds: Seeds): Promise<{ service: SalesByMaterialService; c
   return { service: module.get(SalesByMaterialService), calls };
 }
 
-// 1000 mm × 0.30 mm × 7.85 × 1.01 (D-165).
+// D-369: el teórico sale de la bobina (1000 mm × 0.30 mm × 7.85) y **sin** el 1 % de D-165.
+const RAW_KG_PER_M = new Decimal('1000').times('0.30').times('7.85').div(1000);
+// Con el 1 %: lo que planta descuenta por metro. Solo para fijar que el reporte ya no lo usa.
 const KG_PER_M = kgPerMeter({ widthMm: '1000', thicknessMm: '0.30', densityFactor: '7.85' });
 
 describe('SalesByMaterialService (D-354)', () => {
@@ -125,7 +144,8 @@ describe('SalesByMaterialService (D-354)', () => {
       invoiced: { 'soi-1': '100.000' },
       facts: { 'soi-1': { produced: '100.000' } },
       usage: [
-        { item: 'soi-1', coil: 'B-1', kg: '200.000', cost: '500.0000' },
+        // B-1 roló los 100 m; B-2 solo aportó el despunte al cerrar (sin metros).
+        { item: 'soi-1', coil: 'B-1', kg: '200.000', cost: '500.0000', meters: '100.000' },
         { item: 'soi-1', coil: 'B-2', kg: '40.000', cost: '100.0000' },
       ],
     });
@@ -138,19 +158,64 @@ describe('SalesByMaterialService (D-354)', () => {
     const row = report.rows[0]!;
     expect(row).toMatchObject({ kind: 'COBERTURA', thicknessMm: '0.30', colorLabel: 'ROJO' });
     expect(row.metersSold).toBe('100.000');
-    expect(row.theoreticalKg).toBe(KG_PER_M.times(100).toFixed(3));
+    expect(row.theoreticalKg).toBe(RAW_KG_PER_M.times(100).toFixed(3));
     expect(row.realKg).toBe('240.000');
     expect(row.costPen).toBe('600.0000');
     expect(row.profitPen).toBe('2400.0000');
     expect(row.costPerKgPen).toBe('2.5000');
     expect(row.pricePerKgPen).toBe('12.5000');
     expect(row.marginPerKgPen).toBe('10.0000');
-    expect(row.yieldKg).toBe(KG_PER_M.times(100).minus(240).toFixed(3));
-    expect(row.coils.map((c) => [c.code, c.kg, c.costPen])).toEqual([
-      ['B-1', '200.000', '500.0000'],
-      ['B-2', '40.000', '100.0000'],
+    expect(row.yieldKg).toBe(RAW_KG_PER_M.times(100).minus(240).toFixed(3));
+    expect(row.coils.map((c) => [c.code, c.kg, c.costPen, c.theoreticalKg, c.meters])).toEqual([
+      ['B-1', '200.000', '500.0000', '235.500', '100.000'],
+      ['B-2', '40.000', '100.0000', '0.000', '0.000'],
+    ]);
+    expect(row.coils[0]).toMatchObject({ typeKey: 'PREP-0.30', avgCostPen: '2.5' });
+    expect(row.coils[0]?.documents).toEqual([
+      {
+        documentId: '00000000-0000-0000-0000-000000000001',
+        documentNumber: 'F001-1',
+        issueDate: '2026-09-10',
+        customerName: 'CLIENTE SAC',
+        kg: '200.000',
+        meters: '100.000',
+      },
     ]);
     expect(report.untraceable).toEqual([]);
+  });
+
+  it('D-369: el teórico sale de la bobina (1200 × 0.28, OP-26), no del SKU 0.30, y sin el 1 %', async () => {
+    const { service } = await build({
+      lines: [
+        { doc: '1', qty: '60.000', subtotal: '1800.0000' },
+        { doc: '2', qty: '40.000', subtotal: '1200.0000' },
+        { doc: '3', docType: 'NOTA_CREDITO', qty: '10.000', subtotal: '300.0000' },
+      ],
+      invoiced: { 'soi-1': '90.000' },
+      facts: { 'soi-1': { produced: '90.000' } },
+      usage: [
+        {
+          item: 'soi-1',
+          coil: 'B-26',
+          kg: '240.000',
+          cost: '600.0000',
+          thickness: '0.28',
+          width: '1200.00',
+          meters: '90.000',
+        },
+      ],
+    });
+    const row = (await service.report(SEPT)).rows[0]!;
+    // 90 m × 1200 × 0.28 × 7.85 ÷ 1000 = 237.384 kg.
+    expect(row.theoreticalKg).toBe('237.384');
+    expect(row.theoreticalKg).not.toBe(KG_PER_M.times(90).toFixed(3));
+    const coil = row.coils[0]!;
+    expect(coil).toMatchObject({ thicknessMm: '0.28', theoreticalKg: '237.384', kg: '240.000' });
+    expect(coil.documents.map((doc) => [doc.documentNumber, doc.kg, doc.meters])).toEqual([
+      ['F001-1', '160.000', '60.000'],
+      ['F001-2', '106.667', '40.000'],
+      ['F001-3', '-26.667', '-10.000'],
+    ]);
   });
 
   it('peso real = consumo de las OP de la línea cuando lo facturado cubre lo producido', async () => {

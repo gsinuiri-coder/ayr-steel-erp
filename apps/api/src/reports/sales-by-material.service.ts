@@ -44,6 +44,7 @@ export interface LineRow {
   c_density: Prisma.Decimal | null;
   c_finish_kind: string | null;
   c_color: string | null;
+  customer_name: string;
 }
 
 interface InvoicedRow {
@@ -62,11 +63,16 @@ interface UsageRow {
   sales_order_item_id: string;
   coil_id: string;
   code: string;
+  type_key: string;
   thickness_mm: Prisma.Decimal;
+  width_mm: Prisma.Decimal;
+  density_factor: Prisma.Decimal;
   finish_kind: string;
   color_name: string | null;
   kg: Prisma.Decimal;
   cost_pen: Prisma.Decimal;
+  meters: Prisma.Decimal | null;
+  avg_cost: Prisma.Decimal | null;
 }
 
 const ROOFING_KIND_TO_MATERIAL: Record<string, SalesMaterialKind> = {
@@ -106,11 +112,13 @@ const LINE_COLUMNS = Prisma.sql`
         c."thickness_mm" AS "c_thickness",
         cf."density_factor" AS "c_density",
         cf."kind"::text AS "c_finish_kind",
-        cc."name" AS "c_color"`;
+        cc."name" AS "c_color",
+        cu."name" AS "customer_name"`;
 
 /** Los cruces de `LINE_COLUMNS`, desde `fiscal_document_items fdi` y `products p`. */
 const LINE_JOINS = Prisma.sql`
       JOIN "fiscal_documents" fd ON fd."id" = fdi."document_id"
+      JOIN "customers" cu ON cu."id" = fd."customer_id"
       LEFT JOIN "business_lines" blp ON blp."id" = p."business_line_id"
       LEFT JOIN "fiscal_document_items" afi ON afi."id" = fdi."affected_item_id"
       LEFT JOIN "sales_order_items" soi
@@ -202,10 +210,15 @@ export class SalesByMaterialService {
         salesOrderItemId: u.sales_order_item_id,
         coilId: u.coil_id,
         code: u.code,
+        typeKey: u.type_key,
         thicknessMm: u.thickness_mm.toFixed(2),
         colorLabel: colorLabelOf(u.color_name, u.finish_kind as FinishKind),
         kg: u.kg.toString(),
         costPen: u.cost_pen.toString(),
+        widthMm: u.width_mm.toString(),
+        densityFactor: u.density_factor.toString(),
+        meters: u.meters === null ? '0' : u.meters.toString(),
+        avgCostPen: u.avg_cost === null ? null : u.avg_cost.toString(),
       })),
     };
   }
@@ -356,21 +369,63 @@ export class SalesByMaterialService {
         JOIN "dispatch_items" di ON di."movement_id" = COALESCE(m."reversal_of_id", m."id")
         WHERE m."ref_type" = 'SALE' AND m."item_type" = 'COIL'
           AND di."sales_order_item_id" = ANY(${itemIds}::uuid[])
+      ),
+      -- D-369: los metros que cada reporte vigente roló, atribuidos a la bobina de su salida.
+      -- Un reporte de coberturas sale de un solo rollo; la salida original es la que no es
+      -- reversa (la de un reporte revertido queda fuera por el estado del reporte).
+      report_coil AS (
+        SELECT DISTINCT ops."item_id", pr."id" AS "report_id", pr."meters_m",
+          m."item_id" AS "coil_id"
+        FROM "production_reports" pr
+        JOIN ops ON ops."op_id" = pr."production_order_id"
+        JOIN "inventory_movements" m
+          ON m."ref_type" = 'PRODUCTION' AND m."ref_id" = pr."id"::text
+         AND m."item_type" = 'COIL' AND m."type" = 'OUT' AND m."reversal_of_id" IS NULL
+        WHERE pr."status" = 'ACTIVE'
+      ),
+      -- La misma precedencia que reportMeters (production/reported-meters.ts): los metros directos del reporte (a medida y
+      -- accesorio, que no lleva detalle de largos, D-343) y, si no hay, la suma de sus largos
+      -- (plancha NIU, D-366).
+      meters AS (
+        SELECT rc."item_id", rc."coil_id",
+          SUM(COALESCE(
+            rc."meters_m",
+            (SELECT SUM(p."qty" * p."length_mm") / 1000
+             FROM "production_report_pieces" p WHERE p."report_id" = rc."report_id"),
+            0
+          )) AS "meters"
+        FROM report_coil rc
+        GROUP BY rc."item_id", rc."coil_id"
+      ),
+      totals AS (
+        SELECT u."item_id", u."coil_id",
+          SUM(CASE u."type" WHEN 'OUT' THEN u."qty" WHEN 'IN' THEN -u."qty" ELSE 0 END) AS "kg",
+          SUM(CASE u."type" WHEN 'OUT' THEN u."total_cost" ELSE -u."total_cost" END) AS "cost_pen"
+        FROM usage u
+        GROUP BY u."item_id", u."coil_id"
       )
       SELECT
-        u."item_id" AS "sales_order_item_id",
+        t."item_id" AS "sales_order_item_id",
         c."id" AS "coil_id",
         c."code",
+        c."type_key",
         c."thickness_mm",
+        c."width_mm",
+        f."density_factor",
         f."kind"::text AS "finish_kind",
         col."name" AS "color_name",
-        SUM(CASE u."type" WHEN 'OUT' THEN u."qty" WHEN 'IN' THEN -u."qty" ELSE 0 END) AS "kg",
-        SUM(CASE u."type" WHEN 'OUT' THEN u."total_cost" ELSE -u."total_cost" END) AS "cost_pen"
-      FROM usage u
-      JOIN "coils" c ON c."id"::text = u."coil_id"::text
+        t."kg",
+        t."cost_pen",
+        mt."meters",
+        NULLIF(ib."avg_cost", 0) AS "avg_cost"
+      FROM totals t
+      JOIN "coils" c ON c."id"::text = t."coil_id"::text
       JOIN "finishes" f ON f."id" = c."finish_id"
       LEFT JOIN "colors" col ON col."id" = c."color_id"
-      GROUP BY u."item_id", c."id", c."code", c."thickness_mm", f."kind", col."name"
+      LEFT JOIN meters mt
+        ON mt."item_id" = t."item_id" AND mt."coil_id"::text = t."coil_id"::text
+      LEFT JOIN "inventory_balances" ib
+        ON ib."item_type" = 'COIL' AND ib."item_id"::text = c."id"::text
     `;
   }
 }
@@ -426,5 +481,6 @@ export function toInvoiceLine(r: LineRow): InvoiceLine {
     colorLabel: isCoilSale
       ? colorLabelOf(r.c_color, r.c_finish_kind as FinishKind | null)
       : colorLabelOf(r.p_color, r.p_finish_kind as FinishKind | null),
+    customerName: r.customer_name,
   };
 }

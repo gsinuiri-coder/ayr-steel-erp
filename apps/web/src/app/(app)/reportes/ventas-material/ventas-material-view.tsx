@@ -1,6 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   PROFIT_SOURCES_NOTICE,
@@ -44,9 +46,8 @@ import {
   parseKardexRange,
   resolveKardexDates,
 } from '@/lib/kardex-range';
-import { materialCoils, type CoilView } from '@/lib/material-coils';
 import { useUrlState } from '@/lib/use-url-state';
-import { cn } from '@/lib/utils';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 
 /** Los presets de este reporte: sin «Todo», que no tiene sentido para un reporte de mes. */
 const RANGES = ['month', 'prev'] as const;
@@ -108,7 +109,8 @@ export function VentasMaterialView() {
     return { thicknesses, colors };
   }, [unfiltered.data]);
 
-  const [modal, setModal] = useState<{ title: string; rows: SalesMaterialRowDto[] } | null>(null);
+  // D-370: el desglose se abre desde la fila; ya no hay un botón para todas las filas.
+  const [selected, setSelected] = useState<SalesMaterialRowDto | null>(null);
   const data = report.data;
 
   return (
@@ -198,17 +200,6 @@ export function VentasMaterialView() {
           }}
           options={options.colors.map((c) => ({ value: c, label: c }))}
         />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!data || data.rows.length === 0}
-          onClick={() => {
-            if (data) setModal({ title: 'Bobinas usadas — todas las filas', rows: data.rows });
-          }}
-        >
-          Bobinas usadas
-        </Button>
       </div>
       {!validRange && (
         <p className="text-xs text-destructive">La fecha «Desde» es posterior a «Hasta».</p>
@@ -270,12 +261,7 @@ export function VentasMaterialView() {
                     subtotal={sub}
                     kind={sub.kind}
                     rows={data.rows.filter((r) => r.kind === sub.kind)}
-                    onOpen={(row) => {
-                      setModal({
-                        title: `Bobinas usadas — ${SALES_MATERIAL_KIND_LABELS[row.kind]} ${row.thicknessMm} mm ${row.colorLabel}`,
-                        rows: [row],
-                      });
-                    }}
+                    onOpen={setSelected}
                   />
                 ))}
               </TableBody>
@@ -352,12 +338,10 @@ export function VentasMaterialView() {
         </>
       )}
 
-      <CoilsDialog
-        open={modal !== null}
-        title={modal?.title ?? ''}
-        rows={modal?.rows ?? []}
+      <MaterialBreakdownDialog
+        row={selected}
         onClose={() => {
-          setModal(null);
+          setSelected(null);
         }}
       />
     </RoleGate>
@@ -453,7 +437,7 @@ function KindGroup({
           data-testid="fila-material"
           className="cursor-pointer hover:bg-muted/50"
           tabIndex={0}
-          title="Ver las bobinas usadas"
+          title="Ver el desglose por bobina y comprobante"
           onClick={() => {
             onOpen(row);
           }}
@@ -478,96 +462,173 @@ function KindGroup({
   );
 }
 
-function CoilsDialog({
-  open,
-  title,
-  rows,
+/**
+ * D-370 — desglose de una fila, en dos niveles.
+ *
+ * Nivel 1: las bobinas que alimentaron la venta de la fila (por tolerancia de espesor pudo ser
+ * otra que la del producto, D-086), con el costo de kardex de lo consumido como dato principal y
+ * el costo promedio por kg de la bobina debajo. Nivel 2: por bobina, los comprobantes que se
+ * llevaron sus kilos y metros (una nota de crédito resta).
+ */
+function MaterialBreakdownDialog({
+  row,
   onClose,
 }: {
-  open: boolean;
-  title: string;
-  rows: SalesMaterialRowDto[];
+  row: SalesMaterialRowDto | null;
   onClose: () => void;
 }) {
-  const [view, setView] = useState<CoilView>('sum');
-  const lines = useMemo(() => materialCoils(rows, view), [rows, view]);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (coilId: string): void => {
+    setExpanded((cur) => {
+      const next = new Set(cur);
+      if (next.has(coilId)) next.delete(coilId);
+      else next.add(coilId);
+      return next;
+    });
+  };
+  const coils = row?.coils ?? [];
   return (
     <Dialog
-      open={open}
+      open={row !== null}
       onOpenChange={(next) => {
-        if (!next) onClose();
+        if (!next) {
+          setExpanded(new Set());
+          onClose();
+        }
       }}
     >
-      {/* `sm:max-w-*` (no una clase de ancho sin prefijo): `cn()` no desduplica un
-          `max-w-3xl` sin variante contra el `sm:max-w-sm` por defecto de DialogContent —
-          conviven y `sm:max-w-sm` gana en cascada desde 640px, dejando el modal en 384px
-          pese al 3xl. Mismo bug en `comprobante-detalle-view.tsx` (nota de crédito), fuera
-          de este reporte y sin tabla de desglose: no se toca en esta entrega. */}
-      <DialogContent className="sm:max-w-3xl">
+      {/* `sm:max-w-*` con prefijo: `cn()` no desduplica un `max-w-*` sin variante contra el
+          `sm:max-w-sm` por defecto de DialogContent, y el modal quedaba en 384px. */}
+      <DialogContent className="sm:max-w-5xl" data-testid="desglose-material">
         <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
+          <DialogTitle>
+            {row === null
+              ? ''
+              : `${SALES_MATERIAL_KIND_LABELS[row.kind]} ${row.thicknessMm} mm ${row.colorLabel}`}
+          </DialogTitle>
           <DialogDescription>
-            {lines.length === 1 ? '1 bobina' : `${String(lines.length)} filas`}. Espesor y color de
-            cada bobina: por tolerancia pudo usarse otra que la del producto.
+            {coils.length === 1 ? '1 bobina' : `${String(coils.length)} bobinas`} alimentaron esta
+            venta. Espesor y color son los de cada bobina: por tolerancia (±0,02 mm) pudo usarse
+            otra que la del producto. Abre una bobina para ver sus comprobantes.
           </DialogDescription>
         </DialogHeader>
-        <div className="flex gap-2" role="group" aria-label="Vista de bobinas">
-          <FilterChip
-            active={view === 'sum'}
-            onToggle={() => {
-              setView('sum');
-            }}
-          >
-            Sumado
-          </FilterChip>
-          <FilterChip
-            active={view === 'split'}
-            onToggle={() => {
-              setView('split');
-            }}
-          >
-            Desglosado
-          </FilterChip>
-        </div>
-        {/* La fórmula va en una línea de texto, no en los headers: con espesor, color, tipo,
-            kg y costo, un header con la fórmula no entra en una línea y satura la tabla. */}
         <p className="text-xs text-muted-foreground">
-          Peso real y Costo prod. de la fila salen de sumar Kg consumidos y Costo de estas bobinas.
+          Peso teórico de la fila = suma del teórico de estas bobinas (metros rolados × ancho ×
+          espesor de la bobina × densidad del acabado, sin el 1 % de merma). Peso real y Costo prod.
+          = suma de Kg consumidos y Costo prod.
         </p>
-        <div className="max-h-[60vh] overflow-auto rounded-md border">
-          <Table data-testid="bobinas-usadas">
-            <TableHeader>
+        <div className="max-h-[65vh] overflow-auto rounded-md border">
+          <Table data-testid="bobinas-material">
+            <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
+                <TableHead className="w-8" />
                 <TableHead>Bobina</TableHead>
-                <TableHead className="text-right">Espesor</TableHead>
+                <TableHead className="text-right">Espesor real</TableHead>
                 <TableHead>Color</TableHead>
-                {view === 'split' && <TableHead>Tipo</TableHead>}
+                <TableHead>Tipo</TableHead>
                 <TableHead className="text-right">Kg consumidos</TableHead>
-                <TableHead className="text-right">Costo</TableHead>
+                <TableHead className="text-right">Costo prod.</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lines.length === 0 && (
+              {coils.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={view === 'split' ? 6 : 5} className="text-muted-foreground">
+                  <TableCell colSpan={7} className="text-muted-foreground">
                     Sin bobinas.
                   </TableCell>
                 </TableRow>
               )}
-              {lines.map((l) => (
-                <TableRow key={l.key}>
-                  <TableCell className="font-mono">{l.code}</TableCell>
-                  <TableCell className="text-right">{l.thicknessMm}</TableCell>
-                  <TableCell>{l.colorLabel}</TableCell>
-                  {view === 'split' && (
-                    <TableCell className={cn(l.kind === null && 'text-muted-foreground')}>
-                      {l.kind === null ? '—' : SALES_MATERIAL_KIND_LABELS[l.kind]}
-                    </TableCell>
-                  )}
-                  <TableCell className="text-right">{formatQty(l.kg, 'kg')}</TableCell>
-                  <TableCell className="text-right">{formatMoney(l.costPen)}</TableCell>
-                </TableRow>
-              ))}
+              {coils.map((coil) => {
+                const open = expanded.has(coil.coilId);
+                const panelId = `docs-${coil.coilId}`;
+                return (
+                  <Fragment key={coil.coilId}>
+                    <TableRow data-testid="bobina-material">
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-expanded={open}
+                          aria-controls={open ? panelId : undefined}
+                          aria-label={`${open ? 'Ocultar' : 'Ver'} comprobantes de ${coil.code}`}
+                          onClick={() => {
+                            toggle(coil.coilId);
+                          }}
+                        >
+                          <ChevronRight
+                            className={cn('size-4 transition-transform', open && 'rotate-90')}
+                          />
+                        </Button>
+                      </TableCell>
+                      <TableCell className="font-mono">
+                        <Link className={LINK_CLASSNAME} href={`/bobinas/${coil.coilId}`}>
+                          {coil.code}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-right">{coil.thicknessMm}</TableCell>
+                      <TableCell>{coil.colorLabel}</TableCell>
+                      <TableCell>{coil.typeKey}</TableCell>
+                      <TableCell className="text-right">
+                        {formatQty(coil.kg, 'kg')}
+                        {/* Lo que suma al peso teórico de la fila, para poder verificarlo. */}
+                        <div className="text-xs text-muted-foreground">
+                          teórico {formatQty(coil.theoreticalKg, 'kg')} ·{' '}
+                          {formatQty(coil.meters, 'm')}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(coil.costPen)}
+                        <div className="text-xs text-muted-foreground">
+                          {coil.avgCostPen === null
+                            ? 'sin costo promedio'
+                            : `prom. ${formatMoney(coil.avgCostPen, 'PEN', 4)} /kg`}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {open && (
+                      <TableRow id={panelId} className="bg-muted/30 hover:bg-muted/30">
+                        <TableCell />
+                        <TableCell colSpan={6} className="p-2">
+                          <Table data-testid="comprobantes-bobina">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>N°</TableHead>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Cliente</TableHead>
+                                <TableHead className="text-right">Kg atribuidos</TableHead>
+                                <TableHead className="text-right">ML atribuidos</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {coil.documents.map((doc) => (
+                                <TableRow key={doc.documentId}>
+                                  <TableCell className="font-mono">
+                                    <Link
+                                      className={LINK_CLASSNAME}
+                                      href={`/comprobantes/${doc.documentId}`}
+                                    >
+                                      {doc.documentNumber ?? 'Sin número'}
+                                    </Link>
+                                  </TableCell>
+                                  <TableCell>{formatDate(doc.issueDate)}</TableCell>
+                                  <TableCell>{doc.customerName}</TableCell>
+                                  <TableCell className="text-right">
+                                    {formatQty(doc.kg, 'kg')}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    {formatQty(doc.meters, 'm')}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

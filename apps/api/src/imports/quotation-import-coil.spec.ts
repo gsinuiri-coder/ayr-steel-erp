@@ -291,7 +291,11 @@ describe('QuotationImportService.confirm — lo que viaja a la cotización', () 
     const { service, quotations } = build();
     const tx = {
       $executeRawUnsafe: jest.fn(),
-      quotation: { findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 2 }) },
+      $executeRaw: jest.fn(),
+      quotation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 2 }),
+      },
     };
     (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
       fn: (t: unknown) => Promise<unknown>,
@@ -333,7 +337,11 @@ describe('QuotationImportService.confirm — lo que viaja a la cotización', () 
     const { service, quotations } = build();
     const tx = {
       $executeRawUnsafe: jest.fn(),
-      quotation: { findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 3 }) },
+      $executeRaw: jest.fn(),
+      quotation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 3 }),
+      },
     };
     (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
       fn: (t: unknown) => Promise<unknown>,
@@ -396,5 +404,98 @@ describe('readPaperLines', () => {
   it('dólares sin tipo de cambio no tiene importe legible', () => {
     const [line] = readPaperLines(csv([{ ...BOB_AZUL, currency: 'Dólares' }]));
     expect(line?.netAmountPen).toBeNull();
+  });
+});
+
+describe('D-368 — comprobante con cotización relacionada', () => {
+  const MARK = 'Factura externa: ';
+
+  it('el preview marca la fila como error y busca el número exacto, sin las anuladas', async () => {
+    const { service, prisma } = build();
+    prisma.quotation.findMany.mockResolvedValue([{ notes: `${MARK}FFA1-1350\nNota del vendedor` }]);
+    const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
+    const issue = row?.issues.find((i) => i.field === 'row');
+    expect(issue).toMatchObject({ severity: 'error' });
+    expect(issue?.message).toMatch(/cotización relacionada/);
+    const [[{ where }]] = prisma.quotation.findMany.mock.calls as [
+      [{ where: Record<string, unknown> }],
+    ];
+    expect(where).toEqual({
+      status: { not: 'CANCELLED' },
+      OR: [{ notes: `${MARK}FFA1-1350` }, { notes: { startsWith: `${MARK}FFA1-1350\n` } }],
+    });
+  });
+
+  it('una cotización de FFA1-13500 no vuelve relacionada a FFA1-1350', async () => {
+    const { service, prisma } = build();
+    prisma.quotation.findMany.mockResolvedValue([{ notes: `${MARK}FFA1-13500` }]);
+    const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
+    expect(row?.issues.some((i) => i.message.includes('cotización relacionada'))).toBe(false);
+  });
+
+  it('confirm revalida dentro de la transacción y no crea el documento', async () => {
+    const { service, quotations } = build();
+    const findFirst = jest.fn().mockResolvedValue({ seq: 7 });
+    const tx = {
+      $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
+      quotation: { findFirst, findUniqueOrThrow: jest.fn() },
+    };
+    (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
+      fn: (t: unknown) => Promise<unknown>,
+    ) => fn(tx);
+    await expect(
+      service.confirm({ id: 'u-1' } as never, {
+        rows: [
+          {
+            rowNumber: 1,
+            documentKey: 'FFA1-1350',
+            issueDate: '2026-08-07',
+            customerId: '11111111-1111-4111-8111-111111111111',
+            productId: '22222222-2222-4222-8222-222222222222',
+            qty: '1.000',
+            unitPricePen: '10.0000',
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      response: {
+        errors: { 'FFA1-1350': [expect.stringMatching(/COT-000007/)] },
+      },
+    });
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        status: { not: 'CANCELLED' },
+        OR: [{ notes: `${MARK}FFA1-1350` }, { notes: { startsWith: `${MARK}FFA1-1350\n` } }],
+      },
+      select: { seq: true },
+    });
+    expect(quotations.createInTx).not.toHaveBeenCalled();
+    // El lock por número se toma antes de revalidar (dos confirmaciones simultáneas).
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('la foto de duplicados agrupa por número y solo devuelve dos o más no anuladas', async () => {
+    const { service, prisma } = build();
+    prisma.quotation.findMany.mockResolvedValue([
+      // Re-cotizado: una anulada y una viva no es un duplicado.
+      { seq: 1, status: 'CONFIRMED', notes: `${MARK}F001-1` },
+      { seq: 2, status: 'CANCELLED', notes: `${MARK}F001-1\nre-cotizada` },
+      { seq: 3, status: 'CONFIRMED', notes: `${MARK}F001-12` },
+      // Duplicado de verdad: dos vivas; la anulada va como contexto.
+      { seq: 4, status: 'EMITTED', notes: `${MARK}F001-2` },
+      { seq: 5, status: 'CONFIRMED', notes: `${MARK}F001-2` },
+      { seq: 6, status: 'CANCELLED', notes: `${MARK}F001-2` },
+    ]);
+    await expect(service.duplicateInvoices()).resolves.toEqual([
+      {
+        invoice: 'F001-2',
+        quotations: [
+          { code: 'COT-000004', status: 'EMITTED' },
+          { code: 'COT-000005', status: 'CONFIRMED' },
+          { code: 'COT-000006', status: 'CANCELLED' },
+        ],
+      },
+    ]);
   });
 });

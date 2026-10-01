@@ -49,6 +49,7 @@ import {
   type SupplierPaymentDto,
   type SupplierStatementDto,
   type UpdatePurchaseDocumentInput,
+  type UpdatePurchaseItemInput,
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
 } from '@ayr/shared';
@@ -65,6 +66,13 @@ import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { prorateByWeight } from './landed-cost';
+import {
+  assertCanDeleteLine,
+  assertDraftEditable,
+  editedLineAmounts,
+  impliedIgvRatePct,
+  purchaseTotalsOf,
+} from './purchase-draft-edit';
 import { parseInvoiceXml } from './invoice-xml';
 import {
   computeDueDate,
@@ -393,6 +401,163 @@ export class PurchasesService {
   }
 
   /**
+   * D-371 — corregir cantidad y costo unitario de una línea de una compra en borrador. Sin
+   * kardex no hay nada más que mover: la línea y los totales de la cabecera se recalculan con
+   * la misma cuenta del alta, y la auditoría guarda el antes y el después.
+   */
+  async updateItem(
+    actor: RequestUser,
+    id: string,
+    itemId: string,
+    input: UpdatePurchaseItemInput,
+  ): Promise<PurchaseDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const { purchase, items } = await this.lockDraftForItemEdit(tx, id);
+      const item = items.find((i) => i.id === itemId);
+      if (!item) throw new NotFoundException('Línea de compra no encontrada');
+      // Sin cambios no se recalcula: hacerlo pisaría el importe del papel de una línea
+      // importada (D-359) con cantidad × precio, y dejaría una auditoría vacía.
+      if (item.qty.equals(input.qty) && item.unitPrice.equals(input.unitPrice)) return;
+
+      const rate = impliedIgvRatePct(purchase.subtotal.toString(), purchase.igv.toString());
+      const amounts = editedLineAmounts(input.qty, input.unitPrice, rate);
+      await tx.purchaseItem.update({
+        where: { id: item.id },
+        data: {
+          qty: toFixedString(input.qty, 'KG'),
+          unitPrice: toFixedString(input.unitPrice, 'MONEY'),
+          subtotal: toFixedString(amounts.subtotal, 'MONEY'),
+          igv: toFixedString(amounts.igv, 'MONEY'),
+          total: toFixedString(amounts.total, 'MONEY'),
+        },
+      });
+      const lines = items.map((i) =>
+        i.id === item.id ? amounts : { subtotal: i.subtotal.toString(), igv: i.igv.toString() },
+      );
+      const totals = await this.writeDraftTotals(tx, purchase, lines);
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'purchases.update-item',
+        entity: 'purchases',
+        entityId: id,
+        before: {
+          itemId: item.id,
+          lineNumber: item.lineNumber,
+          qty: item.qty.toFixed(3),
+          unitPrice: item.unitPrice.toFixed(4),
+          total: item.total.toFixed(4),
+          purchaseTotal: purchase.total.toFixed(4),
+        },
+        after: {
+          itemId: item.id,
+          lineNumber: item.lineNumber,
+          qty: toFixedString(input.qty, 'KG'),
+          unitPrice: toFixedString(input.unitPrice, 'MONEY'),
+          total: toFixedString(amounts.total, 'MONEY'),
+          purchaseTotal: toFixedString(totals.total, 'MONEY'),
+        },
+      });
+    });
+    return this.findOne(id);
+  }
+
+  /**
+   * D-371 — quitar una línea de una compra en borrador. La última no se quita (una compra sin
+   * líneas se anula); las que siguen se renumeran para que el detalle no quede con huecos.
+   */
+  async deleteItem(actor: RequestUser, id: string, itemId: string): Promise<PurchaseDto> {
+    await this.prisma.$transaction(async (tx) => {
+      const { purchase, items } = await this.lockDraftForItemEdit(tx, id);
+      const item = items.find((i) => i.id === itemId);
+      if (!item) throw new NotFoundException('Línea de compra no encontrada');
+      assertCanDeleteLine(items.length);
+
+      await tx.purchaseItem.delete({ where: { id: item.id } });
+      const remaining = items.filter((i) => i.id !== item.id);
+      // En orden ascendente: cada línea baja a un número que ya quedó libre, sin chocar con el
+      // único `(purchaseId, lineNumber)`.
+      for (const [index, line] of remaining.entries()) {
+        if (line.lineNumber !== index + 1) {
+          await tx.purchaseItem.update({
+            where: { id: line.id },
+            data: { lineNumber: index + 1 },
+          });
+        }
+      }
+      const totals = await this.writeDraftTotals(
+        tx,
+        purchase,
+        remaining.map((i) => ({ subtotal: i.subtotal.toString(), igv: i.igv.toString() })),
+      );
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'purchases.delete-item',
+        entity: 'purchases',
+        entityId: id,
+        before: {
+          itemId: item.id,
+          lineNumber: item.lineNumber,
+          description: item.description,
+          qty: item.qty.toFixed(3),
+          unitPrice: item.unitPrice.toFixed(4),
+          total: item.total.toFixed(4),
+          purchaseTotal: purchase.total.toFixed(4),
+        },
+        after: { lines: remaining.length, purchaseTotal: toFixedString(totals.total, 'MONEY') },
+      });
+    });
+    return this.findOne(id);
+  }
+
+  /**
+   * Toma el lock de la fila de la compra **condicionado a que siga en borrador** —el mismo
+   * patrón de `receive`, que la pasa a recibida con un `update` condicionado—: una recepción o
+   * un pago concurrentes esperan a esta transacción, y si la compra ya dejó de ser borrador
+   * no se toca nada.
+   */
+  private async lockDraftForItemEdit(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<{ purchase: Purchase; items: PurchaseItem[] }> {
+    const locked = await tx.purchase.updateMany({
+      where: { id, status: PurchaseStatus.DRAFT },
+      data: { updatedAt: new Date() },
+    });
+    const purchase = await tx.purchase.findUnique({ where: { id } });
+    if (!purchase) throw new NotFoundException('Compra no encontrada');
+    const livePayments = await tx.supplierPayment.count({
+      where: { purchaseId: id, reversedAt: null },
+    });
+    assertDraftEditable({
+      status: locked.count === 1 ? PurchaseStatus.DRAFT : purchase.status,
+      livePayments,
+    });
+    const items = await tx.purchaseItem.findMany({
+      where: { purchaseId: id },
+      orderBy: { lineNumber: 'asc' },
+    });
+    return { purchase, items };
+  }
+
+  private async writeDraftTotals(
+    tx: Prisma.TransactionClient,
+    purchase: Purchase,
+    lines: readonly { subtotal: string | Decimal; igv: string | Decimal }[],
+  ): Promise<{ total: Decimal }> {
+    const totals = purchaseTotalsOf(lines, purchase.exchangeRate.toString());
+    await tx.purchase.update({
+      where: { id: purchase.id },
+      data: {
+        subtotal: toFixedString(totals.subtotal, 'MONEY'),
+        igv: toFixedString(totals.igv, 'MONEY'),
+        total: toFixedString(totals.total, 'MONEY'),
+        totalPen: toFixedString(totals.totalPen, 'MONEY'),
+      },
+    });
+    return totals;
+  }
+
+  /**
    * Recepción (D-030). COIL crea una bobina por línea, FINISHED_GOOD mueve el producto
    * de catálogo, SERVICE y EXPENSE no tocan inventario. Todo en una sola transacción:
    * o la compra queda recibida con sus movimientos, o no cambia nada.
@@ -431,8 +596,16 @@ export class PurchasesService {
         if (claimed.count === 0) {
           throw new ConflictException('La compra ya fue recibida o anulada por otra operación');
         }
+        // D-371: las líneas se releen **después** del claim. Una corrección de líneas en
+        // borrador (que toma el mismo lock) pudo confirmarse entre la lectura de arriba y este
+        // punto; recibir con la foto vieja daría de alta bobinas o kardex con cantidades que
+        // ya no son las de la compra.
+        const items = await tx.purchaseItem.findMany({
+          where: { purchaseId: purchase.id },
+          orderBy: { lineNumber: 'asc' },
+        });
 
-        for (const item of purchase.items) {
+        for (const item of items) {
           if (purchase.type === PurchaseType.COIL) {
             await this.coils.create(tx, {
               businessLineId: purchase.businessLineId,
@@ -504,7 +677,7 @@ export class PurchasesService {
           before: { status: purchase.status },
           after: {
             status: PurchaseStatus.RECEIVED,
-            items: purchase.items.length,
+            items: items.length,
             operationDate,
             ...(landed ? { landedCost: landed } : {}),
             ...(cuttingCost ? { cuttingCost } : {}),
