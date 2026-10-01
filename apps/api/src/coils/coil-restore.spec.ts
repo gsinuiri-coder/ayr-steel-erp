@@ -4,6 +4,7 @@ import { assertCoilOutNotBeforeEntry } from '../inventory/inventory.service';
 import {
   classifyCoilRestore,
   restoreCoilInTx,
+  undoCoilRestoreBatch,
   type RestoreContext,
   type RestoreMovement,
 } from './coil-restore';
@@ -23,6 +24,7 @@ function mov(
     refType: 'PURCHASE',
     refId: PURCHASE,
     qty: D('4150'),
+    unit: 'KGM',
     unitCost: D('2.6938'),
     operationDate: date('2026-08-14'),
     reversalOfId: null,
@@ -255,6 +257,7 @@ describe('restoreCoilInTx (D-375)', () => {
         type: 'IN',
         qty: '4150',
         unitCost: '2.6938',
+        unit: 'KGM',
         refType: 'PURCHASE',
         refId: PURCHASE,
         operationDate: '2026-08-14',
@@ -326,5 +329,85 @@ describe('assertCoilOutNotBeforeEntry (D-375)', () => {
     await expect(
       assertCoilOutNotBeforeEntry(tx(null), 'coil-1', '2026-01-01'),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('undoCoilRestoreBatch (D-375)', () => {
+  const LOG = {
+    entityId: 'coil-1',
+    before: { operationDate: '2026-08-14' },
+    after: { movementId: '99', batchId: 'batch-1', date: '2026-08-14' },
+  };
+  function fakeTx(later: number, undone = 0) {
+    return {
+      auditLog: {
+        findMany: jest.fn().mockResolvedValue([LOG]),
+        count: jest.fn().mockResolvedValue(undone),
+      },
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'coil-1' }]),
+      inventoryMovement: { count: jest.fn().mockResolvedValue(later) },
+      coil: { update: jest.fn().mockResolvedValue({}) },
+    } as unknown as Prisma.TransactionClient & { coil: { update: jest.Mock } };
+  }
+
+  it('revierte la entrada en su misma fecha y deja la bobina anulada con su fecha de antes', async () => {
+    const tx = fakeTx(0);
+    const inventory = { reverse: jest.fn().mockResolvedValue({}) };
+    const audit = { write: jest.fn().mockResolvedValue(undefined) };
+    const ids = await undoCoilRestoreBatch(
+      tx,
+      inventory as never,
+      audit as never,
+      'admin-1',
+      'batch-1',
+      'deshacer',
+    );
+    expect(ids).toEqual(['coil-1']);
+    expect(inventory.reverse).toHaveBeenCalledWith(
+      tx,
+      99n,
+      'admin-1',
+      expect.stringContaining('batch-1'),
+      '2026-08-14',
+      true,
+    );
+    expect(tx.coil.update).toHaveBeenCalledWith({
+      where: { id: 'coil-1' },
+      data: { status: 'CANCELLED', operationDate: new Date('2026-08-14T00:00:00.000Z') },
+    });
+    expect(audit.write).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ action: 'coils.restore.undo' }),
+    );
+  });
+
+  it('no escribe nada si la bobina tuvo movimientos después de restaurarse', async () => {
+    const tx = fakeTx(1);
+    const inventory = { reverse: jest.fn() };
+    await expect(
+      undoCoilRestoreBatch(
+        tx,
+        inventory as never,
+        { write: jest.fn() } as never,
+        'admin-1',
+        'batch-1',
+        'deshacer',
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(inventory.reverse).not.toHaveBeenCalled();
+  });
+
+  it('un lote ya deshecho no se deshace dos veces', async () => {
+    const tx = fakeTx(0, 1);
+    await expect(
+      undoCoilRestoreBatch(
+        tx,
+        { reverse: jest.fn() } as never,
+        { write: jest.fn() } as never,
+        'admin-1',
+        'batch-1',
+        'x',
+      ),
+    ).rejects.toThrow(/ya se deshizo/);
   });
 });

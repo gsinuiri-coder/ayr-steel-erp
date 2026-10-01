@@ -7,7 +7,13 @@ import {
   type InventoryMovement,
   type Prisma,
 } from '@prisma/client';
-import { businessToday, Decimal, toDecimal, type CoilRestorePlanDto } from '@ayr/shared';
+import {
+  businessToday,
+  Decimal,
+  toDecimal,
+  toFixedString,
+  type CoilRestorePlanDto,
+} from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { InventoryService } from '../inventory/inventory.service';
 
@@ -34,7 +40,15 @@ export type CoilRestoreMode = CoilRestorePlanDto['mode'];
 
 export type RestoreMovement = Pick<
   InventoryMovement,
-  'id' | 'type' | 'refType' | 'refId' | 'qty' | 'unitCost' | 'operationDate' | 'reversalOfId'
+  | 'id'
+  | 'type'
+  | 'refType'
+  | 'refId'
+  | 'qty'
+  | 'unit'
+  | 'unitCost'
+  | 'operationDate'
+  | 'reversalOfId'
 >;
 
 export interface RestoreContext {
@@ -80,6 +94,17 @@ export function classifyCoilRestore(ctx: RestoreContext): CoilRestoreClassificat
   if (ctx.coil.purchaseId === null) return blocked('La bobina no vino de una compra');
 
   const reversed = reversedIds(ctx.movements);
+  // Salidas propias: todo OUT que no sea la reversa de un ingreso. Vivas bloquean, y es lo
+  // primero que se informa: es la razón que el usuario puede ir a resolver.
+  const ownOuts = ctx.movements.filter((m) => m.type === 'OUT' && m.reversalOfId === null);
+  const liveOwnOuts = ownOuts.filter((m) => !reversed.has(m.id));
+  if (liveOwnOuts.length > 0) {
+    const kinds = [...new Set(liveOwnOuts.map((m) => m.refType))].join(', ');
+    return blocked(
+      `La bobina tiene ${String(liveOwnOuts.length)} salida(s) propia(s) vivas (${kinds})`,
+    );
+  }
+
   const purchaseIns = ctx.movements.filter(
     (m) =>
       m.type === 'IN' &&
@@ -98,17 +123,6 @@ export function classifyCoilRestore(ctx: RestoreContext): CoilRestoreClassificat
     (m) => m.type === 'IN' && m.reversalOfId === null && !reversed.has(m.id),
   );
   if (liveIns.length > 0) return blocked('La bobina ya tiene un ingreso vivo en el kardex', entry);
-
-  // Salidas propias: todo OUT que no sea la reversa de un ingreso. Vivas bloquean.
-  const ownOuts = ctx.movements.filter((m) => m.type === 'OUT' && m.reversalOfId === null);
-  const liveOwnOuts = ownOuts.filter((m) => !reversed.has(m.id));
-  if (liveOwnOuts.length > 0) {
-    const kinds = [...new Set(liveOwnOuts.map((m) => m.refType))].join(', ');
-    return blocked(
-      `La bobina tiene ${String(liveOwnOuts.length)} salida(s) propia(s) vivas (${kinds})`,
-      entry,
-    );
-  }
   if (ctx.activeReservations > 0) return blocked('La bobina tiene reservas activas', entry);
   if (ctx.liveChildren > 0) return blocked('La bobina tiene flejes hijos vigentes', entry);
 
@@ -193,6 +207,7 @@ export async function loadRestoreContext(
         refType: true,
         refId: true,
         qty: true,
+        unit: true,
         unitCost: true,
         operationDate: true,
         reversalOfId: true,
@@ -231,8 +246,10 @@ export function toPlanDto(
     mode: result.mode,
     date: result.date,
     originalDate: result.entry ? day(result.entry.operationDate) : null,
-    qty: result.entry ? result.entry.qty.toString() : null,
-    unitCostPen: result.entry ? result.entry.unitCost.toString() : null,
+    qty: result.entry ? toFixedString(toDecimal(result.entry.qty.toString()), 'KG') : null,
+    unitCostPen: result.entry
+      ? toFixedString(toDecimal(result.entry.unitCost.toString()), 'MONEY')
+      : null,
     purchaseDocument: coil.purchase ? `${coil.purchase.series}-${coil.purchase.number}` : null,
     purchaseStatus: coil.purchase?.status ?? null,
     reasons: result.reasons,
@@ -273,7 +290,7 @@ export async function restoreCoilInTx(
     itemId: coil.id,
     type: 'IN',
     qty: entry.qty.toString(),
-    unit: 'KG',
+    unit: entry.unit,
     unitCost: entry.unitCost.toString(),
     refType: InventoryRefType.PURCHASE,
     refId: coil.purchaseId ?? undefined,
