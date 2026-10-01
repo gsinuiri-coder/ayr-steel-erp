@@ -1320,6 +1320,37 @@ export class InvoicingService {
     // (D-072/D-210) ya la validó el schema.
     this.operationDate.assertIssueDate(actor, input.issueDate);
 
+    // D-376 (cc10): si re-fechar el despacho dejaría el kardex negativo a la fecha nueva (el
+    // mismo bloqueo de D-364), no se re-fecha nada —la transacción entera se deshace y el
+    // usuario ve el motivo— y el intento queda auditado fuera de ella, porque el rollback se
+    // llevaría consigo cualquier auditoría escrita adentro.
+    let redateRejected: string | null = null;
+    try {
+      await this.updateManualIssueDateInTx(actor, id, input, (message) => {
+        redateRejected = message;
+      });
+    } catch (err) {
+      if (redateRejected !== null) {
+        await this.audit.log({
+          actorId: actor.id,
+          action: 'invoicing.dispatch.redate-rejected',
+          entity: 'fiscal_documents',
+          entityId: id,
+          after: { issueDate: input.issueDate, reason: redateRejected },
+          reason: input.reason,
+        });
+      }
+      throw err;
+    }
+    return this.findOne(id);
+  }
+
+  private async updateManualIssueDateInTx(
+    actor: RequestUser,
+    id: string,
+    input: UpdateManualIssueDateInput,
+    onRedateRejected: (message: string) => void,
+  ): Promise<void> {
     await this.prisma.$transaction(
       async (tx) => {
         // **El lock va antes de leer**, igual que `createCreditNote`, `registerManual`,
@@ -1471,15 +1502,20 @@ export class InvoicingService {
         });
         // Después de mover la fecha: el plan del despacho nuevo lee la emisión corregida.
         if (input.redateDispatches === true && atIssueDate.length > 0) {
-          await this.invoiceDispatch.redateInTx(tx, actor, id);
+          try {
+            await this.invoiceDispatch.redateInTx(tx, actor, id);
+          } catch (err) {
+            // Los rechazos de D-288 son 400 con el motivo (kardex negativo a la fecha nueva, o el
+            // despacho nuevo no sería el mismo): se reportan para la auditoría de afuera.
+            if (err instanceof BadRequestException) onRedateRejected(err.message);
+            throw err;
+          }
         }
         // Revertir y volver a despachar toma los locks y el kardex de siempre: más que el
         // default de 5 s de una transacción interactiva.
       },
       { timeout: 60_000 },
     );
-
-    return this.findOne(id);
   }
 
   /**
