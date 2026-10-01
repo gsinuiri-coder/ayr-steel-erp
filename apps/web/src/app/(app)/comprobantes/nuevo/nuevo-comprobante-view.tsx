@@ -14,6 +14,7 @@ import {
   UNIT_LABELS,
   UNITS,
   businessToday,
+  roundDocumentTotals,
   salesTotals,
   toDecimal,
   LIVE_DOCUMENT_STATUSES,
@@ -221,7 +222,9 @@ export function NuevoComprobanteView() {
     ).length;
   }, [salesOrderId, progress.data, qtyByLine, freeLines]);
 
-  const totals = lines.length > 0 ? salesTotals(lines) : null;
+  // D-377 (R2): el total del documento se redondea al céntimo una sola vez, como el API.
+  const lineSums = lines.length > 0 ? salesTotals(lines) : null;
+  const totals = lineSums ? roundDocumentTotals(lineSums.subtotal) : null;
   const isGenericCustomer = customer?.isSystem ?? false;
   const overGenericCap =
     isGenericCustomer && totals?.total.gt(toDecimal(GENERIC_CUSTOMER_MAX_TOTAL_PEN)) === true;

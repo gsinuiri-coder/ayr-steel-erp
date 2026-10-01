@@ -4,6 +4,7 @@ import { businessToday } from '../business-date';
 // `schemas/pricing` —que se carga antes que este módulo— pueda usarlo sin cerrar un ciclo.
 import { IGV_RATE_PCT } from '../tax';
 import {
+  cents,
   Decimal,
   decimalStringSchema,
   MAX_VALUE,
@@ -1623,7 +1624,28 @@ export function sumLineTotals(
     (acc, l) => acc.plus(toDecimal(l.subtotalPen)),
     new Decimal(0),
   );
-  const igv = lines.reduce<Decimal>((acc, l) => acc.plus(toDecimal(l.igvPen)), new Decimal(0));
+  return roundDocumentTotals(subtotal);
+}
+
+/**
+ * D-377 (R2): los totales de un documento de venta —cotización, pedido, comprobante, nota de
+ * crédito— se redondean **al céntimo solo en el documento**: gravada = céntimo(Σ subtotales de
+ * línea), IGV = céntimo(Σ subtotales × 18 %), total = gravada + IGV. Las líneas siguen a 4
+ * decimales (su IGV también) y el valor unitario con su precisión completa.
+ *
+ * Es la convención del papel que emite Nubefact (medida sobre 141 comprobantes de los exportes del
+ * otro sistema: la línea no se redondea al céntimo, el IGV de línea es `valor × 18 %` exacto).
+ * Redondear cada línea al céntimo y sumar difería del papel en 27 de esos 141, por 1–2 céntimos.
+ *
+ * El IGV sale de la suma de los valores y no de sumar los IGV de línea ya redondeados a 4
+ * decimales: así es en el papel, y las dos sumas solo se separan en un medio céntimo.
+ *
+ * Ejemplo: tres líneas de valor 10.01 → gravada 30.03, IGV céntimo(5.4054) = 5.41, total 35.44
+ * (con céntimo por línea habría sido 35.43; sin redondear, 35.4354).
+ */
+export function roundDocumentTotals(subtotalSum: DecimalInput): SalesLineTotals {
+  const subtotal = cents(subtotalSum);
+  const igv = cents(toDecimal(subtotalSum).times(toDecimal(IGV_RATE_PCT)).div(100));
   return { subtotal, igv, total: subtotal.plus(igv) };
 }
 

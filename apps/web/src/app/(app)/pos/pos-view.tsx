@@ -10,6 +10,7 @@ import {
   PAYMENT_METHOD_LABELS,
   POS_PAYMENT_METHODS,
   Role,
+  roundDocumentTotals,
   salesLineTotals,
   toDecimal,
   toFixedString,
@@ -102,17 +103,16 @@ export function PosView() {
   const cartLine = cart[0]?.product.businessLine ?? null;
 
   const totals = useMemo(() => {
-    return cart.reduce(
-      (acc, line) => {
-        const t = salesLineTotals({ qty: line.qty || '0', unitPricePen: line.unitPricePen || '0' });
-        return {
-          subtotal: acc.subtotal.plus(t.subtotal),
-          igv: acc.igv.plus(t.igv),
-          total: acc.total.plus(t.total),
-        };
-      },
-      { subtotal: new Decimal(0), igv: new Decimal(0), total: new Decimal(0) },
+    const subtotal = cart.reduce(
+      (acc, line) =>
+        acc.plus(
+          salesLineTotals({ qty: line.qty || '0', unitPricePen: line.unitPricePen || '0' })
+            .subtotal,
+        ),
+      new Decimal(0),
     );
+    // D-377 (R2): el comprobante del mostrador se cobra por su total al céntimo.
+    return roundDocumentTotals(subtotal);
   }, [cart]);
 
   const overGenericCap =

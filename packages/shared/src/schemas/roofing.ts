@@ -311,6 +311,31 @@ export function fixedLengthValuePerMeter(
   return toDecimal(unitValuePen).div(meters);
 }
 
+/**
+ * D-377 (B1): el valor unitario de una plancha cotizada por metro. Si el valor por metro es
+ * **exactamente el de lista** (`lista ÷ largo` a 4 decimales, como lo siembra el formulario y lo
+ * guarda la línea), la plancha vale la lista exacta: 98.0000 y no `3 × 32.6667` = 98.0001. Si no,
+ * el de siempre, `largo × valor por metro` con un redondeo. Lo usan el API y la vista previa del
+ * formulario, así la línea nueva, el duplicado de una cotización y la conversión a pedido dan el
+ * mismo importe que la lista.
+ */
+export function listValueForPlancha(
+  lengthMm: string,
+  valuePerMeterPen: Decimal | string,
+  listPricePen: string | null | undefined,
+): Decimal {
+  if (
+    listPricePen !== null &&
+    listPricePen !== undefined &&
+    roundTo(fixedLengthValuePerMeter(lengthMm, listPricePen), 'MONEY').equals(
+      toDecimal(valuePerMeterPen),
+    )
+  ) {
+    return roundTo(listPricePen, 'MONEY');
+  }
+  return roundTo(fixedLengthUnitValue(lengthMm, valuePerMeterPen), 'MONEY');
+}
+
 /** D-161: los metros lineales de una línea de planchas = `largo del SKU × cantidad`. */
 export function fixedLengthMeters(lengthMm: string, qty: Decimal | string): Decimal {
   return roundTo(toDecimal(lengthMm).div(1000).times(toDecimal(qty)), 'KG');

@@ -23,7 +23,7 @@ import {
   Role,
   salesOrderCode,
   STANDING_DOCUMENT_STATUSES,
-  toDecimal,
+  roundDocumentTotals,
   toFixedString,
   Unit,
   type AddSalesOrderItemsInput,
@@ -1030,21 +1030,23 @@ export class SalesOrderEditsService {
     return ids;
   }
 
-  /** Totales del pedido desde sus líneas: Σ subtotales + Σ IGV, como `documentTotals`. */
+  /**
+   * Totales del pedido desde sus líneas: Σ subtotales + Σ IGV, como `documentTotals`, y desde
+   * D-377 (R2) redondeados al céntimo en el documento.
+   */
   private async refreshTotals(
     tx: Prisma.TransactionClient,
     orderId: string,
   ): Promise<{ subtotalPen: string; igvPen: string; totalPen: string }> {
     const sums = await tx.salesOrderItem.aggregate({
       where: { salesOrderId: orderId },
-      _sum: { subtotalPen: true, igvPen: true },
+      _sum: { subtotalPen: true },
     });
-    const subtotal = toDecimal((sums._sum.subtotalPen ?? 0).toString());
-    const igv = toDecimal((sums._sum.igvPen ?? 0).toString());
+    const { subtotal, igv, total } = roundDocumentTotals((sums._sum.subtotalPen ?? 0).toString());
     const totals = {
       subtotalPen: toFixedString(subtotal, 'MONEY'),
       igvPen: toFixedString(igv, 'MONEY'),
-      totalPen: toFixedString(subtotal.plus(igv), 'MONEY'),
+      totalPen: toFixedString(total, 'MONEY'),
     };
     await tx.salesOrder.update({ where: { id: orderId }, data: totals });
     return totals;
