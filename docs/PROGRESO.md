@@ -26,8 +26,8 @@
     anterior a R2 no se podía facturar entero.
   - El IGV de cabecera suma los IGV de línea (`céntimo(Σ IGV de línea)`) y no recalcula
     `Σ valor × 18 %`. Recalcularlo rompía el trío del papel de D-255 en ≈15 % de los casos
-    simulados (por ejemplo, 84.75 / 15.25 / 100.00 → 100.01). Falta que el dueño lo confirme
-    antes del merge.
+    simulados (por ejemplo, 84.75 / 15.25 / 100.00 → 100.01). **Aprobado por el dueño el
+    2026-10-01.**
 - **Corrección del análisis:** la tabla §5.1 decía 2,806.32 para 146 × 16.28928. Con la fórmula
   aprobada el total es 2,806.31 (2,378.23 + 428.08). El runbook lo pone a comprobar contra el PDF.
 - **Verificación:**

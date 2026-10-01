@@ -5,7 +5,10 @@
 Cada paso marcado **[OK]** espera el OK explícito del dueño (D-251/D-232). El agente propone el
 comando exacto y espera.
 
-- PR: `<PR>` (rama `cc11/decimales`).
+- PR: #74 (rama `cc11/decimales`). En la misma ventana, después del deploy, entra el PR #75 (solo
+  docs, diagnóstico de FFA1-00001382; paso 5).
+- **Nubefact no se toca.** El PSE sigue apagado en producción (`PSE_ENABLED` sin definir) y todo
+  sigue manual. Ningún paso llama ni habilita Nubefact: el paso 0 solo lee PDF ya emitidos.
 - **No hay migración.** No se escriben datos: no se recalcula ningún documento ya grabado (D-377,
   «solo hacia adelante»).
 - **Orden:** comprobación con los PDF → API → smoke → merge (web) → smoke → verificación en
@@ -30,7 +33,7 @@ total) no vienen en el exporte; las confirma el PDF.
    `local-data/` antes de empezar.
 2. **[agente]** Para cada PDF, compara:
    - **gravada** del PDF contra `céntimo(Σ valor de las líneas)`;
-   - **IGV** del PDF contra `céntimo(Σ valor × 18 %)`;
+   - **IGV** del PDF contra `céntimo(Σ IGV de las líneas)` (D-377, aprobado por el dueño);
    - **total** del PDF contra gravada + IGV.
 
    Revisa además si el total del papel es gravada + IGV o `céntimo(Σ totales de línea)`. Con el
@@ -84,10 +87,23 @@ Sin crear documentos en producción (D-126):
   registrar.
 - **Un PDF de cotización existente:** los importes redondean, no truncan.
 
+## 5. PR #75 y limpieza [OK]
+
+Después de verificar el deploy de cc11:
+
+```sh
+AYR_OWNER_PUSH=1 gh pr merge 75 --merge
+git worktree remove ../ayr-1382
+git branch -d docs/ffa1-1382
+git push origin --delete docs/ffa1-1382
+```
+
+`../ayr-1382` no tiene nada en `local-data/`; se verifica antes de borrar (AGENTS.md §4).
+
 ## Riesgos conocidos (de las revisiones, aceptados o pendientes del dueño)
 
 - **IGV de cabecera = céntimo(Σ IGV de línea)**, no `Σ valor × 18 %` como decía §5.2 del análisis.
-  Así se conserva el trío del papel de D-255. **Lo confirma el dueño antes del merge** (D-377).
+  Así se conserva el trío del papel de D-255. **Aprobado por el dueño el 2026-10-01** (D-377).
 - **Peso teórico de planchas con un solo redondeo:** cambia el teórico que se usa como referencia
   del tope de kg declarado. En el caso real de D-246, 4,043.952 pasa a 4,043.916 kg. El tope duro
   está en metros; el kilo de más solo avisa (D-154).
