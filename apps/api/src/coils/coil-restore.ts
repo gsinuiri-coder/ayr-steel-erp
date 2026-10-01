@@ -28,8 +28,9 @@ import { assertStripsNotAssigned } from '../production/production-assignments';
  * anulada (decisión del dueño).
  *
  * El modo lo decide este clasificador, no el usuario:
- * - `EN_SU_FECHA`: el ingreso vuelve a la fecha del revertido. Solo si ninguna salida
- *   existente desde esa fecha queda con otro costo, y si la fecha no es anterior al piso de
+ * - `EN_SU_FECHA`: el ingreso va en la fecha de la **salida de anulación** (revisión cc08, decisión
+ *   del dueño): el kardex queda como si nunca se hubiera anulado. Solo si ninguna salida
+ *   desde esa fecha queda con otro costo, y si la fecha no es anterior al piso de
  *   la carga histórica.
  * - `A_HOY`: el ingreso va con fecha de hoy. La producción con la bobina no puede tener fecha
  *   anterior (guard de `InventoryService.record`).
@@ -160,26 +161,62 @@ export function classifyCoilRestore(ctx: RestoreContext): CoilRestoreClassificat
     return blocked(`El saldo de la bobina no es cero (${balance.toFixed(3)} kg)`, entry);
   }
 
-  const entryDate = day(entry.operationDate);
+  // Revisión cc08 (P1-1, decisión del dueño): «en su fecha» es la fecha de la **salida de
+  // anulación**, no la del ingreso. La anulación no borra el ingreso original: lo revierte con
+  // una salida fechada el día de la anulación. Un ingreso nuevo en esa misma fecha la neutraliza
+  // y el kardex queda como si nunca se hubiera anulado; fecharlo en el ingreso original
+  // duplicaba el saldo entre las dos fechas (meses ya reportados).
+  const cancellation = ctx.movements.find((m) => m.reversalOfId === entry.id);
+  if (!cancellation) return blocked('No se encontró la salida de anulación del ingreso', entry);
+  const restoreDate = day(cancellation.operationDate);
   const entryCost = toDecimal(entry.unitCost.toString());
   const reasons: string[] = [];
-  // Recosteo: una salida existente (viva o revertida) desde la fecha del ingreso con otro
-  // costo quedaría valorizada distinto al reinsertar la entrada antes que ella.
+  // Recosteo: una salida propia (viva o revertida) desde esa fecha con otro costo quedaría
+  // valorizada distinto con la entrada reinsertada antes que ella.
   const recost = ownOuts.filter(
-    (m) => day(m.operationDate) >= entryDate && !toDecimal(m.unitCost.toString()).equals(entryCost),
+    (m) =>
+      day(m.operationDate) >= restoreDate && !toDecimal(m.unitCost.toString()).equals(entryCost),
   );
   if (recost.length > 0) {
     reasons.push(
-      `${String(recost.length)} salida(s) desde el ${entryDate} tienen otro costo: reinsertar la entrada en su fecha las recostearía`,
+      `${String(recost.length)} salida(s) desde el ${restoreDate} tienen otro costo: reinsertar la entrada en esa fecha las recostearía`,
     );
   }
-  if (entryDate < ctx.historicalFloor) {
+  if (restoreDate < ctx.historicalFloor) {
     reasons.push(
-      `La fecha ${entryDate} es anterior al piso de la carga histórica (${ctx.historicalFloor})`,
+      `La fecha ${restoreDate} es anterior al piso de la carga histórica (${ctx.historicalFloor})`,
     );
   }
   if (reasons.length > 0) return { mode: 'A_HOY', date: ctx.today, reasons, entry };
-  return { mode: 'EN_SU_FECHA', date: entryDate, reasons: [], entry };
+  return { mode: 'EN_SU_FECHA', date: restoreDate, reasons: [], entry };
+}
+
+/**
+ * Saldo de fin de día de la bobina con un ingreso extra (`qty`) en `on`. Lo usan los tests para
+ * comprobar que restaurar no deja ningún día con más stock que el que tuvo antes de anularse.
+ */
+export function projectDailyBalance(
+  movements: readonly RestoreMovement[],
+  extra: { on: string; qty: string } | null,
+): Map<string, string> {
+  const events = movements.map((m) => ({
+    date: day(m.operationDate),
+    delta:
+      m.type === 'IN'
+        ? toDecimal(m.qty.toString())
+        : m.type === 'OUT'
+          ? toDecimal(m.qty.toString()).negated()
+          : new Decimal(0),
+  }));
+  if (extra) events.push({ date: extra.on, delta: toDecimal(extra.qty) });
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  const out = new Map<string, string>();
+  let bal = new Decimal(0);
+  for (const e of events) {
+    bal = bal.plus(e.delta);
+    out.set(e.date, bal.toFixed(3));
+  }
+  return out;
 }
 
 /** Lee lo que el clasificador necesita. Con `lock`, bloquea la fila de la bobina antes. */

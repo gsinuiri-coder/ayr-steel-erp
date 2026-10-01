@@ -10,6 +10,7 @@ import {
   classifyCoilRestore,
   restoreCoilInTx,
   undoCoilRestoreBatch,
+  projectDailyBalance,
   type RestoreContext,
   type RestoreMovement,
 } from './coil-restore';
@@ -59,7 +60,7 @@ function base(): RestoreContext {
 describe('classifyCoilRestore (D-375)', () => {
   it('una bobina anulada sin salidas vuelve en su fecha, con su cantidad y su costo', () => {
     const r = classifyCoilRestore(base());
-    expect(r).toMatchObject({ mode: 'EN_SU_FECHA', date: '2026-08-14', reasons: [] });
+    expect(r).toMatchObject({ mode: 'EN_SU_FECHA', date: '2026-09-28', reasons: [] });
     expect(r.entry?.id).toBe(10n);
   });
 
@@ -106,7 +107,7 @@ describe('classifyCoilRestore (D-375)', () => {
         operationDate: date('2026-09-28'),
       }),
     ];
-    expect(classifyCoilRestore(ctx)).toMatchObject({ mode: 'EN_SU_FECHA', date: '2026-08-01' });
+    expect(classifyCoilRestore(ctx)).toMatchObject({ mode: 'EN_SU_FECHA', date: '2026-09-28' });
   });
 
   it('a hoy si una salida existente desde esa fecha tiene otro costo (recostearía)', () => {
@@ -119,7 +120,7 @@ describe('classifyCoilRestore (D-375)', () => {
         refType: 'SALE',
         refId: 'des-1',
         unitCost: D('3.00'),
-        operationDate: date('2026-08-20'),
+        operationDate: date('2026-09-28'),
       }),
       mov({
         id: 13n,
@@ -128,7 +129,7 @@ describe('classifyCoilRestore (D-375)', () => {
         refId: 'des-1',
         reversalOfId: 12n,
         unitCost: D('3.00'),
-        operationDate: date('2026-09-20'),
+        operationDate: date('2026-09-28'),
       }),
     ];
     const r = classifyCoilRestore(ctx);
@@ -136,11 +137,11 @@ describe('classifyCoilRestore (D-375)', () => {
     expect(r.reasons[0]).toMatch(/recostearía/);
   });
 
-  it('a hoy si la fecha original es anterior al piso de la carga histórica', () => {
+  it('a hoy si la fecha de la anulación es anterior al piso de la carga histórica', () => {
     const ctx = base();
     ctx.movements = [
       mov({ id: 10n, type: 'IN', operationDate: date('2026-07-13') }),
-      mov({ id: 11n, type: 'OUT', reversalOfId: 10n, operationDate: date('2026-09-21') }),
+      mov({ id: 11n, type: 'OUT', reversalOfId: 10n, operationDate: date('2026-07-20') }),
     ];
     const r = classifyCoilRestore(ctx);
     expect(r).toMatchObject({ mode: 'A_HOY', date: '2026-10-01' });
@@ -267,7 +268,7 @@ describe('restoreCoilInTx (D-375)', () => {
         unit: 'KGM',
         refType: 'PURCHASE',
         refId: PURCHASE,
-        operationDate: '2026-08-14',
+        operationDate: '2026-09-28',
       }),
     );
     expect(tx.coil.update).toHaveBeenCalledWith({
@@ -281,7 +282,7 @@ describe('restoreCoilInTx (D-375)', () => {
         reason: 'mal anulada',
         after: expect.objectContaining({
           mode: 'EN_SU_FECHA',
-          date: '2026-08-14',
+          date: '2026-09-28',
           batchId: 'batch-1',
           movementId: '99',
         }) as unknown,
@@ -326,7 +327,7 @@ describe('assertCoilOutNotBeforeEntry (D-375)', () => {
   it('rechaza una salida anterior al primer ingreso vivo, con la fecha en el mensaje', async () => {
     await expect(
       assertCoilOutNotBeforeEntry(tx('2026-10-01'), 'coil-1', '2026-09-25'),
-    ).rejects.toThrow('La producción con esta bobina no puede tener fecha anterior a 2026-10-01');
+    ).rejects.toThrow('Una salida de esta bobina no puede tener fecha anterior a 2026-10-01');
   });
 
   it('acepta una salida en o después del ingreso, o una bobina sin ingreso vivo', async () => {
@@ -469,5 +470,19 @@ describe('classifyCoilRestore — flejes e hijas (revisión cc08)', () => {
     const ctx = base();
     ctx.coil.isChild = true;
     expect(classifyCoilRestore(ctx)).toMatchObject({ mode: 'BLOQUEADA' });
+  });
+});
+
+describe('restaurar en la fecha de la anulación no duplica el saldo histórico (revisión cc08, P1-1)', () => {
+  it('la AZUL de producción: 4150 kg continuos desde el 14/08, nunca 8300', () => {
+    const ctx = base(); // ingreso 14/08, anulación 28/09
+    const r = classifyCoilRestore(ctx);
+    expect(r.date).toBe('2026-09-28');
+    const after = projectDailyBalance(ctx.movements, { on: r.date!, qty: '4150' });
+    expect([...after.values()].every((v) => v === '4150.000')).toBe(true);
+
+    // La regla literal (en la fecha del ingreso) dejaba 8300 kg del 14/08 al 27/09.
+    const literal = projectDailyBalance(ctx.movements, { on: '2026-08-14', qty: '4150' });
+    expect(literal.get('2026-08-14')).toBe('8300.000');
   });
 });

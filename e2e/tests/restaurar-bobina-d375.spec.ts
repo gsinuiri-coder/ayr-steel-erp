@@ -1,9 +1,9 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { addDays, type CoilDto, type CoilRestorePlanDto } from '@ayr/shared';
-import { adminApi, adminCredentials, getJson, postJson } from '../helpers/api';
+import { adminApi, adminCredentials, createUser, getJson, postJson } from '../helpers/api';
 import { setCoilCancelledForTest } from '../helpers/db';
 import { DISPATCH_LINE } from '../helpers/invoicing';
-import { movementsOf, today, type MovementDto } from '../helpers/production';
+import { apiAs, movementsOf, today, type MovementDto } from '../helpers/production';
 import { setupCoilStock } from '../helpers/sales';
 
 /**
@@ -61,7 +61,13 @@ test.describe('D-375 — restaurar bobina anulada de compra', () => {
     });
 
     const plan = await getJson<CoilRestorePlanDto>(api, `/api/coils/${coil.id}/restore-plan`);
-    expect(plan).toMatchObject({ mode: 'EN_SU_FECHA', date: receivedOn, qty: '1000.000' });
+    // D-375 (revisión cc08): la entrada va en la fecha de la anulación (hoy), no en la del ingreso.
+    expect(plan).toMatchObject({
+      mode: 'EN_SU_FECHA',
+      date: today(),
+      originalDate: receivedOn,
+      qty: '1000.000',
+    });
 
     await loginAsAdmin(page);
     await page.goto(`/bobinas?tab=todas&status=CANCELLED&search=${encodeURIComponent(coil.code)}`);
@@ -84,14 +90,18 @@ test.describe('D-375 — restaurar bobina anulada de compra', () => {
 
     const live = liveOf(await movementsOf(api, 'COIL', coil.id));
     expect(live).toHaveLength(1);
-    expect(live[0]).toMatchObject({ type: 'IN', refType: 'PURCHASE', operationDate: receivedOn });
+    expect(live[0]).toMatchObject({ type: 'IN', refType: 'PURCHASE', operationDate: today() });
 
     const audit = await getJson<{ items: { action: string; after: Record<string, unknown> }[] }>(
       api,
       `/api/audit?entityType=coils&entityId=${coil.id}&from=${addDays(today(), -1)}&to=${addDays(today(), 1)}`,
     );
     const restored = audit.items.find((e) => e.action === 'coils.restore');
-    expect(restored?.after).toMatchObject({ mode: 'EN_SU_FECHA', date: receivedOn });
+    expect(restored?.after).toMatchObject({
+      mode: 'EN_SU_FECHA',
+      date: today(),
+      originalDate: receivedOn,
+    });
   });
 
   test('restaurar dos veces se rechaza', async () => {
@@ -164,5 +174,45 @@ test.describe('D-375 — restaurar bobina anulada de compra', () => {
       data: { reason: 'Intento (E2E)' },
     });
     expect(refused.status()).toBe(400);
+  });
+
+  test('con la compra anulada se restaura igual y la compra no se toca (decisión del dueño)', async () => {
+    const { coil, purchaseId } = await setupCoilStock(api, {
+      lineCode: DISPATCH_LINE,
+      weightKg: '1000',
+      receivedOn: addDays(today(), -RECEIVED_DAYS_AGO),
+    });
+    await postJson(api, `/api/purchases/${purchaseId}/cancel`, {
+      reason: 'Compra anulada (E2E D-375)',
+    });
+    expect((await getJson<CoilDto>(api, `/api/coils/${coil.id}`)).status).toBe('CANCELLED');
+
+    const plan = await getJson<CoilRestorePlanDto>(api, `/api/coils/${coil.id}/restore-plan`);
+    expect(plan).toMatchObject({ mode: 'EN_SU_FECHA', purchaseStatus: 'CANCELLED' });
+    await postJson(api, `/api/coils/${coil.id}/restore`, {
+      reason: 'Restaurar con compra anulada (E2E)',
+    });
+
+    expect((await getJson<CoilDto>(api, `/api/coils/${coil.id}`)).status).toBe('OPEN');
+    const purchase = await getJson<{ status: string }>(api, `/api/purchases/${purchaseId}`);
+    expect(purchase.status).toBe('CANCELLED');
+  });
+
+  test('un usuario que no es administrador no ve el plan ni restaura (403)', async ({
+    baseURL,
+  }) => {
+    const coil = await cancelledCoil(api);
+    await postJson(api, `/api/coils/${coil.id}/cancel`, { reason: 'Anulada (E2E D-375)' });
+    const supervisor = await createUser(api, 'SUPERVISOR_PLANTA');
+    const as = await apiAs(baseURL!, supervisor);
+    try {
+      expect((await as.get(`/api/coils/${coil.id}/restore-plan`)).status()).toBe(403);
+      const res = await as.post(`/api/coils/${coil.id}/restore`, {
+        data: { reason: 'Intento (E2E)' },
+      });
+      expect(res.status()).toBe(403);
+    } finally {
+      await as.dispose();
+    }
   });
 });

@@ -34,7 +34,7 @@ export function canRestoreCoil(
 }
 
 const MODE_TEXT: Record<CoilRestorePlanDto['mode'], string> = {
-  EN_SU_FECHA: 'En su fecha',
+  EN_SU_FECHA: 'En su fecha (la de la anulación: como si nunca se hubiera anulado)',
   A_HOY: 'A hoy',
   BLOQUEADA: 'No se puede restaurar',
 };

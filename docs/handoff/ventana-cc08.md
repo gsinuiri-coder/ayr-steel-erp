@@ -57,7 +57,7 @@ Correr `smoke:prod` contra `vercel.app` y contra `v2.mareliac.pe`.
    ```
 
    Imprime la tabla de las 9 bobinas y la seleccionada, con su modo y fecha. Lo esperado según
-   la foto del 2026-10-01 14:37 UTC es **EN_SU_FECHA, 14/08, 4150 kg a 2,6938 PEN/kg**, compra
+   la foto del 2026-10-01 15:08 UTC es **EN_SU_FECHA, 28/09 (fecha de su anulación), 4150 kg a 2,6938 PEN/kg**, compra
    118-315630 (RECEIVED). Guarda el plan con su `batchId` en `local-data/`.
 
 2. **[OK del dueño con la lista] Execute:**
@@ -70,7 +70,8 @@ Correr `smoke:prod` contra `vercel.app` y contra `v2.mareliac.pe`.
 
 3. **Foto posterior [agente, `READ ONLY`]:**
    - la bobina está `OPEN` con 4150 kg;
-   - su kardex tiene una sola entrada viva: 14/08, `PURCHASE`, 2,6938;
+   - su kardex tiene una sola entrada viva: 28/09, `PURCHASE`, 2,6938, y el saldo es 4150 kg
+     todos los días desde el 14/08 (nunca 8300);
    - ninguna salida existente cambió de costo y no hay días negativos;
    - hay un evento `coils.restore` con el `batchId`.
 

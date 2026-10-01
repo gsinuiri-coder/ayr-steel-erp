@@ -131,17 +131,17 @@ Hay tres fotos `READ ONLY` del 2026-10-01, tomadas con el OK del dueño:
 Son **9** bobinas anuladas de compra. En todas el film está sellado (anular no lo toca) y la
 moneda es PEN.
 
-| Bobina                          | Compra (estado)        |   Kg | Costo/kg | Entrada original | Plan D-375  | Gemela activa con el mismo peso y especificación |
-| ------------------------------- | ---------------------- | ---: | -------: | ---------------- | ----------- | ------------------------------------------------ |
-| IMPO-ALZ-AZUL-5002-0.28-4150-23 | 118-315630 (RECEIVED)  | 4150 |   2,6938 | 14/08            | EN_SU_FECHA | ninguna                                          |
-| IMPO-…-0.28-4240-1              | PRRG1-0001 (CANCELLED) | 4240 |   3,4328 | 21/09            | EN_SU_FECHA | 4240-47 (también anulada)                        |
-| IMPO-…-0.28-3711-45             | PRRG1-0002 (CANCELLED) | 3711 |     3,43 | 01/08            | EN_SU_FECHA | SALDO-…-3711-3 (terminada)                       |
-| IMPO-…-0.28-4240-47             | PRRG1-0002 (CANCELLED) | 4240 |     3,43 | 01/08            | EN_SU_FECHA | 4240-1                                           |
-| IMPO-…-0.28-4786-46             | PRRG1-0002 (CANCELLED) | 4786 |     3,43 | 01/08            | EN_SU_FECHA | SALDO-…-4786-1 (vigente)                         |
-| IMPO-…-0.38-3842-43             | PRRG1-0002 (CANCELLED) | 3842 |     3,43 | 01/08            | EN_SU_FECHA | IMPO-…-3842-36 (vigente, 118-315630)             |
-| IMPO-…-0.38-3866-42             | PRRG1-0002 (CANCELLED) | 3866 |     3,43 | 01/08            | EN_SU_FECHA | SALDO-…-3866-11 (vigente)                        |
-| IMPO-…-0.38-4242-44             | PRRG1-0002 (CANCELLED) | 4242 |     3,43 | 01/08            | EN_SU_FECHA | IMPO-…-4242-40 (vigente, 118-315630)             |
-| XSY-ALZ-ROJO-3020-0.38-4544-9   | E001RG-262 (CANCELLED) | 4544 |   2,7131 | 22/09            | EN_SU_FECHA | XSY-…-4544-4 (vigente, E001-262)                 |
+| Bobina                          | Compra (estado)        |   Kg | Costo/kg | Entrada original | Plan D-375 (fecha de la anulación) | Gemela activa con el mismo peso y especificación |
+| ------------------------------- | ---------------------- | ---: | -------: | ---------------- | ---------------------------------- | ------------------------------------------------ |
+| IMPO-ALZ-AZUL-5002-0.28-4150-23 | 118-315630 (RECEIVED)  | 4150 |   2,6938 | 14/08            | EN_SU_FECHA 28/09                  | ninguna                                          |
+| IMPO-…-0.28-4240-1              | PRRG1-0001 (CANCELLED) | 4240 |   3,4328 | 21/09            | EN_SU_FECHA 21/09                  | 4240-47 (también anulada)                        |
+| IMPO-…-0.28-3711-45             | PRRG1-0002 (CANCELLED) | 3711 |     3,43 | 01/08            | EN_SU_FECHA 28/09                  | SALDO-…-3711-3 (terminada)                       |
+| IMPO-…-0.28-4240-47             | PRRG1-0002 (CANCELLED) | 4240 |     3,43 | 01/08            | EN_SU_FECHA 28/09                  | 4240-1                                           |
+| IMPO-…-0.28-4786-46             | PRRG1-0002 (CANCELLED) | 4786 |     3,43 | 01/08            | EN_SU_FECHA 28/09                  | SALDO-…-4786-1 (vigente)                         |
+| IMPO-…-0.38-3842-43             | PRRG1-0002 (CANCELLED) | 3842 |     3,43 | 01/08            | EN_SU_FECHA 28/09                  | IMPO-…-3842-36 (vigente, 118-315630)             |
+| IMPO-…-0.38-3866-42             | PRRG1-0002 (CANCELLED) | 3866 |     3,43 | 01/08            | EN_SU_FECHA 28/09                  | SALDO-…-3866-11 (vigente)                        |
+| IMPO-…-0.38-4242-44             | PRRG1-0002 (CANCELLED) | 4242 |     3,43 | 01/08            | EN_SU_FECHA 28/09                  | IMPO-…-4242-40 (vigente, 118-315630)             |
+| XSY-ALZ-ROJO-3020-0.38-4544-9   | E001RG-262 (CANCELLED) | 4544 |   2,7131 | 22/09            | EN_SU_FECHA 22/09                  | XSY-…-4544-4 (vigente, E001-262)                 |
 
 - **El clasificador del #60 se reemplazó.** Contaba como «ajenos» los pares que se anulan entre
   sí (ventas revertidas, reingresos por corrección de costo) y marcaba 7 EXCLUIDA. El de D-375
@@ -149,3 +149,9 @@ moneda es PEN.
 - **Decisión del dueño:** restaurar por ahora solo la AZUL (`IMPO-ALZ-AZUL-5002-0.28-4150-23`).
   Las otras ocho pueden ser la **misma bobina física** que su gemela activa; se deciden aparte.
 - **Compras anuladas:** se restaura igual, y la compra no se toca.
+
+**Fecha de la restauración (revisión cc08, decisión del dueño).** La anulación no borra el
+ingreso: lo revierte con una salida fechada el día de la anulación. La restauración se fecha en
+**esa salida**, no en el ingreso original. Por ejemplo, la AZUL entró el 14/08 y se anuló el
+28/09, y se restaura el 28/09: el kardex queda con 4150 kg continuos desde el 14/08, como si nunca
+se hubiera anulado. Restaurarla el 14/08 habría dejado 8300 kg del 14/08 al 27/09.

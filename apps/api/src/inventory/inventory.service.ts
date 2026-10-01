@@ -1420,7 +1420,7 @@ export async function assertCoilOutNotBeforeEntry(
   const entryDate = fromDateOnly(firstEntry.operationDate);
   if (operationDate < entryDate) {
     throw new BadRequestException(
-      `La producción con esta bobina no puede tener fecha anterior a ${entryDate}, la fecha de su ingreso al kardex`,
+      `Una salida de esta bobina no puede tener fecha anterior a ${entryDate}, la fecha de su ingreso al kardex`,
     );
   }
 }
