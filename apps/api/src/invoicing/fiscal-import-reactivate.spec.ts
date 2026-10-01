@@ -4,7 +4,13 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { FiscalDocumentOrigin, FiscalDocumentStatus, Prisma, Role } from '@prisma/client';
+import {
+  FiscalDocType,
+  FiscalDocumentOrigin,
+  FiscalDocumentStatus,
+  Prisma,
+  Role,
+} from '@prisma/client';
 import type { RequestUser } from '../auth/auth.types';
 import { FiscalImportService } from './fiscal-import.service';
 
@@ -43,6 +49,7 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     return {
       document: {
         id: 'doc-341',
+        docType: FiscalDocType.BOLETA,
         number: 'BBV1-00000341',
         origin: FiscalDocumentOrigin.MANUAL,
         status: FiscalDocumentStatus.ANNULLED,
@@ -59,6 +66,7 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
         cdrKey: null,
         voidRequestedAt: null,
         voidedAt: null,
+        salesOrderId: 'so-48',
         salesOrder: { seq: 48 },
         items: [
           { qty: new Prisma.Decimal('12'), salesOrderItemId: 'soi-1' },
@@ -129,7 +137,8 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
       number: 'BBV1-00000341',
     });
 
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    // La fila del comprobante, la del pedido y los borradores sobre sus líneas (revisiones cc07).
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
     expect(tx.fiscalDocument.updateMany).toHaveBeenCalledWith({
       where: { id: 'doc-341', status: FiscalDocumentStatus.ANNULLED },
       data: {
@@ -220,6 +229,10 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     ['sunatHash', 'abc'],
     ['voidRequestedAt', new Date()],
     ['voidedAt', new Date()],
+    ['lastAttemptAt', new Date()],
+    ['providerResponse', { ok: true }],
+    ['xmlKey', 'x.xml'],
+    ['cdrKey', 'c.zip'],
   ])('bloquea con rastro de PSE o de baja (%s)', async (field, value) => {
     const s = happy();
     s.document = { ...s.document, [field]: value };
@@ -237,6 +250,23 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     await expect(service.reactivateExternal(ADMIN, 'doc-341', INPUT)).rejects.toThrow(
       /no tiene en la auditoría/,
     );
+  });
+
+  it('una anulación auditada desde un estado que no es aceptado no se reactiva', async () => {
+    const s = happy();
+    s.annulBefore = { status: FiscalDocumentStatus.ISSUED };
+    const { service } = build(s);
+    await expect(service.reactivateExternal(ADMIN, 'doc-341', INPUT)).rejects.toThrow(
+      /no tiene en la auditoría/,
+    );
+  });
+
+  it('un importado (no solo un manual) se reactiva', async () => {
+    const s = happy();
+    s.document = { ...s.document, origin: FiscalDocumentOrigin.IMPORTED };
+    const { service, tx } = build(s);
+    await service.reactivateExternal(ADMIN, 'doc-341', INPUT);
+    expect(tx.fiscalDocument.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('bloquea con cobros vigentes o posteriores a la anulación', async () => {
@@ -278,7 +308,9 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     const s = happy();
     s.drafts = 1;
     const { service, tx } = build(s);
-    const err: unknown = await service.reactivateExternal(ADMIN, 'doc-341', INPUT).catch((e) => e);
+    const err: unknown = await service
+      .reactivateExternal(ADMIN, 'doc-341', INPUT)
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as Error).message).toMatch(/borrador.*PED-000048.*elimínalo/);
     expect(tx.fiscalDocument.updateMany).not.toHaveBeenCalled();
@@ -301,5 +333,44 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     await expect(service.reactivateExternal(ADMIN, 'doc-341', INPUT)).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it('una nota de crédito anulada no se reactiva (revisión cc07, P1-1)', async () => {
+    const s = happy();
+    s.document = { ...s.document, docType: FiscalDocType.NOTA_CREDITO };
+    const { service, tx } = build(s);
+    await expect(service.reactivateExternal(ADMIN, 'doc-341', INPUT)).rejects.toThrow(
+      /Solo se reactiva una factura o una boleta/,
+    );
+    expect(tx.fiscalDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('bloquea el pedido y los borradores de esas líneas antes de revisarlos (revisiones cc07)', async () => {
+    const { service, tx } = build(happy());
+    await service.reactivateExternal(ADMIN, 'doc-341', INPUT);
+    const sqlOf = (n: number): string =>
+      (tx.$queryRaw.mock.calls[n] as [TemplateStringsArray])[0].join('?');
+    expect(sqlOf(1)).toMatch(/FROM "sales_orders" WHERE "id" = \?::uuid FOR UPDATE/);
+    expect(tx.$queryRaw.mock.calls[1]).toContain('so-48');
+    const sql = sqlOf(2);
+    expect(sql).toMatch(/"status" = 'DRAFT'/);
+    expect(sql).toMatch(/ORDER BY d\."id"\s+FOR UPDATE/);
+    expect(tx.$queryRaw.mock.invocationCallOrder[2]).toBeLessThan(
+      tx.fiscalDocument.count.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('un comprobante sin líneas de pedido se reactiva sin chequeo de líneas ni de borradores', async () => {
+    const s = happy();
+    s.document = {
+      ...s.document,
+      items: [{ qty: new Prisma.Decimal('1'), salesOrderItemId: null }],
+    };
+    const { service, tx } = build(s);
+    await service.reactivateExternal(ADMIN, 'doc-341', INPUT);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.salesOrderItem.findMany).not.toHaveBeenCalled();
+    expect(tx.fiscalDocument.count).not.toHaveBeenCalled();
+    expect(tx.fiscalDocument.updateMany).toHaveBeenCalledTimes(1);
   });
 });

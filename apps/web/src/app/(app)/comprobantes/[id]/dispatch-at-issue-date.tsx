@@ -69,13 +69,23 @@ export function DispatchAtIssueDate({
     },
   });
 
+  // D-373 (autorrevisión cc07): con una fecha sugerida, el plan de arriba ya viene con esa fecha
+  // y no sirve para rotular el default de D-285; se pide aparte, sin fecha (misma clave que el
+  // plan por defecto, así que comparte su caché).
+  const defaultPlan = useQuery({
+    queryKey: ['fiscal-document', documentId, 'dispatch-at-issue-date', undefined],
+    queryFn: () => api<InvoiceDispatchPlanDto>(`/dispatches/at-issue-date/${documentId}`),
+    enabled: suggestedDate !== undefined,
+  });
+
   const lines = plan.data?.lines ?? [];
   useEffect(() => {
-    if (dispatchDate !== undefined || plan.data === undefined) return;
+    const source = suggestedDate !== undefined ? defaultPlan.data : plan.data;
+    if ((suggestedDate === undefined && dispatchDate !== undefined) || source === undefined) return;
     setDefaultDates(
-      Object.fromEntries(plan.data.lines.map((line) => [line.lineNumber, line.operationDate])),
+      Object.fromEntries(source.lines.map((line) => [line.lineNumber, line.operationDate])),
     );
-  }, [dispatchDate, plan.data]);
+  }, [suggestedDate, dispatchDate, plan.data, defaultPlan.data]);
   if (lines.length === 0) return null;
   const actionable = lines.some((l) => l.action !== 'REVIEW');
   const defaultFirstDate = defaultDates[lines[0]?.lineNumber ?? 0] ?? lines[0]?.operationDate ?? '';

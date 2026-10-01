@@ -294,4 +294,41 @@ test.describe('D-373 — reactivar un comprobante manual anulado por error', () 
       });
     }
   });
+
+  test('si la línea ya se facturó en otro comprobante, no se reactiva y lo nombra', async () => {
+    const scenario = await setupOrderScenario(api, {
+      coilReceivedOn: addDays(today(), -COIL_RECEIVED_DAYS_AGO),
+    });
+    const issueDate = addDays(today(), -ISSUE_DAYS_AGO);
+    const trail: string[] = [];
+    try {
+      const invoice = await registeredManual(api, scenario, issueDate, uniqueCorrelative());
+      trail.push(invoice.id);
+      await postJson(api, `/api/invoicing/documents/${invoice.id}/annul`, {
+        reason: 'anulación (E2E D-373, refacturada)',
+      });
+      // Mientras estuvo anulado, la misma línea se facturó en otro manual con otro número.
+      const other = await registeredManual(api, scenario, issueDate, uniqueCorrelative() + 1);
+      trail.push(other.id);
+
+      const refused = await api.post(`/api/invoicing/documents/${invoice.id}/reactivate`, {
+        data: { reason: 'Anulado por error (E2E)', confirmStillValid: true },
+      });
+      expect(refused.status()).toBe(409);
+      expect(await refused.text()).toContain(
+        `La línea ${String(scenario.item.lineNumber)} del pedido ya se volvió a facturar en ${other.number ?? ''}`,
+      );
+      expect((await getDocument(api, invoice.id)).status).toBe('ANNULLED');
+    } finally {
+      await purgeInvoicingTrail(api, {
+        documentIds: trail,
+        orderIds: [scenario.order.id],
+        coilIds: [scenario.coil.id],
+        purchaseId: scenario.purchaseId,
+        supplierId: scenario.supplier.id,
+        finish: scenario.finish,
+        productIds: [scenario.product.id],
+      });
+    }
+  });
 });

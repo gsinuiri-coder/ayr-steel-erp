@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
+  FiscalDocType,
   FiscalDocumentOrigin,
   FiscalDocumentStatus,
   type FiscalDocumentDto,
@@ -34,9 +35,10 @@ export const DISPATCH_AT_DOCUMENT_DATE = 'fecha-comprobante';
  * a comprobar con sus bloqueos (cobros, notas de crédito, líneas refacturadas, borradores).
  */
 export function canReactivate(
-  d: Pick<FiscalDocumentListItemDto, 'status' | 'origin' | 'archivedAt'>,
+  d: Pick<FiscalDocumentListItemDto, 'docType' | 'status' | 'origin' | 'archivedAt'>,
 ): boolean {
   return (
+    (d.docType === FiscalDocType.FACTURA || d.docType === FiscalDocType.BOLETA) &&
     d.status === FiscalDocumentStatus.ANNULLED &&
     d.origin !== FiscalDocumentOrigin.ISSUED_HERE &&
     d.archivedAt === null

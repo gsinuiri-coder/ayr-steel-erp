@@ -190,6 +190,7 @@ export class FiscalImportService {
         where: { id },
         select: {
           id: true,
+          docType: true,
           number: true,
           origin: true,
           status: true,
@@ -206,6 +207,7 @@ export class FiscalImportService {
           cdrKey: true,
           voidRequestedAt: true,
           voidedAt: true,
+          salesOrderId: true,
           salesOrder: { select: { seq: true } },
           items: { select: { qty: true, salesOrderItemId: true } },
         },
@@ -216,6 +218,14 @@ export class FiscalImportService {
       if (document.origin === FiscalDocumentOrigin.ISSUED_HERE) {
         throw new BadRequestException(
           'Este comprobante lo emitió el ERP: no se reactiva desde acá, se resuelve ante SUNAT',
+        );
+      }
+      // Revisión cc07 (P1-1): solo facturas y boletas. Una nota de crédito acredita contra un
+      // afectado y tiene su propio tope por línea; reactivarla con esta cuenta, que es la de
+      // facturar líneas de pedido, podía dejarla viva sobre un afectado ya anulado.
+      if (!REACTIVATABLE_DOC_TYPES.includes(document.docType)) {
+        throw new BadRequestException(
+          'Solo se reactiva una factura o una boleta anulada; una nota de crédito o una guía no se reactivan desde acá',
         );
       }
       // Idempotencia de una transición de estado (D-182): el segundo intento ve el estado ya
@@ -302,6 +312,29 @@ export class FiscalImportService {
         ...new Set(document.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []))),
       ];
       if (orderItemIds.length > 0) {
+        // Revisiones cc07 (carrera con el reingreso). Dos locks más, en este orden —comprobante,
+        // pedido, borradores— y ningún camino los toma al revés:
+        // - el **pedido**, el mismo que toman la creación de un borrador y las ediciones del
+        //   pedido (D-187): no puede nacer un borrador nuevo sobre estas líneas hasta el commit;
+        // - los **borradores** que ya existen sobre estas líneas, en orden de id: si uno se está
+        //   registrando o emitiendo ahora (que bloquean solo su propia fila), esto espera a su
+        //   commit, y los chequeos de abajo —sentencias nuevas en READ COMMITTED— ya lo ven
+        //   aceptado.
+        if (document.salesOrderId !== null) {
+          await tx.$queryRaw`
+            SELECT "id" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid FOR UPDATE
+          `;
+        }
+        await tx.$queryRaw`
+          SELECT d."id" FROM "fiscal_documents" d
+          WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
+            AND EXISTS (
+              SELECT 1 FROM "fiscal_document_items" i
+              WHERE i."document_id" = d."id" AND i."sales_order_item_id" = ANY(${orderItemIds}::uuid[])
+            )
+          ORDER BY d."id"
+          FOR UPDATE
+        `;
         await assertLinesNotReinvoiced(tx, id, label, document.items, orderItemIds);
         const drafts = await tx.fiscalDocument.count({
           where: {
@@ -360,6 +393,12 @@ export class FiscalImportService {
     });
   }
 }
+
+/** D-373: lo único que se reactiva (revisión cc07, P1-1). */
+const REACTIVATABLE_DOC_TYPES: readonly FiscalDocType[] = [
+  FiscalDocType.FACTURA,
+  FiscalDocType.BOLETA,
+];
 
 /** El `status` de un `before` de auditoría, si lo trae. */
 function statusOf(json: Prisma.JsonValue | undefined): string | null {
