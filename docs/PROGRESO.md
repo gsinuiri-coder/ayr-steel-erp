@@ -15,8 +15,9 @@ merge ni deploy.** Runbook: `docs/handoff/ventana-cc07.md`; guion UAT: `docs/uat
 - **Web:** «Reactivar» en el menú «⋯» de la fila de /comprobantes (solo admin, solo lo que cumple el
   alcance); modal con motivo y casilla; al reactivar lleva al detalle con el despacho D-364 sugerido a la
   fecha del comprobante.
-- **Pruebas (2026-10-01, en el worktree):** unitarios del servicio 28/28 (cada bloqueo, no admin, no
-  manual, nota de crédito, casilla sin marcar, 409 del segundo intento, verificación de versión, orden de
+- **Pruebas (2026-10-01, en el worktree):** unitarios del servicio 31/31 (cada bloqueo, no admin, no
+  manual, nota de crédito, pedido anulado o editado después de la anulación, casilla sin marcar, 409 del
+  segundo intento, verificación de versión, orden de
   locks). E2E local
   (`E2E_API_PORT=3010`, `ayr_local_e2e` recién reseteada): `reactivar-comprobante-d373` **3 passed** tras las
   correcciones de las revisiones.

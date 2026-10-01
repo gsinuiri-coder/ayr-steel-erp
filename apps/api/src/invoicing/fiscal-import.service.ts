@@ -10,6 +10,7 @@ import {
   FiscalDocumentOrigin,
   FiscalDocumentStatus,
   Role,
+  SalesOrderStatus,
   type Prisma,
 } from '@prisma/client';
 import {
@@ -321,9 +322,27 @@ export class FiscalImportService {
         //   commit, y los chequeos de abajo —sentencias nuevas en READ COMMITTED— ya lo ven
         //   aceptado.
         if (document.salesOrderId !== null) {
-          await tx.$queryRaw`
-            SELECT "id" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid FOR UPDATE
+          const [order] = await tx.$queryRaw<{ status: string }[]>`
+            SELECT "status" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid FOR UPDATE
           `;
+          // D-373 (decisión del dueño): el pedido no pudo cambiar mientras el comprobante estuvo
+          // anulado. Se lee con el pedido ya bloqueado, así que una edición no puede colarse.
+          const orderLabel = document.salesOrder
+            ? `El pedido ${salesOrderCode(document.salesOrder.seq)}`
+            : 'El pedido';
+          if (order?.status === SalesOrderStatus.CANCELLED) {
+            throw new ConflictException(
+              `${orderLabel} está anulado: no se reactiva un comprobante de un pedido anulado`,
+            );
+          }
+          await assertOrderLinesUnchanged(
+            tx,
+            document.salesOrderId,
+            orderItemIds,
+            document.annulledAt,
+            label,
+            orderLabel,
+          );
         }
         await tx.$queryRaw`
           SELECT d."id" FROM "fiscal_documents" d
@@ -392,6 +411,72 @@ export class FiscalImportService {
       return { id, number: document.number };
     });
   }
+}
+
+/**
+ * D-373 (decisión del dueño): las ediciones de una línea de pedido que hacen que el comprobante
+ * ya no la describa —precio, importes del papel, producto (atar a otra bobina) y cantidad—.
+ * Todas se auditan sobre el pedido (`entity = sales_orders`) con el `lineNumber` en `before`.
+ *
+ * Se lee la **auditoría** y no `updatedAt`: `sales_order_items` no tiene esa columna, y aunque
+ * la tuviera la tocan también la reserva y el despacho, que no cambian lo facturado.
+ */
+const ORDER_LINE_EDIT_ACTIONS = [
+  'sales.order.item-price',
+  'sales.order.item-paper-amounts',
+  'sales.order.item-coil',
+  'sales.order.item-qty',
+] as const;
+
+async function assertOrderLinesUnchanged(
+  tx: Prisma.TransactionClient,
+  salesOrderId: string,
+  orderItemIds: readonly string[],
+  annulledAt: Date,
+  label: string,
+  orderLabel: string,
+): Promise<void> {
+  const [lines, edits] = await Promise.all([
+    tx.salesOrderItem.findMany({
+      where: { id: { in: [...orderItemIds] } },
+      select: { lineNumber: true },
+    }),
+    tx.auditLog.findMany({
+      where: {
+        entity: 'sales_orders',
+        entityId: salesOrderId,
+        action: { in: [...ORDER_LINE_EDIT_ACTIONS] },
+        at: { gt: annulledAt },
+      },
+      select: { before: true },
+    }),
+  ]);
+  const covered = new Set(lines.map((l) => l.lineNumber));
+  const changed = [
+    ...new Set(
+      edits.flatMap((e) => {
+        const n = lineNumberOf(e.before);
+        return n !== null && covered.has(n) ? [n] : [];
+      }),
+    ),
+  ].sort((a, b) => a - b);
+  if (changed.length === 0) return;
+  const which =
+    changed.length === 1
+      ? `la línea ${String(changed[0])} se modificó`
+      : `las líneas ${changed.join(', ')} se modificaron`;
+  throw new ConflictException(
+    `${orderLabel}: ${which} (precio, producto o cantidad) después de anular ${label}. Reactivarlo dejaría el comprobante distinto del pedido: revisa el pedido y, si corresponde, factúralo de nuevo`,
+  );
+}
+
+/** El `lineNumber` de un `before` de auditoría de pedido, si lo trae. */
+function lineNumberOf(json: Prisma.JsonValue | undefined): number | null {
+  if (json === null || json === undefined || typeof json !== 'object' || Array.isArray(json)) {
+    return null;
+  }
+  const n = json.lineNumber;
+  return typeof n === 'number' ? n : null;
 }
 
 /** D-373: lo único que se reactiva (revisión cc07, P1-1). */

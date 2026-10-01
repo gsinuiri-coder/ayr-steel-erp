@@ -42,6 +42,10 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     emitted: { salesOrderItemId: string; qty: string }[];
     others: { number: string | null }[];
     drafts: number;
+    /** Estado del pedido, leído con su lock. */
+    orderStatus: string;
+    /** Eventos de edición de líneas del pedido posteriores a la anulación. */
+    orderEdits: { before: Prisma.JsonValue }[];
     updated: number;
   }
 
@@ -83,6 +87,8 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
       emitted: [],
       others: [],
       drafts: 0,
+      orderStatus: 'CONFIRMED',
+      orderEdits: [],
       updated: 1,
     };
   }
@@ -90,7 +96,7 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
   function build(s: Scenario) {
     const audit = { write: jest.fn().mockResolvedValue(undefined) };
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([{ id: 'doc-341' }]),
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'doc-341', status: s.orderStatus }]),
       fiscalDocument: {
         findUnique: jest.fn().mockResolvedValue(s.document),
         // Primera llamada: notas de crédito; segunda: los que refacturaron las líneas.
@@ -102,6 +108,7 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
         findFirst: jest
           .fn()
           .mockResolvedValue(s.annulBefore === undefined ? null : { before: s.annulBefore }),
+        findMany: jest.fn().mockResolvedValue(s.orderEdits),
       },
       customerPayment: { count: jest.fn().mockResolvedValue(s.payments) },
       salesOrderItem: { findMany: jest.fn().mockResolvedValue(s.orderItems) },
@@ -371,6 +378,55 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     expect(tx.salesOrderItem.findMany).not.toHaveBeenCalled();
     expect(tx.fiscalDocument.count).not.toHaveBeenCalled();
+    expect(tx.fiscalDocument.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('bloquea si el pedido está anulado (decisión del dueño)', async () => {
+    const s = happy();
+    s.orderStatus = 'CANCELLED';
+    const { service, tx } = build(s);
+    const err: unknown = await service
+      .reactivateExternal(ADMIN, 'doc-341', INPUT)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as Error).message).toBe(
+      'El pedido PED-000048 está anulado: no se reactiva un comprobante de un pedido anulado',
+    );
+    expect(tx.fiscalDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('bloquea si una línea que cubre el comprobante se editó después de la anulación', async () => {
+    const s = happy();
+    s.orderEdits = [{ before: { code: 'PED-000048', lineNumber: 2, qty: '100.000' } }];
+    const { service, tx } = build(s);
+    await expect(service.reactivateExternal(ADMIN, 'doc-341', INPUT)).rejects.toThrow(
+      'El pedido PED-000048: la línea 2 se modificó (precio, producto o cantidad) después de anular BBV1-00000341',
+    );
+    // Lee las cuatro ediciones de línea del pedido, solo las posteriores a la anulación.
+    expect(tx.auditLog.findMany).toHaveBeenCalledWith({
+      where: {
+        entity: 'sales_orders',
+        entityId: 'so-48',
+        action: {
+          in: [
+            'sales.order.item-price',
+            'sales.order.item-paper-amounts',
+            'sales.order.item-coil',
+            'sales.order.item-qty',
+          ],
+        },
+        at: { gt: ANNULLED_AT },
+      },
+      select: { before: true },
+    });
+    expect(tx.fiscalDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('una edición de otra línea del pedido (o sin número de línea) no bloquea', async () => {
+    const s = happy();
+    s.orderEdits = [{ before: { lineNumber: 7 } }, { before: null }];
+    const { service, tx } = build(s);
+    await service.reactivateExternal(ADMIN, 'doc-341', INPUT);
     expect(tx.fiscalDocument.updateMany).toHaveBeenCalledTimes(1);
   });
 });
