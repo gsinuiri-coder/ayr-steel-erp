@@ -8,11 +8,12 @@ comando exacto y espera.
 - PR: #74 (rama `cc11/decimales`). En la misma ventana, después del deploy, entra el PR #75 (solo
   docs, diagnóstico de FFA1-00001382; paso 5).
 - **Nubefact no se toca.** El PSE sigue apagado en producción (`PSE_ENABLED` sin definir) y todo
-  sigue manual. Ningún paso llama ni habilita Nubefact: el paso 0 solo lee PDF ya emitidos.
+  sigue manual. Ningún paso llama ni habilita Nubefact. Nubefact es lo último que se hará en la
+  app.
 - **No hay migración.** No se escriben datos: no se recalcula ningún documento ya grabado (D-377,
   «solo hacia adelante»).
-- **Orden:** comprobación con los PDF → API → smoke → merge (web) → smoke → verificación en
-  pantalla.
+- **Orden:** resumen de D-232 y OK del dueño → API → smoke → merge (web) → smoke → verificación en
+  pantalla → PR #75 y limpieza.
 - **La API nueva convive con la web vieja durante los minutos entre los dos deploys**, con dos
   diferencias:
   - Las cotizaciones y pedidos nuevos ya salen con el total al céntimo, aunque la web vieja
@@ -23,25 +24,28 @@ comando exacto y espera.
 - **No hace falta respaldo Neon:** no hay migración ni escritura de datos. Si el dueño lo quiere
   igual, el mismo paso de cc08 con `respaldo-pre-cc11-<fecha>`.
 
-## 0. Comprobación con los PDF de Nubefact: ANTES del merge [dueño + agente]
+## 0. Comprobación con los PDF de Nubefact: SALTADA (riesgo aceptado por el dueño, 2026-10-01)
 
 R2 se midió sobre las **líneas** de los exportes (141 comprobantes). Las cabeceras (gravada, IGV,
-total) no vienen en el exporte; las confirma el PDF.
+total) no vienen en el exporte. El dueño decidió no comparar contra PDF antes del deploy.
 
-1. **[dueño]** Deja 2 o 3 PDF de Nubefact en `local-data/nubefact-pdf/`. Al menos uno debe tener
-   varias líneas, y mejor si es de los 27 donde R1 y R2 difieren. El agente da la lista con
-   `local-data/` antes de empezar.
-2. **[agente]** Para cada PDF, compara:
-   - **gravada** del PDF contra `céntimo(Σ valor de las líneas)`;
-   - **IGV** del PDF contra `céntimo(Σ IGV de las líneas)` (D-377, aprobado por el dueño);
-   - **total** del PDF contra gravada + IGV.
+- **Riesgo aceptado:** que el papel cierre de otra forma, por ejemplo con
+  `céntimo(Σ totales de línea)` en vez de gravada + IGV. Con 146 × 16.28928 eso daría 2,806.32 en
+  lugar de 2,806.31.
+- **Control posterior:** después del deploy, el dueño compara el total del **primer comprobante
+  real** contra su papel. Si no coincide, se para y se revisa la fórmula del total antes de seguir
+  registrando.
 
-   Revisa además si el total del papel es gravada + IGV o `céntimo(Σ totales de línea)`. Con el
-   146 × 16.28928 la primera da 2,806.31 y la segunda 2,806.32: no pasa en todos los documentos,
-   pero si el papel usa la segunda hay que corregir la fórmula del total.
+## 0b. Resumen de D-232 y OK del dueño [OK]
 
-3. **Si los tres PDF coinciden con R2, se sigue. Si no, se para:** no hay deploy. El agente
-   presenta la diferencia y la regla que la explica.
+Antes del merge el agente muestra:
+
+- los commits de `origin/main..origin/cc11/decimales`;
+- la CI de la última corrida (`gh pr checks 74`);
+- qué se despliega (API y web, sin migración);
+- el riesgo.
+
+Después espera el OK.
 
 ## 1. Antes de empezar [agente]
 
@@ -87,9 +91,9 @@ Sin crear documentos en producción (D-126):
   registrar.
 - **Un PDF de cotización existente:** los importes redondean, no truncan.
 
-## 5. PR #75 y limpieza [OK]
+## 5. PR #75 y limpieza [agente, sin otro OK del dueño]
 
-Después de verificar el deploy de cc11:
+Después de verificar el deploy de cc11 (el dueño lo autorizó el 2026-10-01):
 
 ```sh
 AYR_OWNER_PUSH=1 gh pr merge 75 --merge

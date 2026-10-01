@@ -37,8 +37,11 @@
     infraestructura (`fase5a:100`, el PDF necesita R2, que en local no está configurado).
   - Revisiones: autorrevisión y segundo modelo en `docs/revision/cc11-*`. Los dos P1 se
     corrigieron: el trío del papel en la cabecera y las aserciones de E2E a 4 decimales.
-- **Comprobación con PDF: pendiente.** `local-data/nubefact-pdf/` no existe. Es el paso 0 del
-  runbook `docs/handoff/ventana-cc11.md`, antes del merge.
+- **Comprobación con PDF: saltada, riesgo aceptado por el dueño (2026-10-01).** Nubefact es lo
+  último que se hará en la app y todo sigue manual. Control posterior: después del deploy, el dueño
+  compara el total del primer comprobante real contra su papel.
+- **Numeración confirmada por el dueño:** D-377 = decimales (cc11); D-378 = reactivar con las
+  líneas del pedido (cc13, aprobada y en espera); D-379 = restaurar reserva (cc12).
 - **Manual nuevo:** `docs/manual/corregir-comprobante-manual.md`, verificado contra el código. Deja
   huecos H1-H7 como propuestas sin implementar; H1 (la ruta `/invoicing/dispatches` no existe) se
   confirmó buscando en el API.
