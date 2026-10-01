@@ -3094,7 +3094,9 @@ export class InvoicingService {
       take: DERIVED_FILTER_FETCH_CAP,
     });
     // D-377 (arreglo A): pendiente es tener algo que cobrar al céntimo, no una cola de diezmilésimas.
-    const pending = (await this.toListDtos(rows)).filter((d) => hasCollectibleBalance(d.balancePen));
+    const pending = (await this.toListDtos(rows)).filter((d) =>
+      hasCollectibleBalance(d.balancePen),
+    );
     // Los despachos, recién sobre la página ya cortada: no sobre todo el universo del tope.
     const page = paginateInMemory(pending, query);
     return { ...page, items: await this.withDispatchLinks(page.items) };

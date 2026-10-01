@@ -36,6 +36,7 @@ total) no vienen en el exporte; las confirma el PDF.
    Revisa además si el total del papel es gravada + IGV o `céntimo(Σ totales de línea)`. Con el
    146 × 16.28928 la primera da 2,806.31 y la segunda 2,806.32: no pasa en todos los documentos,
    pero si el papel usa la segunda hay que corregir la fórmula del total.
+
 3. **Si los tres PDF coinciden con R2, se sigue. Si no, se para:** no hay deploy. El agente
    presenta la diferencia y la regla que la explica.
 

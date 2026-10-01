@@ -184,7 +184,11 @@ describe('roundDocumentTotals (D-377, R2)', () => {
       totalPen: '11.8100',
     });
     // IGV 0.25 × 18 % = 0.045 exacto → 0.05.
-    expect(docOf('0.2500')).toEqual({ subtotalPen: '0.2500', igvPen: '0.0500', totalPen: '0.3000' });
+    expect(docOf('0.2500')).toEqual({
+      subtotalPen: '0.2500',
+      igvPen: '0.0500',
+      totalPen: '0.3000',
+    });
     // Justo por debajo del medio céntimo baja: 0.2499 × 18 % = 0.044982 → 0.04.
     expect(docOf('0.2499').igvPen).toBe('0.0400');
   });
