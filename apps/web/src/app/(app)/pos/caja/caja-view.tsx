@@ -10,6 +10,7 @@ import {
   POS_SALE_STATUS_LABELS,
   PosSaleStatus,
   Role,
+  cents,
   toDecimal,
   type CashSessionDto,
   type PosContextDto,
@@ -83,7 +84,8 @@ export function CajaView() {
   const difference = useMemo(() => {
     if (open === null || counted.trim() === '') return null;
     try {
-      return toDecimal(counted.trim()).minus(toDecimal(open.expectedCashPen));
+      // Al céntimo, la misma regla con la que el API decide si cuadra (P-14).
+      return cents(toDecimal(counted.trim()).minus(toDecimal(open.expectedCashPen)));
     } catch {
       return null;
     }
