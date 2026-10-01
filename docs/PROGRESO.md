@@ -2,6 +2,37 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — cc11: D-377, decimales (P-14): totales al céntimo en el documento (PR sin merge)
+
+- **R2 aprobada por el dueño**, con la medición de 141 comprobantes de los exportes de Nubefact.
+  Gravada, IGV y total van al céntimo solo en el documento; la línea queda a 4 decimales y el
+  unitario con su precisión completa. Tres líneas de 10.01 dan 35.44. Rige para cotización,
+  pedido, comprobante, nota de crédito y POS. No se recalcula nada ya grabado.
+- **También aprobado:**
+  - B1: la plancha sin tocar vale su lista exacta.
+  - B3: el producto de lista sin tocar viaja por su valor de lista.
+  - Cobro: precargado y validado a 2 decimales, en el web y en el API.
+  - Importador: el unitario editado conserva 10 decimales.
+  - El costo queda fuera.
+- **Sin cambio de totales:**
+  - arreglo A de cobranzas: `hasCollectibleBalance` en pendientes, vencidos, el botón de cobrar y
+    los totales;
+  - arqueo del POS al céntimo;
+  - el PDF de cotización redondea en vez de truncar;
+  - costo/kg a 4 decimales;
+  - peso teórico de planchas con un solo redondeo.
+- **Ajuste encontrado al implementar:** el tope de facturación por pedido (D-223) admite un céntimo
+  por documento. Sin eso, un pedido anterior a R2 no se podía facturar entero.
+- **Corrección del análisis:** la tabla §5.1 decía 2,806.32 para 146 × 16.28928. Con la fórmula
+  aprobada el total es 2,806.31 (2,378.23 + 428.08). El runbook lo pone a comprobar contra el PDF.
+- **Comprobación con PDF: pendiente.** `local-data/nubefact-pdf/` no existe. Es el paso 0 del
+  runbook `docs/handoff/ventana-cc11.md`, antes del merge.
+- **Manual nuevo:** `docs/manual/corregir-comprobante-manual.md`, verificado contra el código. Deja
+  huecos H1-H7 como propuestas sin implementar; H1 (la ruta `/invoicing/dispatches` no existe) se
+  confirmó buscando en el API.
+- **Logs de cc08:** los 4 eran logs limpios de corridas terminadas; se movieron a
+  `local-data/cc08/`.
+
 ## 2026-10-01 — cc09 descartado y corrección de la nota de cc07
 
 - **cc09 (fecha sugerida del despacho sin `?despacho=`), descartado sin push.** Las dos revisiones
