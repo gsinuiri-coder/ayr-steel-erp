@@ -15,9 +15,11 @@
 | Foto final (13:58 UTC)      | sin días negativos, ningún costo cambiado, **ninguna línea facturada sin despacho en el sistema** |
 
 **Nota sobre 341.** El plan era despachar la L1 el 03/08 y que la L2 esperara D-374. El dueño
-despachó las dos el 18/08, que era la fecha sugerida en el aviso. El detalle se abrió **sin**
-`?despacho=fecha-comprobante` tras una recarga forzada, así que el campo traía el default D-364
-(la primera fecha en que caben todas las líneas). Para seguir con D-374 punto 3 había que cambiar
+despachó las dos el 18/08. **Corrección (2026-10-01, cc09):** la causa no fue perder
+`?despacho=fecha-comprobante`. Sin ese parámetro, el campo arranca igual en la fecha del
+comprobante (el default de D-285 es `max(último parte, emisión)`, es decir el 03/08). El 18/08 lo
+eligió el dueño en el campo, probablemente desde la «Primera fecha válida: 18/08» de la línea 2.
+Para seguir con D-374 punto 3 había que cambiar
 la herramienta de fechas, porque excluye NF1-1. El dueño eligió la opción B: aceptar el 18/08 y
 despachar 347 en la primera fecha válida. Fotos: `local-data/d374/antes.json` y `despues.json`
 (checkout principal, ignorado por git).

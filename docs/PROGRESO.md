@@ -2,6 +2,20 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — cc09 descartado y corrección de la nota de cc07
+
+- **cc09 (fecha sugerida del despacho sin `?despacho=`), descartado sin push.** Las dos revisiones
+  mostraron que el plan por defecto ya fecha cada línea en `max(último parte, emisión)`
+  (`invoice-dispatch-plan.ts:183-188`). Con stock suficiente, el campo ya arranca en la fecha del
+  comprobante. El cambio no movía ninguna salida y tenía dos efectos negativos:
+  - marcaba el despacho como «fecha elegida», y D-288 dejaba de re-fecharlo;
+  - el rótulo afirmaba la fecha de emisión para líneas producidas después.
+- **Nota de cc07 corregida** (runbook, análisis §8 y la entrada de la ventana). 341 no se despachó el
+  18/08 por perder `?despacho=`: el default era el 03/08 y el 18/08 se eligió en el campo.
+- **cc10:** PR aparte, sin merge, para la próxima ventana. Una `dispatchDate` igual a la fecha de
+  emisión ya no cuenta como «elegida». El camino `?despacho=` de D-373 la manda siempre, y en
+  producción esos despachos quedan hoy fuera de D-288.
+
 ## 2026-10-01 — Ventana cc08 (D-375 desplegada y aplicada, PR #70, sin migración)
 
 Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individual del dueño
@@ -29,8 +43,8 @@ Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individu
 - **Pendientes:**
   - las otras 8 bobinas anuladas (posibles duplicados físicos de sus gemelas activas) esperan decisión
     del dueño, bobina por bobina;
-  - la fecha sugerida del despacho sin `?despacho=` (paso 4 de cc08, sacrificado);
-  - el worktree `../ayr-kardex` (rama `diag/desanular-bobina` del #60, cerrado) sigue en disco.
+  - la fecha sugerida del despacho sin `?despacho=` (paso 4 de cc08): descartada en cc09 (ver arriba);
+  - el worktree `../ayr-kardex` se borró con OK del dueño (sin cambios, sin stash ni `local-data`).
 
 ## 2026-10-01 — cc08: D-375, restaurar bobina anulada de compra (reemplaza el PR #60)
 
@@ -81,8 +95,8 @@ Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individu
   - **Primer intento:** el dueño no veía «Reactivar». Se resolvió con una recarga
     forzada (probablemente la pestaña tenía la web anterior).
 - **Despachos:**
-  - 341 → **DES-000052 el 18/08**, las dos líneas, en la fecha que sugería el aviso. El plan era la L1 el
-    03/08; ver la nota del runbook.
+  - 341 → **DES-000052 el 18/08**, las dos líneas, con fecha elegida en el campo. El plan era la L1 el 03/08.
+    Ver la nota del runbook, corregida en cc09: el default ya era el 03/08.
   - 347 → **DES-000053 el 27/09**, por D-374 punto 4.
 - **D-374 aprobada y registrada.** El dueño eligió no cambiar la herramienta de fechas (que excluye NF1-1) y
   aplicar la primera fecha válida. No se corrió ninguna corrección de compras, así que no hizo falta el
@@ -100,7 +114,8 @@ Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individu
 - **Pendientes:**
   - 341 tiene su salida el 18/08 y no el 03/08;
   - falta el cambio de la herramienta (D-374 punto 3);
-  - la fecha sugerida del despacho se pierde sin `?despacho=` (detalle en el análisis §8).
+  - ~~la fecha sugerida del despacho se pierde sin `?despacho=`~~: descartado en cc09, el default ya es la
+    fecha del comprobante.
 
 ## 2026-10-01 — cc07: D-373, reactivar un comprobante manual anulado por error
 
