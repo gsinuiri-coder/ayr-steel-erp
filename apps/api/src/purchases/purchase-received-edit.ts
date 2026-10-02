@@ -55,6 +55,11 @@ export interface ItemFacts {
    * reversa y reingreso no tienen qué revertir: se bloquea en vez de tocar solo la compra.
    */
   hasLiveIn: boolean;
+  /**
+   * D-134: los pedidos cuya promesa de materia prima por agregado quedaría sin cubrir si la
+   * bobina se quedara sin saldo (el instante de la reversa), ya nombrados; `null` si ninguno.
+   */
+  backsPromised: string | null;
   /** Bobina: estado, si está montada en una OP y si tiene landed cost. */
   coilStatus: string | null;
   mountedOrder: string | null;
@@ -182,6 +187,9 @@ function blockedBy(
   }
   if (reentry && !item.hasLiveIn) {
     return 'La línea no tiene un ingreso de kardex vivo de esta compra: no hay ingreso que corregir';
+  }
+  if (reentry && item.backsPromised !== null) {
+    return `No se puede corregir porque esta bobina respalda material comprometido de ${item.backsPromised}: la reversa del ingreso dejaría esa promesa sin cubrir`;
   }
   if (item.ownReservation) {
     return reentry

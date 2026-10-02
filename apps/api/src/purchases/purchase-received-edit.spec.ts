@@ -28,6 +28,7 @@ const coilItem = (over: Partial<ItemFacts> = {}): ItemFacts => ({
   thicknessMm: '0.40',
   laterMovements: [],
   hasLiveIn: true,
+  backsPromised: null,
   coilStatus: 'OPEN',
   mountedOrder: null,
   ownReservation: false,

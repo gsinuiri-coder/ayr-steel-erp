@@ -94,9 +94,10 @@ Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ve
   administrador, con motivo y vista previa. Cáscara en el lugar; precio, cantidad y producto de un
   ítem sin movimientos posteriores por reversa y nuevo ingreso en la fecha de recepción; código de
   bobina conservado; bloqueos con su motivo. Sin migración.
-- **Tests:** 36 unitarios (clasificador y servicio con base simulada); E2E
-  `editar-compra-recibida-d372.spec.ts` 5/5 en local (precio con PEPS, auditoría y vuelta al valor
-  anterior; kg; bloqueo con consumo; diálogo; cáscara con consumo).
+- **Tests:** 48 unitarios (clasificador y servicio con base simulada); E2E
+  `editar-compra-recibida-d372.spec.ts` 7/7 en local (precio con PEPS, auditoría y vuelta al valor
+  anterior; kg; bloqueo con consumo; diálogo; materia prima prometida con guardado todo o nada;
+  rechazo después de la reversa y el reingreso; cáscara con consumo).
 - **Runbook:** `docs/handoff/ventana-cc14.md` (API antes que web). Guion: `docs/uat/cc14.md`.
 - **Revisiones:** autorrevisión `docs/revision/cc14-autorrevision.md` y segundo modelo
   `docs/revision/cc14-segundo-modelo.md`. Sin P0. **P1 corregidos:**
@@ -106,14 +107,25 @@ Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ve
     los movimientos posteriores, en orden fijo;
   - reserva que la reversa dejaría sin cubrir (bobina reservada; producto cuya reserva no cabe
     sin este ingreso): ahora la vista previa lo bloquea en vez de fallar al confirmar. **Se aparta
-    del diseño** («reserva activa → B1 sí»): queda como pregunta al dueño.
+    del diseño** («reserva activa → B1 sí»); el dueño eligió la opción (a): se mantiene el bloqueo
+    y la operación de reemplazo que comprueba las reservas al final va en la sesión 2.
+- **Materia prima prometida por agregado (D-134):** la vista previa simula la bobina sin saldo
+  (`findRawMaterialShortfalls` con `withoutCoilIds`, sin lock) y bloquea con «No se puede corregir
+  porque esta bobina respalda material comprometido de PED-…». El cambio de color o espesor que
+  saca la bobina del agregado no pasa por la reversa y se rechaza al guardar con el mismo texto;
+  el guardado es una sola `$transaction` y el E2E comprueba que no queda nada a medias. Anticipar
+  ese segundo caso queda como P2 para la sesión 2.
+- **Foto `READ ONLY` de producción (2026-10-02, OK del dueño, clasificador de cc14, script
+  borrado):** de 18 compras recibidas, **3 editables enteras** (E001-261 una de las dos, E001-278,
+  F001-63599); la cáscara, las 18. Bloqueos: consumo posterior (producción, merma, venta, otra
+  compra del mismo producto) y reserva de producto terminado (4 compras solo por eso). Ninguna
+  línea bloqueada por materia prima prometida.
 - **P2 corregidos:** deshacer restaura los importes del papel de la versión anterior (guardados en
   la auditoría, D-359); la tasa de IGV solo se exige si cambian importes y una edición de cáscara
   no reescribe los totales; la misma línea dos veces o dos líneas al mismo producto se bloquean;
   el detalle de bloqueo nombra la operación («merma (SCRAP) el …»); timeout de 120 s.
-- **Pendientes de las revisiones (P2/P3, sin corregir):** la reversa de una bobina que respalda
-  material prometido por agregado (D-134) falla al confirmar con el mensaje de materia prima, sin
-  aviso previo; tras un cambio de producto la compra puede quedar sin anulación si el producto
+- **Pendientes de las revisiones (P2/P3, sin corregir):** el cambio de color o espesor de una
+  bobina que respalda material prometido se rechaza recién al guardar (P2, sesión 2); tras un cambio de producto la compra puede quedar sin anulación si el producto
   viejo se mueve; el cambio de producto no toca la descripción del papel; pasar a contado anula
   los días de crédito sin fila propia en el plan; el «antes» del vencimiento y del costo de
   documento de la bobina no se audita; una serie heredada fuera de formato bloquea el diálogo; sin

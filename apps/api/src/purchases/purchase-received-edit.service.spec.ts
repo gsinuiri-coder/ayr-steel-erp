@@ -9,7 +9,10 @@ jest.mock('../production/production-assignments', () => ({
   findLiveStripAssignments: jest.fn(),
 }));
 jest.mock('../sales/reserved-ledger', () => ({ reservedByItem: jest.fn() }));
-jest.mock('../sales/raw-material', () => ({ assertRawMaterialInvariant: jest.fn() }));
+jest.mock('../sales/raw-material', () => ({
+  assertRawMaterialInvariant: jest.fn(),
+  findRawMaterialShortfalls: jest.fn(),
+}));
 
 /**
  * D-372 (cc14) — el servicio con una base simulada: lo que lee para clasificar y lo que escribe al
@@ -203,6 +206,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     jest.mocked(assignments.findLiveStripAssignments).mockResolvedValue([]);
     jest.mocked(ledger.reservedByItem).mockResolvedValue(new Map());
     jest.mocked(rawMaterial.assertRawMaterialInvariant).mockResolvedValue(undefined);
+    jest.mocked(rawMaterial.findRawMaterialShortfalls).mockResolvedValue([]);
   });
 
   it('vista previa: lee la compra en solo lectura y clasifica', async () => {
@@ -491,6 +495,39 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
     });
     expect(plan.changes[0]?.blockedReason).toContain('material reservado');
+  });
+
+  it('bobina que respalda material prometido por agregado: la vista previa lo nombra y bloquea', async () => {
+    jest.mocked(rawMaterial.findRawMaterialShortfalls).mockResolvedValue([
+      {
+        specId: 'spec-1',
+        label: 'ROJO 0.40',
+        freeKg: '0.000',
+        promisedKg: '300.000',
+        shortfallKg: '300.000',
+        orders: [{ code: 'PED-000009', qtyKg: '300.000' }],
+        message: '',
+      },
+    ]);
+    const { tx } = makeTx({});
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+      header: { notes: 'x' },
+    });
+    expect(rawMaterial.findRawMaterialShortfalls).toHaveBeenCalledWith(
+      tx,
+      ['coil-1'],
+      expect.any(String),
+      expect.objectContaining({ withoutCoilIds: ['coil-1'] }),
+    );
+    expect(plan.changes.find((c) => c.field === 'unitPrice')?.blockedReason).toBe(
+      'No se puede corregir porque esta bobina respalda material comprometido de PED-000009 (300.000 kg): la reversa del ingreso dejaría esa promesa sin cubrir',
+    );
+    // La cáscara no simula nada: sin líneas en la edición no se consulta el agregado.
+    jest.mocked(rawMaterial.findRawMaterialShortfalls).mockClear();
+    await service.preview(ADMIN, 'p-1', { header: { notes: 'x' } });
+    expect(rawMaterial.findRawMaterialShortfalls).not.toHaveBeenCalled();
   });
 
   it('producto con reserva que no cabe sin este ingreso: bloqueado; si cabe, ejecutable', async () => {

@@ -27,7 +27,7 @@ import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
-import { assertRawMaterialInvariant } from '../sales/raw-material';
+import { assertRawMaterialInvariant, findRawMaterialShortfalls } from '../sales/raw-material';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { computeDueDate, receptionCost } from './purchase-math';
 import { editedLineAmounts, impliedIgvRatePct, purchaseTotalsOf } from './purchase-draft-edit';
@@ -79,7 +79,7 @@ export class ReceivedPurchaseEditService {
     return this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-        const loaded = await this.load(tx, id);
+        const loaded = await this.load(tx, id, touchedItems(input));
         const targets = await this.loadTargets(tx, loaded.purchase, loaded.receiptDate, input);
         return classifyReceivedEdit(loaded.facts, input, targets);
       },
@@ -111,7 +111,7 @@ export class ReceivedPurchaseEditService {
         // un movimiento confirmado entre la lectura y la reversa no lo vería el clasificador.
         await this.lockBalances(tx, id, coilIds, input);
 
-        const loaded = await this.load(tx, id);
+        const loaded = await this.load(tx, id, touchedItems(input));
         const targets = await this.loadTargets(tx, loaded.purchase, loaded.receiptDate, input);
         const plan = classifyReceivedEdit(loaded.facts, input, targets);
         if (plan.changes.length === 0) return plan;
@@ -221,7 +221,11 @@ export class ReceivedPurchaseEditService {
   // Lectura
   // -------------------------------------------------------------------------
 
-  private async load(tx: Prisma.TransactionClient, id: string) {
+  private async load(
+    tx: Prisma.TransactionClient,
+    id: string,
+    touched: ReadonlySet<string> = new Set(),
+  ) {
     const purchase = await tx.purchase.findUnique({
       where: { id },
       include: {
@@ -277,6 +281,18 @@ export class ReceivedPurchaseEditService {
         const first = live[0] ?? null;
         const ownIn = first?.type === 'IN' ? first : null;
         if (ownIn && receiptDate === null) receiptDate = dateOf(ownIn.operationDate);
+        // D-134: la reversa deja la bobina sin saldo un instante, y `InventoryService.reverse`
+        // rechaza si eso deja corto un agregado con promesas de pedidos. Se simula acá, solo
+        // para las líneas que la edición toca y que no tienen otro bloqueo antes.
+        const backsPromised =
+          coil && ownIn && live.length === 1 && touched.has(item.id)
+            ? (
+                await findRawMaterialShortfalls(tx, [coil.id], roofingToleranceMm(this.env), {
+                  withoutCoilIds: [coil.id],
+                  firstOnly: true,
+                })
+              )[0]
+            : undefined;
         loadedItems.push({
           coilId: coil?.id ?? null,
           ownIn,
@@ -286,6 +302,9 @@ export class ReceivedPurchaseEditService {
               .filter((m) => m.id !== ownIn?.id)
               .map((m) => ({ refType: m.refType, operationDate: dateOf(m.operationDate) })),
             hasLiveIn: ownIn !== null,
+            backsPromised: backsPromised
+              ? backsPromised.orders.map((o) => `${o.code} (${o.qtyKg} kg)`).join(', ')
+              : null,
             coilStatus: coil?.status ?? null,
             mountedOrder: assignments.find((a) => a.coilId === coil?.id)?.orderCode ?? null,
             ownReservation: coil ? (ownReserved.get(coil.id) ?? toDecimal('0')).gt(0) : false,
@@ -349,6 +368,7 @@ export class ReceivedPurchaseEditService {
               operationDate: dateOf(m.operationDate),
             })),
             hasLiveIn: ownIn !== null,
+            backsPromised: null,
             coilStatus: null,
             mountedOrder: null,
             ownReservation: reservationShort,
@@ -366,6 +386,7 @@ export class ReceivedPurchaseEditService {
             ...baseItemFacts(item, finishCode),
             laterMovements: [],
             hasLiveIn: false,
+            backsPromised: null,
             coilStatus: null,
             mountedOrder: null,
             ownReservation: false,
@@ -599,13 +620,15 @@ export class ReceivedPurchaseEditService {
             `La línea ${String(item.lineNumber)} no tiene ítem de kardex que corregir`,
           );
         }
-        await this.inventory.reverse(
-          tx,
-          ownIn.id,
-          actor.id,
-          `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
-          date,
-          true,
+        await promisedMaterialMessage(() =>
+          this.inventory.reverse(
+            tx,
+            ownIn.id,
+            actor.id,
+            `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
+            date,
+            true,
+          ),
         );
         reversed.push(ownIn.id.toString());
         const kardexTotalPen = cents(lineSubtotal.times(exchangeRate));
@@ -716,15 +739,17 @@ export class ReceivedPurchaseEditService {
     // prima, y el que abandona puede quedar por debajo de lo prometido. Igual que el cambio de
     // acabado de una bobina suelta (`coils.update`).
     for (const t of touchedRawCoils) {
-      await assertRawMaterialInvariant(tx, [t.coilId], roofingToleranceMm(this.env), {
-        alsoAffecting: [
-          {
-            businessLineId: purchase.businessLineId,
-            colorId: t.before.colorId,
-            thicknessMm: t.before.thicknessMm,
-          },
-        ],
-      });
+      await promisedMaterialMessage(() =>
+        assertRawMaterialInvariant(tx, [t.coilId], roofingToleranceMm(this.env), {
+          alsoAffecting: [
+            {
+              businessLineId: purchase.businessLineId,
+              colorId: t.before.colorId,
+              thicknessMm: t.before.thicknessMm,
+            },
+          ],
+        }),
+      );
     }
     return { reversed, created, amountsChanged, linesBefore };
   }
@@ -848,6 +873,29 @@ export class ReceivedPurchaseEditService {
     }
     return { total };
   }
+}
+
+/**
+ * El rechazo de materia prima (D-134) dicho en los términos de esta pantalla. Llega cuando la
+ * corrección ya escribió algo dentro de la transacción; al relanzarlo, `$transaction` deshace
+ * todo (la compra, la bobina y los movimientos): el guardado es todo o nada.
+ */
+async function promisedMaterialMessage<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof BadRequestException && err.message.includes('prometidos a')) {
+      throw new BadRequestException(
+        `No se puede corregir porque esta bobina respalda material comprometido. ${err.message}`,
+      );
+    }
+    throw err;
+  }
+}
+
+/** Las líneas que la edición nombra: solo para ellas se simula la reversa (D-134). */
+function touchedItems(input: EditReceivedPurchaseInput): Set<string> {
+  return new Set((input.items ?? []).map((e) => e.itemId));
 }
 
 /** Una línea como estaba antes de una edición: los importes del papel (D-359). */

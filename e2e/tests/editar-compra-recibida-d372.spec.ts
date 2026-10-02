@@ -8,7 +8,17 @@ import {
   today,
   type CoilDto,
 } from '../helpers/production';
-import { purgeRoofingTrail, setupRoofingScenario, type RoofingScenario } from '../helpers/roofing';
+import {
+  buyRoofingCoil,
+  createColor,
+  createRoofingFinish,
+  pieces,
+  purgeRoofingTrail,
+  quoteAndOrder,
+  setupRoofingScenario,
+  type RoofingScenario,
+} from '../helpers/roofing';
+import { createCustomer } from '../helpers/sales';
 import { headerAction } from '../helpers/ui';
 
 /**
@@ -253,6 +263,120 @@ test.describe('D-372 — editar una compra recibida', () => {
       expect(balance.avgCost).toBe('5.5000');
     } finally {
       await purgeRoofingTrail(api, trailOf(s));
+    }
+  });
+
+  test('materia prima prometida: la vista previa bloquea el precio, y un fallo al guardar no deja nada a medias', async () => {
+    const s = await setupRoofingScenario(api, { weightKg: '1000' });
+    const customer = await createCustomer(api);
+    const otherColor = await createColor(api, '#0033a0');
+    const otherFinish = await createRoofingFinish(api, { colorId: otherColor.id });
+    const trail = { ...trailOf(s), orderIds: [] as string[], quotationIds: [] as string[] };
+    try {
+      // 10 m de cobertura a medida: 40.4 kg prometidos al agregado de esta única bobina,
+      // sin reserva sobre la bobina misma (D-134).
+      const { quotation, order } = await quoteAndOrder(api, {
+        customerId: customer.id,
+        productId: s.product.id,
+        rows: pieces([5, 2]),
+      });
+      trail.quotationIds = [quotation.id];
+      trail.orderIds = [order.id];
+
+      const purchase = await getJson<PurchaseDto>(api, `/api/purchases/${s.purchaseId}`);
+      const item = purchase.items[0]!;
+      const plan = await postJson<PlanDto>(
+        api,
+        `/api/purchases/${s.purchaseId}/received-edit/preview`,
+        { items: [{ itemId: item.id, unitPrice: '5.5' }] },
+      );
+      expect(plan.changes[0]?.path).toBe('BLOCKED');
+      expect(plan.changes[0]?.blockedReason).toContain(
+        'No se puede corregir porque esta bobina respalda material comprometido de',
+      );
+      expect(plan.changes[0]?.blockedReason).toContain(order.code);
+
+      // Cambiar el acabado a otro color saca la bobina del agregado: no pasa por la reversa,
+      // así que la vista previa no lo anticipa y el rechazo llega al guardar, **después** de
+      // haber escrito la bobina y la línea dentro de la transacción.
+      const auditBefore = await getJson<{ items: { action: string }[] }>(
+        api,
+        `/api/audit?entityType=purchases&entityId=${s.purchaseId}&pageSize=20`,
+      );
+      const rejected = await postExpectingError(
+        api,
+        `/api/purchases/${s.purchaseId}/received-edit`,
+        {
+          header: { notes: 'No debe quedar (E2E D-372)' },
+          items: [{ itemId: item.id, finishId: otherFinish.id }],
+          reason: 'Acabado equivocado (E2E D-372)',
+        },
+      );
+      expect(rejected.status).toBe(400);
+      expect(rejected.message).toContain(
+        'No se puede corregir porque esta bobina respalda material comprometido',
+      );
+      expect(rejected.message).toContain(order.code);
+
+      // Todo o nada: la compra, la línea, la bobina, el kardex y la auditoría como antes.
+      const after = await getJson<PurchaseDto & { notes: string | null }>(
+        api,
+        `/api/purchases/${s.purchaseId}`,
+      );
+      expect(after.notes).toBe(null);
+      expect(after.items[0]).toMatchObject({ unitPrice: item.unitPrice });
+      const coil = await getJson<CoilDto & { finishId: string }>(api, `/api/coils/${s.coil.id}`);
+      expect(coil.finishId).toBe(s.finish.id);
+      expect(await movementsOf(api, 'COIL', s.coil.id)).toHaveLength(1);
+      const auditAfter = await getJson<{ items: { action: string }[] }>(
+        api,
+        `/api/audit?entityType=purchases&entityId=${s.purchaseId}&pageSize=20`,
+      );
+      expect(auditAfter.items).toHaveLength(auditBefore.items.length);
+    } finally {
+      await purgeRoofingTrail(api, trail);
+    }
+  });
+
+  test('un rechazo después de la reversa y el reingreso los deshace (comprobante duplicado)', async () => {
+    const s = await setupRoofingScenario(api, { weightKg: '1000' });
+    const second = await buyRoofingCoil(api, {
+      supplierId: s.supplier.id,
+      finishId: s.finish.id,
+      colorId: s.color.id,
+      weightKg: '500',
+    });
+    const trail = {
+      ...trailOf(s),
+      coilIds: [s.coil.id, second.coil.id],
+      purchaseIds: [s.purchaseId, second.purchaseId],
+    };
+    try {
+      const purchase = await getJson<PurchaseDto>(api, `/api/purchases/${s.purchaseId}`);
+      const other = await getJson<{ docType: string; series: string; number: string }>(
+        api,
+        `/api/purchases/${second.purchaseId}`,
+      );
+      const item = purchase.items[0]!;
+      // La unicidad del comprobante se comprueba al escribir la cabecera, después de las
+      // líneas: para entonces la reversa y el ingreso nuevo ya están escritos.
+      const rejected = await postExpectingError(
+        api,
+        `/api/purchases/${s.purchaseId}/received-edit`,
+        {
+          header: { docType: other.docType, series: other.series, number: other.number },
+          items: [{ itemId: item.id, unitPrice: '5.5' }],
+          reason: 'Comprobante duplicado (E2E D-372)',
+        },
+      );
+      expect(rejected.status).toBe(409);
+      expect(await movementsOf(api, 'COIL', s.coil.id)).toHaveLength(1);
+      expect((await balanceOf(api, 'COIL', s.coil.id)).avgCost).toBe('5.0000');
+      const after = await getJson<PurchaseDto>(api, `/api/purchases/${s.purchaseId}`);
+      expect(after.items[0]).toMatchObject({ unitPrice: '5.0000' });
+      expect(after.total).toBe(purchase.total);
+    } finally {
+      await purgeRoofingTrail(api, trail);
     }
   });
 
