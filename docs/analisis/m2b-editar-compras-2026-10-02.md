@@ -1,5 +1,16 @@
 # M2b: editar compras ya recibidas (D-372), diseño
 
+> **Aprobado por el dueño el 2026-10-02**: decisiones 1 a 9 como se recomendaron, salvo la 3. Ajustes:
+>
+> - **3:** el ajuste con consumo posterior es **proporcional**: diferencia unitaria × saldo que queda.
+>   La versión anterior de este informe decía «un ajuste por la diferencia» con la mecánica del
+>   landed cost, que carga la diferencia **entera** sobre el saldo. Queda corregido en §3.B y §5.
+> - **10:** no hay `--undo` por consola. Deshacer es volver a editar con el valor anterior, por la
+>   misma pantalla, con sus movimientos inversos y su auditoría.
+>
+> Implementación: sesión 1 = cc14 (cáscara, costo sin movimientos posteriores, kardex sin
+> movimientos posteriores). Sesión 2 = el ajuste proporcional (B2).
+
 > **Solo diseño.** No hay código ni migración. La foto de producción es del 2026-10-02, en una
 > transacción `READ ONLY` con OK del dueño; solo cuenta filas (sin proveedores ni importes) y el
 > script se borró después de correrlo. El código citado es `main` en `14db1eb`.
@@ -16,8 +27,8 @@
 - **Propuesta en tres niveles:**
   - **Cáscara:** se edita en el lugar y se audita.
   - **Costo:** si nada se movió después, reversa y reingreso en la misma fecha (el patrón del
-    recosteo, D-045). Si ya hubo consumo, un ajuste por la diferencia sobre el saldo que queda (el
-    patrón del landed cost, D-043), con aviso de lo ya vendido.
+    recosteo, D-045). Si ya hubo consumo, un ajuste **proporcional**: diferencia unitaria × saldo
+    que queda. La parte que ya salió no se toca y se informa en el aviso.
   - **Kardex** (cantidad, producto, especificación de la bobina): solo si el ítem no tuvo **ningún**
     movimiento posterior. Si lo tuvo, se bloquea con el detalle de qué lo movió.
 - **Foto de producción:** 18 compras recibidas, todas en soles, sin pagos y sin landed cost.
@@ -102,8 +113,8 @@ Reglas comunes:
 - auditoría `purchases.update-received` con el antes y el después de cada campo y los ids de los
   movimientos revertidos y nuevos;
 - todo movimiento pasa por `InventoryService.record`/`reverse`/`adjustCost`;
-- la reversa (deshacer la edición) se construye en la misma fase, con el patrón `--undo` de la
-  herramienta de fechas.
+- **deshacer = volver a editar con el valor anterior**, por la misma pantalla. Genera sus propios
+  movimientos inversos y su auditoría; no hay `--undo` por consola (decisión 10).
 
 ### A. Cáscara: se edita en el lugar
 
@@ -125,11 +136,14 @@ Reglas comunes:
    - el kardex queda como si la compra hubiera entrado bien.
 2. **B2, con consumo posterior** (producción, merma, venta, partido, corte):
    - **no se reescriben las salidas pasadas** (append-only, regla 8);
-   - se graba un **ajuste por la diferencia** sobre lo que queda de ese ítem (`adjustCost`, la
-     mecánica del landed cost), con `refType PURCHASE` a la compra corregida y nota «corrección de
-     costo»;
-   - si el ítem ya no tiene saldo, no hay dónde imputarlo: la diferencia queda solo en el documento
-     (la compra y la bobina) y se avisa (decisión 3).
+   - se graba un ajuste **proporcional** sobre lo que queda de ese ítem: `(costo unitario nuevo −
+costo unitario viejo) × saldo vigente`, por `adjustCost`, con `refType PURCHASE` a la compra
+     corregida y nota «corrección de costo» (decisión 3). **No** es la mecánica del landed cost, que
+     cargaría la diferencia entera;
+   - la parte que ya salió (`diferencia unitaria × cantidad consumida`) **no se toca**: se informa
+     en el aviso con los documentos que la llevaron;
+   - si el ítem ya no tiene saldo, el ajuste es cero: la corrección queda solo en el documento (la
+     compra y la bobina) y en el aviso.
    - **Aviso:** antes de confirmar se listan los despachos y OP que se llevaron material de esa
      bobina o producto a otro costo. Sus márgenes **no se recalculan**.
 3. **Bloqueos de B:**
@@ -219,25 +233,25 @@ Medido en el código (inventario §4):
 
 ## 5. Decisiones que necesito
 
-| #   | Decisión                                                  | Recomendación                                                                                                                             |
-| --- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Qué campos de cáscara se editan                           | Serie y número (ya), tipo de documento, fecha de emisión, condiciones de pago, observaciones y descripción. **Proveedor solo sin pagos.** |
-| 2   | Cambiar la fecha de emisión en USD con TC automático      | **No recalcula el TC**: el TC se corrige aparte, por el grupo B. Hoy no hay compras en USD                                                |
-| 3   | Costo con consumo posterior (B2)                          | **Ajuste por la diferencia sobre lo que queda y aviso de lo vendido; sin recalcular márgenes.** Sin saldo, solo se corrige el documento   |
-| 4   | Ediciones con pagos vigentes                              | **Bloquear las de costo y kardex con cualquier pago vigente**, como D-371 (hoy no hay pagos); la cáscara sí                               |
-| 5   | El código de la bobina cuando cambia el peso              | **Conservar el código** (es la etiqueta física y la clave que usa todo el resto); el peso nuevo queda en la ficha y en la auditoría       |
-| 6   | Agregar o quitar líneas de una recibida                   | **Fuera de la primera versión**; con todo intacto se anula y se registra de nuevo                                                         |
-| 7   | Cantidad, producto o especificación con consumo posterior | **Bloquear** con el detalle de qué movió el ítem; no hay ajuste de cantidades                                                             |
-| 8   | Fecha de recepción                                        | Queda en la herramienta de D-374; M2b no la toca                                                                                          |
-| 9   | Interfaz                                                  | «Editar compra» en el detalle de la recibida, con la vista previa de qué camino toma (A, B1, B2 o bloqueo) y los documentos afectados     |
-| 10  | Reversa de la edición                                     | `--undo` por lote, como la herramienta de fechas: se niega si hubo movimientos después de la edición                                      |
+| #   | Decisión                                                  | Recomendación                                                                                                                                       |
+| --- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Qué campos de cáscara se editan                           | Serie y número (ya), tipo de documento, fecha de emisión, condiciones de pago, observaciones y descripción. **Proveedor solo sin pagos.**           |
+| 2   | Cambiar la fecha de emisión en USD con TC automático      | **No recalcula el TC**: el TC se corrige aparte, por el grupo B. Hoy no hay compras en USD                                                          |
+| 3   | Costo con consumo posterior (B2)                          | **Decidido: ajuste proporcional** (diferencia unitaria × saldo); lo que salió no se toca y se informa con sus documentos. Sin saldo, solo documento |
+| 4   | Ediciones con pagos vigentes                              | **Bloquear las de costo y kardex con cualquier pago vigente**, como D-371 (hoy no hay pagos); la cáscara sí                                         |
+| 5   | El código de la bobina cuando cambia el peso              | **Conservar el código** (es la etiqueta física y la clave que usa todo el resto); el peso nuevo queda en la ficha y en la auditoría                 |
+| 6   | Agregar o quitar líneas de una recibida                   | **Fuera de la primera versión**; con todo intacto se anula y se registra de nuevo                                                                   |
+| 7   | Cantidad, producto o especificación con consumo posterior | **Bloquear** con el detalle de qué movió el ítem; no hay ajuste de cantidades                                                                       |
+| 8   | Fecha de recepción                                        | Queda en la herramienta de D-374; M2b no la toca                                                                                                    |
+| 9   | Interfaz                                                  | «Editar compra» en el detalle de la recibida, con la vista previa de qué camino toma (A, B1, B2 o bloqueo) y los documentos afectados               |
+| 10  | Reversa de la edición                                     | **Decidido: sin `--undo`.** Deshacer es volver a editar con el valor anterior, por la misma pantalla, con sus movimientos y auditoría               |
 
 ## 6. Estimación
 
 | Sesión | Alcance                                                                                                                                                   |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1      | A (cáscara) + B1 + C con el clasificador (`classifyPurchaseEdit`), API, interfaz, auditoría, reversa, unitarios y E2E                                     |
-| 2      | B2 (ajuste sobre lo que queda) con el aviso de documentos afectados, más los bordes de bobina cerrada y producto                                          |
+| 2      | B2 (ajuste proporcional sobre lo que queda) con el aviso de documentos afectados, más los bordes de bobina cerrada y producto                             |
 | —      | Revisiones (autorrevisión + Sonnet) y ventana. **Sin migración** si se aprueban las recomendaciones (todo cabe en las columnas actuales y en `audit_log`) |
 
 Sin B2 alcanza con una sesión, y cubre 8 de 18 compras enteras más la cáscara de todas.
