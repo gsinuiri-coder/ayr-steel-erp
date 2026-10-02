@@ -5,12 +5,13 @@ import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { PurchasesController } from './purchases.controller';
 import { PurchasesService } from './purchases.service';
+import { ReceivedPurchaseEditService } from './purchase-received-edit.service';
 
 /** Compras (D-030). Depende de kardex y bobinas porque la recepción escribe en ambos. */
 @Module({
   imports: [InventoryModule, CoilsModule, ExchangeRatesModule, DocumentsModule],
   controllers: [PurchasesController],
-  providers: [PurchasesService],
+  providers: [PurchasesService, ReceivedPurchaseEditService],
   exports: [PurchasesService],
 })
 export class PurchasesModule {}
