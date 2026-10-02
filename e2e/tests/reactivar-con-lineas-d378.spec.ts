@@ -13,6 +13,7 @@ import {
 import { POS_LINE, setupPosStock } from '../helpers/pos';
 import { balanceOf, movementsOf } from '../helpers/production';
 import { createDirectOrder, patchExpectingError } from '../helpers/sales';
+import { headerAction } from '../helpers/ui';
 
 /**
  * D-378 — reactivar un comprobante manual anulado con las líneas actuales del pedido.
@@ -276,6 +277,54 @@ test.describe('D-378 — reactivar con las líneas actuales del pedido', () => {
         { data: { reason: 'otra vez', confirmMatchesPaper: true, paperTotalPen: paperTotal } },
       );
       expect(again.status()).toBe(409);
+    } finally {
+      await purgeInvoicingTrail(api, trail);
+    }
+  });
+
+  test('las dos reactivaciones también desde el detalle del comprobante anulado', async ({
+    page,
+  }) => {
+    const trail: InvoicingTrail = {
+      documentIds: [],
+      dispatchIds: [],
+      orderIds: [],
+      productIds: [],
+    };
+    try {
+      const { stock, order, invoice } = await annulledWithDispatchedLine(api, trail);
+      const grown = await postJson<OrderWithReservations>(
+        api,
+        `/api/sales/orders/${order.id}/items`,
+        { items: [{ productId: stock.product.id, qty: '2', unitPricePen: '50.0000' }] },
+      );
+
+      await loginAsAdmin(page);
+      await page.goto(`/comprobantes/${invoice.id}`);
+
+      // D-378 desde la cabecera: la vista previa del pedido entero.
+      await (await headerAction(page, 'Reactivar con las líneas del pedido')).click();
+      const linesDialog = page.getByRole('dialog');
+      await expect(linesDialog.getByRole('region', { name: 'Después' })).toContainText('Agregada');
+      await expect(linesDialog.getByTestId('after-total')).toContainText(cents(grown.totalPen));
+      await linesDialog.getByRole('button', { name: 'Cancelar' }).click();
+      await expect(linesDialog).toBeHidden();
+
+      // D-373 desde la cabecera: reactiva con su línea y su total de siempre.
+      await (await headerAction(page, 'Reactivar')).click();
+      const dialog = page.getByRole('dialog');
+      await expect(dialog).toContainText('faltó un ítem (E2E D-378)');
+      await dialog.getByLabel('Motivo de la reactivación').fill('Anulado por error (E2E detalle)');
+      await dialog.getByLabel(/sigue vigente en Nubefact\/SUNAT/).check();
+      await dialog.getByRole('button', { name: 'Reactivar', exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/comprobantes/${invoice.id}\\?despacho=`), {
+        timeout: 60_000,
+      });
+
+      const after = await getDocument(api, invoice.id);
+      expect(after.status).toBe('ACCEPTED');
+      expect(after.items).toHaveLength(1);
+      expect(after.totalPen).toBe(invoice.totalPen);
     } finally {
       await purgeInvoicingTrail(api, trail);
     }
