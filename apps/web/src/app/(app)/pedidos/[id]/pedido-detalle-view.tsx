@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -21,6 +22,7 @@ import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
+import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -65,6 +67,7 @@ import { OrderDocumentLinks } from '@/components/sales/order-documents';
 import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import { RowActions } from '@/components/row-actions';
+import { RESTORE_RESERVATION_PARAM } from '@/lib/restore-reservation';
 
 function reservationBadge(r: ReservationDto) {
   return <Badge variant={RESERVATION_TONE[r.status]}>{RESERVATION_STATUS_LABELS[r.status]}</Badge>;
@@ -80,6 +83,11 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [cancelOpen, setCancelOpen] = useState(false);
   const [releasing, setReleasing] = useState<ReservationDto | null>(null);
+  /** D-379: la reserva liberada a mano que se está por restaurar. */
+  const [restoring, setRestoring] = useState<ReservationDto | null>(null);
+  const restoreParam = useSearchParams().get(RESTORE_RESERVATION_PARAM);
+  const router = useRouter();
+  const restoreParamHandled = useRef(false);
   // D-187: las ediciones del pedido confirmado, hasta su comprobante.
   const [pricing, setPricing] = useState<SalesItemDto | null>(null);
   const [resizing, setResizing] = useState<SalesItemDto | null>(null);
@@ -135,6 +143,36 @@ export function PedidoDetalleView({ id }: { id: string }) {
     },
     onError,
   });
+
+  /** D-379: vuelve a activar una reserva de producto liberada a mano. */
+  const restore = useMutation({
+    mutationFn: ({ reservationId, reason }: { reservationId: string; reason: string }) =>
+      api<ReservationDto>(`/sales/reservations/${reservationId}/restore`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: () => {
+      toast.success('Reserva restaurada: la línea ya se puede despachar');
+      setRestoring(null);
+      invalidateSales(queryClient, { orderId: id });
+      // El plan de despacho del comprobante cambia con la reserva: sin esto, volver por
+      // navegación del cliente mostraba la línea «No se despacha» hasta refrescar.
+      invalidateInvoicing(queryClient, { orderId: id });
+    },
+    onError,
+  });
+
+  // D-379: el enlace del comprobante abre el diálogo una sola vez, si la reserva sigue siendo
+  // restaurable. Si ya no lo es (otro la restauró), no abre nada.
+  useEffect(() => {
+    if (restoreParamHandled.current || !isAdmin || restoreParam === null) return;
+    if (order.data === undefined) return;
+    restoreParamHandled.current = true;
+    const target = order.data.reservations.find((r) => r.id === restoreParam && r.restorable);
+    if (target) setRestoring(target);
+    // Se consume una vez: sin limpiarlo, un refresco volvía a abrir el diálogo.
+    router.replace(`/pedidos/${id}`, { scroll: false });
+  }, [id, isAdmin, order.data, restoreParam, router]);
 
   /**
    * D-341: reserva lo que hoy alcanza del faltante. Si no alcanza nada, el API lo dice y no
@@ -245,13 +283,19 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const busy =
     cancel.isPending ||
     release.isPending ||
+    restore.isPending ||
     generateOrders.isPending ||
     completeReservation.isPending;
   // D-187: precio y cliente son de ADMINISTRADOR; agregar ítems y cambiar cantidades, también
   // del vendedor dueño del pedido. El API es el que corta; esto solo evita ofrecer un 403.
   const canEditAsAdmin = o.isEditable && isAdmin;
   const canEditAsOwner = o.isEditable && (isAdmin || user.id === o.sellerId);
-  const showLineActions = canEditAsAdmin || canEditAsOwner;
+  // D-379: la reserva liberada a mano de cada línea que se puede restaurar. La acción vive en el
+  // menú de la línea aunque el pedido ya no se edite (tiene comprobante): restaurar no lo cambia.
+  const restorableByLine = new Map(
+    isAdmin ? o.reservations.filter((r) => r.restorable).map((r) => [r.salesOrderItemId, r]) : [],
+  );
+  const showLineActions = canEditAsAdmin || canEditAsOwner || restorableByLine.size > 0;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -556,7 +600,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
                   <TableCell className="text-right">
                     <RowActions
                       label={`línea ${String(item.lineNumber)}`}
-                      primary="price"
+                      // D-379: sin ediciones, «Restaurar reserva» queda en el menú ⋯, no como botón.
+                      // Con ediciones, la principal sigue siendo la de siempre (precio o cantidad).
+                      primary={canEditAsAdmin || canEditAsOwner ? 'price' : null}
                       actions={[
                         {
                           key: 'price',
@@ -585,6 +631,17 @@ export function PedidoDetalleView({ id }: { id: string }) {
                           show: canEditAsOwner && isCoilSaleLine(item),
                           onSelect: () => {
                             setRecoiling(item);
+                          },
+                        },
+                        // D-379: la reserva de lo fabricado se liberó a mano; se repone desde acá.
+                        {
+                          key: 'restore-reservation',
+                          label: 'Restaurar reserva',
+                          ariaLabel: `Restaurar la reserva de la línea ${String(item.lineNumber)}`,
+                          show: restorableByLine.has(item.id),
+                          disabled: busy,
+                          onSelect: () => {
+                            setRestoring(restorableByLine.get(item.id) ?? null);
                           },
                         },
                       ]}
@@ -739,6 +796,21 @@ export function PedidoDetalleView({ id }: { id: string }) {
         pending={release.isPending}
         onConfirm={(reason) => {
           if (releasing) release.mutate({ reservationId: releasing.id, reason });
+        }}
+      />
+      <ReasonDialog
+        open={restoring !== null}
+        onOpenChange={(open) => {
+          if (!open) setRestoring(null);
+        }}
+        title={`Restaurar la reserva de ${restoring?.itemLabel ?? ''}`}
+        description={`Vuelve a reservar ${restoring ? formatQty(restoring.qty, unitSymbol(restoring.unit)) : ''} para este pedido, que se liberaron a mano. Si el material ya no está disponible, no cambia nada y se indica cuánto falta. No mueve el kardex.`}
+        confirmLabel="Restaurar reserva"
+        placeholder="Por qué se restaura"
+        constructive
+        pending={restore.isPending}
+        onConfirm={(reason) => {
+          if (restoring) restore.mutate({ reservationId: restoring.id, reason });
         }}
       />
       <EditLinePriceDialog

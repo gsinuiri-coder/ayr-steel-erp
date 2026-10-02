@@ -24,6 +24,7 @@ import { assertSellerAccess } from '../auth/seller-scope';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
+import { restorableByLine } from '../sales/reservation-restore';
 import { DispatchesService } from './dispatches.service';
 import {
   allocateUndispatched,
@@ -148,17 +149,23 @@ export class InvoiceDispatchService {
   ): Promise<InvoiceDispatchPlanDto> {
     const dispatchDate =
       requestedDate === undefined ? undefined : this.operationDate.resolve(actor, requestedDate);
-    const plan = await this.prisma.$transaction(
+    const { plan, restorable } = await this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-        return this.buildPlan(tx, { id: invoiceId }, { dispatchDate });
+        const built = await this.buildPlan(tx, { id: invoiceId }, { dispatchDate });
+        // D-379: las líneas que van a revisión y tienen una reserva liberada a mano que se
+        // puede restaurar; el detalle del comprobante enlaza la acción.
+        const reviewIds = (built.invoices[0]?.lines ?? [])
+          .filter((l) => l.action === 'REVIEW')
+          .map((l) => l.orderItemId);
+        return { plan: built, restorable: await restorableByLine(tx, reviewIds) };
       },
       { timeout: 30_000 },
     );
     const invoice = plan.invoices[0];
     if (invoice === undefined) return { invoiceId, lines: [] };
     assertSellerAccess(actor, invoice.sellerId, 'Comprobante');
-    return toPlanDto(invoice, plan.items);
+    return toPlanDto(invoice, plan.items, restorable);
   }
 
   /** El botón: despacha lo que el plan permite y devuelve lo que quedó a revisión. */
@@ -825,6 +832,8 @@ export function planSignature(invoice: PlannedInvoice): string {
 function toPlanDto(
   invoice: PlannedInvoice,
   items: Map<string, PlanItemInfo>,
+  /** D-379: por línea de pedido, la reserva liberada a mano que se puede restaurar. */
+  restorable: ReadonlyMap<string, { salesOrderId: string; reservationId: string }> = new Map(),
 ): InvoiceDispatchPlanDto {
   return {
     invoiceId: invoice.invoiceId,
@@ -837,6 +846,7 @@ function toPlanDto(
       operationDate: l.operationDate,
       reason: l.reason,
       firstValidDate: l.firstValidDate,
+      restorableReservation: l.action === 'REVIEW' ? (restorable.get(l.orderItemId) ?? null) : null,
     })),
   };
 }

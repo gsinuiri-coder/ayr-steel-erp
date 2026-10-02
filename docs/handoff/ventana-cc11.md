@@ -1,6 +1,17 @@
 # Runbook: ventana de cc11 (D-377, decimales: totales al céntimo)
 
-**Estado: PENDIENTE.** Se ejecuta esta noche, con el cliente fuera de la app.
+**Estado: EJECUTADO el 2026-10-01, de noche, sin incidencias.** Resultado:
+
+| Qué                   | Valor                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------ |
+| Resumen de D-232      | 18 commits, CI 36928690786 sobre `8bf9927` en verde; OK del dueño                          |
+| Revisión API anterior | `ayr-steel-erp-api-00073-zmj` (`git-sha=abe3e08`)                                          |
+| Revisión API nueva    | **`ayr-steel-erp-api-00074-wwq`**, 100 %, `git-sha=8bf9927`, `/health` 200, smoke 7/7      |
+| Merge del #74         | `main` = **`348d760`**, diff de runtime vacío; Vercel `success`; smoke en los dos dominios |
+| PR #75                | mergeado, `main` = **`1997518`**; `../ayr-1382` y su rama borrados                         |
+| Paso 0 (PDF)          | saltado, riesgo aceptado; el dueño compara el primer comprobante real con su papel         |
+
+Plan original:
 
 Cada paso marcado **[OK]** espera el OK explícito del dueño (D-251/D-232). El agente propone el
 comando exacto y espera.

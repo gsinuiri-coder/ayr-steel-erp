@@ -205,6 +205,39 @@ export async function setQuotationSellerForTest(
 }
 
 /**
+ * D-379: deja una reserva de producto terminado **liberada a mano**, como quedó la de
+ * FFA1-00001382 antes de D-379. Desde D-379 el API ya no deja liberar la reserva de lo fabricado
+ * de una línea contra pedido, así que el estado viejo solo se reproduce acá: la fila liberada con
+ * su cantidad intacta y el evento `sales.reservation.release` que escribe la liberación manual.
+ */
+export async function releaseReservationLegacyForTest(
+  reservationId: string,
+  reason: string,
+): Promise<void> {
+  const db = testDatabaseClient();
+  try {
+    await db.$executeRawUnsafe(
+      `UPDATE "reservations"
+       SET "status" = 'RELEASED', "shortfall_qty" = 0, "released_at" = now(),
+           "released_by_id" = (SELECT "id" FROM "users" WHERE "role" = 'ADMINISTRADOR' ORDER BY "created_at" LIMIT 1)
+       WHERE "id" = $1::uuid AND "status" = 'ACTIVE'`,
+      reservationId,
+    );
+    await db.$executeRawUnsafe(
+      `INSERT INTO "audit_log" ("actor_id", "action", "entity", "entity_id", "before", "after")
+       SELECT u."id", 'sales.reservation.release', 'reservations', $1,
+              '{"status":"ACTIVE","shortfallQty":"0.000"}'::jsonb,
+              jsonb_build_object('status', 'RELEASED', 'shortfallQty', '0.000', 'reason', $2::text)
+       FROM "users" u WHERE u."role" = 'ADMINISTRADOR' ORDER BY u."created_at" LIMIT 1`,
+      reservationId,
+      reason,
+    );
+  } finally {
+    await db.$disconnect();
+  }
+}
+
+/**
  * D-375: deja anulada una bobina **que tiene salidas vivas**. Ninguna ruta del API produce ese
  * estado (anular exige que no queden movimientos vivos), y es justo el que la restauración
  * tiene que bloquear.

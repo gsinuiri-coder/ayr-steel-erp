@@ -55,7 +55,10 @@ export async function upsertItemReservation(
       itemId: input.itemId,
     },
   };
-  const existing = await tx.reservation.findUnique({ where: key, select: { id: true, qty: true } });
+  const existing = await tx.reservation.findUnique({
+    where: key,
+    select: { id: true, qty: true, status: true },
+  });
   if (!existing) {
     const created = await tx.reservation.create({
       data: {
@@ -73,10 +76,16 @@ export async function upsertItemReservation(
     return created.id;
   }
 
+  // D-379: una fila `RELEASED` no promete nada. La liberación manual conservaba la cantidad que
+  // prometía, y revivirla sumándole lo nuevo prometía de más (48 + 48 por los mismos metros).
+  const base =
+    existing.status === ReservationStatus.RELEASED
+      ? new Decimal(0)
+      : toDecimal(existing.qty.toString());
   await tx.reservation.update({
     where: key,
     data: {
-      qty: toDecimal(existing.qty.toString()).plus(input.qty).toFixed(3),
+      qty: base.plus(input.qty).toFixed(3),
       status: ReservationStatus.ACTIVE,
       consumedAt: null,
       releasedAt: null,

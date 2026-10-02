@@ -897,6 +897,13 @@ export const invoiceDispatchPlanSchema = z.object({
       reason: z.string().nullable(),
       /** D-364: primera fecha candidata que pasa el mismo guard cronológico, si existe. */
       firstValidDate: z.string().nullable(),
+      /**
+       * D-379: la línea no se despacha porque su reserva de producto terminado se liberó a
+       * mano, y esa reserva se puede restaurar desde el pedido. `null` en cualquier otro caso.
+       */
+      restorableReservation: z
+        .object({ salesOrderId: z.string().uuid(), reservationId: z.string().uuid() })
+        .nullable(),
     }),
   ),
 });
