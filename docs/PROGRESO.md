@@ -124,6 +124,17 @@ Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ve
   la auditoría, D-359); la tasa de IGV solo se exige si cambian importes y una edición de cáscara
   no reescribe los totales; la misma línea dos veces o dos líneas al mismo producto se bloquean;
   el detalle de bloqueo nombra la operación («merma (SCRAP) el …»); timeout de 120 s.
+- **Decisión del dueño (2026-10-02):** cc14 sale **ahora**, en ventana propia, después de su UAT
+  en demo (demo local con `da07aeb`). cc13 sigue por su lado.
+- **Las dos E001-261 (foto `READ ONLY`, OK del dueño):** son **dos documentos distintos**, no una
+  factura registrada dos veces: proveedores distintos (YISENT y XIN SHENG YUAN, RUC distintos), la
+  misma serie-número y la misma fecha de emisión (18/08) por coincidencia de numeración de cada
+  proveedor; una bobina cada una (4 536 kg, ancho 1 220, abierta; 4 546 kg, ancho 1 200,
+  cerrada). No se corrigió nada.
+- **Alcance de la sesión 2** (fila D-372): ajuste proporcional del costo con consumo; operación de
+  reemplazo que comprueba reservas al final (habilita las líneas con reserva); líneas bloqueadas
+  por otra compra posterior del mismo producto; vista previa del cambio de color o espesor de una
+  bobina comprometida.
 - **Pendientes de las revisiones (P2/P3, sin corregir):** el cambio de color o espesor de una
   bobina que respalda material prometido se rechaza recién al guardar (P2, sesión 2); tras un cambio de producto la compra puede quedar sin anulación si el producto
   viejo se mueve; el cambio de producto no toca la descripción del papel; pasar a contado anula
