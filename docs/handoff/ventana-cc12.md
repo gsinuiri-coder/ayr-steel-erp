@@ -1,7 +1,18 @@
 # Runbook: ventana de cc12 (D-379, restaurar la reserva de lo fabricado)
 
-**Estado: PENDIENTE.** Va después de la ventana de cc11: cc12 se reacomoda sobre el `main` que ya
-tiene cc11 y espera su CI otra vez antes del deploy.
+**Estado: EJECUTADO el 2026-10-02, después de la ventana de cc11, sin incidencias.** Resultado:
+
+| Qué                         | Valor                                                                                                                                           |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reacomodo y CI              | sobre `main` `1997518`; CI 36965763082 en `c7b2645`: unitarios 2117, E2E 479, smoke Neon `ci` 36                                                |
+| Revisión API anterior       | `ayr-steel-erp-api-00074-wwq` (`git-sha=8bf9927`)                                                                                               |
+| Revisión API nueva          | **`ayr-steel-erp-api-00075-9f9`**, 100 %, `git-sha=c7b2645`, `/health` 200, smoke 8/8 con la web vieja                                          |
+| Merge del #76               | `main` = **`768903a`**, diff de runtime vacío; Vercel `success`; smoke 8/8 en los dos dominios                                                  |
+| Disponible antes del paso 5 | 348 m, 300 reservados por PED-000001: **48 libres**; lo fabricado vivo de la línea 1, 48 m                                                      |
+| Paso 5 (dueño)              | reserva restaurada (13:41 UTC, «se ha vuelto a reservar»); **DES-000054** al 29/09                                                              |
+| Foto posterior `READ ONLY`  | reserva `CONSUMED`; DES-000054 enlazado a FFA1-00001382; salida 48 m (mov. 483) al 29/09; saldo 300, sin días negativos; PED-000011 `FULFILLED` |
+
+Plan original:
 
 Cada paso marcado **[OK]** espera el OK explícito del dueño (D-251/D-232). El agente propone el
 comando exacto y espera.

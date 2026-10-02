@@ -2,6 +2,31 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-02 — Ventana cc12 (D-379 desplegada, PR #76, sin migración) y FFA1-00001382 despachado
+
+Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc12.md`.
+
+- **Reacomodo:** sobre `main` `1997518`. CI 36965763082 en `c7b2645`: unitarios 2117, E2E 479
+  passed y smoke de Neon `ci` 36 passed.
+- **API:** **`ayr-steel-erp-api-00075-9f9`** (`git-sha=c7b2645`) al 100 %. Smoke 8/8 con la web
+  vieja. Vuelta atrás: `00074-wwq`.
+- **Merge del #76:** `main` = **`768903a`**, diff de runtime vacío. Vercel `success`; smoke 8/8 en
+  `vercel.app` y `v2.mareliac.pe`.
+- **FFA1-00001382** (por la interfaz, a cargo del dueño). Antes de empezar había 48 m libres de
+  COB040ROJO, justo lo necesario.
+  - La reserva de la línea 1 de PED-000011 se restauró con auditoría
+    `sales.reservation.restore`, que copia la liberación del 29/09.
+  - Se despachó en **DES-000054** al 29/09, enlazado al comprobante.
+- **Foto posterior `READ ONLY`:**
+  - la reserva quedó `CONSUMED`;
+  - hay una salida de 48 m (movimiento 483) con fecha de operación 29/09;
+  - el saldo de COB040ROJO es 300 m (los de PED-000001), sin días negativos;
+  - PED-000011 está `FULFILLED`.
+- **Limpieza:** worktrees `../ayr-cc11` y `../ayr-cc12` borrados (ninguno tenía `local-data/`).
+  Ramas `cc11/decimales` y `cc12/restaurar-reserva` borradas, locales y remotas.
+- **Queda abierto:** cc13 (D-378, reactivar con las líneas del pedido), aprobada y en espera de la
+  lista de comprobantes del dueño.
+
 ## 2026-10-01 — Ventana cc11 (D-377 desplegada, PR #74 y #75, sin migración)
 
 Ventana de noche. El dueño aprobó el resumen de D-232; la comparación con los PDF se saltó como
