@@ -10,14 +10,15 @@
 
 ## 1. Propósito
 
-Este manual explica cómo dejar el ERP en orden cuando un comprobante manual quedó mal. Hay tres
-situaciones:
+Este manual explica cómo dejar el ERP en orden cuando un comprobante manual quedó mal o no se puede
+despachar. Hay cuatro situaciones:
 
 | Caso | Qué pasó                                                                                 | Qué se hace en el ERP                                                                     |
 | ---- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | 1    | El papel estuvo mal (serie, número, fecha, tipo, cliente), pero **la venta es la misma** | Se **anula internamente** y se registra el comprobante correcto sobre el **mismo pedido** |
 | 2    | **Cambió la venta**: precio, cantidad o producto                                         | Se anula, se **edita el pedido** y se factura de nuevo                                    |
 | 3    | El error fue **anular** un comprobante que sí era válido                                 | Se **reactiva** (D-373)                                                                   |
+| 4    | La línea fabricada «No se despacha» porque **su reserva se liberó a mano**               | Se **restaura la reserva** y se despacha (D-379)                                          |
 
 Tres cosas que conviene saber desde el principio:
 
@@ -47,7 +48,7 @@ Abra el comprobante en **Comprobantes → (el comprobante)** y revise:
    - ¿El despacho aparece como **propio** del comprobante («DES-…») o solo como
      **«Del pedido: DES-…»**?
 
-   Esto define qué hacer con el despacho (§6).
+   Esto define qué hacer con el despacho (§7).
 
 4. **Otros comprobantes y borradores del pedido.**
    - Para **editar el pedido** (caso 2) no puede quedar **ningún** comprobante ni borrador de factura
@@ -69,7 +70,7 @@ Abra el comprobante en **Comprobantes → (el comprobante)** y revise:
    - El comprobante queda **Anulado**, con saldo cero, y sale de cuentas por cobrar y de los reportes
      de ventas.
    - Las líneas del pedido vuelven a quedar «por facturar».
-4. Si existe un despacho, decida qué hacer con él (§6). **Lo recomendado es no tocarlo.**
+4. Si existe un despacho, decida qué hacer con él (§7). **Lo recomendado es no tocarlo.**
 5. Desde el pedido, **«Emitir comprobante»**, o **Comprobantes → Nuevo** eligiendo el pedido. La
    pantalla propone facturar todo lo pendiente.
    - El campo **«Despacho que factura»** debería permitir elegir el despacho del comprobante
@@ -82,7 +83,7 @@ Abra el comprobante en **Comprobantes → (el comprobante)** y revise:
 - **Cobros:** se cargan de nuevo sobre el comprobante nuevo.
 - **Despacho:** si no lo toca, el kardex queda bien y **no se descuenta dos veces**. El comprobante
   nuevo ve sus líneas como despachadas y no ofrece despacharlas. Pero el despacho **sigue enlazado al
-  comprobante anulado** (§6 y hueco H2).
+  comprobante anulado** (§7 y hueco H2).
 
 ## 4. Caso 2: la venta cambió (precio, cantidad o producto)
 
@@ -112,7 +113,7 @@ viva. Una anulada ya no cuenta.
 3. **Solo si cambia la cantidad (o la bobina) de una línea ya despachada:** vaya al despacho →
    «⋯» → **«Revertir despacho»**, con motivo y fecha de operación.
    - La reversa devuelve el material al kardex y **restaura la reserva** del pedido.
-   - Lea §6 antes de elegir la fecha.
+   - Lea §7 antes de elegir la fecha.
    - Si solo cambia el **precio**, no revierta el despacho.
 4. Edite el pedido. Al cambiar la cantidad, el sistema **libera la reserva vigente y reserva la
    cantidad nueva**. Si no alcanza el stock, no cambia nada.
@@ -156,10 +157,47 @@ viva. Una anulada ya no cuenta.
 - **Despacho que siguió vigente** mientras estuvo anulado: sigue enlazado y no hay nada pendiente.
   El aviso «queda pendiente de despacho» aparece igual, aunque no sea cierto (hueco H5).
 - **Despacho que se revirtió** mientras estuvo anulado: las líneas quedan pendientes y el aviso
-  ofrece despacharlas. Lea §6: hay riesgo de **contar dos veces la salida** entre esa fecha y la de
+  ofrece despacharlas. Lea §7: hay riesgo de **contar dos veces la salida** entre esa fecha y la de
   la reversa.
 
-## 6. Qué pasa con el despacho en cada caso
+## 6. Caso 4: la línea fabricada «No se despacha» porque su reserva se liberó (D-379)
+
+Una cobertura o una plancha que se **fabrica contra el pedido** solo sale del almacén desde su
+**reserva de producto terminado**: la que abre la producción al reportar. Si esa reserva se liberó a
+mano, la línea queda sin camino de despacho. En el detalle del comprobante se ve «No se despacha —
+La línea N se fabrica contra el pedido y no tiene producto terminado reservado…». Es lo que pasó
+con FFA1-00001382.
+
+Desde D-379:
+
+- **Ya no se puede liberar a mano** esa reserva mientras cubra lo fabricado sin despachar. El
+  mensaje dice qué hacer en su lugar: despachar, revertir la producción o anular el pedido.
+- **Una reserva liberada antes de D-379 se restaura.** Debajo de la línea, el comprobante muestra
+  «La reserva de esta línea se liberó a mano. **Restaurar reserva**».
+
+### Pasos
+
+1. En el comprobante, haga clic en **Restaurar reserva**. Se abre el pedido con el diálogo listo.
+   - Otra vía: abra el pedido y, en la línea, use el menú **⋯ → Restaurar reserva**.
+2. Escriba el motivo y confirme. La reserva vuelve a **Activa** con lo fabricado que todavía no
+   salió.
+   - Si el material ya no está disponible porque otro pedido lo tomó, no cambia nada y el mensaje
+     dice cuánto falta.
+3. Vuelva al comprobante. La línea ahora dice «Sale del almacén».
+4. Elija la **fecha de despacho** y despache. Si la salida vieja de esa línea se revirtió, use una
+   fecha **igual o posterior a la de la reversa**. Una anterior deja el kardex negativo y la línea
+   vuelve a «No se despacha» con la «Primera fecha válida». Lea §7, «Riesgo de fecha».
+
+### Qué pasa con cada cosa
+
+- **Kardex:** restaurar no lo mueve. Lo mueve el despacho del paso 4.
+- **Reserva:** queda activa y el despacho la consume.
+- **Auditoría:** queda el evento «Reserva restaurada (D-379)» con quién y cuándo se había liberado y
+  el motivo de la liberación.
+- **No se restauran:** las reservas cerradas por un despacho, por la producción o por anular el
+  pedido, ni las de productos de stock. Esas siguen el flujo normal.
+
+## 7. Qué pasa con el despacho en cada caso
 
 Cómo funciona por dentro (verificado):
 
@@ -198,7 +236,7 @@ Cómo funciona por dentro (verificado):
 > despacho**. Si tiene que revertirlo y rehacerlo porque cambia la cantidad, elija como **fecha del
 > nuevo despacho la misma fecha de la reversa**, no la del comprobante.
 
-## 7. Mensajes que verá
+## 8. Mensajes que verá
 
 | Mensaje                                                                                             | Qué hacer                                                                                                    |
 | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -209,14 +247,24 @@ Cómo funciona por dentro (verificado):
 | «El pedido ya tiene comprobante (…): no se puede … Corrige con una nota de crédito.»                | Queda una factura o boleta, o un borrador, en pie en el pedido. Anúlela internamente o descarte el borrador. |
 | «Línea N: ya tiene despachos, así que su cantidad no se cambia…»                                    | Revierta el despacho primero, o agregue un ítem con la diferencia.                                           |
 | «El comprobante … todavía factura líneas de este despacho: dalo de baja…» (al revertir el despacho) | Para un manual, **anúlelo internamente** primero (hueco H6).                                                 |
-| «La fecha … queda ANTES de N movimiento(s) …» (al revertir con fecha pasada)                        | Use la fecha de hoy (§6).                                                                                    |
+| «La fecha … queda ANTES de N movimiento(s) …» (al revertir con fecha pasada)                        | Use la fecha de hoy (§7).                                                                                    |
 | «Hay N borrador(es) de comprobante sobre las mismas líneas…»                                        | Descarte el borrador del reingreso.                                                                          |
 | «La línea N del pedido ya se volvió a facturar en …»                                                | Ya hay un reemplazo. Decida cuál queda.                                                                      |
 | «El pedido …: la línea N se modificó … después de anular …»                                         | El pedido cambió: facture de nuevo (caso 2), no reactive.                                                    |
 | «Confirma que el comprobante sigue vigente en Nubefact/SUNAT …»                                     | Falta marcar la casilla.                                                                                     |
 | No aparece «Anular internamente» en un manual                                                       | Tiene cobros o notas de crédito vivas (hueco H6).                                                            |
+| «La línea N se fabrica contra el pedido y no tiene producto terminado reservado…»                   | Restaure la reserva (§6, caso 4) y despache.                                                                 |
+| «La línea N se fabrica contra el pedido y esta reserva cubre … ya fabricados…» (al liberar)         | Es D-379: no se libera. Despache la línea, revierta la producción o anule el pedido.                         |
+| «… tiene X disponibles … y la reserva necesita Y: faltan Z.» (al restaurar)                         | Otro pedido tomó el material. Hay que producir o liberar lo de ese otro pedido.                              |
 
-## 8. Huecos conocidos y propuestas (sin implementar)
+## 9. Huecos conocidos y propuestas (sin implementar)
+
+Del diagnóstico de FFA1-00001382 salieron dos más:
+
+- **H8:** corregir el contenido de un manual conservando su número. Es **D-378**, aprobada y en
+  espera (cc13).
+- **H9:** la reserva de lo fabricado se podía liberar y no reponer. Está **resuelto por D-379**
+  (§6).
 
 | Hueco  | Qué pasa                                                                                                                                                                                                                                                                                                                                                                  | Propuesta (número D-nnn a definir por el dueño)                                                                                                                                                                                                                                      |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -228,7 +276,12 @@ Cómo funciona por dentro (verificado):
 | **H6** | Para un manual, «Anular internamente» se oculta sin aviso cuando hay cobros o notas de crédito; el diálogo habla de «planilla»; el bloqueo de la reversa de despacho dice «dalo de baja».                                                                                                                                                                                 | Ajustar los textos al origen MANUAL.                                                                                                                                                                                                                                                 |
 | **H7** | No hay edición para cambiar el producto de una línea común ni para quitarla del pedido.                                                                                                                                                                                                                                                                                   | Decisión de alcance del dueño (regla 16).                                                                                                                                                                                                                                            |
 
-## 9. Para soporte (referencias de código, `main` en `cdcd4cc`)
+## 10. Para soporte (referencias de código, `main` en `cdcd4cc`)
+
+- **Restaurar y el bloqueo de liberar (D-379, cc12):**
+  - `apps/api/src/sales/reservation-restore.ts`: `fabricatedReleaseBlock`, `restoreBlock`,
+    `fabricatedAliveQty` y `restorableByLine`;
+  - `SalesOrdersService.restoreReservation` y `releaseReservation`.
 
 - **Anular:** `apps/api/src/invoicing/fiscal-import.service.ts`, `annulExternal`. Bloquea con cobros
   vigentes y notas de crédito vivas. Solo cambia el estado y la constancia, y no toca despachos,

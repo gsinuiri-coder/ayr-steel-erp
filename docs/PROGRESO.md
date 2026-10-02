@@ -2,6 +2,21 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-01 — Ventana cc11 (D-377 desplegada, PR #74 y #75, sin migración)
+
+Ventana de noche. El dueño aprobó el resumen de D-232; la comparación con los PDF se saltó como
+riesgo aceptado. Detalle en `docs/handoff/ventana-cc11.md`.
+
+- **API:** **`ayr-steel-erp-api-00074-wwq`** (`git-sha=8bf9927`) al 100 %, `/health` 200 y smoke
+  7/7 con la web vieja. Vuelta atrás: `00073-zmj`.
+- **Merge del #74:** `main` = **`348d760`**, diff de runtime contra `8bf9927` vacío. Vercel
+  `success`; smoke en verde contra `vercel.app` y `v2.mareliac.pe`.
+- **PR #75** (diagnóstico de FFA1-00001382, solo docs) mergeado: `main` = **`1997518`**.
+- **Limpieza:** worktrees `../ayr-1382` y `../ayr-cc11` borrados (ninguno tenía `local-data/`).
+  Ramas borradas: `docs/ffa1-1382` (local y remota) y `cc11/decimales` (local).
+- **Control posterior a cargo del dueño:** comparar el total del primer comprobante real contra su
+  papel.
+
 ## 2026-10-01 — cc12: D-379, restaurar la reserva de lo fabricado (PR sin merge)
 
 - **Origen:** FFA1-00001382. La reserva de producto de su única línea (48 m de COB040ROJO, OP-000015)
@@ -19,11 +34,13 @@
 - **Runbook:** `docs/handoff/ventana-cc12.md`. Va después de cc11, reacomodado sobre `main`. Trae
   los pasos por la interfaz para el 1382: restaurar la reserva y despachar con fecha **29/09**; el
   22/09 deja −48 m.
-- **Pendiente al reacomodar sobre `main`:** agregar el caso al manual
-  `docs/manual/corregir-comprobante-manual.md`, que entra con cc11.
+- **Reacomodado sobre `main` `1997518`** (después de cc11). El caso se sumó al manual
+  `docs/manual/corregir-comprobante-manual.md` como §6, caso 4.
+- **Verificación antes del reacomodo:** CI 36933006326 sobre `7c79c40`, con unitarios 2089, E2E 478
+  passed y smoke de Neon `ci` 36 passed. E2E local: 43 passed y 1 rojo de infraestructura (R2).
 - **Limpieza (OK del dueño por nombre, 2026-10-01):** se borraron 6 ramas locales y 20 remotas ya
-  mergeadas o cerradas. Quedan vivas `main`, `cc11/decimales`, `docs/ffa1-1382` y
-  `cc12/restaurar-reserva`.
+  mergeadas o cerradas.
+
 ## 2026-10-01 — cc11: D-377, decimales (P-14): totales al céntimo en el documento (PR sin merge)
 
 - **R2 aprobada por el dueño**, con la medición de 141 comprobantes de los exportes de Nubefact.
