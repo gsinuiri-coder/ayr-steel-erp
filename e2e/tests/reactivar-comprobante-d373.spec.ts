@@ -123,7 +123,7 @@ test.describe('D-373 — reactivar un comprobante manual anulado por error', () 
       await loginAsAdmin(page);
       await page.goto(`/comprobantes?status=VOIDED,ANNULLED&search=${encodeURIComponent(number)}`);
       await page.getByRole('button', { name: `Más acciones de ${number}` }).click();
-      await page.getByRole('menuitem', { name: 'Reactivar' }).click();
+      await page.getByRole('menuitem', { name: 'Reactivar', exact: true }).click();
 
       const dialog = page.getByRole('dialog');
       await expect(dialog).toContainText('mal despacho (E2E D-373)');
