@@ -6,8 +6,8 @@ la foto `READ ONLY` del paso 2 se toma cuando el dueño pase los números, antes
 ## Cierre de la sesión cc13 (2026-10-02)
 
 **Resumen.** D-378 está implementada en la rama `cc13/reactivar-con-lineas`, que sale de `main`
-`58955b5` y es independiente de cc14. PR #80 sin merge. Sin migración y nada en producción. CI:
-ver el PR.
+`58955b5` y es independiente de cc14. PR #80 sin merge. Sin migración y nada en producción. CI
+37063416075 en verde sobre `f343be9` (ver «Pruebas»).
 
 **Hecho**, por milestone:
 
@@ -46,8 +46,13 @@ ver el PR.
   plan puro, incluidos los bloqueos) y 31 de D-373, sin cambios.
 - Lint y typecheck en verde.
 - E2E local: D-378 (2) y D-373 (3), 5/5.
-- La suite E2E completa con build de producción la corre la CI del PR. La máquina local no la
-  aguanta.
+- CI 37063416075, todo en verde:
+  - lint, typecheck y unitarios;
+  - Sonar;
+  - E2E completo con build de producción: **481 passed, 0 failed, 3 skipped**;
+  - smoke de Neon `ci`: 36 passed y 2 skipped;
+  - Vercel preview.
+  - La corrida anterior (37060365261) se canceló por el push del número del PR, no por un rojo.
 
 **Revisiones:**
 

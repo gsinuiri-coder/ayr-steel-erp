@@ -30,7 +30,8 @@
   - lint, typecheck y unitarios en verde (API 2150, web 87);
   - E2E de D-378 (2, nuevos) y de D-373 (3) en verde, 5/5. El de D-373 solo cambió el selector del
     menú a `exact: true`.
-  - La suite E2E completa la corre la CI (la local muere por memoria, ver memoria de correcciones 04).
+  - CI 37063416075 sobre `f343be9`, todo en verde: E2E completo **481 passed, 0 failed, 3
+    skipped**; smoke de Neon `ci` 36 passed; Sonar en verde.
 - **Revisiones:**
   - autorrevisión, en `docs/revision/cc13-autorrevision.md`: 0 P0, 0 P1, 5 P2 y 5 P3;
   - segundo modelo Sonnet, en `docs/revision/cc13-segundo-modelo.md`: 0 P0, 1 P1, 3 P2 y 4 P3.
