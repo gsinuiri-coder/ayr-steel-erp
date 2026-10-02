@@ -2,6 +2,44 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-02 — cc13: D-378, reactivar un manual con las líneas del pedido (PR sin merge)
+
+- **Rama `cc13/reactivar-con-lineas`** desde `main` `58955b5`, independiente de cc14. Sin migración y
+  nada en producción. Runbook: `docs/handoff/ventana-cc13.md`.
+- **D-378, decisiones 1-4 del arranque aprobadas por el dueño:**
+  - el comprobante pasa a facturar el pedido entero;
+  - se admiten los cambios de precio o cantidad hechos mientras estuvo anulado (D-187 sigue
+    mandando sobre la línea despachada);
+  - las filas se actualizan en su lugar y las nuevas van al final;
+  - con detracción no se reactiva así.
+- **Lo que hace:**
+  - controla el total del papel tipeado al céntimo y, si no coincide, muestra los dos y la
+    diferencia, en el API y en el modal;
+  - el modal muestra el antes y el después;
+  - la casilla dice «Confirmo que el comprobante, con estas líneas, coincide con el papel vigente»;
+  - las líneas agregadas quedan pendientes de despacho y las originales conservan el suyo;
+  - no toca kardex, reservas ni cobros.
+- **Bloqueos agregados en la implementación** (registrados en la fila de D-378, para confirmar en la
+  revisión del dueño):
+  - un pedido que no cambió remite a «Reactivar»;
+  - una boleta a «público en general» que cruzaría el tope de D-077;
+  - si la línea cambió de producto, la fila toma el producto nuevo.
+- **D-380** (conservar los cobros corrigiendo un manual vivo sin anularlo) registrada como
+  **propuesta, sin implementar**.
+- **Verificación local:**
+  - lint, typecheck y unitarios en verde (API 2150, web 87);
+  - E2E de D-378 (2, nuevos) y de D-373 (3) en verde, 5/5. El de D-373 solo cambió el selector del
+    menú a `exact: true`.
+  - La suite E2E completa la corre la CI (la local muere por memoria, ver memoria de correcciones 04).
+- **Revisiones:**
+  - autorrevisión, en `docs/revision/cc13-autorrevision.md`: 0 P0, 0 P1, 5 P2 y 5 P3;
+  - segundo modelo Sonnet, en `docs/revision/cc13-segundo-modelo.md`: 0 P0, 1 P1, 3 P2 y 4 P3.
+  - El P1 (un `tsc` rojo en un spec) y todos los P2 se corrigieron, salvo los locks de la vista
+    previa, que se aceptaron y documentaron.
+  - Queda para el dueño: si la acción debe estar también en el detalle del comprobante.
+- **Pendiente:** la foto `READ ONLY` de los comprobantes del dueño, cuando pase los números, antes de
+  la ventana.
+
 ## 2026-10-02 — Ventana cc12 (D-379 desplegada, PR #76, sin migración) y FFA1-00001382 despachado
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc12.md`.
