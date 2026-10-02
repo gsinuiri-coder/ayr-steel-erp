@@ -6,7 +6,7 @@ la foto `READ ONLY` del paso 2 se toma cuando el dueño pase los números, antes
 ## Cierre de la sesión cc13 (2026-10-02)
 
 **Resumen.** D-378 está implementada en la rama `cc13/reactivar-con-lineas`, que sale de `main`
-`58955b5` y es independiente de cc14. PR `<PR>` sin merge. Sin migración y nada en producción. CI:
+`58955b5` y es independiente de cc14. PR #80 sin merge. Sin migración y nada en producción. CI:
 ver el PR.
 
 **Hecho**, por milestone:
@@ -76,7 +76,7 @@ desde el paso 0.
 Cada paso marcado **[OK]** espera el OK explícito del dueño (D-251/D-232). El agente propone el
 comando exacto y espera.
 
-- PR: `<PR>` (rama `cc13/reactivar-con-lineas`).
+- PR: #80 (rama `cc13/reactivar-con-lineas`).
 - **No hay migración** y el deploy no escribe datos. Los datos que se tocan son los del paso 7,
   que el dueño hace **por la interfaz** con los servicios de dominio.
 - **Orden:** reacomodar sobre `main` → CI → foto `READ ONLY` → resumen de D-232 y OK → API →
@@ -95,7 +95,7 @@ comando exacto y espera.
 git fetch
 git -C ../ayr-cc13 rebase origin/main
 git -C ../ayr-cc13 push --force-with-lease
-gh pr checks <PR> --watch
+gh pr checks 80 --watch
 ```
 
 Si `main` avanzó (por ejemplo con cc14), los conflictos esperables son de docs: filas de
@@ -104,7 +104,7 @@ Si `main` avanzó (por ejemplo con cc14), los conflictos esperables son de docs:
 ## 1. Antes de empezar [agente]
 
 ```sh
-gh pr checks <PR>
+gh pr checks 80
 git rev-parse origin/cc13/reactivar-con-lineas     # = <SHA>
 git diff --name-only origin/main origin/cc13/reactivar-con-lineas -- apps/api/prisma/migrations apps/api/prisma/schema.prisma   # vacío
 cmd /c gcloud run services describe ayr-steel-erp-api --project ayr-steel-erp --region us-central1 --format "value(metadata.labels.git-sha,status.latestReadyRevisionName,status.traffic[0].percent)"
@@ -151,7 +151,7 @@ Verificar el `git-sha`, la revisión al 100 % y que `/health` responda 200. Desp
 ## 5. Merge a `main`: publica la web [OK]
 
 ```sh
-AYR_OWNER_PUSH=1 gh pr merge <PR> --merge
+AYR_OWNER_PUSH=1 gh pr merge 80 --merge
 ```
 
 Comprobar que el diff de runtime contra `<SHA>` sale vacío y que Vercel terminó en `success`.
