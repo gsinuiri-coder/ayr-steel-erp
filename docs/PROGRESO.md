@@ -85,6 +85,40 @@ Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ve
 - **Orden de las ventanas (dueño):** cc13 primero y cc14 después. La foto `READ ONLY` y los pasos
   por la interfaz van después del deploy de cc13, cuando el dueño pase los números.
 
+## 2026-10-02 — cc14: D-372 v1, editar una compra recibida (PR sin merge)
+
+- **Diseño:** M2b aprobado por el dueño (informe `docs/analisis/m2b-editar-compras-2026-10-02.md`,
+  PR #78), con el costo con consumo como ajuste **proporcional** al saldo (sesión 2) y deshacer como
+  re-edición.
+- **Implementado (sesión 1 de 2):** «Editar compra» en el detalle de una compra recibida, solo
+  administrador, con motivo y vista previa. Cáscara en el lugar; precio, cantidad y producto de un
+  ítem sin movimientos posteriores por reversa y nuevo ingreso en la fecha de recepción; código de
+  bobina conservado; bloqueos con su motivo. Sin migración.
+- **Tests:** 36 unitarios (clasificador y servicio con base simulada); E2E
+  `editar-compra-recibida-d372.spec.ts` 5/5 en local (precio con PEPS, auditoría y vuelta al valor
+  anterior; kg; bloqueo con consumo; diálogo; cáscara con consumo).
+- **Runbook:** `docs/handoff/ventana-cc14.md` (API antes que web). Guion: `docs/uat/cc14.md`.
+- **Revisiones:** autorrevisión `docs/revision/cc14-autorrevision.md` y segundo modelo
+  `docs/revision/cc14-segundo-modelo.md`. Sin P0. **P1 corregidos:**
+  - línea sin ingreso de kardex vivo: la vista previa la bloquea y el commit tiene una red que no
+    toca la compra sin su kardex;
+  - el commit bloquea los saldos de kardex (bobinas, producto viejo y nuevo) **antes** de leer
+    los movimientos posteriores, en orden fijo;
+  - reserva que la reversa dejaría sin cubrir (bobina reservada; producto cuya reserva no cabe
+    sin este ingreso): ahora la vista previa lo bloquea en vez de fallar al confirmar. **Se aparta
+    del diseño** («reserva activa → B1 sí»): queda como pregunta al dueño.
+- **P2 corregidos:** deshacer restaura los importes del papel de la versión anterior (guardados en
+  la auditoría, D-359); la tasa de IGV solo se exige si cambian importes y una edición de cáscara
+  no reescribe los totales; la misma línea dos veces o dos líneas al mismo producto se bloquean;
+  el detalle de bloqueo nombra la operación («merma (SCRAP) el …»); timeout de 120 s.
+- **Pendientes de las revisiones (P2/P3, sin corregir):** la reversa de una bobina que respalda
+  material prometido por agregado (D-134) falla al confirmar con el mensaje de materia prima, sin
+  aviso previo; tras un cambio de producto la compra puede quedar sin anulación si el producto
+  viejo se mueve; el cambio de producto no toca la descripción del papel; pasar a contado anula
+  los días de crédito sin fila propia en el plan; el «antes» del vencimiento y del costo de
+  documento de la bobina no se audita; una serie heredada fuera de formato bloquea el diálogo; sin
+  `idempotencyKey` (la operación es idempotente: un reintento ve un plan vacío).
+
 ## 2026-10-02 — Ventana cc12 (D-379 desplegada, PR #76, sin migración) y FFA1-00001382 despachado
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc12.md`.

@@ -27,6 +27,7 @@ const coilItem = (over: Partial<ItemFacts> = {}): ItemFacts => ({
   widthMm: '1000.00',
   thicknessMm: '0.40',
   laterMovements: [],
+  hasLiveIn: true,
   coilStatus: 'OPEN',
   mountedOrder: null,
   ownReservation: false,
@@ -54,6 +55,7 @@ const purchase = (over: Partial<PurchaseFacts> = {}): PurchaseFacts => ({
   purchaseId: 'p-1',
   type: PurchaseType.COIL,
   livePayments: 0,
+  igvRateIssue: null,
   header: {
     supplierId: 'sup-1',
     supplierLabel: 'ACME (20123456789)',
@@ -82,6 +84,76 @@ const noTargets = (over: Partial<TargetFacts> = {}): TargetFacts => ({
 });
 
 describe('D-372 — classifyReceivedEdit', () => {
+  describe('salvaguardas de la revisión', () => {
+    it('sin ingreso de kardex vivo, precio y cantidad se bloquean; la especificación sola no', () => {
+      const facts = purchase({ items: [coilItem({ hasLiveIn: false })] });
+      const plan = classifyReceivedEdit(
+        facts,
+        { items: [{ itemId: 'item-1', unitPrice: '6', qty: '990' }] },
+        noTargets(),
+      );
+      expect(plan.changes.every((c) => c.path === 'BLOCKED')).toBe(true);
+      expect(plan.changes[0]?.blockedReason).toContain('ingreso de kardex vivo');
+      const spec = classifyReceivedEdit(
+        facts,
+        { items: [{ itemId: 'item-1', widthMm: '1200' }] },
+        noTargets(),
+      );
+      expect(spec.changes[0]?.path).toBe('IN_PLACE');
+    });
+
+    it('tasa de IGV no estándar: bloquea precio y cantidad, no la cáscara', () => {
+      const plan = classifyReceivedEdit(
+        purchase({ igvRateIssue: 'La compra no tiene una tasa de IGV estándar' }),
+        { header: { notes: 'x' }, items: [{ itemId: 'item-1', unitPrice: '6' }] },
+        noTargets(),
+      );
+      expect(plan.changes.find((c) => c.field === 'notes')?.path).toBe('IN_PLACE');
+      expect(plan.changes.find((c) => c.field === 'unitPrice')?.blockedReason).toContain(
+        'tasa de IGV',
+      );
+    });
+
+    it('la misma línea dos veces en la edición: bloqueada', () => {
+      const plan = classifyReceivedEdit(
+        purchase(),
+        {
+          items: [
+            { itemId: 'item-1', unitPrice: '6' },
+            { itemId: 'item-1', unitPrice: '7' },
+          ],
+        },
+        noTargets(),
+      );
+      expect(plan.executable).toBe(false);
+      expect(plan.changes.at(-1)?.blockedReason).toContain('dos veces');
+    });
+
+    it('dos líneas que quedarían con el mismo producto: bloqueado', () => {
+      const plan = classifyReceivedEdit(
+        purchase({
+          type: PurchaseType.FINISHED_GOOD,
+          items: [
+            productItem(),
+            productItem({ itemId: 'item-2', lineNumber: 2, productId: 'prod-2' }),
+          ],
+        }),
+        { items: [{ itemId: 'item-1', productId: 'prod-2' }] },
+        noTargets(),
+      );
+      expect(plan.changes[0]?.blockedReason).toContain('mismo producto en dos líneas');
+    });
+
+    it('reserva que la reversa dejaría sin cubrir: bloquea también el precio', () => {
+      const plan = classifyReceivedEdit(
+        purchase({ items: [coilItem({ ownReservation: true })] }),
+        { items: [{ itemId: 'item-1', unitPrice: '6' }] },
+        noTargets(),
+      );
+      expect(plan.changes[0]?.blockedReason).toContain('material reservado');
+    });
+  });
+
   describe('cáscara', () => {
     it('serie, número, tipo, fecha, condiciones y observaciones se editan en la fila', () => {
       const plan = classifyReceivedEdit(
@@ -193,8 +265,8 @@ describe('D-372 — classifyReceivedEdit', () => {
       );
       expect(plan.changes[0]?.path).toBe('BLOCKED');
       expect(plan.changes[0]?.blockedReason).toContain('próxima versión');
-      expect(plan.changes[0]?.blockedReason).toContain('PRODUCTION el 2026-09-15');
-      expect(plan.changes[0]?.blockedReason).toContain('SCRAP el 2026-09-16');
+      expect(plan.changes[0]?.blockedReason).toContain('producción (PRODUCTION) el 2026-09-15');
+      expect(plan.changes[0]?.blockedReason).toContain('merma (SCRAP) el 2026-09-16');
     });
 
     it('pagos vigentes bloquean el costo', () => {
@@ -233,7 +305,7 @@ describe('D-372 — classifyReceivedEdit', () => {
       );
       const reason = plan.changes[0]?.blockedReason ?? '';
       expect(reason).toContain('movimientos posteriores');
-      expect(reason).toContain('SALE el 2026-09-20');
+      expect(reason).toContain('venta (SALE) el 2026-09-20');
       expect(reason).not.toContain('próxima versión');
     });
 

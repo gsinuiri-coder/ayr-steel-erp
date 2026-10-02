@@ -50,9 +50,19 @@ export interface ItemFacts {
   thicknessMm: string | null;
   /** Movimientos vivos del ítem después del ingreso de esta compra (no los de ella). */
   laterMovements: LaterMovement[];
-  /** Bobina: estado, si está montada en una OP, si tiene reserva propia y si tiene landed cost. */
+  /**
+   * Hay un ingreso vivo de esta compra para la línea, y es el que se revierte. Sin él, una
+   * reversa y reingreso no tienen qué revertir: se bloquea en vez de tocar solo la compra.
+   */
+  hasLiveIn: boolean;
+  /** Bobina: estado, si está montada en una OP y si tiene landed cost. */
   coilStatus: string | null;
   mountedOrder: string | null;
+  /**
+   * Hay material reservado que la reversa del ingreso dejaría sin cubrir (la reserva de la
+   * bobina, o la del producto por encima de lo que queda sin este ingreso). La reversa de
+   * `InventoryService` lo rechazaría; la vista previa lo dice antes.
+   */
   ownReservation: boolean;
   landedCost: boolean;
   /** Más de una línea de la compra entra al mismo producto: el ingreso no se separa por línea. */
@@ -63,6 +73,11 @@ export interface PurchaseFacts {
   purchaseId: string;
   type: PurchaseType;
   livePayments: number;
+  /**
+   * Si la tasa de IGV no se deduce de los totales (D-371), el motivo: un cambio de precio o
+   * cantidad no puede recalcular los importes de la línea.
+   */
+  igvRateIssue: string | null;
   header: {
     supplierId: string;
     supplierLabel: string;
@@ -110,13 +125,31 @@ const ITEM_LABELS: Record<string, string> = {
   thicknessMm: 'Espesor (mm)',
 };
 
+/** El nombre de la operación que movió el ítem, para el mensaje de bloqueo. */
+const REF_LABELS: Record<string, string> = {
+  PURCHASE: 'otra compra',
+  SALE: 'venta',
+  PRODUCTION: 'producción',
+  SPLIT: 'partido',
+  SCRAP: 'merma',
+  CLOSE_ADJUSTMENT: 'cierre de bobina',
+  CUTTING: 'corte',
+  ADJUSTMENT: 'ajuste de inventario',
+  IMPORT: 'carga inicial',
+};
+
 /** Igualdad de importes y medidas por valor, no por texto ("10" = "10.0000"). */
 function sameNumber(a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
   return toDecimal(a).equals(toDecimal(b));
 }
 
-function blockedBy(facts: PurchaseFacts, item: ItemFacts, group: ReceivedEditGroup): string | null {
+function blockedBy(
+  facts: PurchaseFacts,
+  item: ItemFacts,
+  group: ReceivedEditGroup,
+  reentry: boolean,
+): string | null {
   if (facts.livePayments > 0) {
     return 'La compra tiene pagos vigentes: revierte los pagos antes de corregir costo o cantidades';
   }
@@ -139,7 +172,7 @@ function blockedBy(facts: PurchaseFacts, item: ItemFacts, group: ReceivedEditGro
   if (item.laterMovements.length > 0) {
     const detail = item.laterMovements
       .slice(0, 5)
-      .map((m) => `${m.refType} el ${m.operationDate}`)
+      .map((m) => `${REF_LABELS[m.refType] ?? m.refType} (${m.refType}) el ${m.operationDate}`)
       .join(', ');
     const more =
       item.laterMovements.length > 5 ? ` y ${String(item.laterMovements.length - 5)} más` : '';
@@ -147,8 +180,13 @@ function blockedBy(facts: PurchaseFacts, item: ItemFacts, group: ReceivedEditGro
       ? `El ítem ya tuvo consumo después del ingreso (${detail}${more}): corregir el costo con consumo posterior estará disponible en la próxima versión`
       : `El ítem tiene movimientos posteriores al ingreso (${detail}${more}): revierte esas operaciones primero o anula la compra`;
   }
-  if (group === 'KARDEX' && item.ownReservation) {
-    return 'La bobina tiene una reserva propia: libérala antes de corregir su cantidad o especificación';
+  if (reentry && !item.hasLiveIn) {
+    return 'La línea no tiene un ingreso de kardex vivo de esta compra: no hay ingreso que corregir';
+  }
+  if (item.ownReservation) {
+    return reentry
+      ? 'El ítem tiene material reservado que la reversa del ingreso dejaría sin cubrir: libera esa reserva primero'
+      : 'La bobina tiene una reserva propia: libérala antes de corregir su especificación';
   }
   return null;
 }
@@ -222,8 +260,35 @@ export function classifyReceivedEdit(
 
   // --- Líneas ---
   const byId = new Map(facts.items.map((i) => [i.itemId, i]));
+  // El producto con que queda cada línea después de la edición: dos líneas al mismo producto
+  // dejarían una compra que ya no se podría volver a editar (`sharedProduct`).
+  const finalProduct = new Map(facts.items.map((i) => [i.itemId, i.productId]));
+  for (const edit of input.items ?? []) {
+    if (edit.productId !== undefined && byId.has(edit.itemId)) {
+      finalProduct.set(edit.itemId, edit.productId);
+    }
+  }
+  const productLines = new Map<string, number>();
+  for (const p of finalProduct.values()) {
+    if (p !== null) productLines.set(p, (productLines.get(p) ?? 0) + 1);
+  }
+  const seen = new Set<string>();
   for (const edit of input.items ?? []) {
     const item = byId.get(edit.itemId);
+    if (seen.has(edit.itemId)) {
+      push(
+        'KARDEX',
+        'itemId',
+        'Línea',
+        item?.lineNumber ?? null,
+        null,
+        edit.itemId,
+        'BLOCKED',
+        'La línea aparece dos veces en la edición',
+      );
+      continue;
+    }
+    seen.add(edit.itemId);
     if (!item) {
       push(
         'KARDEX',
@@ -254,14 +319,14 @@ export function classifyReceivedEdit(
     const reentry = newQty !== null || newPrice !== null || newProduct !== null;
     const pathOf = (reason: string | null, inPlace = false): ReceivedEditPath =>
       reason !== null ? 'BLOCKED' : inPlace ? 'IN_PLACE' : 'REVERSE_REENTRY';
+    // Precio o cantidad recalculan los importes de la línea con la tasa deducida (D-371).
+    const amountsReason = (reason: string | null): string | null => reason ?? facts.igvRateIssue;
 
     if (newPrice !== null) {
       // Un precio que viaja con una cantidad o un producto nuevos es parte de esa misma
       // reversa: el mensaje que vale es el de kardex.
-      const reason = blockedBy(
-        facts,
-        item,
-        newQty !== null || newProduct !== null ? 'KARDEX' : 'COST',
+      const reason = amountsReason(
+        blockedBy(facts, item, newQty !== null || newProduct !== null ? 'KARDEX' : 'COST', true),
       );
       push(
         'COST',
@@ -275,7 +340,7 @@ export function classifyReceivedEdit(
       );
     }
     if (newQty !== null) {
-      const reason = blockedBy(facts, item, 'KARDEX');
+      const reason = amountsReason(blockedBy(facts, item, 'KARDEX', true));
       push(
         'KARDEX',
         'qty',
@@ -290,9 +355,13 @@ export function classifyReceivedEdit(
     if (newProduct !== null) {
       let reason =
         facts.type === PurchaseType.FINISHED_GOOD
-          ? blockedBy(facts, item, 'KARDEX')
+          ? blockedBy(facts, item, 'KARDEX', true)
           : 'Solo una compra de producto terminado cambia de producto';
       reason ??= targets.invalidProducts.get(newProduct) ?? null;
+      if (reason === null && (productLines.get(newProduct) ?? 0) > 1) {
+        reason =
+          'La compra quedaría con el mismo producto en dos líneas: esta versión no separa sus ingresos';
+      }
       if (reason === null && targets.productsWithLaterMovements.has(newProduct)) {
         reason =
           'El producto nuevo ya tiene movimientos posteriores a la fecha de recepción: su ingreso cambiaría su historia';
@@ -320,7 +389,7 @@ export function classifyReceivedEdit(
     for (const [field, before, after] of specChanges) {
       let reason =
         facts.type === PurchaseType.COIL
-          ? blockedBy(facts, item, 'KARDEX')
+          ? blockedBy(facts, item, 'KARDEX', reentry)
           : 'Solo una compra de bobinas tiene especificación de bobina';
       if (reason === null && field === 'finishId' && newFinish !== null) {
         reason = targets.invalidFinishes.get(newFinish) ?? null;

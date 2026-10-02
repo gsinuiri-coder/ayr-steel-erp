@@ -86,6 +86,8 @@ function makeTx(opts: {
   movements?: unknown[];
   payments?: number;
   productMovements?: unknown[];
+  productBalance?: string;
+  auditEvents?: unknown[];
 }) {
   const purchase = coilPurchase(opts.purchase);
   const updates: { model: string; args: unknown }[] = [];
@@ -159,7 +161,12 @@ function makeTx(opts: {
         .fn()
         .mockResolvedValue({ name: 'OTRO', docNumber: '20999999999', isActive: true }),
     },
+    inventoryBalance: {
+      findUnique: jest.fn().mockResolvedValue({ qty: D(opts.productBalance ?? '100') }),
+    },
+    auditLog: { findMany: jest.fn().mockResolvedValue(opts.auditEvents ?? []) },
     product: {
+      findMany: jest.fn().mockResolvedValue([{ id: 'prod-2', unit: 'NIU' }]),
       findUnique: jest.fn().mockResolvedValue({
         sku: 'PERFIL-2',
         isActive: true,
@@ -176,6 +183,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
   const inventory = {
     reverse: jest.fn().mockResolvedValue({ id: 11n }),
     record: jest.fn().mockResolvedValue({ id: 12n }),
+    lockAvailability: jest.fn(),
   };
   const coils = { ensureTradingProduct: jest.fn() };
   let service: ReceivedPurchaseEditService;
@@ -225,7 +233,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     const plan = await service.preview(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
     });
-    expect(plan.changes[0]?.blockedReason).toContain('SCRAP el 2026-09-12');
+    expect(plan.changes[0]?.blockedReason).toContain('merma (SCRAP) el 2026-09-12');
   });
 
   it('compra en borrador o anulada, o inexistente: se rechaza', async () => {
@@ -434,6 +442,170 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     expect(inventory.record).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({ itemType: 'PRODUCT', itemId: 'prod-2', qty: '100.000' }),
+    );
+    // Los saldos del producto viejo y del nuevo se bloquean antes de leer, en orden fijo.
+    expect(
+      (inventory.lockAvailability.mock.calls as [unknown, { itemId: string }][]).map(
+        (c) => c[1].itemId,
+      ),
+    ).toEqual(['prod-1', 'prod-2']);
+  });
+
+  it('confirmar bloquea el saldo de la bobina antes de leer sus movimientos', async () => {
+    const { tx } = makeTx({});
+    withTx(tx);
+    await service.commit(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+      reason: 'x',
+    });
+    expect(inventory.lockAvailability).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ itemType: 'COIL', itemId: 'coil-1', businessLineId: 'bl-roof' }),
+    );
+    const lockOrder = inventory.lockAvailability.mock.invocationCallOrder[0] ?? 0;
+    const readOrder = tx.inventoryMovement.findMany.mock.invocationCallOrder[0] ?? 0;
+    expect(lockOrder).toBeLessThan(readOrder);
+  });
+
+  it('sin ingreso de kardex vivo: la vista previa bloquea y no se toca la compra', async () => {
+    const { tx } = makeTx({ movements: [] });
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+    });
+    expect(plan.changes[0]?.blockedReason).toContain('ingreso de kardex vivo');
+    await expect(
+      service.commit(ADMIN, 'p-1', {
+        items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+        reason: 'x',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(tx.purchaseItem.update).not.toHaveBeenCalled();
+  });
+
+  it('bobina con reserva: el precio se bloquea en la vista previa (la reversa la dejaría sin cubrir)', async () => {
+    jest.mocked(ledger.reservedByItem).mockResolvedValue(new Map([['coil-1', D('100')]]));
+    const { tx } = makeTx({});
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+    });
+    expect(plan.changes[0]?.blockedReason).toContain('material reservado');
+  });
+
+  it('producto con reserva que no cabe sin este ingreso: bloqueado; si cabe, ejecutable', async () => {
+    const fg = {
+      type: PurchaseType.FINISHED_GOOD,
+      items: [
+        {
+          ...coilPurchase().items[0],
+          productId: 'prod-1',
+          product: { sku: 'PERFIL-1' },
+          unit: 'NIU',
+          qty: D('100'),
+          unitPrice: D('50'),
+          finishId: null,
+          widthMm: null,
+          thicknessMm: null,
+        },
+      ],
+    };
+    const productIn = {
+      ...ownIn,
+      itemType: 'PRODUCT',
+      itemId: 'prod-1',
+      unit: 'NIU',
+      qty: D('100'),
+    };
+    jest.mocked(ledger.reservedByItem).mockResolvedValue(new Map([['prod-1', D('30')]]));
+
+    const short = makeTx({ purchase: fg, productMovements: [productIn], productBalance: '120' });
+    short.tx.coil.findMany.mockResolvedValue([]);
+    withTx(short.tx);
+    const blocked = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '55' }],
+    });
+    expect(blocked.changes[0]?.path).toBe('BLOCKED');
+
+    const fits = makeTx({ purchase: fg, productMovements: [productIn], productBalance: '200' });
+    fits.tx.coil.findMany.mockResolvedValue([]);
+    withTx(fits.tx);
+    const ok = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '55' }],
+    });
+    expect(ok.changes[0]?.path).toBe('REVERSE_REENTRY');
+  });
+
+  it('IGV no estándar: la cáscara se guarda sin reescribir totales; el precio se bloquea', async () => {
+    const { tx, updates } = makeTx({ purchase: { igv: D('500') } });
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+    });
+    expect(plan.changes[0]?.blockedReason).toContain('tasa de IGV');
+    await service.commit(ADMIN, 'p-1', { header: { notes: 'nota' }, reason: 'x' });
+    const header = updates.find((u) => u.model === 'purchase')?.args as {
+      data: Record<string, unknown>;
+    };
+    expect(header.data).toEqual({ notes: 'nota' });
+  });
+
+  it('deshacer: volver a la cantidad y el precio de antes restaura los importes del papel', async () => {
+    // Papel original: 1000 × 5 con subtotal 4999.99 (redondeo del papel, D-359). La edición
+    // anterior lo dejó en 5.5; volver a 5 restaura 4999.99, no 5000.
+    const { tx, updates } = makeTx({
+      purchase: {
+        subtotal: D('5500'),
+        igv: D('990'),
+        total: D('6490'),
+        items: [
+          {
+            ...coilPurchase().items[0],
+            unitPrice: D('5.5'),
+            subtotal: D('5500'),
+            igv: D('990'),
+            total: D('6490'),
+          },
+        ],
+      },
+      auditEvents: [
+        {
+          before: {
+            lines: [
+              {
+                itemId: 'item-1',
+                qty: '1000.000',
+                unitPrice: '5.0000',
+                subtotal: '4999.9900',
+                igv: '900.0000',
+                total: '5899.9900',
+              },
+            ],
+          },
+        },
+      ],
+    });
+    withTx(tx);
+    await service.commit(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5' }],
+      reason: 'Deshacer',
+    });
+    const line = updates.find((u) => u.model === 'purchaseItem')?.args as {
+      data: Record<string, unknown>;
+    };
+    expect(line.data).toMatchObject({ subtotal: '4999.9900', igv: '900.0000', total: '5899.9900' });
+    expect(inventory.record).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ totalCost: '4999.9900' }),
+    );
+    // Y la edición deja su propio «antes» para poder volver a esta versión.
+    expect(audit.write).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        before: expect.objectContaining({
+          lines: [expect.objectContaining({ unitPrice: '5.5000', subtotal: '5500.0000' })],
+        }) as unknown,
+      }),
     );
   });
 });

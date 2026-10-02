@@ -106,6 +106,10 @@ export class ReceivedPurchaseEditService {
         if (coilIds.length > 0) {
           await tx.$queryRaw`SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE`;
         }
+        // Y los saldos de kardex que la edición puede tocar, **antes** de leer los movimientos
+        // posteriores: quien consume o ingresa toma el saldo, no la bobina, así que sin este lock
+        // un movimiento confirmado entre la lectura y la reversa no lo vería el clasificador.
+        await this.lockBalances(tx, id, coilIds, input);
 
         const loaded = await this.load(tx, id);
         const targets = await this.loadTargets(tx, loaded.purchase, loaded.receiptDate, input);
@@ -114,7 +118,7 @@ export class ReceivedPurchaseEditService {
         if (!plan.executable) throw new BadRequestException(blockedSummary(plan));
 
         const movements = await this.applyItems(tx, actor, loaded, input);
-        const header = await this.applyHeader(tx, loaded, input);
+        const header = await this.applyHeader(tx, loaded, input, movements.amountsChanged);
         await this.audit.write(tx, {
           actorId: actor.id,
           action: 'purchases.update-received',
@@ -128,6 +132,9 @@ export class ReceivedPurchaseEditService {
               value: c.before,
             })),
             total: loaded.purchase.total.toFixed(4),
+            // Los importes de las líneas tocadas como estaban (los del papel, D-359): volver a
+            // editar con la misma cantidad y el mismo precio los restaura tal cual.
+            lines: movements.linesBefore as unknown as Prisma.InputJsonArray,
           },
           after: {
             changes: plan.changes.map((c) => ({
@@ -144,8 +151,70 @@ export class ReceivedPurchaseEditService {
         });
         return plan;
       },
-      { timeout: 60_000, maxWait: 15_000 },
+      // Hasta 200 líneas con reversa y reingreso: el mismo margen que `cancel`.
+      { timeout: 120_000, maxWait: 15_000 },
     );
+  }
+
+  /** Bloquea los saldos de los ítems de kardex de la compra y de los productos de destino. */
+  private async lockBalances(
+    tx: Prisma.TransactionClient,
+    id: string,
+    coilIds: string[],
+    input: EditReceivedPurchaseInput,
+  ): Promise<void> {
+    const purchase = await tx.purchase.findUnique({
+      where: { id },
+      select: {
+        type: true,
+        businessLineId: true,
+        items: { select: { id: true, productId: true, unit: true } },
+      },
+    });
+    if (!purchase) return; // `load` responde el 404
+    const refs: { itemType: InventoryItemType; itemId: string; unit: string }[] = [];
+    if (purchase.type === PurchaseType.COIL) {
+      for (const coilId of coilIds) refs.push({ itemType: 'COIL', itemId: coilId, unit: 'KGM' });
+    } else if (purchase.type === PurchaseType.FINISHED_GOOD) {
+      for (const i of purchase.items) {
+        if (i.productId) refs.push({ itemType: 'PRODUCT', itemId: i.productId, unit: i.unit });
+      }
+      // Los productos de destino, solo los que existen en la línea de la compra con la unidad de
+      // la línea: los demás los rechaza el clasificador con su motivo, y bloquear su saldo
+      // crearía uno vacío o fallaría con otro mensaje.
+      const unitOf = new Map(purchase.items.map((i) => [i.id, i.unit]));
+      const targetIds = (input.items ?? []).flatMap((e) => (e.productId ? [e.productId] : []));
+      const valid = new Map(
+        (
+          await tx.product.findMany({
+            where: { id: { in: targetIds }, businessLineId: purchase.businessLineId },
+            select: { id: true, unit: true },
+          })
+        ).map((p) => [p.id, p.unit]),
+      );
+      for (const e of input.items ?? []) {
+        const unit = unitOf.get(e.itemId);
+        const productUnit = e.productId ? valid.get(e.productId) : undefined;
+        if (
+          e.productId &&
+          unit !== undefined &&
+          productUnit !== undefined &&
+          productUnit === unit
+        ) {
+          refs.push({ itemType: 'PRODUCT', itemId: e.productId, unit });
+        }
+      }
+    }
+    // Orden fijo para no cruzarse con otra transacción que bloquee los mismos saldos.
+    const unique = [...new Map(refs.map((r) => [`${r.itemType}:${r.itemId}`, r])).values()].sort(
+      (a, b) => `${a.itemType}:${a.itemId}`.localeCompare(`${b.itemType}:${b.itemId}`),
+    );
+    for (const ref of unique) {
+      await this.inventory.lockAvailability(tx, {
+        ...ref,
+        businessLineId: purchase.businessLineId,
+      });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -216,6 +285,7 @@ export class ReceivedPurchaseEditService {
             laterMovements: live
               .filter((m) => m.id !== ownIn?.id)
               .map((m) => ({ refType: m.refType, operationDate: dateOf(m.operationDate) })),
+            hasLiveIn: ownIn !== null,
             coilStatus: coil?.status ?? null,
             mountedOrder: assignments.find((a) => a.coilId === coil?.id)?.orderCode ?? null,
             ownReservation: coil ? (ownReserved.get(coil.id) ?? toDecimal('0')).gt(0) : false,
@@ -254,6 +324,21 @@ export class ReceivedPurchaseEditService {
           });
           later = liveMovements(candidates).filter((m) => m.id !== ownIn.id);
         }
+        // La reversa saca el ingreso entero del saldo del producto, que comparte con otras
+        // compras: se bloquea si lo reservado no cabe en lo que queda sin este ingreso (D-066).
+        let reservationShort = false;
+        if (ownIn) {
+          const balance = await tx.inventoryBalance.findUnique({
+            where: { itemType_itemId: { itemType: 'PRODUCT', itemId: ownIn.itemId } },
+            select: { qty: true },
+          });
+          const reserved =
+            (await reservedByItem(tx, InventoryItemType.PRODUCT, [ownIn.itemId])).get(
+              ownIn.itemId,
+            ) ?? toDecimal('0');
+          const remaining = toDecimal((balance?.qty ?? 0).toString()).minus(ownIn.qty.toString());
+          reservationShort = reserved.gt(0) && reserved.gt(remaining);
+        }
         loadedItems.push({
           coilId: null,
           ownIn,
@@ -263,9 +348,10 @@ export class ReceivedPurchaseEditService {
               refType: m.refType,
               operationDate: dateOf(m.operationDate),
             })),
+            hasLiveIn: ownIn !== null,
             coilStatus: null,
             mountedOrder: null,
-            ownReservation: false,
+            ownReservation: reservationShort,
             landedCost: false,
             sharedProduct: shared,
           },
@@ -279,6 +365,7 @@ export class ReceivedPurchaseEditService {
           facts: {
             ...baseItemFacts(item, finishCode),
             laterMovements: [],
+            hasLiveIn: false,
             coilStatus: null,
             mountedOrder: null,
             ownReservation: false,
@@ -293,6 +380,7 @@ export class ReceivedPurchaseEditService {
       purchaseId: purchase.id,
       type: purchase.type,
       livePayments,
+      igvRateIssue: igvRateIssueOf(purchase.subtotal.toString(), purchase.igv.toString()),
       header: {
         supplierId: purchase.supplierId,
         supplierLabel: `${purchase.supplier.name} (${purchase.supplier.docNumber})`,
@@ -415,12 +503,20 @@ export class ReceivedPurchaseEditService {
     actor: RequestUser,
     loaded: Awaited<ReturnType<ReceivedPurchaseEditService['load']>>,
     input: CommitReceivedPurchaseEditInput,
-  ): Promise<{ reversed: string[]; created: string[] }> {
+  ): Promise<{
+    reversed: string[];
+    created: string[];
+    amountsChanged: boolean;
+    linesBefore: PaperLine[];
+  }> {
     const reversed: string[] = [];
     const created: string[] = [];
+    const linesBefore: PaperLine[] = [];
+    let amountsChanged = false;
     const { purchase } = loaded;
-    const rate = impliedIgvRatePct(purchase.subtotal.toString(), purchase.igv.toString());
     const exchangeRate = toDecimal(purchase.exchangeRate.toString());
+    // Los importes del papel que tuvo cada línea antes de ediciones anteriores (D-359).
+    const paperHistory = await this.paperHistory(tx, purchase.id);
     const touchedRawCoils: {
       coilId: string;
       before: { colorId: string | null; thicknessMm: string };
@@ -447,17 +543,46 @@ export class ReceivedPurchaseEditService {
         continue;
       }
 
-      // La línea: sin cambio de importes se conserva el del papel (D-359); con cambio, la misma
-      // cuenta del alta y de D-371 (cantidad × precio, IGV deducido de la cabecera).
-      const amounts = amountsChange
-        ? editedLineAmounts(qty.toString(), unitPrice.toString(), rate)
-        : {
+      // La línea: sin cambio de importes se conserva el del papel (D-359). Con cambio, si la
+      // cantidad y el precio vuelven a los de una versión anterior de la línea, sus importes de
+      // entonces (deshacer exacto, decisión 10); si no, la cuenta del alta y de D-371.
+      const restored = amountsChange
+        ? paperHistory.find(
+            (p) => p.itemId === item.id && qty.equals(p.qty) && unitPrice.equals(p.unitPrice),
+          )
+        : undefined;
+      const amounts = !amountsChange
+        ? {
             subtotal: item.subtotal.toString(),
             igv: item.igv.toString(),
             total: item.total.toString(),
-          };
+          }
+        : (restored ??
+          editedLineAmounts(
+            qty.toString(),
+            unitPrice.toString(),
+            impliedIgvRatePct(purchase.subtotal.toString(), purchase.igv.toString()),
+          ));
       const lineSubtotal = toDecimal(amounts.subtotal.toString());
+      if (amountsChange) {
+        amountsChanged = true;
+        linesBefore.push({
+          itemId: item.id,
+          qty: item.qty.toFixed(3),
+          unitPrice: item.unitPrice.toFixed(4),
+          subtotal: item.subtotal.toFixed(4),
+          igv: item.igv.toFixed(4),
+          total: item.total.toFixed(4),
+        });
+      }
 
+      if ((amountsChange || productChange) && !loadedItem.ownIn) {
+        // El clasificador ya lo bloquea (`hasLiveIn`); esto es la red por si dejara de hacerlo:
+        // corregir la compra sin su kardex los separaría sin aviso.
+        throw new BadRequestException(
+          `La línea ${String(item.lineNumber)} no tiene un ingreso de kardex vivo que corregir`,
+        );
+      }
       if ((amountsChange || productChange) && loadedItem.ownIn) {
         const ownIn = loadedItem.ownIn;
         const date = dateOf(ownIn.operationDate);
@@ -601,13 +726,30 @@ export class ReceivedPurchaseEditService {
         ],
       });
     }
-    return { reversed, created };
+    return { reversed, created, amountsChanged, linesBefore };
+  }
+
+  /** Las versiones anteriores de las líneas, de las ediciones ya auditadas de esta compra. */
+  private async paperHistory(tx: Prisma.TransactionClient, purchaseId: string) {
+    const events = await tx.auditLog.findMany({
+      where: { action: 'purchases.update-received', entity: 'purchases', entityId: purchaseId },
+      orderBy: { id: 'asc' },
+      select: { before: true },
+    });
+    const lines: (PaperLine & { qty: string; unitPrice: string })[] = [];
+    for (const e of events) {
+      const before = e.before as { lines?: PaperLine[] } | null;
+      for (const l of before?.lines ?? []) lines.push(l);
+    }
+    // La primera versión de una línea es la del papel original: va primero.
+    return lines;
   }
 
   private async applyHeader(
     tx: Prisma.TransactionClient,
     loaded: Awaited<ReturnType<ReceivedPurchaseEditService['load']>>,
     input: CommitReceivedPurchaseEditInput,
+    amountsChanged: boolean,
   ): Promise<{ total: string }> {
     const { purchase } = loaded;
     const header = input.header ?? {};
@@ -673,22 +815,29 @@ export class ReceivedPurchaseEditService {
     }
     if (header.notes !== undefined) data.notes = header.notes === '' ? null : header.notes;
 
-    // Los totales de la cabecera, con la cuenta de D-371 sobre las líneas ya corregidas.
-    const items = await tx.purchaseItem.findMany({
-      where: { purchaseId: purchase.id },
-      select: { subtotal: true, igv: true },
-    });
-    const totals = purchaseTotalsOf(
-      items.map((i) => ({ subtotal: i.subtotal.toString(), igv: i.igv.toString() })),
-      purchase.exchangeRate.toString(),
-    );
-    data.subtotal = toFixedString(totals.subtotal, 'MONEY');
-    data.igv = toFixedString(totals.igv, 'MONEY');
-    data.total = toFixedString(totals.total, 'MONEY');
-    data.totalPen = toFixedString(totals.totalPen, 'MONEY');
+    // Los totales de la cabecera, con la cuenta de D-371 sobre las líneas ya corregidas. Solo si
+    // cambió algún importe: una edición de cáscara no reescribe los totales del papel (D-359).
+    let total = purchase.total.toFixed(4);
+    if (amountsChanged) {
+      const items = await tx.purchaseItem.findMany({
+        where: { purchaseId: purchase.id },
+        select: { subtotal: true, igv: true },
+      });
+      const totals = purchaseTotalsOf(
+        items.map((i) => ({ subtotal: i.subtotal.toString(), igv: i.igv.toString() })),
+        purchase.exchangeRate.toString(),
+      );
+      data.subtotal = toFixedString(totals.subtotal, 'MONEY');
+      data.igv = toFixedString(totals.igv, 'MONEY');
+      data.total = toFixedString(totals.total, 'MONEY');
+      data.totalPen = toFixedString(totals.totalPen, 'MONEY');
+      total = toFixedString(totals.total, 'MONEY');
+    }
 
     try {
-      await tx.purchase.update({ where: { id: purchase.id }, data });
+      if (Object.keys(data).length > 0) {
+        await tx.purchase.update({ where: { id: purchase.id }, data });
+      }
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException(
@@ -697,7 +846,27 @@ export class ReceivedPurchaseEditService {
       }
       throw err;
     }
-    return { total: toFixedString(totals.total, 'MONEY') };
+    return { total };
+  }
+}
+
+/** Una línea como estaba antes de una edición: los importes del papel (D-359). */
+interface PaperLine {
+  itemId: string;
+  qty: string;
+  unitPrice: string;
+  subtotal: string;
+  igv: string;
+  total: string;
+}
+
+/** El motivo por el que la tasa de IGV no se deduce de los totales, o `null` si se deduce. */
+function igvRateIssueOf(subtotal: string, igv: string): string | null {
+  try {
+    impliedIgvRatePct(subtotal, igv);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : 'La tasa de IGV de la compra no es estándar';
   }
 }
 
