@@ -84,11 +84,14 @@ comando exacto y espera.
 - PR: #80 (rama `cc13/reactivar-con-lineas`).
 - **No hay migración** y el deploy no escribe datos. Los datos que se tocan son los del paso 7,
   que el dueño hace **por la interfaz** con los servicios de dominio.
-- **Orden:** reacomodar sobre `main` → CI → foto `READ ONLY` → resumen de D-232 y OK → API →
-  smoke → merge (web) → smoke → pasos por la interfaz → foto posterior.
-- **La API nueva convive con la web vieja:** agrega dos rutas
-  (`GET /invoicing/documents/:id/reactivate-with-order-lines/preview` y
-  `POST /invoicing/documents/:id/reactivate-with-order-lines`) que la web vieja no llama. La
+- **Orden (decidido por el dueño el 2026-10-02):** UAT en demo → CI → resumen de D-232 y OK →
+  API → smoke → merge (web) → smoke. **Después**, cuando el dueño pase los números: foto
+  `READ ONLY` (paso 2) → respaldo (paso 6) → pasos por la interfaz → foto posterior. cc14 va
+  después de cc13, con su propio OK.
+- **La API nueva convive con la web vieja:** agrega tres rutas
+  (`GET /invoicing/documents/:id/reactivate-with-order-lines/preview`,
+  `POST /invoicing/documents/:id/reactivate-with-order-lines` y
+  `GET /invoicing/documents/:id/reactivate/preview`, de solo lectura) que la web vieja no llama. La
   reactivación simple de D-373 no cambia de comportamiento (sus bloqueos se extrajeron a una
   función común; los 31 unitarios y los 3 E2E de D-373 siguen en verde).
 - Nubefact no se toca desde el ERP. **El papel de cada comprobante tiene que estar ya corregido en

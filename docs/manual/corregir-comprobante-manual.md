@@ -229,10 +229,16 @@ correlativo, fecha de emisión y cliente, y pasa a facturar **el pedido entero**
    - **agregue los ítems** que faltaron («Agregar ítems»);
    - si hace falta, corrija **precio o cantidad** de una línea. La cantidad de una línea que **ya
      tiene despachos** no se cambia (D-187): agregue un ítem con la diferencia.
-3. En **Comprobantes**, active el chip **Anulados** y en la fila del comprobante use el menú
-   **«⋯» → «Reactivar con las líneas del pedido»**.
+3. Desde el mismo **pedido**, en la sección **Comprobantes anulados** (número, emisión, total,
+   motivo y fecha de anulación), use **«Reactivar con las líneas del pedido»** en la fila del
+   comprobante. Si el botón está deshabilitado, debajo dice por qué (el mismo mensaje de la tabla
+   de §9); resuélvalo y vuelva a abrir el pedido.
+   - Otras vías, con el mismo diálogo: el menú **«⋯»** de la cabecera del comprobante anulado, o
+     **Comprobantes → Anulados** (la columna **Pedido** dice de qué pedido es cada uno) y el menú
+     **«⋯»** de la fila.
 4. El diálogo muestra **Antes** (las líneas del comprobante anulado) y **Después** (las del pedido
    entero), cada uno con gravada, IGV y total. Las líneas nuevas llevan la marca **«Agregada»**.
+   Arriba dice **«Líneas del pedido»** con el código del pedido del que salen: confírmelo.
    - Si algo lo bloquea (un borrador, otro comprobante vivo, el pedido cambió de cliente…), el
      diálogo muestra el mensaje en lugar de la comparación. Resuélvalo y vuelva a abrirlo.
 5. Escriba el **total del papel vigente**, tal como figura en el PDF de Nubefact (con céntimos).
@@ -377,7 +383,9 @@ Del diagnóstico de FFA1-00001382 salieron dos más:
   `previewReactivationWithOrderLines`, `reactivateWithOrderLines` y
   `planReactivationWithOrderLines` (bloqueos y locks); el cálculo puro está en
   `apps/api/src/invoicing/reactivate-order-lines.ts` (`planOrderLines`, `paperTotalDifference`). Web:
-  `components/invoicing/reactivate-with-order-lines-dialog.tsx`.
+  `components/invoicing/reactivate-with-order-lines-dialog.tsx`; la sección del pedido es
+  `components/invoicing/annulled-documents-card.tsx`, que habilita cada acción con su vista previa
+  (`GET …/reactivate-with-order-lines/preview` y `GET …/reactivate/preview`, de solo lectura).
 - **Crear y registrar:** `apps/api/src/invoicing/invoicing.service.ts`.
   - `createInTx` hace el lock del pedido y maneja el despacho declarado: lo enlaza si el comprobante
     al que estaba enlazado no está vivo.

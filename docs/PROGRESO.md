@@ -37,9 +37,21 @@
   - segundo modelo Sonnet, en `docs/revision/cc13-segundo-modelo.md`: 0 P0, 1 P1, 3 P2 y 4 P3.
   - El P1 (un `tsc` rojo en un spec) y todos los P2 se corrigieron, salvo los locks de la vista
     previa, que se aceptaron y documentaron.
-  - Queda para el dueño: si la acción debe estar también en el detalle del comprobante.
-- **Pendiente:** la foto `READ ONLY` de los comprobantes del dueño, cuando pase los números, antes de
-  la ventana.
+- **Revisión del dueño (2026-10-02).**
+  - Confirmó las tres reglas agregadas.
+  - Pidió las dos acciones también en el detalle del comprobante anulado; están en el commit
+    `587c8e3`, con su E2E.
+  - Dio OK al respaldo Neon antes de la primera reactivación con líneas en producción.
+- **UAT del dueño en demo, con una observación** (en el commit `f4fedf3`): entre varias facturas
+  anuladas no se sabía cuál era de qué pedido. Se resolvió así:
+  - el detalle del pedido lista sus anulados con las dos reactivaciones; si una no aplica, queda
+    deshabilitada con el motivo de su vista previa;
+  - para eso se agregó `GET …/reactivate/preview` (D-373), de solo lectura;
+  - Comprobantes → Anulados tiene la columna «Pedido»;
+  - el modal dice de qué pedido salen las líneas.
+  - E2E local: 7/7 entre D-378 y D-373.
+- **Orden de las ventanas (dueño):** cc13 primero y cc14 después. La foto `READ ONLY` y los pasos
+  por la interfaz van después del deploy de cc13, cuando el dueño pase los números.
 
 ## 2026-10-02 — Ventana cc12 (D-379 desplegada, PR #76, sin migración) y FFA1-00001382 despachado
 
