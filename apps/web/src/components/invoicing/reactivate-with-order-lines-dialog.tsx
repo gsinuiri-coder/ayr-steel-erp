@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -15,6 +16,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { formatMoney, formatTimestampDate } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
+import { LINK_CLASSNAME } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -228,6 +230,17 @@ export function ReactivateWithOrderLinesDialog({
           </DialogDescription>
         </DialogHeader>
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+          {/* UAT de cc13: de qué pedido salen las líneas nuevas, a la vista. */}
+          <dt className="text-muted-foreground">Líneas del pedido</dt>
+          <dd data-testid="reactivate-lines-order">
+            {preview.data && d.salesOrderId ? (
+              <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
+                {preview.data.salesOrderCode}
+              </Link>
+            ) : (
+              '—'
+            )}
+          </dd>
           <dt className="text-muted-foreground">Anulado</dt>
           <dd>
             {d.annulledAt ? formatTimestampDate(d.annulledAt) : '—'}

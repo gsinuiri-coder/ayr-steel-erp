@@ -454,6 +454,19 @@ export class InvoicingController {
   }
 
   /**
+   * D-373 (cc13): si la reactivación simple aplica, sin escribir nada. Responde el mismo error que
+   * daría reactivar; el detalle del pedido lo muestra como motivo del botón deshabilitado.
+   */
+  @Get('documents/:id/reactivate/preview')
+  @Roles(Role.ADMINISTRADOR)
+  previewReactivate(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<{ id: string; number: string | null }> {
+    return this.fiscalImport.previewReactivateExternal(actor, id);
+  }
+
+  /**
    * D-378: el antes y el después de reactivar un manual anulado con las líneas actuales del
    * pedido. Pasa por los mismos bloqueos que la reactivación y no escribe nada.
    */

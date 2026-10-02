@@ -64,6 +64,7 @@ import {
 import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { OrderDocumentLinks } from '@/components/sales/order-documents';
+import { AnnulledDocumentsCard } from '@/components/invoicing/annulled-documents-card';
 import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import { RowActions } from '@/components/row-actions';
@@ -655,6 +656,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
       </Section>
 
       {isAdmin && <ProductionOrdersCard salesOrderId={o.id} canOperate={canOperate} />}
+
+      {/* UAT de cc13: los anulados del pedido y sus dos reactivaciones (D-373, D-378). */}
+      {isAdmin && <AnnulledDocumentsCard salesOrderId={o.id} />}
 
       <Section
         title={

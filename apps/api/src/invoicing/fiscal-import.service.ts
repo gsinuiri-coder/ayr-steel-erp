@@ -183,47 +183,67 @@ export class FiscalImportService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const { document, label, statusBeforeAnnul, annulledAt } = await lockAnnulledForReactivation(
-        tx,
-        id,
-      );
+      const checked = await this.checkReactivateExternal(tx, id);
+      return this.writeReactivateExternal(tx, actor, id, input, checked);
+    });
+  }
 
-      const orderItemIds = [
-        ...new Set(document.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []))),
-      ];
-      if (orderItemIds.length > 0) {
-        // Revisiones cc07 (carrera con el reingreso). Dos locks más, en este orden —comprobante,
-        // pedido, borradores— y ningún camino los toma al revés:
-        // - el **pedido**, el mismo que toman la creación de un borrador y las ediciones del
-        //   pedido (D-187): no puede nacer un borrador nuevo sobre estas líneas hasta el commit;
-        // - los **borradores** que ya existen sobre estas líneas, en orden de id: si uno se está
-        //   registrando o emitiendo ahora (que bloquean solo su propia fila), esto espera a su
-        //   commit, y los chequeos de abajo —sentencias nuevas en READ COMMITTED— ya lo ven
-        //   aceptado.
-        if (document.salesOrderId !== null) {
-          const [order] = await tx.$queryRaw<{ status: string }[]>`
+  /**
+   * D-373 (pedido del dueño en cc13): la misma comprobación que `reactivateExternal`, con sus
+   * locks, en una transacción que no escribe. La usa el detalle del pedido para mostrar
+   * «Reactivar» deshabilitado con el motivo del bloqueo. Si algo bloquea, responde el mismo error.
+   */
+  async previewReactivateExternal(
+    actor: RequestUser,
+    id: string,
+  ): Promise<{ id: string; number: string | null }> {
+    assertCanReactivate(actor);
+    return this.prisma.$transaction(async (tx) => {
+      const { document } = await this.checkReactivateExternal(tx, id);
+      return { id, number: document.number };
+    });
+  }
+
+  /** D-373: el lock y todos los bloqueos de la reactivación simple; no escribe nada. */
+  private async checkReactivateExternal(tx: Prisma.TransactionClient, id: string) {
+    const checked = await lockAnnulledForReactivation(tx, id);
+    const { document, label, annulledAt } = checked;
+    const orderItemIds = [
+      ...new Set(document.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []))),
+    ];
+    if (orderItemIds.length > 0) {
+      // Revisiones cc07 (carrera con el reingreso). Dos locks más, en este orden —comprobante,
+      // pedido, borradores— y ningún camino los toma al revés:
+      // - el **pedido**, el mismo que toman la creación de un borrador y las ediciones del
+      //   pedido (D-187): no puede nacer un borrador nuevo sobre estas líneas hasta el commit;
+      // - los **borradores** que ya existen sobre estas líneas, en orden de id: si uno se está
+      //   registrando o emitiendo ahora (que bloquean solo su propia fila), esto espera a su
+      //   commit, y los chequeos de abajo —sentencias nuevas en READ COMMITTED— ya lo ven
+      //   aceptado.
+      if (document.salesOrderId !== null) {
+        const [order] = await tx.$queryRaw<{ status: string }[]>`
             SELECT "status" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid FOR UPDATE
           `;
-          // D-373 (decisión del dueño): el pedido no pudo cambiar mientras el comprobante estuvo
-          // anulado. Se lee con el pedido ya bloqueado, así que una edición no puede colarse.
-          const orderLabel = document.salesOrder
-            ? `El pedido ${salesOrderCode(document.salesOrder.seq)}`
-            : 'El pedido';
-          if (order?.status === SalesOrderStatus.CANCELLED) {
-            throw new ConflictException(
-              `${orderLabel} está anulado: no se reactiva un comprobante de un pedido anulado`,
-            );
-          }
-          await assertOrderLinesUnchanged(
-            tx,
-            document.salesOrderId,
-            orderItemIds,
-            annulledAt,
-            label,
-            orderLabel,
+        // D-373 (decisión del dueño): el pedido no pudo cambiar mientras el comprobante estuvo
+        // anulado. Se lee con el pedido ya bloqueado, así que una edición no puede colarse.
+        const orderLabel = document.salesOrder
+          ? `El pedido ${salesOrderCode(document.salesOrder.seq)}`
+          : 'El pedido';
+        if (order?.status === SalesOrderStatus.CANCELLED) {
+          throw new ConflictException(
+            `${orderLabel} está anulado: no se reactiva un comprobante de un pedido anulado`,
           );
         }
-        await tx.$queryRaw`
+        await assertOrderLinesUnchanged(
+          tx,
+          document.salesOrderId,
+          orderItemIds,
+          annulledAt,
+          label,
+          orderLabel,
+        );
+      }
+      await tx.$queryRaw`
           SELECT d."id" FROM "fiscal_documents" d
           WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
             AND EXISTS (
@@ -233,62 +253,72 @@ export class FiscalImportService {
           ORDER BY d."id"
           FOR UPDATE
         `;
-        await assertLinesNotReinvoiced(tx, id, label, document.items, orderItemIds);
-        const drafts = await tx.fiscalDocument.count({
-          where: {
-            id: { not: id },
-            status: FiscalDocumentStatus.DRAFT,
-            items: { some: { salesOrderItemId: { in: orderItemIds } } },
-          },
-        });
-        if (drafts > 0) {
-          const order = document.salesOrder
-            ? ` del pedido ${salesOrderCode(document.salesOrder.seq)}`
-            : '';
-          throw new ConflictException(
-            `Hay ${String(drafts)} borrador(es) de comprobante sobre las mismas líneas${order}: elimínalo(s) primero y vuelve a reactivar`,
-          );
-        }
-      }
-
-      // Verificación de versión además del lock: solo cambia si sigue anulado.
-      const changed = await tx.fiscalDocument.updateMany({
-        where: { id, status: FiscalDocumentStatus.ANNULLED },
-        data: {
-          status: FiscalDocumentStatus.ACCEPTED,
-          annulledAt: null,
-          annulledById: null,
-          annulReason: null,
+      await assertLinesNotReinvoiced(tx, id, label, document.items, orderItemIds);
+      const drafts = await tx.fiscalDocument.count({
+        where: {
+          id: { not: id },
+          status: FiscalDocumentStatus.DRAFT,
+          items: { some: { salesOrderItemId: { in: orderItemIds } } },
         },
       });
-      if (changed.count !== 1) {
-        throw new ConflictException(`${label} cambió mientras se reactivaba: vuelve a intentarlo`);
+      if (drafts > 0) {
+        const order = document.salesOrder
+          ? ` del pedido ${salesOrderCode(document.salesOrder.seq)}`
+          : '';
+        throw new ConflictException(
+          `Hay ${String(drafts)} borrador(es) de comprobante sobre las mismas líneas${order}: elimínalo(s) primero y vuelve a reactivar`,
+        );
       }
+    }
+    return checked;
+  }
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'invoicing.document.reactivate',
-        entity: 'fiscal_documents',
-        entityId: id,
-        reason: input.reason,
-        // La copia de lo que la fila deja de guardar (D-373): sin esto, la anulación solo
-        // quedaría en su propio evento y nada diría que se deshizo.
-        before: {
-          status: FiscalDocumentStatus.ANNULLED,
-          statusBeforeAnnul,
-          annulledAt: annulledAt.toISOString(),
-          annulledById: document.annulledById,
-          annulReason: document.annulReason,
-        },
-        after: {
-          status: FiscalDocumentStatus.ACCEPTED,
-          reason: input.reason,
-          number: document.number,
-          confirmedStillValid: true,
-        },
-      });
-      return { id, number: document.number };
+  /** D-373: la escritura de la reactivación simple, después de `checkReactivateExternal`. */
+  private async writeReactivateExternal(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    id: string,
+    input: { reason: string },
+    checked: Awaited<ReturnType<typeof lockAnnulledForReactivation>>,
+  ): Promise<{ id: string; number: string | null }> {
+    const { document, label, statusBeforeAnnul, annulledAt } = checked;
+    // Verificación de versión además del lock: solo cambia si sigue anulado.
+    const changed = await tx.fiscalDocument.updateMany({
+      where: { id, status: FiscalDocumentStatus.ANNULLED },
+      data: {
+        status: FiscalDocumentStatus.ACCEPTED,
+        annulledAt: null,
+        annulledById: null,
+        annulReason: null,
+      },
     });
+    if (changed.count !== 1) {
+      throw new ConflictException(`${label} cambió mientras se reactivaba: vuelve a intentarlo`);
+    }
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.document.reactivate',
+      entity: 'fiscal_documents',
+      entityId: id,
+      reason: input.reason,
+      // La copia de lo que la fila deja de guardar (D-373): sin esto, la anulación solo
+      // quedaría en su propio evento y nada diría que se deshizo.
+      before: {
+        status: FiscalDocumentStatus.ANNULLED,
+        statusBeforeAnnul,
+        annulledAt: annulledAt.toISOString(),
+        annulledById: document.annulledById,
+        annulReason: document.annulReason,
+      },
+      after: {
+        status: FiscalDocumentStatus.ACCEPTED,
+        reason: input.reason,
+        number: document.number,
+        confirmedStillValid: true,
+      },
+    });
+    return { id, number: document.number };
   }
 
   /**

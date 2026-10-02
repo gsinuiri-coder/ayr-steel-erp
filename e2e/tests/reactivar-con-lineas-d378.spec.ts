@@ -330,6 +330,75 @@ test.describe('D-378 — reactivar con las líneas actuales del pedido', () => {
     }
   });
 
+  test('desde el detalle del pedido: anular → agregar ítem → reactivar con las líneas; la lista de anulados nombra el pedido', async ({
+    page,
+  }) => {
+    const trail: InvoicingTrail = {
+      documentIds: [],
+      dispatchIds: [],
+      orderIds: [],
+      productIds: [],
+    };
+    try {
+      const { stock, order, invoice } = await annulledWithDispatchedLine(api, trail);
+      const number = invoice.number ?? '';
+      await loginAsAdmin(page);
+
+      // La lista de anulados lleva el pedido en su propia columna, con enlace.
+      await page.goto(`/comprobantes?status=VOIDED,ANNULLED&search=${encodeURIComponent(number)}`);
+      await expect(page.getByRole('columnheader', { name: 'Pedido' })).toBeVisible();
+      await expect(page.getByRole('link', { name: order.code, exact: true })).toHaveAttribute(
+        'href',
+        `/pedidos/${order.id}`,
+      );
+
+      // En el pedido, sin cambios todavía: «con las líneas» deshabilitado con su motivo, y
+      // «Reactivar» disponible.
+      await page.goto(`/pedidos/${order.id}`);
+      const row = page.getByTestId(`annulled-${number}`);
+      await expect(row).toContainText('faltó un ítem (E2E D-378)');
+      const withLines = row.getByRole('button', { name: 'Reactivar con las líneas del pedido' });
+      await expect(row).toContainText('no hay nada que cambiar', { timeout: 30_000 });
+      await expect(withLines).toBeDisabled();
+      await expect(row.getByRole('button', { name: 'Reactivar', exact: true })).toBeEnabled();
+
+      // Se agrega lo que faltó y, al volver al pedido, la acción queda disponible.
+      const grown = await postJson<OrderWithReservations>(
+        api,
+        `/api/sales/orders/${order.id}/items`,
+        { items: [{ productId: stock.product.id, qty: '2', unitPricePen: '50.0000' }] },
+      );
+      const paperTotal = cents(grown.totalPen);
+      await page.reload();
+      await expect(withLines).toBeEnabled({ timeout: 30_000 });
+      await withLines.click();
+
+      const dialog = page.getByRole('dialog');
+      await expect(dialog.getByTestId('reactivate-lines-order')).toHaveText(order.code);
+      await expect(dialog.getByTestId('after-total')).toContainText(paperTotal);
+      await dialog.getByLabel('Total del papel vigente (S/)').fill(paperTotal);
+      await dialog.getByLabel('Motivo de la reactivación').fill('Faltó un ítem (E2E pedido)');
+      await dialog.getByLabel(/coincide con el papel vigente/).check();
+      await dialog.getByRole('button', { name: 'Reactivar con estas líneas' }).click();
+      await expect(page).toHaveURL(new RegExp(`/comprobantes/${invoice.id}\\?despacho=`), {
+        timeout: 60_000,
+      });
+
+      const after = await getDocument(api, invoice.id);
+      expect(after.status).toBe('ACCEPTED');
+      expect(after.number).toBe(number);
+      expect(after.items).toHaveLength(2);
+      expect(cents(after.totalPen)).toBe(paperTotal);
+
+      // Ya vigente, el pedido no lo lista entre los anulados.
+      await page.goto(`/pedidos/${order.id}`);
+      await expect(page.getByRole('heading', { name: order.code })).toBeVisible();
+      await expect(page.getByTestId(`annulled-${number}`)).toHaveCount(0);
+    } finally {
+      await purgeInvoicingTrail(api, trail);
+    }
+  });
+
   test('borrador u otro comprobante vivo en el pedido bloquean con mensaje claro; el total distinto se rechaza en el API', async () => {
     const trail: InvoicingTrail = {
       documentIds: [],
