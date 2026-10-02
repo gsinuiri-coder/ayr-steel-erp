@@ -28,6 +28,7 @@ import {
 export interface DocumentLineRow {
   id: string;
   lineNumber: number;
+  productId: string | null;
   description: string;
   qty: { toString(): string };
   unit: string;
@@ -59,8 +60,11 @@ interface LineAmounts {
 }
 
 export interface OrderLinesPlan {
-  /** Filas que ya existen: se actualizan por id con estos valores. */
-  updates: ({ id: string } & LineAmounts)[];
+  /**
+   * Filas que ya existen: se actualizan por id con estos valores. `productId`, `description` y
+   * `unit` son los de la fila salvo que la línea del pedido haya cambiado de producto.
+   */
+  updates: ({ id: string; productId: string; description: string; unit: string } & LineAmounts)[];
   /** Filas nuevas, con su número de línea ya asignado. */
   creates: ({
     lineNumber: number;
@@ -95,18 +99,36 @@ function amountsKey(l: LineAmounts): string {
   return [l.qty, l.unitPricePen, l.subtotalPen, l.igvPen, l.totalPen].join('|');
 }
 
-function side(lines: ReactivationLineDto[]): ReactivationSideDto {
-  return { lines, ...serializeSalesTotals(sumLineTotals(lines)) };
+/** La cabecera grabada de un comprobante. */
+export interface StoredHeader {
+  subtotalPen: { toString(): string };
+  igvPen: { toString(): string };
+  totalPen: { toString(): string };
+}
+
+function side(lines: ReactivationLineDto[], header?: StoredHeader): ReactivationSideDto {
+  if (!header) return { lines, ...serializeSalesTotals(sumLineTotals(lines)) };
+  return {
+    lines,
+    subtotalPen: toFixedString(header.subtotalPen.toString(), 'MONEY'),
+    igvPen: toFixedString(header.igvPen.toString(), 'MONEY'),
+    totalPen: toFixedString(header.totalPen.toString(), 'MONEY'),
+  };
 }
 
 /**
  * Arma el plan. Supone lo que el servicio ya comprobó: todas las líneas del comprobante vienen
  * del pedido, ninguna línea del pedido aparece dos veces y todas las de `documentLines` están en
  * `orderLines`.
+ *
+ * `storedHeader` es la cabecera **grabada** del comprobante, y el «antes» la muestra tal cual
+ * (autorrevisión cc13, P2-2): recalcularla con D-377 podía diferir en céntimos en un manual
+ * anterior a D-377, y la auditoría perdía el valor real.
  */
 export function planOrderLines(
   documentLines: readonly DocumentLineRow[],
   orderLines: readonly OrderLineRow[],
+  storedHeader?: StoredHeader,
 ): OrderLinesPlan {
   const orderById = new Map(orderLines.map((o) => [o.id, o]));
   const byOrderItem = new Map(
@@ -141,12 +163,20 @@ export function planOrderLines(
     const amounts = fullLineAmounts(o);
     const prev = before.find((b) => b.lineNumber === d.lineNumber);
     if (!prev || amountsKey(prev) !== amountsKey(amounts)) changed = true;
-    updates.push({ id: d.id, ...amounts });
+    // Autorrevisión cc13 (P2-1): si la línea del pedido cambió de producto mientras el comprobante
+    // estuvo anulado (otra bobina), la fila toma el producto nuevo con su descripción y su unidad.
+    // Con el viejo, «Ventas por material» y el margen —que agrupan por el producto de la línea del
+    // comprobante— dejarían la venta en el material anterior.
+    const productChanged = d.productId !== o.productId;
+    if (productChanged) changed = true;
+    const description = productChanged ? o.description : d.description;
+    const unit = productChanged ? o.unit : d.unit;
+    updates.push({ id: d.id, productId: o.productId, description, unit, ...amounts });
     afterExisting.push({
       lineNumber: d.lineNumber,
       orderLineNumber: o.lineNumber,
-      description: d.description,
-      unit: d.unit,
+      description,
+      unit,
       ...amounts,
       added: false,
     });
@@ -178,7 +208,7 @@ export function planOrderLines(
   return {
     updates,
     creates,
-    before: side(before),
+    before: side(before, storedHeader),
     after: side([...afterExisting, ...afterAdded]),
     changed,
   };

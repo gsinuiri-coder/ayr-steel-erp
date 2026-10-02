@@ -200,7 +200,7 @@ test.describe('D-378 — reactivar con las líneas actuales del pedido', () => {
         cents(invoice.totalPen),
       );
       await expect(dialog.getByRole('region', { name: 'Después' })).toContainText('Agregada');
-      await expect(dialog.getByTestId('después-total')).toContainText(paperTotal);
+      await expect(dialog.getByTestId('after-total')).toContainText(paperTotal);
 
       const confirm = dialog.getByRole('button', { name: 'Reactivar con estas líneas' });
       await dialog.getByLabel('Motivo de la reactivación').fill('Faltó un ítem (E2E)');

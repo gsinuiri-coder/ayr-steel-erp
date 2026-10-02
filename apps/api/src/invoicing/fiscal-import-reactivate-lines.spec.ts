@@ -78,6 +78,7 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
           {
             id: 'fdi-1',
             lineNumber: 1,
+            productId: 'p-1',
             description: 'Cobertura roja (papel)',
             qty: dec('48'),
             unit: 'MTR',
@@ -196,6 +197,9 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
     expect(tx.fiscalDocumentItem.update).toHaveBeenCalledWith({
       where: { id: 'fdi-1' },
       data: {
+        productId: 'p-1',
+        description: 'Cobertura roja (papel)',
+        unit: 'MTR',
         qty: '48.000',
         unitPricePen: '2.0833',
         subtotalPen: '100.0000',
@@ -279,7 +283,12 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
       }
     ).data;
     expect(
-      documentBalance({ status: data.status, totalPen: data.totalPen, paidPen: 0, creditedPen: 0 }),
+      documentBalance({
+        status: data.status,
+        totalPen: data.totalPen,
+        paidPen: '0',
+        creditedPen: '0',
+      }),
     ).toBe('153.4400');
   });
 
@@ -390,6 +399,16 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
       const s = happy();
       s.creditNotes = [{ number: 'FC01-00000009' }];
       await rejects(s, BadRequestException, /notas de crédito vivas/);
+    });
+
+    it('el pedido describe lo mismo que el comprobante: corresponde la reactivación simple', async () => {
+      const s = happy();
+      s.orderLines = [s.orderLines[0]!];
+      await rejects(
+        s,
+        BadRequestException,
+        'Las líneas del pedido PED-000011 son las mismas de FFA1-00001382: no hay nada que cambiar. Usa «Reactivar»',
+      );
     });
 
     it('el pedido cambió de cliente', async () => {

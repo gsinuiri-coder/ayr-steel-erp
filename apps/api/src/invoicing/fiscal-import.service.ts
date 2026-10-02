@@ -301,16 +301,22 @@ export class FiscalImportService {
     id: string,
   ): Promise<ReactivationPreviewDto> {
     assertCanReactivate(actor);
-    return this.prisma.$transaction(async (tx) => {
-      const { document, plan, orderCode } = await this.planReactivationWithOrderLines(tx, id);
-      return {
-        id,
-        number: document.number,
-        salesOrderCode: orderCode,
-        before: plan.before,
-        after: plan.after,
-      };
-    });
+    // Revisión cc13 (P2-3, aceptado): la vista previa toma los mismos locks que la reactivación.
+    // Es una transacción corta y sin escrituras, y así no puede haber un bloqueo que la vista
+    // previa no muestre y la reactivación sí; la reactivación vuelve a comprobar todo igual.
+    return this.prisma.$transaction(
+      async (tx) => {
+        const { document, plan, orderCode } = await this.planReactivationWithOrderLines(tx, id);
+        return {
+          id,
+          number: document.number,
+          salesOrderCode: orderCode,
+          before: plan.before,
+          after: plan.after,
+        };
+      },
+      { timeout: REACTIVATION_TX_TIMEOUT_MS },
+    );
   }
 
   /**
@@ -336,85 +342,103 @@ export class FiscalImportService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const { document, plan, label, statusBeforeAnnul, annulledAt } =
-        await this.planReactivationWithOrderLines(tx, id);
+    return this.prisma.$transaction(
+      async (tx) => {
+        const { document, plan, label, statusBeforeAnnul, annulledAt } =
+          await this.planReactivationWithOrderLines(tx, id);
 
-      // El control del dueño: el papel manda. Al céntimo, que es la escala del papel (D-377).
-      const difference = paperTotalDifference(input.paperTotalPen, plan.after.totalPen);
-      if (difference !== null) {
-        throw new BadRequestException(
-          `El total del papel (S/ ${toDecimal(input.paperTotalPen).toFixed(2)}) no coincide con el de estas líneas (S/ ${toDecimal(plan.after.totalPen).toFixed(2)}): diferencia S/ ${difference}. Revisa el pedido o el papel; no se reactivó`,
-        );
-      }
+        // El control del dueño: el papel manda. Al céntimo, que es la escala del papel (D-377).
+        const difference = paperTotalDifference(input.paperTotalPen, plan.after.totalPen);
+        if (difference !== null) {
+          throw new BadRequestException(
+            `El total del papel (S/ ${toDecimal(input.paperTotalPen).toFixed(2)}) no coincide con el de estas líneas (S/ ${toDecimal(plan.after.totalPen).toFixed(2)}): diferencia S/ ${difference}. Revisa el pedido o el papel; no se reactivó`,
+          );
+        }
 
-      // Primero el estado, condicionado: si otra transacción lo cambió, no se toca ninguna línea.
-      const changed = await tx.fiscalDocument.updateMany({
-        where: { id, status: FiscalDocumentStatus.ANNULLED },
-        data: {
-          status: FiscalDocumentStatus.ACCEPTED,
-          annulledAt: null,
-          annulledById: null,
-          annulReason: null,
-          subtotalPen: plan.after.subtotalPen,
-          igvPen: plan.after.igvPen,
-          totalPen: plan.after.totalPen,
-        },
-      });
-      if (changed.count !== 1) {
-        throw new ConflictException(`${label} cambió mientras se reactivaba: vuelve a intentarlo`);
-      }
-      for (const u of plan.updates) {
-        await tx.fiscalDocumentItem.update({
-          where: { id: u.id },
+        // Primero el estado, condicionado: si otra transacción lo cambió, no se toca ninguna línea.
+        const changed = await tx.fiscalDocument.updateMany({
+          where: { id, status: FiscalDocumentStatus.ANNULLED },
           data: {
-            qty: u.qty,
-            unitPricePen: u.unitPricePen,
-            subtotalPen: u.subtotalPen,
-            igvPen: u.igvPen,
-            totalPen: u.totalPen,
+            status: FiscalDocumentStatus.ACCEPTED,
+            annulledAt: null,
+            annulledById: null,
+            annulReason: null,
+            subtotalPen: plan.after.subtotalPen,
+            igvPen: plan.after.igvPen,
+            totalPen: plan.after.totalPen,
           },
         });
-      }
-      if (plan.creates.length > 0) {
-        await tx.fiscalDocumentItem.createMany({
-          data: plan.creates.map((c) => ({ documentId: id, ...c })),
-        });
-      }
+        if (changed.count !== 1) {
+          throw new ConflictException(
+            `${label} cambió mientras se reactivaba: vuelve a intentarlo`,
+          );
+        }
+        for (const u of plan.updates) {
+          await tx.fiscalDocumentItem.update({
+            where: { id: u.id },
+            data: {
+              productId: u.productId,
+              description: u.description,
+              unit: u.unit,
+              qty: u.qty,
+              unitPricePen: u.unitPricePen,
+              subtotalPen: u.subtotalPen,
+              igvPen: u.igvPen,
+              totalPen: u.totalPen,
+            },
+          });
+        }
+        if (plan.creates.length > 0) {
+          await tx.fiscalDocumentItem.createMany({
+            data: plan.creates.map((c) => ({ documentId: id, ...c })),
+          });
+        }
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'invoicing.document.reactivate-with-order-lines',
-        entity: 'fiscal_documents',
-        entityId: id,
-        reason: input.reason,
-        // Las líneas y la cabecera de antes son lo único que la fila deja de guardar: el
-        // cliente compara contra el papel, y la historia es append-only (RF-95).
-        before: {
-          status: FiscalDocumentStatus.ANNULLED,
-          statusBeforeAnnul,
-          annulledAt: annulledAt.toISOString(),
-          annulledById: document.annulledById,
-          annulReason: document.annulReason,
-          lines: plan.before.lines,
-          subtotalPen: plan.before.subtotalPen,
-          igvPen: plan.before.igvPen,
-          totalPen: plan.before.totalPen,
-        },
-        after: {
-          status: FiscalDocumentStatus.ACCEPTED,
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'invoicing.document.reactivate-with-order-lines',
+          entity: 'fiscal_documents',
+          entityId: id,
           reason: input.reason,
-          number: document.number,
-          confirmedMatchesPaper: true,
-          paperTotalPen: toDecimal(input.paperTotalPen).toFixed(2),
-          lines: plan.after.lines,
-          subtotalPen: plan.after.subtotalPen,
-          igvPen: plan.after.igvPen,
-          totalPen: plan.after.totalPen,
-        },
-      });
-      return { id, number: document.number };
-    });
+          // Las líneas y la cabecera de antes son lo único que la fila deja de guardar: el
+          // cliente compara contra el papel, y la historia es append-only (RF-95).
+          before: {
+            status: FiscalDocumentStatus.ANNULLED,
+            statusBeforeAnnul,
+            annulledAt: annulledAt.toISOString(),
+            annulledById: document.annulledById,
+            annulReason: document.annulReason,
+            lines: plan.before.lines,
+            // Autorrevisión cc13 (P3-10): qué fila es cada una y a qué producto apuntaba.
+            rows: document.items.map((i) => ({
+              id: i.id,
+              lineNumber: i.lineNumber,
+              productId: i.productId,
+            })),
+            subtotalPen: plan.before.subtotalPen,
+            igvPen: plan.before.igvPen,
+            totalPen: plan.before.totalPen,
+          },
+          after: {
+            status: FiscalDocumentStatus.ACCEPTED,
+            reason: input.reason,
+            number: document.number,
+            confirmedMatchesPaper: true,
+            paperTotalPen: toDecimal(input.paperTotalPen).toFixed(2),
+            lines: plan.after.lines,
+            rows: [
+              ...plan.updates.map((u) => ({ id: u.id, productId: u.productId })),
+              ...plan.creates.map((c) => ({ lineNumber: c.lineNumber, productId: c.productId })),
+            ],
+            subtotalPen: plan.after.subtotalPen,
+            igvPen: plan.after.igvPen,
+            totalPen: plan.after.totalPen,
+          },
+        });
+        return { id, number: document.number };
+      },
+      { timeout: REACTIVATION_TX_TIMEOUT_MS },
+    );
   }
 
   /**
@@ -546,7 +570,15 @@ export class FiscalImportService {
       );
     }
 
-    const plan = planOrderLines(document.items, orderLines);
+    const plan = planOrderLines(document.items, orderLines, document);
+    // Revisión cc13 (P2-4): si el pedido describe exactamente lo que el comprobante ya tenía, no
+    // hay líneas que cambiar y la auditoría diría «con las líneas del pedido» sobre un antes igual
+    // al después. Eso es la reactivación simple de D-373.
+    if (!plan.changed) {
+      throw new BadRequestException(
+        `Las líneas del pedido ${orderCode} son las mismas de ${label}: no hay nada que cambiar. Usa «Reactivar»`,
+      );
+    }
 
     // D-077: una boleta a «público en general» por encima del tope solo existe si un
     // administrador lo forzó explícitamente al crearla. Reactivar no es ese gesto: si las líneas
@@ -569,6 +601,12 @@ export class FiscalImportService {
     return { document, plan, label, statusBeforeAnnul, annulledAt, orderCode };
   }
 }
+
+/**
+ * D-378 (revisión cc13, P2-2): un `update` por línea dentro de la transacción. Contra Neon, los
+ * 5 s por defecto de Prisma no alcanzan con un pedido grande; el mismo margen que `create`.
+ */
+const REACTIVATION_TX_TIMEOUT_MS = 30_000;
 
 /** D-373/D-378: las dos reactivaciones son solo de administrador. */
 function assertCanReactivate(actor: RequestUser): void {
@@ -755,6 +793,7 @@ async function lockAnnulledForReactivation(tx: Prisma.TransactionClient, id: str
         select: {
           id: true,
           lineNumber: true,
+          productId: true,
           description: true,
           qty: true,
           unit: true,

@@ -52,14 +52,25 @@ export function canReactivateWithOrderLines(
   return canReactivate(d) && d.origin === FiscalDocumentOrigin.MANUAL && d.salesOrderId !== null;
 }
 
-/** El total tipeado, si es un importe válido con hasta dos decimales. */
+/**
+ * El total tipeado, si es un importe válido con hasta dos decimales. La coma solo se acepta como
+ * separador de miles bien puesto (`1,234.50`): `153,44` no se lee como 15344 (revisión cc13, P3-6).
+ */
 function typedTotal(value: string): string | null {
-  const v = value.trim().replace(/,/g, '');
-  if (!/^\d+(\.\d{1,2})?$/.test(v)) return null;
-  return toDecimal(v).toFixed(2);
+  const v = value.trim();
+  if (!/^(\d+|\d{1,3}(,\d{3})+)(\.\d{1,2})?$/.test(v)) return null;
+  return toDecimal(v.replace(/,/g, '')).toFixed(2);
 }
 
-function Side({ title, side }: { title: string; side: ReactivationSideDto }) {
+function Side({
+  title,
+  testId,
+  side,
+}: {
+  title: string;
+  testId: string;
+  side: ReactivationSideDto;
+}) {
   return (
     <section aria-label={title} className="grid gap-1">
       <h3 className="text-sm font-medium">{title}</h3>
@@ -115,7 +126,7 @@ function Side({ title, side }: { title: string; side: ReactivationSideDto }) {
             </TableCell>
             <TableCell
               className="text-right font-medium tabular-nums"
-              data-testid={`${title.toLowerCase()}-total`}
+              data-testid={`${testId}-total`}
             >
               {formatMoney(side.totalPen)}
             </TableCell>
@@ -190,6 +201,9 @@ export function ReactivateWithOrderLinesDialog({
     },
     onError: (err: unknown) => {
       toast.error(err instanceof ApiError ? err.message : 'No se pudo reactivar');
+      // Autorrevisión cc13 (P3): si el pedido cambió mientras el diálogo estaba abierto, el antes
+      // y el después que se ven ya no son los que la API calculó: se vuelven a pedir.
+      void preview.refetch();
     },
   });
 
@@ -233,8 +247,8 @@ export function ReactivateWithOrderLinesDialog({
         )}
         {preview.data && (
           <div className="grid gap-4 md:grid-cols-2">
-            <Side title="Antes" side={preview.data.before} />
-            <Side title="Después" side={preview.data.after} />
+            <Side title="Antes" testId="before" side={preview.data.before} />
+            <Side title="Después" testId="after" side={preview.data.after} />
           </div>
         )}
 
@@ -258,7 +272,7 @@ export function ReactivateWithOrderLinesDialog({
             )}
             {difference !== null && !matches && linesTotal !== null && typed !== null && (
               <p
-                role="alert"
+                aria-live="polite"
                 className="text-sm text-destructive"
                 data-testid="paper-total-mismatch"
               >

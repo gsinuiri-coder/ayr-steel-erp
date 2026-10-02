@@ -41,6 +41,7 @@ describe('planOrderLines (D-378)', () => {
   ): DocumentLineRow => ({
     id,
     lineNumber,
+    productId: `p-${salesOrderItemId}`,
     description: `Papel ${id}`,
     qty,
     unit: 'MTR',
@@ -73,6 +74,9 @@ describe('planOrderLines (D-378)', () => {
     expect(plan.updates).toEqual([
       {
         id: 'fdi-1',
+        productId: 'p-soi-1',
+        description: 'Papel fdi-1',
+        unit: 'MTR',
         qty: '48.000',
         unitPricePen: '2.0833',
         subtotalPen: '100.0000',
@@ -138,6 +142,40 @@ describe('planOrderLines (D-378)', () => {
     );
     expect(plan.updates[0]).toMatchObject({ id: 'fdi-1', qty: '50.000', totalPen: '122.9167' });
     expect(plan.creates).toEqual([]);
+    expect(plan.changed).toBe(true);
+  });
+
+  it('si la línea del pedido cambió de producto, la fila toma el producto nuevo con su descripción y su unidad', () => {
+    const otherCoil = { ...ORDER[0]!, productId: 'p-otra-bobina', description: 'Otra bobina' };
+    const plan = planOrderLines([ORIGINAL], [otherCoil]);
+    expect(plan.updates[0]).toMatchObject({
+      id: 'fdi-1',
+      productId: 'p-otra-bobina',
+      description: 'Otra bobina',
+      unit: 'NIU',
+    });
+    expect(plan.after.lines[0]).toMatchObject({ description: 'Otra bobina', unit: 'NIU' });
+    // Mismos importes, pero otro material: es un cambio.
+    expect(plan.changed).toBe(true);
+  });
+
+  it('el «antes» muestra la cabecera grabada, no la recalculada con D-377', () => {
+    // Un manual anterior a D-377: la cabecera grabada no es el céntimo de la suma de líneas.
+    const stored = { subtotalPen: '100.0049', igvPen: '18.0009', totalPen: '118.0058' };
+    const plan = planOrderLines([ORIGINAL], ORDER, stored);
+    expect(plan.before).toMatchObject({
+      subtotalPen: '100.0049',
+      igvPen: '18.0009',
+      totalPen: '118.0058',
+    });
+    // El «después» siempre se calcula con D-377.
+    expect(plan.after.totalPen).toBe('153.4400');
+  });
+
+  it('una línea facturada en parte pasa a la línea entera del pedido (decisión 1)', () => {
+    const partial = docLine('fdi-1', 1, 'soi-1', '20', '41.6667', '7.5000', '49.1667', '2.0833');
+    const plan = planOrderLines([partial], [ORDER[0]!]);
+    expect(plan.updates[0]).toMatchObject({ id: 'fdi-1', qty: '48.000', totalPen: '118.0000' });
     expect(plan.changed).toBe(true);
   });
 
