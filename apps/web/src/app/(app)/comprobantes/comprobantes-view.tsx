@@ -23,6 +23,10 @@ import {
   canReactivate,
   ReactivateDocumentDialog,
 } from '@/components/invoicing/reactivate-document-dialog';
+import {
+  canReactivateWithOrderLines,
+  ReactivateWithOrderLinesDialog,
+} from '@/components/invoicing/reactivate-with-order-lines-dialog';
 import { formatDate, formatMoney } from '@/lib/format';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -129,6 +133,8 @@ export function ComprobantesView() {
   const rows = documents.data?.items ?? [];
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [reactivating, setReactivating] = useState<FiscalDocumentListItemDto | null>(null);
+  const [reactivatingWithLines, setReactivatingWithLines] =
+    useState<FiscalDocumentListItemDto | null>(null);
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -405,6 +411,15 @@ export function ComprobantesView() {
                               setReactivating(d);
                             },
                           },
+                          {
+                            // D-378: el papel está bien y al pedido le faltaron ítems.
+                            key: 'reactivate-with-order-lines',
+                            label: 'Reactivar con las líneas del pedido',
+                            show: canReactivateWithOrderLines(d),
+                            onSelect: () => {
+                              setReactivatingWithLines(d);
+                            },
+                          },
                         ]}
                       />
                     </TableCell>
@@ -441,6 +456,15 @@ export function ComprobantesView() {
           open
           onOpenChange={(open) => {
             if (!open) setReactivating(null);
+          }}
+        />
+      )}
+      {reactivatingWithLines && (
+        <ReactivateWithOrderLinesDialog
+          document={reactivatingWithLines}
+          open
+          onOpenChange={(open) => {
+            if (!open) setReactivatingWithLines(null);
           }}
         />
       )}
