@@ -10,6 +10,10 @@ import { InventoryItemType, Prisma, PurchaseStatus, PurchaseType } from '@prisma
 import {
   cents,
   coilTypeKey,
+  Decimal,
+  dispatchCode,
+  money,
+  productionOrderCode,
   toDateOnly,
   Role,
   toDecimal,
@@ -19,6 +23,7 @@ import {
   type ReceivedEditPlanDto,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
+import { claimIdempotencyKey } from '../common/idempotency';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
@@ -34,7 +39,9 @@ import { editedLineAmounts, impliedIgvRatePct, purchaseTotalsOf } from './purcha
 import {
   blockedSummary,
   classifyReceivedEdit,
+  fifoLotConsumption,
   type ItemFacts,
+  type LaterMovement,
   type PurchaseFacts,
   type TargetFacts,
 } from './purchase-received-edit';
@@ -42,6 +49,8 @@ import {
 type MovementRow = Prisma.InventoryMovementGetPayload<{
   include: { reversals: { select: { id: true } } };
 }>;
+
+type Loaded = Awaited<ReturnType<ReceivedPurchaseEditService['load']>>;
 
 /** Lo que el servicio leyó de una línea, además de los hechos del clasificador. */
 interface LoadedItem {
@@ -81,7 +90,8 @@ export class ReceivedPurchaseEditService {
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
         const loaded = await this.load(tx, id, touchedItems(input));
         const targets = await this.loadTargets(tx, loaded.purchase, loaded.receiptDate, input);
-        return classifyReceivedEdit(loaded.facts, input, targets);
+        const plan = classifyReceivedEdit(loaded.facts, input, targets);
+        return (await this.enrichPlan(tx, loaded, input, plan)).plan;
       },
       { timeout: 30_000 },
     );
@@ -111,13 +121,21 @@ export class ReceivedPurchaseEditService {
         // un movimiento confirmado entre la lectura y la reversa no lo vería el clasificador.
         await this.lockBalances(tx, id, coilIds, input);
 
+        // cc15: un mismo envío (doble click, reintento de red) se aplica una sola vez. El que
+        // llega segundo ve la edición ya hecha y no repite nada.
+        const claim = await claimIdempotencyKey(tx, 'purchase-received-edit', input.idempotencyKey);
+        if (!claim.claimed) {
+          return { purchaseId: id, changes: [], warnings: [], executable: false, replayed: true };
+        }
+
         const loaded = await this.load(tx, id, touchedItems(input));
         const targets = await this.loadTargets(tx, loaded.purchase, loaded.receiptDate, input);
-        const plan = classifyReceivedEdit(loaded.facts, input, targets);
-        if (plan.changes.length === 0) return plan;
-        if (!plan.executable) throw new BadRequestException(blockedSummary(plan));
+        const classified = classifyReceivedEdit(loaded.facts, input, targets);
+        if (classified.changes.length === 0) return classified;
+        if (!classified.executable) throw new BadRequestException(blockedSummary(classified));
+        const { plan, adjustments } = await this.enrichPlan(tx, loaded, input, classified);
 
-        const movements = await this.applyItems(tx, actor, loaded, input);
+        const movements = await this.applyItems(tx, actor, loaded, input, adjustments, targets);
         const header = await this.applyHeader(tx, loaded, input, movements.amountsChanged);
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -135,6 +153,9 @@ export class ReceivedPurchaseEditService {
             // Los importes de las líneas tocadas como estaban (los del papel, D-359): volver a
             // editar con la misma cantidad y el mismo precio los restaura tal cual.
             lines: movements.linesBefore as unknown as Prisma.InputJsonArray,
+            // cc15: el vencimiento va en `changes`; el costo de documento de las bobinas, acá.
+            dueDate: loaded.facts.header.dueDate,
+            coils: movements.coilsBefore as unknown as Prisma.InputJsonArray,
           },
           after: {
             changes: plan.changes.map((c) => ({
@@ -146,6 +167,20 @@ export class ReceivedPurchaseEditService {
             total: header.total,
             reversedMovementIds: movements.reversed,
             newMovementIds: movements.created,
+            // cc15: los ajustes proporcionales, con lo que quedaba y el monto.
+            adjustMovementIds: movements.adjusted,
+            adjustments: plan.changes.flatMap((c) =>
+              c.adjustment
+                ? [
+                    {
+                      line: c.lineNumber,
+                      remainingQty: c.adjustment.remainingQty,
+                      amountPen: c.adjustment.amountPen,
+                      affected: c.adjustment.affected.length,
+                    },
+                  ]
+                : [],
+            ),
             reason: input.reason,
           },
         });
@@ -298,9 +333,7 @@ export class ReceivedPurchaseEditService {
           ownIn,
           facts: {
             ...baseItemFacts(item, finishCode),
-            laterMovements: live
-              .filter((m) => m.id !== ownIn?.id)
-              .map((m) => ({ refType: m.refType, operationDate: dateOf(m.operationDate) })),
+            laterMovements: live.filter((m) => m.id !== ownIn?.id).map(laterOf(purchase.id)),
             hasLiveIn: ownIn !== null,
             backsPromised: backsPromised
               ? backsPromised.orders.map((o) => `${o.code} (${o.qtyKg} kg)`).join(', ')
@@ -308,7 +341,9 @@ export class ReceivedPurchaseEditService {
             coilStatus: coil?.status ?? null,
             mountedOrder: assignments.find((a) => a.coilId === coil?.id)?.orderCode ?? null,
             ownReservation: coil ? (ownReserved.get(coil.id) ?? toDecimal('0')).gt(0) : false,
-            landedCost: live.some((m) => m.type === 'ADJUST'),
+            // El landed cost es un ajuste de **otra** compra (el flete o la aduana). Los ajustes
+            // de esta misma compra son sus correcciones de costo con consumo (cc15).
+            landedCost: live.some((m) => m.type === 'ADJUST' && m.refId !== purchase.id),
             sharedProduct: false,
           },
         });
@@ -363,10 +398,7 @@ export class ReceivedPurchaseEditService {
           ownIn,
           facts: {
             ...baseItemFacts(item, finishCode),
-            laterMovements: later.map((m) => ({
-              refType: m.refType,
-              operationDate: dateOf(m.operationDate),
-            })),
+            laterMovements: later.map(laterOf(purchase.id)),
             hasLiveIn: ownIn !== null,
             backsPromised: null,
             coilStatus: null,
@@ -411,6 +443,7 @@ export class ReceivedPurchaseEditService {
         issueDate: dateOf(purchase.issueDate),
         paymentTerms: purchase.paymentTerms,
         creditDays: purchase.creditDays,
+        dueDate: purchase.dueDate === null ? null : dateOf(purchase.dueDate),
         notes: purchase.notes,
       },
       items: loadedItems.map((l) => l.facts),
@@ -429,6 +462,7 @@ export class ReceivedPurchaseEditService {
     const invalidProducts = new Map<string, string>();
     const invalidFinishes = new Map<string, string>();
     const productsWithLaterMovements = new Set<string>();
+    const productNames = new Map<string, string>();
 
     const supplierId = input.header?.supplierId;
     if (supplierId) {
@@ -452,13 +486,14 @@ export class ReceivedPurchaseEditService {
       if (edit.productId) {
         const product = await tx.product.findUnique({
           where: { id: edit.productId },
-          select: { sku: true, isActive: true, businessLineId: true, unit: true },
+          select: { sku: true, name: true, isActive: true, businessLineId: true, unit: true },
         });
         if (!product) {
           invalidProducts.set(edit.productId, 'El producto no existe');
           continue;
         }
         labels.set(edit.productId, product.sku);
+        productNames.set(edit.productId, product.name);
         const lineUnit = itemsById.get(edit.itemId)?.unit;
         if (!product.isActive) invalidProducts.set(edit.productId, 'El producto está desactivado');
         else if (product.businessLineId !== purchase.businessLineId) {
@@ -512,7 +547,7 @@ export class ReceivedPurchaseEditService {
         }
       }
     }
-    return { labels, invalidProducts, invalidFinishes, productsWithLaterMovements };
+    return { labels, invalidProducts, invalidFinishes, productsWithLaterMovements, productNames };
   }
 
   // -------------------------------------------------------------------------
@@ -522,17 +557,23 @@ export class ReceivedPurchaseEditService {
   private async applyItems(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
-    loaded: Awaited<ReturnType<ReceivedPurchaseEditService['load']>>,
+    loaded: Loaded,
     input: CommitReceivedPurchaseEditInput,
+    adjustments: Map<string, LineAdjustment>,
+    targets: TargetFacts,
   ): Promise<{
     reversed: string[];
     created: string[];
+    adjusted: string[];
     amountsChanged: boolean;
     linesBefore: PaperLine[];
+    coilsBefore: CoilCostBefore[];
   }> {
     const reversed: string[] = [];
     const created: string[] = [];
+    const adjusted: string[] = [];
     const linesBefore: PaperLine[] = [];
+    const coilsBefore: CoilCostBefore[] = [];
     let amountsChanged = false;
     const { purchase } = loaded;
     const exchangeRate = toDecimal(purchase.exchangeRate.toString());
@@ -564,27 +605,11 @@ export class ReceivedPurchaseEditService {
         continue;
       }
 
-      // La línea: sin cambio de importes se conserva el del papel (D-359). Con cambio, si la
-      // cantidad y el precio vuelven a los de una versión anterior de la línea, sus importes de
-      // entonces (deshacer exacto, decisión 10); si no, la cuenta del alta y de D-371.
-      const restored = amountsChange
-        ? paperHistory.find(
-            (p) => p.itemId === item.id && qty.equals(p.qty) && unitPrice.equals(p.unitPrice),
-          )
-        : undefined;
-      const amounts = !amountsChange
-        ? {
-            subtotal: item.subtotal.toString(),
-            igv: item.igv.toString(),
-            total: item.total.toString(),
-          }
-        : (restored ??
-          editedLineAmounts(
-            qty.toString(),
-            unitPrice.toString(),
-            impliedIgvRatePct(purchase.subtotal.toString(), purchase.igv.toString()),
-          ));
-      const lineSubtotal = toDecimal(amounts.subtotal.toString());
+      const amounts = this.lineAmountsFor(purchase, item, qty, unitPrice, paperHistory);
+      const lineSubtotal = toDecimal(amounts.subtotal);
+      // Decisión 3 (cc15): con consumo, el precio se corrige con un ajuste sobre lo que queda,
+      // sin reversa ni reingreso. El plan ya lo calculó con la misma cuenta que se muestra.
+      const adjustment = adjustments.get(item.id);
       if (amountsChange) {
         amountsChanged = true;
         linesBefore.push({
@@ -597,14 +622,33 @@ export class ReceivedPurchaseEditService {
         });
       }
 
-      if ((amountsChange || productChange) && !loadedItem.ownIn) {
+      if (adjustment && loadedItem.ownIn) {
+        const ownIn = loadedItem.ownIn;
+        if (!adjustment.amountPen.isZero() && adjustment.remainingQty.gt(0)) {
+          const movement = await this.inventory.adjustCost(tx, {
+            businessLineId: purchase.businessLineId,
+            itemType: ownIn.itemType,
+            itemId: ownIn.itemId,
+            unit: ownIn.unit,
+            amountPen: toFixedString(adjustment.amountPen, 'MONEY'),
+            refType: 'PURCHASE',
+            refId: purchase.id,
+            notes:
+              `Corrección de costo de la compra recibida, sobre ${toFixedString(adjustment.remainingQty, 'KG')} que quedan: ${input.reason}`.slice(
+                0,
+                240,
+              ),
+            actorId: actor.id,
+          });
+          if (movement) adjusted.push(movement.id.toString());
+        }
+      } else if ((amountsChange || productChange) && !loadedItem.ownIn) {
         // El clasificador ya lo bloquea (`hasLiveIn`); esto es la red por si dejara de hacerlo:
         // corregir la compra sin su kardex los separaría sin aviso.
         throw new BadRequestException(
           `La línea ${String(item.lineNumber)} no tiene un ingreso de kardex vivo que corregir`,
         );
-      }
-      if ((amountsChange || productChange) && loadedItem.ownIn) {
+      } else if ((amountsChange || productChange) && loadedItem.ownIn) {
         const ownIn = loadedItem.ownIn;
         const date = dateOf(ownIn.operationDate);
         // D-045 generalizado: reversa del ingreso y nuevo ingreso **en la misma fecha**, con el
@@ -678,15 +722,39 @@ export class ReceivedPurchaseEditService {
       }
       if (productChange && edit.productId !== undefined) {
         itemData.product = { connect: { id: edit.productId } };
+        // Decisión D (cc15): la descripción pasa a ser el nombre del producto nuevo; la anterior
+        // queda en la auditoría (`changes`).
+        const name = targets.productNames.get(edit.productId);
+        if (name !== undefined) itemData.description = name;
       }
 
       if (purchase.type === PurchaseType.COIL && loadedItem.coilId) {
         const coil = await tx.coil.findUniqueOrThrow({
           where: { id: loadedItem.coilId },
-          select: { id: true, finishId: true, colorId: true, thicknessMm: true, widthMm: true },
+          select: {
+            id: true,
+            code: true,
+            finishId: true,
+            colorId: true,
+            thicknessMm: true,
+            widthMm: true,
+            weightKg: true,
+            unitCostPerKg: true,
+            totalCost: true,
+            totalCostPen: true,
+          },
         });
         const coilData: Prisma.CoilUpdateInput = {};
         if (amountsChange) {
+          // cc15: el costo de documento anterior de la bobina, para la auditoría.
+          coilsBefore.push({
+            coilId: coil.id,
+            code: coil.code,
+            weightKg: coil.weightKg.toFixed(3),
+            unitCostPerKg: coil.unitCostPerKg.toFixed(4),
+            totalCost: coil.totalCost.toFixed(4),
+            totalCostPen: coil.totalCostPen.toFixed(4),
+          });
           // El costo de documento de la bobina, con la misma cuenta de `CoilsService.create`. El
           // código **no** se regenera aunque cambie el peso: es la etiqueta física (decisión 5).
           coilData.weightKg = toFixedString(qty, 'KG');
@@ -751,7 +819,283 @@ export class ReceivedPurchaseEditService {
         }),
       );
     }
-    return { reversed, created, amountsChanged, linesBefore };
+    return { reversed, created, adjusted, amountsChanged, linesBefore, coilsBefore };
+  }
+
+  /**
+   * Los importes de una línea con su cantidad y su precio nuevos. Sin cambio, los del papel
+   * (D-359). Con cambio, si vuelven a una versión anterior de la línea, sus importes de entonces
+   * (deshacer exacto, decisión 10); si no, la cuenta del alta y de D-371.
+   */
+  private lineAmountsFor(
+    purchase: Loaded['purchase'],
+    item: Loaded['purchase']['items'][number],
+    qty: Decimal,
+    unitPrice: Decimal,
+    paperHistory: PaperLine[],
+  ): { subtotal: string; igv: string; total: string } {
+    const amountsChange =
+      !qty.equals(item.qty.toString()) || !unitPrice.equals(item.unitPrice.toString());
+    if (!amountsChange) {
+      return {
+        subtotal: item.subtotal.toString(),
+        igv: item.igv.toString(),
+        total: item.total.toString(),
+      };
+    }
+    const restored = paperHistory.find(
+      (p) => p.itemId === item.id && qty.equals(p.qty) && unitPrice.equals(p.unitPrice),
+    );
+    if (restored) return restored;
+    const edited = editedLineAmounts(
+      qty.toString(),
+      unitPrice.toString(),
+      impliedIgvRatePct(purchase.subtotal.toString(), purchase.igv.toString()),
+    );
+    return {
+      subtotal: edited.subtotal.toString(),
+      igv: edited.igv.toString(),
+      total: edited.total.toString(),
+    };
+  }
+
+  /**
+   * Decisión 3 (cc15): el ajuste proporcional de una línea con consumo. El monto es la diferencia
+   * del costo de la línea en soles por la parte de la compra que **todavía está** en existencias
+   * (decisión A: en orden de llegada); lo que ya salió conserva su costo y se lista.
+   */
+  private async adjustmentFor(
+    tx: Prisma.TransactionClient,
+    purchase: Loaded['purchase'],
+    loadedItem: LoadedItem,
+    item: Loaded['purchase']['items'][number],
+    newSubtotal: string,
+  ): Promise<LineAdjustment> {
+    const ownIn = loadedItem.ownIn;
+    if (!ownIn) throw new BadRequestException('La línea no tiene un ingreso de kardex vivo');
+    const exchangeRate = toDecimal(purchase.exchangeRate.toString());
+    const diffPen = cents(toDecimal(newSubtotal).times(exchangeRate)).minus(
+      cents(toDecimal(item.subtotal.toString()).times(exchangeRate)),
+    );
+    const movements = liveMovements(
+      await tx.inventoryMovement.findMany({
+        where: { itemType: ownIn.itemType, itemId: ownIn.itemId },
+        orderBy: [{ operationDate: 'asc' }, { at: 'asc' }, { id: 'asc' }],
+        include: { reversals: { select: { id: true } } },
+      }),
+    );
+    const { remaining, consumers } = fifoLotConsumption(movements, ownIn.id);
+    const balance = await tx.inventoryBalance.findUnique({
+      where: { itemType_itemId: { itemType: ownIn.itemType, itemId: ownIn.itemId } },
+      select: { qty: true, avgCost: true },
+    });
+    const lotQty = toDecimal(ownIn.qty.toString());
+    const balanceQty = toDecimal((balance?.qty ?? 0).toString());
+    const remainingQty = Decimal.max(Decimal.min(remaining, balanceQty, lotQty), new Decimal(0));
+    let amountPen = lotQty.isZero()
+      ? new Decimal(0)
+      : money(diffPen.times(remainingQty).div(lotQty));
+    if (ownIn.itemType === InventoryItemType.COIL && remainingQty.gt(0) && !lotQty.isZero()) {
+      // En una bobina todo lo que queda es de esta compra, así que el ajuste lleva lo que queda
+      // **al costo nuevo del papel**, sea cual sea su valor de hoy. La diferencia unitaria daría
+      // lo mismo en el caso normal, pero no si una salida anulada devolvió material al costo
+      // viejo: entonces quedaría corto (autorrevisión de cc15a, P1-1).
+      const target = cents(toDecimal(newSubtotal).times(exchangeRate))
+        .times(remainingQty)
+        .div(lotQty);
+      // El valor de hoy **de lo que queda de esta compra**, no del saldo entero: en una bobina
+      // coinciden, pero así no depende de esa invariante (segunda revisión de cc15a, P2-2).
+      const current = remainingQty.times(toDecimal((balance?.avgCost ?? 0).toString()));
+      amountPen = money(target.minus(current));
+    }
+    return {
+      remainingQty,
+      amountPen,
+      consumers,
+      // El valor en stock del ítem hoy: `adjustCost` rechaza bajarlo de cero (revisión cc15a).
+      stockValuePen: toDecimal((balance?.qty ?? 0).toString()).times(
+        toDecimal((balance?.avgCost ?? 0).toString()),
+      ),
+    };
+  }
+
+  /** «Despacho DES-000012», «OP-000003», «Merma»…: qué documento se llevó cada salida. */
+  private async documentLabels(
+    tx: Prisma.TransactionClient,
+    movements: MovementRow[],
+  ): Promise<Map<bigint, string>> {
+    const idsOf = (refType: string): string[] => [
+      ...new Set(
+        movements.flatMap((m) => (m.refType === refType && m.refId !== null ? [m.refId] : [])),
+      ),
+    ];
+    const saleIds = idsOf('SALE');
+    const productionIds = idsOf('PRODUCTION');
+    const [dispatches, reports, orders] = await Promise.all([
+      saleIds.length
+        ? tx.dispatch.findMany({ where: { id: { in: saleIds } }, select: { id: true, seq: true } })
+        : Promise.resolve([]),
+      productionIds.length
+        ? tx.productionReport.findMany({
+            where: { id: { in: productionIds } },
+            select: { id: true, productionOrder: { select: { seq: true } } },
+          })
+        : Promise.resolve([]),
+      productionIds.length
+        ? tx.productionOrder.findMany({
+            where: { id: { in: productionIds } },
+            select: { id: true, seq: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const dispatchSeq = new Map(dispatches.map((d) => [d.id, d.seq]));
+    const orderSeq = new Map([
+      ...orders.map((o) => [o.id, o.seq] as const),
+      ...reports.map((r) => [r.id, r.productionOrder.seq] as const),
+    ]);
+    const labels = new Map<bigint, string>();
+    for (const m of movements) {
+      const base = REF_DOCUMENT[m.refType] ?? m.refType;
+      const ref = m.refId ?? '';
+      const seqSale = dispatchSeq.get(ref);
+      const seqOrder = orderSeq.get(ref);
+      labels.set(
+        m.id,
+        m.refType === 'SALE' && seqSale !== undefined
+          ? `${base} ${dispatchCode(seqSale)}`
+          : m.refType === 'PRODUCTION' && seqOrder !== undefined
+            ? `${base} ${productionOrderCode(seqOrder)}`
+            : base,
+      );
+    }
+    return labels;
+  }
+
+  /**
+   * Completa el plan con lo que el clasificador puro no puede saber: el monto de cada ajuste
+   * proporcional, las salidas que ya se llevaron material al costo anterior y los avisos.
+   * Lo usan la vista previa y el guardado, así lo que se muestra es lo que se hace.
+   */
+  private async enrichPlan(
+    tx: Prisma.TransactionClient,
+    loaded: Loaded,
+    input: EditReceivedPurchaseInput,
+    plan: ReceivedEditPlanDto,
+  ): Promise<{ plan: ReceivedEditPlanDto; adjustments: Map<string, LineAdjustment> }> {
+    const adjustments = new Map<string, LineAdjustment>();
+    const warnings: string[] = [];
+    const { purchase } = loaded;
+    const paperHistory = await this.paperHistory(tx, purchase.id);
+    const changes = [];
+    for (const change of plan.changes) {
+      if (change.path !== 'COST_ADJUST') {
+        changes.push(change);
+        continue;
+      }
+      const loadedItem = loaded.items.find((l) => l.facts.lineNumber === change.lineNumber);
+      const item = purchase.items.find((i) => i.lineNumber === change.lineNumber);
+      const edit = (input.items ?? []).find((e) => e.itemId === item?.id);
+      if (!loadedItem || !item || !edit) {
+        changes.push(change);
+        continue;
+      }
+      const amounts = this.lineAmountsFor(
+        purchase,
+        item,
+        toDecimal(item.qty.toString()),
+        toDecimal(edit.unitPrice ?? item.unitPrice.toString()),
+        paperHistory,
+      );
+      const adjustment = await this.adjustmentFor(tx, purchase, loadedItem, item, amounts.subtotal);
+      adjustments.set(item.id, adjustment);
+      const labels = await this.documentLabels(
+        tx,
+        adjustment.consumers.map((c) => c.movement),
+      );
+      // `adjustCost` rechaza dejar el valor del ítem en negativo: una baja mayor que lo que vale
+      // el stock se bloquea acá, así la vista previa dice lo mismo que el guardado.
+      const exceedsStock =
+        adjustment.amountPen.isNegative() &&
+        adjustment.amountPen.negated().gt(adjustment.stockValuePen);
+      changes.push({
+        ...change,
+        ...(exceedsStock
+          ? {
+              path: 'BLOCKED' as const,
+              blockedReason: `La baja de costo (S/ ${toFixedString(adjustment.amountPen.negated(), 'MONEY')}) supera lo que vale hoy el stock del ítem (S/ ${toFixedString(adjustment.stockValuePen, 'MONEY')}): el kardex quedaría con valor negativo`,
+            }
+          : {}),
+        adjustment: {
+          remainingQty: toFixedString(adjustment.remainingQty, 'KG'),
+          amountPen: toFixedString(adjustment.amountPen, 'MONEY'),
+          affected: adjustment.consumers.map((c) => ({
+            operationDate: dateOf(c.movement.operationDate),
+            document: labels.get(c.movement.id) ?? c.movement.refType,
+            qty: toFixedString(c.qty, 'KG'),
+            unitCost: toFixedString(c.movement.unitCost.toString(), 'MONEY'),
+          })),
+        },
+      });
+    }
+    if (adjustments.size > 0) {
+      const writes = [...adjustments.values()].some(
+        (a) => !a.amountPen.isZero() && a.remainingQty.gt(0),
+      );
+      warnings.push(
+        writes
+          ? 'Lo que ya salió conserva el costo con que salió: los márgenes de esos despachos, OP y mermas no se recalculan. El ajuste se registra con la fecha de hoy y solo carga la diferencia sobre lo que queda de esta compra.'
+          : 'No queda nada de esta compra en existencias: no se registra ajuste en el kardex; solo cambian la compra y la ficha. Lo que ya salió conserva su costo y sus márgenes no se recalculan.',
+        'Deshacer (volver a editar con el precio anterior) ajusta otra vez sobre lo que quede en ese momento: si entre las dos ediciones salió más material, ese material conserva el costo corregido y el resultado no es idéntico al de antes.',
+        'El kardex sigue siendo de costo promedio: las próximas salidas toman el promedio nuevo de todo lo que hay en existencias.',
+      );
+    }
+    const coilCost = changes.some(
+      (c) => purchase.type === PurchaseType.COIL && c.field === 'unitPrice' && c.path !== 'BLOCKED',
+    );
+    if (coilCost) {
+      warnings.push(
+        'El costo por kg de la bobina cambia en su ficha y, con él, en los reportes mensuales de bobinas ya pasados, que leen la ficha (decisión C).',
+      );
+      // Los flejes de un corte y las bobinas de un partido nacieron con el costo de entonces y
+      // son ítems propios del kardex: la corrección de la madre no los alcanza.
+      const coilIds = changes.flatMap((c) => {
+        if (c.field !== 'unitPrice' || c.path === 'BLOCKED') return [];
+        const coilId = loaded.items.find((l) => l.facts.lineNumber === c.lineNumber)?.coilId;
+        return coilId ? [coilId] : [];
+      });
+      if (coilIds.length > 0) {
+        const children = await tx.coil.findMany({
+          where: {
+            status: { not: 'CANCELLED' },
+            OR: [
+              { parentCoilId: { in: coilIds } },
+              { split: { parentCoilId: { in: coilIds }, revertedAt: null } },
+            ],
+          },
+          select: { code: true },
+          orderBy: { code: 'asc' },
+        });
+        if (children.length > 0) {
+          const shown = children
+            .slice(0, 8)
+            .map((c) => c.code)
+            .join(', ');
+          const more = children.length > 8 ? ` y ${String(children.length - 8)} más` : '';
+          warnings.push(
+            `Los flejes o bobinas que salieron de esta bobina (${shown}${more}) conservan el costo con que nacieron: la corrección no los alcanza.`,
+          );
+        }
+      }
+    }
+    return {
+      plan: {
+        ...plan,
+        changes,
+        warnings,
+        executable: changes.length > 0 && changes.every((c) => c.path !== 'BLOCKED'),
+      },
+      adjustments,
+    };
   }
 
   /** Las versiones anteriores de las líneas, de las ediciones ya auditadas de esta compra. */
@@ -898,6 +1242,16 @@ function touchedItems(input: EditReceivedPurchaseInput): Set<string> {
   return new Set((input.items ?? []).map((e) => e.itemId));
 }
 
+/** El costo de documento de una bobina antes de la edición (cc15, para la auditoría). */
+interface CoilCostBefore {
+  coilId: string;
+  code: string;
+  weightKg: string;
+  unitCostPerKg: string;
+  totalCost: string;
+  totalCostPen: string;
+}
+
 /** Una línea como estaba antes de una edición: los importes del papel (D-359). */
 interface PaperLine {
   itemId: string;
@@ -928,12 +1282,51 @@ function dateOf(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
+/**
+ * Un movimiento posterior, como lo necesita el clasificador. Un ajuste de **esta misma** compra
+ * es una corrección de costo anterior (cc15): se nombra así, no como «otra compra».
+ */
+function laterOf(purchaseId: string): (m: MovementRow) => LaterMovement {
+  return (m) => ({
+    type: m.type,
+    refType:
+      m.type === 'ADJUST' && m.refType === 'PURCHASE' && m.refId === purchaseId
+        ? 'OWN_COST_CORRECTION'
+        : m.refType,
+    operationDate: dateOf(m.operationDate),
+  });
+}
+
+/** Qué documento movió una salida, para el aviso de los afectados (cc15). */
+const REF_DOCUMENT: Record<string, string> = {
+  SCRAP: 'Merma',
+  SPLIT: 'Partido',
+  CLOSE_ADJUSTMENT: 'Cierre de bobina',
+  CUTTING: 'Corte tercerizado',
+  ADJUSTMENT: 'Ajuste de inventario',
+  PURCHASE: 'Compra',
+  IMPORT: 'Carga inicial',
+  SALE: 'Despacho',
+  PRODUCTION: 'Producción',
+};
+
+/** El ajuste proporcional de una línea (decisión 3): lo que queda, el monto y lo que ya salió. */
+interface LineAdjustment {
+  remainingQty: Decimal;
+  amountPen: Decimal;
+  /** Salidas que se llevaron material de esta compra, con la cantidad que tomaron de ella. */
+  consumers: { movement: MovementRow; qty: Decimal }[];
+  /** Valor en stock del ítem (saldo × promedio): un ajuste a la baja no puede superarlo. */
+  stockValuePen: Decimal;
+}
+
 function baseItemFacts(
   item: {
     id: string;
     lineNumber: number;
     productId: string | null;
     product: { sku: string } | null;
+    description: string;
     unit: string;
     qty: Prisma.Decimal;
     unitPrice: Prisma.Decimal;
@@ -948,6 +1341,7 @@ function baseItemFacts(
   | 'lineNumber'
   | 'productId'
   | 'productLabel'
+  | 'description'
   | 'unit'
   | 'qty'
   | 'unitPrice'
@@ -961,6 +1355,7 @@ function baseItemFacts(
     lineNumber: item.lineNumber,
     productId: item.productId,
     productLabel: item.product?.sku ?? null,
+    description: item.description,
     unit: item.unit,
     qty: item.qty.toFixed(3),
     unitPrice: item.unitPrice.toFixed(4),

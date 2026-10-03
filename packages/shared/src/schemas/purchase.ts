@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { decimalStringSchema } from '../decimal';
 import { reasonSchema } from './coil';
+import { idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 import {
@@ -503,6 +504,8 @@ export type EditReceivedPurchaseInput = z.infer<typeof editReceivedPurchaseSchem
 /** Confirmar la edición: lo mismo más el motivo, obligatorio. */
 export const commitReceivedPurchaseEditSchema = editReceivedPurchaseSchema.extend({
   reason: reasonSchema,
+  /** D-372 (cc15): un mismo envío (doble click, reintento de red) se aplica una sola vez. */
+  idempotencyKey: idempotencyKeySchema.optional(),
 });
 export type CommitReceivedPurchaseEditInput = z.infer<typeof commitReceivedPurchaseEditSchema>;
 
@@ -513,10 +516,27 @@ export type ReceivedEditGroup = (typeof RECEIVED_EDIT_GROUPS)[number];
 /**
  * Qué camino toma cada cambio: `IN_PLACE` se edita en la fila (cáscara, especificación de una
  * bobina intacta); `REVERSE_REENTRY` revierte el ingreso y vuelve a ingresar en la misma fecha;
- * `BLOCKED` no se puede, y `blockedReason` dice por qué.
+ * `BLOCKED` no se puede, y `blockedReason` dice por qué. `COST_ADJUST` (cc15, decisión 3): el
+ * ítem ya tuvo consumo, así que el costo se corrige con un ajuste **proporcional** sobre lo que
+ * queda de esa compra; lo que ya salió no se toca.
  */
-export const RECEIVED_EDIT_PATHS = ['IN_PLACE', 'REVERSE_REENTRY', 'BLOCKED'] as const;
+export const RECEIVED_EDIT_PATHS = [
+  'IN_PLACE',
+  'REVERSE_REENTRY',
+  'COST_ADJUST',
+  'BLOCKED',
+] as const;
 export type ReceivedEditPath = (typeof RECEIVED_EDIT_PATHS)[number];
+
+/** Una salida que ya se llevó material de la línea al costo anterior (no se recalcula). */
+export const receivedEditAffectedSchema = z.object({
+  operationDate: z.string(),
+  /** Qué la movió: «Despacho DES-000012», «OP-000003», «Merma»… */
+  document: z.string(),
+  qty: z.string(),
+  unitCost: z.string(),
+});
+export type ReceivedEditAffectedDto = z.infer<typeof receivedEditAffectedSchema>;
 
 export const receivedEditPlanSchema = z.object({
   purchaseId: z.string().uuid(),
@@ -532,8 +552,28 @@ export const receivedEditPlanSchema = z.object({
       after: z.string().nullable(),
       path: z.enum(RECEIVED_EDIT_PATHS),
       blockedReason: z.string().nullable(),
+      /**
+       * Solo en `COST_ADJUST`: cuánto queda de esa compra en existencias, el monto del ajuste en
+       * soles (diferencia unitaria × lo que queda) y las salidas que ya se llevaron material al
+       * costo anterior.
+       */
+      adjustment: z
+        .object({
+          remainingQty: z.string(),
+          amountPen: z.string(),
+          affected: z.array(receivedEditAffectedSchema),
+        })
+        .nullable()
+        .optional(),
     }),
   ),
+  /** Avisos de la edición entera, para leer antes de confirmar. */
+  warnings: z.array(z.string()).optional(),
+  /**
+   * El guardado ya se había aplicado con esta misma clave de idempotencia (un doble click o un
+   * reintento): no se repitió nada.
+   */
+  replayed: z.boolean().optional(),
   /** Hay al menos un cambio y ninguno está bloqueado. */
   executable: z.boolean(),
 });

@@ -63,6 +63,7 @@ import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { lastOwnMovementByLiveItem } from './purchase-cancel';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { prorateByWeight } from './landed-cost';
@@ -766,12 +767,21 @@ export class PurchasesService {
           // reversa: sin este filtro el bucle intentaba anular una anulación y la
           // compra quedaba sin poder anularse nunca, con un mensaje que no decía nada.
           const movements = liveMovements(own);
+          // cc15: los ítems donde esta compra hizo un ingreso. Un ajuste suyo sobre ellos es la
+          // corrección proporcional de «Editar compra», que ya reescribió la ficha de la bobina
+          // con el precio entero: no se descuenta de la ficha. El landed cost (un ajuste de una
+          // compra de servicio, sin ingreso propio sobre la bobina) sí.
+          const ownInItems = new Set(movements.filter((m) => m.type === 'IN').map((m) => m.itemId));
 
           // Del más nuevo al más viejo: si una compra generó un ingreso y luego un
           // ajuste de costo sobre el mismo ítem, el ajuste tiene que deshacerse primero.
           for (const movement of [...movements].reverse()) {
             await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
-            if (movement.type === 'ADJUST' && movement.itemType === 'COIL') {
+            if (
+              movement.type === 'ADJUST' &&
+              movement.itemType === 'COIL' &&
+              !ownInItems.has(movement.itemId)
+            ) {
               // El kardex ya volvió atrás; el costo del documento de la bobina también
               // tiene que hacerlo, o quedaría mostrando un landed cost que ya no existe.
               await this.bumpCoilDocumentCost(
@@ -846,33 +856,36 @@ export class PurchasesService {
    */
   private async assertNothingMovedAfter(
     tx: Prisma.TransactionClient,
-    movements: { id: bigint; itemType: InventoryItemType; itemId: string }[],
+    movements: {
+      id: bigint;
+      itemType: InventoryItemType;
+      itemId: string;
+      type: string;
+      reversalOfId: bigint | null;
+      reversals: unknown[];
+    }[],
   ): Promise<void> {
     if (movements.length === 0) return;
     const ownIds = new Set(movements.map((m) => m.id));
 
-    // "Posterior" se mide por ítem y contra el ÚLTIMO movimiento que esta compra le
-    // hizo, no contra el conjunto entero. Anular un flete (D-043) no puede quedar
-    // bloqueado por el ingreso de la bobina, que es anterior a su propio ajuste.
-    const lastOwnId = new Map<string, bigint>();
-    for (const m of movements) {
-      const current = lastOwnId.get(m.itemId);
-      if (current === undefined || m.id > current) lastOwnId.set(m.itemId, m.id);
-    }
-
+    const lastOwnId = lastOwnMovementByLiveItem(movements);
+    if (lastOwnId.size === 0) return;
     const later = await tx.inventoryMovement.findMany({
+      // Lo que ya se anuló no bloquea: una merma registrada y anulada después deja el
+      // saldo intacto, y contarla dejaría la compra sin poder anularse nunca más. Se filtra
+      // **en la consulta**, antes del límite: con el filtro en memoria, 50 filas anuladas
+      // tapaban una salida viva que venía después (segunda revisión de cc15a, P2-1).
       where: {
         OR: [...lastOwnId].map(([itemId, id]) => ({ itemId, id: { gt: id } })),
+        reversalOfId: null,
+        reversals: { none: {} },
+        id: { notIn: [...ownIds] },
       },
       orderBy: { id: 'asc' },
       include: { reversals: { select: { id: true } } },
-      take: 50,
+      take: 5,
     });
-    // Lo que ya se anuló no bloquea: una merma registrada y anulada después deja el
-    // saldo intacto, y contarla dejaría la compra sin poder anularse nunca más.
-    const blocking = liveMovements(later)
-      .filter((m) => !ownIds.has(m.id))
-      .slice(0, 5);
+    const blocking = liveMovements(later).filter((m) => !ownIds.has(m.id));
     if (blocking.length === 0) return;
 
     const labels = await this.resolveMovementLabels(tx, blocking);

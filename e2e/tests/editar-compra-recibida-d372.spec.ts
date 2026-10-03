@@ -191,7 +191,7 @@ test.describe('D-372 — editar una compra recibida', () => {
     }
   });
 
-  test('con consumo: la vista previa bloquea con el detalle y confirmar se rechaza', async () => {
+  test('con consumo: el precio va por ajuste (cc15), la cantidad se bloquea con el detalle y confirmarla se rechaza', async () => {
     const s = await setupRoofingScenario(api, { weightKg: '1000' });
     try {
       await postJson(api, `/api/coils/${s.coil.id}/scrap`, {
@@ -205,12 +205,8 @@ test.describe('D-372 — editar una compra recibida', () => {
         `/api/purchases/${s.purchaseId}/received-edit/preview`,
         { items: [{ itemId: item.id, unitPrice: '5.5' }], header: { notes: 'corregida' } },
       );
-      expect(plan.executable).toBe(false);
-      const cost = plan.changes.find((c) => c.field === 'unitPrice');
-      expect(cost?.path).toBe('BLOCKED');
-      expect(cost?.blockedReason).toContain('próxima versión');
-      expect(cost?.blockedReason).toContain('SCRAP');
-      // La cáscara sí se puede, aunque el costo esté bloqueado.
+      expect(plan.executable).toBe(true);
+      expect(plan.changes.find((c) => c.field === 'unitPrice')?.path).toBe('COST_ADJUST');
       expect(plan.changes.find((c) => c.field === 'notes')?.path).toBe('IN_PLACE');
 
       const qtyPlan = await postJson<PlanDto>(
@@ -219,17 +215,18 @@ test.describe('D-372 — editar una compra recibida', () => {
         { items: [{ itemId: item.id, qty: '990' }] },
       );
       expect(qtyPlan.changes[0]?.blockedReason).toContain('movimientos posteriores');
+      expect(qtyPlan.changes[0]?.blockedReason).toContain('SCRAP');
 
       const rejected = await postExpectingError(
         api,
         `/api/purchases/${s.purchaseId}/received-edit`,
         {
-          items: [{ itemId: item.id, unitPrice: '5.5' }],
+          items: [{ itemId: item.id, qty: '990' }],
           reason: 'Intento con consumo (E2E D-372)',
         },
       );
       expect(rejected.status).toBe(400);
-      expect(rejected.message).toContain('próxima versión');
+      expect(rejected.message).toContain('movimientos posteriores');
       // Nada se movió.
       expect(live(await movementsOf(api, 'COIL', s.coil.id))).toHaveLength(2);
     } finally {

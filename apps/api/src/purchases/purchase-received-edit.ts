@@ -1,5 +1,6 @@
 import { PurchaseType } from '@prisma/client';
 import {
+  Decimal,
   toDecimal,
   toFixedString,
   type EditReceivedPurchaseInput,
@@ -30,8 +31,22 @@ import {
 
 /** Un movimiento posterior que bloquea, ya nombrado para el mensaje. */
 export interface LaterMovement {
+  /** `IN` es otra entrada (otra compra del mismo producto); `OUT`/`ADJUST`, consumo o costo. */
+  type: 'IN' | 'OUT' | 'ADJUST';
   refType: string;
   operationDate: string;
+}
+
+/** Fecha de vencimiento de una compra al crédito, o `null` al contado (la cuenta del alta). */
+function dueDateOf(
+  paymentTerms: string,
+  creditDays: number | null,
+  issueDate: string,
+): string | null {
+  if (paymentTerms !== 'CREDITO' || !creditDays) return null;
+  const due = new Date(`${issueDate}T00:00:00.000Z`);
+  due.setUTCDate(due.getUTCDate() + creditDays);
+  return due.toISOString().slice(0, 10);
 }
 
 /** Lo que el servicio sabe de una línea antes de clasificar. */
@@ -41,6 +56,8 @@ export interface ItemFacts {
   /** Producto (FINISHED_GOOD) o `null`. */
   productId: string | null;
   productLabel: string | null;
+  /** Descripción de la línea (la del papel). */
+  description: string;
   unit: string;
   qty: string;
   unitPrice: string;
@@ -92,6 +109,8 @@ export interface PurchaseFacts {
     issueDate: string;
     paymentTerms: string;
     creditDays: number | null;
+    /** Vencimiento guardado, para mostrar el recalculado (cc15). */
+    dueDate: string | null;
     notes: string | null;
   };
   items: ItemFacts[];
@@ -106,6 +125,8 @@ export interface TargetFacts {
   /** Producto nuevo inválido (otra línea, otra unidad, inactivo), con el motivo. */
   invalidProducts: Map<string, string>;
   invalidFinishes: Map<string, string>;
+  /** Nombre del producto nuevo: pasa a ser la descripción de la línea (decisión D de cc15). */
+  productNames: Map<string, string>;
 }
 
 type Change = ReceivedEditPlanDto['changes'][number];
@@ -118,6 +139,7 @@ const HEADER_LABELS: Record<string, string> = {
   issueDate: 'Fecha de emisión',
   paymentTerms: 'Condición de pago',
   creditDays: 'Días de crédito',
+  dueDate: 'Vencimiento',
   notes: 'Observaciones',
 };
 
@@ -141,6 +163,7 @@ const REF_LABELS: Record<string, string> = {
   CUTTING: 'corte',
   ADJUSTMENT: 'ajuste de inventario',
   IMPORT: 'carga inicial',
+  OWN_COST_CORRECTION: 'corrección de costo de esta compra',
 };
 
 /** Igualdad de importes y medidas por valor, no por texto ("10" = "10.0000"). */
@@ -181,8 +204,10 @@ function blockedBy(
       .join(', ');
     const more =
       item.laterMovements.length > 5 ? ` y ${String(item.laterMovements.length - 5)} más` : '';
+    // Con consumo, el costo va por el ajuste proporcional (`adjustBlockedBy`); acá llega solo
+    // cuando lo posterior son entradas (otra compra del mismo producto) o cuando cambia kardex.
     return group === 'COST'
-      ? `El ítem ya tuvo consumo después del ingreso (${detail}${more}): corregir el costo con consumo posterior estará disponible en la próxima versión`
+      ? `El producto volvió a entrar después por otra compra (${detail}${more}): corregir esta línea estará disponible en la próxima versión`
       : `El ítem tiene movimientos posteriores al ingreso (${detail}${more}): revierte esas operaciones primero o anula la compra`;
   }
   if (reentry && !item.hasLiveIn) {
@@ -197,6 +222,34 @@ function blockedBy(
       : 'La bobina tiene una reserva propia: libérala antes de corregir su especificación';
   }
   return null;
+}
+
+/**
+ * El ítem ya tuvo **consumo** (una salida o un ajuste de costo después del ingreso): el precio
+ * se corrige con el ajuste proporcional de la decisión 3 (cc15), no con reversa.
+ */
+function consumed(item: ItemFacts): boolean {
+  return item.laterMovements.some((m) => m.type !== 'IN');
+}
+
+/**
+ * Lo que bloquea el ajuste proporcional (decisión 3): lo mismo que cualquier corrección de costo
+ * —pagos, tipo de compra, corte tercerizado, bobina anulada o montada, landed cost, producto
+ * repetido, sin ingreso vivo, tasa de IGV no estándar—, pero **no** el consumo, que es justamente
+ * su caso, ni la reserva, porque no mueve cantidades.
+ */
+function adjustBlockedBy(facts: PurchaseFacts, item: ItemFacts): string | null {
+  const reason = blockedBy(
+    facts,
+    { ...item, laterMovements: [], ownReservation: false },
+    'COST',
+    false,
+  );
+  if (reason !== null) return reason;
+  if (!item.hasLiveIn) {
+    return 'La línea no tiene un ingreso de kardex vivo de esta compra: no hay ingreso que corregir';
+  }
+  return facts.igvRateIssue;
 }
 
 /** El plan de una edición: cada cambio, su grupo, su camino y, si no se puede, por qué. */
@@ -266,6 +319,66 @@ export function classifyReceivedEdit(
     push('SHELL', field, label, null, before, next, 'IN_PLACE', null);
   }
 
+  // cc15: lo que la condición de pago arrastra, a la vista. Pasar a contado borra los días de
+  // crédito, y cualquier cambio de fecha, condición o días recalcula el vencimiento.
+  const nextTerms = header.paymentTerms ?? current.paymentTerms;
+  // Solo cuando la edición **toca** la condición: el guardado solo borra los días entonces.
+  if (
+    header.paymentTerms !== undefined &&
+    nextTerms !== 'CREDITO' &&
+    current.creditDays !== null &&
+    header.creditDays === undefined
+  ) {
+    push(
+      'SHELL',
+      'creditDays',
+      HEADER_LABELS.creditDays ?? 'creditDays',
+      null,
+      String(current.creditDays),
+      null,
+      'IN_PLACE',
+      null,
+    );
+  }
+  if (
+    header.issueDate !== undefined ||
+    header.paymentTerms !== undefined ||
+    header.creditDays !== undefined
+  ) {
+    const nextDays =
+      nextTerms === 'CREDITO'
+        ? header.creditDays !== undefined
+          ? header.creditDays
+          : current.creditDays
+        : null;
+    // Al crédito sin días el guardado lo rechaza: la vista previa lo dice antes.
+    if (nextTerms === 'CREDITO' && (nextDays === null || nextDays <= 0)) {
+      push(
+        'SHELL',
+        'creditDays',
+        HEADER_LABELS.creditDays ?? 'creditDays',
+        null,
+        current.creditDays === null ? null : String(current.creditDays),
+        null,
+        'BLOCKED',
+        'Una compra al crédito necesita días de crédito',
+      );
+    }
+    const nextDue = dueDateOf(nextTerms, nextDays, header.issueDate ?? current.issueDate);
+    if (nextDue !== current.dueDate) {
+      push(
+        'SHELL',
+        'dueDate',
+        HEADER_LABELS.dueDate ?? 'dueDate',
+        null,
+        current.dueDate,
+        nextDue,
+        'IN_PLACE',
+        null,
+      );
+    }
+  }
+
   // --- Líneas ---
   const byId = new Map(facts.items.map((i) => [i.itemId, i]));
   // El producto con que queda cada línea después de la edición: dos líneas al mismo producto
@@ -330,7 +443,21 @@ export function classifyReceivedEdit(
     // Precio o cantidad recalculan los importes de la línea con la tasa deducida (D-371).
     const amountsReason = (reason: string | null): string | null => reason ?? facts.igvRateIssue;
 
-    if (newPrice !== null) {
+    if (newPrice !== null && newQty === null && newProduct === null && consumed(item)) {
+      // Decisión 3 (cc15): con consumo, el precio se corrige con un ajuste proporcional sobre lo
+      // que queda de la compra. El servicio completa el monto y las salidas afectadas.
+      const reason = adjustBlockedBy(facts, item);
+      push(
+        'COST',
+        'unitPrice',
+        label('unitPrice'),
+        line,
+        toFixedString(item.unitPrice, 'MONEY'),
+        toFixedString(newPrice, 'MONEY'),
+        reason === null ? 'COST_ADJUST' : 'BLOCKED',
+        reason,
+      );
+    } else if (newPrice !== null) {
       // Un precio que viaja con una cantidad o un producto nuevos es parte de esa misma
       // reversa: el mensaje que vale es el de kardex.
       const reason = amountsReason(
@@ -384,6 +511,20 @@ export function classifyReceivedEdit(
         pathOf(reason),
         reason,
       );
+      // Decisión D (cc15): la descripción de la línea pasa a ser el nombre del producto nuevo.
+      const name = targets.productNames.get(newProduct);
+      if (name !== undefined && name !== item.description) {
+        push(
+          'SHELL',
+          'description',
+          'Descripción',
+          line,
+          item.description,
+          name,
+          reason === null ? 'IN_PLACE' : 'BLOCKED',
+          reason,
+        );
+      }
     }
     const specChanges: [string, string | null, string][] = [];
     if (newFinish !== null) {
@@ -411,6 +552,45 @@ export function classifyReceivedEdit(
     changes,
     executable: changes.length > 0 && changes.every((c) => c.path !== 'BLOCKED'),
   };
+}
+
+/**
+ * Decisión A (cc15): cuánto queda de **un lote** (el ingreso de una compra) en un saldo que
+ * mezcla varias compras, y qué salidas se lo llevaron, en orden de llegada (PEPS).
+ *
+ * Recibe los movimientos **vivos** del ítem (sin pares revertidos) ya ordenados como el kardex
+ * (fecha de operación, instante de grabación, id). Cada entrada abre una capa; cada salida
+ * consume las más antiguas primero; los ajustes no mueven cantidad. Una salida sin capas
+ * suficientes (un dato viejo retrofechado) consume lo que hay y el resto se ignora.
+ */
+export function fifoLotConsumption<
+  T extends { id: bigint; type: 'IN' | 'OUT' | 'ADJUST'; qty: { toString(): string } },
+>(
+  movements: T[],
+  lotId: bigint,
+): { remaining: Decimal; consumers: { movement: T; qty: Decimal }[] } {
+  const layers: { id: bigint; qty: Decimal }[] = [];
+  const consumers: { movement: T; qty: Decimal }[] = [];
+  for (const m of movements) {
+    const qty = toDecimal(m.qty.toString());
+    if (m.type === 'IN') {
+      layers.push({ id: m.id, qty });
+      continue;
+    }
+    if (m.type !== 'OUT') continue;
+    let pending = qty;
+    while (pending.gt(0) && layers.length > 0) {
+      const head = layers[0];
+      if (!head) break;
+      const take = Decimal.min(head.qty, pending);
+      if (head.id === lotId && take.gt(0)) consumers.push({ movement: m, qty: take });
+      head.qty = head.qty.minus(take);
+      pending = pending.minus(take);
+      if (head.qty.lte(0)) layers.shift();
+    }
+  }
+  const lot = layers.find((l) => l.id === lotId);
+  return { remaining: lot ? lot.qty : new Decimal(0), consumers };
 }
 
 /** Los motivos de bloqueo de un plan, para el mensaje de un intento de guardar igual. */
