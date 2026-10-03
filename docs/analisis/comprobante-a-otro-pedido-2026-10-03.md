@@ -6,7 +6,25 @@
 
 **Revisión.** Un segundo modelo (Sonnet, contexto limpio) revisó el diseño:
 `docs/revision/d381-diseno-segundo-modelo.md`. No encontró P0. Su P1 y sus P2 están incorporados
-en §3.4 y §3.6, y la P3 de la referencia de línea está corregida. Falta la revisión del dueño.
+en §3.4 y §3.6, y la P3 de la referencia de línea está corregida.
+
+**Autorrevisión** de un subagente nuevo: `docs/revision/d381-diseno-autorrevision.md`. Encontró
+0 P0, 1 P1, 3 P2 y 7 P3. Es una lista de riesgos, no una aprobación. El dueño ya decidió D-381 el
+2026-10-03; lo que aplica se resuelve en la implementación (cc16):
+
+- **P1, despacho a la fecha del papel.** Despachar desde el comprobante a esa fecha puede dar
+  `BEFORE_OPENING` o `REVIEW`, no solo el negativo de D-374. Por eso, al traer el comprobante no
+  se abre el despacho a la fecha del papel (D-378 sí lo abre). El aviso del modal y el runbook de
+  la ventana piden decidir antes la fecha física de salida.
+- **P2-1, papel por seis líneas.** Resuelto: el dueño confirmó que el papel es por las siete.
+- **P2-3, refresco de la web.** Se refrescan los dos pedidos.
+- **P3.** Ahora bloquea cualquier nota de crédito, aunque ya no esté viva. El filtro de pedido
+  anulado va antes del tope de candidatos. Hay etiquetas de auditoría. No se usa
+  `idempotencyKey`, porque la transición de estado ya cubre los reintentos.
+- **P2-2, queda abierto para el dueño.** Hoy se puede anular un pedido que tiene un comprobante
+  vivo. Así nació este caso, y está fuera de D-381.
+
+Falta la revisión del dueño.
 
 **Caso del dueño.** Anuló el comprobante manual `FFA1-00001389` y también su pedido, porque el
 pedido tenía datos erróneos. Creó el pedido `PED-000056` con los datos correctos. El comprobante
