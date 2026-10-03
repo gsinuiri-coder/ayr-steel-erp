@@ -28,10 +28,17 @@ if (missing.length) {
 }
 
 console.log(
-  'Levantando api+web contra la rama Neon "demo", solo en 127.0.0.1. Ctrl+C para cortar.',
+  'Levantando api :3100 + web :3101 contra la rama Neon "demo", solo en 127.0.0.1. Ctrl+C para cortar.',
 );
 const isWin = process.platform === 'win32';
 const pnpm = isWin ? 'pnpm.cmd' : 'pnpm';
+
+// Puertos **propios** de demo, nunca 3000/3001: esos son de `pnpm dev:local` y de Playwright,
+// que mata y levanta lo que haya ahí. Con los dos compartiendo puertos, una corrida de E2E
+// tumbaba la demo del dueño en pleno UAT (2026-10-02), y un E2E que reusara el API de demo
+// escribiría sobre una copia de datos reales. 4000/4001 son del dueño (`dev:preview`).
+const DEMO_API_PORT = '3100';
+const DEMO_WEB_PORT = '3101';
 // El override viaja por entorno y gana sobre `apps/api/.env`: NestJS lee `process.env`.
 //
 // R2/PSE/jobs apagados mientras `demo` sea copia de datos reales (ajustes antes de UAT
@@ -50,6 +57,8 @@ const env = {
   R2_ENDPOINT: '',
   PSE_ENABLED: 'false',
   JOBS_ENABLED: 'false',
+  PORT: DEMO_API_PORT,
+  WEB_ORIGIN: `http://127.0.0.1:${DEMO_WEB_PORT}`,
 };
 
 // C06: **solo localhost.** Demo es copia de datos reales y sus usuarios conservan el hash de
@@ -73,10 +82,21 @@ const children = [
   }),
   spawn(
     pnpm,
-    ['--filter', '@ayr/web', 'exec', 'next', 'dev', '--turbopack', '-p', '3001', '-H', '127.0.0.1'],
+    [
+      '--filter',
+      '@ayr/web',
+      'exec',
+      'next',
+      'dev',
+      '--turbopack',
+      '-p',
+      DEMO_WEB_PORT,
+      '-H',
+      '127.0.0.1',
+    ],
     {
       cwd: ROOT,
-      env: { ...env, API_URL: 'http://127.0.0.1:3000' },
+      env: { ...env, API_URL: `http://127.0.0.1:${DEMO_API_PORT}` },
       stdio: 'inherit',
       shell: isWin,
     },

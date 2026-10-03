@@ -113,8 +113,24 @@ un vendedor, cargar datos de prueba y romperlos sin consecuencias.
 ```
 pnpm env:demo    # escribe .env.demo con la conexión a la rama demo (no se commitea)
 pnpm db:demo     # migraciones + seed en demo
-pnpm dev:demo    # levanta api :3000 + web :3001 contra demo, solo en 127.0.0.1
+pnpm dev:demo    # levanta api :3100 + web :3101 contra demo, solo en 127.0.0.1
 ```
+
+**Demo tiene puertos propios: 3100 (API) y 3101 (web)** desde el 2026-10-03. Antes compartía
+3000/3001 con `pnpm dev:local` y con Playwright, y una corrida de E2E tumbó la demo del dueño en
+pleno UAT de cc14 (2026-10-02). Los puertos quedan así, sin superposición:
+
+| Puertos   | De quién                                                        |
+| --------- | --------------------------------------------------------------- |
+| 3000/3001 | `pnpm dev:local` y la suite E2E (Playwright los mata y levanta) |
+| 3002      | stub del padrón de la suite E2E                                 |
+| 3100/3101 | `pnpm dev:demo`                                                 |
+| 4000/4001 | `pnpm dev:preview` del dueño (ningún agente los toca)           |
+
+**La suite E2E no reusa servidores** (`playwright.config.ts`, `reuseServers`): si 3000 o 3001
+están ocupados, falla al instante en vez de escribir por un API que hable con otra base. La única
+excepción es `scripts/e2e-latency.mjs`, que levanta los suyos contra la base de la suite y lo pide
+con `E2E_REUSE_SERVERS=1`.
 
 `pnpm dev:demo` **no toca** `apps/api/.env`: inyecta la conexión por variables de entorno al
 proceso, así que `pnpm dev` sigue apuntando a `dev` y las dos cosas conviven. `.env.demo` está
@@ -149,18 +165,16 @@ dev` imprimía `Network: http://192.168.18.50:3001`).
 **Mitigación vigente: demo solo escucha en `127.0.0.1`.** `pnpm dev:demo` ya no usa `pnpm run dev`:
 levanta el API con `BIND_HOST=127.0.0.1` (`apps/api/src/config/env.ts`; por defecto `0.0.0.0`, así
 que Cloud Run y `dev:local` no cambian) y el web con `next dev -H 127.0.0.1`, que habla con el API
-por `API_URL=http://127.0.0.1:3000`. Mientras demo sea solo local, nadie entra desde otra máquina
+por `API_URL=http://127.0.0.1:3100`. Mientras demo sea solo local, nadie entra desde otra máquina
 y el reseteo manual de los usuarios reales no hace falta. **No se publica demo en ningún host ni
 túnel** hasta que exista D-362 (backlog): resetear la contraseña de todos los usuarios al
 restablecer demo. Si alguna vez hiciera falta antes, la vía es la pantalla Usuarios con el
 administrador de demo, uno por uno (`UsersService.update`: hash nuevo, cambio obligatorio,
 auditoría y sesiones revocadas).
 
-Verificado en vivo el 2026-09-28: el web escucha solo en `127.0.0.1:3001` (`netstat`) y no responde
-por la IP de la red local. **Pendiente, sin bloquear nada:** la verificación en vivo del bind del
-API (`127.0.0.1:3000`), en el próximo `pnpm dev:demo` desde el checkout principal —la prueba del
-2026-09-28 corrió desde un worktree cuyo `.env.demo` tenía la conexión anterior al
-restablecimiento, y el API no llegó a arrancar—. Hasta entonces lo cubren el test del esquema
+Verificado en vivo el 2026-09-28: el web escucha solo en `127.0.0.1` (`netstat`) y no responde
+por la IP de la red local. El bind del API a `127.0.0.1` se verificó en vivo el 2026-10-02
+(`netstat`, durante el UAT de cc14, todavía en 3000/3001); lo cubren además el test del esquema
 (`apps/api/src/config/env.spec.ts`) y `app.listen(env.PORT, env.BIND_HOST)` en `main.ts`.
 
 ### Demo tiene secretos propios, y eso no es opcional
