@@ -12,7 +12,15 @@
   - el borrador de PED-000056 ya está eliminado; se confirma en la foto previa a la ventana.
 - Implementación: API, web, unitarios y el E2E `traer-comprobante-d381.spec.ts`. Sin migración,
   nada en producción. Por la sesión de cc15b no se levantó demo ni se corrió la suite en local:
-  **la CI es el juez** (resultado en el PR #87 y en el cierre).
+  **la CI es el juez**.
+- **CI 37160575144, en `7802594`: verde.**
+  - E2E: 497 pasados, 3 saltados y 0 fallidos.
+  - El smoke de Neon `ci`, lint, typecheck, unitarios y Sonar, en verde.
+  - **Corrida anterior (37159099316): 2 rojos, ambos del spec nuevo.** Los dos eran defectos del
+    test, no del producto. Con el RUC facturable de CI, `createInvoiceableCustomer` reusa siempre el
+    mismo cliente, así que el «otro cliente» no era otro (respuesta 201) y el diálogo tenía varios
+    candidatos, por lo que no autoseleccionó ninguno. Se corrigió con un RUC propio por caso.
+  - Corrida previa a esa: un error de lint en el test del presupuesto.
 - Unitarios locales: `jest src/invoicing` dio 335 en verde. Typecheck de API y web, y lint de los
   archivos tocados, limpios.
 - Revisiones:
