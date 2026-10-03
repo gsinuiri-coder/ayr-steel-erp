@@ -1,7 +1,14 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, getJson, postJson } from '../helpers/api';
 import { setupPosStock, POS_LINE } from '../helpers/pos';
-import { balanceOf, live, movementsOf, today, uniqueDocumentNumber } from '../helpers/production';
+import {
+  balanceOf,
+  live,
+  movementsOf,
+  postExpectingError,
+  today,
+  uniqueDocumentNumber,
+} from '../helpers/production';
 import { purgeRoofingTrail, setupRoofingScenario, type RoofingScenario } from '../helpers/roofing';
 import { createSellableProduct } from '../helpers/sales';
 import { headerAction } from '../helpers/ui';
@@ -226,6 +233,32 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
         subtotal: purchase.items[0]!.subtotal,
       });
       expect(after.total).toBe(purchase.total);
+    } finally {
+      await purgeRoofingTrail(api, trailOf(s));
+    }
+  });
+
+  test('punto 1 + 2: después de un ajuste proporcional, la anulación sigue viendo el consumo y se rechaza', async () => {
+    const s = await setupRoofingScenario(api, { weightKg: '1000' });
+    try {
+      await scrap(api, s.coil.id, '300');
+      const purchase = await getJson<PurchaseDto>(api, `/api/purchases/${s.purchaseId}`);
+      await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
+        items: [{ itemId: purchase.items[0]!.id, unitPrice: '6' }],
+        reason: 'Precio mal tipeado (E2E cc15a)',
+      });
+      // El ajuste propio es el movimiento más nuevo de la compra: no puede esconder la merma.
+      const rejected = await postExpectingError(api, `/api/purchases/${s.purchaseId}/cancel`, {
+        reason: 'Intento de anular con consumo (E2E cc15a)',
+      });
+      expect(rejected.status).toBe(400);
+      expect(rejected.message).toContain('movimientos posteriores');
+      const after = await getJson<PurchaseDto>(api, `/api/purchases/${s.purchaseId}`);
+      expect(after.status).toBe('RECEIVED');
+      expect(await balanceOf(api, 'COIL', s.coil.id)).toMatchObject({
+        qty: '700.000',
+        avgCost: '6.0000',
+      });
     } finally {
       await purgeRoofingTrail(api, trailOf(s));
     }

@@ -163,6 +163,7 @@ const REF_LABELS: Record<string, string> = {
   CUTTING: 'corte',
   ADJUSTMENT: 'ajuste de inventario',
   IMPORT: 'carga inicial',
+  OWN_COST_CORRECTION: 'corrección de costo de esta compra',
 };
 
 /** Igualdad de importes y medidas por valor, no por texto ("10" = "10.0000"). */
@@ -321,7 +322,13 @@ export function classifyReceivedEdit(
   // cc15: lo que la condición de pago arrastra, a la vista. Pasar a contado borra los días de
   // crédito, y cualquier cambio de fecha, condición o días recalcula el vencimiento.
   const nextTerms = header.paymentTerms ?? current.paymentTerms;
-  if (nextTerms !== 'CREDITO' && current.creditDays !== null && header.creditDays === undefined) {
+  // Solo cuando la edición **toca** la condición: el guardado solo borra los días entonces.
+  if (
+    header.paymentTerms !== undefined &&
+    nextTerms !== 'CREDITO' &&
+    current.creditDays !== null &&
+    header.creditDays === undefined
+  ) {
     push(
       'SHELL',
       'creditDays',
@@ -344,6 +351,19 @@ export function classifyReceivedEdit(
           ? header.creditDays
           : current.creditDays
         : null;
+    // Al crédito sin días el guardado lo rechaza: la vista previa lo dice antes.
+    if (nextTerms === 'CREDITO' && (nextDays === null || nextDays <= 0)) {
+      push(
+        'SHELL',
+        'creditDays',
+        HEADER_LABELS.creditDays ?? 'creditDays',
+        null,
+        current.creditDays === null ? null : String(current.creditDays),
+        null,
+        'BLOCKED',
+        'Una compra al crédito necesita días de crédito',
+      );
+    }
     const nextDue = dueDateOf(nextTerms, nextDays, header.issueDate ?? current.issueDate);
     if (nextDue !== current.dueDate) {
       push(

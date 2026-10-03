@@ -101,6 +101,7 @@ function makeTx(opts: {
   payments?: number;
   productMovements?: unknown[];
   productBalance?: string;
+  productAvg?: string;
   auditEvents?: unknown[];
 }) {
   const purchase = coilPurchase(opts.purchase);
@@ -181,7 +182,10 @@ function makeTx(opts: {
         .mockResolvedValue({ name: 'OTRO', docNumber: '20999999999', isActive: true }),
     },
     inventoryBalance: {
-      findUnique: jest.fn().mockResolvedValue({ qty: D(opts.productBalance ?? '100') }),
+      findUnique: jest.fn().mockResolvedValue({
+        qty: D(opts.productBalance ?? '100'),
+        avgCost: D(opts.productAvg ?? '5'),
+      }),
     },
     auditLog: { findMany: jest.fn().mockResolvedValue(opts.auditEvents ?? []) },
     product: {
@@ -313,6 +317,87 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     );
   });
 
+  it('bobina con una merma anulada después de corregir: el ajuste lleva lo que queda al costo del papel (P1-1)', async () => {
+    // Factura en 5.5 después de una corrección; la merma de 400 se anuló y volvió a 5, así que
+    // hoy hay 1000 kg valorizados en 5300. Volver a 5 tiene que dejar 5000, no 4800.
+    const ownAdjust = { ...ownIn, id: 30n, type: 'ADJUST', qty: D('600') };
+    const purchase = {
+      subtotal: D('5500'),
+      igv: D('990'),
+      total: D('6490'),
+      items: [
+        {
+          ...coilPurchase().items[0],
+          unitPrice: D('5.5'),
+          subtotal: D('5500'),
+          igv: D('990'),
+          total: D('6490'),
+        },
+      ],
+    };
+    const { tx } = makeTx({
+      purchase,
+      movements: [ownIn, ownAdjust],
+      productBalance: '1000',
+      productAvg: '5.3',
+    });
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5' }],
+    });
+    expect(plan.changes[0]?.adjustment).toMatchObject({
+      remainingQty: '1000.000',
+      amountPen: '-300.0000',
+    });
+  });
+
+  it('producto terminado: una baja mayor que lo que vale el stock se bloquea en la vista previa', async () => {
+    // Lote de 100 a 50; salieron 90 y quedan 10 en un stock que hoy vale 10 soles. Bajar a 1 es
+    // −4900 × 10/100 = −490: más que el valor del stock.
+    const productIn = {
+      ...ownIn,
+      itemType: 'PRODUCT',
+      itemId: 'prod-1',
+      unit: 'NIU',
+      qty: D('100'),
+    };
+    const sale = { ...productIn, id: 40n, type: 'OUT', qty: D('90'), refType: 'SALE', refId: null };
+    const fg = {
+      type: PurchaseType.FINISHED_GOOD,
+      items: [
+        {
+          ...coilPurchase().items[0],
+          productId: 'prod-1',
+          product: { sku: 'PERFIL-1' },
+          unit: 'NIU',
+          qty: D('100'),
+          unitPrice: D('50'),
+          finishId: null,
+          widthMm: null,
+          thicknessMm: null,
+        },
+      ],
+    };
+    const { tx } = makeTx({
+      purchase: fg,
+      productMovements: [productIn],
+      productBalance: '10',
+      productAvg: '1',
+    });
+    tx.coil.findMany.mockResolvedValue([]);
+    tx.inventoryMovement.findMany.mockImplementation(
+      (args: { where: { refType?: string; OR?: unknown } }) =>
+        Promise.resolve(args.where.refType === 'PURCHASE' ? [productIn] : [productIn, sale]),
+    );
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '1' }],
+    });
+    expect(plan.changes[0]?.path).toBe('BLOCKED');
+    expect(plan.changes[0]?.blockedReason).toContain('supera lo que vale hoy el stock');
+    expect(plan.executable).toBe(false);
+  });
+
   it('un reintento con la misma clave de idempotencia no repite nada', async () => {
     const { tx } = makeTx({});
     tx.$queryRaw.mockResolvedValue([]); // la clave ya existía: el INSERT no devolvió fila
@@ -325,7 +410,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
       reason: 'x',
       idempotencyKey: 'k-1',
     });
-    expect(plan.changes).toEqual([]);
+    expect(plan).toMatchObject({ changes: [], replayed: true });
     expect(inventory.reverse).not.toHaveBeenCalled();
     expect(audit.write).not.toHaveBeenCalled();
   });

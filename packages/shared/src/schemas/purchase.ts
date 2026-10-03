@@ -569,6 +569,11 @@ export const receivedEditPlanSchema = z.object({
   ),
   /** Avisos de la edición entera, para leer antes de confirmar. */
   warnings: z.array(z.string()).optional(),
+  /**
+   * El guardado ya se había aplicado con esta misma clave de idempotencia (un doble click o un
+   * reintento): no se repitió nada.
+   */
+  replayed: z.boolean().optional(),
   /** Hay al menos un cambio y ninguno está bloqueado. */
   executable: z.boolean(),
 });

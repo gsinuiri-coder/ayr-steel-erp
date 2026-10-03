@@ -129,6 +129,44 @@ describe('D-372 (cc15) — lo que arrastra la cáscara y el producto', () => {
     });
   });
 
+  it('pasar al crédito sin días se bloquea en la vista previa', () => {
+    const plan = classifyReceivedEdit(
+      purchase(),
+      { header: { paymentTerms: 'CREDITO' } },
+      noTargets(),
+    );
+    expect(plan.executable).toBe(false);
+    expect(plan.changes.find((c) => c.field === 'creditDays')?.blockedReason).toContain(
+      'necesita días de crédito',
+    );
+  });
+
+  it('una compra al contado con días heredados no los muestra si no se toca la condición', () => {
+    const plan = classifyReceivedEdit(
+      purchase({ header: { ...purchase().header, creditDays: 15 } }),
+      { header: { notes: 'x' } },
+      noTargets(),
+    );
+    expect(plan.changes.map((c) => c.field)).toEqual(['notes']);
+  });
+
+  it('una corrección de costo anterior de esta compra se nombra como tal, no como otra compra', () => {
+    const plan = classifyReceivedEdit(
+      purchase({
+        items: [
+          coilItem({
+            laterMovements: [
+              { type: 'ADJUST', refType: 'OWN_COST_CORRECTION', operationDate: '2026-10-03' },
+            ],
+          }),
+        ],
+      }),
+      { items: [{ itemId: 'item-1', qty: '990' }] },
+      noTargets(),
+    );
+    expect(plan.changes[0]?.blockedReason).toContain('corrección de costo de esta compra');
+  });
+
   it('cambiar de producto cambia también la descripción (decisión D)', () => {
     const plan = classifyReceivedEdit(
       purchase({

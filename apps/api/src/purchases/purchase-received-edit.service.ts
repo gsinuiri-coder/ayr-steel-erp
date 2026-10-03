@@ -124,7 +124,9 @@ export class ReceivedPurchaseEditService {
         // cc15: un mismo envío (doble click, reintento de red) se aplica una sola vez. El que
         // llega segundo ve la edición ya hecha y no repite nada.
         const claim = await claimIdempotencyKey(tx, 'purchase-received-edit', input.idempotencyKey);
-        if (!claim.claimed) return { purchaseId: id, changes: [], warnings: [], executable: false };
+        if (!claim.claimed) {
+          return { purchaseId: id, changes: [], warnings: [], executable: false, replayed: true };
+        }
 
         const loaded = await this.load(tx, id, touchedItems(input));
         const targets = await this.loadTargets(tx, loaded.purchase, loaded.receiptDate, input);
@@ -331,7 +333,7 @@ export class ReceivedPurchaseEditService {
           ownIn,
           facts: {
             ...baseItemFacts(item, finishCode),
-            laterMovements: live.filter((m) => m.id !== ownIn?.id).map(laterOf),
+            laterMovements: live.filter((m) => m.id !== ownIn?.id).map(laterOf(purchase.id)),
             hasLiveIn: ownIn !== null,
             backsPromised: backsPromised
               ? backsPromised.orders.map((o) => `${o.code} (${o.qtyKg} kg)`).join(', ')
@@ -396,7 +398,7 @@ export class ReceivedPurchaseEditService {
           ownIn,
           facts: {
             ...baseItemFacts(item, finishCode),
-            laterMovements: later.map(laterOf),
+            laterMovements: later.map(laterOf(purchase.id)),
             hasLiveIn: ownIn !== null,
             backsPromised: null,
             coilStatus: null,
@@ -885,17 +887,33 @@ export class ReceivedPurchaseEditService {
     const { remaining, consumers } = fifoLotConsumption(movements, ownIn.id);
     const balance = await tx.inventoryBalance.findUnique({
       where: { itemType_itemId: { itemType: ownIn.itemType, itemId: ownIn.itemId } },
-      select: { qty: true },
+      select: { qty: true, avgCost: true },
     });
     const lotQty = toDecimal(ownIn.qty.toString());
-    const remainingQty = Decimal.max(
-      Decimal.min(remaining, toDecimal((balance?.qty ?? 0).toString()), lotQty),
-      new Decimal(0),
-    );
+    const balanceQty = toDecimal((balance?.qty ?? 0).toString());
+    const remainingQty = Decimal.max(Decimal.min(remaining, balanceQty, lotQty), new Decimal(0));
+    let amountPen = lotQty.isZero()
+      ? new Decimal(0)
+      : money(diffPen.times(remainingQty).div(lotQty));
+    if (ownIn.itemType === InventoryItemType.COIL && remainingQty.gt(0) && !lotQty.isZero()) {
+      // En una bobina todo lo que queda es de esta compra, así que el ajuste lleva lo que queda
+      // **al costo nuevo del papel**, sea cual sea su valor de hoy. La diferencia unitaria daría
+      // lo mismo en el caso normal, pero no si una salida anulada devolvió material al costo
+      // viejo: entonces quedaría corto (autorrevisión de cc15a, P1-1).
+      const target = cents(toDecimal(newSubtotal).times(exchangeRate))
+        .times(remainingQty)
+        .div(lotQty);
+      const current = balanceQty.times(toDecimal((balance?.avgCost ?? 0).toString()));
+      amountPen = money(target.minus(current));
+    }
     return {
       remainingQty,
-      amountPen: lotQty.isZero() ? new Decimal(0) : money(diffPen.times(remainingQty).div(lotQty)),
+      amountPen,
       consumers,
+      // El valor en stock del ítem hoy: `adjustCost` rechaza bajarlo de cero (revisión cc15a).
+      stockValuePen: toDecimal((balance?.qty ?? 0).toString()).times(
+        toDecimal((balance?.avgCost ?? 0).toString()),
+      ),
     };
   }
 
@@ -992,8 +1010,19 @@ export class ReceivedPurchaseEditService {
         tx,
         adjustment.consumers.map((c) => c.movement),
       );
+      // `adjustCost` rechaza dejar el valor del ítem en negativo: una baja mayor que lo que vale
+      // el stock se bloquea acá, así la vista previa dice lo mismo que el guardado.
+      const exceedsStock =
+        adjustment.amountPen.isNegative() &&
+        adjustment.amountPen.negated().gt(adjustment.stockValuePen);
       changes.push({
         ...change,
+        ...(exceedsStock
+          ? {
+              path: 'BLOCKED' as const,
+              blockedReason: `La baja de costo (S/ ${toFixedString(adjustment.amountPen.negated(), 'MONEY')}) supera lo que vale hoy el stock del ítem (S/ ${toFixedString(adjustment.stockValuePen, 'MONEY')}): el kardex quedaría con valor negativo`,
+            }
+          : {}),
         adjustment: {
           remainingQty: toFixedString(adjustment.remainingQty, 'KG'),
           amountPen: toFixedString(adjustment.amountPen, 'MONEY'),
@@ -1007,9 +1036,15 @@ export class ReceivedPurchaseEditService {
       });
     }
     if (adjustments.size > 0) {
+      const writes = [...adjustments.values()].some(
+        (a) => !a.amountPen.isZero() && a.remainingQty.gt(0),
+      );
       warnings.push(
-        'Lo que ya salió conserva el costo con que salió: los márgenes de esos despachos, OP y mermas no se recalculan. El ajuste se registra con la fecha de hoy y solo carga la diferencia sobre lo que queda de esta compra.',
+        writes
+          ? 'Lo que ya salió conserva el costo con que salió: los márgenes de esos despachos, OP y mermas no se recalculan. El ajuste se registra con la fecha de hoy y solo carga la diferencia sobre lo que queda de esta compra.'
+          : 'No queda nada de esta compra en existencias: no se registra ajuste en el kardex; solo cambian la compra y la ficha. Lo que ya salió conserva su costo y sus márgenes no se recalculan.',
         'Deshacer (volver a editar con el precio anterior) ajusta otra vez sobre lo que quede en ese momento: si entre las dos ediciones salió más material, ese material conserva el costo corregido y el resultado no es idéntico al de antes.',
+        'El kardex sigue siendo de costo promedio: las próximas salidas toman el promedio nuevo de todo lo que hay en existencias.',
       );
     }
     const coilCost = changes.some(
@@ -1020,7 +1055,15 @@ export class ReceivedPurchaseEditService {
         'El costo por kg de la bobina cambia en su ficha y, con él, en los reportes mensuales de bobinas ya pasados, que leen la ficha (decisión C).',
       );
     }
-    return { plan: { ...plan, changes, warnings }, adjustments };
+    return {
+      plan: {
+        ...plan,
+        changes,
+        warnings,
+        executable: changes.length > 0 && changes.every((c) => c.path !== 'BLOCKED'),
+      },
+      adjustments,
+    };
   }
 
   /** Las versiones anteriores de las líneas, de las ediciones ya auditadas de esta compra. */
@@ -1207,9 +1250,19 @@ function dateOf(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-/** Un movimiento posterior, como lo necesita el clasificador. */
-function laterOf(m: MovementRow): LaterMovement {
-  return { type: m.type, refType: m.refType, operationDate: dateOf(m.operationDate) };
+/**
+ * Un movimiento posterior, como lo necesita el clasificador. Un ajuste de **esta misma** compra
+ * es una corrección de costo anterior (cc15): se nombra así, no como «otra compra».
+ */
+function laterOf(purchaseId: string): (m: MovementRow) => LaterMovement {
+  return (m) => ({
+    type: m.type,
+    refType:
+      m.type === 'ADJUST' && m.refType === 'PURCHASE' && m.refId === purchaseId
+        ? 'OWN_COST_CORRECTION'
+        : m.refType,
+    operationDate: dateOf(m.operationDate),
+  });
 }
 
 /** Qué documento movió una salida, para el aviso de los afectados (cc15). */
@@ -1231,6 +1284,8 @@ interface LineAdjustment {
   amountPen: Decimal;
   /** Salidas que se llevaron material de esta compra, con la cantidad que tomaron de ella. */
   consumers: { movement: MovementRow; qty: Decimal }[];
+  /** Valor en stock del ítem (saldo × promedio): un ajuste a la baja no puede superarlo. */
+  stockValuePen: Decimal;
 }
 
 function baseItemFacts(
