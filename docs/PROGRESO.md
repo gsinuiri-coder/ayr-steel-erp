@@ -2,6 +2,19 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 — D-381: llevar un comprobante manual anulado a otro pedido (diseño, PR de solo docs)
+
+- Caso: `FFA1-00001389` anulado junto con PED-000044; el pedido correcto es PED-000056. Foto
+  `READ ONLY` de producción con OK del dueño (JSON en `local-data/d381/`, script borrado).
+- Lo erróneo de PED-000044 era que **le faltaba la línea `UPVC6MT` × 42**; las otras seis líneas y
+  el cliente coinciden. Cambia también el vendedor. PED-000056 tiene un borrador de factura del
+  intento de reingreso, que hay que eliminar antes.
+- Confirmado en el código que no hay camino por la interfaz. Diseño, bloqueos, decisiones 1-3 con
+  recomendación y estimación (una sesión, sin migración) en
+  `docs/analisis/comprobante-a-otro-pedido-2026-10-03.md`. D-381 registrada como **propuesta**.
+- Pendiente del dueño: decisiones 1-3, que el papel de Nubefact sea por las siete líneas, el
+  vendedor correcto y el número D-381.
+
 ## 2026-10-03 — Ventana cc15a (D-372 sesión 2a desplegada, PR #84, sin migración)
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc15a.md`.
