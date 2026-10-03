@@ -464,15 +464,23 @@ export class InventoryService {
     operationDate?: string,
     confirmBackdate?: boolean,
   ): Promise<InventoryMovement> {
-    const original = await this.reversibleMovement(tx, movementId);
-
+    const peek = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
+    if (!peek) throw new NotFoundException('Movimiento de kardex no encontrado');
     const item: ItemRef = {
-      businessLineId: original.businessLineId,
-      itemType: original.itemType,
-      itemId: original.itemId,
-      unit: original.unit,
+      businessLineId: peek.businessLineId,
+      itemType: peek.itemType,
+      itemId: peek.itemId,
+      unit: peek.unit,
     };
+    // D-134: la reversa de un ingreso de bobina saca kilos igual que una salida, así que toma
+    // las bobinas antes que el saldo, en el mismo orden que `record` y `replaceEntry` (revisión
+    // de cc15b: dos órdenes opuestos podían trabarse).
+    if (peek.itemType === InventoryItemType.COIL && peek.type === 'IN') {
+      await lockRawMaterialCoils(tx, [peek.itemId], roofingToleranceMm(this.env));
+    }
     const balance = await this.lockBalance(tx, item);
+    // Recién bajo el lock: un reemplazo o una anulación concurrentes ya terminaron.
+    const original = await this.reversibleMovement(tx, movementId);
     // D-124: una reversa retrofechada mete una salida (o una entrada) por detrás del saldo
     // corrido igual que cualquier otro movimiento, así que pasa por el mismo guardrail. Por
     // defecto la fecha es hoy y el chequeo ni consulta.
@@ -655,6 +663,28 @@ export class InventoryService {
     const { unitCost, totalCost } = entryCost(qty, input.unitCost, input.totalCost);
     const origQty = toDecimal(original.qty.toString());
     const origValue = toDecimal(original.totalCost.toString());
+
+    // El saldo corrido en **cada** fecha, no solo el final: una salida posterior ya anulada no
+    // cuenta para la precondición, pero sigue en el kardex en su fecha, y una baja de cantidad
+    // podría dejar negativo el tramo entre la salida y su reversa (revisión de cc15b, P1-1).
+    if (qty.lt(origQty)) {
+      const all = await tx.inventoryMovement.findMany({
+        where: { itemType: original.itemType, itemId: original.itemId },
+        orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
+        select: { type: true, qty: true, operationDate: true },
+      });
+      const min = minRunningAfterReplace(
+        all.map((m) => ({ ...m, operationDate: fromDateOnly(m.operationDate) })),
+        fromDateOnly(original.operationDate),
+        origQty,
+        qty,
+      );
+      if (min.isNegative()) {
+        throw new BadRequestException(
+          `No se puede reemplazar el ingreso: con ${qty.toFixed(3)} el kardex quedaría en ${min.toFixed(3)} en alguna fecha posterior`,
+        );
+      }
+    }
 
     const afterReverse = stockAfterReverseIn(stockOf(balance), origQty, origValue);
     const after = stockAfterIn(afterReverse, qty, totalCost);
@@ -1595,6 +1625,46 @@ function stockAfterReverseIn(stock: Stock, origQty: Decimal, origValue: Decimal)
   throw new ConflictException(
     `No se puede anular el movimiento: sacaría ${origValue.toFixed(2)} de un saldo valorizado en ${stock.value.toFixed(2)}. Revisa los movimientos posteriores del ítem.`,
   );
+}
+
+/**
+ * D-372 (cc15b, revisión P1-1): el saldo corrido **más bajo** que quedaría si un ingreso de
+ * `origQty` fechado `date` se reemplaza por `newQty`, contando **todas** las filas del kardex
+ * —también las salidas ya anuladas y sus reversas, que la vista del kardex sigue mostrando en su
+ * fecha—. Las dos filas del reemplazo van al final del día `date` (son las de id más alto): primero
+ * la reversa y después el ingreso nuevo. Devuelve el mínimo desde ese punto en adelante; si es
+ * negativo, en alguna fecha el kardex mostraría stock negativo.
+ *
+ * `movements` en el orden del saldo corrido: fecha de operación y luego id.
+ */
+export function minRunningAfterReplace(
+  movements: { type: string; qty: { toString(): string }; operationDate: string }[],
+  date: string,
+  origQty: Decimal,
+  newQty: Decimal,
+): Decimal {
+  let running = new Decimal(0);
+  let min: Decimal | null = null;
+  const track = (value: Decimal): void => {
+    if (min === null || value.lt(min)) min = value;
+  };
+  let inserted = false;
+  const insert = (): void => {
+    running = running.minus(origQty);
+    track(running);
+    running = running.plus(newQty);
+    track(running);
+    inserted = true;
+  };
+  for (const m of movements) {
+    if (!inserted && m.operationDate > date) insert();
+    const qty = toDecimal(m.qty.toString());
+    if (m.type === 'IN') running = running.plus(qty);
+    else if (m.type === 'OUT') running = running.minus(qty);
+    if (inserted) track(running);
+  }
+  if (!inserted) insert();
+  return min ?? new Decimal(0);
 }
 
 /**

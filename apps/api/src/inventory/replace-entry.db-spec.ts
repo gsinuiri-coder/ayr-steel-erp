@@ -42,6 +42,12 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+/** `record` devuelve `null` solo en líneas sin stock, que estos tests no usan. */
+function must<T>(value: T | null): T {
+  if (value === null) throw new Error('Se esperaba un movimiento');
+  return value;
+}
+
 function item(): { itemId: string } {
   return { itemId: randomUUID() };
 }
@@ -157,7 +163,7 @@ describe('InventoryService.replaceEntry contra la base', () => {
         actorId,
       }),
     );
-    await prisma.$transaction((tx) => inventory.reverse(tx, out!.id, actorId, 'anulada'));
+    await prisma.$transaction((tx) => inventory.reverse(tx, must(out).id, actorId, 'anulada'));
     await entry(itemId, '50', '300');
     await replace(id, '100', '550');
     // 100 a 5.5 + 50 a 6 = 850 / 150 = 5.66667. Con otras existencias, el valor de partida sale
@@ -173,10 +179,10 @@ describe('InventoryService.replaceEntry contra la base', () => {
     const id = await entry(itemId, '100', '500');
     const results = await Promise.allSettled([replace(id, '100', '600'), replace(id, '80', '400')]);
     const ok = results.filter((r) => r.status === 'fulfilled');
-    const failed = results.filter((r) => r.status === 'rejected');
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
     expect(ok).toHaveLength(1);
     expect(failed).toHaveLength(1);
-    expect(String((failed[0] as PromiseRejectedResult).reason)).toMatch(/ya fue anulado/);
+    expect(String(failed[0]?.reason)).toMatch(/ya fue anulado/);
     const live = await prisma.inventoryMovement.findMany({
       where: { itemId, reversalOfId: null, reversals: { none: {} } },
     });
@@ -186,6 +192,116 @@ describe('InventoryService.replaceEntry contra la base', () => {
       { qty: '100.000', avgCost: '6.0000' },
       { qty: '80.000', avgCost: '5.0000' },
     ]).toContainEqual(winner);
+  });
+
+  it('precondición por fecha: una salida con id menor pero fecha posterior al ingreso también bloquea', async () => {
+    const { itemId } = item();
+    await entry(itemId, '50', '250'); // stock de otra compra, hoy
+    await prisma.$transaction((tx) =>
+      inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        type: 'OUT',
+        qty: '10',
+        unit: 'NIU',
+        refType: 'SALE',
+        actorId,
+      }),
+    );
+    // El ingreso a reemplazar se graba después (id mayor) pero con fecha anterior.
+    const backdated = await prisma.$transaction((tx) =>
+      inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        type: 'IN',
+        qty: '100',
+        unit: 'NIU',
+        unitCost: '5.0000',
+        totalCost: '500',
+        refType: 'PURCHASE',
+        actorId,
+        operationDate: '2026-09-01',
+        confirmBackdate: true,
+      }),
+    );
+    await expect(replace(must(backdated).id, '100', '550')).rejects.toThrow(/movimiento posterior/);
+  });
+
+  it('saldo corrido: una salida anulada entre fechas no deja bajar la cantidad si el kardex quedaría negativo (revisión P1-1)', async () => {
+    const { itemId } = item();
+    const id = await prisma.$transaction((tx) =>
+      inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        type: 'IN',
+        qty: '100',
+        unit: 'NIU',
+        unitCost: '5.0000',
+        totalCost: '500',
+        refType: 'PURCHASE',
+        actorId,
+        operationDate: '2026-09-01',
+        confirmBackdate: true,
+      }),
+    );
+    const out = await prisma.$transaction((tx) =>
+      inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        type: 'OUT',
+        qty: '100',
+        unit: 'NIU',
+        refType: 'SALE',
+        actorId,
+        operationDate: '2026-09-10',
+        confirmBackdate: true,
+      }),
+    );
+    // La anulación queda con la fecha de hoy: entre el 10/09 y hoy el kardex muestra 0.
+    await prisma.$transaction((tx) => inventory.reverse(tx, must(out).id, actorId, 'anulada'));
+    // Bajar a 50 dejaría −50 entre el 10/09 y hoy.
+    await expect(replace(must(id).id, '50', '250')).rejects.toThrow(/quedaría en -50.000/);
+    // Subir o mantener la cantidad no tiene ese problema.
+    await replace(must(id).id, '100', '550');
+    expect(await balance(itemId)).toEqual({ qty: '100.000', avgCost: '5.5000' });
+  });
+
+  it('dos reemplazos que se solapan de verdad: el segundo espera el lock del saldo y sale con 409', async () => {
+    const { itemId } = item();
+    const id = await entry(itemId, '100', '500');
+    let firstHoldsLock!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      firstHoldsLock = resolve;
+    });
+    const first = prisma.$transaction(
+      async (tx) => {
+        const result = await inventory.replaceEntry(tx, {
+          movementId: id,
+          qty: '100',
+          unitCost: '6.0000',
+          totalCost: '600',
+          actorId,
+          reason: 'db-spec primero',
+        });
+        firstHoldsLock();
+        // Sostiene el lock del saldo un rato, con el segundo ya esperando.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return result;
+      },
+      { timeout: 20_000 },
+    );
+    await locked;
+    const started = Date.now();
+    const second = replace(id, '80', '400');
+    await expect(first).resolves.toBeDefined();
+    await expect(second).rejects.toThrow(/ya fue anulado/);
+    // Esperó al primero: no corrió en paralelo sobre el mismo saldo.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1000);
+    expect(await balance(itemId)).toEqual({ qty: '100.000', avgCost: '6.0000' });
   });
 
   it('solo un ingreso vivo se reemplaza: una reversa o un ingreso ya reemplazado, no', async () => {

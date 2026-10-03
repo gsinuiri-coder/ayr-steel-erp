@@ -28,12 +28,16 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
-import { InventoryService } from '../inventory/inventory.service';
+import { InventoryService, minRunningAfterReplace } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
-import { assertRawMaterialInvariant, findRawMaterialShortfalls } from '../sales/raw-material';
+import {
+  assertRawMaterialInvariant,
+  findRawMaterialShortfalls,
+  lockRawMaterialCoils,
+} from '../sales/raw-material';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { computeDueDate, receptionCost } from './purchase-math';
 import { editedLineAmounts, impliedIgvRatePct, purchaseTotalsOf } from './purchase-draft-edit';
@@ -115,7 +119,11 @@ export class ReceivedPurchaseEditService {
           .map((c) => c.id)
           .sort();
         if (coilIds.length > 0) {
-          await tx.$queryRaw`SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE`;
+          // D-134: bobinas antes que saldos. No solo las de la compra: también las de cada
+          // agregado con promesas que ellas cubren, en orden de id, igual que confirmar un pedido
+          // o una salida de `record`. Así `replaceEntry`, que las vuelve a pedir, ya las tiene y
+          // no las toma después del saldo (revisiones de cc15b: deadlock con un pedido).
+          await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
         }
         // Y los saldos de kardex que la edición puede tocar, **antes** de leer los movimientos
         // posteriores: quien consume o ingresa toma el saldo, no la bobina, así que sin este lock
@@ -359,6 +367,7 @@ export class ReceivedPurchaseEditService {
               'KG',
             ),
             specPromised,
+            runningLow: await this.runningLow(tx, ownIn, edit),
             backsPromised: backsPromised
               ? backsPromised.orders.map((o) => `${o.code} (${o.qtyKg} kg)`).join(', ')
               : null,
@@ -430,6 +439,7 @@ export class ReceivedPurchaseEditService {
             balanceQty: toFixedString(balanceQty, 'KG'),
             reservedQty: toFixedString(reserved, 'KG'),
             specPromised: null,
+            runningLow: await this.runningLow(tx, ownIn, touched.get(item.id)),
             backsPromised: null,
             coilStatus: null,
             mountedOrder: null,
@@ -451,6 +461,7 @@ export class ReceivedPurchaseEditService {
             balanceQty: '0.000',
             reservedQty: '0.000',
             specPromised: null,
+            runningLow: null,
             backsPromised: null,
             coilStatus: null,
             mountedOrder: null,
@@ -482,6 +493,34 @@ export class ReceivedPurchaseEditService {
       items: loadedItems.map((l) => l.facts),
     };
     return { purchase, facts, items: loadedItems, receiptDate, livePayments };
+  }
+
+  /**
+   * cc15b (revisión P1-1): con una baja de cantidad, el saldo corrido más bajo que quedaría en el
+   * kardex —con las salidas anuladas en su fecha—, si es negativo; si no, `null`. La misma cuenta
+   * que `replaceEntry` vuelve a hacer bajo el lock.
+   */
+  private async runningLow(
+    tx: Prisma.TransactionClient,
+    ownIn: MovementRow | null,
+    edit: ReceivedPurchaseItemEdit | undefined,
+  ): Promise<string | null> {
+    if (!ownIn || edit?.qty === undefined) return null;
+    const origQty = toDecimal(ownIn.qty.toString());
+    const newQty = toDecimal(edit.qty);
+    if (!newQty.lt(origQty)) return null;
+    const all = await tx.inventoryMovement.findMany({
+      where: { itemType: ownIn.itemType, itemId: ownIn.itemId },
+      orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
+      select: { type: true, qty: true, operationDate: true },
+    });
+    const min = minRunningAfterReplace(
+      all.map((m) => ({ ...m, operationDate: dateOf(m.operationDate) })),
+      dateOf(ownIn.operationDate),
+      origQty,
+      newQty,
+    );
+    return min.isNegative() ? toFixedString(min, 'KG') : null;
   }
 
   /**
@@ -1177,7 +1216,12 @@ export class ReceivedPurchaseEditService {
     // recalcula el promedio de todo, y volver al valor anterior lo recalcula otra vez: con otras
     // existencias, el redondeo del promedio a 4 decimales puede no dejarlo idéntico.
     const mixedProduct = changes.some((c) => {
-      if (c.path !== 'REVERSE_REENTRY' || purchase.type !== PurchaseType.FINISHED_GOOD) {
+      // Solo el reemplazo (precio o cantidad): un cambio de producto no recalcula este promedio.
+      if (
+        c.path !== 'REVERSE_REENTRY' ||
+        purchase.type !== PurchaseType.FINISHED_GOOD ||
+        (c.field !== 'unitPrice' && c.field !== 'qty')
+      ) {
         return false;
       }
       const facts = loaded.items.find((l) => l.facts.lineNumber === c.lineNumber)?.facts;

@@ -12,6 +12,7 @@ jest.mock('../sales/reserved-ledger', () => ({ reservedByItem: jest.fn() }));
 jest.mock('../sales/raw-material', () => ({
   assertRawMaterialInvariant: jest.fn(),
   findRawMaterialShortfalls: jest.fn(),
+  lockRawMaterialCoils: jest.fn(),
 }));
 
 /**
@@ -762,6 +763,17 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     // cc15b el precio se bloqueaba. Ahora cuenta el saldo final.
     const { tx } = makeTx({ purchase: fg, productMovements: [productIn], productBalance: '120' });
     tx.coil.findMany.mockResolvedValue([]);
+    // Todo el kardex del producto (para el saldo corrido): el ingreso de esta compra y otros 20.
+    tx.inventoryMovement.findMany.mockImplementation(
+      (args: { where: { refType?: string; OR?: unknown } }) =>
+        Promise.resolve(
+          args.where.refType === 'PURCHASE'
+            ? [productIn]
+            : args.where.OR
+              ? []
+              : [{ ...productIn, id: 5n, qty: D('20') }, productIn],
+        ),
+    );
     withTx(tx);
     const price = await service.preview(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '55' }],

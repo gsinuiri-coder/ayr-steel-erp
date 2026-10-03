@@ -85,6 +85,11 @@ export interface ItemFacts {
   /** cc15b, punto 3: saldo del ítem hoy y lo reservado sobre él, para la reserva al final. */
   balanceQty: string;
   reservedQty: string;
+  /**
+   * cc15b (revisión P1-1): si la cantidad nueva dejaría el saldo corrido negativo en alguna
+   * fecha posterior (una salida anulada sigue en su fecha), ese mínimo; si no, `null`.
+   */
+  runningLow: string | null;
   /** Bobina: estado, si está montada en una OP y si tiene landed cost. */
   coilStatus: string | null;
   mountedOrder: string | null;
@@ -231,7 +236,9 @@ function blockedBy(
       ? `No se puede corregir porque esta bobina respalda material comprometido de ${item.backsPromised}: con la cantidad nueva esa promesa quedaría sin cubrir`
       : `No se puede corregir porque esta bobina respalda material comprometido de ${item.backsPromised}: la reversa del ingreso dejaría esa promesa sin cubrir`;
   }
-  if (!reentry && item.specPromised !== null) {
+  // Con o sin precio o cantidad en la misma edición: el servicio solo lo llena cuando la edición
+  // cambia color o espesor (autorrevisión de cc15b, P2-1).
+  if (item.specPromised !== null) {
     return `No se puede cambiar el color o el espesor porque esta bobina respalda material comprometido de ${item.specPromised}: fuera de ese agregado, la promesa quedaría sin cubrir`;
   }
   if (item.ownReservation && !replace) {
@@ -248,6 +255,9 @@ function blockedBy(
  * vuelve a comprobar bajo el lock; acá se dice antes.
  */
 function finalReservationShort(item: ItemFacts, newQty: string | null): string | null {
+  if (newQty !== null && item.runningLow !== null) {
+    return `Con la cantidad nueva el kardex quedaría en ${item.runningLow} en alguna fecha posterior (una salida anulada sigue en su fecha): elige una cantidad mayor`;
+  }
   const reserved = toDecimal(item.reservedQty);
   if (reserved.lte(0)) return null;
   const finalQty = toDecimal(item.balanceQty)

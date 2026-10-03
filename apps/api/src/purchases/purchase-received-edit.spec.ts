@@ -34,6 +34,7 @@ const coilItem = (over: Partial<ItemFacts> = {}): ItemFacts => ({
   specPromised: null,
   balanceQty: '1000.000',
   reservedQty: '0.000',
+  runningLow: null,
   coilStatus: 'OPEN',
   mountedOrder: null,
   ownReservation: false,
@@ -313,6 +314,25 @@ describe('D-372 — classifyReceivedEdit', () => {
       expect(plan.changes[0]?.blockedReason).toContain(
         'No se puede cambiar el color o el espesor porque esta bobina respalda material comprometido de PED-000009',
       );
+      // Con precio en la misma edición también (autorrevisión de cc15b, P2-1).
+      const withPrice = classifyReceivedEdit(
+        purchase({ items: [coilItem({ specPromised: 'PED-000009 (300.000 kg)' })] }),
+        { items: [{ itemId: 'item-1', unitPrice: '6', finishId: 'fin-azul' }] },
+        noTargets(),
+      );
+      expect(withPrice.executable).toBe(false);
+      expect(withPrice.changes.find((c) => c.field === 'finishId')?.blockedReason).toContain(
+        'No se puede cambiar el color',
+      );
+    });
+
+    it('una baja de cantidad que dejaría el kardex negativo en alguna fecha: bloqueada (revisión P1-1)', () => {
+      const plan = classifyReceivedEdit(
+        purchase({ items: [coilItem({ runningLow: '-50.000' })] }),
+        { items: [{ itemId: 'item-1', qty: '950' }] },
+        noTargets(),
+      );
+      expect(plan.changes[0]?.blockedReason).toContain('el kardex quedaría en -50.000');
     });
   });
 

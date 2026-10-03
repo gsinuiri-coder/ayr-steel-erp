@@ -79,6 +79,38 @@
 - Pendiente del dueño: decisiones 1-3, que el papel de Nubefact sea por las siete líneas, el
   vendedor correcto y el número D-381.
 
+## 2026-10-03 — cc15b: D-372 sesión 2b y D-382, `replaceEntry` (PR sin merge)
+
+- **Rama `cc15b/reemplazo-con-reserva`** desde `main` `56e068e`, en `../ayr-cc15`. Sin migración y
+  nada en producción. Runbook `docs/handoff/ventana-cc15b.md`, guion `docs/uat/cc15b.md`.
+- **Primer commit:** regla dura 8 de `AGENTS.md` con el texto aprobado y el centinela
+  `kardex-writers.sentinel.spec.ts` (excepciones D-285, D-018, D-208). **D-382.**
+- **`InventoryService.replaceEntry`:** mismo camino interno que `record`/`reverse`; reservas y
+  materia prima sobre el estado final; precondición en SQL bajo el lock; saldo corrido en cada
+  fecha posterior no negativo. `reverse` toma las bobinas antes que el saldo al revertir un
+  ingreso de bobina y relee el movimiento bajo el lock.
+- **«Editar compra»:** precio y cantidad por `replaceEntry`; punto 3 (reserva activa si cabe en el
+  saldo final), punto 4 (otra compra posterior sin salidas), punto 5 (vista previa del cambio de
+  color o espesor de una bobina comprometida); baja de kilos de una bobina comprometida simulada
+  con la cantidad nueva; aviso de ±0,0001 al deshacer con otras existencias.
+- **Tests:** unitarios de compras e inventario 189; contra base real (`test:db`) 10: reemplazo,
+  exactitud al deshacer, precondición por id y por fecha, ajuste posterior, salida anulada entre
+  fechas, entrada posterior, dos reemplazos simultáneos (incluido uno con solape forzado) y solo
+  ingresos vivos; E2E local 15/15 (cc15b: reserva, carrera con una reserva nueva, compra
+  posterior; más los de cc14 y cc15a).
+- **Revisiones:** autorrevisión `docs/revision/cc15b-autorrevision.md` (sin P0/P1; P2-1 corregido)
+  y segundo modelo centrado en romper `replaceEntry` `docs/revision/cc15b-segundo-modelo.md`
+  (P1-1 corregido: salida anulada entre fechas dejaba el saldo corrido negativo; P2-1 y P2-2
+  corregidos: orden de locks bobinas → saldo en la edición y en `reverse`; P3-3 corregido).
+- **Pendiente de decisión del dueño:** tras corregir una compra por reemplazo, otra compra
+  **posterior** del mismo producto ya no se puede anular (el ingreso nuevo tiene id mayor y la
+  anulación mide «posterior» por id; P2-2 de la autorrevisión).
+- **Test frágil identificado:** `auth.service.spec.ts` «rechaza correo inexistente con 401» calcula
+  un hash Argon2 real y supera los 5 s cuando corren lint y typecheck en paralelo; solo, y en la
+  CI, pasa.
+- **Huecos del centinela anotados (P3):** `TRUNCATE` sin `TABLE`, nombre con esquema, acceso por
+  corchetes o alias, y las migraciones (fuera del barrido a propósito).
+
 ## 2026-10-03 — Ventana cc15a (D-372 sesión 2a desplegada, PR #84, sin migración)
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc15a.md`.
