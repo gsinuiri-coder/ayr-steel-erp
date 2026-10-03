@@ -27,6 +27,7 @@ import {
   type SupplierDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -85,11 +86,13 @@ const MM_PATTERN = /^\d+(\.\d{1,2})?$/;
 const PATH_LABELS: Record<ReceivedEditPath, string> = {
   IN_PLACE: 'Se edita',
   REVERSE_REENTRY: 'Reversa y nuevo ingreso',
+  COST_ADJUST: 'Ajuste sobre lo que queda',
   BLOCKED: 'Bloqueado',
 };
 const PATH_TONE: Record<ReceivedEditPath, 'secondary' | 'warning' | 'destructive'> = {
   IN_PLACE: 'secondary',
   REVERSE_REENTRY: 'warning',
+  COST_ADJUST: 'warning',
   BLOCKED: 'destructive',
 };
 
@@ -179,8 +182,10 @@ export function EditReceivedPurchaseDialog({
   const headerEdit: ReceivedPurchaseHeaderEdit = {};
   const series = header.series.trim().toUpperCase();
   const number = header.number.trim();
-  const seriesOk = /^[A-Z0-9]{1,10}$/.test(series);
-  const numberOk = /^[0-9]{1,20}$/.test(number);
+  // cc15: serie y número se validan solo si cambian. Un dato viejo fuera del formato actual no
+  // tiene que bloquear la corrección de un precio.
+  const seriesOk = series === p.series || /^[A-Z0-9]{1,10}$/.test(series);
+  const numberOk = number === p.number || /^[0-9]{1,20}$/.test(number);
   const issueDateOk = /^\d{4}-\d{2}-\d{2}$/.test(header.issueDate);
   const creditDaysText = header.creditDays.trim();
   const creditDaysOk =
@@ -275,9 +280,18 @@ export function EditReceivedPurchaseDialog({
     },
   });
 
+  // cc15: un mismo envío (doble click, reintento tras un corte de red) se aplica una sola vez.
+  // La clave es del contenido: si se corrige el formulario, el envío es otro.
+  const commitKey = useIdempotencyKey();
   const commit = useMutation({
     mutationFn: (body: CommitReceivedPurchaseEditInput) =>
-      api<PurchaseDto>(`/purchases/${p.id}/received-edit`, { method: 'POST', body }),
+      api<PurchaseDto>(`/purchases/${p.id}/received-edit`, {
+        method: 'POST',
+        body: { ...body, idempotencyKey: commitKey.current(JSON.stringify(body)) },
+      }),
+    onSettled: (_data, error) => {
+      commitKey.settle(error ?? undefined);
+    },
     onSuccess: () => {
       toast.success('Compra corregida');
       onSaved();
@@ -345,9 +359,10 @@ export function EditReceivedPurchaseDialog({
         <DialogHeader>
           <DialogTitle>Editar la compra {p.documentLabel}</DialogTitle>
           <DialogDescription>
-            La compra ya está recibida. Solo los ítems sin movimientos posteriores pueden cambiar su
-            costo o sus cantidades; si algo ya se consumió, la revisión dice por qué queda
-            bloqueado. Para deshacer una corrección, se vuelve a editar al valor anterior. Moneda,
+            La compra ya está recibida. Las cantidades solo cambian en ítems sin movimientos
+            posteriores. El precio se corrige siempre que nada lo bloquee: si el ítem ya se
+            consumió, con un ajuste sobre lo que queda de esta compra, y lo que ya salió no se
+            recalcula. Para deshacer una corrección, se vuelve a editar al valor anterior. Moneda,
             tipo de cambio y fecha de recepción no se editan acá.
           </DialogDescription>
         </DialogHeader>
@@ -711,11 +726,46 @@ export function EditReceivedPurchaseDialog({
                         {change.path === 'BLOCKED' && change.blockedReason && (
                           <p className="mt-1 text-xs text-destructive">{change.blockedReason}</p>
                         )}
+                        {change.adjustment && (
+                          <div
+                            className="mt-1 grid gap-1 text-xs"
+                            data-testid="received-edit-adjustment"
+                          >
+                            <p>
+                              Quedan {change.adjustment.remainingQty} de esta compra: ajuste de{' '}
+                              <strong>S/ {change.adjustment.amountPen}</strong> con la fecha de hoy.
+                            </p>
+                            {change.adjustment.affected.length > 0 && (
+                              <div>
+                                <p className="text-muted-foreground">
+                                  Ya salió al costo anterior (no se recalcula):
+                                </p>
+                                <ul className="list-disc pl-4" data-testid="received-edit-affected">
+                                  {change.adjustment.affected.map((a, i) => (
+                                    <li key={`${a.document}-${a.operationDate}-${String(i)}`}>
+                                      {a.operationDate} · {a.document} · {a.qty} a {a.unitCost}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
+            )}
+            {(currentPlan.warnings ?? []).length > 0 && (
+              <ul
+                className="grid list-disc gap-1 pl-4 text-xs text-amber-700 dark:text-amber-400"
+                data-testid="received-edit-warnings"
+              >
+                {(currentPlan.warnings ?? []).map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
             )}
             {!currentPlan.executable && currentPlan.changes.length > 0 && (
               <p className="text-xs text-destructive">
