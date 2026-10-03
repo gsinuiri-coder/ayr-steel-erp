@@ -10,6 +10,16 @@
 >
 > Implementación: sesión 1 = cc14 (cáscara, costo sin movimientos posteriores, kardex sin
 > movimientos posteriores). Sesión 2 = el ajuste proporcional (B2).
+>
+> **Cambio respecto de lo aprobado (decisión del dueño en cc14, 2026-10-02, opción a):** la fila
+> «Reserva activa → B1 si no hay salidas» de §3 **no** se cumple en la sesión 1. La reversa vacía
+> el saldo antes del ingreso nuevo, y `InventoryService.reverse` rechaza el estado intermedio si
+> deja una reserva sin cubrir (D-066) o un agregado de materia prima por debajo de lo prometido
+> (D-134). En cc14 la vista previa lo **bloquea**: bobina con reserva propia, producto cuya reserva
+> no cabe sin este ingreso, y bobina que respalda material prometido por agregado. La sesión 2 trae
+> una operación de **reemplazo** del ingreso que comprueba las reservas al final, no a mitad, y
+> con ella se habilita este caso. Foto del 2026-10-02 con el clasificador de cc14: 3 de 18 compras
+> editables enteras; 4 quedan bloqueadas solo por reserva.
 
 > **Solo diseño.** No hay código ni migración. La foto de producción es del 2026-10-02, en una
 > transacción `READ ONLY` con OK del dueño; solo cuenta filas (sin proveedores ni importes) y el
@@ -174,15 +184,15 @@ costo unitario viejo) × saldo vigente`, por `adjustCost`, con `refType PURCHASE
 
 ### Qué bloquea cada uso posterior
 
-| Uso posterior del ítem                            | A (cáscara)   | B (costo)                              | C (kardex)          |
-| ------------------------------------------------- | ------------- | -------------------------------------- | ------------------- |
-| Ninguno                                           | se edita      | B1 (reversa y reingreso)               | se edita            |
-| Reserva activa                                    | se edita      | B1 si no hay salidas                   | bloqueado           |
-| Montada en OP / en corte (`IN_THIRD_PARTY`)       | se edita      | bloqueado                              | bloqueado           |
-| Producción, merma, partido, venta (salidas vivas) | se edita      | B2 (ajuste sobre lo que queda + aviso) | bloqueado           |
-| Bobina cerrada (ajuste de cierre)                 | se edita      | B2; sin saldo, solo documento          | bloqueado           |
-| Pagos vigentes                                    | sin proveedor | según la decisión 4                    | según la decisión 4 |
-| Landed cost aplicado                              | se edita      | bloqueado                              | bloqueado           |
+| Uso posterior del ítem                            | A (cáscara)   | B (costo)                                        | C (kardex)          |
+| ------------------------------------------------- | ------------- | ------------------------------------------------ | ------------------- |
+| Ninguno                                           | se edita      | B1 (reversa y reingreso)                         | se edita            |
+| Reserva activa                                    | se edita      | B1 si no hay salidas (cc14: bloqueado; sesión 2) | bloqueado           |
+| Montada en OP / en corte (`IN_THIRD_PARTY`)       | se edita      | bloqueado                                        | bloqueado           |
+| Producción, merma, partido, venta (salidas vivas) | se edita      | B2 (ajuste sobre lo que queda + aviso)           | bloqueado           |
+| Bobina cerrada (ajuste de cierre)                 | se edita      | B2; sin saldo, solo documento                    | bloqueado           |
+| Pagos vigentes                                    | sin proveedor | según la decisión 4                              | según la decisión 4 |
+| Landed cost aplicado                              | se edita      | bloqueado                                        | bloqueado           |
 
 ## 4. Efecto sobre lo ya vendido
 

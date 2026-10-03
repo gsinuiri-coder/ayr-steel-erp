@@ -256,7 +256,7 @@ export async function rawMaterialAvailability(
   tx: Prisma.TransactionClient,
   spec: RawMaterialSpecRef,
   toleranceMm: string,
-  options: RawMaterialScope & { lockCoils?: boolean } = {},
+  options: RawMaterialScope & { lockCoils?: boolean; withoutCoilIds?: string[] } = {},
 ): Promise<RawMaterialAvailability> {
   const candidates = await tx.coil.findMany({
     where: roofingCoilWhere({
@@ -268,7 +268,8 @@ export async function rawMaterialAvailability(
     select: { id: true },
     orderBy: { id: 'asc' },
   });
-  const ids = candidates.map((c) => c.id);
+  const without = new Set(options.withoutCoilIds ?? []);
+  const ids = candidates.map((c) => c.id).filter((id) => !without.has(id));
 
   if (options.lockCoils === true && ids.length > 0) {
     await tx.$queryRaw`
@@ -641,6 +642,11 @@ interface ShortfallOptions extends RawMaterialScope {
   firstOnly?: boolean;
   /** D-275: quién lee el mensaje; a un VENDEDOR no se le nombra el documento de otro. */
   viewer?: HolderViewer;
+  /**
+   * D-372: leer el agregado **como si estas bobinas no tuvieran saldo** (la reversa de su
+   * ingreso), sin bloquear. Lo usa la vista previa de la corrección de una compra recibida.
+   */
+  withoutCoilIds?: string[];
 }
 
 /**
@@ -712,9 +718,12 @@ export async function findRawMaterialShortfallsFor(
     // Con el lock, las dos transacciones compiten por las mismas filas de `coils` y la
     // segunda ve lo que la primera dejó. El orden es siempre id ascendente, acá y en
     // `createReservations`.
+    // D-372: con `withoutCoilIds` es una simulación de lectura (la vista previa de una
+    // reversa): no bloquea, porque puede correr en una transacción de solo lectura, y el
+    // guardrail de verdad vuelve a correr con lock cuando la operación escribe.
     const availability = await rawMaterialAvailability(tx, spec, toleranceMm, {
       ...options,
-      lockCoils: true,
+      lockCoils: options.withoutCoilIds === undefined,
     });
     if (availability.available.gte(0)) continue;
 

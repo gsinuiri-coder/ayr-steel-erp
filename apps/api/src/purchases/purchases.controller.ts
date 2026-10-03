@@ -38,12 +38,18 @@ import {
   type SupplierStatementDto,
   type UpdatePurchaseDocumentInput,
   type UpdatePurchaseItemInput,
+  commitReceivedPurchaseEditSchema,
+  editReceivedPurchaseSchema,
+  type CommitReceivedPurchaseEditInput,
+  type EditReceivedPurchaseInput,
+  type ReceivedEditPlanDto,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PurchasesService } from './purchases.service';
+import { ReceivedPurchaseEditService } from './purchase-received-edit.service';
 
 /** Una factura electrónica real pesa unos pocos KB; 2 MB es holgado y acota el DoS. */
 const MAX_XML_BYTES = 2 * 1024 * 1024;
@@ -58,7 +64,34 @@ const MAX_XML_BYTES = 2 * 1024 * 1024;
 @Controller('purchases')
 @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
 export class PurchasesController {
-  constructor(private readonly purchases: PurchasesService) {}
+  constructor(
+    private readonly purchases: PurchasesService,
+    private readonly receivedEdit: ReceivedPurchaseEditService,
+  ) {}
+
+  /** D-372: vista previa de la edición de una compra recibida. No escribe nada. */
+  @Post(':id/received-edit/preview')
+  @Roles(Role.ADMINISTRADOR)
+  previewReceivedEdit(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(editReceivedPurchaseSchema)) body: EditReceivedPurchaseInput,
+  ): Promise<ReceivedEditPlanDto> {
+    return this.receivedEdit.preview(actor, id, body);
+  }
+
+  /** D-372: confirmar la edición de una compra recibida, con motivo. */
+  @Post(':id/received-edit')
+  @Roles(Role.ADMINISTRADOR)
+  async commitReceivedEdit(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(commitReceivedPurchaseEditSchema))
+    body: CommitReceivedPurchaseEditInput,
+  ): Promise<PurchaseDto> {
+    await this.receivedEdit.commit(actor, id, body);
+    return this.purchases.findOne(id);
+  }
 
   @Get()
   findAll(

@@ -85,6 +85,63 @@ Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ve
 - **Orden de las ventanas (dueño):** cc13 primero y cc14 después. La foto `READ ONLY` y los pasos
   por la interfaz van después del deploy de cc13, cuando el dueño pase los números.
 
+## 2026-10-02 — cc14: D-372 v1, editar una compra recibida (PR sin merge)
+
+- **Diseño:** M2b aprobado por el dueño (informe `docs/analisis/m2b-editar-compras-2026-10-02.md`,
+  PR #78), con el costo con consumo como ajuste **proporcional** al saldo (sesión 2) y deshacer como
+  re-edición.
+- **Implementado (sesión 1 de 2):** «Editar compra» en el detalle de una compra recibida, solo
+  administrador, con motivo y vista previa. Cáscara en el lugar; precio, cantidad y producto de un
+  ítem sin movimientos posteriores por reversa y nuevo ingreso en la fecha de recepción; código de
+  bobina conservado; bloqueos con su motivo. Sin migración.
+- **Tests:** 48 unitarios (clasificador y servicio con base simulada); E2E
+  `editar-compra-recibida-d372.spec.ts` 7/7 en local (precio con PEPS, auditoría y vuelta al valor
+  anterior; kg; bloqueo con consumo; diálogo; materia prima prometida con guardado todo o nada;
+  rechazo después de la reversa y el reingreso; cáscara con consumo).
+- **Runbook:** `docs/handoff/ventana-cc14.md` (API antes que web). Guion: `docs/uat/cc14.md`.
+- **Revisiones:** autorrevisión `docs/revision/cc14-autorrevision.md` y segundo modelo
+  `docs/revision/cc14-segundo-modelo.md`. Sin P0. **P1 corregidos:**
+  - línea sin ingreso de kardex vivo: la vista previa la bloquea y el commit tiene una red que no
+    toca la compra sin su kardex;
+  - el commit bloquea los saldos de kardex (bobinas, producto viejo y nuevo) **antes** de leer
+    los movimientos posteriores, en orden fijo;
+  - reserva que la reversa dejaría sin cubrir (bobina reservada; producto cuya reserva no cabe
+    sin este ingreso): ahora la vista previa lo bloquea en vez de fallar al confirmar. **Se aparta
+    del diseño** («reserva activa → B1 sí»); el dueño eligió la opción (a): se mantiene el bloqueo
+    y la operación de reemplazo que comprueba las reservas al final va en la sesión 2.
+- **Materia prima prometida por agregado (D-134):** la vista previa simula la bobina sin saldo
+  (`findRawMaterialShortfalls` con `withoutCoilIds`, sin lock) y bloquea con «No se puede corregir
+  porque esta bobina respalda material comprometido de PED-…». El cambio de color o espesor que
+  saca la bobina del agregado no pasa por la reversa y se rechaza al guardar con el mismo texto;
+  el guardado es una sola `$transaction` y el E2E comprueba que no queda nada a medias. Anticipar
+  ese segundo caso queda como P2 para la sesión 2.
+- **Foto `READ ONLY` de producción (2026-10-02, OK del dueño, clasificador de cc14, script
+  borrado):** de 18 compras recibidas, **3 editables enteras** (E001-261 una de las dos, E001-278,
+  F001-63599); la cáscara, las 18. Bloqueos: consumo posterior (producción, merma, venta, otra
+  compra del mismo producto) y reserva de producto terminado (4 compras solo por eso). Ninguna
+  línea bloqueada por materia prima prometida.
+- **P2 corregidos:** deshacer restaura los importes del papel de la versión anterior (guardados en
+  la auditoría, D-359); la tasa de IGV solo se exige si cambian importes y una edición de cáscara
+  no reescribe los totales; la misma línea dos veces o dos líneas al mismo producto se bloquean;
+  el detalle de bloqueo nombra la operación («merma (SCRAP) el …»); timeout de 120 s.
+- **Decisión del dueño (2026-10-02):** cc14 sale **ahora**, en ventana propia, después de su UAT
+  en demo (demo local con `da07aeb`). cc13 sigue por su lado.
+- **Las dos E001-261 (foto `READ ONLY`, OK del dueño):** son **dos documentos distintos**, no una
+  factura registrada dos veces: proveedores distintos (YISENT y XIN SHENG YUAN, RUC distintos), la
+  misma serie-número y la misma fecha de emisión (18/08) por coincidencia de numeración de cada
+  proveedor; una bobina cada una (4 536 kg, ancho 1 220, abierta; 4 546 kg, ancho 1 200,
+  cerrada). No se corrigió nada.
+- **Alcance de la sesión 2** (fila D-372): ajuste proporcional del costo con consumo; operación de
+  reemplazo que comprueba reservas al final (habilita las líneas con reserva); líneas bloqueadas
+  por otra compra posterior del mismo producto; vista previa del cambio de color o espesor de una
+  bobina comprometida.
+- **Pendientes de las revisiones (P2/P3, sin corregir):** el cambio de color o espesor de una
+  bobina que respalda material prometido se rechaza recién al guardar (P2, sesión 2); tras un cambio de producto la compra puede quedar sin anulación si el producto
+  viejo se mueve; el cambio de producto no toca la descripción del papel; pasar a contado anula
+  los días de crédito sin fila propia en el plan; el «antes» del vencimiento y del costo de
+  documento de la bobina no se audita; una serie heredada fuera de formato bloquea el diálogo; sin
+  `idempotencyKey` (la operación es idempotente: un reintento ve un plan vacío).
+
 ## 2026-10-02 — Ventana cc12 (D-379 desplegada, PR #76, sin migración) y FFA1-00001382 despachado
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc12.md`.

@@ -32,6 +32,7 @@ import { formatDate, formatMoney, formatQty, isPositiveDecimal, todayIso } from 
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
+import { EditReceivedPurchaseDialog } from '@/components/purchases/edit-received-purchase-dialog';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { useSession } from '@/lib/session';
@@ -103,6 +104,8 @@ export function CompraDetalleView({ id }: { id: string }) {
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [editingDocument, setEditingDocument] = useState(false);
+  // D-372 (cc14): editar la compra ya recibida, con vista previa y motivo.
+  const [editingReceived, setEditingReceived] = useState(false);
   const [reversingPaymentId, setReversingPaymentId] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<PurchaseItemView | null>(null);
   const [deletingItem, setDeletingItem] = useState<PurchaseItemView | null>(null);
@@ -277,6 +280,16 @@ export function CompraDetalleView({ id }: { id: string }) {
                 onSelect: () => {
                   if (busy) return;
                   void backdate.attempt();
+                },
+              },
+              {
+                key: 'edit-received',
+                label: 'Editar compra',
+                show: isAdmin && p.status === 'RECEIVED',
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setEditingReceived(true);
                 },
               },
               {
@@ -653,6 +666,16 @@ export function CompraDetalleView({ id }: { id: string }) {
           cancel.mutate({ reason, operationDate });
         }}
       />
+
+      {editingReceived && (
+        <EditReceivedPurchaseDialog
+          purchase={p}
+          onClose={() => {
+            setEditingReceived(false);
+          }}
+          onSaved={invalidate}
+        />
+      )}
 
       <DocumentNumberDialog
         open={editingDocument}

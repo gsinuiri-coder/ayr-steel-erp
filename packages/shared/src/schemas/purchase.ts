@@ -454,6 +454,91 @@ export const updatePurchaseItemSchema = z.object({
 });
 export type UpdatePurchaseItemInput = z.infer<typeof updatePurchaseItemSchema>;
 
+// --------------------------------------------------------------------------
+// D-372 (cc14) — editar una compra ya recibida
+// --------------------------------------------------------------------------
+
+/**
+ * Cáscara de una compra recibida (D-372, grupo A): no mueve kardex ni costo. Cada campo es
+ * opcional; lo que no viene no cambia. Moneda, TC y fecha de recepción quedan fuera de esta
+ * versión.
+ */
+export const receivedPurchaseHeaderEditSchema = z.object({
+  supplierId: z.string().uuid().optional(),
+  docType: z.enum(PURCHASE_DOC_TYPES).optional(),
+  series: seriesSchema.optional(),
+  number: documentNumberSchema.optional(),
+  issueDate: isoDateSchema.optional(),
+  paymentTerms: z.enum(PAYMENT_TERMS).optional(),
+  creditDays: z.number().int().min(0).max(365).nullable().optional(),
+  notes: z.string().trim().max(500).nullable().optional(),
+});
+export type ReceivedPurchaseHeaderEdit = z.infer<typeof receivedPurchaseHeaderEditSchema>;
+
+/**
+ * Una línea de una compra recibida (D-372): el precio (grupo B, costo) y la cantidad, el
+ * producto o la especificación de la bobina (grupo C, kardex). Solo en ítems **sin movimientos
+ * posteriores**: el API lo decide y lo dice en la vista previa.
+ */
+export const receivedPurchaseItemEditSchema = z.object({
+  itemId: z.string().uuid(),
+  unitPrice: decimalStringSchema('MONEY', { positive: true }).optional(),
+  qty: decimalStringSchema('KG', { positive: true }).optional(),
+  /** Solo compras de producto terminado. */
+  productId: z.string().uuid().optional(),
+  /** Solo compras de bobinas. El código de la bobina no se regenera (D-372, decisión 5). */
+  finishId: z.string().uuid().optional(),
+  widthMm: decimalStringSchema('MM', { positive: true }).optional(),
+  thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
+});
+export type ReceivedPurchaseItemEdit = z.infer<typeof receivedPurchaseItemEditSchema>;
+
+/** Lo que se quiere cambiar; la vista previa lo clasifica sin escribir nada. */
+export const editReceivedPurchaseSchema = z.object({
+  header: receivedPurchaseHeaderEditSchema.optional(),
+  items: z.array(receivedPurchaseItemEditSchema).max(200).optional(),
+});
+export type EditReceivedPurchaseInput = z.infer<typeof editReceivedPurchaseSchema>;
+
+/** Confirmar la edición: lo mismo más el motivo, obligatorio. */
+export const commitReceivedPurchaseEditSchema = editReceivedPurchaseSchema.extend({
+  reason: reasonSchema,
+});
+export type CommitReceivedPurchaseEditInput = z.infer<typeof commitReceivedPurchaseEditSchema>;
+
+/** D-372: los tres grupos de campos de una compra recibida. */
+export const RECEIVED_EDIT_GROUPS = ['SHELL', 'COST', 'KARDEX'] as const;
+export type ReceivedEditGroup = (typeof RECEIVED_EDIT_GROUPS)[number];
+
+/**
+ * Qué camino toma cada cambio: `IN_PLACE` se edita en la fila (cáscara, especificación de una
+ * bobina intacta); `REVERSE_REENTRY` revierte el ingreso y vuelve a ingresar en la misma fecha;
+ * `BLOCKED` no se puede, y `blockedReason` dice por qué.
+ */
+export const RECEIVED_EDIT_PATHS = ['IN_PLACE', 'REVERSE_REENTRY', 'BLOCKED'] as const;
+export type ReceivedEditPath = (typeof RECEIVED_EDIT_PATHS)[number];
+
+export const receivedEditPlanSchema = z.object({
+  purchaseId: z.string().uuid(),
+  changes: z.array(
+    z.object({
+      group: z.enum(RECEIVED_EDIT_GROUPS),
+      field: z.string(),
+      /** Nombre del campo para mostrar. */
+      label: z.string(),
+      /** Número de línea, o `null` en la cabecera. */
+      lineNumber: z.number().int().nullable(),
+      before: z.string().nullable(),
+      after: z.string().nullable(),
+      path: z.enum(RECEIVED_EDIT_PATHS),
+      blockedReason: z.string().nullable(),
+    }),
+  ),
+  /** Hay al menos un cambio y ninguno está bloqueado. */
+  executable: z.boolean(),
+});
+export type ReceivedEditPlanDto = z.infer<typeof receivedEditPlanSchema>;
+
 /** Pago parcial o total de una compra (D-039). */
 export const createSupplierPaymentSchema = z.object({
   date: isoDateSchema,
