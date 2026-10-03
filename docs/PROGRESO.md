@@ -24,8 +24,15 @@ Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ve
 - **Demo:** el administrador de demo quedó sembrado con la contraseña del `.env.demo` de
   `../ayr-cc14`, que ya no existe. Para volver a entrar, `pnpm db:demo` desde el checkout
   principal (reusa su `.env.demo`).
-- **Queda abierto:** sesión 2 de D-372 (alcance en la fila); P2/P3 pendientes de cc14 (lista en la
-  entrada de cc14); rama remota `tooling/puertos-demo`.
+- **Queda abierto:**
+  - sesión 2 de D-372 (alcance en la fila). **Primero, por pedido del dueño (2026-10-03):** tras
+    un cambio de producto en «Editar compra», la compra puede quedar sin poder anularse (la
+    anulación mide «posterior» contra el ingreso revertido del producto viejo). Recomendación del
+    agente hasta corregirlo, pendiente del dueño: no cambiar el producto de una línea; con la
+    línea intacta, anular y registrar de nuevo;
+  - el resto de los P2/P3 de cc14 (lista en la entrada de cc14);
+  - **Descarga de comprobantes en Excel** (pedido del dueño, 2026-10-03; alcance por definir
+    cuando le toque).
 
 ## 2026-10-02 — Ventana cc13 (D-378 desplegada, PR #80, sin migración)
 
