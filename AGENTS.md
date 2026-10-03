@@ -122,8 +122,20 @@ Reglas de convivencia, sin excepción:
    borrar por accidente la BD de E2E). En la sesión Precios (2026-09-09) un `node -e` con backticks
    ejecutó un `pnpm e2e` que vació `ayr_local_e2e` en plena corrida; es una regla de forma, no de
    criterio, porque el daño lo hace un comando que la shell arma sola.
-8. **Todo movimiento de stock pasa por `InventoryService.record()`.** El kardex es append-only:
-   las reversas son movimientos inversos, nunca edición de saldos.
+8. **Todo movimiento de stock pasa por `InventoryService`, y solo por sus puertas:** `record()`
+   (una entrada o una salida), `reverse()` (el movimiento inverso de uno existente),
+   `adjustCost()` (un ajuste de valor sin cantidad) y `replaceEntry()` (la reversa de un ingreso
+   y su reingreso en la misma fecha, como una sola operación; solo sobre ítems sin salidas ni
+   ajustes posteriores a ese ingreso, y con las reservas —D-066— y la materia prima —D-134—
+   comprobadas sobre el estado final, nunca a mitad). Cambiar una fecha es reversa más movimiento
+   nuevo (D-364, D-374, D-376/D-288), nunca editar `operation_date`. Ningún otro código escribe
+   `inventory_movements` ni `inventory_balances`, salvo estas excepciones, nombradas con su
+   decisión en el test centinela (`apps/api/src/inventory/kardex-writers.sentinel.spec.ts`):
+   la herramienta de fecha de la carga inicial (D-285: solo `operation_date`, con el permiso del
+   trigger y auditoría), el reset de la base de pruebas (D-018, `TRUNCATE` con el guard de D-181)
+   y la limpia de `production` para V-4 (D-208, `TRUNCATE`). El centinela barre `apps/api/src`,
+   `apps/api/prisma`, `scripts/`, `packages/` y `e2e/`, y falla si aparece un escritor nuevo. El
+   kardex es append-only: las reversas son movimientos inversos, nunca edición de saldos.
 9. **`Decimal`, nunca `number`,** para dinero, pesos y dimensiones.
 10. **Sin creación silenciosa de entidades.**
 11. **Orden de deploy siempre:** migraciones Prisma → deploy API → push web.
