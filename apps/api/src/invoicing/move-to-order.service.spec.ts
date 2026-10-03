@@ -674,7 +674,16 @@ describe('MoveDocumentToOrderService (D-381)', () => {
         },
       });
       const service = new MoveDocumentToOrderService(reader as never, built.audit as never);
-      return { service, findManyDocs, queryRaw: built.tx.$queryRaw };
+      /** Todas las llamadas a Prisma: cada `jest.fn` del `tx` simulado y de las dos lecturas fijas. */
+      const prismaCalls = () => {
+        const fns: jest.Mock[] = [built.tx.$queryRaw as unknown as jest.Mock];
+        for (const model of Object.values(built.tx)) {
+          if (typeof model === 'object') fns.push(...(Object.values(model) as jest.Mock[]));
+        }
+        fns.push(prisma.salesOrder.findUnique, findManyDocs);
+        return fns.reduce((n, f) => n + f.mock.calls.length, 0);
+      };
+      return { service, findManyDocs, queryRaw: built.tx.$queryRaw, prismaCalls };
     }
 
     const candidate = {
@@ -722,6 +731,16 @@ describe('MoveDocumentToOrderService (D-381)', () => {
         (c[0] as TemplateStringsArray).join('?'),
       );
       expect(sqls.some((q) => q.includes('FOR UPDATE'))).toBe(false);
+    });
+
+    it('presupuesto de consultas (AGENTS.md §3.4): 2 fijas + 14 por candidato que pasa todo', async () => {
+      const { service, prismaCalls } = buildList([candidate]);
+      await service.candidates(ADMIN, TARGET);
+      // Fijas: el pedido destino y la lista de anulados.
+      // Por candidato: 4 de `lockAnnulledForReactivation` (comprobante, auditoría, cobros, notas
+      // de crédito vivas) + 10 del plan (notas de crédito, pedidos, 2 de despachos, 2 de líneas,
+      // otros vivos, borradores, cliente, vendedores). Sin lock no corre el SELECT de borradores.
+      expect(prismaCalls()).toBe(2 + 14);
     });
 
     it('un pedido destino que no existe', async () => {

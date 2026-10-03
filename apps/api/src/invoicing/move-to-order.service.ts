@@ -30,7 +30,6 @@ import {
   assertCanReactivate,
   availability,
   lockAnnulledForReactivation,
-  type AnnulledForReactivation,
 } from './fiscal-import.service';
 import { pairRowsToOrder } from './move-to-order-lines';
 import { paperTotalDifference, planOrderLines } from './reactivate-order-lines';
@@ -84,9 +83,13 @@ export class MoveDocumentToOrderService {
    * puede. **Sin bloqueos**: corre las mismas comprobaciones con `lock = false`, como la sección
    * de anulados de cc13; la vista previa y la ejecución vuelven a comprobar todo con sus locks.
    *
-   * Presupuesto (llamadas a Prisma, verificado por test): 2 fijas (pedido y anulados) y, por
-   * candidato, 4 comunes (`lockAnnulledForReactivation`) + hasta 12 propias. Tope de
-   * `MOVABLE_CANDIDATES_LIMIT` candidatos: se pide al abrir el diálogo, no al pintar el pedido.
+   * Presupuesto (llamadas a Prisma, verificado por test en `move-to-order.service.spec.ts`): 2
+   * fijas (pedido y anulados) y, por candidato que pasa todos los bloqueos, 4 comunes
+   * (`lockAnnulledForReactivation`) + 10 propias = 14 (sin lock no corre el de borradores); uno
+   * bloqueado corta antes. En SQL reales
+   * son algunas más: la lectura del comprobante trae `salesOrder` e `items` aparte. Tope de
+   * `MOVABLE_CANDIDATES_LIMIT` candidatos, y se pide al abrir el diálogo, no al pintar el pedido.
+   * En la práctica un cliente tiene uno o dos anulados de pedidos anulados.
    */
   async candidates(
     actor: RequestUser,
@@ -330,15 +333,12 @@ export class MoveDocumentToOrderService {
    * (`lockAnnulledForReactivation`), los dos pedidos **ordenados por id** (dos acciones cruzadas
    * no se esperan en orden inverso) y los borradores del destino; el mismo orden que D-378.
    */
-  private async plan(
-    tx: Prisma.TransactionClient,
-    id: string,
-    targetOrderId: string,
-    lock = true,
-    common?: AnnulledForReactivation,
-  ) {
-    const { document, label, statusBeforeAnnul, annulledAt } =
-      common ?? (await lockAnnulledForReactivation(tx, id, lock));
+  private async plan(tx: Prisma.TransactionClient, id: string, targetOrderId: string, lock = true) {
+    const { document, label, statusBeforeAnnul, annulledAt } = await lockAnnulledForReactivation(
+      tx,
+      id,
+      lock,
+    );
 
     if (document.origin !== FiscalDocumentOrigin.MANUAL) {
       throw new BadRequestException(
