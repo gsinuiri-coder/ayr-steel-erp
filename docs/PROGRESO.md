@@ -2,6 +2,38 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 — Ventana cc14 (D-372 v1 desplegada, PR #79, sin migración) y tooling de puertos (PR #82)
+
+Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc14.md`.
+
+- **Antes del deploy:**
+  - cc14 se reacomodó sobre `main` después de cc13 (`7ff5fff`) y del #82 (`df8eb59`);
+  - UAT del dueño en demo sobre `fecc358`, confirmado;
+  - CI 37105681418 en `fecc358`: unitarios 2208, E2E 490 passed y 3 skipped, smoke de Neon `ci`
+    36 passed.
+- **API:** **`ayr-steel-erp-api-00077-p8z`** (`git-sha=fecc358`) al 100 %, `/health` 200 y smoke 7/7
+  con la web vieja. Vuelta atrás: `00076-nx7`.
+- **Merge del #79:** `main` = **`a188282`**, diff de runtime vacío. Vercel `success`; smoke 8/8 en
+  `vercel.app` y en `v2.mareliac.pe`.
+- **PR #82 (solo tooling, `df8eb59`):** demo pasa a **3100/3101** y la suite E2E ya no reusa
+  servidores levantados. Probado en vivo con un proceso cualquiera ocupando el puerto: con 3000
+  ocupado falla en 2 s («http://localhost:3000/health is already used»), con 3001 en 33 s (levanta
+  y baja primero el API de la suite); ningún test corre.
+- **Cierre:** demo apagada; worktrees `../ayr-cc14` y `../ayr-ports` borrados (sin `local-data/`).
+  Ramas `cc14/editar-compra-recibida` (local y remota) y `tooling/puertos-demo` (local) borradas.
+- **Demo:** el administrador de demo quedó sembrado con la contraseña del `.env.demo` de
+  `../ayr-cc14`, que ya no existe. Para volver a entrar, `pnpm db:demo` desde el checkout
+  principal (reusa su `.env.demo`).
+- **Queda abierto:**
+  - sesión 2 de D-372 (alcance en la fila). **Primero, por pedido del dueño (2026-10-03):** tras
+    un cambio de producto en «Editar compra», la compra puede quedar sin poder anularse (la
+    anulación mide «posterior» contra el ingreso revertido del producto viejo). Recomendación del
+    agente hasta corregirlo, pendiente del dueño: no cambiar el producto de una línea; con la
+    línea intacta, anular y registrar de nuevo;
+  - el resto de los P2/P3 de cc14 (lista en la entrada de cc14);
+  - **Descarga de comprobantes en Excel** (pedido del dueño, 2026-10-03; alcance por definir
+    cuando le toque).
+
 ## 2026-10-02 — Ventana cc13 (D-378 desplegada, PR #80, sin migración)
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc13.md`.
