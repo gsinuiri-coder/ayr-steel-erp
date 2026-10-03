@@ -33,8 +33,14 @@
 - Runbook de la ventana: `docs/handoff/ventana-cc16.md`. Incluye la foto previa, el respaldo, el
   paso por la interfaz y la **decisión aparte del despacho**: preguntar cuándo salió la mercadería y
   seguir D-374. Guion UAT: `docs/uat/cc16.md`. Manual: caso 6.
-- Abierto para el dueño, fuera de D-381: hoy se puede anular un pedido con un comprobante vivo, y
-  así nació este caso (P2-2 de la autorrevisión del diseño).
+- Revisión del dueño del PR #87 (2026-10-03): sale antes que cc15b. Está de acuerdo con no abrir el
+  despacho a la fecha del papel al terminar.
+- **D-382 propuesta, sin implementar** (pieza aparte, a pedido del dueño):
+  - bloquear la anulación de un pedido con comprobante vivo;
+  - avisar al anular un pedido que tiene comprobantes manuales anulados;
+  - los dos P2 abiertos de cc16.
+- UAT del dueño en demo: **en espera**. Los puertos 3100 y 3101 los tiene la sesión de cc15b,
+  levantados desde `../ayr-cc15`, y no se tocaron.
 - Registro de riesgo (toca datos): `MoveDocumentToOrderService.move` y el cambio de una línea en
   `planOrderLines`/`reactivateWithOrderLines`.
 
