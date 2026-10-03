@@ -676,9 +676,9 @@ describe('MoveDocumentToOrderService (D-381)', () => {
       const service = new MoveDocumentToOrderService(reader as never, built.audit as never);
       /** Todas las llamadas a Prisma: cada `jest.fn` del `tx` simulado y de las dos lecturas fijas. */
       const prismaCalls = () => {
-        const fns: jest.Mock[] = [built.tx.$queryRaw as unknown as jest.Mock];
+        const fns: jest.Mock[] = [built.tx.$queryRaw];
         for (const model of Object.values(built.tx)) {
-          if (typeof model === 'object') fns.push(...(Object.values(model) as jest.Mock[]));
+          if (typeof model === 'object') fns.push(...Object.values(model));
         }
         fns.push(prisma.salesOrder.findUnique, findManyDocs);
         return fns.reduce((n, f) => n + f.mock.calls.length, 0);
