@@ -384,8 +384,10 @@ Del diagnóstico de FFA1-00001382 salieron dos más:
   `planReactivationWithOrderLines` (bloqueos y locks); el cálculo puro está en
   `apps/api/src/invoicing/reactivate-order-lines.ts` (`planOrderLines`, `paperTotalDifference`). Web:
   `components/invoicing/reactivate-with-order-lines-dialog.tsx`; la sección del pedido es
-  `components/invoicing/annulled-documents-card.tsx`, que habilita cada acción con su vista previa
-  (`GET …/reactivate-with-order-lines/preview` y `GET …/reactivate/preview`, de solo lectura).
+  `components/invoicing/annulled-documents-card.tsx`, que pide `GET /invoicing/orders/:id/annulled-documents`
+  (`FiscalImportService.annulledOfOrder`: las mismas comprobaciones con `lock = false`, sin
+  transacción) solo si `annulledDocumentCount` del pedido es mayor que cero (`orderDocuments`, en
+  `apps/api/src/sales/order-documents.ts`).
 - **Crear y registrar:** `apps/api/src/invoicing/invoicing.service.ts`.
   - `createInTx` hace el lock del pedido y maneja el despacho declarado: lo enlaza si el comprobante
     al que estaba enlazado no está vivo.

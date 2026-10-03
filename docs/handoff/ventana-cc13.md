@@ -91,7 +91,8 @@ comando exacto y espera.
 - **La API nueva convive con la web vieja:** agrega tres rutas
   (`GET /invoicing/documents/:id/reactivate-with-order-lines/preview`,
   `POST /invoicing/documents/:id/reactivate-with-order-lines` y
-  `GET /invoicing/documents/:id/reactivate/preview`, de solo lectura) que la web vieja no llama. La
+  `GET /invoicing/orders/:id/annulled-documents`, de solo lectura y sin bloqueos) que la web vieja
+  no llama, y el detalle del pedido suma el campo `annulledDocumentCount`, que la web vieja ignora. La
   reactivación simple de D-373 no cambia de comportamiento (sus bloqueos se extrajeron a una
   función común; los 31 unitarios y los 3 E2E de D-373 siguen en verde).
 - Nubefact no se toca desde el ERP. **El papel de cada comprobante tiene que estar ya corregido en

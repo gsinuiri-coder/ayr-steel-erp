@@ -45,11 +45,22 @@
 - **UAT del dueño en demo, con una observación** (en el commit `f4fedf3`): entre varias facturas
   anuladas no se sabía cuál era de qué pedido. Se resolvió así:
   - el detalle del pedido lista sus anulados con las dos reactivaciones; si una no aplica, queda
-    deshabilitada con el motivo de su vista previa;
-  - para eso se agregó `GET …/reactivate/preview` (D-373), de solo lectura;
+    deshabilitada con el motivo;
   - Comprobantes → Anulados tiene la columna «Pedido»;
   - el modal dice de qué pedido salen las líneas.
-  - E2E local: 7/7 entre D-378 y D-373.
+- **Pregunta del dueño sobre bloqueos (corregido):** la primera versión de la sección pedía, al
+  cargar, una vista previa por acción y por anulado, y esas vistas previas tomaban `FOR UPDATE`.
+  Ahora:
+  - una sola llamada, `GET /invoicing/orders/:id/annulled-documents`, comprueba sin transacción
+    ni locks (`lock = false`); el modal de D-378 y las dos ejecuciones siguen con sus locks;
+  - se pide solo si `annulledDocumentCount` del pedido es mayor que 0; el conteo sale de la consulta
+    de comprobantes que el detalle ya hacía, así que un pedido sin anulados no paga ninguna consulta
+    extra;
+  - se retiró `GET …/reactivate/preview`; con `lock`, D-373 conserva el SQL de siempre y su spec no
+    cambió;
+  - **medido en demo** (solo lectura, script de un uso ya borrado): 19 SQL para un pedido con un
+    anulado (2 fijas y 17 por el anulado; hasta 18 si aplican las dos acciones) y 0 `FOR UPDATE`.
+  - E2E local: 7/7 entre D-378 y D-373. Unitarios: API 2158 y web 87.
 - **Orden de las ventanas (dueño):** cc13 primero y cc14 después. La foto `READ ONLY` y los pasos
   por la interfaz van después del deploy de cc13, cuando el dueño pase los números.
 
