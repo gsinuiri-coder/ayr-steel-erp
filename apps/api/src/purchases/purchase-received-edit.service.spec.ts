@@ -422,6 +422,80 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     );
   });
 
+  it('baja de kilos con una salida anulada entre fechas: la vista previa ve el saldo corrido negativo (P1-1)', async () => {
+    const out = {
+      ...ownIn,
+      id: 20n,
+      type: 'OUT',
+      refType: 'SALE',
+      operationDate: new Date('2026-09-12T00:00:00.000Z'),
+      reversals: [{ id: 21n }],
+    };
+    const back = {
+      ...ownIn,
+      id: 21n,
+      type: 'IN',
+      refType: 'SALE',
+      reversalOfId: 20n,
+      operationDate: new Date('2026-10-03T00:00:00.000Z'),
+    };
+    const { tx } = makeTx({ movements: [ownIn, out, back] });
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', qty: '500' }],
+    });
+    expect(plan.changes[0]?.blockedReason).toContain('el kardex quedaría en -500.000');
+    // Sin baja, no hay tramo negativo.
+    const price = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+    });
+    expect(price.changes[0]?.path).toBe('REVERSE_REENTRY');
+  });
+
+  it('cambio de color de una bobina comprometida (punto 5): simula el agregado sin ella y nombra el pedido', async () => {
+    jest.mocked(rawMaterial.findRawMaterialShortfalls).mockResolvedValue([
+      {
+        specId: 'spec-1',
+        label: 'ROJO 0.40',
+        freeKg: '0.000',
+        promisedKg: '300.000',
+        shortfallKg: '300.000',
+        orders: [{ code: 'PED-000009', qtyKg: '300.000' }],
+        message: '',
+      },
+    ]);
+    const { tx } = makeTx({});
+    const spec = {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([
+          {
+            id: 'spec-1',
+            businessLineId: 'bl-roof',
+            colorId: 'color-rojo',
+            thicknessMm: D('0.40'),
+          },
+        ]),
+    };
+    withTx({ ...tx, rawMaterialSpec: spec });
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', finishId: 'fin-azul' }],
+    });
+    expect(rawMaterial.findRawMaterialShortfalls).toHaveBeenCalledWith(
+      expect.anything(),
+      ['coil-1'],
+      expect.any(String),
+      expect.objectContaining({ withoutCoilIds: ['coil-1'] }),
+    );
+    expect(plan.changes[0]?.blockedReason).toContain(
+      'No se puede cambiar el color o el espesor porque esta bobina respalda material comprometido de PED-000009',
+    );
+    // Un ancho nuevo no cambia color ni espesor: no se simula nada.
+    jest.mocked(rawMaterial.findRawMaterialShortfalls).mockClear();
+    await service.preview(ADMIN, 'p-1', { items: [{ itemId: 'item-1', widthMm: '1200' }] });
+    expect(rawMaterial.findRawMaterialShortfalls).not.toHaveBeenCalled();
+  });
+
   it('un reintento con la misma clave de idempotencia no repite nada', async () => {
     const { tx } = makeTx({});
     tx.$queryRaw.mockResolvedValue([]); // la clave ya existía: el INSERT no devolvió fila

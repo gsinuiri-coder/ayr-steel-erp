@@ -653,3 +653,239 @@ describe('InventoryService (§3.2, D-028)', () => {
     });
   });
 });
+
+/**
+ * D-372 (cc15b, D-381) — `replaceEntry` sobre la transacción falsa: el mismo camino interno que
+ * `record` y `reverse`, las invariantes sobre el estado final y la precondición. Lo que depende de
+ * Postgres de verdad (locks, concurrencia, la consulta por fecha) vive en
+ * `replace-entry.db-spec.ts`.
+ */
+describe('InventoryService.replaceEntry (D-381)', () => {
+  let service: InventoryService;
+
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        InventoryService,
+        { provide: PrismaService, useValue: {} },
+        { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
+      ],
+    }).compile();
+    service = moduleRef.get(InventoryService);
+  });
+
+  interface FakeTx {
+    inventoryMovement: { findFirst: jest.Mock; findMany?: jest.Mock };
+    reservation: { groupBy: jest.Mock; findMany: jest.Mock };
+  }
+
+  async function received(fake: ReturnType<typeof createFakeTx>): Promise<bigint> {
+    const movement = await service.record(
+      fake.tx,
+      entry({ itemType: 'PRODUCT', qty: '100.000', unit: 'NIU', unitCost: '10.0000' }),
+    );
+    if (!movement) throw new Error('sin movimiento');
+    const tx = fake.tx as unknown as FakeTx;
+    // El saldo corrido lee todo el kardex del ítem.
+    tx.inventoryMovement.findMany = jest.fn(() => Promise.resolve(fake.movements));
+    // La precondición (`findFirst` con `type`) no encuentra nada posterior; el resto del
+    // `findFirst` falso (la búsqueda de una anulación existente) sigue igual.
+    const original = tx.inventoryMovement.findFirst.getMockImplementation();
+    tx.inventoryMovement.findFirst.mockImplementation((args: { where: { type?: unknown } }) =>
+      args.where.type !== undefined
+        ? Promise.resolve(null)
+        : (original?.(args) as Promise<unknown>),
+    );
+    return movement.id;
+  }
+
+  const replace = (
+    fake: ReturnType<typeof createFakeTx>,
+    movementId: bigint,
+    qty: string,
+    unitCost: string,
+  ) =>
+    service.replaceEntry(fake.tx, {
+      movementId,
+      qty,
+      unitCost,
+      totalCost: new Decimal(qty).times(unitCost).toFixed(4),
+      actorId: ACTOR,
+      reason: 'corrección',
+    });
+
+  it('escribe la reversa y el ingreso nuevo en la fecha del original, y el saldo queda con el costo nuevo', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const id = await received(fake);
+    const { reversal, entry: next } = await replace(fake, id, '100.000', '12.0000');
+    expect(reversal).toMatchObject({ type: 'OUT', reversalOfId: id, totalCost: '1000.0000' });
+    expect(next).toMatchObject({ type: 'IN', qty: '100.000', totalCost: '1200.0000' });
+    expect(reversal.operationDate).toEqual(fake.movements[0]?.operationDate);
+    expect(fake.balanceOf('PRODUCT', ITEM)).toMatchObject({ qty: '100.000', avgCost: '12.0000' });
+  });
+
+  it('con otras existencias, el promedio pondera el costo nuevo con el resto', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const id = await received(fake);
+    await service.record(
+      fake.tx,
+      entry({ itemType: 'PRODUCT', qty: '100.000', unit: 'NIU', unitCost: '20.0000' }),
+    );
+    await replace(fake, id, '100.000', '12.0000');
+    // (100 × 12 + 100 × 20) / 200 = 16.
+    expect(fake.balanceOf('PRODUCT', ITEM)).toMatchObject({ qty: '200.000', avgCost: '16.0000' });
+  });
+
+  it('precondición: un movimiento posterior que sale o ajusta lo bloquea, sin escribir nada', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const id = await received(fake);
+    const tx = fake.tx as unknown as FakeTx;
+    const original = tx.inventoryMovement.findFirst.getMockImplementation();
+    tx.inventoryMovement.findFirst.mockImplementation((args: { where: { type?: unknown } }) =>
+      args.where.type !== undefined
+        ? Promise.resolve({ id: 9n, type: 'OUT', refType: 'SALE' })
+        : (original?.(args) as Promise<unknown>),
+    );
+    await expect(replace(fake, id, '100.000', '12.0000')).rejects.toThrow(/movimiento posterior/);
+    expect(fake.movements).toHaveLength(1);
+    expect(fake.balanceOf('PRODUCT', ITEM)).toMatchObject({ qty: '100.000', avgCost: '10.0000' });
+  });
+
+  it('reservas sobre el estado final: el precio pasa aunque todo esté reservado; una cantidad que no cubre, no', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const id = await received(fake);
+    const tx = fake.tx as unknown as FakeTx;
+    tx.reservation.groupBy.mockResolvedValue([
+      { itemId: ITEM, _sum: { qty: { toString: () => '100.000' } } },
+    ]);
+    tx.reservation.findMany.mockResolvedValue([
+      {
+        id: 'res-1',
+        itemType: 'PRODUCT',
+        itemId: ITEM,
+        qty: { toString: () => '100.000' },
+        unit: 'NIU',
+        salesOrder: { id: 'ord-1', seq: 7 },
+      },
+    ]);
+    // Con `reverse` + `record`, el estado intermedio (saldo 0) violaba la reserva.
+    const { entry: next } = await replace(fake, id, '100.000', '12.0000');
+    await expect(replace(fake, next.id, '90.000', '12.0000')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(fake.balanceOf('PRODUCT', ITEM)).toMatchObject({ qty: '100.000', avgCost: '12.0000' });
+  });
+
+  it('una baja que dejaría el saldo corrido negativo en alguna fecha se rechaza (revisión P1-1)', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const id = await received(fake);
+    // Una salida y su anulación posteriores, que la vista del kardex sigue mostrando en su fecha.
+    const later = new Date('2099-01-01T00:00:00.000Z');
+    fake.movements.push(
+      { id: 50n, type: 'OUT', qty: '100.000', operationDate: later, reversalOfId: null },
+      { id: 51n, type: 'IN', qty: '100.000', operationDate: later, reversalOfId: 50n },
+    );
+    await expect(replace(fake, id, '40.000', '10.0000')).rejects.toThrow(/quedaría en -60.000/);
+  });
+
+  it('solo se reemplaza un ingreso vivo: ni una anulación, ni un ingreso ya reemplazado, ni una salida', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const id = await received(fake);
+    const { reversal } = await replace(fake, id, '100.000', '12.0000');
+    await expect(replace(fake, reversal.id, '100.000', '12.0000')).rejects.toThrow(/anulación/);
+    await expect(replace(fake, id, '100.000', '12.0000')).rejects.toBeInstanceOf(ConflictException);
+    const out = await service.record(
+      fake.tx,
+      entry({ itemType: 'PRODUCT', type: 'OUT', qty: '1.000', unit: 'NIU', unitCost: undefined }),
+    );
+    await expect(replace(fake, out?.id ?? 0n, '1.000', '1.0000')).rejects.toThrow(
+      /Solo se reemplaza un ingreso/,
+    );
+    await expect(replace(fake, 999n, '1.000', '1.0000')).rejects.toThrow(/no encontrado/);
+  });
+
+  it('una cantidad no positiva o un costo negativo se rechazan', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const id = await received(fake);
+    await expect(replace(fake, id, '0', '10.0000')).rejects.toThrow(/mayor a cero/);
+    await expect(
+      service.replaceEntry(fake.tx, {
+        movementId: id,
+        qty: '100.000',
+        unitCost: '-1.0000',
+        actorId: ACTOR,
+        reason: 'x',
+      }),
+    ).rejects.toThrow(/no puede ser negativo/);
+  });
+
+  it('bobina: toma las bobinas antes que el saldo y, si bajan los kilos, comprueba el agregado al final', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const movement = await service.record(fake.tx, entry({ qty: '100.000', unitCost: '10.0000' }));
+    const tx = fake.tx as unknown as FakeTx & { coil: { findMany: jest.Mock } };
+    tx.inventoryMovement.findMany = jest.fn(() => Promise.resolve(fake.movements));
+    const original = tx.inventoryMovement.findFirst.getMockImplementation();
+    tx.inventoryMovement.findFirst.mockImplementation((args: { where: { type?: unknown } }) =>
+      args.where.type !== undefined
+        ? Promise.resolve(null)
+        : (original?.(args) as Promise<unknown>),
+    );
+    await replace(fake, movement?.id ?? 0n, '90.000', '10.0000');
+    // `lockRawMaterialCoils` y `assertRawMaterialInvariant` leen las bobinas del agregado.
+    expect(tx.coil.findMany).toHaveBeenCalled();
+    expect(fake.balanceOf('COIL', ITEM)).toMatchObject({ qty: '90.000', avgCost: '10.0000' });
+  });
+});
+
+/** Las dos ramas de valor negativo de la reversa de un ingreso (`stockAfterReverseIn`). */
+describe('InventoryService.reverse — valor negativo (D-381, camino compartido)', () => {
+  let service: InventoryService;
+
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        InventoryService,
+        { provide: PrismaService, useValue: {} },
+        { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
+      ],
+    }).compile();
+    service = moduleRef.get(InventoryService);
+  });
+
+  const product = (overrides: Partial<RecordMovementInput> = {}) =>
+    entry({ itemType: 'PRODUCT', unit: 'NIU', ...overrides });
+
+  it('sin kilos, el residuo negativo es redondeo y el saldo se cierra en cero', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const a = await service.record(fake.tx, product({ qty: '100.000', unitCost: '10.0000' }));
+    await service.adjustCost(fake.tx, {
+      businessLineId: STOCK_LINE.id,
+      itemType: 'PRODUCT',
+      itemId: ITEM,
+      unit: 'NIU',
+      amountPen: '-900',
+      refType: 'PURCHASE',
+      actorId: ACTOR,
+    });
+    await service.reverse(fake.tx, a?.id ?? 0n, ACTOR, 'anulación');
+    expect(fake.balanceOf('PRODUCT', ITEM)).toMatchObject({ qty: '0.000', avgCost: '0.0000' });
+  });
+
+  it('con kilos, sacar más valor del que hay se rechaza', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const a = await service.record(fake.tx, product({ qty: '100.000', unitCost: '10.0000' }));
+    await service.record(fake.tx, product({ qty: '100.000', unitCost: '10.0000' }));
+    await service.adjustCost(fake.tx, {
+      businessLineId: STOCK_LINE.id,
+      itemType: 'PRODUCT',
+      itemId: ITEM,
+      unit: 'NIU',
+      amountPen: '-1500',
+      refType: 'PURCHASE',
+      actorId: ACTOR,
+    });
+    await expect(service.reverse(fake.tx, a?.id ?? 0n, ACTOR, 'anulación')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+});
