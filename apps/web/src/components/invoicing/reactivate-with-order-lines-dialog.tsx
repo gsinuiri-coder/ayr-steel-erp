@@ -58,13 +58,14 @@ export function canReactivateWithOrderLines(
  * El total tipeado, si es un importe válido con hasta dos decimales. La coma solo se acepta como
  * separador de miles bien puesto (`1,234.50`): `153,44` no se lee como 15344 (revisión cc13, P3-6).
  */
-function typedTotal(value: string): string | null {
+export function typedTotal(value: string): string | null {
   const v = value.trim();
   if (!/^(\d+|\d{1,3}(,\d{3})+)(\.\d{1,2})?$/.test(v)) return null;
   return toDecimal(v.replace(/,/g, '')).toFixed(2);
 }
 
-function Side({
+/** D-378, también en D-381: un lado del antes y el después. */
+export function Side({
   title,
   testId,
   side,
@@ -97,6 +98,12 @@ function Side({
                 {l.added && (
                   <Badge variant="secondary" className="ml-2">
                     Agregada
+                  </Badge>
+                )}
+                {/* D-381: una fila que toma otro producto no pasa en silencio. */}
+                {l.productChanged === true && (
+                  <Badge variant="outline" className="ml-2">
+                    Cambia de producto
                   </Badge>
                 )}
               </TableCell>
