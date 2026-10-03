@@ -10,7 +10,45 @@
 - **D-378:** sin lista de comprobantes; se usa cuando aparezca un caso. Se retira ese pendiente.
 - **D-380:** sin fecha; los comprobantes afectados no tienen cobros.
 - **cc15:** worktree `../ayr-cc15`, rama `cc15/editar-compra-sesion2` desde `main` `017564b`. Plan
-  presentado al dueño; sin código hasta su OK.
+  aprobado (decisiones A-E: las recomendaciones; en C, aviso de los reportes mensuales pasados) y
+  partido en dos PR: **cc15a** (puntos 1, 2 y 6) y **cc15b** (3, 4 y 5, desde `main` cuando cc15a
+  esté mergeado).
+- **Foto `READ ONLY` del plan (2026-10-03, script borrado):** compras editables enteras 3 hoy, 7
+  con el punto 3 y 8 con 3 y 4; con el costo corregible en todas sus líneas, 13 con el punto 2 y
+  las 18 con 2, 3 y 4.
+
+## 2026-10-03 — cc15a: D-372 sesión 2a (PR sin merge)
+
+- **Punto 1:** la anulación mide «posterior» contra el **último ingreso vigente** de la compra en
+  cada ítem, y no mira los ítems donde ya no tiene nada vigente (`purchase-cancel.ts`). El
+  producto viejo tras un cambio de producto deja de bloquear; un ajuste propio posterior no
+  esconde el consumo (P1 de las dos revisiones, corregido); el flete (sin ingreso propio) se sigue
+  midiendo contra su ajuste.
+- **Punto 2:** con consumo posterior, el precio va por **«Ajuste sobre lo que queda»**
+  (`COST_ADJUST`): `adjustCost` fechado hoy (B) por lo que queda de la compra (A: en orden de
+  llegada, acotado por el saldo). En bobinas el ajuste lleva lo que queda al costo nuevo del papel
+  (corrige el caso de una salida anulada que volvió al costo viejo); en producto terminado, la
+  diferencia unitaria × lo que queda. La vista previa lista las salidas afectadas y avisa: los
+  márgenes no se recalculan, deshacer con consumo entre medio no es idéntico, el kardex sigue
+  siendo de promedio, y el costo por kg de la bobina cambia en los reportes mensuales pasados (C).
+  Una baja mayor que el valor del stock se bloquea en la vista previa. La ficha de la bobina toma
+  el precio del papel; al anular no se le descuenta la corrección propia.
+- **Punto 6:** contado y vencimiento a la vista; crédito sin días bloqueado en la vista previa;
+  auditoría con el vencimiento y el costo anterior de la bobina; descripción = nombre del producto
+  nuevo (D); serie y número solo se validan si cambian; `idempotencyKey` (un reintento devuelve
+  `replayed`).
+- **Tests:** unitarios de compras 129; E2E local 11/11 (cc14 7 y cc15a 4: anular tras cambio de
+  producto, ajuste con PEPS y deshacer con consumo entre medio, anular tras un ajuste se rechaza,
+  pantalla).
+- **Revisiones:** `docs/revision/cc15a-autorrevision.md` (P0-1 = P1-1 del segundo modelo,
+  corregido; P1-1 del monto en bobinas, corregido) y `docs/revision/cc15a-segundo-modelo.md` (P1-1
+  corregido; P2-1, P2-2, P2-3 corregidos).
+- **Límites conocidos, documentados:** en producto terminado con varios lotes, el reporte PEPS
+  reparte el ajuste sobre todas las capas vivas (el total cuadra con el kardex; el costo por lote
+  no); el orden de llegada usa la fecha de operación y la hora de grabación, así que un reingreso
+  de cc14 queda detrás de otros ingresos del mismo día; los flejes de un partido conservan el costo
+  viejo; tras un ajuste propio, cantidad y producto de esa línea quedan bloqueados.
+- **Runbook:** `docs/handoff/ventana-cc15a.md`. Guion: `docs/uat/cc15a.md`.
 
 ## 2026-10-03 — Ventana cc14 (D-372 v1 desplegada, PR #79, sin migración) y tooling de puertos (PR #82)
 
