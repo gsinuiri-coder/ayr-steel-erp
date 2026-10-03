@@ -510,6 +510,9 @@ export class FiscalImportService {
             where: { id: u.id },
             data: {
               productId: u.productId,
+              // En D-378 es la misma línea de antes; se escribe igual para que el plan sea la
+              // única fuente de a qué línea apunta cada fila (D-381 la cambia).
+              salesOrderItemId: u.salesOrderItemId,
               description: u.description,
               unit: u.unit,
               qty: u.qty,
@@ -753,10 +756,10 @@ export class FiscalImportService {
  * D-378 (revisión cc13, P2-2): un `update` por línea dentro de la transacción. Contra Neon, los
  * 5 s por defecto de Prisma no alcanzan con un pedido grande; el mismo margen que `create`.
  */
-const REACTIVATION_TX_TIMEOUT_MS = 30_000;
+export const REACTIVATION_TX_TIMEOUT_MS = 30_000;
 
 /** Lo que deja leído `lockAnnulledForReactivation`: la parte común de las dos reactivaciones. */
-type AnnulledForReactivation = Awaited<ReturnType<typeof lockAnnulledForReactivation>>;
+export type AnnulledForReactivation = Awaited<ReturnType<typeof lockAnnulledForReactivation>>;
 
 /**
  * UAT de cc13: el motivo que se muestra para una acción deshabilitada es el mensaje del error de
@@ -768,7 +771,9 @@ function blockReason(error: unknown): string {
   throw error;
 }
 
-async function availability(check: () => Promise<unknown>): Promise<ReactivationAvailabilityDto> {
+export async function availability(
+  check: () => Promise<unknown>,
+): Promise<ReactivationAvailabilityDto> {
   try {
     await check();
     return { ok: true, reason: null };
@@ -778,7 +783,7 @@ async function availability(check: () => Promise<unknown>): Promise<Reactivation
 }
 
 /** D-373/D-378: las dos reactivaciones son solo de administrador. */
-function assertCanReactivate(actor: RequestUser): void {
+export function assertCanReactivate(actor: RequestUser): void {
   if (actor.role !== Role.ADMINISTRADOR) {
     throw new ForbiddenException('Solo un administrador puede reactivar un comprobante anulado');
   }
@@ -851,7 +856,7 @@ function lineNumberOf(json: Prisma.JsonValue | undefined): number | null {
 }
 
 /** D-373: lo único que se reactiva (revisión cc07, P1-1). */
-const REACTIVATABLE_DOC_TYPES: readonly FiscalDocType[] = [
+export const REACTIVATABLE_DOC_TYPES: readonly FiscalDocType[] = [
   FiscalDocType.FACTURA,
   FiscalDocType.BOLETA,
 ];
@@ -923,7 +928,11 @@ async function assertLinesNotReinvoiced(
  * reactivaciones —origen, tipo, estado, versión, rastro de PSE, la anulación en la auditoría,
  * cobros y notas de crédito—. Lo que sigue (pedido, líneas, borradores) es propio de cada una.
  */
-async function lockAnnulledForReactivation(tx: Prisma.TransactionClient, id: string, lock = true) {
+export async function lockAnnulledForReactivation(
+  tx: Prisma.TransactionClient,
+  id: string,
+  lock = true,
+) {
   // El mismo lock que la anulación: una anulación, una reactivación o un cobro simultáneos
   // sobre esta fila esperan a que esta transacción termine y ven el estado ya cambiado.
   // Sin `lock` (la sección del pedido, cc13) es una lectura simple: solo informa, y el modal y
@@ -957,6 +966,8 @@ async function lockAnnulledForReactivation(tx: Prisma.TransactionClient, id: str
       salesOrderId: true,
       salesOrder: { select: { seq: true } },
       // D-378 lee también la fila completa de cada línea y la cabecera: es lo que reescribe.
+      // D-381 lee la fecha del papel para avisar si es anterior al pedido destino.
+      issueDate: true,
       customerId: true,
       detractionCode: true,
       subtotalPen: true,
