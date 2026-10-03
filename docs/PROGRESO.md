@@ -2,6 +2,27 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-02 — Ventana cc13 (D-378 desplegada, PR #80, sin migración)
+
+Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc13.md`.
+
+- **Antes del deploy:**
+  - UAT del dueño en demo confirmado, incluida la §6 (anulados desde el pedido);
+  - CI 37084224775 en `8c38bb7`: unitarios en verde, E2E 483 passed y smoke de Neon `ci` 36 passed;
+  - la rama contenía `main` `58955b5`, así que no hubo que reacomodar.
+- **API:** **`ayr-steel-erp-api-00076-nx7`** (`git-sha=8c38bb7`) al 100 %, `/health` 200. Smoke 7/7
+  con la web vieja. Vuelta atrás: `00075-9f9`.
+- **Merge del #80:** `main` = **`0a7344e`**, diff de runtime contra `8c38bb7` vacío. Vercel
+  `success`; smoke 8/8 en `vercel.app` y en `v2.mareliac.pe`.
+- **Cómo se desplegó:** desde el worktree `../ayr-cc13`, en `8c38bb7`, con `AYR_ENV_SETUP`. La
+  revisión de Cloud Run se leyó con un `.mjs` de un solo uso en el scratchpad (vía `scripts/lib.mjs#run`),
+  porque el aislamiento del worktree no deja correr `cmd /c gcloud`.
+- **Queda abierto:**
+  - con los números del dueño, la foto `READ ONLY` (paso 2 del runbook), el respaldo Neon (paso 6,
+    con OK del dueño) y los pasos por la interfaz;
+  - después, cc14 (reacomodo sobre `main`, CI, demo, UAT y su propio D-232).
+- **Demo** sigue arriba con el código de cc13 desde `../ayr-cc13` (127.0.0.1:3001).
+
 ## 2026-10-02 — cc13: D-378, reactivar un manual con las líneas del pedido (PR sin merge)
 
 - **Rama `cc13/reactivar-con-lineas`** desde `main` `58955b5`, independiente de cc14. Sin migración y

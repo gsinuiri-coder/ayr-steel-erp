@@ -1,7 +1,15 @@
 # Runbook: ventana de cc13 (D-378, reactivar con las líneas del pedido)
 
-**Estado: PENDIENTE.** El PR está abierto y sin merge. Falta la lista de comprobantes del dueño:
-la foto `READ ONLY` del paso 2 se toma cuando el dueño pase los números, antes de la ventana.
+**Estado: DEPLOY HECHO el 2026-10-02 (pasos 1, 3, 4 y 5).** Pendiente: con los números del
+dueño, la foto `READ ONLY` (paso 2), el respaldo (paso 6) y los pasos por la interfaz (7 y 8).
+
+| Qué                   | Valor                                                                                              |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| UAT y CI              | UAT del dueño en demo confirmado (§1-§6); CI 37084224775 en `8c38bb7`: E2E 483, smoke Neon `ci` 36 |
+| Revisión API anterior | `ayr-steel-erp-api-00075-9f9` (`git-sha=c7b2645`)                                                  |
+| Revisión API nueva    | **`ayr-steel-erp-api-00076-nx7`**, 100 %, `git-sha=8c38bb7`, `/health` 200, smoke 7/7 web vieja    |
+| Merge del #80         | `main` = **`0a7344e`**, diff de runtime vacío; Vercel `success`; smoke 8/8 en los dos dominios     |
+| Desde dónde           | worktree `../ayr-cc13` en `8c38bb7` con `AYR_ENV_SETUP` (el aislamiento no deja usar el principal) |
 
 ## Cierre de la sesión cc13 (2026-10-02)
 
