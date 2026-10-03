@@ -323,34 +323,6 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     expect(tx.fiscalDocument.updateMany).not.toHaveBeenCalled();
   });
 
-  describe('vista previa (cc13: el detalle del pedido)', () => {
-    it('si aplica, devuelve el comprobante sin escribir nada', async () => {
-      const { service, tx, audit } = build(happy());
-      await expect(service.previewReactivateExternal(ADMIN, 'doc-341')).resolves.toEqual({
-        id: 'doc-341',
-        number: 'BBV1-00000341',
-      });
-      expect(tx.fiscalDocument.updateMany).not.toHaveBeenCalled();
-      expect(audit.write).not.toHaveBeenCalled();
-    });
-
-    it('da el mismo bloqueo que la reactivación', async () => {
-      const s = happy();
-      s.drafts = 1;
-      const { service } = build(s);
-      await expect(service.previewReactivateExternal(ADMIN, 'doc-341')).rejects.toThrow(
-        /borrador.*PED-000048.*elimínalo/,
-      );
-    });
-
-    it('solo un administrador', async () => {
-      const { service } = build(happy());
-      await expect(service.previewReactivateExternal(SELLER, 'doc-341')).rejects.toThrow(
-        ForbiddenException,
-      );
-    });
-  });
-
   it('si la fila cambió entre el lock y la escritura, no escribe auditoría', async () => {
     const s = happy();
     s.updated = 0;

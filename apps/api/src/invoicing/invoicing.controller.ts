@@ -54,6 +54,7 @@ import {
   type ReactivateDocumentInput,
   type ReactivateWithOrderLinesInput,
   type ReactivationPreviewDto,
+  type OrderAnnulledDocumentDto,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -454,16 +455,17 @@ export class InvoicingController {
   }
 
   /**
-   * D-373 (cc13): si la reactivación simple aplica, sin escribir nada. Responde el mismo error que
-   * daría reactivar; el detalle del pedido lo muestra como motivo del botón deshabilitado.
+   * UAT de cc13: los anulados de un pedido con sus dos reactivaciones (D-373, D-378) y el motivo
+   * si no aplican. Solo lectura y **sin bloqueos**: pinta la sección del pedido; el modal y la
+   * ejecución vuelven a comprobar con sus locks.
    */
-  @Get('documents/:id/reactivate/preview')
+  @Get('orders/:salesOrderId/annulled-documents')
   @Roles(Role.ADMINISTRADOR)
-  previewReactivate(
+  annulledOfOrder(
     @CurrentUser() actor: RequestUser,
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<{ id: string; number: string | null }> {
-    return this.fiscalImport.previewReactivateExternal(actor, id);
+    @Param('salesOrderId', ParseUUIDPipe) salesOrderId: string,
+  ): Promise<OrderAnnulledDocumentDto[]> {
+    return this.fiscalImport.annulledOfOrder(actor, salesOrderId);
   }
 
   /**

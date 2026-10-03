@@ -1229,6 +1229,11 @@ export const salesOrderSchema = z.object({
    * acción sobre el pedido no lo trae, y ausente no quiere decir «sin comprobante».
    */
   documents: z.array(salesOrderDocumentLinkSchema).optional(),
+  /**
+   * UAT de cc13: cuántos comprobantes anulados (no archivados) tiene el pedido. Solo lo llena el
+   * detalle, con la misma consulta de `documents`: con 0, el web no pide la sección de anulados.
+   */
+  annulledDocumentCount: z.number().int().optional(),
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 

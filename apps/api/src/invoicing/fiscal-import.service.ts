@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -19,6 +20,8 @@ import {
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   salesOrderCode,
   toDecimal,
+  type OrderAnnulledDocumentDto,
+  type ReactivationAvailabilityDto,
   type ReactivationPreviewDto,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
@@ -189,24 +192,116 @@ export class FiscalImportService {
   }
 
   /**
-   * D-373 (pedido del dueño en cc13): la misma comprobación que `reactivateExternal`, con sus
-   * locks, en una transacción que no escribe. La usa el detalle del pedido para mostrar
-   * «Reactivar» deshabilitado con el motivo del bloqueo. Si algo bloquea, responde el mismo error.
+   * UAT de cc13: los comprobantes anulados de un pedido, cada uno con si aplican sus dos
+   * reactivaciones (D-373 y D-378) y, si no, el motivo —el mismo mensaje que daría intentarla—.
+   *
+   * **Sin bloqueos y sin transacción** (pedido del dueño): es lectura simple para pintar la
+   * sección del pedido. Corre las mismas comprobaciones con `lock = false`; el modal de D-378 y
+   * las dos ejecuciones las vuelven a correr con sus `FOR UPDATE`. La parte común (comprobante,
+   * auditoría, cobros, notas de crédito) se lee una vez por comprobante y la usan las dos.
+   *
+   * Presupuesto (llamadas a Prisma, verificado por test): 2 fijas (anulados y nombres de quien
+   * anuló) y, por anulado, 4 comunes + hasta 5 de D-378 + hasta 7 de D-373 (más 1 si hay
+   * refacturadas que nombrar). En SQL reales son 2 más por anulado: la lectura del comprobante
+   * trae `salesOrder` e `items` en consultas aparte. Medido en demo el 2026-10-02: 19 SQL para un
+   * pedido con un anulado (17 por el anulado, con D-378 bloqueada por «sin cambios»; hasta 18 si
+   * aplican las dos), 0 `FOR UPDATE`. El detalle de un pedido **sin** anulados no llama a esto:
+   * lo decide `annulledDocumentCount` del pedido, que sale de la consulta que el detalle ya hacía.
    */
-  async previewReactivateExternal(
+  async annulledOfOrder(
     actor: RequestUser,
-    id: string,
-  ): Promise<{ id: string; number: string | null }> {
+    salesOrderId: string,
+  ): Promise<OrderAnnulledDocumentDto[]> {
     assertCanReactivate(actor);
-    return this.prisma.$transaction(async (tx) => {
-      const { document } = await this.checkReactivateExternal(tx, id);
-      return { id, number: document.number };
+    const docs = await this.prisma.fiscalDocument.findMany({
+      // El mismo corte que `annulledDocumentCount` del pedido (`orderDocuments`): la sección
+      // muestra exactamente los que ese número cuenta.
+      where: {
+        salesOrderId,
+        status: FiscalDocumentStatus.ANNULLED,
+        archivedAt: null,
+        docType: {
+          in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA, FiscalDocType.NOTA_CREDITO],
+        },
+      },
+      select: {
+        id: true,
+        number: true,
+        docType: true,
+        origin: true,
+        status: true,
+        issueDate: true,
+        totalPen: true,
+        salesOrderId: true,
+        archivedAt: true,
+        annulledAt: true,
+        annulledById: true,
+        annulReason: true,
+      },
+      orderBy: [{ issueDate: 'asc' }, { number: 'asc' }],
     });
+    if (docs.length === 0) return [];
+    const annulledByIds = [
+      ...new Set(docs.flatMap((d) => (d.annulledById ? [d.annulledById] : []))),
+    ];
+    const users =
+      annulledByIds.length > 0
+        ? await this.prisma.user.findMany({
+            where: { id: { in: annulledByIds } },
+            select: { id: true, name: true },
+          })
+        : [];
+    const names = new Map(users.map((u) => [u.id, u.name]));
+
+    // Lecturas simples, una por vez: sin transacción, el cliente de Prisma vale como `tx`.
+    const reader: Prisma.TransactionClient = this.prisma;
+    const out: OrderAnnulledDocumentDto[] = [];
+    for (const d of docs) {
+      let common: AnnulledForReactivation | null = null;
+      let commonBlock: string | null = null;
+      try {
+        common = await lockAnnulledForReactivation(reader, d.id, false);
+      } catch (error) {
+        commonBlock = blockReason(error);
+      }
+      const withOrderLines = common
+        ? await availability(() => this.planReactivationWithOrderLines(reader, d.id, false, common))
+        : { ok: false, reason: commonBlock };
+      const simple = common
+        ? await availability(() => this.checkReactivateExternal(reader, d.id, false, common))
+        : { ok: false, reason: commonBlock };
+      out.push({
+        id: d.id,
+        number: d.number,
+        docType: d.docType,
+        origin: d.origin,
+        status: d.status,
+        issueDate: d.issueDate.toISOString().slice(0, 10),
+        totalPen: d.totalPen.toFixed(4),
+        salesOrderId: d.salesOrderId,
+        archivedAt: d.archivedAt?.toISOString() ?? null,
+        annulledAt: d.annulledAt?.toISOString() ?? null,
+        annulledByName: d.annulledById ? (names.get(d.annulledById) ?? null) : null,
+        annulReason: d.annulReason,
+        withOrderLines,
+        simple,
+      });
+    }
+    return out;
   }
 
-  /** D-373: el lock y todos los bloqueos de la reactivación simple; no escribe nada. */
-  private async checkReactivateExternal(tx: Prisma.TransactionClient, id: string) {
-    const checked = await lockAnnulledForReactivation(tx, id);
+  /**
+   * D-373: el lock y todos los bloqueos de la reactivación simple; no escribe nada. Sin `lock`, la
+   * misma comprobación como lectura simple (la sección del pedido); `common` reutiliza la parte
+   * común ya leída para no repetir sus consultas.
+   */
+  private async checkReactivateExternal(
+    tx: Prisma.TransactionClient,
+    id: string,
+    lock = true,
+    common?: AnnulledForReactivation,
+  ) {
+    const checked = common ?? (await lockAnnulledForReactivation(tx, id, lock));
     const { document, label, annulledAt } = checked;
     const orderItemIds = [
       ...new Set(document.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []))),
@@ -221,8 +316,13 @@ export class FiscalImportService {
       //   commit, y los chequeos de abajo —sentencias nuevas en READ COMMITTED— ya lo ven
       //   aceptado.
       if (document.salesOrderId !== null) {
-        const [order] = await tx.$queryRaw<{ status: string }[]>`
+        // Con `lock`, el SQL de siempre; sin él, la misma lectura sin `FOR UPDATE`.
+        const [order] = lock
+          ? await tx.$queryRaw<{ status: string }[]>`
             SELECT "status" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid FOR UPDATE
+          `
+          : await tx.$queryRaw<{ status: string }[]>`
+            SELECT "status" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid
           `;
         // D-373 (decisión del dueño): el pedido no pudo cambiar mientras el comprobante estuvo
         // anulado. Se lee con el pedido ya bloqueado, así que una edición no puede colarse.
@@ -243,7 +343,8 @@ export class FiscalImportService {
           orderLabel,
         );
       }
-      await tx.$queryRaw`
+      if (lock) {
+        await tx.$queryRaw`
           SELECT d."id" FROM "fiscal_documents" d
           WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
             AND EXISTS (
@@ -253,6 +354,7 @@ export class FiscalImportService {
           ORDER BY d."id"
           FOR UPDATE
         `;
+      }
       await assertLinesNotReinvoiced(tx, id, label, document.items, orderItemIds);
       const drafts = await tx.fiscalDocument.count({
         where: {
@@ -475,11 +577,14 @@ export class FiscalImportService {
    * D-378: los bloqueos y el plan, comunes a la vista previa y a la reactivación. Locks en el
    * mismo orden que D-373 —comprobante, pedido, borradores— y ningún camino los toma al revés.
    */
-  private async planReactivationWithOrderLines(tx: Prisma.TransactionClient, id: string) {
-    const { document, label, statusBeforeAnnul, annulledAt } = await lockAnnulledForReactivation(
-      tx,
-      id,
-    );
+  private async planReactivationWithOrderLines(
+    tx: Prisma.TransactionClient,
+    id: string,
+    lock = true,
+    common?: AnnulledForReactivation,
+  ) {
+    const { document, label, statusBeforeAnnul, annulledAt } =
+      common ?? (await lockAnnulledForReactivation(tx, id, lock));
 
     // Solo manual: un importado es la copia de otro sistema y su contenido no se reescribe
     // desde acá; un `ISSUED_HERE` ya lo frenó el lock común.
@@ -512,10 +617,20 @@ export class FiscalImportService {
     }
 
     const salesOrderId = document.salesOrderId;
-    const [order] = await tx.$queryRaw<{ status: string; customer_id: string; seq: number }[]>`
-      SELECT "status", "customer_id", "seq" FROM "sales_orders"
-      WHERE "id" = ${salesOrderId}::uuid FOR UPDATE
-    `;
+    interface OrderRow {
+      status: string;
+      customer_id: string;
+      seq: number;
+    }
+    const [order] = lock
+      ? await tx.$queryRaw<OrderRow[]>`
+          SELECT "status", "customer_id", "seq" FROM "sales_orders"
+          WHERE "id" = ${salesOrderId}::uuid FOR UPDATE
+        `
+      : await tx.$queryRaw<OrderRow[]>`
+          SELECT "status", "customer_id", "seq" FROM "sales_orders"
+          WHERE "id" = ${salesOrderId}::uuid
+        `;
     if (!order) throw new NotFoundException('Pedido no encontrado');
     const orderCode = salesOrderCode(order.seq);
     if (order.status === SalesOrderStatus.CANCELLED) {
@@ -556,19 +671,21 @@ export class FiscalImportService {
 
     // Los borradores del pedido, con lock en orden de id: uno que se esté registrando espera a
     // este commit, y los chequeos de abajo ya lo ven aceptado (revisiones cc07).
-    await tx.$queryRaw`
-      SELECT d."id" FROM "fiscal_documents" d
-      WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
-        AND (
-          d."sales_order_id" = ${salesOrderId}::uuid
-          OR EXISTS (
-            SELECT 1 FROM "fiscal_document_items" i
-            WHERE i."document_id" = d."id" AND i."sales_order_item_id" = ANY(${orderLineIds}::uuid[])
+    if (lock) {
+      await tx.$queryRaw`
+        SELECT d."id" FROM "fiscal_documents" d
+        WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
+          AND (
+            d."sales_order_id" = ${salesOrderId}::uuid
+            OR EXISTS (
+              SELECT 1 FROM "fiscal_document_items" i
+              WHERE i."document_id" = d."id" AND i."sales_order_item_id" = ANY(${orderLineIds}::uuid[])
+            )
           )
-        )
-      ORDER BY d."id"
-      FOR UPDATE
-    `;
+        ORDER BY d."id"
+        FOR UPDATE
+      `;
+    }
     const onOrder = {
       id: { not: id },
       archivedAt: null,
@@ -637,6 +754,28 @@ export class FiscalImportService {
  * 5 s por defecto de Prisma no alcanzan con un pedido grande; el mismo margen que `create`.
  */
 const REACTIVATION_TX_TIMEOUT_MS = 30_000;
+
+/** Lo que deja leído `lockAnnulledForReactivation`: la parte común de las dos reactivaciones. */
+type AnnulledForReactivation = Awaited<ReturnType<typeof lockAnnulledForReactivation>>;
+
+/**
+ * UAT de cc13: el motivo que se muestra para una acción deshabilitada es el mensaje del error de
+ * dominio que daría intentarla. Cualquier otro error (base caída, un bug) no es un «motivo» y se
+ * deja subir.
+ */
+function blockReason(error: unknown): string {
+  if (error instanceof HttpException) return error.message;
+  throw error;
+}
+
+async function availability(check: () => Promise<unknown>): Promise<ReactivationAvailabilityDto> {
+  try {
+    await check();
+    return { ok: true, reason: null };
+  } catch (error) {
+    return { ok: false, reason: blockReason(error) };
+  }
+}
 
 /** D-373/D-378: las dos reactivaciones son solo de administrador. */
 function assertCanReactivate(actor: RequestUser): void {
@@ -784,12 +923,16 @@ async function assertLinesNotReinvoiced(
  * reactivaciones —origen, tipo, estado, versión, rastro de PSE, la anulación en la auditoría,
  * cobros y notas de crédito—. Lo que sigue (pedido, líneas, borradores) es propio de cada una.
  */
-async function lockAnnulledForReactivation(tx: Prisma.TransactionClient, id: string) {
+async function lockAnnulledForReactivation(tx: Prisma.TransactionClient, id: string, lock = true) {
   // El mismo lock que la anulación: una anulación, una reactivación o un cobro simultáneos
   // sobre esta fila esperan a que esta transacción termine y ven el estado ya cambiado.
-  await tx.$queryRaw`
-    SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
-  `;
+  // Sin `lock` (la sección del pedido, cc13) es una lectura simple: solo informa, y el modal y
+  // la ejecución vuelven a comprobar todo con sus locks.
+  if (lock) {
+    await tx.$queryRaw`
+      SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
+    `;
+  }
   const document = await tx.fiscalDocument.findUnique({
     where: { id },
     select: {

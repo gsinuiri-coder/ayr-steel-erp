@@ -496,6 +496,38 @@ export const reactivationPreviewSchema = z.object({
 });
 export type ReactivationPreviewDto = z.infer<typeof reactivationPreviewSchema>;
 
+/**
+ * UAT de cc13: si una reactivación aplica y, si no, por qué (el mismo mensaje que daría el API
+ * al intentarla). Se calcula **sin bloqueos**: solo informa; el modal y la ejecución vuelven a
+ * comprobar todo con sus locks.
+ */
+export const reactivationAvailabilitySchema = z.object({
+  ok: z.boolean(),
+  reason: z.string().nullable(),
+});
+export type ReactivationAvailabilityDto = z.infer<typeof reactivationAvailabilitySchema>;
+
+/** UAT de cc13: un comprobante anulado del pedido, con sus dos reactivaciones (D-373 y D-378). */
+export const orderAnnulledDocumentSchema = z.object({
+  id: z.string().uuid(),
+  number: z.string().nullable(),
+  docType: z.enum(FISCAL_DOC_TYPES),
+  origin: z.enum(FISCAL_DOCUMENT_ORIGINS),
+  status: z.enum(FISCAL_DOCUMENT_STATUSES),
+  issueDate: z.string(),
+  totalPen: z.string(),
+  salesOrderId: z.string().uuid().nullable(),
+  archivedAt: z.string().nullable(),
+  annulledAt: z.string().nullable(),
+  annulledByName: z.string().nullable(),
+  annulReason: z.string().nullable(),
+  /** «Reactivar con las líneas del pedido» (D-378). */
+  withOrderLines: reactivationAvailabilitySchema,
+  /** «Reactivar» (D-373). */
+  simple: reactivationAvailabilitySchema,
+});
+export type OrderAnnulledDocumentDto = z.infer<typeof orderAnnulledDocumentSchema>;
+
 /** D-073: interruptor de contingencia y umbral de alerta. Solo ADMINISTRADOR. */
 export const updateInvoicingSettingsSchema = z.object({
   manualByDefault: z.boolean().optional(),

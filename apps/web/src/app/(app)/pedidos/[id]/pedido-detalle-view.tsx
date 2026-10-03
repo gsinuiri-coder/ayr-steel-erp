@@ -658,7 +658,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
       {isAdmin && <ProductionOrdersCard salesOrderId={o.id} canOperate={canOperate} />}
 
       {/* UAT de cc13: los anulados del pedido y sus dos reactivaciones (D-373, D-378). */}
-      {isAdmin && <AnnulledDocumentsCard salesOrderId={o.id} />}
+      {isAdmin && (
+        <AnnulledDocumentsCard salesOrderId={o.id} annulledCount={o.annulledDocumentCount ?? 0} />
+      )}
 
       <Section
         title={
