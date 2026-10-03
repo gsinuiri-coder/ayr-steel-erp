@@ -43,6 +43,18 @@
 - **Revisiones:** `docs/revision/cc15a-autorrevision.md` (P0-1 = P1-1 del segundo modelo,
   corregido; P1-1 del monto en bobinas, corregido) y `docs/revision/cc15a-segundo-modelo.md` (P1-1
   corregido; P2-1, P2-2, P2-3 corregidos).
+- **Segunda revisión de los arreglos de anulación** (Sonnet con contexto limpio, pedida por el
+  dueño, `docs/revision/cc15a-segunda-revision-anulacion.md`): sin P0 ni P1. Se corrigieron sus
+  dos P2: el guardrail filtraba lo anulado **después** de tomar 50 filas, así que muchas mermas
+  anuladas tapaban una salida viva posterior (E2E nuevo; sin el arreglo, en bobina solo lo
+  frenaba la falta de saldo y en producto terminado no lo frenaba nada); y el valor actual del
+  ajuste en bobinas se mide sobre lo que queda de la compra.
+- **Aviso de flejes:** si la bobina corregida tiene flejes de un corte o bobinas de un partido
+  vigentes, la revisión los nombra y avisa que conservan el costo con que nacieron.
+- **Rojo local que no se repitió:** una corrida de `turbo lint typecheck test` en paralelo dio
+  «Failed: @ayr/api#test» sin que quedara el nombre del test (la salida se recortó). No se
+  reprodujo en dos corridas más ni en la CI. No se anota como test frágil porque no se identificó;
+  la próxima vez se guarda la salida completa.
 - **Límites conocidos, documentados:** en producto terminado con varios lotes, el reporte PEPS
   reparte el ajuste sobre todas las capas vivas (el total cuadra con el kardex; el costo por lote
   no); el orden de llegada usa la fecha de operación y la hora de grabación, así que un reingreso
