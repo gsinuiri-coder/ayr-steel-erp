@@ -466,16 +466,14 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     ]);
     const { tx } = makeTx({});
     const spec = {
-      findMany: jest
-        .fn()
-        .mockResolvedValue([
-          {
-            id: 'spec-1',
-            businessLineId: 'bl-roof',
-            colorId: 'color-rojo',
-            thicknessMm: D('0.40'),
-          },
-        ]),
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: 'spec-1',
+          businessLineId: 'bl-roof',
+          colorId: 'color-rojo',
+          thicknessMm: D('0.40'),
+        },
+      ]),
     };
     withTx({ ...tx, rawMaterialSpec: spec });
     const plan = await service.preview(ADMIN, 'p-1', {
