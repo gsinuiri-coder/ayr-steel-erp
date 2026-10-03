@@ -63,6 +63,7 @@ import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { lastOwnMovementByLiveItem } from './purchase-cancel';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { prorateByWeight } from './landed-cost';
@@ -846,20 +847,19 @@ export class PurchasesService {
    */
   private async assertNothingMovedAfter(
     tx: Prisma.TransactionClient,
-    movements: { id: bigint; itemType: InventoryItemType; itemId: string }[],
+    movements: {
+      id: bigint;
+      itemType: InventoryItemType;
+      itemId: string;
+      reversalOfId: bigint | null;
+      reversals: unknown[];
+    }[],
   ): Promise<void> {
     if (movements.length === 0) return;
     const ownIds = new Set(movements.map((m) => m.id));
 
-    // "Posterior" se mide por ítem y contra el ÚLTIMO movimiento que esta compra le
-    // hizo, no contra el conjunto entero. Anular un flete (D-043) no puede quedar
-    // bloqueado por el ingreso de la bobina, que es anterior a su propio ajuste.
-    const lastOwnId = new Map<string, bigint>();
-    for (const m of movements) {
-      const current = lastOwnId.get(m.itemId);
-      if (current === undefined || m.id > current) lastOwnId.set(m.itemId, m.id);
-    }
-
+    const lastOwnId = lastOwnMovementByLiveItem(movements);
+    if (lastOwnId.size === 0) return;
     const later = await tx.inventoryMovement.findMany({
       where: {
         OR: [...lastOwnId].map(([itemId, id]) => ({ itemId, id: { gt: id } })),

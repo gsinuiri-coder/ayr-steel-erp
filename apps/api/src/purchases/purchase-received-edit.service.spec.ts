@@ -45,6 +45,7 @@ function coilPurchase(over: Record<string, unknown> = {}) {
     issueDate: RECEIPT,
     paymentTerms: 'CONTADO',
     creditDays: null,
+    dueDate: null,
     notes: null,
     subtotal: D('5000'),
     igv: D('900'),
@@ -59,11 +60,17 @@ function coilPurchase(over: Record<string, unknown> = {}) {
         unit: 'KGM',
         qty: D('1000'),
         unitPrice: D('5'),
+        description: 'BOBINA ROJO',
         subtotal: D('5000'),
         igv: D('900'),
         total: D('5900'),
         finishId: 'fin-rojo',
         widthMm: D('1000'),
+        code: 'BOB-1',
+        weightKg: D('1000'),
+        unitCostPerKg: D('5'),
+        totalCost: D('5000'),
+        totalCostPen: D('5000'),
         thicknessMm: D('0.4'),
       },
     ],
@@ -77,6 +84,10 @@ const ownIn = {
   itemType: 'COIL',
   itemId: 'coil-1',
   qty: D('1000'),
+  unitCost: D('5'),
+  totalCost: D('5000'),
+  refId: 'p-1',
+  at: RECEIPT,
   unit: 'KGM',
   refType: 'PURCHASE',
   operationDate: RECEIPT,
@@ -127,6 +138,11 @@ function makeTx(opts: {
         colorId: 'color-rojo',
         thicknessMm: D('0.4'),
         widthMm: D('1000'),
+        code: 'BOB-1',
+        weightKg: D('1000'),
+        unitCostPerKg: D('5'),
+        totalCost: D('5000'),
+        totalCostPen: D('5000'),
       }),
       update: jest.fn((args: unknown) => {
         updates.push({ model: 'coil', args });
@@ -186,6 +202,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
   const inventory = {
     reverse: jest.fn().mockResolvedValue({ id: 11n }),
     record: jest.fn().mockResolvedValue({ id: 12n }),
+    adjustCost: jest.fn().mockResolvedValue({ id: 13n }),
     lockAvailability: jest.fn(),
   };
   const coils = { ensureTradingProduct: jest.fn() };
@@ -220,24 +237,97 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     expect(inventory.reverse).not.toHaveBeenCalled();
   });
 
-  it('vista previa: los movimientos posteriores llegan al plan con su tipo y fecha', async () => {
-    const { tx } = makeTx({
-      movements: [
-        ownIn,
-        {
-          ...ownIn,
-          id: 20n,
-          type: 'OUT',
-          refType: 'SCRAP',
-          operationDate: new Date('2026-09-12T00:00:00.000Z'),
-        },
-      ],
-    });
+  // 1000 kg a 5; salió una merma de 400 y quedan 600.
+  const scrap = {
+    ...ownIn,
+    id: 20n,
+    type: 'OUT',
+    qty: D('400'),
+    refType: 'SCRAP',
+    refId: null,
+    operationDate: new Date('2026-09-12T00:00:00.000Z'),
+  };
+
+  it('vista previa con consumo: ajuste proporcional sobre lo que queda, con la salida afectada y los avisos', async () => {
+    // A 5.5, la diferencia de la línea es 500 soles; sobre lo que queda (600 de 1000), 300.
+    const { tx } = makeTx({ movements: [ownIn, scrap], productBalance: '600' });
     withTx(tx);
     const plan = await service.preview(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
     });
-    expect(plan.changes[0]?.blockedReason).toContain('merma (SCRAP) el 2026-09-12');
+    expect(plan.changes[0]).toMatchObject({
+      path: 'COST_ADJUST',
+      adjustment: {
+        remainingQty: '600.000',
+        amountPen: '300.0000',
+        affected: [
+          { operationDate: '2026-09-12', document: 'Merma', qty: '400.000', unitCost: '5.0000' },
+        ],
+      },
+    });
+    expect(plan.warnings?.join(' ')).toContain('reportes mensuales de bobinas ya pasados');
+    expect(plan.warnings?.join(' ')).toContain('Deshacer');
+    expect(inventory.adjustCost).not.toHaveBeenCalled();
+  });
+
+  it('guardar con consumo: un ajuste de costo con la fecha de hoy, sin reversa, y la ficha de la bobina corregida', async () => {
+    const { tx, updates } = makeTx({ movements: [ownIn, scrap], productBalance: '600' });
+    withTx(tx);
+    await service.commit(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+      reason: 'Precio mal tipeado',
+    });
+    expect(inventory.reverse).not.toHaveBeenCalled();
+    expect(inventory.record).not.toHaveBeenCalled();
+    expect(inventory.adjustCost).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        itemType: 'COIL',
+        itemId: 'coil-1',
+        amountPen: '300.0000',
+        refType: 'PURCHASE',
+        refId: 'p-1',
+      }),
+    );
+    // Sin `operationDate`: `adjustCost` lo fecha hoy (decisión B).
+    expect((inventory.adjustCost.mock.calls as unknown[][])[0]?.[1]).not.toHaveProperty(
+      'operationDate',
+    );
+    const coilUpdate = updates.find((u) => u.model === 'coil')?.args as {
+      data: Record<string, unknown>;
+    };
+    expect(coilUpdate.data).toMatchObject({ unitCostPerKg: '5.5000', totalCostPen: '5500.0000' });
+    expect(audit.write).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        before: expect.objectContaining({
+          coils: [expect.objectContaining({ code: 'BOB-1', unitCostPerKg: '5.0000' })],
+        }) as unknown,
+        after: expect.objectContaining({
+          adjustMovementIds: ['13'],
+          adjustments: [
+            expect.objectContaining({ amountPen: '300.0000', remainingQty: '600.000' }),
+          ],
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('un reintento con la misma clave de idempotencia no repite nada', async () => {
+    const { tx } = makeTx({});
+    tx.$queryRaw.mockResolvedValue([]); // la clave ya existía: el INSERT no devolvió fila
+    const idempotencyKey = {
+      findUnique: jest.fn().mockResolvedValue({ scope: 'purchase-received-edit', resourceId: 'r' }),
+    };
+    withTx({ ...tx, idempotencyKey });
+    const plan = await service.commit(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+      reason: 'x',
+      idempotencyKey: 'k-1',
+    });
+    expect(plan.changes).toEqual([]);
+    expect(inventory.reverse).not.toHaveBeenCalled();
+    expect(audit.write).not.toHaveBeenCalled();
   });
 
   it('compra en borrador o anulada, o inexistente: se rechaza', async () => {

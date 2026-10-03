@@ -3,6 +3,7 @@ import { PurchaseType, Role } from '@prisma/client';
 import {
   blockedSummary,
   classifyReceivedEdit,
+  fifoLotConsumption,
   type ItemFacts,
   type PurchaseFacts,
   type TargetFacts,
@@ -19,6 +20,7 @@ const coilItem = (over: Partial<ItemFacts> = {}): ItemFacts => ({
   lineNumber: 1,
   productId: null,
   productLabel: null,
+  description: 'BOBINA ROJO',
   unit: 'KGM',
   qty: '1000.000',
   unitPrice: '5.0000',
@@ -66,6 +68,7 @@ const purchase = (over: Partial<PurchaseFacts> = {}): PurchaseFacts => ({
     issueDate: '2026-09-10',
     paymentTerms: 'CONTADO',
     creditDays: null,
+    dueDate: null,
     notes: null,
   },
   items: [coilItem()],
@@ -81,7 +84,97 @@ const noTargets = (over: Partial<TargetFacts> = {}): TargetFacts => ({
   productsWithLaterMovements: new Set(),
   invalidProducts: new Map(),
   invalidFinishes: new Map(),
+  productNames: new Map([['prod-2', 'PERFIL DOS']]),
   ...over,
+});
+
+describe('D-372 (cc15) — lo que arrastra la cáscara y el producto', () => {
+  it('pasar a contado borra los días de crédito y el vencimiento, y los muestra', () => {
+    const plan = classifyReceivedEdit(
+      purchase({
+        header: {
+          ...purchase().header,
+          paymentTerms: 'CREDITO',
+          creditDays: 30,
+          dueDate: '2026-10-10',
+        },
+      }),
+      { header: { paymentTerms: 'CONTADO' } },
+      noTargets(),
+    );
+    expect(plan.changes.map((c) => [c.field, c.before, c.after])).toEqual([
+      ['paymentTerms', 'CREDITO', 'CONTADO'],
+      ['creditDays', '30', null],
+      ['dueDate', '2026-10-10', null],
+    ]);
+  });
+
+  it('cambiar la fecha de emisión de una compra al crédito recalcula el vencimiento', () => {
+    const plan = classifyReceivedEdit(
+      purchase({
+        header: {
+          ...purchase().header,
+          paymentTerms: 'CREDITO',
+          creditDays: 30,
+          dueDate: '2026-10-10',
+        },
+      }),
+      { header: { issueDate: '2026-09-15' } },
+      noTargets(),
+    );
+    expect(plan.changes.find((c) => c.field === 'dueDate')).toMatchObject({
+      before: '2026-10-10',
+      after: '2026-10-15',
+      path: 'IN_PLACE',
+    });
+  });
+
+  it('cambiar de producto cambia también la descripción (decisión D)', () => {
+    const plan = classifyReceivedEdit(
+      purchase({
+        type: PurchaseType.FINISHED_GOOD,
+        items: [productItem({ description: 'PERFIL UNO' })],
+      }),
+      { items: [{ itemId: 'item-1', productId: 'prod-2' }] },
+      noTargets(),
+    );
+    expect(plan.changes.map((c) => [c.field, c.before, c.after, c.path])).toEqual([
+      ['productId', 'PERFIL-1', 'PERFIL-2', 'REVERSE_REENTRY'],
+      ['description', 'PERFIL UNO', 'PERFIL DOS', 'IN_PLACE'],
+    ]);
+  });
+});
+
+describe('D-372 (cc15) — fifoLotConsumption (decisión A)', () => {
+  const m = (id: number, type: 'IN' | 'OUT' | 'ADJUST', qty: string) => ({
+    id: BigInt(id),
+    type,
+    qty,
+  });
+
+  it('las salidas consumen primero los lotes más antiguos', () => {
+    // Lote 1: 100; lote 2 (el de la compra): 50. Salen 120: 100 del lote 1 y 20 del 2.
+    const result = fifoLotConsumption(
+      [m(1, 'IN', '100'), m(2, 'IN', '50'), m(3, 'OUT', '120'), m(4, 'ADJUST', '30')],
+      2n,
+    );
+    expect(result.remaining.toFixed(3)).toBe('30.000');
+    expect(result.consumers.map((c) => [c.movement.id, c.qty.toFixed(3)])).toEqual([
+      [3n, '20.000'],
+    ]);
+  });
+
+  it('un lote que nadie tocó queda entero; uno agotado, en cero', () => {
+    expect(fifoLotConsumption([m(1, 'IN', '10'), m(2, 'IN', '5')], 2n).remaining.toFixed(0)).toBe(
+      '5',
+    );
+    expect(
+      fifoLotConsumption(
+        [m(1, 'IN', '10'), m(2, 'OUT', '4'), m(3, 'OUT', '6')],
+        1n,
+      ).remaining.toFixed(0),
+    ).toBe('0');
+  });
 });
 
 describe('D-372 — classifyReceivedEdit', () => {
@@ -181,6 +274,7 @@ describe('D-372 — classifyReceivedEdit', () => {
         ['paymentTerms', 'SHELL', 'IN_PLACE'],
         ['creditDays', 'SHELL', 'IN_PLACE'],
         ['notes', 'SHELL', 'IN_PLACE'],
+        ['dueDate', 'SHELL', 'IN_PLACE'],
       ]);
     });
 
@@ -249,14 +343,15 @@ describe('D-372 — classifyReceivedEdit', () => {
       expect(plan.executable).toBe(true);
     });
 
-    it('con consumo posterior: bloqueado, «disponible en la próxima versión», con el detalle', () => {
+    it('con consumo posterior: ajuste proporcional (cc15), aunque haya reserva', () => {
       const plan = classifyReceivedEdit(
         purchase({
           items: [
             coilItem({
+              ownReservation: true,
               laterMovements: [
-                { refType: 'PRODUCTION', operationDate: '2026-09-15' },
-                { refType: 'SCRAP', operationDate: '2026-09-16' },
+                { type: 'OUT', refType: 'PRODUCTION', operationDate: '2026-09-15' },
+                { type: 'OUT', refType: 'SCRAP', operationDate: '2026-09-16' },
               ],
             }),
           ],
@@ -264,10 +359,67 @@ describe('D-372 — classifyReceivedEdit', () => {
         { items: [{ itemId: 'item-1', unitPrice: '5.5' }] },
         noTargets(),
       );
-      expect(plan.changes[0]?.path).toBe('BLOCKED');
-      expect(plan.changes[0]?.blockedReason).toContain('próxima versión');
-      expect(plan.changes[0]?.blockedReason).toContain('producción (PRODUCTION) el 2026-09-15');
+      expect(plan.changes[0]).toMatchObject({ path: 'COST_ADJUST', blockedReason: null });
+      expect(plan.executable).toBe(true);
+    });
+
+    it('ajuste proporcional: lo bloquean pagos, landed cost, montada, sin ingreso vivo e IGV no estándar', () => {
+      const consumedItem = (over: Partial<ItemFacts> = {}): ItemFacts =>
+        coilItem({
+          laterMovements: [{ type: 'OUT', refType: 'SCRAP', operationDate: '2026-09-16' }],
+          ...over,
+        });
+      const price = { items: [{ itemId: 'item-1', unitPrice: '5.5' }] };
+      const reasonOf = (facts: PurchaseFacts): string | null =>
+        classifyReceivedEdit(facts, price, noTargets()).changes[0]?.blockedReason ?? null;
+      expect(reasonOf(purchase({ livePayments: 1, items: [consumedItem()] }))).toContain('pagos');
+      expect(reasonOf(purchase({ items: [consumedItem({ landedCost: true })] }))).toContain(
+        'landed cost',
+      );
+      expect(
+        reasonOf(purchase({ items: [consumedItem({ mountedOrder: 'OP-000001' })] })),
+      ).toContain('montada');
+      expect(reasonOf(purchase({ items: [consumedItem({ hasLiveIn: false })] }))).toContain(
+        'ingreso de kardex vivo',
+      );
+      expect(
+        reasonOf(purchase({ igvRateIssue: 'tasa de IGV rara', items: [consumedItem()] })),
+      ).toContain('tasa de IGV');
+    });
+
+    it('con consumo, precio y cantidad juntos: la cantidad sigue bloqueada (decisión 7)', () => {
+      const plan = classifyReceivedEdit(
+        purchase({
+          items: [
+            coilItem({
+              laterMovements: [{ type: 'OUT', refType: 'SCRAP', operationDate: '2026-09-16' }],
+            }),
+          ],
+        }),
+        { items: [{ itemId: 'item-1', unitPrice: '5.5', qty: '990' }] },
+        noTargets(),
+      );
+      expect(plan.executable).toBe(false);
+      expect(plan.changes.every((c) => c.path === 'BLOCKED')).toBe(true);
       expect(plan.changes[0]?.blockedReason).toContain('merma (SCRAP) el 2026-09-16');
+    });
+
+    it('solo otra compra posterior del mismo producto: sigue bloqueado hasta cc15b', () => {
+      const plan = classifyReceivedEdit(
+        purchase({
+          type: PurchaseType.FINISHED_GOOD,
+          items: [
+            productItem({
+              laterMovements: [{ type: 'IN', refType: 'PURCHASE', operationDate: '2026-09-27' }],
+            }),
+          ],
+        }),
+        { items: [{ itemId: 'item-1', unitPrice: '13' }] },
+        noTargets(),
+      );
+      expect(plan.changes[0]?.path).toBe('BLOCKED');
+      expect(plan.changes[0]?.blockedReason).toContain('otra compra (PURCHASE) el 2026-09-27');
+      expect(plan.changes[0]?.blockedReason).toContain('próxima versión');
     });
 
     it('pagos vigentes bloquean el costo', () => {
@@ -299,7 +451,11 @@ describe('D-372 — classifyReceivedEdit', () => {
     it('cantidad con movimientos posteriores: bloqueada con el detalle, sin la promesa de la próxima versión', () => {
       const plan = classifyReceivedEdit(
         purchase({
-          items: [coilItem({ laterMovements: [{ refType: 'SALE', operationDate: '2026-09-20' }] })],
+          items: [
+            coilItem({
+              laterMovements: [{ type: 'OUT', refType: 'SALE', operationDate: '2026-09-20' }],
+            }),
+          ],
         }),
         { items: [{ itemId: 'item-1', qty: '980' }] },
         noTargets(),
