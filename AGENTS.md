@@ -116,8 +116,8 @@ Reglas de convivencia, sin excepción:
 5. **Dry-run por default.** Escrituras masivas requieren `--confirm-production`; un
    `--execute --confirm-production` exige aprobación explícita del dueño.
 6. **Los puertos 4000/4001 son del dueño** (`dev:preview`). Ningún agente los toca ni los mata.
-   El entorno demo corre en web 3001 / api 3000. Matar el `:4001` del dueño le tira la sesión del
-   navegador sin aviso.
+   El entorno demo corre en web 3101 / api 3100, puertos propios que ni `dev:local` ni la suite
+   E2E usan (3000/3001). Matar el `:4001` del dueño le tira la sesión del navegador sin aviso.
 7. **Sin texto multilínea por `node -e` ni interpolación de shell** (regla añadida después de
    borrar por accidente la BD de E2E). En la sesión Precios (2026-09-09) un `node -e` con backticks
    ejecutó un `pnpm e2e` que vació `ayr_local_e2e` en plena corrida; es una regla de forma, no de

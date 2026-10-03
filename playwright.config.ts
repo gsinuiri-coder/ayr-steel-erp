@@ -51,6 +51,20 @@ const API_ORIGIN = `http://localhost:${API_PORT}`;
 /** Puerto del stub del padrón (`e2e/padron-stub.mjs`). Ver el `webServer` de más abajo. */
 const PADRON_STUB_PORT = '3002';
 
+/**
+ * **La suite nunca reusa un API ni un web que ya esté escuchando** (2026-10-03). Playwright da
+ * por bueno cualquier proceso que conteste en el puerto, y lo que conteste puede no hablar con
+ * la base de la suite: un `pnpm dev:local` (base `ayr_local`), una demo vieja (rama Neon `demo`,
+ * copia de datos reales) o un API de otra rama sin los cambios. El reset de `global-setup` vacía
+ * `DATABASE_URL`, pero los tests escriben por el API que encuentren. Con el puerto ocupado la
+ * corrida falla al instante y dice cuál; se libera y se relanza. Demo vive en 3100/3101 y no choca.
+ *
+ * Única excepción, explícita: `E2E_REUSE_SERVERS=1`, para el script que levanta **él mismo** el
+ * API y el web contra la base de la suite y comprobó antes que los puertos estaban libres
+ * (`scripts/e2e-latency.mjs`). Nunca en CI.
+ */
+const reuseServers = !isCI && process.env.E2E_REUSE_SERVERS === '1';
+
 // Local (no CI, sin E2E_BASE_URL): por defecto contra el Postgres de docker-compose.yml, base
 // "ayr_local_e2e" — separada de la que usa `pnpm dev:local` para no pisar datos de prueba
 // manual. `??=` deja que quien exporte DATABASE_URL a mano (p. ej. para probar contra otra
@@ -95,7 +109,7 @@ export default defineConfig({
         {
           command: isCI ? 'pnpm --filter @ayr/api start' : 'pnpm --filter @ayr/api exec nest start',
           url: `${API_ORIGIN}/health`,
-          reuseExistingServer: !isCI && !runsPse,
+          reuseExistingServer: reuseServers,
           timeout: 180_000,
           env: {
             PORT: API_PORT,
@@ -124,7 +138,7 @@ export default defineConfig({
         {
           command: isCI ? 'pnpm --filter @ayr/web start' : 'pnpm --filter @ayr/web dev',
           url: 'http://localhost:3001/login',
-          reuseExistingServer: !isCI && !runsPse && !process.env.E2E_API_PORT,
+          reuseExistingServer: reuseServers,
           timeout: 180_000,
           env: { API_URL: API_ORIGIN },
         },

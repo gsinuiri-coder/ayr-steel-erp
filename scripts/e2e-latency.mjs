@@ -13,7 +13,7 @@
 // Requisitos:
 //   1. `node scripts/latency-proxy.mjs --listen 5435 --delay 1 --stats-port 5499` corriendo.
 //   2. El worktree con `pnpm install` y los builds hechos (shared, api, web).
-//   3. :3000 y :3001 libres (Playwright reusa lo que encuentre ahí).
+//   3. :3000 y :3001 libres (este script levanta ahí los suyos y le pide a Playwright reusarlos).
 //
 // Uso: node scripts/e2e-latency.mjs --worktree ../wt-x --out local-data/r1/x.jsonl [-- <args de playwright>]
 import { spawn, spawnSync } from 'node:child_process';
@@ -150,7 +150,9 @@ const res = spawnSync(
   ],
   {
     cwd: worktree,
-    env: { ...env, E2E_ROUNDTRIPS_OUT: out },
+    // Los servidores los levantó este script contra la base de la suite: Playwright los reusa
+    // solo porque se lo pide (por defecto ya no reusa nada, ver `playwright.config.ts`).
+    env: { ...env, E2E_ROUNDTRIPS_OUT: out, E2E_REUSE_SERVERS: '1' },
     stdio: 'inherit',
     shell: isWin,
   },
