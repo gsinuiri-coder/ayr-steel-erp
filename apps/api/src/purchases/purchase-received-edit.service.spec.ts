@@ -102,6 +102,7 @@ function makeTx(opts: {
   productMovements?: unknown[];
   productBalance?: string;
   productAvg?: string;
+  coilBalance?: string;
   auditEvents?: unknown[];
 }) {
   const purchase = coilPurchase(opts.purchase);
@@ -182,6 +183,9 @@ function makeTx(opts: {
         .mockResolvedValue({ name: 'OTRO', docNumber: '20999999999', isActive: true }),
     },
     inventoryBalance: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([{ itemId: 'coil-1', qty: D(opts.coilBalance ?? '1000') }]),
       findUnique: jest.fn().mockResolvedValue({
         qty: D(opts.productBalance ?? '100'),
         avgCost: D(opts.productAvg ?? '5'),
@@ -207,6 +211,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     reverse: jest.fn().mockResolvedValue({ id: 11n }),
     record: jest.fn().mockResolvedValue({ id: 12n }),
     adjustCost: jest.fn().mockResolvedValue({ id: 13n }),
+    replaceEntry: jest.fn().mockResolvedValue({ reversal: { id: 11n }, entry: { id: 12n } }),
     lockAvailability: jest.fn(),
   };
   const coils = { ensureTradingProduct: jest.fn() };
@@ -444,35 +449,24 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     await expect(service.preview(ADMIN, 'p-1', {})).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('confirmar el precio: reversa y reingreso en la fecha de la recepción, bobina y cabecera corregidas, auditado', async () => {
+  it('confirmar el precio: un reemplazo del ingreso (cc15b), bobina y cabecera corregidas, auditado', async () => {
     const { tx, updates } = makeTx({});
     withTx(tx);
     await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
       reason: 'Precio mal tipeado',
     });
-    expect(inventory.reverse).toHaveBeenCalledWith(
-      tx,
-      10n,
-      'admin-1',
-      expect.stringContaining('Precio mal tipeado'),
-      '2026-09-10',
-      true,
-    );
-    expect(inventory.record).toHaveBeenCalledWith(
-      tx,
-      expect.objectContaining({
-        itemType: 'COIL',
-        itemId: 'coil-1',
-        type: 'IN',
-        qty: '1000.000',
-        totalCost: '5500.0000',
-        operationDate: '2026-09-10',
-        confirmBackdate: true,
-        refType: 'PURCHASE',
-        refId: 'p-1',
-      }),
-    );
+    // La puerta `replaceEntry` (regla dura 8): la fecha la toma del ingreso original.
+    expect(inventory.replaceEntry).toHaveBeenCalledWith(tx, {
+      movementId: 10n,
+      qty: '1000.000',
+      unitCost: '5.5000',
+      totalCost: '5500.0000',
+      actorId: 'admin-1',
+      reason: expect.stringContaining('Precio mal tipeado') as unknown,
+    });
+    expect(inventory.reverse).not.toHaveBeenCalled();
+    expect(inventory.record).not.toHaveBeenCalled();
     const coilUpdate = updates.find((u) => u.model === 'coil')?.args as {
       data: Record<string, unknown>;
     };
@@ -680,17 +674,25 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     expect(tx.purchaseItem.update).not.toHaveBeenCalled();
   });
 
-  it('bobina con reserva: el precio se bloquea en la vista previa (la reversa la dejaría sin cubrir)', async () => {
+  it('bobina con reserva (punto 3): el precio pasa; una cantidad que no cubre la reserva, no', async () => {
     jest.mocked(ledger.reservedByItem).mockResolvedValue(new Map([['coil-1', D('100')]]));
     const { tx } = makeTx({});
     withTx(tx);
-    const plan = await service.preview(ADMIN, 'p-1', {
+    const price = await service.preview(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
     });
-    expect(plan.changes[0]?.blockedReason).toContain('material reservado');
+    expect(price.changes[0]?.path).toBe('REVERSE_REENTRY');
+    const enough = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', qty: '100' }],
+    });
+    expect(enough.changes[0]?.path).toBe('REVERSE_REENTRY');
+    const short = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', qty: '99' }],
+    });
+    expect(short.changes[0]?.blockedReason).toContain('quedarían 99.000 y hay 100.000 reservados');
   });
 
-  it('bobina que respalda material prometido por agregado: la vista previa lo nombra y bloquea', async () => {
+  it('bobina que respalda material prometido: el precio no se simula; una baja de kilos sí, con la cantidad nueva', async () => {
     jest.mocked(rawMaterial.findRawMaterialShortfalls).mockResolvedValue([
       {
         specId: 'spec-1',
@@ -704,18 +706,25 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     ]);
     const { tx } = makeTx({});
     withTx(tx);
-    const plan = await service.preview(ADMIN, 'p-1', {
+    const price = await service.preview(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+    });
+    // Sin baja de kilos, el agregado no cambia: no se consulta y el precio pasa.
+    expect(rawMaterial.findRawMaterialShortfalls).not.toHaveBeenCalled();
+    expect(price.changes[0]?.path).toBe('REVERSE_REENTRY');
+
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', qty: '900' }],
       header: { notes: 'x' },
     });
     expect(rawMaterial.findRawMaterialShortfalls).toHaveBeenCalledWith(
       tx,
       ['coil-1'],
       expect.any(String),
-      expect.objectContaining({ withoutCoilIds: ['coil-1'] }),
+      expect.objectContaining({ coilQtyOverrides: new Map([['coil-1', D('900')]]) }),
     );
-    expect(plan.changes.find((c) => c.field === 'unitPrice')?.blockedReason).toBe(
-      'No se puede corregir porque esta bobina respalda material comprometido de PED-000009 (300.000 kg): la reversa del ingreso dejaría esa promesa sin cubrir',
+    expect(plan.changes.find((c) => c.field === 'qty')?.blockedReason).toBe(
+      'No se puede corregir porque esta bobina respalda material comprometido de PED-000009 (300.000 kg): con la cantidad nueva esa promesa quedaría sin cubrir',
     );
     // La cáscara no simula nada: sin líneas en la edición no se consulta el agregado.
     jest.mocked(rawMaterial.findRawMaterialShortfalls).mockClear();
@@ -723,7 +732,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     expect(rawMaterial.findRawMaterialShortfalls).not.toHaveBeenCalled();
   });
 
-  it('producto con reserva que no cabe sin este ingreso: bloqueado; si cabe, ejecutable', async () => {
+  it('producto con reserva (punto 3): se mira el saldo final; el cambio de producto sigue con la reserva de la reversa', async () => {
     const fg = {
       type: PurchaseType.FINISHED_GOOD,
       items: [
@@ -749,21 +758,27 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     };
     jest.mocked(ledger.reservedByItem).mockResolvedValue(new Map([['prod-1', D('30')]]));
 
-    const short = makeTx({ purchase: fg, productMovements: [productIn], productBalance: '120' });
-    short.tx.coil.findMany.mockResolvedValue([]);
-    withTx(short.tx);
-    const blocked = await service.preview(ADMIN, 'p-1', {
+    // Saldo 120 (100 de esta compra), 30 reservados. Sin esta compra quedarían 20: antes de
+    // cc15b el precio se bloqueaba. Ahora cuenta el saldo final.
+    const { tx } = makeTx({ purchase: fg, productMovements: [productIn], productBalance: '120' });
+    tx.coil.findMany.mockResolvedValue([]);
+    withTx(tx);
+    const price = await service.preview(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '55' }],
     });
-    expect(blocked.changes[0]?.path).toBe('BLOCKED');
-
-    const fits = makeTx({ purchase: fg, productMovements: [productIn], productBalance: '200' });
-    fits.tx.coil.findMany.mockResolvedValue([]);
-    withTx(fits.tx);
-    const ok = await service.preview(ADMIN, 'p-1', {
-      items: [{ itemId: 'item-1', unitPrice: '55' }],
+    expect(price.changes[0]?.path).toBe('REVERSE_REENTRY');
+    // Con otras existencias, el aviso del redondeo al deshacer.
+    expect(price.warnings?.join(' ')).toContain('±0,0001');
+    // 120 − 100 + 10 = 30: alcanza justo. Con 9 ya no.
+    const exact = await service.preview(ADMIN, 'p-1', { items: [{ itemId: 'item-1', qty: '10' }] });
+    expect(exact.changes[0]?.path).toBe('REVERSE_REENTRY');
+    const short = await service.preview(ADMIN, 'p-1', { items: [{ itemId: 'item-1', qty: '9' }] });
+    expect(short.changes[0]?.blockedReason).toContain('quedarían 29.000 y hay 30.000 reservados');
+    // El cambio de producto saca el ingreso del producto: la reserva que no cabe lo bloquea.
+    const product = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', productId: 'prod-2' }],
     });
-    expect(ok.changes[0]?.path).toBe('REVERSE_REENTRY');
+    expect(product.changes[0]?.blockedReason).toContain('material reservado');
   });
 
   it('IGV no estándar: la cáscara se guarda sin reescribir totales; el precio se bloquea', async () => {
@@ -824,7 +839,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
       data: Record<string, unknown>;
     };
     expect(line.data).toMatchObject({ subtotal: '4999.9900', igv: '900.0000', total: '5899.9900' });
-    expect(inventory.record).toHaveBeenCalledWith(
+    expect(inventory.replaceEntry).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({ totalCost: '4999.9900' }),
     );

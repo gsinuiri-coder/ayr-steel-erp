@@ -77,6 +77,14 @@ export interface ItemFacts {
    * bobina se quedara sin saldo (el instante de la reversa), ya nombrados; `null` si ninguno.
    */
   backsPromised: string | null;
+  /**
+   * cc15b, punto 5: los pedidos cuya promesa de materia prima quedaría sin cubrir si la bobina
+   * cambiara de color o de espesor y dejara su agregado; `null` si ninguno o si no cambia.
+   */
+  specPromised: string | null;
+  /** cc15b, punto 3: saldo del ítem hoy y lo reservado sobre él, para la reserva al final. */
+  balanceQty: string;
+  reservedQty: string;
   /** Bobina: estado, si está montada en una OP y si tiene landed cost. */
   coilStatus: string | null;
   mountedOrder: string | null;
@@ -172,11 +180,17 @@ function sameNumber(a: string | null, b: string | null): boolean {
   return toDecimal(a).equals(toDecimal(b));
 }
 
+/**
+ * Por qué no se puede un cambio. `replace` (cc15b) es el reemplazo del ingreso sobre el **mismo**
+ * ítem (precio o cantidad, `InventoryService.replaceEntry`): ahí otras entradas posteriores no
+ * bloquean (punto 4) y la reserva se mira sobre el estado final (punto 3), no acá.
+ */
 function blockedBy(
   facts: PurchaseFacts,
   item: ItemFacts,
   group: ReceivedEditGroup,
   reentry: boolean,
+  replace = false,
 ): string | null {
   if (facts.livePayments > 0) {
     return 'La compra tiene pagos vigentes: revierte los pagos antes de corregir costo o cantidades';
@@ -197,7 +211,8 @@ function blockedBy(
   if (item.sharedProduct) {
     return 'Otra línea de la compra entra al mismo producto: esta versión no separa sus ingresos';
   }
-  if (item.laterMovements.length > 0) {
+  const onlyLaterEntries = item.laterMovements.every((m) => m.type === 'IN');
+  if (item.laterMovements.length > 0 && !(replace && onlyLaterEntries)) {
     const detail = item.laterMovements
       .slice(0, 5)
       .map((m) => `${REF_LABELS[m.refType] ?? m.refType} (${m.refType}) el ${m.operationDate}`)
@@ -206,22 +221,40 @@ function blockedBy(
       item.laterMovements.length > 5 ? ` y ${String(item.laterMovements.length - 5)} más` : '';
     // Con consumo, el costo va por el ajuste proporcional (`adjustBlockedBy`); acá llega solo
     // cuando lo posterior son entradas (otra compra del mismo producto) o cuando cambia kardex.
-    return group === 'COST'
-      ? `El producto volvió a entrar después por otra compra (${detail}${more}): corregir esta línea estará disponible en la próxima versión`
-      : `El ítem tiene movimientos posteriores al ingreso (${detail}${more}): revierte esas operaciones primero o anula la compra`;
+    return `El ítem tiene movimientos posteriores al ingreso (${detail}${more}): revierte esas operaciones primero o anula la compra`;
   }
   if (reentry && !item.hasLiveIn) {
     return 'La línea no tiene un ingreso de kardex vivo de esta compra: no hay ingreso que corregir';
   }
   if (reentry && item.backsPromised !== null) {
-    return `No se puede corregir porque esta bobina respalda material comprometido de ${item.backsPromised}: la reversa del ingreso dejaría esa promesa sin cubrir`;
+    return replace
+      ? `No se puede corregir porque esta bobina respalda material comprometido de ${item.backsPromised}: con la cantidad nueva esa promesa quedaría sin cubrir`
+      : `No se puede corregir porque esta bobina respalda material comprometido de ${item.backsPromised}: la reversa del ingreso dejaría esa promesa sin cubrir`;
   }
-  if (item.ownReservation) {
+  if (!reentry && item.specPromised !== null) {
+    return `No se puede cambiar el color o el espesor porque esta bobina respalda material comprometido de ${item.specPromised}: fuera de ese agregado, la promesa quedaría sin cubrir`;
+  }
+  if (item.ownReservation && !replace) {
     return reentry
       ? 'El ítem tiene material reservado que la reversa del ingreso dejaría sin cubrir: libera esa reserva primero'
       : 'La bobina tiene una reserva propia: libérala antes de corregir su especificación';
   }
   return null;
+}
+
+/**
+ * cc15b, punto 3: con el reemplazo, lo reservado sobre el ítem tiene que caber en el saldo
+ * **final** (el de hoy, sin lo que entró por esta línea, más la cantidad nueva). La primitiva lo
+ * vuelve a comprobar bajo el lock; acá se dice antes.
+ */
+function finalReservationShort(item: ItemFacts, newQty: string | null): string | null {
+  const reserved = toDecimal(item.reservedQty);
+  if (reserved.lte(0)) return null;
+  const finalQty = toDecimal(item.balanceQty)
+    .minus(toDecimal(item.qty))
+    .plus(toDecimal(newQty ?? item.qty));
+  if (finalQty.gte(reserved)) return null;
+  return `Con la cantidad nueva quedarían ${toFixedString(finalQty, 'KG')} y hay ${toFixedString(reserved, 'KG')} reservados: libera la reserva o elige una cantidad que la cubra`;
 }
 
 /**
@@ -438,6 +471,10 @@ export function classifyReceivedEdit(
     // Precio y cantidad revierten y vuelven a ingresar; la especificación de la bobina solo se
     // corrige en la fila. El producto cambia el ítem del kardex: también reversa y reingreso.
     const reentry = newQty !== null || newPrice !== null || newProduct !== null;
+    // cc15b: precio o cantidad sobre el mismo ítem van por `replaceEntry` (reservas y materia
+    // prima al final; otras entradas posteriores no bloquean). Un cambio de producto mueve el
+    // ingreso a otro ítem y sigue siendo reversa + ingreso nuevo, con sus bloqueos de siempre.
+    const replace = reentry && newProduct === null;
     const pathOf = (reason: string | null, inPlace = false): ReceivedEditPath =>
       reason !== null ? 'BLOCKED' : inPlace ? 'IN_PLACE' : 'REVERSE_REENTRY';
     // Precio o cantidad recalculan los importes de la línea con la tasa deducida (D-371).
@@ -461,7 +498,13 @@ export function classifyReceivedEdit(
       // Un precio que viaja con una cantidad o un producto nuevos es parte de esa misma
       // reversa: el mensaje que vale es el de kardex.
       const reason = amountsReason(
-        blockedBy(facts, item, newQty !== null || newProduct !== null ? 'KARDEX' : 'COST', true),
+        blockedBy(
+          facts,
+          item,
+          newQty !== null || newProduct !== null ? 'KARDEX' : 'COST',
+          true,
+          replace,
+        ) ?? (replace ? finalReservationShort(item, newQty) : null),
       );
       push(
         'COST',
@@ -475,7 +518,10 @@ export function classifyReceivedEdit(
       );
     }
     if (newQty !== null) {
-      const reason = amountsReason(blockedBy(facts, item, 'KARDEX', true));
+      const reason = amountsReason(
+        blockedBy(facts, item, 'KARDEX', true, replace) ??
+          (replace ? finalReservationShort(item, newQty) : null),
+      );
       push(
         'KARDEX',
         'qty',

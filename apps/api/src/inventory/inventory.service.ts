@@ -245,22 +245,12 @@ export class InventoryService {
     let totalCost: Decimal;
 
     if (input.type === 'IN') {
-      if (input.unitCost === undefined) {
-        throw new BadRequestException('Una entrada de inventario necesita su costo unitario');
-      }
-      unitCost = toDecimal(input.unitCost);
-      if (unitCost.isNegative()) {
-        throw new BadRequestException('El costo unitario no puede ser negativo');
-      }
-      // D-359: el total del documento, si viene, manda; el unitario tiene que ser el suyo.
-      totalCost = input.totalCost === undefined ? qty.times(unitCost) : toDecimal(input.totalCost);
-      if (input.totalCost !== undefined) assertTotalMatchesUnit(totalCost, qty, unitCost);
-      newQty = balance.qty.plus(qty);
-      // Promedio ponderado (D-028), sobre el **valor** que entra. Con saldo previo <= 0 el
-      // promedio anterior no aporta información: el costo de la entrada pasa a ser el promedio.
-      newAvgCost = balance.qty.lte(0)
-        ? totalCost.div(qty)
-        : balance.qty.times(balance.avgCost).plus(totalCost).div(newQty);
+      ({ unitCost, totalCost } = entryCost(qty, input.unitCost, input.totalCost));
+      // Promedio ponderado (D-028), sobre el **valor** que entra: la misma cuenta que usa
+      // `replaceEntry` para su reingreso.
+      const after = stockAfterIn(stockOf(balance), qty, totalCost);
+      newQty = after.qty;
+      newAvgCost = avgOf(after);
     } else {
       if (qty.gt(balance.qty)) {
         throw new BadRequestException(
@@ -285,14 +275,7 @@ export class InventoryService {
       input.viewer,
     );
 
-    await tx.inventoryBalance.update({
-      where: { id: balance.id },
-      data: {
-        qty: toFixedString(newQty, 'KG'),
-        avgCost: toFixedString(newAvgCost, 'MONEY'),
-        unit: input.unit,
-      },
-    });
+    await this.writeBalance(tx, balance.id, newQty, newAvgCost, input.unit);
 
     // D-134: la mitad genérica de la misma invariante. Una cobertura a medida ya no promete
     // `esta` bobina sino **kilos del agregado compatible**, así que el chequeo por ítem de
@@ -321,22 +304,20 @@ export class InventoryService {
       }
     }
 
-    return tx.inventoryMovement.create({
-      data: {
-        businessLineId: input.businessLineId,
-        itemType: input.itemType,
-        itemId: input.itemId,
-        type: input.type,
-        qty: toFixedString(qty, 'KG'),
-        unit: input.unit,
-        unitCost: toFixedString(unitCost, 'MONEY'),
-        totalCost: toFixedString(totalCost, 'MONEY'),
-        refType: input.refType,
-        refId: input.refId ?? null,
-        notes: input.notes ?? null,
-        actorId: input.actorId,
-        operationDate: toDateOnly(operationDate),
-      },
+    return this.createMovement(tx, {
+      businessLineId: input.businessLineId,
+      itemType: input.itemType,
+      itemId: input.itemId,
+      type: input.type,
+      qty: toFixedString(qty, 'KG'),
+      unit: input.unit,
+      unitCost: toFixedString(unitCost, 'MONEY'),
+      totalCost: toFixedString(totalCost, 'MONEY'),
+      refType: input.refType,
+      refId: input.refId ?? null,
+      notes: input.notes ?? null,
+      actorId: input.actorId,
+      operationDate: toDateOnly(operationDate),
     });
   }
 
@@ -483,18 +464,7 @@ export class InventoryService {
     operationDate?: string,
     confirmBackdate?: boolean,
   ): Promise<InventoryMovement> {
-    const original = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
-    if (!original) throw new NotFoundException('Movimiento de kardex no encontrado');
-    if (original.reversalOfId !== null) {
-      throw new BadRequestException('Un movimiento de anulación no se puede volver a anular');
-    }
-    const existing = await tx.inventoryMovement.findFirst({
-      where: { reversalOfId: movementId },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new ConflictException('Ese movimiento ya fue anulado');
-    }
+    const original = await this.reversibleMovement(tx, movementId);
 
     const item: ItemRef = {
       businessLineId: original.businessLineId,
@@ -519,17 +489,16 @@ export class InventoryService {
     let newValue: Decimal;
 
     if (original.type === 'IN') {
-      if (origQty.gt(balance.qty)) {
-        throw new BadRequestException(
-          `No se puede anular el ingreso: quedan ${balance.qty.toFixed(3)} de los ${origQty.toFixed(3)} que ingresaron`,
-        );
-      }
+      // La misma cuenta que usa `replaceEntry` para su reversa.
       type = 'OUT';
       qty = origQty;
       unitCost = toDecimal(original.unitCost.toString());
       totalCost = origValue;
-      newQty = balance.qty.minus(origQty);
-      newValue = currentValue.minus(origValue);
+      ({ qty: newQty, value: newValue } = stockAfterReverseIn(
+        stockOf(balance),
+        origQty,
+        origValue,
+      ));
     } else if (original.type === 'OUT') {
       type = 'IN';
       qty = origQty;
@@ -582,14 +551,7 @@ export class InventoryService {
       balance.qty,
     );
 
-    await tx.inventoryBalance.update({
-      where: { id: balance.id },
-      data: {
-        qty: toFixedString(newQty, 'KG'),
-        avgCost: toFixedString(newAvgCost, 'MONEY'),
-        unit: balance.unit,
-      },
-    });
+    await this.writeBalance(tx, balance.id, newQty, newAvgCost, balance.unit);
 
     // D-134: igual que en `record`. Anular el ingreso de una bobina baja el agregado sin
     // que ninguna reserva nombre a esa bobina.
@@ -601,25 +563,197 @@ export class InventoryService {
       await assertRawMaterialInvariant(tx, [original.itemId], roofingToleranceMm(this.env));
     }
 
+    return this.createMovement(tx, {
+      businessLineId: original.businessLineId,
+      itemType: original.itemType,
+      itemId: original.itemId,
+      type,
+      qty: toFixedString(qty, 'KG'),
+      unit: original.unit,
+      unitCost: toFixedString(unitCost, 'MONEY'),
+      totalCost: toFixedString(totalCost, 'MONEY'),
+      refType: original.refType,
+      refId: original.refId,
+      notes: reason,
+      reversalOfId: original.id,
+      actorId,
+      operationDate: toDateOnly(operationDate ?? businessToday()),
+    });
+  }
+
+  /**
+   * **Reemplazar un ingreso** (D-372, cc15b; regla dura 8): la reversa del ingreso y su
+   * reingreso con cantidad o costo corregidos, **en la misma fecha**, como una sola operación.
+   *
+   * Por qué una puerta propia y no `reverse` + `record`: entre las dos, el saldo pasa por un
+   * estado intermedio —sin el ingreso— que nunca existió, y las invariantes que `reverse`
+   * comprueba ahí (reservas, D-066; materia prima por agregado, D-134) rechazaban una corrección
+   * de precio de un ítem reservado aunque al final no cambiara nada. Acá se comprueban **sobre
+   * el estado final**. Lo demás es el mismo camino interno: la reversa con
+   * `stockAfterReverseIn`, el reingreso con `stockAfterIn` y `entryCost`, el saldo con
+   * `writeBalance` y las filas con `createMovement`.
+   *
+   * **Precondición, comprobada acá adentro y bajo el lock del saldo:** el ítem no tiene
+   * salidas ni ajustes vivos después del ingreso (por id o por fecha). Solo puede tener otras
+   * entradas (una compra posterior del mismo producto). Con eso el saldo corrido nunca baja de
+   * cero en ninguna fecha: desde la fecha del ingreso hasta hoy solo se suma, y la cantidad
+   * nueva es positiva.
+   *
+   * Se deshace igual: otro `replaceEntry` sobre el ingreso nuevo, con los valores anteriores.
+   */
+  async replaceEntry(
+    tx: Prisma.TransactionClient,
+    input: {
+      movementId: bigint;
+      qty: string;
+      unitCost: string;
+      totalCost?: string;
+      actorId: string;
+      reason: string;
+    },
+  ): Promise<{ reversal: InventoryMovement; entry: InventoryMovement }> {
+    const peek = await tx.inventoryMovement.findUnique({ where: { id: input.movementId } });
+    if (!peek) throw new NotFoundException('Movimiento de kardex no encontrado');
+    const item: ItemRef = {
+      businessLineId: peek.businessLineId,
+      itemType: peek.itemType,
+      itemId: peek.itemId,
+      unit: peek.unit,
+    };
+    // D-134: bobinas antes que saldos, igual que una salida de `record`.
+    if (item.itemType === InventoryItemType.COIL) {
+      await lockRawMaterialCoils(tx, [item.itemId], roofingToleranceMm(this.env));
+    }
+    const balance = await this.lockBalance(tx, item);
+    // Recién bajo el lock: otro reemplazo o una anulación concurrentes ya terminaron.
+    const original = await this.reversibleMovement(tx, input.movementId);
+    if (original.type !== 'IN') {
+      throw new BadRequestException('Solo se reemplaza un ingreso');
+    }
+    const later = await tx.inventoryMovement.findFirst({
+      where: {
+        itemType: original.itemType,
+        itemId: original.itemId,
+        id: { not: original.id },
+        OR: [{ id: { gt: original.id } }, { operationDate: { gt: original.operationDate } }],
+        type: { not: 'IN' },
+        reversalOfId: null,
+        reversals: { none: {} },
+      },
+      select: { id: true, type: true, refType: true },
+    });
+    if (later) {
+      throw new BadRequestException(
+        `No se puede reemplazar el ingreso: el ítem tiene un movimiento posterior (${later.type} ${later.refType}) que salió o ajustó lo que entró`,
+      );
+    }
+
+    const qty = toDecimal(input.qty);
+    if (!qty.isFinite() || qty.lte(0)) {
+      throw new BadRequestException('La cantidad de un movimiento debe ser mayor a cero');
+    }
+    const { unitCost, totalCost } = entryCost(qty, input.unitCost, input.totalCost);
+    const origQty = toDecimal(original.qty.toString());
+    const origValue = toDecimal(original.totalCost.toString());
+
+    const afterReverse = stockAfterReverseIn(stockOf(balance), origQty, origValue);
+    const after = stockAfterIn(afterReverse, qty, totalCost);
+
+    // Las invariantes, **sobre el estado final**: el intermedio sin el ingreso no existe.
+    await assertReservationInvariant(
+      tx,
+      { itemType: original.itemType, itemId: original.itemId },
+      after.qty,
+      balance.qty,
+    );
+    await this.writeBalance(tx, balance.id, after.qty, avgOf(after), balance.unit);
+    if (original.itemType === InventoryItemType.COIL && after.qty.lt(balance.qty)) {
+      await assertRawMaterialInvariant(tx, [original.itemId], roofingToleranceMm(this.env));
+    }
+
+    const date = original.operationDate;
+    const reversal = await this.createMovement(tx, {
+      businessLineId: original.businessLineId,
+      itemType: original.itemType,
+      itemId: original.itemId,
+      type: 'OUT',
+      qty: toFixedString(origQty, 'KG'),
+      unit: original.unit,
+      unitCost: toFixedString(original.unitCost.toString(), 'MONEY'),
+      totalCost: toFixedString(origValue, 'MONEY'),
+      refType: original.refType,
+      refId: original.refId,
+      notes: input.reason,
+      reversalOfId: original.id,
+      actorId: input.actorId,
+      operationDate: date,
+    });
+    const entry = await this.createMovement(tx, {
+      businessLineId: original.businessLineId,
+      itemType: original.itemType,
+      itemId: original.itemId,
+      type: 'IN',
+      qty: toFixedString(qty, 'KG'),
+      unit: original.unit,
+      unitCost: toFixedString(unitCost, 'MONEY'),
+      totalCost: toFixedString(totalCost, 'MONEY'),
+      refType: original.refType,
+      refId: original.refId,
+      notes: input.reason,
+      actorId: input.actorId,
+      operationDate: date,
+    });
+    return { reversal, entry };
+  }
+
+  /** Un movimiento que todavía se puede anular: existe, no es una anulación y nadie lo anuló. */
+  private async reversibleMovement(
+    tx: Prisma.TransactionClient,
+    movementId: bigint,
+  ): Promise<InventoryMovement> {
+    const original = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
+    if (!original) throw new NotFoundException('Movimiento de kardex no encontrado');
+    if (original.reversalOfId !== null) {
+      throw new BadRequestException('Un movimiento de anulación no se puede volver a anular');
+    }
+    const existing = await tx.inventoryMovement.findFirst({
+      where: { reversalOfId: movementId },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException('Ese movimiento ya fue anulado');
+    }
+    return original;
+  }
+
+  /** El saldo de un ítem, ya bloqueado por `lockBalance`, con su cantidad y su promedio nuevos. */
+  private async writeBalance(
+    tx: Prisma.TransactionClient,
+    balanceId: string,
+    qty: Decimal,
+    avgCost: Decimal,
+    unit: string,
+  ): Promise<void> {
+    await tx.inventoryBalance.update({
+      where: { id: balanceId },
+      data: {
+        qty: toFixedString(qty, 'KG'),
+        avgCost: toFixedString(avgCost, 'MONEY'),
+        unit,
+      },
+    });
+  }
+
+  /**
+   * La fila del kardex. Una anulación lleva `reversalOfId`, que es único: dos reversas
+   * simultáneas del mismo movimiento no pueden convivir, y la segunda sale con un 409 legible.
+   */
+  private async createMovement(
+    tx: Prisma.TransactionClient,
+    data: Prisma.InventoryMovementUncheckedCreateInput,
+  ): Promise<InventoryMovement> {
     try {
-      return await tx.inventoryMovement.create({
-        data: {
-          businessLineId: original.businessLineId,
-          itemType: original.itemType,
-          itemId: original.itemId,
-          type,
-          qty: toFixedString(qty, 'KG'),
-          unit: original.unit,
-          unitCost: toFixedString(unitCost, 'MONEY'),
-          totalCost: toFixedString(totalCost, 'MONEY'),
-          refType: original.refType,
-          refId: original.refId,
-          notes: reason,
-          reversalOfId: original.id,
-          actorId,
-          operationDate: toDateOnly(operationDate ?? businessToday()),
-        },
-      });
+      return await tx.inventoryMovement.create({ data });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException('Ese movimiento ya fue anulado por otra operación');
@@ -1393,6 +1527,74 @@ function assertTotalMatchesUnit(totalCost: Decimal, qty: Decimal, unitCost: Deci
       `El costo unitario ${unitCost.toFixed(4)} no corresponde al total ${totalCost.toFixed(4)} de ${qty.toFixed(3)}`,
     );
   }
+}
+
+/**
+ * El costo de una entrada: el unitario es obligatorio y no negativo; el total del documento, si
+ * viene, manda y tiene que corresponder al unitario (D-359). Lo comparten `record` y
+ * `replaceEntry` (regla dura 8: el mismo camino interno).
+ */
+function entryCost(
+  qty: Decimal,
+  unitCostInput: string | undefined,
+  totalCostInput: string | undefined,
+): { unitCost: Decimal; totalCost: Decimal } {
+  if (unitCostInput === undefined) {
+    throw new BadRequestException('Una entrada de inventario necesita su costo unitario');
+  }
+  const unitCost = toDecimal(unitCostInput);
+  if (unitCost.isNegative()) {
+    throw new BadRequestException('El costo unitario no puede ser negativo');
+  }
+  const totalCost = totalCostInput === undefined ? qty.times(unitCost) : toDecimal(totalCostInput);
+  if (totalCostInput !== undefined) assertTotalMatchesUnit(totalCost, qty, unitCost);
+  return { unitCost, totalCost };
+}
+
+/** Un saldo en cantidad y valor, la forma en que se hace la cuenta del promedio (D-028). */
+interface Stock {
+  qty: Decimal;
+  value: Decimal;
+}
+
+function stockOf(balance: { qty: Decimal; avgCost: Decimal }): Stock {
+  return { qty: balance.qty, value: balance.qty.times(balance.avgCost) };
+}
+
+function avgOf(stock: Stock): Decimal {
+  return stock.qty.lte(0) ? new Decimal(0) : stock.value.div(stock.qty);
+}
+
+/**
+ * El saldo después de una entrada (D-028): promedio ponderado sobre el **valor** que entra. Con
+ * saldo previo <= 0, el valor anterior no aporta: el costo de la entrada pasa a ser el promedio.
+ */
+function stockAfterIn(stock: Stock, qty: Decimal, totalCost: Decimal): Stock {
+  return {
+    qty: stock.qty.plus(qty),
+    value: stock.qty.lte(0) ? totalCost : stock.value.plus(totalCost),
+  };
+}
+
+/**
+ * El saldo después de anular una entrada: sale **el mismo valor** que metió, no el promedio del
+ * momento, o el promedio quedaría contaminado por la anulación. Sin kilos, un residuo negativo es
+ * redondeo del promedio guardado con 4 decimales y se cierra en cero; con kilos, sería dejar el
+ * valorizado por debajo del costo real sin traza, y se rechaza.
+ */
+function stockAfterReverseIn(stock: Stock, origQty: Decimal, origValue: Decimal): Stock {
+  if (origQty.gt(stock.qty)) {
+    throw new BadRequestException(
+      `No se puede anular el ingreso: quedan ${stock.qty.toFixed(3)} de los ${origQty.toFixed(3)} que ingresaron`,
+    );
+  }
+  const qty = stock.qty.minus(origQty);
+  const value = stock.value.minus(origValue);
+  if (!value.isNegative()) return { qty, value };
+  if (qty.lte(0)) return { qty, value: new Decimal(0) };
+  throw new ConflictException(
+    `No se puede anular el movimiento: sacaría ${origValue.toFixed(2)} de un saldo valorizado en ${stock.value.toFixed(2)}. Revisa los movimientos posteriores del ítem.`,
+  );
 }
 
 /**

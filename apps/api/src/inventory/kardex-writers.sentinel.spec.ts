@@ -50,7 +50,7 @@ const EXCEPTIONS = new Map<string, Exception>([
     {
       decision: 'regla dura 8',
       what: 'la puerta misma: record, reverse, adjustCost y replaceEntry',
-      mustMatch: /async record\(/,
+      mustMatch: /async replaceEntry\(/,
     },
   ],
   [
