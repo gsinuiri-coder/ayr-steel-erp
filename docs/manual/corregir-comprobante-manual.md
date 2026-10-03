@@ -10,11 +10,14 @@
 >
 > El caso 5 (§7, D-378) se agregó en cc13 (2026-10-02) y se verificó con E2E
 > (`e2e/tests/reactivar-con-lineas-d378.spec.ts`).
+>
+> El caso 6 (§8, D-381) se agregó en cc16 (2026-10-03) y se verifica con E2E
+> (`e2e/tests/traer-comprobante-d381.spec.ts`).
 
 ## 1. Propósito
 
 Este manual explica cómo dejar el ERP en orden cuando un comprobante manual quedó mal o no se puede
-despachar. Hay cinco situaciones:
+despachar. Hay seis situaciones:
 
 | Caso | Qué pasó                                                                                 | Qué se hace en el ERP                                                                     |
 | ---- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -23,6 +26,7 @@ despachar. Hay cinco situaciones:
 | 3    | El error fue **anular** un comprobante que sí era válido                                 | Se **reactiva** (D-373)                                                                   |
 | 4    | La línea fabricada «No se despacha» porque **su reserva se liberó a mano**               | Se **restaura la reserva** y se despacha (D-379)                                          |
 | 5    | El papel está bien pero **al pedido le faltaron ítems** (o un precio o cantidad)         | Se anula, se **corrige el pedido** y se **reactiva con sus líneas** (D-378)               |
+| 6    | Se anularon **el comprobante y su pedido**, y se creó el **pedido correcto**             | Desde el pedido correcto se **trae el comprobante anulado** (D-381)                       |
 
 Tres cosas que conviene saber desde el principio:
 
@@ -52,7 +56,7 @@ Abra el comprobante en **Comprobantes → (el comprobante)** y revise:
    - ¿El despacho aparece como **propio** del comprobante («DES-…») o solo como
      **«Del pedido: DES-…»**?
 
-   Esto define qué hacer con el despacho (§8).
+   Esto define qué hacer con el despacho (§9).
 
 4. **Otros comprobantes y borradores del pedido.**
    - Para **editar el pedido** (caso 2) no puede quedar **ningún** comprobante ni borrador de factura
@@ -74,7 +78,7 @@ Abra el comprobante en **Comprobantes → (el comprobante)** y revise:
    - El comprobante queda **Anulado**, con saldo cero, y sale de cuentas por cobrar y de los reportes
      de ventas.
    - Las líneas del pedido vuelven a quedar «por facturar».
-4. Si existe un despacho, decida qué hacer con él (§8). **Lo recomendado es no tocarlo.**
+4. Si existe un despacho, decida qué hacer con él (§9). **Lo recomendado es no tocarlo.**
 5. Desde el pedido, **«Emitir comprobante»**, o **Comprobantes → Nuevo** eligiendo el pedido. La
    pantalla propone facturar todo lo pendiente.
    - El campo **«Despacho que factura»** debería permitir elegir el despacho del comprobante
@@ -87,7 +91,7 @@ Abra el comprobante en **Comprobantes → (el comprobante)** y revise:
 - **Cobros:** se cargan de nuevo sobre el comprobante nuevo.
 - **Despacho:** si no lo toca, el kardex queda bien y **no se descuenta dos veces**. El comprobante
   nuevo ve sus líneas como despachadas y no ofrece despacharlas. Pero el despacho **sigue enlazado al
-  comprobante anulado** (§8 y hueco H2).
+  comprobante anulado** (§9 y hueco H2).
 
 ## 4. Caso 2: la venta cambió (precio, cantidad o producto)
 
@@ -117,7 +121,7 @@ viva. Una anulada ya no cuenta.
 3. **Solo si cambia la cantidad (o la bobina) de una línea ya despachada:** vaya al despacho →
    «⋯» → **«Revertir despacho»**, con motivo y fecha de operación.
    - La reversa devuelve el material al kardex y **restaura la reserva** del pedido.
-   - Lea §8 antes de elegir la fecha.
+   - Lea §9 antes de elegir la fecha.
    - Si solo cambia el **precio**, no revierta el despacho.
 4. Edite el pedido. Al cambiar la cantidad, el sistema **libera la reserva vigente y reserva la
    cantidad nueva**. Si no alcanza el stock, no cambia nada.
@@ -161,7 +165,7 @@ viva. Una anulada ya no cuenta.
 - **Despacho que siguió vigente** mientras estuvo anulado: sigue enlazado y no hay nada pendiente.
   El aviso «queda pendiente de despacho» aparece igual, aunque no sea cierto (hueco H5).
 - **Despacho que se revirtió** mientras estuvo anulado: las líneas quedan pendientes y el aviso
-  ofrece despacharlas. Lea §8: hay riesgo de **contar dos veces la salida** entre esa fecha y la de
+  ofrece despacharlas. Lea §9: hay riesgo de **contar dos veces la salida** entre esa fecha y la de
   la reversa.
 
 ## 6. Caso 4: la línea fabricada «No se despacha» porque su reserva se liberó (D-379)
@@ -190,7 +194,7 @@ Desde D-379:
 3. Vuelva al comprobante. La línea ahora dice «Sale del almacén».
 4. Elija la **fecha de despacho** y despache. Si la salida vieja de esa línea se revirtió, use una
    fecha **igual o posterior a la de la reversa**. Una anterior deja el kardex negativo y la línea
-   vuelve a «No se despacha» con la «Primera fecha válida». Lea §8, «Riesgo de fecha».
+   vuelve a «No se despacha» con la «Primera fecha válida». Lea §9, «Riesgo de fecha».
 
 ### Qué pasa con cada cosa
 
@@ -232,7 +236,7 @@ correlativo, fecha de emisión y cliente, y pasa a facturar **el pedido entero**
 3. Desde el mismo **pedido**, en la sección **Comprobantes anulados** (número, emisión, total,
    motivo y fecha de anulación), use **«Reactivar con las líneas del pedido»** en la fila del
    comprobante. Si el botón está deshabilitado, debajo dice por qué (el mismo mensaje de la tabla
-   de §9); resuélvalo y vuelva a abrir el pedido.
+   de §10); resuélvalo y vuelva a abrir el pedido.
    - Otras vías, con el mismo diálogo: el menú **«⋯»** de la cabecera del comprobante anulado, o
      **Comprobantes → Anulados** (la columna **Pedido** dice de qué pedido es cada uno) y el menú
      **«⋯»** de la fila.
@@ -251,7 +255,7 @@ correlativo, fecha de emisión y cliente, y pasa a facturar **el pedido entero**
 7. Confirme con **«Reactivar con estas líneas»**. El comprobante vuelve a **Aceptado** y se abre su
    detalle.
 8. **Despache las líneas agregadas** desde la tarjeta del detalle (D-364), con la fecha que
-   corresponda (§8).
+   corresponda (§9).
 9. Si había revertido cobros, **vuelva a cargarlos** con su fecha original.
 
 ### Qué pasa con cada cosa
@@ -282,7 +286,83 @@ correlativo, fecha de emisión y cliente, y pasa a facturar **el pedido entero**
   o **borradores**;
 - es una boleta a «público en general» que con las líneas nuevas pasaría el tope de S/ 700.
 
-## 8. Qué pasa con el despacho en cada caso
+## 8. Caso 6: se anularon el comprobante y su pedido, y se creó el pedido correcto (D-381)
+
+El papel de Nubefact es el correcto, pero el pedido sobre el que se registró tenía datos erróneos.
+Se anularon **el comprobante y el pedido**, y se creó **otro pedido** con los datos correctos. El
+número del anulado sigue ocupado, así que no se puede registrar de nuevo. Las dos reactivaciones
+(casos 3 y 5) tampoco sirven, porque su pedido está anulado, y un pedido anulado no se reabre.
+Desde D-381 se **trae el comprobante anulado al pedido correcto**.
+
+> Si **todavía no anuló el pedido**, no lo haga: corrija ese mismo pedido y use el caso 5. Este caso
+> es solo para cuando el pedido ya está anulado.
+
+### Requisitos
+
+- Es una **factura o boleta manual**, anulada y no archivada, y **su pedido está anulado**.
+- El pedido correcto es **del mismo cliente**. El cliente del papel no cambia.
+- La acción la hace un **administrador**.
+- El comprobante **no tiene cobros ni notas de crédito**, ni siquiera notas ya anuladas.
+- **No hay despachos** enlazados al comprobante ni despachos vigentes del pedido anulado.
+- El pedido correcto **no tiene otro comprobante vivo ni borradores**. Si al intentar el reingreso
+  quedó un borrador, **elimínelo antes**.
+- El pedido correcto tiene **al menos tantas líneas** como el comprobante.
+- **No tiene detracción.**
+- El papel de Nubefact coincide con el pedido correcto, y usted tiene a mano su **total**.
+
+### Pasos
+
+1. Si quedó un **borrador** del intento de reingreso en el pedido correcto, **descártelo**: ábralo
+   y use «Descartar», con motivo.
+2. Abra el **pedido correcto** y elija **«⋯» → «Traer comprobante anulado»**.
+3. El diálogo lista los comprobantes manuales anulados del cliente cuyo pedido está anulado. Si uno
+   no se puede traer, debajo dice por qué. Elija el comprobante; si hay uno solo, ya viene elegido.
+4. Revise lo que muestra:
+   - **Pedido:** el anulado → el correcto;
+   - **Vendedor:** el de antes → el de después. El comprobante pasa a ser del vendedor del pedido
+     correcto;
+   - **Fecha del papel:** se conserva. Si es anterior al pedido, lo avisa, pero no bloquea;
+   - **Antes y Después**, con gravada, IGV y total. Las líneas nuevas llevan **«Agregada»**. Una
+     fila que toma otro producto lleva **«Cambia de producto»**: revísela con el papel.
+5. Escriba el **total del papel vigente**. Si no coincide, el diálogo muestra los dos totales y la
+   diferencia, y no deja confirmar. No ajuste el total para que calce.
+6. Escriba el **motivo** y marque **«Confirmo que el comprobante, con estas líneas y en este pedido,
+   coincide con el papel vigente»**.
+7. Confirme con **«Traer comprobante»**. El comprobante vuelve a **Aceptado** en el pedido correcto,
+   y se abre su detalle.
+8. **El despacho se decide aparte.** «Despachar a la fecha del comprobante» usa la **fecha del
+   papel**, que puede ser anterior a la entrada del stock. Si a esa fecha no había stock, no se
+   fuerza el negativo: se sigue D-374, es decir, se corrige la fecha de recepción de la compra o se
+   despacha en la primera fecha válida posterior. Antes de despachar, confirme **cuándo salió la
+   mercadería de verdad** (§9).
+
+### Qué pasa con cada cosa
+
+- **Número, serie, fecha, cliente, condición y vencimiento:** no cambian.
+- **Líneas:** las que ya tenía **se conservan**, con su descripción del papel, y pasan a facturar
+  la línea del pedido correcto del mismo producto. Las que faltaban se **agregan al final**. No se
+  borra ninguna.
+- **Cabecera y deuda:** se recalculan con las líneas, al céntimo (D-377). La deuda pasa a ser el
+  total nuevo.
+- **Pedido anulado:** queda anulado y sin comprobante. **Pedido correcto:** queda con comprobante
+  y ya no se edita (D-187).
+- **Kardex y reservas:** no se tocan. Las reservas del pedido correcto siguen activas.
+- **Auditoría:** el comprobante registra el evento «Comprobante manual anulado traído a otro pedido
+  (D-381)», con el antes y el después, los dos pedidos y los dos vendedores. Cada pedido registra
+  también su propio evento.
+
+### Se rechaza si
+
+- el total tipeado no coincide al céntimo;
+- falta la casilla o el motivo;
+- el pedido de origen **no está anulado**: en ese caso use el caso 5;
+- el pedido correcto es **de otro cliente**, está anulado, tiene otro comprobante vivo o un
+  borrador, o tiene menos líneas que el comprobante;
+- el comprobante tiene cobros, notas de crédito, despachos enlazados, rastro de PSE o detracción;
+- el pedido anulado tiene despachos vigentes;
+- es una boleta a «público en general» que pasaría el tope de S/ 700.
+
+## 9. Qué pasa con el despacho en cada caso
 
 Cómo funciona por dentro (verificado):
 
@@ -321,7 +401,7 @@ Cómo funciona por dentro (verificado):
 > despacho**. Si tiene que revertirlo y rehacerlo porque cambia la cantidad, elija como **fecha del
 > nuevo despacho la misma fecha de la reversa**, no la del comprobante.
 
-## 9. Mensajes que verá
+## 10. Mensajes que verá
 
 | Mensaje                                                                                             | Qué hacer                                                                                                    |
 | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -332,7 +412,7 @@ Cómo funciona por dentro (verificado):
 | «El pedido ya tiene comprobante (…): no se puede … Corrige con una nota de crédito.»                | Queda una factura o boleta, o un borrador, en pie en el pedido. Anúlela internamente o descarte el borrador. |
 | «Línea N: ya tiene despachos, así que su cantidad no se cambia…»                                    | Revierta el despacho primero, o agregue un ítem con la diferencia.                                           |
 | «El comprobante … todavía factura líneas de este despacho: dalo de baja…» (al revertir el despacho) | Para un manual, **anúlelo internamente** primero (hueco H6).                                                 |
-| «La fecha … queda ANTES de N movimiento(s) …» (al revertir con fecha pasada)                        | Use la fecha de hoy (§8).                                                                                    |
+| «La fecha … queda ANTES de N movimiento(s) …» (al revertir con fecha pasada)                        | Use la fecha de hoy (§9).                                                                                    |
 | «Hay N borrador(es) de comprobante sobre las mismas líneas…»                                        | Descarte el borrador del reingreso.                                                                          |
 | «La línea N del pedido ya se volvió a facturar en …»                                                | Ya hay un reemplazo. Decida cuál queda.                                                                      |
 | «El pedido …: la línea N se modificó … después de anular …»                                         | El pedido cambió: facture de nuevo (caso 2) o, si el papel ya lo dice, reactive con sus líneas (caso 5).     |
@@ -342,12 +422,16 @@ Cómo funciona por dentro (verificado):
 | «Confirma que el comprobante, con estas líneas, coincide con el papel vigente…»                     | Falta marcar la casilla (caso 5).                                                                            |
 | «Las líneas del pedido … son las mismas de …: no hay nada que cambiar. Usa «Reactivar»»             | El pedido no cambió: es el caso 3, no el 5.                                                                  |
 | «Confirma que el comprobante sigue vigente en Nubefact/SUNAT …»                                     | Falta marcar la casilla.                                                                                     |
+| «El pedido … está anulado: no se reactiva un comprobante de un pedido anulado»                      | Cree el pedido correcto y traiga el comprobante desde él (caso 6).                                           |
+| «El pedido de origen … no está anulado: … se trae a otro pedido solo si su pedido está anulado…»    | Corrija ese pedido y reactive con sus líneas (caso 5).                                                       |
+| «El pedido … es de otro cliente: … conserva el cliente del papel…»                                  | El cliente del papel no cambia. Use un pedido del mismo cliente (caso 6).                                    |
+| «El pedido … tiene N línea(s) y … tiene M: no se borra ninguna línea del comprobante…»              | Agregue al pedido correcto lo que falta (caso 6).                                                            |
 | No aparece «Anular internamente» en un manual                                                       | Tiene cobros o notas de crédito vivas (hueco H6).                                                            |
 | «La línea N se fabrica contra el pedido y no tiene producto terminado reservado…»                   | Restaure la reserva (§6, caso 4) y despache.                                                                 |
 | «La línea N se fabrica contra el pedido y esta reserva cubre … ya fabricados…» (al liberar)         | Es D-379: no se libera. Despache la línea, revierta la producción o anule el pedido.                         |
 | «… tiene X disponibles … y la reserva necesita Y: faltan Z.» (al restaurar)                         | Otro pedido tomó el material. Hay que producir o liberar lo de ese otro pedido.                              |
 
-## 10. Huecos conocidos y propuestas (sin implementar)
+## 11. Huecos conocidos y propuestas (sin implementar)
 
 Del diagnóstico de FFA1-00001382 salieron dos más:
 
@@ -366,7 +450,7 @@ Del diagnóstico de FFA1-00001382 salieron dos más:
 | **H6** | Para un manual, «Anular internamente» se oculta sin aviso cuando hay cobros o notas de crédito; el diálogo habla de «planilla»; el bloqueo de la reversa de despacho dice «dalo de baja».                                                                                                                                                                                 | Ajustar los textos al origen MANUAL.                                                                                                                                                                                                                                                 |
 | **H7** | No hay edición para cambiar el producto de una línea común ni para quitarla del pedido.                                                                                                                                                                                                                                                                                   | Decisión de alcance del dueño (regla 16).                                                                                                                                                                                                                                            |
 
-## 11. Para soporte (referencias de código, `main` en `cdcd4cc`)
+## 12. Para soporte (referencias de código, `main` en `cdcd4cc`)
 
 - **Restaurar y el bloqueo de liberar (D-379, cc12):**
   - `apps/api/src/sales/reservation-restore.ts`: `fabricatedReleaseBlock`, `restoreBlock`,
