@@ -2,6 +2,29 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 — Ventana cc15a (D-372 sesión 2a desplegada, PR #84, sin migración)
+
+Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc15a.md`.
+
+- **Antes del deploy:** UAT del dueño en demo sobre `5bd99ba`, confirmado; CI 37148102293 en
+  `5bd99ba` (unitarios 2229, E2E 495 passed y 3 skipped, smoke de Neon `ci` 36 passed); foto
+  `READ ONLY`: con el guardrail de anulación nuevo, **ninguna** de las 18 compras recibidas cambia
+  de anulable a no anulable ni al revés (la de más movimientos posteriores tiene 41, bajo el tope
+  de 50).
+- **API:** **`ayr-steel-erp-api-00078-pg7`** (`git-sha=5bd99ba`) al 100 %, `/health` 200 y smoke
+  8/8 con la web vieja. Vuelta atrás: `00077-p8z`.
+- **Merge del #84:** `main` = **`f550bd4`**, diff de runtime vacío. Vercel `success`. Smoke:
+  `vercel.app` 8/8; `v2.mareliac.pe` 7/8 en la primera corrida (la salida filtrada no dejó cuál
+  falló) y 8/8 en las dos siguientes.
+- **Demo** sigue arriba desde `../ayr-cc15` (127.0.0.1:3101), que se conserva para reusar; cc15b
+  sale en rama nueva desde `f550bd4`.
+- **Queda abierto:**
+  - **cc15b** (puntos 2, 3 y 4 de la sesión 2): antes de programar, el texto nuevo de la
+    invariante de las puertas de escritura del kardex, con OK del dueño;
+  - P2/P3 de cc14 y cc15a no corregidos (listas en sus entradas);
+  - **Descarga de comprobantes en Excel** (alcance por definir);
+  - rama remota `cc15/editar-compra-sesion2`.
+
 ## 2026-10-03 — Decisiones del dueño y arranque de cc15 (sesión 2 de D-372)
 
 - **Cambio de producto en «Editar compra» (P2 de cc14): sin hotfix**, va primero en la sesión 2.
