@@ -1,9 +1,23 @@
 # Runbook: ventana de cc15a (D-372, sesión 2, primera parte)
 
-**Estado: PREPARADO, sin ejecutar.** Cada paso marcado **[OK]** espera el OK explícito del dueño
-(D-251/D-232). El agente propone el comando exacto y espera.
+**Estado: EJECUTADO el 2026-10-03, sin incidencias.** Resultado:
 
-- PR: `<PR>` (rama `cc15/editar-compra-sesion2`).
+| Qué                    | Valor                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| UAT del dueño          | en demo local (127.0.0.1:3101, desde `../ayr-cc15` en `5bd99ba`), confirmado                                                   |
+| CI                     | 37148102293 en `5bd99ba`: unitarios 2229, E2E 495 passed y 3 skipped, smoke Neon `ci` 36 passed                                |
+| Foto `READ ONLY`       | guardrail de anulación de hoy contra el de cc15a en las 18 compras recibidas: **ninguna cambia** (máximo 41 filas posteriores) |
+| Revisión API anterior  | `ayr-steel-erp-api-00077-p8z` (`git-sha=fecc358`)                                                                              |
+| Revisión API nueva     | **`ayr-steel-erp-api-00078-pg7`**, 100 %, `git-sha=5bd99ba`, `/health` 200, smoke 8/8 con la web vieja                         |
+| Merge del #84          | `main` = **`f550bd4`**, diff de runtime contra `5bd99ba` vacío; Vercel `success`                                               |
+| Smoke con la web nueva | `vercel.app` 8/8; `v2.mareliac.pe` 7/8 en la primera corrida (no quedó cuál falló) y 8/8 en las dos siguientes                 |
+
+Plan original:
+
+Cada paso marcado **[OK]** espera el OK explícito del dueño (D-251/D-232). El agente propone el
+comando exacto y espera.
+
+- PR: #84 (rama `cc15/editar-compra-sesion2`), desplegado desde `5bd99ba`.
 - **No hay migración** y el deploy no escribe datos. Las correcciones las hace el dueño después,
   por «Editar compra», con motivo y vista previa.
 - **Orden:** reacomodar sobre `main` → CI → resumen de D-232 y OK → **API** → smoke → merge
