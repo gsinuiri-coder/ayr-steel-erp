@@ -903,7 +903,9 @@ export class ReceivedPurchaseEditService {
       const target = cents(toDecimal(newSubtotal).times(exchangeRate))
         .times(remainingQty)
         .div(lotQty);
-      const current = balanceQty.times(toDecimal((balance?.avgCost ?? 0).toString()));
+      // El valor de hoy **de lo que queda de esta compra**, no del saldo entero: en una bobina
+      // coinciden, pero así no depende de esa invariante (segunda revisión de cc15a, P2-2).
+      const current = remainingQty.times(toDecimal((balance?.avgCost ?? 0).toString()));
       amountPen = money(target.minus(current));
     }
     return {
@@ -1054,6 +1056,36 @@ export class ReceivedPurchaseEditService {
       warnings.push(
         'El costo por kg de la bobina cambia en su ficha y, con él, en los reportes mensuales de bobinas ya pasados, que leen la ficha (decisión C).',
       );
+      // Los flejes de un corte y las bobinas de un partido nacieron con el costo de entonces y
+      // son ítems propios del kardex: la corrección de la madre no los alcanza.
+      const coilIds = changes.flatMap((c) => {
+        if (c.field !== 'unitPrice' || c.path === 'BLOCKED') return [];
+        const coilId = loaded.items.find((l) => l.facts.lineNumber === c.lineNumber)?.coilId;
+        return coilId ? [coilId] : [];
+      });
+      if (coilIds.length > 0) {
+        const children = await tx.coil.findMany({
+          where: {
+            status: { not: 'CANCELLED' },
+            OR: [
+              { parentCoilId: { in: coilIds } },
+              { split: { parentCoilId: { in: coilIds }, revertedAt: null } },
+            ],
+          },
+          select: { code: true },
+          orderBy: { code: 'asc' },
+        });
+        if (children.length > 0) {
+          const shown = children
+            .slice(0, 8)
+            .map((c) => c.code)
+            .join(', ');
+          const more = children.length > 8 ? ` y ${String(children.length - 8)} más` : '';
+          warnings.push(
+            `Los flejes o bobinas que salieron de esta bobina (${shown}${more}) conservan el costo con que nacieron: la corrección no los alcanza.`,
+          );
+        }
+      }
     }
     return {
       plan: {

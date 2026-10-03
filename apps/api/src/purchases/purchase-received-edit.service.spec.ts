@@ -398,6 +398,24 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     expect(plan.executable).toBe(false);
   });
 
+  it('bobina con flejes o hijas de un partido: la revisión avisa que conservan su costo', async () => {
+    const { tx } = makeTx({ movements: [ownIn, scrap], productBalance: '600' });
+    tx.coil.findMany.mockImplementation((args: { where: { purchaseId?: string } }) =>
+      Promise.resolve(
+        args.where.purchaseId
+          ? [{ id: 'coil-1', purchaseItemId: 'item-1', status: 'OPEN' }]
+          : [{ code: 'BOB-1-F1' }, { code: 'BOB-1-F2' }],
+      ),
+    );
+    withTx(tx);
+    const plan = await service.preview(ADMIN, 'p-1', {
+      items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+    });
+    expect(plan.warnings?.join(' ')).toContain(
+      'Los flejes o bobinas que salieron de esta bobina (BOB-1-F1, BOB-1-F2) conservan el costo con que nacieron',
+    );
+  });
+
   it('un reintento con la misma clave de idempotencia no repite nada', async () => {
     const { tx } = makeTx({});
     tx.$queryRaw.mockResolvedValue([]); // la clave ya existía: el INSERT no devolvió fila

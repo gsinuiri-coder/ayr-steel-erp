@@ -871,18 +871,21 @@ export class PurchasesService {
     const lastOwnId = lastOwnMovementByLiveItem(movements);
     if (lastOwnId.size === 0) return;
     const later = await tx.inventoryMovement.findMany({
+      // Lo que ya se anuló no bloquea: una merma registrada y anulada después deja el
+      // saldo intacto, y contarla dejaría la compra sin poder anularse nunca más. Se filtra
+      // **en la consulta**, antes del límite: con el filtro en memoria, 50 filas anuladas
+      // tapaban una salida viva que venía después (segunda revisión de cc15a, P2-1).
       where: {
         OR: [...lastOwnId].map(([itemId, id]) => ({ itemId, id: { gt: id } })),
+        reversalOfId: null,
+        reversals: { none: {} },
+        id: { notIn: [...ownIds] },
       },
       orderBy: { id: 'asc' },
       include: { reversals: { select: { id: true } } },
-      take: 50,
+      take: 5,
     });
-    // Lo que ya se anuló no bloquea: una merma registrada y anulada después deja el
-    // saldo intacto, y contarla dejaría la compra sin poder anularse nunca más.
-    const blocking = liveMovements(later)
-      .filter((m) => !ownIds.has(m.id))
-      .slice(0, 5);
+    const blocking = liveMovements(later).filter((m) => !ownIds.has(m.id));
     if (blocking.length === 0) return;
 
     const labels = await this.resolveMovementLabels(tx, blocking);

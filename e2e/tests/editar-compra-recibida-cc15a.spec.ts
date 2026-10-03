@@ -264,6 +264,30 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
     }
   });
 
+  test('anular: muchas mermas anuladas no tapan una salida viva que vino después (segunda revisión, P2-1)', async () => {
+    const s = await setupRoofingScenario(api, { weightKg: '1000' });
+    try {
+      // 26 mermas registradas y anuladas: 52 filas descartables después del ingreso.
+      for (let i = 0; i < 26; i += 1) {
+        await scrap(api, s.coil.id, '1');
+        const out = live(await movementsOf(api, 'COIL', s.coil.id)).find((m) => m.type === 'OUT');
+        await postJson(api, `/api/coils/scraps/${out!.id}/cancel`, {
+          reason: 'Merma anulada (E2E cc15a)',
+        });
+      }
+      // Y recién después, una merma que sigue viva.
+      await scrap(api, s.coil.id, '5');
+      const rejected = await postExpectingError(api, `/api/purchases/${s.purchaseId}/cancel`, {
+        reason: 'Intento de anular con consumo (E2E cc15a)',
+      });
+      expect(rejected.status).toBe(400);
+      // Lo rechaza el guardrail con su mensaje, no la reversa del ingreso por falta de saldo.
+      expect(rejected.message).toContain('movimientos posteriores');
+    } finally {
+      await purgeRoofingTrail(api, trailOf(s));
+    }
+  });
+
   test('pantalla: con consumo, la revisión muestra el ajuste, lo que ya salió y los avisos', async ({
     page,
   }) => {
