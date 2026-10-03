@@ -6,6 +6,7 @@ import {
   getDocument,
   orderProgress,
   purgeInvoicingTrail,
+  validRuc,
   type FiscalDocumentDto,
   type InvoicingTrail,
 } from '../helpers/invoicing';
@@ -87,7 +88,10 @@ async function loginAsAdmin(page: Page): Promise<void> {
  * anulado también. Después, el pedido correcto con esa línea y una más.
  */
 async function annulledWithCancelledOrder(api: APIRequestContext, trail: InvoicingTrail) {
-  const customer = await createInvoiceableCustomer(api);
+  // Un RUC propio por caso: sin él, con el RUC facturable configurado (CI) el helper devuelve siempre el
+  // mismo cliente, que acumula los anulados de otras corridas y de los otros tests, y «otro
+  // cliente» dejaba de ser otro.
+  const customer = await createInvoiceableCustomer(api, { docNumber: validRuc() });
   const stock = await setupPosStock(api, { qty: '40', unitPrice: '20' });
   trail.purchaseId = stock.purchaseId;
   trail.supplierId = stock.supplier.id;
@@ -327,7 +331,7 @@ test.describe('D-381 — traer un comprobante manual anulado a otro pedido', () 
       const paperTotal = cents(right.totalPen);
 
       // Otro cliente: el cliente del papel no cambia (decisión 1).
-      const other = await createInvoiceableCustomer(api);
+      const other = await createInvoiceableCustomer(api, { docNumber: validRuc() });
       const foreign = await createDirectOrder(api, {
         customerId: other.id,
         businessLine: POS_LINE,
