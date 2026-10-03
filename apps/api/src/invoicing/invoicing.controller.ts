@@ -29,6 +29,7 @@ import {
   updateInvoicingSettingsSchema,
   voidDocumentSchema,
   reactivateDocumentSchema,
+  reactivateWithOrderLinesSchema,
   type CreateCreditNoteInput,
   type CreateCustomerPaymentInput,
   type CreateFiscalSeriesInput,
@@ -51,6 +52,9 @@ import {
   type UpdateInvoicingSettingsInput,
   type VoidDocumentInput,
   type ReactivateDocumentInput,
+  type ReactivateWithOrderLinesInput,
+  type ReactivationPreviewDto,
+  type OrderAnnulledDocumentDto,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -447,6 +451,49 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(reactivateDocumentSchema)) body: ReactivateDocumentInput,
   ): Promise<FiscalDocumentDto> {
     await this.fiscalImport.reactivateExternal(actor, id, body);
+    return this.invoicing.findOne(id);
+  }
+
+  /**
+   * UAT de cc13: los anulados de un pedido con sus dos reactivaciones (D-373, D-378) y el motivo
+   * si no aplican. Solo lectura y **sin bloqueos**: pinta la sección del pedido; el modal y la
+   * ejecución vuelven a comprobar con sus locks.
+   */
+  @Get('orders/:salesOrderId/annulled-documents')
+  @Roles(Role.ADMINISTRADOR)
+  annulledOfOrder(
+    @CurrentUser() actor: RequestUser,
+    @Param('salesOrderId', ParseUUIDPipe) salesOrderId: string,
+  ): Promise<OrderAnnulledDocumentDto[]> {
+    return this.fiscalImport.annulledOfOrder(actor, salesOrderId);
+  }
+
+  /**
+   * D-378: el antes y el después de reactivar un manual anulado con las líneas actuales del
+   * pedido. Pasa por los mismos bloqueos que la reactivación y no escribe nada.
+   */
+  @Get('documents/:id/reactivate-with-order-lines/preview')
+  @Roles(Role.ADMINISTRADOR)
+  previewReactivateWithOrderLines(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<ReactivationPreviewDto> {
+    return this.fiscalImport.previewReactivationWithOrderLines(actor, id);
+  }
+
+  /**
+   * D-378: reactiva un manual anulado con las líneas actuales del pedido. Motivo, casilla «coincide
+   * con el papel vigente» y total del papel (al céntimo) obligatorios; no despacha nada.
+   */
+  @Post('documents/:id/reactivate-with-order-lines')
+  @Roles(Role.ADMINISTRADOR)
+  async reactivateWithOrderLines(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reactivateWithOrderLinesSchema))
+    body: ReactivateWithOrderLinesInput,
+  ): Promise<FiscalDocumentDto> {
+    await this.fiscalImport.reactivateWithOrderLines(actor, id, body);
     return this.invoicing.findOne(id);
   }
 }

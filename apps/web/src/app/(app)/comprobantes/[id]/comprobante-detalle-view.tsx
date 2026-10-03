@@ -83,7 +83,15 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatches';
 import { DispatchAtIssueDate } from './dispatch-at-issue-date';
-import { DISPATCH_AT_DOCUMENT_DATE } from '@/components/invoicing/reactivate-document-dialog';
+import {
+  canReactivate,
+  DISPATCH_AT_DOCUMENT_DATE,
+  ReactivateDocumentDialog,
+} from '@/components/invoicing/reactivate-document-dialog';
+import {
+  canReactivateWithOrderLines,
+  ReactivateWithOrderLinesDialog,
+} from '@/components/invoicing/reactivate-with-order-lines-dialog';
 import { DocumentProfitability } from './document-profitability';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -102,6 +110,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const suggestDocumentDate = useSearchParams().get('despacho') === DISPATCH_AT_DOCUMENT_DATE;
   const [voidOpen, setVoidOpen] = useState(false);
   const [annulOpen, setAnnulOpen] = useState(false);
+  // D-373/D-378 (pedido del dueño en cc13): las dos reactivaciones también desde el detalle.
+  const [reactivateOpen, setReactivateOpen] = useState(false);
+  const [reactivateLinesOpen, setReactivateLinesOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [creditOpen, setCreditOpen] = useState(false);
   const [creditReason, setCreditReason] = useState<CreditNoteReason>('ANULACION_OPERACION');
@@ -762,6 +773,26 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 },
               },
               {
+                key: 'reactivate',
+                label: 'Reactivar',
+                show: isAdmin && canReactivate(d),
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setReactivateOpen(true);
+                },
+              },
+              {
+                key: 'reactivate-with-order-lines',
+                label: 'Reactivar con las líneas del pedido',
+                show: isAdmin && canReactivateWithOrderLines(d),
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setReactivateLinesOpen(true);
+                },
+              },
+              {
                 key: 'void',
                 label: 'Dar de baja',
                 show: canVoid || canVoidDispatchNote,
@@ -1200,6 +1231,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         {d.sunatHash && <> Hash SUNAT: {d.sunatHash}.</>}
         {d.sendAttempts > 0 && <> Intentos de envío: {d.sendAttempts}.</>}
       </div>
+
+      {reactivateOpen && (
+        <ReactivateDocumentDialog document={d} open onOpenChange={setReactivateOpen} />
+      )}
+      {reactivateLinesOpen && (
+        <ReactivateWithOrderLinesDialog document={d} open onOpenChange={setReactivateLinesOpen} />
+      )}
 
       <ReasonDialog
         open={discardOpen}

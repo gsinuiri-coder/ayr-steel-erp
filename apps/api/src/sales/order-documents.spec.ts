@@ -6,7 +6,7 @@ import { ENV, type Env } from '../config/env';
 import { InventoryService } from '../inventory/inventory.service';
 import { RoofingProductionService } from '../production/roofing-production.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { liveDocumentsByOrder } from './order-documents';
+import { liveDocumentsByOrder, orderDocuments } from './order-documents';
 import { SalesOrdersService } from './sales-orders.service';
 
 /**
@@ -150,6 +150,36 @@ describe('SalesOrdersService.findAll — comprobantes del pedido sin N+1 (Correc
       in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA, FiscalDocType.NOTA_CREDITO],
     });
     expect(args.orderBy).toEqual([{ issueDate: 'asc' }, { number: 'asc' }]);
+  });
+});
+
+describe('orderDocuments (UAT de cc13)', () => {
+  const row = (id: string, status: string) => ({
+    id,
+    number: `F001-${id}`,
+    docType: FiscalDocType.FACTURA,
+    issueDate: new Date('2026-09-22T00:00:00.000Z'),
+    status,
+  });
+
+  it('una sola consulta: separa los vivos y cuenta los anulados', async () => {
+    const findMany = jest
+      .fn()
+      .mockResolvedValue([row('1', 'ACCEPTED'), row('2', 'ANNULLED'), row('3', 'ANNULLED')]);
+    const out = await orderDocuments({ fiscalDocument: { findMany } } as never, 'so-1');
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const args = (findMany.mock.calls as unknown[][])[0]![0] as {
+      where: { status: { in: string[] } };
+    };
+    expect(args.where.status.in).toEqual([...LIVE_DOCUMENT_STATUSES, 'ANNULLED']);
+    expect(out.live.map((d) => d.id)).toEqual(['1']);
+    expect(out.annulledCount).toBe(2);
+  });
+
+  it('sin anulados, la cuenta es 0', async () => {
+    const findMany = jest.fn().mockResolvedValue([row('1', 'ACCEPTED')]);
+    const out = await orderDocuments({ fiscalDocument: { findMany } } as never, 'so-1');
+    expect(out.annulledCount).toBe(0);
   });
 });
 

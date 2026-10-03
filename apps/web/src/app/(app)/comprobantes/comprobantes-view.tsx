@@ -23,6 +23,10 @@ import {
   canReactivate,
   ReactivateDocumentDialog,
 } from '@/components/invoicing/reactivate-document-dialog';
+import {
+  canReactivateWithOrderLines,
+  ReactivateWithOrderLinesDialog,
+} from '@/components/invoicing/reactivate-with-order-lines-dialog';
 import { formatDate, formatMoney } from '@/lib/format';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -128,7 +132,13 @@ export function ComprobantesView() {
 
   const rows = documents.data?.items ?? [];
   const isAdmin = user.role === Role.ADMINISTRADOR;
+  // UAT de cc13: entre varios anulados hay que saber de qué pedido es cada uno, así que con el
+  // chip de anulados el pedido va en su propia columna (y no debajo del número).
+  const showOrderColumn = status.split(',').includes('ANNULLED');
+  const columnCount = (isAdmin ? 10 : 9) + (showOrderColumn ? 1 : 0);
   const [reactivating, setReactivating] = useState<FiscalDocumentListItemDto | null>(null);
+  const [reactivatingWithLines, setReactivatingWithLines] =
+    useState<FiscalDocumentListItemDto | null>(null);
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -250,6 +260,7 @@ export function ComprobantesView() {
                 >
                   Número
                 </SortableTableHead>
+                {showOrderColumn && <TableHead>Pedido</TableHead>}
                 <SortableTableHead
                   className="hidden md:table-cell"
                   active={sort.key === 'docType'}
@@ -330,7 +341,7 @@ export function ComprobantesView() {
                       {/* Un borrador todavía no tiene número (D-072): se dice, no se finge. */}
                       {d.number ?? 'Borrador'}
                     </Link>
-                    {d.salesOrderCode && d.salesOrderId && (
+                    {!showOrderColumn && d.salesOrderCode && d.salesOrderId && (
                       <div className="text-xs">
                         <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
                           {d.salesOrderCode}
@@ -338,6 +349,17 @@ export function ComprobantesView() {
                       </div>
                     )}
                   </TableCell>
+                  {showOrderColumn && (
+                    <TableCell>
+                      {d.salesOrderCode && d.salesOrderId ? (
+                        <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
+                          {d.salesOrderCode}
+                        </Link>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell className="hidden md:table-cell">
                     {FISCAL_DOC_TYPE_LABELS[d.docType]}
                   </TableCell>
@@ -405,6 +427,15 @@ export function ComprobantesView() {
                               setReactivating(d);
                             },
                           },
+                          {
+                            // D-378: el papel está bien y al pedido le faltaron ítems.
+                            key: 'reactivate-with-order-lines',
+                            label: 'Reactivar con las líneas del pedido',
+                            show: canReactivateWithOrderLines(d),
+                            onSelect: () => {
+                              setReactivatingWithLines(d);
+                            },
+                          },
                         ]}
                       />
                     </TableCell>
@@ -413,10 +444,7 @@ export function ComprobantesView() {
               ))}
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell
-                    colSpan={isAdmin ? 10 : 9}
-                    className="text-center text-muted-foreground"
-                  >
+                  <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
                     No hay comprobantes que coincidan.
                   </TableCell>
                 </TableRow>
@@ -441,6 +469,15 @@ export function ComprobantesView() {
           open
           onOpenChange={(open) => {
             if (!open) setReactivating(null);
+          }}
+        />
+      )}
+      {reactivatingWithLines && (
+        <ReactivateWithOrderLinesDialog
+          document={reactivatingWithLines}
+          open
+          onOpenChange={(open) => {
+            if (!open) setReactivatingWithLines(null);
           }}
         />
       )}

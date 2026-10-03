@@ -2,6 +2,68 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-02 — cc13: D-378, reactivar un manual con las líneas del pedido (PR sin merge)
+
+- **Rama `cc13/reactivar-con-lineas`** desde `main` `58955b5`, independiente de cc14. Sin migración y
+  nada en producción. Runbook: `docs/handoff/ventana-cc13.md`.
+- **D-378, decisiones 1-4 del arranque aprobadas por el dueño:**
+  - el comprobante pasa a facturar el pedido entero;
+  - se admiten los cambios de precio o cantidad hechos mientras estuvo anulado (D-187 sigue
+    mandando sobre la línea despachada);
+  - las filas se actualizan en su lugar y las nuevas van al final;
+  - con detracción no se reactiva así.
+- **Lo que hace:**
+  - controla el total del papel tipeado al céntimo y, si no coincide, muestra los dos y la
+    diferencia, en el API y en el modal;
+  - el modal muestra el antes y el después;
+  - la casilla dice «Confirmo que el comprobante, con estas líneas, coincide con el papel vigente»;
+  - las líneas agregadas quedan pendientes de despacho y las originales conservan el suyo;
+  - no toca kardex, reservas ni cobros.
+- **Bloqueos agregados en la implementación** (registrados en la fila de D-378, para confirmar en la
+  revisión del dueño):
+  - un pedido que no cambió remite a «Reactivar»;
+  - una boleta a «público en general» que cruzaría el tope de D-077;
+  - si la línea cambió de producto, la fila toma el producto nuevo.
+- **D-380** (conservar los cobros corrigiendo un manual vivo sin anularlo) registrada como
+  **propuesta, sin implementar**.
+- **Verificación local:**
+  - lint, typecheck y unitarios en verde (API 2150, web 87);
+  - E2E de D-378 (2, nuevos) y de D-373 (3) en verde, 5/5. El de D-373 solo cambió el selector del
+    menú a `exact: true`.
+  - CI 37063416075 sobre `f343be9`, todo en verde: E2E completo **481 passed, 0 failed, 3
+    skipped**; smoke de Neon `ci` 36 passed; Sonar en verde.
+- **Revisiones:**
+  - autorrevisión, en `docs/revision/cc13-autorrevision.md`: 0 P0, 0 P1, 5 P2 y 5 P3;
+  - segundo modelo Sonnet, en `docs/revision/cc13-segundo-modelo.md`: 0 P0, 1 P1, 3 P2 y 4 P3.
+  - El P1 (un `tsc` rojo en un spec) y todos los P2 se corrigieron, salvo los locks de la vista
+    previa, que se aceptaron y documentaron.
+- **Revisión del dueño (2026-10-02).**
+  - Confirmó las tres reglas agregadas.
+  - Pidió las dos acciones también en el detalle del comprobante anulado; están en el commit
+    `587c8e3`, con su E2E.
+  - Dio OK al respaldo Neon antes de la primera reactivación con líneas en producción.
+- **UAT del dueño en demo, con una observación** (en el commit `f4fedf3`): entre varias facturas
+  anuladas no se sabía cuál era de qué pedido. Se resolvió así:
+  - el detalle del pedido lista sus anulados con las dos reactivaciones; si una no aplica, queda
+    deshabilitada con el motivo;
+  - Comprobantes → Anulados tiene la columna «Pedido»;
+  - el modal dice de qué pedido salen las líneas.
+- **Pregunta del dueño sobre bloqueos (corregido):** la primera versión de la sección pedía, al
+  cargar, una vista previa por acción y por anulado, y esas vistas previas tomaban `FOR UPDATE`.
+  Ahora:
+  - una sola llamada, `GET /invoicing/orders/:id/annulled-documents`, comprueba sin transacción
+    ni locks (`lock = false`); el modal de D-378 y las dos ejecuciones siguen con sus locks;
+  - se pide solo si `annulledDocumentCount` del pedido es mayor que 0; el conteo sale de la consulta
+    de comprobantes que el detalle ya hacía, así que un pedido sin anulados no paga ninguna consulta
+    extra;
+  - se retiró `GET …/reactivate/preview`; con `lock`, D-373 conserva el SQL de siempre y su spec no
+    cambió;
+  - **medido en demo** (solo lectura, script de un uso ya borrado): 19 SQL para un pedido con un
+    anulado (2 fijas y 17 por el anulado; hasta 18 si aplican las dos acciones) y 0 `FOR UPDATE`.
+  - E2E local: 7/7 entre D-378 y D-373. Unitarios: API 2158 y web 87.
+- **Orden de las ventanas (dueño):** cc13 primero y cc14 después. La foto `READ ONLY` y los pasos
+  por la interfaz van después del deploy de cc13, cuando el dueño pase los números.
+
 ## 2026-10-02 — Ventana cc12 (D-379 desplegada, PR #76, sin migración) y FFA1-00001382 despachado
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc12.md`.

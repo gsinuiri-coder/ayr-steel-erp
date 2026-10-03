@@ -442,6 +442,92 @@ export const reactivateDocumentSchema = z.object({
 });
 export type ReactivateDocumentInput = z.infer<typeof reactivateDocumentSchema>;
 
+/**
+ * D-378: reactivar un comprobante manual anulado **con las líneas actuales del pedido**.
+ *
+ * - `confirmMatchesPaper` es la casilla «Confirmo que el comprobante, con estas líneas, coincide
+ *   con el papel vigente». Igual que en D-373, el servicio rechaza el `false` con su mensaje.
+ * - `paperTotalPen` es el total del papel **tipeado** por el administrador. Va al céntimo, y el
+ *   servicio solo reactiva si coincide exactamente con el total de las líneas nuevas (D-377).
+ */
+export const reactivateWithOrderLinesSchema = z.object({
+  reason: reasonSchema,
+  confirmMatchesPaper: z.boolean(),
+  paperTotalPen: moneySchema.refine(
+    (v) => toDecimal(v).decimalPlaces() <= 2,
+    'El total del papel va con hasta dos decimales (céntimos)',
+  ),
+});
+export type ReactivateWithOrderLinesInput = z.infer<typeof reactivateWithOrderLinesSchema>;
+
+/** D-378: una línea del antes o del después. Importes a 4 decimales, como se guardan. */
+export const reactivationLineSchema = z.object({
+  lineNumber: z.number().int(),
+  /** Número de línea del pedido que factura. */
+  orderLineNumber: z.number().int(),
+  description: z.string(),
+  qty: z.string(),
+  unit: z.string(),
+  unitPricePen: z.string(),
+  subtotalPen: z.string(),
+  igvPen: z.string(),
+  totalPen: z.string(),
+  /** `true` en el después si la línea no estaba en el comprobante. */
+  added: z.boolean(),
+});
+export type ReactivationLineDto = z.infer<typeof reactivationLineSchema>;
+
+/** D-378: un lado de la comparación —líneas y cabecera (gravada, IGV y total al céntimo)—. */
+export const reactivationSideSchema = z.object({
+  lines: z.array(reactivationLineSchema),
+  subtotalPen: z.string(),
+  igvPen: z.string(),
+  totalPen: z.string(),
+});
+export type ReactivationSideDto = z.infer<typeof reactivationSideSchema>;
+
+/** D-378: la vista previa del modal. Solo se arma si no hay bloqueos. */
+export const reactivationPreviewSchema = z.object({
+  id: z.string(),
+  number: z.string().nullable(),
+  salesOrderCode: z.string(),
+  before: reactivationSideSchema,
+  after: reactivationSideSchema,
+});
+export type ReactivationPreviewDto = z.infer<typeof reactivationPreviewSchema>;
+
+/**
+ * UAT de cc13: si una reactivación aplica y, si no, por qué (el mismo mensaje que daría el API
+ * al intentarla). Se calcula **sin bloqueos**: solo informa; el modal y la ejecución vuelven a
+ * comprobar todo con sus locks.
+ */
+export const reactivationAvailabilitySchema = z.object({
+  ok: z.boolean(),
+  reason: z.string().nullable(),
+});
+export type ReactivationAvailabilityDto = z.infer<typeof reactivationAvailabilitySchema>;
+
+/** UAT de cc13: un comprobante anulado del pedido, con sus dos reactivaciones (D-373 y D-378). */
+export const orderAnnulledDocumentSchema = z.object({
+  id: z.string().uuid(),
+  number: z.string().nullable(),
+  docType: z.enum(FISCAL_DOC_TYPES),
+  origin: z.enum(FISCAL_DOCUMENT_ORIGINS),
+  status: z.enum(FISCAL_DOCUMENT_STATUSES),
+  issueDate: z.string(),
+  totalPen: z.string(),
+  salesOrderId: z.string().uuid().nullable(),
+  archivedAt: z.string().nullable(),
+  annulledAt: z.string().nullable(),
+  annulledByName: z.string().nullable(),
+  annulReason: z.string().nullable(),
+  /** «Reactivar con las líneas del pedido» (D-378). */
+  withOrderLines: reactivationAvailabilitySchema,
+  /** «Reactivar» (D-373). */
+  simple: reactivationAvailabilitySchema,
+});
+export type OrderAnnulledDocumentDto = z.infer<typeof orderAnnulledDocumentSchema>;
+
 /** D-073: interruptor de contingencia y umbral de alerta. Solo ADMINISTRADOR. */
 export const updateInvoicingSettingsSchema = z.object({
   manualByDefault: z.boolean().optional(),

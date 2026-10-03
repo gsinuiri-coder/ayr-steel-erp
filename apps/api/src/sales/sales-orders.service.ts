@@ -138,7 +138,7 @@ import {
   restoreBlock,
   restoreQty,
 } from './reservation-restore';
-import { liveDocumentsByOrder } from './order-documents';
+import { liveDocumentsByOrder, orderDocuments } from './order-documents';
 import { salesOrderOrderBy } from '../common/list-orderings';
 
 import { buildPlantOrderPdf } from './plant-order-pdf';
@@ -3163,8 +3163,9 @@ export class SalesOrdersService {
           select: { id: true },
         }),
         reservationDispatches(this.prisma, row.reservations),
-        // Correcciones 05 / M4: los comprobantes vivos, junto al estado del pedido.
-        liveDocumentsByOrder(this.prisma, [id]),
+        // Correcciones 05 / M4: los comprobantes vivos, junto al estado del pedido. UAT de cc13:
+        // la misma consulta cuenta también los anulados, para la sección del detalle.
+        orderDocuments(this.prisma, id),
       ]);
     // D-379: qué reservas liberadas a mano se pueden restaurar desde la línea.
     const lineById = new Map(row.items.map((i) => [i.id, i]));
@@ -3183,7 +3184,8 @@ export class SalesOrdersService {
       reservations: dto.reservations.map((r) => ({ ...r, restorable: restorable.has(r.id) })),
       priceChanges,
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
-      documents: documentsByOrder.get(id) ?? [],
+      documents: documentsByOrder.live,
+      annulledDocumentCount: documentsByOrder.annulledCount,
     };
   }
 
