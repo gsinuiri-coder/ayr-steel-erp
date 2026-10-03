@@ -2,6 +2,16 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 — Decisiones del dueño y arranque de cc15 (sesión 2 de D-372)
+
+- **Cambio de producto en «Editar compra» (P2 de cc14): sin hotfix**, va primero en la sesión 2.
+  Hasta corregirlo no se cambia el producto de una línea; con la línea intacta, se anula y se
+  registra de nuevo.
+- **D-378:** sin lista de comprobantes; se usa cuando aparezca un caso. Se retira ese pendiente.
+- **D-380:** sin fecha; los comprobantes afectados no tienen cobros.
+- **cc15:** worktree `../ayr-cc15`, rama `cc15/editar-compra-sesion2` desde `main` `017564b`. Plan
+  presentado al dueño; sin código hasta su OK.
+
 ## 2026-10-03 — Ventana cc14 (D-372 v1 desplegada, PR #79, sin migración) y tooling de puertos (PR #82)
 
 Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc14.md`.
@@ -27,9 +37,9 @@ Cada paso sensible tuvo OK del dueño (D-251/D-232). Detalle en `docs/handoff/ve
 - **Queda abierto:**
   - sesión 2 de D-372 (alcance en la fila). **Primero, por pedido del dueño (2026-10-03):** tras
     un cambio de producto en «Editar compra», la compra puede quedar sin poder anularse (la
-    anulación mide «posterior» contra el ingreso revertido del producto viejo). Recomendación del
-    agente hasta corregirlo, pendiente del dueño: no cambiar el producto de una línea; con la
-    línea intacta, anular y registrar de nuevo;
+    anulación mide «posterior» contra el ingreso revertido del producto viejo). **Decidido por el
+    dueño (2026-10-03): sin hotfix**; hasta corregirlo no se cambia el producto de una línea; con
+    la línea intacta, se anula y se registra de nuevo;
   - el resto de los P2/P3 de cc14 (lista en la entrada de cc14);
   - **Descarga de comprobantes en Excel** (pedido del dueño, 2026-10-03; alcance por definir
     cuando le toque).
