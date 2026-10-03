@@ -107,7 +107,7 @@ export function MoveToOrderDialog({
       }),
     onSuccess: (doc) => {
       toast.success(
-        `${doc.number ?? 'Comprobante'} traído a ${order.code}. Las líneas quedan pendientes de despacho.`,
+        `${doc.number ?? 'Comprobante'} traído a ${order.code}. Revisa su despacho desde el comprobante.`,
       );
       onOpenChange(false);
       // Los dos pedidos cambian: el de origen pierde el comprobante y el destino lo gana
