@@ -655,12 +655,12 @@ describe('InventoryService (§3.2, D-028)', () => {
 });
 
 /**
- * D-372 (cc15b, D-381) — `replaceEntry` sobre la transacción falsa: el mismo camino interno que
+ * D-372 (cc15b, D-382) — `replaceEntry` sobre la transacción falsa: el mismo camino interno que
  * `record` y `reverse`, las invariantes sobre el estado final y la precondición. Lo que depende de
  * Postgres de verdad (locks, concurrencia, la consulta por fecha) vive en
  * `replace-entry.db-spec.ts`.
  */
-describe('InventoryService.replaceEntry (D-381)', () => {
+describe('InventoryService.replaceEntry (D-382)', () => {
   let service: InventoryService;
 
   beforeEach(async () => {
@@ -838,7 +838,7 @@ describe('InventoryService.replaceEntry (D-381)', () => {
 });
 
 /** Las dos ramas de valor negativo de la reversa de un ingreso (`stockAfterReverseIn`). */
-describe('InventoryService.reverse — valor negativo (D-381, camino compartido)', () => {
+describe('InventoryService.reverse — valor negativo (D-382, camino compartido)', () => {
   let service: InventoryService;
 
   beforeEach(async () => {
