@@ -1,9 +1,24 @@
 # Runbook: ventana de cc14 (D-372 v1, editar una compra recibida)
 
-**Estado: PREPARADO, sin ejecutar.** Cada paso marcado **[OK]** espera el OK explícito del dueño
-(D-251/D-232). El agente propone el comando exacto y espera.
+**Estado: EJECUTADO el 2026-10-03, sin incidencias.** Resultado:
 
-- PR: `<PR>` (rama `cc14/editar-compra-recibida`).
+| Qué                    | Valor                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ |
+| UAT del dueño          | en demo local (127.0.0.1:3101, desde `../ayr-cc14` en `fecc358`), confirmado                           |
+| CI                     | 37105681418 en `fecc358`: unitarios 2208, E2E 490 passed y 3 skipped, smoke Neon `ci` 36 passed        |
+| `main` antes           | `df8eb59` (CI 37105663539 en verde); la rama ya lo contenía                                            |
+| Revisión API anterior  | `ayr-steel-erp-api-00076-nx7` (`git-sha=8c38bb7`)                                                      |
+| Revisión API nueva     | **`ayr-steel-erp-api-00077-p8z`**, 100 %, `git-sha=fecc358`, `/health` 200, smoke 7/7 con la web vieja |
+| Merge del #79          | `main` = **`a188282`**, diff de runtime contra `fecc358` vacío; Vercel `success`                       |
+| Smoke con la web nueva | 8/8 en `ayr-steel-erp-web.vercel.app` y en `v2.mareliac.pe`                                            |
+| Cierre                 | demo apagada; worktree `../ayr-cc14` y rama `cc14/editar-compra-recibida` (local y remota) borrados    |
+
+Plan original:
+
+Cada paso marcado **[OK]** espera el OK explícito del dueño (D-251/D-232). El agente propone el
+comando exacto y espera.
+
+- PR: #79 (rama `cc14/editar-compra-recibida`), desplegado desde `fecc358`.
 - **No hay migración** y el deploy no escribe datos. Las correcciones de compras las hace el dueño
   después, **por la interfaz**, con motivo y vista previa.
 - **Orden:** reacomodar sobre `main` → CI → resumen de D-232 y OK → **API** → smoke → merge
