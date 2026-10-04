@@ -556,7 +556,7 @@ export class PosService {
 
     // 4. El pedido: libera lo que quede prometido.
     if (sale.salesOrder.status !== SalesOrderStatus.CANCELLED) {
-      await this.salesOrders.cancel(actor, sale.salesOrder.id, reason);
+      await this.salesOrders.cancel(actor, sale.salesOrder.id, { reason });
     }
 
     await this.prisma.$transaction(async (tx) => {
