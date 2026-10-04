@@ -31,6 +31,10 @@ const coilItem = (over: Partial<ItemFacts> = {}): ItemFacts => ({
   laterMovements: [],
   hasLiveIn: true,
   backsPromised: null,
+  specPromised: null,
+  balanceQty: '1000.000',
+  reservedQty: '0.000',
+  runningLow: null,
   coilStatus: 'OPEN',
   mountedOrder: null,
   ownReservation: false,
@@ -51,6 +55,7 @@ const productItem = (over: Partial<ItemFacts> = {}): ItemFacts => ({
   widthMm: null,
   thicknessMm: null,
   coilStatus: null,
+  balanceQty: '100.000',
   ...over,
 });
 
@@ -276,13 +281,58 @@ describe('D-372 — classifyReceivedEdit', () => {
       expect(plan.changes[0]?.blockedReason).toContain('mismo producto en dos líneas');
     });
 
-    it('reserva que la reversa dejaría sin cubrir: bloquea también el precio', () => {
-      const plan = classifyReceivedEdit(
-        purchase({ items: [coilItem({ ownReservation: true })] }),
+    it('reserva (cc15b, punto 3): el precio pasa; la cantidad se mide contra el saldo final; la especificación sigue bloqueada', () => {
+      const reserved = coilItem({ ownReservation: true, reservedQty: '1000.000' });
+      const price = classifyReceivedEdit(
+        purchase({ items: [reserved] }),
         { items: [{ itemId: 'item-1', unitPrice: '6' }] },
         noTargets(),
       );
-      expect(plan.changes[0]?.blockedReason).toContain('material reservado');
+      expect(price.changes[0]?.path).toBe('REVERSE_REENTRY');
+      const qty = classifyReceivedEdit(
+        purchase({ items: [reserved] }),
+        { items: [{ itemId: 'item-1', qty: '990' }] },
+        noTargets(),
+      );
+      expect(qty.changes[0]?.blockedReason).toContain(
+        'quedarían 990.000 y hay 1000.000 reservados',
+      );
+      const spec = classifyReceivedEdit(
+        purchase({ items: [reserved] }),
+        { items: [{ itemId: 'item-1', widthMm: '1200' }] },
+        noTargets(),
+      );
+      expect(spec.changes[0]?.blockedReason).toContain('reserva propia');
+    });
+
+    it('cambio de color o espesor de una bobina comprometida (punto 5): bloqueado con los pedidos', () => {
+      const plan = classifyReceivedEdit(
+        purchase({ items: [coilItem({ specPromised: 'PED-000009 (300.000 kg)' })] }),
+        { items: [{ itemId: 'item-1', finishId: 'fin-azul' }] },
+        noTargets(),
+      );
+      expect(plan.changes[0]?.blockedReason).toContain(
+        'No se puede cambiar el color o el espesor porque esta bobina respalda material comprometido de PED-000009',
+      );
+      // Con precio en la misma edición también (autorrevisión de cc15b, P2-1).
+      const withPrice = classifyReceivedEdit(
+        purchase({ items: [coilItem({ specPromised: 'PED-000009 (300.000 kg)' })] }),
+        { items: [{ itemId: 'item-1', unitPrice: '6', finishId: 'fin-azul' }] },
+        noTargets(),
+      );
+      expect(withPrice.executable).toBe(false);
+      expect(withPrice.changes.find((c) => c.field === 'finishId')?.blockedReason).toContain(
+        'No se puede cambiar el color',
+      );
+    });
+
+    it('una baja de cantidad que dejaría el kardex negativo en alguna fecha: bloqueada (revisión P1-1)', () => {
+      const plan = classifyReceivedEdit(
+        purchase({ items: [coilItem({ runningLow: '-50.000' })] }),
+        { items: [{ itemId: 'item-1', qty: '950' }] },
+        noTargets(),
+      );
+      expect(plan.changes[0]?.blockedReason).toContain('el kardex quedaría en -50.000');
     });
   });
 
@@ -442,22 +492,47 @@ describe('D-372 — classifyReceivedEdit', () => {
       expect(plan.changes[0]?.blockedReason).toContain('merma (SCRAP) el 2026-09-16');
     });
 
-    it('solo otra compra posterior del mismo producto: sigue bloqueado hasta cc15b', () => {
+    it('solo otra compra posterior del mismo producto (punto 4): precio y cantidad pasan; el cambio de producto no', () => {
+      const facts = purchase({
+        type: PurchaseType.FINISHED_GOOD,
+        items: [
+          productItem({
+            balanceQty: '150.000',
+            laterMovements: [{ type: 'IN', refType: 'PURCHASE', operationDate: '2026-09-27' }],
+          }),
+        ],
+      });
+      const price = classifyReceivedEdit(
+        facts,
+        { items: [{ itemId: 'item-1', unitPrice: '13', qty: '90' }] },
+        noTargets(),
+      );
+      expect(price.changes.map((c) => c.path)).toEqual(['REVERSE_REENTRY', 'REVERSE_REENTRY']);
+      const product = classifyReceivedEdit(
+        facts,
+        { items: [{ itemId: 'item-1', productId: 'prod-2' }] },
+        noTargets(),
+      );
+      expect(product.changes[0]?.blockedReason).toContain('otra compra (PURCHASE) el 2026-09-27');
+    });
+
+    it('otra compra posterior y además una salida: el precio va por ajuste, no por reemplazo', () => {
       const plan = classifyReceivedEdit(
         purchase({
           type: PurchaseType.FINISHED_GOOD,
           items: [
             productItem({
-              laterMovements: [{ type: 'IN', refType: 'PURCHASE', operationDate: '2026-09-27' }],
+              laterMovements: [
+                { type: 'IN', refType: 'PURCHASE', operationDate: '2026-09-27' },
+                { type: 'OUT', refType: 'SALE', operationDate: '2026-09-28' },
+              ],
             }),
           ],
         }),
         { items: [{ itemId: 'item-1', unitPrice: '13' }] },
         noTargets(),
       );
-      expect(plan.changes[0]?.path).toBe('BLOCKED');
-      expect(plan.changes[0]?.blockedReason).toContain('otra compra (PURCHASE) el 2026-09-27');
-      expect(plan.changes[0]?.blockedReason).toContain('próxima versión');
+      expect(plan.changes[0]?.path).toBe('COST_ADJUST');
     });
 
     it('pagos vigentes bloquean el costo', () => {

@@ -33,8 +33,8 @@ Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle está en
 - **Qué sale:** `apps/api/prisma/production-cleanup-v4.ts`, `scripts/production-cleanup-v4.mjs`, el
   script de `package.json` y sus 4 reglas `ask` de `.claude/settings.json`. `docs/ENTORNOS.md`
   marca el checklist de V-4 como histórico. El código queda en la historia de git (`ca1fa4d`).
-- **Pendiente al reacomodar cc15b (PR #88):** el centinela de escritores del kardex va sin la
-  excepción D-208 y la regla dura 8 de `AGENTS.md` deja de nombrarla.
+- **Mergeado (PR #89, `43e606b`).** Al reacomodar cc15b (PR #88) el centinela de escritores del
+  kardex quedó sin la excepción D-208 y la regla dura 8 de `AGENTS.md` dejó de nombrarla.
 - Sin cambio de runtime: ni API ni web usan estos archivos (no hay deploy).
 
 ## 2026-10-03 — cc16: D-381, traer un comprobante manual anulado a otro pedido (PR #87 sin merge)
@@ -98,6 +98,80 @@ Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle está en
   `docs/analisis/comprobante-a-otro-pedido-2026-10-03.md`. D-381 registrada como **propuesta**.
 - Pendiente del dueño: decisiones 1-3, que el papel de Nubefact sea por las siete líneas, el
   vendedor correcto y el número D-381.
+
+## Pendiente — Orden único de bloqueos en despacho y reversas (pieza propia)
+
+Decisión del dueño (2026-10-03): sesión aparte, **después de cc15b y D-383**; sin tocar antes.
+Origen: P2-1 y P2-2 de `docs/revision/cc15b-p2b-segundo-modelo.md`, previos a cc15b.
+
+- **Despacho** (`dispatches.service.ts` ~340-374): bloquea solo las bobinas nombradas; `record`
+  de una salida de bobina expande el agregado después, y los saldos de producto se toman en el
+  orden de las líneas. Puede cruzarse con la anulación de una compra o con confirmar un pedido.
+- **Reversas de varios ítems** (despacho, venta, producción): iteran los ítems sin ordenar.
+- **Arreglo sugerido:** tomar al inicio, con `InventoryService.lockItemsForReversal` (o una
+  generalización), bobinas con sus agregados y después saldos en orden fijo, como la anulación
+  de compras y «Editar compra».
+
+## 2026-10-03 — cc15b: D-372 sesión 2b y D-382, `replaceEntry` (PR sin merge)
+
+- **Rama `cc15b/reemplazo-con-reserva`** desde `main` `56e068e`, en `../ayr-cc15`. Sin migración y
+  nada en producción. Runbook `docs/handoff/ventana-cc15b.md`, guion `docs/uat/cc15b.md`.
+- **Primer commit:** regla dura 8 de `AGENTS.md` con el texto aprobado y el centinela
+  `kardex-writers.sentinel.spec.ts` (excepciones D-285 y D-018; D-208 salió al retirarse
+  `limpia:v4` por D-384). **D-382.**
+- **`InventoryService.replaceEntry`:** mismo camino interno que `record`/`reverse`; reservas y
+  materia prima sobre el estado final; precondición en SQL bajo el lock; saldo corrido en cada
+  fecha posterior no negativo. `reverse` toma las bobinas antes que el saldo al revertir un
+  ingreso de bobina y relee el movimiento bajo el lock.
+- **«Editar compra»:** precio y cantidad por `replaceEntry`; punto 3 (reserva activa si cabe en el
+  saldo final), punto 4 (otra compra posterior sin salidas), punto 5 (vista previa del cambio de
+  color o espesor de una bobina comprometida); baja de kilos de una bobina comprometida simulada
+  con la cantidad nueva; aviso de ±0,0001 al deshacer con otras existencias.
+- **Tests:** unitarios de compras e inventario 189; contra base real (`test:db`) 10: reemplazo,
+  exactitud al deshacer, precondición por id y por fecha, ajuste posterior, salida anulada entre
+  fechas, entrada posterior, dos reemplazos simultáneos (incluido uno con solape forzado) y solo
+  ingresos vivos; E2E local 15/15 (cc15b: reserva, carrera con una reserva nueva, compra
+  posterior; más los de cc14 y cc15a).
+- **Revisiones:** autorrevisión `docs/revision/cc15b-autorrevision.md` (sin P0/P1; P2-1 corregido)
+  y segundo modelo centrado en romper `replaceEntry` `docs/revision/cc15b-segundo-modelo.md`
+  (P1-1 corregido: salida anulada entre fechas dejaba el saldo corrido negativo; P2-1 y P2-2
+  corregidos: orden de locks bobinas → saldo en la edición y en `reverse`; P3-3 corregido).
+- **P2-2 de la autorrevisión, resuelto en este PR (decisión del dueño, opción (a), 2026-10-03):**
+  tras corregir una compra por reemplazo, otra compra **posterior** del mismo producto quedaba sin
+  poder anularse (el ingreso nuevo tiene id mayor y la anulación mide «posterior» por id). Ahora,
+  en producto terminado, una **entrada** ajena posterior no bloquea la anulación (misma regla que
+  la precondición de `replaceEntry`); en bobina todo sigue bloqueando. El filtro va en la consulta
+  (`laterMovementsWhere`, `purchase-cancel.ts`). La reversa sigue comprobando saldo final y
+  reservas. Tests: unitarios (incluido «nunca bloquea más que antes»), 4 contra la base
+  (`purchase-cancel.db-spec.ts`) y un E2E. Trabajado en `../ayr-c15x` (rama
+  `cc15b/anular-ajenas`) para no tocar demo.
+  - **Foto READ ONLY de producción (2026-10-03, con OK del dueño; script de un solo uso ya
+    borrado; detalle en `local-data/foto-d382/`):** 18 compras recibidas; 11 bloqueadas con la
+    regla de hoy y 10 con la nueva; **ninguna pasa de anulable a bloqueada**. La única que cambia
+    es E001-1766: la bloqueaba una entrada de E001-1731 (2026-09-27). Con la regla nueva pasa el
+    guardrail, pero la reversa la sigue parando por reservas: PERFILU y PERFILH quedarían en 0
+    con 7 y 4 reservados; ALVEOLAR11800, en 1 con 4 reservados.
+  - **Revisión Sonnet de contexto limpio solo sobre este cambio**
+    (`docs/revision/cc15b-anulacion-segundo-modelo.md`): sin P0 ni P1. P2-A corregido: la
+    anulación bloquea los ítems de la compra antes del guardrail (una venta concurrente cabía en
+    el saldo de la otra compra y la reversa salía a costo completo). La verificación de Sonnet
+    del arreglo abrió el P2-B (orden de locks en una compra mixta), corregido con
+    `InventoryService.lockItemsForReversal`: bobinas antes que saldos (D-134).
+  - **Pasada de Sonnet de contexto limpio solo sobre P2-B** (pedida por el dueño,
+    `docs/revision/cc15b-p2b-segundo-modelo.md`): sin P0 ni P1; sin ciclo contra «Editar
+    compra», `replaceEntry`, `reverse` ni una reserva nueva. P2-1 y P2-2, previos a este cambio,
+    van como pieza propia: «Orden único de bloqueos en despacho y reversas» (arriba). P3: la
+    anulación no bloquea los flejes heredados antes de
+    cancelarlos; la segunda toma de bobinas en `reverse` puede ampliar el conjunto.
+  - **P3-B cerrado:** tests contra la base de la regla de bobina (una entrada ajena sigue
+    bloqueando) y del ajuste ajeno en producto. P3-C corregido (E2E); P3-A
+    (deriva de ±0,0001 sin aviso al anular) y P3-B (bobina y ajuste ajeno probados como forma de
+    la consulta) aceptados.
+- **Test frágil identificado:** `auth.service.spec.ts` «rechaza correo inexistente con 401» calcula
+  un hash Argon2 real y supera los 5 s cuando corren lint y typecheck en paralelo; solo, y en la
+  CI, pasa.
+- **Huecos del centinela anotados (P3):** `TRUNCATE` sin `TABLE`, nombre con esquema, acceso por
+  corchetes o alias, y las migraciones (fuera del barrido a propósito).
 
 ## 2026-10-03 — Ventana cc15a (D-372 sesión 2a desplegada, PR #84, sin migración)
 

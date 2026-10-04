@@ -63,7 +63,7 @@ import { StorageService } from '../documents/storage.service';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
-import { lastOwnMovementByLiveItem } from './purchase-cancel';
+import { findBlockingLaterMovements, type OwnMovement } from './purchase-cancel';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { prorateByWeight } from './landed-cost';
@@ -758,6 +758,20 @@ export class PurchasesService {
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },
           });
+          // D-382 (revisión de P2-2, P2-A y P2-B): los ítems de la compra se bloquean **antes**
+          // de buscar movimientos posteriores. Con las entradas ajenas fuera del guardrail, una
+          // venta confirmada entre esa lectura y la reversa cabía en el saldo de la otra compra y
+          // la reversa salía igual, a costo completo, sobre un ingreso ya consumido. Bobinas antes
+          // que saldos (D-134) y en orden fijo, como «Editar compra».
+          await this.inventory.lockItemsForReversal(
+            tx,
+            own.map((m) => ({
+              businessLineId: m.businessLineId,
+              itemType: m.itemType,
+              itemId: m.itemId,
+              unit: m.unit,
+            })),
+          );
           // Para decidir qué es "posterior" cuentan TODOS los movimientos de la compra,
           // incluidos los ya revertidos y sus reversas: son suyos igual.
           await this.assertNothingMovedAfter(tx, own);
@@ -856,36 +870,12 @@ export class PurchasesService {
    */
   private async assertNothingMovedAfter(
     tx: Prisma.TransactionClient,
-    movements: {
-      id: bigint;
-      itemType: InventoryItemType;
-      itemId: string;
-      type: string;
-      reversalOfId: bigint | null;
-      reversals: unknown[];
-    }[],
+    movements: OwnMovement[],
   ): Promise<void> {
     if (movements.length === 0) return;
-    const ownIds = new Set(movements.map((m) => m.id));
-
-    const lastOwnId = lastOwnMovementByLiveItem(movements);
-    if (lastOwnId.size === 0) return;
-    const later = await tx.inventoryMovement.findMany({
-      // Lo que ya se anuló no bloquea: una merma registrada y anulada después deja el
-      // saldo intacto, y contarla dejaría la compra sin poder anularse nunca más. Se filtra
-      // **en la consulta**, antes del límite: con el filtro en memoria, 50 filas anuladas
-      // tapaban una salida viva que venía después (segunda revisión de cc15a, P2-1).
-      where: {
-        OR: [...lastOwnId].map(([itemId, id]) => ({ itemId, id: { gt: id } })),
-        reversalOfId: null,
-        reversals: { none: {} },
-        id: { notIn: [...ownIds] },
-      },
-      orderBy: { id: 'asc' },
-      include: { reversals: { select: { id: true } } },
-      take: 5,
-    });
-    const blocking = liveMovements(later).filter((m) => !ownIds.has(m.id));
+    // Lo ya anulado no bloquea, y en producto terminado tampoco una entrada ajena posterior
+    // (D-382, cc15b P2-2): el detalle, en `laterMovementsWhere`.
+    const blocking = await findBlockingLaterMovements(tx, movements);
     if (blocking.length === 0) return;
 
     const labels = await this.resolveMovementLabels(tx, blocking);

@@ -126,6 +126,13 @@ jobs:
       - run: pnpm --filter @ayr/shared build
       - run: pnpm --filter @ayr/api db:generate
       - run: pnpm --filter @ayr/api build
+      # D-372 (cc15b): `InventoryService` contra la base real (`*.db-spec.ts`): la precondición
+      # y la concurrencia de `replaceEntry`. Resetea y siembra la misma base del job; la suite E2E
+      # la vuelve a resetear en su `globalSetup`.
+      - name: Kardex contra la base (test:db)
+        run: pnpm --filter @ayr/api test:db
+        env:
+          SEED_ADMIN_FOR_TESTS: '1'
       - run: pnpm --filter @ayr/web build
         env:
           API_URL: http://localhost:3000

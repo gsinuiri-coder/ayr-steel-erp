@@ -1,4 +1,5 @@
-import { lastOwnMovementByLiveItem } from './purchase-cancel';
+import type { InventoryItemType } from '@prisma/client';
+import { lastOwnMovementByLiveItem, laterMovementsWhere } from './purchase-cancel';
 
 /**
  * D-372 (cc15) — contra qué se mide «posterior» al anular una compra. Un ítem que la compra ya
@@ -58,5 +59,63 @@ describe('lastOwnMovementByLiveItem', () => {
         mv(51, 'p', 50, { type: 'OUT' }),
       ]).size,
     ).toBe(0);
+  });
+});
+
+/**
+ * D-382 (cc15b, P2-2) — qué bloquea la anulación. En producto terminado, una entrada ajena
+ * posterior no; en bobina, sí. Lo anulado nunca. Todo dentro de la consulta, antes del límite.
+ */
+describe('laterMovementsWhere', () => {
+  const own = (id: number, itemId: string, itemType: InventoryItemType, type = 'IN') => ({
+    id: BigInt(id),
+    itemId,
+    itemType,
+    type,
+    reversalOfId: null,
+    reversals: [],
+  });
+
+  it('producto terminado: solo lo que no es entrada; bobina: todo lo posterior', () => {
+    const where = laterMovementsWhere([own(10, 'prod', 'PRODUCT'), own(11, 'coil', 'COIL')]);
+    expect(where).toEqual({
+      OR: [
+        { itemId: 'prod', id: { gt: 10n }, type: { not: 'IN' } },
+        { itemId: 'coil', id: { gt: 11n } },
+      ],
+      reversalOfId: null,
+      reversals: { none: {} },
+      id: { notIn: [10n, 11n] },
+    });
+  });
+
+  it('nunca bloquea más que antes: cada condición nueva es la de antes más, como mucho, «no es entrada»', () => {
+    // La regla de antes, tal cual estaba en `assertNothingMovedAfter` (cc15a).
+    const before = (movements: Parameters<typeof laterMovementsWhere>[0]) =>
+      [...lastOwnMovementByLiveItem(movements)].map(([itemId, id]) => ({ itemId, id: { gt: id } }));
+    const sets = [
+      [own(1, 'p', 'PRODUCT')],
+      [own(1, 'c', 'COIL'), own(2, 'c', 'COIL', 'ADJUST')],
+      [own(1, 'p', 'PRODUCT'), own(2, 'q', 'PRODUCT'), own(3, 'c', 'COIL')],
+      [own(4, 'c', 'COIL', 'ADJUST')],
+    ];
+    for (const set of sets) {
+      const now = laterMovementsWhere(set)?.OR ?? [];
+      expect(now.map(({ itemId, id }) => ({ itemId, id }))).toEqual(before(set));
+      for (const clause of now) {
+        const { itemId: _i, id: _d, ...extra } = clause as Record<string, unknown>;
+        expect(Object.keys(extra).length === 0 || extra.type !== undefined).toBe(true);
+        if (extra.type !== undefined) expect(extra).toEqual({ type: { not: 'IN' } });
+      }
+    }
+  });
+
+  it('sin nada vigente no hay consulta', () => {
+    expect(
+      laterMovementsWhere([
+        { ...own(20, 'prod', 'PRODUCT'), reversals: [{ id: 21n }] },
+        { ...own(21, 'prod', 'PRODUCT', 'OUT'), reversalOfId: 20n },
+      ]),
+    ).toBeNull();
   });
 });

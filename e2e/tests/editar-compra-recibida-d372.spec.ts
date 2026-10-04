@@ -15,6 +15,7 @@ import {
   pieces,
   purgeRoofingTrail,
   quoteAndOrder,
+  reservationsOf,
   setupRoofingScenario,
   type RoofingScenario,
 } from '../helpers/roofing';
@@ -263,7 +264,7 @@ test.describe('D-372 — editar una compra recibida', () => {
     }
   });
 
-  test('materia prima prometida: la vista previa bloquea el precio, y un fallo al guardar no deja nada a medias', async () => {
+  test('materia prima prometida (cc15b): el precio pasa; una baja de kilos o un cambio de color que dejen la promesa sin cubrir, no', async () => {
     const s = await setupRoofingScenario(api, { weightKg: '1000' });
     const customer = await createCustomer(api);
     const otherColor = await createColor(api, '#0033a0');
@@ -282,20 +283,33 @@ test.describe('D-372 — editar una compra recibida', () => {
 
       const purchase = await getJson<PurchaseDto>(api, `/api/purchases/${s.purchaseId}`);
       const item = purchase.items[0]!;
+      // El precio no mueve kilos: con `replaceEntry` el agregado se mira al final y pasa.
       const plan = await postJson<PlanDto>(
         api,
         `/api/purchases/${s.purchaseId}/received-edit/preview`,
         { items: [{ itemId: item.id, unitPrice: '5.5' }] },
       );
-      expect(plan.changes[0]?.path).toBe('BLOCKED');
-      expect(plan.changes[0]?.blockedReason).toContain(
-        'No se puede corregir porque esta bobina respalda material comprometido de',
+      expect(plan.changes[0]?.path).toBe('REVERSE_REENTRY');
+      // Bajar a 10 kg deja la promesa de 40.4 kg sin cubrir: se bloquea con el pedido.
+      const qtyPlan = await postJson<PlanDto>(
+        api,
+        `/api/purchases/${s.purchaseId}/received-edit/preview`,
+        { items: [{ itemId: item.id, qty: '10' }] },
       );
-      expect(plan.changes[0]?.blockedReason).toContain(order.code);
+      expect(qtyPlan.changes[0]?.path).toBe('BLOCKED');
+      expect(qtyPlan.changes[0]?.blockedReason).toContain('con la cantidad nueva');
+      expect(qtyPlan.changes[0]?.blockedReason).toContain(order.code);
+      // Punto 5: cambiar a otro color saca la bobina del agregado; la vista previa lo dice.
+      const specPlan = await postJson<PlanDto>(
+        api,
+        `/api/purchases/${s.purchaseId}/received-edit/preview`,
+        { items: [{ itemId: item.id, finishId: otherFinish.id }] },
+      );
+      expect(specPlan.changes[0]?.path).toBe('BLOCKED');
+      expect(specPlan.changes[0]?.blockedReason).toContain('No se puede cambiar el color');
+      expect(specPlan.changes[0]?.blockedReason).toContain(order.code);
 
-      // Cambiar el acabado a otro color saca la bobina del agregado: no pasa por la reversa,
-      // así que la vista previa no lo anticipa y el rechazo llega al guardar, **después** de
-      // haber escrito la bobina y la línea dentro de la transacción.
+      // Guardar igual se rechaza bajo los locks y no deja nada.
       const auditBefore = await getJson<{ items: { action: string }[] }>(
         api,
         `/api/audit?entityType=purchases&entityId=${s.purchaseId}&pageSize=20`,
@@ -310,9 +324,7 @@ test.describe('D-372 — editar una compra recibida', () => {
         },
       );
       expect(rejected.status).toBe(400);
-      expect(rejected.message).toContain(
-        'No se puede corregir porque esta bobina respalda material comprometido',
-      );
+      expect(rejected.message).toContain('No se puede cambiar el color');
       expect(rejected.message).toContain(order.code);
 
       // Todo o nada: la compra, la línea, la bobina, el kardex y la auditoría como antes.
@@ -330,6 +342,15 @@ test.describe('D-372 — editar una compra recibida', () => {
         `/api/audit?entityType=purchases&entityId=${s.purchaseId}&pageSize=20`,
       );
       expect(auditAfter.items).toHaveLength(auditBefore.items.length);
+
+      // Y el precio se guarda con la promesa viva: la reserva del pedido sigue activa.
+      await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
+        items: [{ itemId: item.id, unitPrice: '5.5' }],
+        reason: 'Precio con promesa viva (E2E cc15b)',
+      });
+      expect((await balanceOf(api, 'COIL', s.coil.id)).avgCost).toBe('5.5000');
+      const reservations = await reservationsOf(api, order.id);
+      expect(reservations.every((r) => r.status === 'ACTIVE')).toBe(true);
     } finally {
       await purgeRoofingTrail(api, trail);
     }
