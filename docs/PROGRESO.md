@@ -2,7 +2,33 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-04 — cc17: D-385, importador de ventas con TONELADA y bobina sin stock (PR #94 sin merge)
+## 2026-10-04 — Ventana cc17 (D-385 desplegada, PR #94, sin migración)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc17.md`.
+
+- **UAT:** confirmado por el dueño en demo. CI 37198276868 en `df5929f`: E2E 505 y smoke 36, en
+  verde.
+- **Foto `READ ONLY` previa:** 0 cotizaciones importadas abiertas con líneas `BOB…` sin bobina.
+- **API:** `ayr-steel-erp-api-00082-rlx`, con `git-sha=df5929f`, `/health` 200 y smoke 8/8. La
+  vuelta atrás es `00081-p5g`.
+- **Web:** merge del #94, `main` = `c8fefa7`. Vercel `success` y smoke 8/8 en los dos dominios.
+  Salidas completas en `local-data/cc17/`.
+- **Datos:** ninguno. FFA1-1419 la importa el dueño y elige la bobina cuando almacén confirme
+  cuál salió. El agente no importa ni confirma nada.
+- **Cierre:** demo apagado; worktree y rama `cc17/importador-bobina` borrados.
+- **Ramas de Neon: de 17 a 9 (regla del dueño: máximo 10).** El dueño aprobó por nombre borrar 8;
+  antes de cada borrado se verificó que el id coincidiera, que no tuviera ramas hijas y que su
+  endpoint estuviera `idle`:
+  - `respaldo-pre-correcciones-02-20260924`, `respaldo-pre-corr04b-20260926` y
+    `respaldo-pre-corr03b-20260926`;
+  - `respaldo-pre-drywall-20260927`, `respaldo-pre-import-compras-20260927` y
+    `respaldo-pre-c06-20260928`;
+  - `respaldo-pre-fechas-2026-09-29` y `respaldo-pre-deploy-20260930`.
+- **Quedan** las 5 fijas, `respaldo-pre-log3-20260930`, `respaldo-pre-cc08-20261001`,
+  `respaldo-pre-cc16-20261003` y `respaldo-pre-replaceentry-20261003`. Los dos del 03/10 se
+  conservan hasta el 2026-10-11. Lista con ids en `docs/ENTORNOS.md`.
+
+## 2026-10-04 — cc17: D-385, importador de ventas con TONELADA y bobina sin stock (PR #94)
 
 - D-385 aprobada por el dueño. Caso real: FFA1-1419 (`BOB030AZUL`, 4.192 TONELADA, 12 789.153),
   leído del archivo `local-data/VENTAS SETIEMBRE.xlsx` del checkout principal, sin copiarlo.
