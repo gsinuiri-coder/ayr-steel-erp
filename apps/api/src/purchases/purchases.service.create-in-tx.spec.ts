@@ -160,3 +160,63 @@ describe('PurchasesService.cancel — onlyDraft (D-351, deshacer lote)', () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 });
+
+describe('PurchasesService.cancel — saldos bloqueados antes del guardrail (D-382, P2-A)', () => {
+  it('bloquea los saldos de los productos, en orden, antes de buscar movimientos posteriores', async () => {
+    const calls: string[] = [];
+    const own = ['prod-b', 'prod-a', 'prod-b'].map((itemId, i) => ({
+      id: BigInt(10 + i),
+      businessLineId: 'bl-1',
+      itemType: 'PRODUCT',
+      itemId,
+      type: 'IN',
+      unit: 'NIU',
+      qty: new Prisma.Decimal(1),
+      totalCost: new Prisma.Decimal(1),
+      reversalOfId: null,
+      reversals: [],
+    }));
+    let movementQueries = 0;
+    const tx = {
+      purchase: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      supplierPayment: { count: jest.fn().mockResolvedValue(0) },
+      inventoryMovement: {
+        findMany: jest.fn().mockImplementation(() => {
+          movementQueries++;
+          calls.push(movementQueries === 1 ? 'own' : 'later');
+          return Promise.resolve(movementQueries === 1 ? own : []);
+        }),
+      },
+      coil: {
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    };
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    Object.assign(svc, {
+      operationDate: { resolve: () => '2026-10-03' },
+      audit: { write: jest.fn().mockResolvedValue(undefined) },
+      inventory: {
+        lockAvailability: jest.fn().mockImplementation((_tx, ref: { itemId: string }) => {
+          calls.push(`lock:${ref.itemId}`);
+          return Promise.resolve();
+        }),
+        reverse: jest.fn().mockImplementation(() => {
+          calls.push('reverse');
+          return Promise.resolve();
+        }),
+      },
+      prisma: {
+        purchase: {
+          findUnique: jest.fn().mockResolvedValue({ id: 'pu-1', status: 'RECEIVED', payments: [] }),
+        },
+        $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+      findOne: jest.fn().mockResolvedValue({ id: 'pu-1' }),
+    });
+
+    await svc.cancel(ACTOR, 'pu-1', { reason: 'Anular' });
+    expect(calls.slice(0, 4)).toEqual(['own', 'lock:prod-a', 'lock:prod-b', 'later']);
+    expect(calls.filter((c) => c === 'reverse')).toHaveLength(3);
+  });
+});

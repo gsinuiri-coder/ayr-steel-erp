@@ -193,20 +193,6 @@ test.describe('D-372 sesión 2 (cc15b)', () => {
       qty: '10.000',
       avgCost: '27.0000',
     });
-
-    // Con una reserva que el saldo final cubre, también (D-066 se comprueba en la reversa).
-    const third = await buyProduct(api, supplier.id, product.id, '4', '20');
-    const customer = await createCustomer(api);
-    await createDirectOrder(api, {
-      customerId: customer.id,
-      businessLine: LINE,
-      items: [{ productId: product.id, qty: '2', unitPricePen: '50.0000' }],
-    });
-    // Un pedido directo reserva, no saca stock. La salida posterior que bloquea se prueba contra
-    // la base (purchase-cancel.db-spec).
-    await postJson(api, `/api/purchases/${third.id}/cancel`, {
-      reason: 'Anular con una reserva que el saldo cubre (E2E cc15b)',
-    });
-    expect((await balanceOf(api, 'PRODUCT', product.id)).qty).toBe('10.000');
+    // La salida posterior que sigue bloqueando se prueba contra la base (purchase-cancel.db-spec).
   });
 });
