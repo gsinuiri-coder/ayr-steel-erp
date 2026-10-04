@@ -100,8 +100,13 @@ interface RowEdit {
    * papel. Editar la cantidad o el precio lo descarta, como descartaba el importe del archivo.
    */
   netAmountPen?: string;
-  /** D-254 (R1): la bobina del pool que eligió quien revisa, en una fila de bobina. */
-  saleCoilId?: string;
+  /**
+   * D-254 (R1): la bobina del pool que eligió quien revisa, en una fila de bobina. D-385 (B):
+   * `null` es «sin bobina» a propósito (se quitó la sugerida); `undefined`, la del preview.
+   */
+  saleCoilId?: string | null;
+  /** D-385 (A): el producto de bobina elegido para la fila sin bobina, si hay varios en tolerancia. */
+  coilProductId?: string;
   /** Texto del plan de corte, formato `4x20, 1x1.9`. Vacío = el que trajo el preview. */
   plan?: string;
   removed?: boolean;
@@ -878,6 +883,9 @@ function ImportRow({
             onChoose={(coilId) => {
               onChange({ saleCoilId: coilId });
             }}
+            onChooseProduct={(productId) => {
+              onChange({ coilProductId: productId });
+            }}
           />
         ) : (
           <>
@@ -1037,39 +1045,70 @@ function ImportRow({
   );
 }
 
+/** D-385 (B): el valor del selector que significa «sin bobina, se elige al confirmar». */
+const NO_COIL = '__sin_bobina__';
+
 /**
- * D-254 (R1): la celda de producto de una fila con código de bobina. El producto no se elige:
- * es el SKU canónico que el normalizador dedujo del código. Lo que se elige es **cuál bobina**
- * del pool atiende la línea, entre las candidatas que el API calculó (espesor exacto, mismo
- * color comercial o tipo, libres y con saldo suficiente). Sin candidatas no hay nada que
- * elegir y la fila queda bloqueada con el motivo del API.
+ * D-254 (R1) / D-385: la celda de producto de una fila con código de bobina. Lo que se elige es
+ * **cuál bobina** atiende la línea, entre las candidatas que el API calculó: mismo color
+ * comercial o tipo, espesor dentro de la tolerancia del papel (A: pueden ser de otro SKU),
+ * libres y con saldo suficiente. La que eligió el preview es una sugerencia (B): se puede
+ * cambiar o quitar; sin bobina, la línea entra «sin bobina asignada» y se elige al confirmar.
+ * La línea toma el producto de la bobina; sin bobina, el del papel o el único existente en
+ * tolerancia, y si hay varios se elige acá.
  */
 function CoilRowCell({
   row,
   disabled,
   onChoose,
+  onChooseProduct,
 }: {
   row: ResolvedRow;
   disabled: boolean;
-  onChoose: (coilId: string) => void;
+  onChoose: (coilId: string | null) => void;
+  onChooseProduct: (productId: string) => void;
 }) {
   const { raw } = row;
+  const chosen = raw.coilCandidates.find((c) => c.coilId === row.saleCoilId);
+  const productSku =
+    chosen?.productSku ??
+    raw.coilProductOptions.find((o) => o.productId === row.productId)?.sku ??
+    null;
   return (
-    <div className="grid w-60 gap-1">
-      <div className="font-mono text-xs font-medium">
-        {raw.productSku ?? 'Sin producto de venta'}
+    <div className="grid w-64 gap-1">
+      <div className="text-xs">
+        <span className="text-muted-foreground">papel: </span>
+        <span className="font-mono">{raw.paperCoilSku ?? raw.rawSku}</span>
+        {chosen ? (
+          <>
+            <span className="text-muted-foreground"> · bobina: </span>
+            <span className="font-mono font-medium">
+              {chosen.productSku} ({chosen.thicknessMm} mm)
+            </span>
+          </>
+        ) : productSku ? (
+          <>
+            <span className="text-muted-foreground"> · producto: </span>
+            <span className="font-mono font-medium">{productSku}</span>
+          </>
+        ) : null}
       </div>
       <div className="text-xs text-muted-foreground">
-        {raw.rawSku} · pool: {formatQty(raw.coilPoolAvailableKg ?? '0.000', 'kg')} disponibles
+        disponibles en tolerancia: {formatQty(raw.coilPoolAvailableKg ?? '0.000', 'kg')}
       </div>
-      {raw.coilCandidates.length === 0 && raw.productId !== null && (
-        // D-385: entra sin bobina; se elige al confirmar la cotización.
+      {!chosen && row.productId !== null && (
         <Badge variant="outline" className="w-fit text-xs">
           Sin bobina asignada
         </Badge>
       )}
       {raw.coilCandidates.length > 0 && (
-        <Select value={row.saleCoilId ?? ''} onValueChange={onChoose} disabled={disabled}>
+        <Select
+          value={row.saleCoilId ?? NO_COIL}
+          onValueChange={(value) => {
+            onChoose(value === NO_COIL ? null : value);
+          }}
+          disabled={disabled}
+        >
           <SelectTrigger
             className="h-9 w-full text-xs"
             aria-label={`Bobina de la fila ${String(raw.rowNumber)}`}
@@ -1077,9 +1116,27 @@ function CoilRowCell({
             <SelectValue placeholder="Elige la bobina" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={NO_COIL}>Sin bobina (se elige al confirmar)</SelectItem>
             {raw.coilCandidates.map((c) => (
               <SelectItem key={c.coilId} value={c.coilId}>
                 {coilCandidateLabel(c)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {!chosen && raw.coilProductOptions.length > 1 && (
+        <Select value={row.productId ?? ''} onValueChange={onChooseProduct} disabled={disabled}>
+          <SelectTrigger
+            className="h-9 w-full text-xs"
+            aria-label={`Producto de bobina de la fila ${String(raw.rowNumber)}`}
+          >
+            <SelectValue placeholder="Elige el producto" />
+          </SelectTrigger>
+          <SelectContent>
+            {raw.coilProductOptions.map((o) => (
+              <SelectItem key={o.productId} value={o.productId}>
+                {o.sku} ({o.thicknessMm} mm)
               </SelectItem>
             ))}
           </SelectContent>
@@ -1094,9 +1151,12 @@ function trimDecimals(value: string): string {
   return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 }
 
-/** `BOB-0012 · 1200.00 mm · 4,194.000 kg`: lo que distingue a dos bobinas del mismo pool. */
+/**
+ * `BOB-0012 · BOB028AZUL 0.28 mm · 1200.00 mm · 4,194.000 kg`: lo que distingue a dos bobinas
+ * candidatas, que con la tolerancia de espesor pueden ser de SKU distintos (D-385 A).
+ */
 function coilCandidateLabel(c: CoilPoolCandidateDto): string {
-  return `${c.code} · ${c.widthMm} mm · ${formatQty(c.balanceKg, 'kg')}`;
+  return `${c.code} · ${c.productSku} ${c.thicknessMm} mm · ${c.widthMm} mm · ${formatQty(c.balanceKg, 'kg')}`;
 }
 
 /**
@@ -1174,10 +1234,26 @@ function resolveRow(
   edit: RowEdit,
   productsById: ReadonlyMap<string, ProductDto>,
 ): ResolvedRow {
-  // D-254: el producto de una fila de bobina es el SKU canónico y no se cambia a mano.
-  const productId = raw.coilLine ? raw.productId : (edit.productId ?? raw.productId);
+  // D-385 (B): `null` en la edición es «sin bobina» a propósito; `undefined`, la sugerida.
+  const saleCoilId = raw.coilLine
+    ? edit.saleCoilId !== undefined
+      ? edit.saleCoilId
+      : raw.saleCoilId
+    : null;
+  const chosenCoil = raw.coilCandidates.find((c) => c.coilId === saleCoilId);
+  // D-385 (A): en una fila de bobina el producto no se escribe: es el de la bobina elegida; sin
+  // bobina, el del papel si existe, si no el único existente dentro de la tolerancia, y si hay
+  // varios el que se eligió en la celda.
+  const coilFallback =
+    raw.coilProductOptions.find((o) => o.sku === raw.paperCoilSku) ??
+    (raw.coilProductOptions.length === 1 ? raw.coilProductOptions[0] : undefined);
+  const productId = raw.coilLine
+    ? (chosenCoil?.productId ??
+      edit.coilProductId ??
+      coilFallback?.productId ??
+      (raw.coilProductOptions.length === 0 ? raw.productId : null))
+    : (edit.productId ?? raw.productId);
   const qty = edit.qty ?? raw.qty;
-  const saleCoilId = raw.coilLine ? (edit.saleCoilId ?? raw.saleCoilId) : null;
   /**
    * D-255: con el valor de venta tipeado, el unitario **se deriva** de él (`importe ÷
    * cantidad`). Mandarlo es lo que mantiene honesta la comprobación de tolerancia del API: sin
@@ -1235,14 +1311,14 @@ function resolveRow(
   // D-254: en una fila de bobina, el error del producto es **el de la bobina** («elige cuál»,
   // «queda para revisión»). Elegir una candidata lo resuelve; sin candidatas no hay qué elegir
   // y el error del API queda en pie.
-  const coilChosen =
-    raw.coilLine && saleCoilId !== null && raw.coilCandidates.some((c) => c.coilId === saleCoilId);
+  const coilChosen = raw.coilLine && chosenCoil !== undefined;
   for (const issue of raw.issues) {
+    // D-385: en una fila de bobina lo del producto se recalcula abajo con lo elegido; el motivo
+    // del API solo queda cuando no hay ni bobina ni producto (no se interpretó, no existe).
     if (
       issue.field === 'product' &&
-      (raw.coilLine || (productId !== null && productId === raw.productId))
+      (raw.coilLine ? productId === null : productId !== null && productId === raw.productId)
     ) {
-      if (coilChosen && issue.severity === 'error') continue;
       issues.push(issue);
     }
     // D-385: lo de la unidad del papel no depende de lo editable y se conserva siempre (una
@@ -1263,10 +1339,23 @@ function resolveRow(
       message: `La fila está en ${raw.rawUnit} y el producto se vende en kilos: escribe la cantidad en kg (× 1000).`,
     });
   }
-  if (raw.coilLine && productId !== null && !coilChosen && raw.coilCandidates.length > 0) {
-    if (!issues.some((i) => i.field === 'product' && i.severity === 'error')) {
-      issues.push({ field: 'product', severity: 'error', message: 'Elige la bobina del pool.' });
-    }
+  // D-385 (B): sin bobina la fila entra igual, «sin bobina asignada», y se elige al confirmar.
+  if (raw.coilLine && productId !== null && !coilChosen) {
+    issues.push({
+      field: 'product',
+      severity: 'warning',
+      message:
+        raw.coilCandidates.length > 0
+          ? 'Sin bobina asignada: elige una ahora o al confirmar la cotización.'
+          : 'Sin bobina asignada: ninguna bobina libre tiene los kilos del papel; se elige al confirmar.',
+    });
+  }
+  if (raw.coilLine && productId === null && raw.coilProductOptions.length > 1) {
+    issues.push({
+      field: 'product',
+      severity: 'error',
+      message: 'Elige la bobina o el producto de bobina.',
+    });
   }
 
   const productsLoaded = productsById.size > 0;
@@ -1308,7 +1397,6 @@ function resolveRow(
     });
   }
   // D-254: la bobina elegida tiene que alcanzar para la cantidad de la línea.
-  const chosenCoil = raw.coilCandidates.find((c) => c.coilId === saleCoilId);
   if (chosenCoil && isNumeric(qty) && toDecimal(qty.trim()).gt(toDecimal(chosenCoil.balanceKg))) {
     issues.push({
       field: 'qty',

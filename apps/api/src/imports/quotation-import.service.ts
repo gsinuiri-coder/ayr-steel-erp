@@ -1,8 +1,10 @@
-import { BadRequestException, HttpException, Injectable } from '@nestjs/common';
+import { BadRequestException, HttpException, Inject, Injectable } from '@nestjs/common';
 import { DocType, Prisma, QuotationStatus } from '@prisma/client';
 import {
+  coilSkusWithinThickness,
   Decimal,
   defaultRoofingPlan,
+  parseCanonicalCoilSku,
   derivedUnitValue,
   importDocTypeOf,
   importPaperUnit,
@@ -17,6 +19,7 @@ import {
   paperAmounts,
   Unit,
   type CoilPoolCandidateDto,
+  type CoilProductOptionDto,
   MAX_QUOTATION_IMPORT_ROWS,
   PADRON_LOOKUP_CONCURRENCY,
   QUOTATION_IMPORT_COLUMNS,
@@ -34,14 +37,15 @@ import {
   type QuotationImportRowInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
+import { ENV, type Env } from '../config/env';
 import { CustomersService } from '../customers/customers.service';
 import { DocumentLookupService } from '../customers/document-lookup.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { roofingToleranceMm } from '../production/roofing-coil-match';
 import {
-  COIL_SALE_IDENTITY_SELECT,
   coilPoolFor,
-  findCoilSaleProductBySku,
-  findCoilSaleProducts,
+  coilSaleProductsByCoil,
+  findCoilSaleProductsBySkus,
   knownCoilAttributes,
 } from '../sales/coil-sale-product';
 import { detailsLengths } from '../sales/sales-lines';
@@ -73,6 +77,8 @@ export class QuotationImportService {
     private readonly quotations: QuotationsService,
     private readonly customers: CustomersService,
     private readonly padron: DocumentLookupService,
+    // D-385 (A): la tolerancia de espesor de coberturas, con su override de entorno.
+    @Inject(ENV) private readonly env: Pick<Env, 'ROOFING_THICKNESS_TOLERANCE_MM'>,
   ) {}
 
   /**
@@ -419,6 +425,8 @@ export class QuotationImportService {
       coilCandidates: coil?.candidates ?? [],
       coilPoolAvailableKg: coil?.availableKg ?? null,
       saleCoilId: coil?.saleCoilId ?? null,
+      paperCoilSku: coil?.paperSku ?? null,
+      coilProductOptions: coil?.options ?? [],
       unitConversion:
         paper.convertedFromTonnes && paper.paperQty !== null
           ? { paperQty: paper.paperQty, paperUnit: rawUnit }
@@ -489,59 +497,91 @@ export class QuotationImportService {
           saleCoilId: null,
           problem: `No se pudo interpretar el código de bobina: ${parsed.reason}. La línea queda para revisión.`,
           warning: null,
+          paperSku: null,
+          options: [],
         });
         continue;
       }
       // D-385: el producto de venta de bobina se vende en kilos, así que una fila en toneladas
       // se lee en kilos **antes** de buscar en el pool.
       const qty = paperQtyOf(raw[row.index] ?? {}, Unit.KGM).qty;
+      const qtyKg = qty === null ? '0' : toFixedString(qty, 'KG');
+      // D-385 (A): las candidatas son del mismo color comercial o tipo con espesor dentro de la
+      // tolerancia de coberturas del SKU del papel, aunque sean de otro SKU (el papel dice
+      // `BOB030AZUL` y la bobina real está como 0.28). El saldo, como siempre: ≥ los kg del papel.
+      const tolerance = roofingToleranceMm(this.env);
       const pool = await coilPoolFor(
         this.prisma,
-        { thicknessMm: parsed.thicknessMm, attribute: parsed.attribute },
-        qty === null ? '0' : toFixedString(qty, 'KG'),
+        { thicknessMm: parsed.thicknessMm, attribute: parsed.attribute, toleranceMm: tolerance },
+        qtyKg,
       );
-      if (pool.candidates.length === 0) {
-        // D-385: sin bobina libre que corresponda, la línea **entra igual** con el producto de
-        // venta del SKU y sin bobina: la cotización nace emitida con los kilos y el importe del
-        // papel, y la bobina se elige al confirmar (D-054 sigue: sin bobina no se confirma). Si
-        // el catálogo no tiene ese producto, la fila queda para revisión: no se crea nada.
-        const found = await findCoilSaleProductBySku(this.prisma, parsed.sku);
-        out.set(row.index, {
-          product: found
-            ? { id: found.id, sku: found.sku, name: found.name, unit: Unit.KGM, roofingKind: null }
-            : null,
-          candidates: [],
-          availableKg: pool.availableKg,
-          saleCoilId: null,
-          problem: found
-            ? null
-            : `${parsed.sku}: no hay bobina libre del pool ni producto de venta ${parsed.sku} en el catálogo. La línea queda para revisión.`,
-          warning: found
-            ? `${parsed.sku}: ninguna bobina libre del pool tiene ${qty === null ? 'la cantidad' : `${toFixedString(qty, 'KG')} kg`} (disponible en el pool: ${pool.availableKg} kg). La cotización entra sin bobina asignada; la bobina se elige al confirmar.`
-            : null,
-        });
-        continue;
-      }
-      const product = await this.coilSaleProductOf(
+      const productByCoil = await coilSaleProductsByCoil(
+        this.prisma,
         pool.candidates.map((c) => c.coilId),
-        parsed.sku,
       );
+      const candidates = pool.candidates.flatMap((c) => {
+        const p = productByCoil.get(c.coilId);
+        return p ? [{ ...c, productId: p.id, productSku: p.sku }] : [];
+      });
+      // Los productos existentes dentro de la tolerancia: con ellos va la línea sin bobina.
+      const inTolerance = await findCoilSaleProductsBySkus(
+        this.prisma,
+        coilSkusWithinThickness(parsed, tolerance).map((s) => s.sku),
+      );
+      const nameById = new Map(
+        [...inTolerance, ...productByCoil.values()].map((p) => [p.id, p.name]),
+      );
+      const options = inTolerance.map((p) => ({
+        productId: p.id,
+        sku: p.sku,
+        thicknessMm: parseCanonicalCoilSku(p.sku)?.thicknessMm ?? parsed.thicknessMm,
+      }));
+      const fallback =
+        options.find((o) => o.sku === parsed.sku) ?? (options.length === 1 ? options[0] : null);
+      const exact = candidates.filter((c) => toDecimal(c.balanceKg).equals(toDecimal(qtyKg)));
+      const auto =
+        candidates.length === 1 ? candidates[0] : exact.length === 1 ? exact[0] : undefined;
+      const productOf = (p: { productId: string; sku: string } | null | undefined) =>
+        p
+          ? {
+              id: p.productId,
+              sku: p.sku,
+              name: nameById.get(p.productId) ?? p.sku,
+              unit: Unit.KGM,
+              roofingKind: null,
+            }
+          : null;
+      const available = `(disponible dentro de ±${tolerance} mm: ${pool.availableKg} kg)`;
       out.set(row.index, {
-        product,
-        candidates: pool.candidates,
+        product: auto
+          ? productOf({ productId: auto.productId, sku: auto.productSku })
+          : productOf(fallback),
+        candidates,
         availableKg: pool.availableKg,
-        saleCoilId: pool.autoCoilId,
+        saleCoilId: auto?.coilId ?? null,
+        paperSku: parsed.sku,
+        options,
         problem:
-          product === null
+          pool.candidates.length > 0 && candidates.length === 0
             ? `${parsed.sku}: las bobinas del pool no tienen producto de venta; revisa el catálogo antes de importar.`
-            : pool.autoCoilId === null
-              ? `${parsed.sku}: hay ${String(pool.candidates.length)} bobinas que pueden atender la línea; elige cuál.`
+            : candidates.length === 0 && options.length === 0
+              ? `${parsed.sku}: no hay bobina libre ni producto de venta del mismo color dentro de ±${tolerance} mm en el catálogo. La línea queda para revisión.`
+              : !auto && !fallback
+                ? `${parsed.sku} no existe y hay ${String(options.length)} productos dentro de ±${tolerance} mm: elige la bobina o el producto.`
+                : null,
+        // D-385 (B): sin bobina elegida la línea **entra igual** «sin bobina asignada» y la bobina
+        // se elige al confirmar; la sugerencia automática es solo eso.
+        warning:
+          candidates.length === 0 && options.length > 0
+            ? `${parsed.sku}: ninguna bobina libre tiene ${qtyKg} kg ${available}. La cotización entra sin bobina asignada; la bobina se elige al confirmar.`
+            : candidates.length > 1 && !auto
+              ? `${parsed.sku}: hay ${String(candidates.length)} bobinas que pueden atender la línea. Elige una ahora o déjala sin bobina y elígela al confirmar.`
               : null,
-        warning: null,
       });
     }
 
-    // Una bobina, una fila: la elección automática que se repite queda para revisión.
+    // Una bobina, una fila: la sugerencia que se repite se quita de las dos filas (quedan sin
+    // bobina, con su producto) y se avisa.
     const autoCount = new Map<string, number>();
     for (const r of out.values()) {
       if (r.saleCoilId !== null)
@@ -550,28 +590,11 @@ export class QuotationImportService {
     for (const r of out.values()) {
       if (r.saleCoilId !== null && (autoCount.get(r.saleCoilId) ?? 0) > 1) {
         r.saleCoilId = null;
-        r.problem =
-          'Otra línea del archivo quedó con la misma bobina: elige cuál atiende a cada una.';
+        r.warning =
+          'Otra línea del archivo quedó con la misma bobina sugerida: elige cuál atiende a cada una, o déjalas sin bobina y elígelas al confirmar.';
       }
     }
     return out;
-  }
-
-  /** El producto de venta canónico (o el viejo, en la transición) de las bobinas del pool. */
-  private async coilSaleProductOf(
-    coilIds: readonly string[],
-    canonicalSku: string,
-  ): Promise<CoilRowResolution['product']> {
-    if (coilIds.length === 0) return null;
-    const coils = await this.prisma.coil.findMany({
-      where: { id: { in: [...coilIds] } },
-      select: COIL_SALE_IDENTITY_SELECT,
-    });
-    const products = await findCoilSaleProducts(this.prisma, coils);
-    const product = products.get(canonicalSku);
-    return product
-      ? { id: product.id, sku: product.sku, name: product.name, unit: Unit.KGM, roofingKind: null }
-      : null;
   }
 
   // -------------------------------------------------------------------------
@@ -1104,6 +1127,9 @@ interface CoilRowResolution {
   problem: string | null;
   /** D-385: un aviso que no bloquea (la línea entra sin bobina asignada). */
   warning: string | null;
+  /** D-385 (A): el SKU canónico del papel, y los productos dentro de la tolerancia. */
+  paperSku: string | null;
+  options: CoilProductOptionDto[];
 }
 
 /**

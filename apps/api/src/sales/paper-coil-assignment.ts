@@ -1,17 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
-import { InventoryItemType, type Prisma } from '@prisma/client';
+import { InventoryItemType, type BusinessLineCode, type Prisma } from '@prisma/client';
 import {
   isImportedQuotation,
+  normalizeCoilSku,
   paperCoilWeightCheck,
   toFixedString,
   type ConfirmCoilChoiceDto,
 } from '@ayr/shared';
 import {
-  COIL_SALE_IDENTITY_SELECT,
   coilPoolFor,
-  coilSaleSkus,
-  findCoilSaleProducts,
+  coilSaleProductsByCoil,
   isCoilSaleProduct,
+  knownCoilAttributes,
   lineCoilPool,
   type CoilPoolKey,
 } from './coil-sale-product';
@@ -31,12 +31,43 @@ export interface UnassignedPaperCoilLine {
   productSku: string;
   /** Los kilos del papel, a escala de kilos. */
   paperKg: string;
-  pool: CoilPoolKey;
+  /**
+   * D-385 (A): el espesor y el color **del papel**, con la tolerancia de espesor de coberturas.
+   * Las candidatas salen de acá, aunque sean de otro SKU que el producto de la línea.
+   */
+  pool: CoilPoolKey & { toleranceMm: string };
+}
+
+/** Lo mínimo de una línea guardada para saber de qué papel salió. */
+export interface PaperCoilLineRef {
+  description: string;
+  reserveItemType: InventoryItemType;
+  reserveItemId: string;
+  product: { sku: string; name: string; businessLine: { code: BusinessLineCode } };
+}
+
+/**
+ * D-385 (A): el pool **del papel** de una línea de bobina importada. La descripción de la línea es
+ * el texto del papel («BOBINA ALUZINC AZUL 0.30 X 1200 RAL 5002»): si el normalizador lo
+ * interpreta, manda; si no (una descripción editada), el pool del producto o de la bobina de la
+ * línea. La tolerancia de espesor se mide desde ahí.
+ */
+export async function paperPoolOfLine(
+  tx: Prisma.TransactionClient,
+  line: PaperCoilLineRef,
+  known: ReadonlySet<string>,
+): Promise<CoilPoolKey | null> {
+  const parsed = normalizeCoilSku({ description: line.description }, known);
+  if (parsed.ok) {
+    return { sku: parsed.sku, thicknessMm: parsed.thicknessMm, attribute: parsed.attribute };
+  }
+  return lineCoilPool(tx, line);
 }
 
 export async function unassignedPaperCoilLines(
   tx: Prisma.TransactionClient,
   quotation: { id: string; notes: string | null },
+  toleranceMm: string,
 ): Promise<UnassignedPaperCoilLine[]> {
   if (!isImportedQuotation(quotation.notes)) return [];
   const rows = await tx.quotationItem.findMany({
@@ -52,26 +83,29 @@ export async function unassignedPaperCoilLines(
     },
     orderBy: { lineNumber: 'asc' },
   });
+  const coilRows = rows.filter((row) => isCoilSaleProduct(row.product));
+  if (coilRows.length === 0) return [];
+  const known = await knownCoilAttributes(tx);
   const out: UnassignedPaperCoilLine[] = [];
-  for (const row of rows) {
-    if (!isCoilSaleProduct(row.product)) continue;
-    const pool = await lineCoilPool(tx, row);
+  for (const row of coilRows) {
+    const pool = await paperPoolOfLine(tx, row, known);
     if (pool === null) continue;
     out.push({
       itemId: row.id,
       lineNumber: row.lineNumber,
       productSku: row.product.sku,
       paperKg: toFixedString(row.qty.toString(), 'KG'),
-      pool,
+      pool: { ...pool, toleranceMm },
     });
   }
   return out;
 }
 
 /**
- * Las bobinas libres del pool de la línea —abiertas, sin reserva viva de otro documento, sin
- * montar en una OP y sin otra cotización abierta que las venda (`coilPoolFor`)—, **con cualquier
- * saldo**, marcadas según caigan o no en la tolerancia de los kilos del papel.
+ * Las bobinas libres del mismo color con espesor dentro de la tolerancia del papel —abiertas,
+ * sin reserva viva de otro documento, sin montar en una OP y sin otra cotización abierta que las
+ * venda (`coilPoolFor`)—, **con cualquier saldo**, con su producto de venta y marcadas según caigan
+ * o no en la tolerancia de los kilos del papel. Una bobina sin producto de venta no se ofrece.
  */
 export async function paperCoilChoices(
   tx: Prisma.TransactionClient,
@@ -84,13 +118,25 @@ export async function paperCoilChoices(
     exceptQuotationIds: [quotationId],
     ...(exceptSalesOrderId ? { exceptSalesOrderIds: [exceptSalesOrderId] } : {}),
   });
-  return pool.candidates.map((c) => ({
-    coilId: c.coilId,
-    code: c.code,
-    widthMm: c.widthMm,
-    balanceKg: c.balanceKg,
-    withinTolerance: paperCoilWeightCheck(line.paperKg, c.balanceKg).ok,
-  }));
+  const products = await coilSaleProductsByCoil(
+    tx,
+    pool.candidates.map((c) => c.coilId),
+  );
+  return pool.candidates.flatMap((c) => {
+    const product = products.get(c.coilId);
+    if (!product) return [];
+    return [
+      {
+        coilId: c.coilId,
+        code: c.code,
+        widthMm: c.widthMm,
+        balanceKg: c.balanceKg,
+        thicknessMm: c.thicknessMm,
+        productSku: product.sku,
+        withinTolerance: paperCoilWeightCheck(line.paperKg, c.balanceKg).ok,
+      },
+    ];
+  });
 }
 
 /** El motivo por el que la línea no se puede confirmar con ninguna bobina, o `null`. */
@@ -99,12 +145,14 @@ export function paperCoilBlocker(
   choices: readonly ConfirmCoilChoiceDto[],
 ): string | null {
   const at = `Línea ${String(line.lineNumber)} (${line.productSku})`;
+  // D-385 (A): «de BOB030AZUL ±0.02 mm»: el papel y la tolerancia de espesor.
+  const pool = `${line.pool.sku} ±${line.pool.toleranceMm} mm`;
   if (choices.length === 0) {
-    return `${at}: sin bobina asignada y no hay ninguna bobina libre de ${line.productSku}. Recibe la compra de la bobina y vuelve a confirmar.`;
+    return `${at}: sin bobina asignada y no hay ninguna bobina libre de ${pool}. Recibe la compra de la bobina y vuelve a confirmar.`;
   }
   if (!choices.some((c) => c.withinTolerance)) {
     const range = paperCoilWeightCheck(line.paperKg, '0');
-    return `${at}: ninguna bobina libre de ${line.productSku} pesa lo del papel (${line.paperKg} kg, entre ${range.minKg} y ${range.maxKg} kg): ${choices
+    return `${at}: ninguna bobina libre de ${pool} pesa lo del papel (${line.paperKg} kg, entre ${range.minKg} y ${range.maxKg} kg): ${choices
       .map((c) => `${c.code} tiene ${c.balanceKg} kg`)
       .join(', ')}.`;
   }
@@ -138,9 +186,9 @@ export async function resolvePaperCoilAssignments(
   tx: Prisma.TransactionClient,
   quotation: { id: string; notes: string | null },
   requested: readonly { lineNumber: number; saleCoilId: string }[],
-  options: { exceptSalesOrderId?: string } = {},
+  options: { toleranceMm: string; exceptSalesOrderId?: string },
 ): Promise<PaperCoilAssignment[]> {
-  const lines = await unassignedPaperCoilLines(tx, quotation);
+  const lines = await unassignedPaperCoilLines(tx, quotation, options.toleranceMm);
   const byLine = new Map(lines.map((l) => [l.lineNumber, l]));
   for (const r of requested) {
     if (!byLine.has(r.lineNumber)) {
@@ -168,7 +216,7 @@ export async function resolvePaperCoilAssignments(
     const at = `Línea ${String(line.lineNumber)}`;
     if (!chosen) {
       throw new BadRequestException(
-        `${at}: esa bobina no está libre en el pool de ${line.productSku} (abierta, del mismo espesor y color, sin reserva, sin OP y sin otra cotización abierta)`,
+        `${at}: esa bobina no está libre para ${line.pool.sku} (abierta, del mismo color, con espesor dentro de ±${line.pool.toleranceMm} mm, sin reserva, sin OP y sin otra cotización abierta)`,
       );
     }
     const check = paperCoilWeightCheck(line.paperKg, chosen.balanceKg);
@@ -177,11 +225,9 @@ export async function resolvePaperCoilAssignments(
         `${at}: ${chosen.code} tiene ${chosen.balanceKg} kg y el papel dice ${line.paperKg} kg. Fuera de la tolerancia: el saldo tiene que estar entre ${check.minKg} y ${check.maxKg} kg.`,
       );
     }
-    const coil = await tx.coil.findUniqueOrThrow({
-      where: { id: chosen.coilId },
-      select: COIL_SALE_IDENTITY_SELECT,
-    });
-    const product = (await findCoilSaleProducts(tx, [coil])).get(coilSaleSkus(coil).canonical);
+    // D-385 (A): la línea toma el producto de la bobina elegida (`BOB028AZUL`), aunque el papel
+    // diga otro SKU dentro de la tolerancia; descripción, kilos e importe siguen siendo del papel.
+    const product = (await coilSaleProductsByCoil(tx, [chosen.coilId])).get(chosen.coilId);
     if (!product) {
       throw new BadRequestException(`${at}: ${chosen.code} no tiene producto de venta de bobina`);
     }

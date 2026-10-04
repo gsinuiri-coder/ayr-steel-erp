@@ -48,6 +48,7 @@ import {
   TemporaryReservationLines,
 } from '@/components/sales/temporary-reservation';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
+import { QuotationCoilLineActions } from '@/components/sales/quotation-coil-actions';
 import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
@@ -166,6 +167,8 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   const canConfirm = q.status === 'EMITTED' && !q.isExpired;
   const canReserve = canConfirm && q.temporaryReservation === null;
   const canCancel = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
+  // D-385 (B): en una importada, la bobina de cada línea se quita o se cambia antes de confirmar.
+  const coilEditable = canCancel && isImportedQuotation(q.notes);
   // D-184: editable mientras no esté confirmada. Una vencida también: editarla es renovarla.
   const canEdit = q.status !== 'CONFIRMED' && q.status !== 'CANCELLED';
 
@@ -376,6 +379,17 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                       </div>
                     )}
                     <div className="text-xs text-muted-foreground">{item.description}</div>
+                    {/* D-385 (B): la bobina sugerida por el importador se quita o se cambia. */}
+                    {coilEditable &&
+                      (item.reserveItemType === 'COIL' ||
+                        unassignedCoilLines([item]).length > 0) && (
+                        <QuotationCoilLineActions
+                          quotationId={q.id}
+                          lineNumber={item.lineNumber}
+                          hasCoil={item.reserveItemType === 'COIL'}
+                          disabled={busy}
+                        />
+                      )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatQty(item.qty, unitSymbol(item.unit))}

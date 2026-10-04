@@ -923,10 +923,36 @@ export const confirmCoilChoiceSchema = z.object({
   code: z.string(),
   widthMm: z.string(),
   balanceKg: z.string(),
+  /** D-385 (A): espesor y producto de venta de la bobina (puede ser otro SKU que el del papel). */
+  thicknessMm: z.string(),
+  productSku: z.string(),
   /** Si el saldo está dentro de la tolerancia (±1 %) de los kilos del papel. */
   withinTolerance: z.boolean(),
 });
 export type ConfirmCoilChoiceDto = z.infer<typeof confirmCoilChoiceSchema>;
+
+/**
+ * D-385 (B): quitar (`null`) o cambiar la bobina de una línea de bobina de una cotización
+ * importada, antes de confirmarla. La sugerencia del importador es solo eso.
+ */
+export const setQuotationItemCoilSchema = z.object({
+  saleCoilId: z.string().uuid().nullable(),
+});
+export type SetQuotationItemCoilInput = z.infer<typeof setQuotationItemCoilSchema>;
+
+/**
+ * D-385 (B): las bobinas a las que se puede cambiar esa línea: libres, del color del papel, con
+ * espesor dentro de la tolerancia y saldo ≥ los kilos del papel (la regla de la sugerencia). Una
+ * más liviana, dentro del ±1 %, se elige al confirmar dejando la línea sin bobina.
+ */
+export const quotationItemCoilCandidatesSchema = z.object({
+  lineNumber: z.number().int(),
+  paperSku: z.string().nullable(),
+  toleranceMm: z.string(),
+  currentCoilId: z.string().uuid().nullable(),
+  candidates: z.array(confirmCoilChoiceSchema.omit({ withinTolerance: true })),
+});
+export type QuotationItemCoilCandidatesDto = z.infer<typeof quotationItemCoilCandidatesSchema>;
 export type ConfirmLineAction = (typeof CONFIRM_LINE_ACTIONS)[number];
 
 export const confirmPreviewLineSchema = z.object({
@@ -951,6 +977,8 @@ export const confirmPreviewLineSchema = z.object({
   plan: z.string().nullable(),
   /** D-385: las bobinas libres que se pueden elegir (`CHOOSE_COIL`). Vacío en toda otra línea. */
   coilChoices: z.array(confirmCoilChoiceSchema),
+  /** D-385 (A): el SKU que dice el papel (`CHOOSE_COIL`); `null` en toda otra línea. */
+  paperSku: z.string().nullable(),
 });
 export type ConfirmPreviewLineDto = z.infer<typeof confirmPreviewLineSchema>;
 

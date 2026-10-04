@@ -74,17 +74,36 @@ function csv(rows: Row[]): Buffer {
   return Buffer.from([HEADERS.join(','), ...body].join('\n'), 'utf8');
 }
 
-const coilRow = (id: string, balance: string) => ({
+const coilRow = (id: string, balance: string, thickness = '0.38', color = 'AZUL') => ({
   id,
   code: `SALDO-${id}`,
   widthMm: D('1200'),
-  thicknessMm: D('0.38'),
-  finish: { code: 'ALZ-AZUL-5002', kind: FinishKind.PREPINTADO, color: { code: 'AZUL' } },
+  thicknessMm: D(thickness),
+  finish: { code: `ALZ-${color}-5002`, kind: FinishKind.PREPINTADO, color: { code: color } },
   balance,
 });
 
-function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean } = {}) {
+/** Los productos de venta de bobina del catálogo (SKU canónicos). */
+const CANON = {
+  id: 'p-canon',
+  sku: 'BOB038AZUL',
+  name: 'Bobina Azul 0.38',
+  businessLineId: 'bl-t',
+};
+
+function build(
+  opts: {
+    coils?: ReturnType<typeof coilRow>[];
+    canonical?: boolean;
+    /** D-385 (A): los productos de bobina que existen; por defecto, solo `BOB038AZUL`. */
+    products?: { id: string; sku: string }[];
+  } = {},
+) {
   const coils = opts.coils ?? [coilRow('c-1', '4194')];
+  const coilProducts =
+    opts.canonical === false
+      ? []
+      : (opts.products?.map((p) => ({ ...p, name: p.sku, businessLineId: 'bl-t' })) ?? [CANON]);
   const looseProduct = {
     id: 'p-loose',
     sku: 'BOB38AZUL',
@@ -108,40 +127,21 @@ function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean
     },
     product: {
       findMany: jest.fn(
-        ({ where }: { where: { businessLineId?: string; sku: { in: string[] } } }) => {
-          // findCoilSaleProducts (con línea) devuelve el canónico; el preview de filas comunes, el suelto.
-          if (where.businessLineId !== undefined) {
-            return Promise.resolve(
-              opts.canonical === false
-                ? []
-                : [
-                    {
-                      id: 'p-canon',
-                      sku: 'BOB038AZUL',
-                      name: 'Bobina Azul 0.38',
-                      businessLineId: 'bl-t',
-                    },
-                  ],
-            );
+        ({
+          where,
+        }: {
+          where: { businessLineId?: string; businessLine?: unknown; sku: { in: string[] } };
+        }) => {
+          // Los productos de venta de bobina (por línea de reventa o por su código); el preview
+          // de filas comunes, el suelto y el conformado.
+          if (where.businessLineId !== undefined || where.businessLine !== undefined) {
+            return Promise.resolve(coilProducts.filter((p) => where.sku.in.includes(p.sku)));
           }
           return Promise.resolve([
             ...(where.sku.in.includes('BOB38AZUL') ? [looseProduct] : []),
             ...(where.sku.in.includes('CONFORMADO') ? [conformado] : []),
           ]);
         },
-      ),
-      // D-385: el producto de venta por SKU canónico, cuando el pool no tiene bobina.
-      findFirst: jest.fn(({ where }: { where: { sku: string } }) =>
-        Promise.resolve(
-          opts.canonical === false || where.sku !== 'BOB038AZUL'
-            ? null
-            : {
-                id: 'p-canon',
-                sku: 'BOB038AZUL',
-                name: 'Bobina Azul 0.38',
-                businessLineId: 'bl-t',
-              },
-        ),
       ),
     },
     quotation: { findMany: jest.fn().mockResolvedValue([]) },
@@ -165,6 +165,8 @@ function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean
     quotations as unknown as QuotationsService,
     {} as CustomersService,
     { lookup: jest.fn() } as unknown as DocumentLookupService,
+    // Sin override: la tolerancia de coberturas por defecto, ±0.02 mm.
+    { ROOFING_THICKNESS_TOLERANCE_MM: '' },
   );
   return { service, prisma, quotations };
 }
@@ -223,7 +225,7 @@ describe('QuotationImportService.preview — filas de bobina (R1)', () => {
     const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
     expect(row?.productId).toBeNull();
     expect(row?.issues.find((i) => i.severity === 'error')?.message).toMatch(
-      /ni producto de venta BOB038AZUL/,
+      /no hay bobina libre ni producto de venta del mismo color dentro de ±0\.02 mm/,
     );
   });
 
@@ -251,6 +253,77 @@ describe('QuotationImportService.preview — filas de bobina (R1)', () => {
     );
     expect(rows.map((r) => r.saleCoilId)).toEqual([null, null]);
     expect(rows[0]?.issues.map((i) => i.message).join(' ')).toMatch(/misma bobina/);
+  });
+});
+
+describe('D-385 (A) — bobina dentro de la tolerancia de espesor del papel', () => {
+  const B030: Row = {
+    key: 'FFA1-1419',
+    sku: 'BOB030AZUL',
+    name: 'BOBINA ALUZINC AZUL 0.30 X 1200 RAL 5002',
+    qty: '4192',
+    net: '12789.15',
+  };
+  const P028 = { id: '28282828-2828-4828-8828-282828282828', sku: 'BOB028AZUL' };
+  const P030 = { id: '30303030-3030-4030-8030-303030303030', sku: 'BOB030AZUL' };
+  const P032 = { id: '32323232-3232-4232-8232-323232323232', sku: 'BOB032AZUL' };
+
+  it('papel BOB030AZUL con una bobina 0.28 de saldo suficiente: se sugiere y la línea toma BOB028AZUL', async () => {
+    const { service } = build({
+      coils: [coilRow('c-28', '4200', '0.28')],
+      products: [P028],
+    });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row).toMatchObject({
+      paperCoilSku: 'BOB030AZUL',
+      saleCoilId: 'c-28',
+      productId: P028.id,
+      productSku: 'BOB028AZUL',
+      qty: '4192.000',
+      netAmountPen: '12789.1500',
+    });
+    expect(row?.coilCandidates[0]).toMatchObject({
+      coilId: 'c-28',
+      thicknessMm: '0.28',
+      productSku: 'BOB028AZUL',
+    });
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('sin bobina y sin el SKU del papel: entra con el único SKU existente en tolerancia', async () => {
+    const { service } = build({ coils: [], products: [P028] });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row).toMatchObject({ productId: P028.id, saleCoilId: null });
+    expect(row?.coilProductOptions).toEqual([
+      { productId: P028.id, sku: 'BOB028AZUL', thicknessMm: '0.28' },
+    ]);
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('sin bobina, con el SKU del papel existente: va con el del papel aunque haya otros', async () => {
+    const { service } = build({ coils: [], products: [P028, P030, P032] });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row?.productId).toBe(P030.id);
+  });
+
+  it('sin bobina, sin el SKU del papel y con dos en tolerancia: quien revisa elige', async () => {
+    const { service } = build({ coils: [], products: [P028, P032] });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row?.productId).toBeNull();
+    expect(row?.coilProductOptions.map((o) => o.sku)).toEqual(['BOB028AZUL', 'BOB032AZUL']);
+    expect(row?.issues.find((i) => i.severity === 'error')?.message).toMatch(
+      /BOB030AZUL no existe y hay 2 productos dentro de ±0\.02 mm: elige la bobina o el producto/,
+    );
+  });
+
+  it('una bobina de otro color no es candidata', async () => {
+    const { service } = build({
+      coils: [coilRow('c-rojo', '4200', '0.30', 'ROJO')],
+      products: [P030],
+    });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row?.coilCandidates).toEqual([]);
+    expect(row?.saleCoilId).toBeNull();
   });
 });
 

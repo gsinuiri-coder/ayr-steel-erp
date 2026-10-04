@@ -398,7 +398,20 @@ export const coilPoolCandidateSchema = z.object({
   code: z.string(),
   widthMm: z.string(),
   balanceKg: z.string(),
+  /** D-385 (A): con tolerancia de espesor, la bobina puede ser de otro SKU que el del papel. */
+  thicknessMm: z.string(),
+  /** El producto de venta de esta bobina: la línea lo toma si se la elige. */
+  productId: z.string().uuid(),
+  productSku: z.string(),
 });
+
+/** D-385 (A): un producto de venta de bobina existente dentro de la tolerancia del papel. */
+export const coilProductOptionSchema = z.object({
+  productId: z.string().uuid(),
+  sku: z.string(),
+  thicknessMm: z.string(),
+});
+export type CoilProductOptionDto = z.infer<typeof coilProductOptionSchema>;
 export type CoilPoolCandidateDto = z.infer<typeof coilPoolCandidateSchema>;
 
 /** Una fila del preview: lo de arriba más lo que hace falta para pintarla y decidirla. */
@@ -440,6 +453,14 @@ export const quotationImportRowSchema = quotationImportRowInputSchema
     /** D-254: lo disponible en el pool, en kg. `null` fuera de una línea de bobina. */
     coilPoolAvailableKg: z.string().nullable(),
     saleCoilId: z.string().uuid().nullable(),
+    /** D-385 (A): el SKU canónico que dice el papel (`BOB030AZUL`). `null` fuera de bobina. */
+    paperCoilSku: z.string().nullable(),
+    /**
+     * D-385 (A): los productos de venta existentes del mismo color con espesor dentro de la
+     * tolerancia del papel. Sin bobina elegida, la línea va con el del papel si existe; si no,
+     * con el único de esta lista, y si hay varios lo elige quien revisa.
+     */
+    coilProductOptions: z.array(coilProductOptionSchema),
     /**
      * D-385: la cantidad tal como venía en el papel cuando se convirtió (tonelada → kg), para que
      * la vista previa muestre «4.192 TONELADA → 4,192 kg». `null` si no hubo conversión.

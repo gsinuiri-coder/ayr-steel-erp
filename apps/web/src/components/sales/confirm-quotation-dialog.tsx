@@ -323,12 +323,29 @@ function CoilChoice({
   onChange: (coilId: string) => void;
 }) {
   if (line.coilChoices.length === 0) {
-    return <span className="text-destructive">Sin bobina libre de {line.productSku}</span>;
+    return (
+      <span className="text-destructive">
+        Sin bobina libre de {line.paperSku ?? line.productSku}
+      </span>
+    );
   }
   const chosen = line.coilChoices.find((c) => c.coilId === value);
   const range = paperCoilWeightCheck(line.qty, chosen?.balanceKg ?? line.qty);
   return (
     <div className="grid gap-1">
+      {/* D-385 (A): el papel y la bobina elegida, que puede ser de otro SKU en tolerancia. */}
+      <span>
+        papel: <span className="font-mono">{line.paperSku ?? line.productSku}</span>
+        {chosen && (
+          <>
+            {' '}
+            · bobina:{' '}
+            <span className="font-mono font-medium">
+              {chosen.productSku} ({chosen.thicknessMm} mm)
+            </span>
+          </>
+        )}
+      </span>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger
           className="h-8 w-full text-xs"
@@ -339,7 +356,7 @@ function CoilChoice({
         <SelectContent>
           {line.coilChoices.map((c) => (
             <SelectItem key={c.coilId} value={c.coilId}>
-              {c.code} · {formatQty(c.balanceKg, 'kg')}
+              {c.code} · {c.productSku} {c.thicknessMm} mm · {formatQty(c.balanceKg, 'kg')}
               {c.withinTolerance ? '' : ' · fuera de tolerancia'}
             </SelectItem>
           ))}

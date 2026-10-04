@@ -89,9 +89,19 @@ describe('D-385 — confirmQuotationSchema.coilAssignments', () => {
   });
 });
 
-/** Una base falsa con una línea `BOB038AZUL` sin bobina y las bobinas del pool que se pasen. */
-function txWith(coils: { id: string; code: string; balance: string }[]) {
+/**
+ * Una base falsa con una línea `BOB038AZUL` sin bobina y las bobinas que se pasen. La
+ * descripción de la línea es el texto del papel (D-385 A: de ahí sale el espesor de referencia).
+ */
+function txWith(
+  coils: { id: string; code: string; balance: string; thickness?: string }[],
+  paperDescription = 'BOBINA ALUZINC AZUL 0.38 X 1200 RAL 5002',
+) {
   const finish = { code: 'ALZ-AZUL', kind: FinishKind.PREPINTADO, color: { code: 'AZUL' } };
+  const products = [
+    { id: 'p-canon', sku: 'BOB038AZUL', name: 'Bobina Azul 0.38', businessLineId: 'bl-t' },
+    { id: 'p-028', sku: 'BOB028AZUL', name: 'Bobina Azul 0.28', businessLineId: 'bl-t' },
+  ];
   return {
     $queryRaw: jest.fn().mockResolvedValue([]),
     quotationItem: {
@@ -104,7 +114,7 @@ function txWith(coils: { id: string; code: string; balance: string }[]) {
                 id: 'qi-1',
                 lineNumber: 1,
                 qty: D('4192'),
-                description: 'BOBINA ALUZINC AZUL 0.38 X 1200 RAL 5002',
+                description: paperDescription,
                 reserveItemType: 'PRODUCT',
                 reserveItemId: 'p-canon',
                 product: {
@@ -118,12 +128,15 @@ function txWith(coils: { id: string; code: string; balance: string }[]) {
     },
     color: { findMany: jest.fn().mockResolvedValue([{ code: 'AZUL' }]) },
     coil: {
-      findMany: jest
-        .fn()
-        .mockResolvedValue(
-          coils.map((c) => ({ id: c.id, code: c.code, widthMm: D('1200'), finish })),
-        ),
-      findUniqueOrThrow: jest.fn().mockResolvedValue({ thicknessMm: D('0.38'), finish }),
+      findMany: jest.fn().mockResolvedValue(
+        coils.map((c) => ({
+          id: c.id,
+          code: c.code,
+          widthMm: D('1200'),
+          thicknessMm: D(c.thickness ?? '0.38'),
+          finish,
+        })),
+      ),
     },
     inventoryBalance: {
       findMany: jest
@@ -132,50 +145,75 @@ function txWith(coils: { id: string; code: string; balance: string }[]) {
     },
     businessLine: { findUnique: jest.fn().mockResolvedValue({ id: 'bl-t' }) },
     product: {
-      findMany: jest
-        .fn()
-        .mockResolvedValue([
-          { id: 'p-canon', sku: 'BOB038AZUL', name: 'Bobina Azul 0.38', businessLineId: 'bl-t' },
-        ]),
+      findMany: jest.fn(({ where }: { where: { sku: { in: string[] } } }) =>
+        Promise.resolve(products.filter((p) => where.sku.in.includes(p.sku))),
+      ),
     },
   };
 }
 
 const IMPORTED = { id: 'q-1', notes: 'Factura externa: FFA1-1419' };
+const TOL = { toleranceMm: '0.02' };
 
 describe('D-385 — elegir la bobina al confirmar', () => {
   it('una cotización manual no tiene líneas que elegir (su comportamiento no cambia)', async () => {
     const tx = txWith([]);
     await expect(
-      unassignedPaperCoilLines(tx as never, { id: 'q-1', notes: null }),
+      unassignedPaperCoilLines(tx as never, { id: 'q-1', notes: null }, '0.02'),
     ).resolves.toEqual([]);
     expect(tx.quotationItem.findMany).not.toHaveBeenCalled();
     await expect(
-      resolvePaperCoilAssignments(tx as never, { id: 'q-1', notes: null }, [
-        { lineNumber: 1, saleCoilId: COIL_ID },
-      ]),
+      resolvePaperCoilAssignments(
+        tx as never,
+        { id: 'q-1', notes: null },
+        [{ lineNumber: 1, saleCoilId: COIL_ID }],
+        TOL,
+      ),
     ).rejects.toThrow(/no es una línea de bobina sin bobina asignada/);
   });
 
   it('sin bobina libre que corresponda, confirmar se bloquea con un mensaje claro', async () => {
     const tx = txWith([]);
-    await expect(resolvePaperCoilAssignments(tx as never, IMPORTED, [])).rejects.toThrow(
-      /sin bobina asignada y no hay ninguna bobina libre de BOB038AZUL/,
+    await expect(resolvePaperCoilAssignments(tx as never, IMPORTED, [], TOL)).rejects.toThrow(
+      /sin bobina asignada y no hay ninguna bobina libre de BOB038AZUL ±0\.02 mm/,
     );
   });
 
   it('con bobina libre pero sin elegirla, pide elegirla', async () => {
     const tx = txWith([{ id: COIL_ID, code: 'BOB-0042', balance: '4190' }]);
-    await expect(resolvePaperCoilAssignments(tx as never, IMPORTED, [])).rejects.toThrow(
+    await expect(resolvePaperCoilAssignments(tx as never, IMPORTED, [], TOL)).rejects.toThrow(
       /Elige la bobina al confirmar/,
     );
   });
 
+  it('D-385 (A): papel 0.30 y bobina 0.28 dentro de la tolerancia: la línea toma BOB028AZUL', async () => {
+    const tx = txWith(
+      [{ id: COIL_ID, code: 'BOB-0028', balance: '4200', thickness: '0.28' }],
+      'BOBINA ALUZINC AZUL 0.30 X 1200 RAL 5002',
+    );
+    const [line] = await unassignedPaperCoilLines(tx as never, IMPORTED, '0.02');
+    expect(line?.pool).toMatchObject({
+      sku: 'BOB030AZUL',
+      thicknessMm: '0.30',
+      toleranceMm: '0.02',
+    });
+    const [a] = await resolvePaperCoilAssignments(
+      tx as never,
+      IMPORTED,
+      [{ lineNumber: 1, saleCoilId: COIL_ID }],
+      TOL,
+    );
+    expect(a).toMatchObject({ coilId: COIL_ID, productId: 'p-028', balanceKg: '4200.000' });
+  });
+
   it('la bobina dentro del ±1 % se ata y reserva su saldo entero', async () => {
     const tx = txWith([{ id: COIL_ID, code: 'BOB-0042', balance: '4180.500' }]);
-    const [a] = await resolvePaperCoilAssignments(tx as never, IMPORTED, [
-      { lineNumber: 1, saleCoilId: COIL_ID },
-    ]);
+    const [a] = await resolvePaperCoilAssignments(
+      tx as never,
+      IMPORTED,
+      [{ lineNumber: 1, saleCoilId: COIL_ID }],
+      TOL,
+    );
     expect(a).toEqual({
       lineNumber: 1,
       itemId: 'qi-1',
@@ -196,7 +234,7 @@ describe('D-385 — elegir la bobina al confirmar', () => {
       tx as never,
       IMPORTED,
       [{ lineNumber: 1, saleCoilId: COIL_ID }],
-      { exceptSalesOrderId: 'o-1' },
+      { ...TOL, exceptSalesOrderId: 'o-1' },
     );
     const { reservedByItem } = jest.requireMock<{ reservedByItem: jest.Mock }>('./reserved-ledger');
     expect(reservedByItem).toHaveBeenLastCalledWith(expect.anything(), 'COIL', [COIL_ID], {
@@ -220,22 +258,30 @@ describe('D-385 — elegir la bobina al confirmar', () => {
   it('una bobina fuera del ±1 % se bloquea mostrando los dos pesos', async () => {
     const tx = txWith([{ id: COIL_ID, code: 'BOB-0042', balance: '4100' }]);
     await expect(
-      resolvePaperCoilAssignments(tx as never, IMPORTED, [{ lineNumber: 1, saleCoilId: COIL_ID }]),
+      resolvePaperCoilAssignments(
+        tx as never,
+        IMPORTED,
+        [{ lineNumber: 1, saleCoilId: COIL_ID }],
+        TOL,
+      ),
     ).rejects.toThrow(/BOB-0042 tiene 4100\.000 kg y el papel dice 4192\.000 kg/);
   });
 
   it('una bobina que no está libre en el pool se rechaza', async () => {
     const tx = txWith([{ id: COIL_ID, code: 'BOB-0042', balance: '4192' }]);
     await expect(
-      resolvePaperCoilAssignments(tx as never, IMPORTED, [
-        { lineNumber: 1, saleCoilId: OTHER_COIL_ID },
-      ]),
-    ).rejects.toThrow(/no está libre en el pool/);
+      resolvePaperCoilAssignments(
+        tx as never,
+        IMPORTED,
+        [{ lineNumber: 1, saleCoilId: OTHER_COIL_ID }],
+        TOL,
+      ),
+    ).rejects.toThrow(/no está libre para BOB038AZUL/);
   });
 
   it('el aviso de la vista previa nombra las bobinas fuera de rango', async () => {
     const tx = txWith([]);
-    const [line] = await unassignedPaperCoilLines(tx as never, IMPORTED);
+    const [line] = await unassignedPaperCoilLines(tx as never, IMPORTED, '0.02');
     expect(line).toBeDefined();
     if (!line) return;
     expect(
@@ -245,10 +291,14 @@ describe('D-385 — elegir la bobina al confirmar', () => {
           code: 'BOB-0042',
           widthMm: '1200.00',
           balanceKg: '3000.000',
+          thicknessMm: '0.38',
+          productSku: 'BOB038AZUL',
           withinTolerance: false,
         },
       ]),
-    ).toMatch(/ninguna bobina libre de BOB038AZUL pesa lo del papel.*BOB-0042 tiene 3000\.000 kg/);
+    ).toMatch(
+      /ninguna bobina libre de BOB038AZUL ±0\.02 mm pesa lo del papel.*BOB-0042 tiene 3000\.000 kg/,
+    );
     expect(
       paperCoilBlocker(line, [
         {
@@ -256,6 +306,8 @@ describe('D-385 — elegir la bobina al confirmar', () => {
           code: 'BOB-0042',
           widthMm: '1200.00',
           balanceKg: '4192.000',
+          thicknessMm: '0.38',
+          productSku: 'BOB038AZUL',
           withinTolerance: true,
         },
       ]),

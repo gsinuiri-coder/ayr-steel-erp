@@ -468,6 +468,7 @@ export class SalesOrdersService {
           tx,
           quotation,
           input.coilAssignments ?? [],
+          { toleranceMm: roofingToleranceMm(this.env) },
         );
         const assignedByLine = new Map(coilAssignments.map((a) => [a.lineNumber, a]));
 
@@ -590,7 +591,7 @@ export class SalesOrdersService {
             tx,
             quotation,
             input.coilAssignments ?? [],
-            { exceptSalesOrderId: order.id },
+            { toleranceMm: roofingToleranceMm(this.env), exceptSalesOrderId: order.id },
           );
           const same = (a: (typeof recheck)[number]) =>
             coilAssignments.some(
@@ -746,7 +747,11 @@ export class SalesOrdersService {
 
     // D-385: la línea de bobina sin bobina asignada de una importada no reserva un producto (que
     // nunca tiene saldo): se elige la bobina en el diálogo. Va aparte del cálculo de reserva.
-    const unassigned = await unassignedPaperCoilLines(this.prisma, quotation);
+    const unassigned = await unassignedPaperCoilLines(
+      this.prisma,
+      quotation,
+      roofingToleranceMm(this.env),
+    );
     const unassignedNumbers = new Set(unassigned.map((l) => l.lineNumber));
     const {
       lines: reservedLines,
@@ -778,6 +783,7 @@ export class SalesOrdersService {
         shortfallQty: null,
         plan: null,
         coilChoices,
+        paperSku: line.pool.sku,
       });
     }
     const previewLines = [...reservedLines, ...chooseLines].sort(
@@ -888,6 +894,7 @@ export class SalesOrdersService {
           shortfallQty: null,
           plan: null,
           coilChoices: [],
+          paperSku: null,
         });
         continue;
       }
@@ -956,6 +963,7 @@ export class SalesOrdersService {
         shortfallQty: shortfall?.toFixed(3) ?? null,
         plan,
         coilChoices: [],
+        paperSku: null,
       });
     }
 

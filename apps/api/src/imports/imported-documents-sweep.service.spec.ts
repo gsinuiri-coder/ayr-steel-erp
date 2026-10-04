@@ -141,6 +141,7 @@ function fakePrisma(o: FakeOpts = {}) {
           id: c.id,
           code: c.code,
           widthMm: D('1200'),
+          thicknessMm: D('0.38'),
           finish: { kind: FinishKind.PREPINTADO, color: { code: 'AZUL' } },
         })),
       ),
@@ -189,6 +190,7 @@ function build(prisma: ReturnType<typeof fakePrisma>) {
     prisma as unknown as PrismaService,
     quotations as unknown as QuotationsService,
     edits as unknown as SalesOrderEditsService,
+    { ROOFING_THICKNESS_TOLERANCE_MM: '' },
   );
   return { service, quotations, edits };
 }
@@ -273,6 +275,31 @@ describe('ImportedDocumentsSweepService.report', () => {
     expect(finding?.product).toBeNull();
     expect(finding?.amounts?.paper.net).toBe('12439.8310');
     expect(finding?.newSku).toBe('BOB038AZUL');
+  });
+
+  it('D-385 (A): una línea BOB028AZUL empareja con el papel BOB030AZUL (±0.02 mm); BOB033AZUL, no', async () => {
+    const paper030 = paperLine({
+      rawSku: 'BOB030AZUL',
+      productName: 'BOBINA ALUZINC AZUL 0.30 X 1200 RAL 5002',
+    });
+    const near = line(1, {
+      sku: 'BOB028AZUL',
+      productId: 'p-028',
+      subtotal: '12439.8310',
+      igv: '2239.1690',
+      total: '14679.0000',
+    });
+    const { service } = build(
+      fakePrisma({ quotations: [quotationRow([near], { status: 'EMITTED' })] }),
+    );
+    const { documents } = await service.report([paper030]);
+    expect(documents[0]?.findings).toEqual([]);
+    expect(documents[0]?.unpairedPaperRows).toEqual([]);
+
+    const far = line(1, { sku: 'BOB033AZUL', productId: 'p-033' });
+    const other = build(fakePrisma({ quotations: [quotationRow([far], { status: 'EMITTED' })] }));
+    const report = await other.service.report([paper030]);
+    expect(report.documents[0]?.findings[0]?.unpaired).toMatch(/ninguna línea del papel/);
   });
 
   it('sin candidatas en el pool no hay bobina a la que atarla', async () => {

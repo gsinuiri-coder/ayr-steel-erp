@@ -33,13 +33,17 @@ import {
   quotationCode,
   salesOrderCode,
   toDecimal,
+  toFixedString,
   toSkipTake,
+  Unit,
   type CreateQuotationInput,
   type CreateQuotationInternalInput,
   type PaginatedResult,
   type QuotationDto,
   type QuotationDuplicateDto,
+  type QuotationItemCoilCandidatesDto,
   type QuotationListItemDto,
+  type SetQuotationItemCoilInput,
   type QuotationQuery,
   type SalesItemInput,
   type UpdateQuotationInput,
@@ -60,7 +64,16 @@ import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
 import { reservedByItem } from './reserved-ledger';
 import { SalesOrdersService } from './sales-orders.service';
-import { coilTieReasons, findCoilTies, isCoilSaleProduct, lineCoilPool } from './coil-sale-product';
+import {
+  coilPoolFor,
+  coilSaleProductsByCoil,
+  coilTieReasons,
+  findCoilTies,
+  isCoilSaleProduct,
+  knownCoilAttributes,
+  lineCoilPool,
+} from './coil-sale-product';
+import { paperPoolOfLine } from './paper-coil-assignment';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 import { quotationOrderBy } from '../common/list-orderings';
 
@@ -535,6 +548,216 @@ export class QuotationsService {
       },
     });
     return new Set(rows.filter((r) => isCoilSaleProduct(r.product)).map((r) => r.productId));
+  }
+
+  // -------------------------------------------------------------------------
+  // D-385 (B): quitar o cambiar la bobina de una línea importada, antes de confirmar
+  // -------------------------------------------------------------------------
+
+  /** La línea de bobina de una cotización importada, con lo que hace falta para su pool. */
+  private async requireImportedCoilLine(
+    tx: Prisma.TransactionClient,
+    quotation: { id: string; notes: string | null },
+    lineNumber: number,
+  ) {
+    if (!isImportedQuotation(quotation.notes)) {
+      throw new BadRequestException(
+        'Solo en una cotización importada se quita o se cambia la bobina de una línea: en una manual se edita la cotización',
+      );
+    }
+    const item = await tx.quotationItem.findFirst({
+      where: { quotationId: quotation.id, lineNumber },
+      select: {
+        id: true,
+        lineNumber: true,
+        productId: true,
+        qty: true,
+        description: true,
+        reserveItemType: true,
+        reserveItemId: true,
+        product: { select: { sku: true, name: true, businessLine: { select: { code: true } } } },
+      },
+    });
+    if (!item) throw new NotFoundException(`La cotización no tiene la línea ${String(lineNumber)}`);
+    if (item.reserveItemType !== InventoryItemType.COIL && !isCoilSaleProduct(item.product)) {
+      throw new BadRequestException(
+        `Línea ${String(lineNumber)}: ${item.product.sku} no es una venta de bobina`,
+      );
+    }
+    return item;
+  }
+
+  /**
+   * Las candidatas de esa línea con la regla de la sugerencia del importador: libres, del color
+   * del papel, espesor dentro de la tolerancia de coberturas y saldo ≥ los kilos del papel.
+   */
+  private async itemCoilCandidates(
+    tx: Prisma.TransactionClient,
+    quotationId: string,
+    item: Awaited<ReturnType<QuotationsService['requireImportedCoilLine']>>,
+  ): Promise<{
+    paperSku: string | null;
+    candidates: QuotationItemCoilCandidatesDto['candidates'];
+  }> {
+    const known = await knownCoilAttributes(tx);
+    const pool = await paperPoolOfLine(tx, item, known);
+    if (pool === null) return { paperSku: null, candidates: [] };
+    const found = await coilPoolFor(
+      tx,
+      { ...pool, toleranceMm: roofingToleranceMm(this.env) },
+      toFixedString(item.qty.toString(), 'KG'),
+      { exceptQuotationIds: [quotationId] },
+    );
+    const products = await coilSaleProductsByCoil(
+      tx,
+      found.candidates.map((c) => c.coilId),
+    );
+    return {
+      paperSku: pool.sku,
+      candidates: found.candidates.flatMap((c) => {
+        const product = products.get(c.coilId);
+        return product
+          ? [
+              {
+                coilId: c.coilId,
+                code: c.code,
+                widthMm: c.widthMm,
+                balanceKg: c.balanceKg,
+                thicknessMm: c.thicknessMm,
+                productSku: product.sku,
+              },
+            ]
+          : [];
+      }),
+    };
+  }
+
+  async itemCoilOptions(
+    actor: RequestUser,
+    quotationId: string,
+    lineNumber: number,
+  ): Promise<QuotationItemCoilCandidatesDto> {
+    const quotation = await this.prisma.quotation.findUnique({
+      where: { id: quotationId },
+      select: { id: true, notes: true, sellerId: true },
+    });
+    if (!quotation) throw new NotFoundException('Cotización no encontrada');
+    assertSellerAccess(actor, quotation.sellerId, 'Cotización');
+    const item = await this.requireImportedCoilLine(this.prisma, quotation, lineNumber);
+    const { paperSku, candidates } = await this.itemCoilCandidates(this.prisma, quotationId, item);
+    return {
+      lineNumber,
+      paperSku,
+      toleranceMm: roofingToleranceMm(this.env),
+      currentCoilId: item.reserveItemType === InventoryItemType.COIL ? item.reserveItemId : null,
+      candidates,
+    };
+  }
+
+  /**
+   * D-385 (B): la bobina que sugirió el importador **se puede quitar o cambiar** antes de
+   * confirmar. Quitarla deja la línea «sin bobina asignada» con su producto de venta (se elige al
+   * confirmar, con el ±1 %); cambiarla toma otra candidata y su producto. Descripción, kilos e
+   * importe siguen siendo los del papel. La cotización no reserva nada (D-054): la palabra final
+   * la tiene confirmar, bajo el lock de las reservas.
+   */
+  async setItemCoil(
+    actor: RequestUser,
+    quotationId: string,
+    lineNumber: number,
+    input: SetQuotationItemCoilInput,
+  ): Promise<QuotationDto> {
+    await this.prisma.$transaction(
+      async (tx) => {
+        const current = await this.lockQuotation(tx, quotationId);
+        assertSellerAccess(actor, current.sellerId, 'Cotización');
+        if (
+          current.status === QuotationStatus.CONFIRMED ||
+          current.status === QuotationStatus.CANCELLED
+        ) {
+          throw new BadRequestException(
+            `La cotización está ${current.status === QuotationStatus.CONFIRMED ? 'confirmada' : 'anulada'}: su bobina ya no se cambia`,
+          );
+        }
+        const item = await this.requireImportedCoilLine(tx, current, lineNumber);
+        const before = {
+          lineNumber,
+          productSku: item.product.sku,
+          coilId: item.reserveItemType === InventoryItemType.COIL ? item.reserveItemId : null,
+        };
+        let after: Record<string, string | number | null>;
+        if (input.saleCoilId === null) {
+          if (before.coilId === null) return;
+          // El producto se queda: es el de la bobina que tenía, del pool del papel.
+          await tx.quotationItem.update({
+            where: { id: item.id },
+            data: {
+              reserveItemType: InventoryItemType.PRODUCT,
+              reserveItemId: item.productId,
+              reserveQty: item.qty,
+              reserveUnit: Unit.KGM,
+            },
+          });
+          after = { lineNumber, productSku: item.product.sku, coilId: null };
+        } else {
+          const { candidates } = await this.itemCoilCandidates(tx, quotationId, item);
+          const chosen = candidates.find((c) => c.coilId === input.saleCoilId);
+          if (!chosen) {
+            throw new BadRequestException(
+              `Línea ${String(lineNumber)}: esa bobina no es candidata (libre, del color del papel, espesor dentro de ±${roofingToleranceMm(this.env)} mm y con ${toFixedString(item.qty.toString(), 'KG')} kg o más). Para una más liviana, quita la bobina y elígela al confirmar.`,
+            );
+          }
+          const sameCoil = await tx.quotationItem.findFirst({
+            where: {
+              quotationId,
+              id: { not: item.id },
+              reserveItemType: InventoryItemType.COIL,
+              reserveItemId: chosen.coilId,
+            },
+            select: { lineNumber: true },
+          });
+          if (sameCoil) {
+            throw new BadRequestException(
+              `Línea ${String(lineNumber)}: ${chosen.code} ya la vende la línea ${String(sameCoil.lineNumber)}`,
+            );
+          }
+          const product = (await coilSaleProductsByCoil(tx, [chosen.coilId])).get(chosen.coilId);
+          if (!product) {
+            throw new BadRequestException(`${chosen.code} no tiene producto de venta de bobina`);
+          }
+          await tx.quotationItem.update({
+            where: { id: item.id },
+            data: {
+              productId: product.id,
+              reserveItemType: InventoryItemType.COIL,
+              reserveItemId: chosen.coilId,
+              reserveQty: item.qty,
+              reserveUnit: Unit.KGM,
+            },
+          });
+          after = {
+            lineNumber,
+            productSku: product.sku,
+            coilId: chosen.coilId,
+            coilCode: chosen.code,
+            thicknessMm: chosen.thicknessMm,
+          };
+        }
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.quotation.item-coil',
+          entity: 'quotations',
+          entityId: quotationId,
+          before: { code: quotationCode(current.seq), ...before },
+          after,
+        });
+        // D-185: con reserva temporal vigente, lo reservado sigue a la línea.
+        await this.orders.recalculateTemporaryInTx(tx, actor, quotationId);
+      },
+      { timeout: 30_000, maxWait: 10_000 },
+    );
+    await this.generatePdf(quotationId);
+    return this.findOne(quotationId);
   }
 
   /** Las bobinas que la cotización ya vende: su propia línea no compite consigo misma. */

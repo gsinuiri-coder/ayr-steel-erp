@@ -1,4 +1,4 @@
-import { HttpException, Injectable } from '@nestjs/common';
+import { HttpException, Inject, Injectable } from '@nestjs/common';
 import {
   FiscalDocType,
   InventoryItemType,
@@ -12,14 +12,18 @@ import {
   fromDateOnly,
   importRoundingTolerance,
   normalizeCoilSku,
+  parseCanonicalCoilSku,
   quotationCode,
   salesOrderCode,
   STANDING_DOCUMENT_STATUSES,
+  thicknessWithin,
   toDecimal,
   type SalesItemInput,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
+import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
+import { roofingToleranceMm } from '../production/roofing-coil-match';
 import {
   coilPoolFor,
   isCoilSaleProduct,
@@ -223,6 +227,8 @@ export class ImportedDocumentsSweepService {
     private readonly prisma: PrismaService,
     private readonly quotations: QuotationsService,
     private readonly edits: SalesOrderEditsService,
+    // D-385 (A): la tolerancia de espesor de coberturas, con su override de entorno.
+    @Inject(ENV) private readonly env: Pick<Env, 'ROOFING_THICKNESS_TOLERANCE_MM'>,
   ) {}
 
   /** Dry-run: el reporte, sin escribir nada. */
@@ -471,7 +477,7 @@ export class ImportedDocumentsSweepService {
     // común caída frente a un `BOB…` del papel se convertía en venta de bobina.
     const paperKeys = paper.map((p) => paperProductKey(p, known));
     const lineKeys = await Promise.all(doc.items.map((l) => this.lineProductKey(l)));
-    const pairing = pairLines(doc.items, lineKeys, paper, paperKeys);
+    const pairing = pairLines(doc.items, lineKeys, paper, paperKeys, roofingToleranceMm(this.env));
 
     const findings: SweepLineFinding[] = [];
     for (const [i, line] of doc.items.entries()) {
@@ -671,6 +677,23 @@ function normalizedSku(sku: string): string {
 }
 
 /**
+ * D-385 (A): ¿la línea y la fila del papel nombran el mismo producto? Igual SKU normalizado, o
+ * —para bobinas— el mismo color comercial o tipo con espesor dentro de la tolerancia: el papel
+ * dice `BOB030AZUL` y la línea vende una bobina `BOB028AZUL`, como hace el importador.
+ */
+function sameProductKey(paperKey: string, lineKey: string, toleranceMm: string): boolean {
+  if (paperKey === lineKey) return true;
+  const a = parseCanonicalCoilSku(paperKey);
+  const b = parseCanonicalCoilSku(lineKey);
+  return (
+    a !== null &&
+    b !== null &&
+    a.attribute === b.attribute &&
+    thicknessWithin(a.thicknessMm, b.thicknessMm, toleranceMm)
+  );
+}
+
+/**
  * D-385: la línea «sin bobina asignada» del importador: un producto de venta de bobina **con el
  * SKU canónico de su pool** y sin bobina. El `BOB…` suelto de COT-000002 tiene otro SKU
  * (`BOB38AZUL` frente a `BOB038AZUL`) y sigue siendo un hallazgo de R1.
@@ -712,11 +735,17 @@ function pairLines(
   lineKeys: readonly string[],
   paper: readonly PaperLine[],
   paperKeys: readonly string[],
+  /** D-385 (A): tolerancia de espesor de coberturas para emparejar bobinas de otro SKU. */
+  toleranceMm: string,
 ): LinePairing[] {
   const choice = items.map((line, i): LinePairing => {
     const qty = toDecimal(line.qty.toString());
     const candidates = paper.flatMap((p, j) =>
-      paperKeys[j] === lineKeys[i] && p.qty !== null && toDecimal(p.qty).equals(qty) ? [j] : [],
+      sameProductKey(paperKeys[j] ?? '', lineKeys[i] ?? '', toleranceMm) &&
+      p.qty !== null &&
+      toDecimal(p.qty).equals(qty)
+        ? [j]
+        : [],
     );
     if (candidates.length === 0) {
       return {

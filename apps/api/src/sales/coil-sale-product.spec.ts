@@ -263,6 +263,7 @@ describe('coilPoolFor', () => {
     id,
     code: `B-${id}`,
     widthMm: new Prisma.Decimal(width),
+    thicknessMm: new Prisma.Decimal('0.38'),
     finish: { kind: FinishKind.PREPINTADO, color: { code: colorCode } },
   });
   const txWith = (

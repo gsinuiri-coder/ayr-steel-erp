@@ -86,6 +86,7 @@ function serviceFor(buffer: Buffer): QuotationImportService {
     {} as QuotationsService,
     {} as CustomersService,
     { lookup: jest.fn().mockResolvedValue({ found: false }) } as unknown as DocumentLookupService,
+    { ROOFING_THICKNESS_TOLERANCE_MM: '' },
   );
 }
 
