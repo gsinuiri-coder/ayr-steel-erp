@@ -179,6 +179,9 @@ Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle está en
 ## Pendiente — Orden único de bloqueos en despacho y reversas (pieza propia)
 
 Decisión del dueño (2026-10-03): sesión aparte, **después de cc15b y D-383**; sin tocar antes.
+**Actualización (dueño, 2026-10-04):** es la **siguiente pieza después de cc17** (D-385,
+importador de bobina en toneladas y sin stock), que está en curso en otra sesión con prioridad
+alta.
 Origen: P2-1 y P2-2 de `docs/revision/cc15b-p2b-segundo-modelo.md`, previos a cc15b.
 
 - **Despacho** (`dispatches.service.ts` ~340-374): bloquea solo las bobinas nombradas; `record`
@@ -654,8 +657,9 @@ Ventana de día: el cliente no usaba la app. Cada paso sensible tuvo OK individu
 - **Limpieza:** el `local-data/` del worktree se copió y verificó en el checkout principal. Worktree
   `../ayr-cc08` y su rama local borrados.
 - **Pendientes:**
-  - las otras 8 bobinas anuladas (posibles duplicados físicos de sus gemelas activas) esperan decisión
-    del dueño, bobina por bobina;
+  - ~~las otras 8 bobinas anuladas (posibles duplicados físicos de sus gemelas activas) esperan
+    decisión del dueño, bobina por bobina~~: **decidido por el dueño el 2026-10-01: se quedan
+    anuladas.** Registrado el 2026-10-04; ya no es un pendiente;
   - la fecha sugerida del despacho sin `?despacho=` (paso 4 de cc08): descartada en cc09 (ver arriba);
   - el worktree `../ayr-kardex` se borró con OK del dueño (sin cambios, sin stash ni `local-data`).
 

@@ -47,8 +47,9 @@ Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232). Sin migració
 
 ## Lo que queda abierto en el proyecto (al 2026-10-04)
 
-1. **Orden único de bloqueos en despacho y reversas.** Es una pieza propia: el dueño la puso
-   **después de cc15b y de D-383**, así que ya se puede programar. Origen: P2-1 y P2-2 de
+1. **Orden único de bloqueos en despacho y reversas.** Es la **siguiente pieza, después de cc17**.
+   cc17 es D-385, el importador de bobina en toneladas y sin stock: está en curso en otra sesión,
+   con prioridad alta (dueño, 2026-10-04). Origen: P2-1 y P2-2 de
    `docs/revision/cc15b-p2b-segundo-modelo.md`. Detalle en `docs/PROGRESO.md`, «Pendiente».
 2. **Respaldos Neon con fecha de borrado.** Se borran solo con el OK del dueño por nombre:
    - `respaldo-pre-cc16-20261003` (`br-late-poetry-aewbwyl6`): se conserva hasta el 2026-10-11;
@@ -71,12 +72,10 @@ Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232). Sin migració
    - de cc16: el tercer pase del emparejado de D-381 sin mirar importes, y el refetch al
      terminar.
 6. **Descarga de comprobantes en Excel.** El alcance está por definir.
-7. **Bobinas de cc08.** Las otras 8 bobinas anuladas, posibles duplicados físicos de sus gemelas
-   activas, esperan la decisión del dueño, bobina por bobina.
-8. **D-374, punto 3.** Falta el cambio de la herramienta `fix:purchase-received-dates`, que hoy
+7. **D-374, punto 3.** Falta el cambio de la herramienta `fix:purchase-received-dates`, que hoy
    excluye las compras con salidas posteriores. El dueño eligió no cambiarla por ahora (opción B).
-9. **Registro de riesgo.** Hay piezas marcadas «PENDIENTE DE REVISIÓN DEL DUEÑO» en
+8. **Registro de riesgo.** Hay piezas marcadas «PENDIENTE DE REVISIÓN DEL DUEÑO» en
    `docs/PROGRESO.md` («Registro de riesgo»). Desde 2026-09-26 son un registro de dónde mirar
    primero, no una deuda de revisión, salvo que el dueño diga otra cosa.
-10. **Ramas remotas de sesiones anteriores**, si quedan. Las borra el dueño, salvo que pida lo
-    contrario.
+9. **Ramas remotas de sesiones anteriores**, si quedan. Las borra el dueño, salvo que pida lo
+   contrario.
