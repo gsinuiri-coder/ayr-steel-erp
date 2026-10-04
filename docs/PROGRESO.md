@@ -2,7 +2,28 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-04 — cc17: D-385, importador de ventas con TONELADA y bobina sin stock (PR #94 sin merge)
+## 2026-10-04 — Ventana cc17 (D-385 desplegada, PR #94, sin migración)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc17.md`.
+
+- **UAT:** confirmado por el dueño en demo. CI 37198276868 en `df5929f`: E2E 505 y smoke 36, en
+  verde.
+- **Foto `READ ONLY` previa:** 0 cotizaciones importadas abiertas con líneas `BOB…` sin bobina.
+- **API:** `ayr-steel-erp-api-00082-rlx`, con `git-sha=df5929f`, `/health` 200 y smoke 8/8. La
+  vuelta atrás es `00081-p5g`.
+- **Web:** merge del #94, `main` = `c8fefa7`. Vercel `success` y smoke 8/8 en los dos dominios.
+  Salidas completas en `local-data/cc17/`.
+- **Datos:** ninguno. FFA1-1419 la importa el dueño y elige la bobina cuando almacén confirme
+  cuál salió. El agente no importa ni confirma nada.
+- **Cierre:** demo apagado; worktree y rama `cc17/importador-bobina` borrados.
+- **Ramas de Neon: 17, el máximo es 10 (regla del dueño).** Propuesta, **pendiente del OK del dueño
+  por nombre** y sin borrar nada todavía:
+  - se conservan las 5 fijas (`production`, `dev`, `ci`, `demo`, `respaldo-pre-v4-20260915`) y
+    los 2 respaldos del 03/10 (`respaldo-pre-cc16-20261003` y
+    `respaldo-pre-replaceentry-20261003`, hasta cumplir 7 días: 2026-10-10 y 2026-10-11);
+  - se borran 7 para quedar en 10; el detalle está en el reporte de cierre al dueño.
+
+## 2026-10-04 — cc17: D-385, importador de ventas con TONELADA y bobina sin stock (PR #94)
 
 - D-385 aprobada por el dueño. Caso real: FFA1-1419 (`BOB030AZUL`, 4.192 TONELADA, 12 789.153),
   leído del archivo `local-data/VENTAS SETIEMBRE.xlsx` del checkout principal, sin copiarlo.

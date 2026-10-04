@@ -1,5 +1,27 @@
 # Ventana cc17 — D-385: importador de ventas (TONELADA y bobina sin stock)
 
+## Ejecutada el 2026-10-04: sin incidencias
+
+Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232).
+
+| Qué                            | Resultado                                                                                                                                                                                                        |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UAT                            | Confirmado por el dueño en demo (refrescada desde production con su OK; `dev:demo` desde `../ayr-cc17` sobre `2d8d207`, mismo runtime que `df5929f`)                                                             |
+| CI del PR #94                  | Corrida 37198276868 en `df5929f`: E2E 505 pasados y 3 saltados (incluye los dos E2E de D-385); smoke Neon `ci` 36 pasados y 2 saltados; lint, typecheck, unitarios y Sonar en verde                              |
+| Condiciones del dueño          | Sin migración (diff de `prisma/migrations` y `schema.prisma` vacío); PR `MERGEABLE`/`CLEAN` sobre `main` `a9fee5a`; vuelta atrás identificada                                                                    |
+| Foto `READ ONLY` previa        | 2026-10-04 13:39 UTC (`local-data/cc17/foto-sin-bobina-production-2026-10-04T1339.json`): **0** cotizaciones importadas abiertas con líneas `BOB…` sin bobina. La de bobinas AZUL (08:47 UTC) está en D-385      |
+| Revisión API anterior (vuelta) | `ayr-steel-erp-api-00081-p5g`, `git-sha=4528b65`                                                                                                                                                                 |
+| Paso 1: deploy de la API       | **`ayr-steel-erp-api-00082-rlx`**, al 100 %, `git-sha=df5929f`, `/health` 200, `smoke:prod` 8/8 con la web vieja (`local-data/cc17/smoke-prod-api-df5929f.txt`)                                                  |
+| Paso 2: merge del #94          | `main` = **`c8fefa7`**, diff de runtime vacío contra `df5929f`, Vercel `success`, `smoke:prod` 8/8 en `vercel.app` y 8/8 en `v2.mareliac.pe` (`local-data/cc17/smoke-prod-web-vercel.txt`, `…-web-mareliac.txt`) |
+| Datos                          | Ninguno. El deploy no escribe datos y el agente no importó ni confirmó nada: **FFA1-1419 la importa el dueño** y elige la bobina al confirmar, cuando almacén confirme cuál salió                                |
+| Cierre                         | Demo apagado; worktree `../ayr-cc17` y rama `cc17/importador-bobina` (local y remota) borrados, con su `local-data` revisada                                                                                     |
+
+**Ramas de Neon (regla de máximo 10):** 17 al cierre. La propuesta de borrado está en
+`docs/PROGRESO.md`, entrada de la ventana cc17. No se borró nada: espera el OK del dueño por
+nombre.
+
+---
+
 Runbook. Cada paso marcado **[OK]** espera el OK explícito del dueño (D-251/D-232): el agente
 propone el comando exacto y espera.
 
