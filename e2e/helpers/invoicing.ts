@@ -1016,13 +1016,29 @@ export async function purgeInvoicingTrail(
       .catch(() => undefined);
   }
 
-  // 5. Pedidos: anular libera las reservas y desbloquea la bobina.
-  for (const orderId of trail.orderIds ?? []) {
+  // 4b. D-383: un borrador del pedido bloquea su anulación. Los del rastro se descartan acá
+  //     (las fases de arriba los saltan a propósito: no tienen nada que deshacer).
+  for (const document of await readDocuments()) {
+    if (document.status !== 'DRAFT') continue;
     await api
+      .delete(`/api/invoicing/documents/${document.id}`, { data: { reason } })
+      .catch(() => undefined);
+  }
+
+  // 5. Pedidos: anular libera las reservas y desbloquea la bobina. D-383: si algo la bloquea
+  //    (comprobante vivo, despacho, borrador), se avisa en vez de tragarlo: un pedido que no se
+  //    anuló deja reservas que contaminan los casos siguientes.
+  for (const orderId of trail.orderIds ?? []) {
+    const res = await api
       .post(`/api/sales/orders/${orderId}/cancel`, {
         data: { reason, acknowledgeFabricated: true },
       })
-      .catch(() => undefined);
+      .catch(() => null);
+    if (res && !res.ok() && res.status() !== 409) {
+      console.warn(
+        `Limpieza E2E: el pedido ${orderId} no se anuló (${String(res.status())}): ${await res.text()}`,
+      );
+    }
   }
 
   // 6. Bobinas, compra y maestros, igual que en las fases anteriores.

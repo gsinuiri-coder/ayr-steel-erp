@@ -30,6 +30,9 @@ describe('D-383 — anular un pedido', () => {
     docs: {
       number: string | null;
       origin: string;
+      docType?: string;
+      status?: string;
+      createdAt?: Date;
       totalPen: Prisma.Decimal;
       creditNotes: { totalPen: Prisma.Decimal }[];
     }[];
@@ -53,6 +56,15 @@ describe('D-383 — anular un pedido', () => {
   function happy(): Scenario {
     return { docs: [], dispatches: [], reports: [], movements: [], shipped: [] };
   }
+
+  /** Lo que la consulta trae: vivos y borradores. Por defecto, una factura aceptada. */
+  const withDocDefaults = (docs: Scenario['docs']) =>
+    docs.map((d) => ({
+      docType: 'FACTURA',
+      status: 'ACCEPTED',
+      createdAt: new Date('2026-10-03T15:00:00.000Z'),
+      ...d,
+    }));
 
   /** Lo fabricado de la línea 1 (24.6 m de COB-ROJO en OP-000012, cerrada). */
   function withFabricated(s: Scenario): Scenario {
@@ -120,7 +132,7 @@ describe('D-383 — anular un pedido', () => {
           ),
         ),
       },
-      fiscalDocument: { findMany: jest.fn().mockResolvedValue(s.docs) },
+      fiscalDocument: { findMany: jest.fn().mockResolvedValue(withDocDefaults(s.docs)) },
       dispatch: { findMany: jest.fn().mockResolvedValue(s.dispatches) },
       productionReport: { findMany: jest.fn().mockResolvedValue(s.reports) },
       inventoryMovement: { findMany: jest.fn().mockResolvedValue(s.movements) },
@@ -248,6 +260,68 @@ describe('D-383 — anular un pedido', () => {
         /FFA1-1 vigente.*\. El pedido PED-000007 tiene el despacho DES-000003 vigente/,
       );
     });
+
+    it('decisión del dueño: un borrador bloquea, nombrado, y no se borra solo', async () => {
+      const s = happy();
+      s.docs = [
+        {
+          number: null,
+          origin: 'ISSUED_HERE',
+          docType: 'FACTURA',
+          status: 'DRAFT',
+          // 01:40 UTC del 2 de octubre es 1 de octubre en Lima.
+          createdAt: new Date('2026-10-02T01:40:45.000Z'),
+          totalPen: D('6438'),
+          creditNotes: [],
+        },
+      ];
+      await rejects(
+        s,
+        BadRequestException,
+        'El pedido PED-000007 tiene un borrador de comprobante: elimina primero el borrador (factura del 01/10/2026 por S/ 6438.00) antes de anular el pedido',
+      );
+    });
+
+    it('dos borradores: los nombra a los dos', async () => {
+      const s = happy();
+      s.docs = [
+        {
+          number: null,
+          origin: 'ISSUED_HERE',
+          status: 'DRAFT',
+          totalPen: D('10'),
+          creditNotes: [],
+        },
+        {
+          number: null,
+          origin: 'ISSUED_HERE',
+          docType: 'BOLETA',
+          status: 'DRAFT',
+          totalPen: D('5'),
+          creditNotes: [],
+        },
+      ];
+      await rejects(
+        s,
+        BadRequestException,
+        /tiene 2 borradores de comprobante: elimina primero los borradores \(factura del 03\/10\/2026 por S\/ 10\.00; boleta del 03\/10\/2026 por S\/ 5\.00\)/,
+      );
+    });
+
+    it('acreditado por completo al céntimo, con un resto en el cuarto decimal, no bloquea', async () => {
+      const s = happy();
+      s.docs = [
+        {
+          number: 'B001-00000011',
+          origin: 'ISSUED_HERE',
+          totalPen: D('118.0049'),
+          creditNotes: [{ totalPen: D('118.0000') }],
+        },
+      ];
+      const { service, tx } = await build(s);
+      await service.cancel(ADMIN, 'o-1', { reason: 'anulación de venta de mostrador' });
+      expect(tx.salesOrder.update).toHaveBeenCalled();
+    });
   });
 
   describe('(2) producto fabricado sin despachar', () => {
@@ -306,7 +380,7 @@ describe('D-383 — anular un pedido', () => {
       const findManyDocs = jest
         .fn()
         // Comprobantes vivos y, después, los manuales anulados.
-        .mockResolvedValueOnce(s.docs)
+        .mockResolvedValueOnce(withDocDefaults(s.docs))
         .mockResolvedValueOnce(annulled);
       const reader = {
         ...tx,

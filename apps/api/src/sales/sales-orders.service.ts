@@ -2196,8 +2196,9 @@ export class SalesOrdersService {
    * reserva a `ACTIVA` y libera este bloqueo, así que un pedido nunca queda sin poder
    * anularse para siempre — el agujero que D-061 tuvo que cerrar con los pagos a proveedor.
    *
-   * Con la OP cerrada no hay nada que impedir: el material ya salió y anular el pedido es un
-   * acto puramente comercial.
+   * Con la OP cerrada la producción no bloquea, pero D-383 exige ver lo fabricado sin despachar
+   * (`acknowledgeFabricated`): queda en inventario sin pedido y nadie lo toma. D-383 bloquea
+   * además con un comprobante vivo, un borrador o un despacho vigente: primero se deshace la venta.
    *
    * Si el pedido venía de una cotización, esa cotización vuelve a `EMITIDA` cuando sigue
    * vigente — el cliente puede volver a aceptarla— y queda `VENCIDA` cuando ya no.
@@ -2265,9 +2266,17 @@ export class SalesOrdersService {
       // uno que se esté registrando espera a este commit y `assertStillAvailable` ve el pedido
       // ya anulado. Crear un comprobante o un despacho toma el lock del pedido, que ya es nuestro.
       await tx.$queryRaw`
-        SELECT "id" FROM "fiscal_documents"
-        WHERE "sales_order_id" = ${id}::uuid AND "status" = 'DRAFT'
-        ORDER BY "id" FOR UPDATE
+        SELECT d."id" FROM "fiscal_documents" d
+        WHERE d."status" = 'DRAFT'
+          AND (
+            d."sales_order_id" = ${id}::uuid
+            OR EXISTS (
+              SELECT 1 FROM "fiscal_document_items" i
+              JOIN "sales_order_items" s ON s."id" = i."sales_order_item_id"
+              WHERE i."document_id" = d."id" AND s."sales_order_id" = ${id}::uuid
+            )
+          )
+        ORDER BY d."id" FOR UPDATE
       `;
       const orderCode = salesOrderCode(order.seq);
       const commercial = await commercialCancelBlocks(tx, id, orderCode);
