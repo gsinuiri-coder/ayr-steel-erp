@@ -2,6 +2,21 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 — D-384: `pnpm limpia:v4` retirado del repo (PR sin merge)
+
+- **Decisión del dueño:** retirar la limpia total de V-4 (D-208) en lugar de dejarla bloqueada.
+  Ya cumplió su función el 2026-09-15 y producción tiene datos reales desde entonces.
+- **Hueco que cierra:** `tsx prisma/production-cleanup-v4.ts --execute` con el `DATABASE_URL` de
+  producción y sin `AYR_BRANCH_LABEL` se saltaba la confirmación (`AYR_LIMPIA_V4_CONFIRMED`) y
+  truncaba 39 tablas. El wrapper, el `--confirm-production` y el `ask` solo cubrían la invocación
+  por `pnpm limpia:v4`.
+- **Qué sale:** `apps/api/prisma/production-cleanup-v4.ts`, `scripts/production-cleanup-v4.mjs`, el
+  script de `package.json` y sus 4 reglas `ask` de `.claude/settings.json`. `docs/ENTORNOS.md`
+  marca el checklist de V-4 como histórico. El código queda en la historia de git (`ca1fa4d`).
+- **Pendiente al reacomodar cc15b (PR #88):** el centinela de escritores del kardex va sin la
+  excepción D-208 y la regla dura 8 de `AGENTS.md` deja de nombrarla.
+- Sin cambio de runtime: ni API ni web usan estos archivos (no hay deploy).
+
 ## 2026-10-03 — cc16: D-381, traer un comprobante manual anulado a otro pedido (PR #87 sin merge)
 
 - D-381 confirmada por el dueño, con las decisiones 1-4 (fila de §0.2). El PR de diseño #86 se

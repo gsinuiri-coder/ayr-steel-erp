@@ -8,7 +8,7 @@
 //
 // Sin `--execute` el script solo lee y reporta: el dry-run contra `production` está permitido
 // porque no escribe una sola fila. `--execute` contra `production` exige además
-// `--confirm-production` — sin ese flag aborta, igual que `limpia:v4` e `import:initial-inventory`.
+// `--confirm-production` — sin ese flag aborta, igual que `import:initial-inventory`.
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString } from './lib.mjs';
