@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
@@ -7,6 +7,7 @@ import { BusinessLinesModule } from './business-lines/business-lines.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { ColorsModule } from './colors/colors.module';
 import { CoilsModule } from './coils/coils.module';
+import { LockConflictFilter } from './common/lock-conflict.filter';
 import { AppThrottlerGuard } from './common/throttler.guard';
 import { ConfigModule } from './config/config.module';
 import { ENV, type Env } from './config/env';
@@ -72,6 +73,10 @@ import { UsersModule } from './users/users.module';
     ReportsModule,
   ],
   controllers: [HealthController],
-  providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: AppThrottlerGuard },
+    // D-386: un deadlock o un fallo de serialización sale como 409 en español, no como 500.
+    { provide: APP_FILTER, useClass: LockConflictFilter },
+  ],
 })
 export class AppModule {}
