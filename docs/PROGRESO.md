@@ -122,7 +122,18 @@
     anulación bloquea los ítems de la compra antes del guardrail (una venta concurrente cabía en
     el saldo de la otra compra y la reversa salía a costo completo). La verificación de Sonnet
     del arreglo abrió el P2-B (orden de locks en una compra mixta), corregido con
-    `InventoryService.lockItemsForReversal`: bobinas antes que saldos (D-134). P3-C corregido (E2E); P3-A
+    `InventoryService.lockItemsForReversal`: bobinas antes que saldos (D-134).
+  - **Pasada de Sonnet de contexto limpio solo sobre P2-B** (pedida por el dueño,
+    `docs/revision/cc15b-p2b-segundo-modelo.md`): sin P0 ni P1; sin ciclo contra «Editar
+    compra», `replaceEntry`, `reverse` ni una reserva nueva. **Anotados, previos a este cambio y
+    fuera de alcance:** P2-1, el despacho (`dispatches.service.ts` ~340-374) bloquea solo las
+    bobinas nombradas y toma los saldos de producto en el orden de las líneas, así que puede
+    cruzarse con la anulación o con confirmar un pedido; P2-2, las reversas de varios ítems
+    (despacho, venta, producción) iteran sin ordenar. Arreglo sugerido para los dos: llamar a
+    `lockItemsForReversal` al inicio. P3: la anulación no bloquea los flejes heredados antes de
+    cancelarlos; la segunda toma de bobinas en `reverse` puede ampliar el conjunto.
+  - **P3-B cerrado:** tests contra la base de la regla de bobina (una entrada ajena sigue
+    bloqueando) y del ajuste ajeno en producto. P3-C corregido (E2E); P3-A
     (deriva de ±0,0001 sin aviso al anular) y P3-B (bobina y ajuste ajeno probados como forma de
     la consulta) aceptados.
 - **Test frágil identificado:** `auth.service.spec.ts` «rechaza correo inexistente con 401» calcula
