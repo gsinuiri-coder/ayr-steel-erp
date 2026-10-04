@@ -758,25 +758,20 @@ export class PurchasesService {
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },
           });
-          // D-382 (revisión de P2-2, P2-A): los saldos de los productos se bloquean **antes** de
-          // buscar movimientos posteriores. Con las entradas ajenas fuera del guardrail, una venta
-          // confirmada entre esa lectura y la reversa cabía en el saldo de la otra compra y la
-          // reversa salía igual, a costo completo, sobre un ingreso ya consumido. En orden fijo,
-          // como «Editar compra». Las bobinas no: su guardrail no cambió y D-134 pide tomarlas
-          // antes que los saldos.
-          const productRefs = [
-            ...new Map(
-              own.filter((m) => m.itemType === 'PRODUCT').map((m) => [m.itemId, m] as const),
-            ).values(),
-          ].sort((a, b) => a.itemId.localeCompare(b.itemId));
-          for (const m of productRefs) {
-            await this.inventory.lockAvailability(tx, {
+          // D-382 (revisión de P2-2, P2-A y P2-B): los ítems de la compra se bloquean **antes**
+          // de buscar movimientos posteriores. Con las entradas ajenas fuera del guardrail, una
+          // venta confirmada entre esa lectura y la reversa cabía en el saldo de la otra compra y
+          // la reversa salía igual, a costo completo, sobre un ingreso ya consumido. Bobinas antes
+          // que saldos (D-134) y en orden fijo, como «Editar compra».
+          await this.inventory.lockItemsForReversal(
+            tx,
+            own.map((m) => ({
               businessLineId: m.businessLineId,
-              itemType: 'PRODUCT',
+              itemType: m.itemType,
               itemId: m.itemId,
               unit: m.unit,
-            });
-          }
+            })),
+          );
           // Para decidir qué es "posterior" cuentan TODOS los movimientos de la compra,
           // incluidos los ya revertidos y sus reversas: son suyos igual.
           await this.assertNothingMovedAfter(tx, own);

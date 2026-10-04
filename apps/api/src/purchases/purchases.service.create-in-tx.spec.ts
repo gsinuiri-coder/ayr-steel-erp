@@ -162,7 +162,7 @@ describe('PurchasesService.cancel — onlyDraft (D-351, deshacer lote)', () => {
 });
 
 describe('PurchasesService.cancel — saldos bloqueados antes del guardrail (D-382, P2-A)', () => {
-  it('bloquea los saldos de los productos, en orden, antes de buscar movimientos posteriores', async () => {
+  it('bloquea los ítems de la compra antes de buscar movimientos posteriores', async () => {
     const calls: string[] = [];
     const own = ['prod-b', 'prod-a', 'prod-b'].map((itemId, i) => ({
       id: BigInt(10 + i),
@@ -197,8 +197,8 @@ describe('PurchasesService.cancel — saldos bloqueados antes del guardrail (D-3
       operationDate: { resolve: () => '2026-10-03' },
       audit: { write: jest.fn().mockResolvedValue(undefined) },
       inventory: {
-        lockAvailability: jest.fn().mockImplementation((_tx, ref: { itemId: string }) => {
-          calls.push(`lock:${ref.itemId}`);
+        lockItemsForReversal: jest.fn().mockImplementation((_tx, refs: { itemId: string }[]) => {
+          calls.push(`lock:${refs.map((r) => r.itemId).join(',')}`);
           return Promise.resolve();
         }),
         reverse: jest.fn().mockImplementation(() => {
@@ -216,7 +216,7 @@ describe('PurchasesService.cancel — saldos bloqueados antes del guardrail (D-3
     });
 
     await svc.cancel(ACTOR, 'pu-1', { reason: 'Anular' });
-    expect(calls.slice(0, 4)).toEqual(['own', 'lock:prod-a', 'lock:prod-b', 'later']);
+    expect(calls.slice(0, 3)).toEqual(['own', 'lock:prod-b,prod-a,prod-b', 'later']);
     expect(calls.filter((c) => c === 'reverse')).toHaveLength(3);
   });
 });

@@ -837,6 +837,58 @@ describe('InventoryService.replaceEntry (D-382)', () => {
   });
 });
 
+/** D-382 (P2-B): la anulación de una compra bloquea bobinas antes que saldos (D-134). */
+describe('InventoryService.lockItemsForReversal', () => {
+  let service: InventoryService;
+
+  beforeEach(async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        InventoryService,
+        { provide: PrismaService, useValue: {} },
+        { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
+      ],
+    }).compile();
+    service = moduleRef.get(InventoryService);
+  });
+
+  const ref = (itemType: 'COIL' | 'PRODUCT', itemId: string) => ({
+    businessLineId: STOCK_LINE.id,
+    itemType,
+    itemId,
+    unit: itemType === 'COIL' ? 'KGM' : 'NIU',
+  });
+  const balanceLocks = (executed: string[]) =>
+    executed.filter((sql) => sql.includes('FOR UPDATE') && sql.includes('inventory_balances'));
+
+  it('primero las bobinas, después cada saldo una sola vez', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const tx = fake.tx as unknown as { coil: { findMany: jest.Mock } };
+    let locksWhenCoils = -1;
+    tx.coil.findMany = jest.fn(() => {
+      if (locksWhenCoils < 0) locksWhenCoils = balanceLocks(fake.executed).length;
+      return Promise.resolve([]);
+    });
+    await service.lockItemsForReversal(fake.tx, [
+      ref('PRODUCT', 'p-2'),
+      ref('COIL', 'c-1'),
+      ref('PRODUCT', 'p-2'),
+      ref('PRODUCT', 'p-1'),
+    ]);
+    expect(locksWhenCoils).toBe(0);
+    expect(balanceLocks(fake.executed)).toHaveLength(3);
+  });
+
+  it('sin bobinas no las lee', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const tx = fake.tx as unknown as { coil: { findMany: jest.Mock } };
+    tx.coil.findMany = jest.fn(() => Promise.resolve([]));
+    await service.lockItemsForReversal(fake.tx, [ref('PRODUCT', 'p-1')]);
+    expect(tx.coil.findMany).not.toHaveBeenCalled();
+    expect(balanceLocks(fake.executed)).toHaveLength(1);
+  });
+});
+
 /** Las dos ramas de valor negativo de la reversa de un ingreso (`stockAfterReverseIn`). */
 describe('InventoryService.reverse — valor negativo (D-382, camino compartido)', () => {
   let service: InventoryService;

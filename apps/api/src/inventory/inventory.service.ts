@@ -899,6 +899,26 @@ export class InventoryService {
   }
 
   /**
+   * D-382 (revisión de P2-2, P2-B): bloquea varios ítems en el orden de D-134 — primero las
+   * bobinas (con sus agregados, como `record` y `reverse`), después los saldos, cada grupo en
+   * orden de id — para quien necesita leer «qué se movió después» antes de revertir (la anulación
+   * de una compra). Tomar un saldo de producto antes que una bobina cruzaba el orden de confirmar
+   * un pedido o reportar producción. No escribe nada.
+   */
+  async lockItemsForReversal(tx: Prisma.TransactionClient, items: ItemRef[]): Promise<void> {
+    const coilIds = [
+      ...new Set(items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
+    ].sort();
+    if (coilIds.length > 0) {
+      await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
+    }
+    const unique = [...new Map(items.map((i) => [`${i.itemType}:${i.itemId}`, i])).values()].sort(
+      (a, b) => `${a.itemType}:${a.itemId}`.localeCompare(`${b.itemType}:${b.itemId}`),
+    );
+    for (const item of unique) await this.lockBalance(tx, item);
+  }
+
+  /**
    * Saldo físico, reservado y disponible de un ítem, **con el saldo bloqueado** (D-066).
    *
    * Es el mismo `FOR UPDATE` que toma cualquier movimiento de kardex, y por eso vive acá y
