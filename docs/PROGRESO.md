@@ -119,8 +119,10 @@
     con 7 y 4 reservados; ALVEOLAR11800, en 1 con 4 reservados.
   - **Revisión Sonnet de contexto limpio solo sobre este cambio**
     (`docs/revision/cc15b-anulacion-segundo-modelo.md`): sin P0 ni P1. P2-A corregido: la
-    anulación bloquea los saldos de los productos antes del guardrail (una venta concurrente cabía
-    en el saldo de la otra compra y la reversa salía a costo completo). P3-C corregido (E2E); P3-A
+    anulación bloquea los ítems de la compra antes del guardrail (una venta concurrente cabía en
+    el saldo de la otra compra y la reversa salía a costo completo). La verificación de Sonnet
+    del arreglo abrió el P2-B (orden de locks en una compra mixta), corregido con
+    `InventoryService.lockItemsForReversal`: bobinas antes que saldos (D-134). P3-C corregido (E2E); P3-A
     (deriva de ±0,0001 sin aviso al anular) y P3-B (bobina y ajuste ajeno probados como forma de
     la consulta) aceptados.
 - **Test frágil identificado:** `auth.service.spec.ts` «rechaza correo inexistente con 401» calcula

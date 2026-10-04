@@ -73,3 +73,20 @@ Ninguno.
 - **P3-A, aceptado sin cambio:** la deriva a ±0,0001 es la misma que `replaceEntry` avisa en la vista previa; la anulación no tiene vista previa. Queda anotado.
 - **P3-B, aceptado:** la regla de bobina y la del `ADJUST` ajeno en producto se prueban como forma de la consulta (unitario), más el test de que la regla nueva nunca bloquea más que la de antes.
 - **P3-C, corregido:** se quitó del E2E la mitad que no probaba el cambio.
+
+---
+
+## Verificación del arreglo de P2-A
+
+Commit revisado: `ee30dab` (solo lectura).
+
+**Cierra el P2-A para producto.** `cancel` toma `lockAvailability` (el `FOR UPDATE` del saldo) de cada PRODUCT de la compra, en orden de id, después de que `updateMany` tomó la fila de la compra y antes de `assertNothingMovedAfter`. Una venta concurrente del mismo SKU espera o ya está confirmada y el chequeo la ve. `reverse` vuelve a pedir el mismo saldo en la misma transacción: el lock es reentrante, no hay deadlock. El orden entre productos es el mismo que usa «Editar compra» (`purchase-received-edit.service.ts` ~254) y ambas toman primero la fila de la compra, así que se serializan entre sí. El spec unitario prueba el orden `own, lock:a, lock:b, later`, pero con mocks: no prueba el bloqueo real contra una venta (sigue faltando el db-spec de dos transacciones, mejora opcional).
+
+**Abre un riesgo de deadlock nuevo en compras que mezclan bobina y producto (P2-B).** D-134 fija el orden «primero las bobinas, después los saldos» (`lockRawMaterialCoils`, `sales/raw-material.ts:853`). `cancel` ahora toma saldos de producto y recién después, dentro del bucle de `reverse`, las bobinas (`inventory.service.ts:479`, y la reversa del IN de bobina). Escenario: T1 anula una compra con la bobina C y el accesorio P: ya tiene el saldo de P y pide las filas de coil. T2 confirma un pedido (o reporta producción) que toma las bobinas del agregado y luego `lockAvailability` de P: tiene las coils y pide P. Ciclo. Es estrecho (mismo producto P en ambos, y T2 con material prima), pero «Editar compra» ya cerró exactamente este caso con `lockRawMaterialCoils` primero. Antes del commit el orden dependía del id de cada movimiento (también podía invertirse), ahora el inverso queda garantizado en una compra mixta.
+Arreglo: en `cancel`, antes del bucle de saldos, si la compra tiene bobinas, `await lockRawMaterialCoils(tx, <ids de coil de la compra, ordenados>, roofingToleranceMm(this.env))` (igual que `purchase-received-edit.service.ts:126`); luego los saldos de producto. Compras solo de producto o solo de bobina no cambian.
+
+Sin hallazgos nuevos sobre el orden entre productos (ids UUID, mismo comparador en ambos servicios).
+
+### Respuesta del autor a P2-B (2026-10-03)
+
+Corregido. `InventoryService.lockItemsForReversal` toma primero las bobinas de los movimientos de la compra (`lockRawMaterialCoils`, ordenadas, con la tolerancia de `this.env`) y después cada saldo una sola vez, en orden fijo. `cancel` la llama con todos los movimientos propios antes del guardrail. Así cubre la compra mixta, aunque hoy una compra es de bobina, de producto o de servicio y no mezcla tipos. Tests unitarios: el orden bobinas antes que saldos y sin bobinas no las lee (`inventory.service.spec.ts`); el de `cancel`, que el bloqueo va antes de la búsqueda (`purchases.service.create-in-tx.spec.ts`). Sigue sin db-spec de dos transacciones, igual que antes.
