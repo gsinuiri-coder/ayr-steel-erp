@@ -133,9 +133,10 @@ test.describe('D-387 — comprobante en la lista de cotizaciones', () => {
     // El buscador: por la serie, por el número entero y sin distinguir mayúsculas.
     const bySeries = await listed(api, `search=${series.toLowerCase()}`);
     expect(bySeries.map((q) => q.externalInvoice).sort()).toEqual([...keys].sort());
-    expect((await listed(api, `search=${series}-999`)).map((q) => q.externalInvoice)).toEqual([
-      `${series}-999`,
-    ]);
+    // Los dígitos del texto también se comparan con el número de cotización (`COT-…999`, que en
+    // una base longeva existe): se miran solo las filas con comprobante.
+    const byNumber = await listed(api, `search=${series}-999`);
+    expect(byNumber.flatMap((q) => q.externalInvoice ?? [])).toEqual([`${series}-999`]);
 
     // Serie y correlativo como número: 12 < 999 < 1000 (como texto sería 1000 < 12 < 999).
     const asc = await listed(api, `search=${series}&sort=invoice&dir=asc`);
@@ -188,7 +189,7 @@ test.describe('D-387 — comprobante en la lista de cotizaciones', () => {
       .getByPlaceholder('Buscar por código, comprobante, cliente o documento…')
       .fill(`${series}-999`);
     await expect(page).toHaveURL(new RegExp(`search=${series}-999`));
-    await expect(invoiceCells).toHaveText([`${series}-999`]);
+    await expect(invoiceCells.filter({ hasText: series })).toHaveText([`${series}-999`]);
 
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto(`/cotizaciones?search=${customer.docNumber}`);
@@ -199,7 +200,9 @@ test.describe('D-387 — comprobante en la lista de cotizaciones', () => {
   test('el detalle de la importada muestra el comprobante en la cabecera; la manual no', async ({
     page,
   }) => {
-    const [imported] = await listed(api, `search=${series}-999`);
+    const imported = (await listed(api, `search=${series}-999`)).find(
+      (q) => q.externalInvoice === `${series}-999`,
+    );
     await loginAsAdmin(page);
     await page.goto(`/cotizaciones/${imported!.id}`);
     await expect(page.getByTestId('quotation-external-invoice')).toHaveText(`${series}-999`, {

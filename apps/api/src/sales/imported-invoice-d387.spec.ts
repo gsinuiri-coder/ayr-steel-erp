@@ -230,4 +230,19 @@ describe('QuotationsService.findAll — columna, buscador y orden (D-387)', () =
       { customer: { docNumber: { contains: '20134615804' } } },
     ]);
   });
+
+  it('un vendedor solo ve lo suyo: buscar y ordenar por comprobante conservan su alcance', async () => {
+    const { svc, findMany } = service();
+    const seller = { id: 'u-7', role: Role.VENDEDOR } as never;
+    findMany.mockImplementationOnce(() =>
+      Promise.resolve([{ id: 'q-3', notes: 'Factura externa: FFA1-999' }]),
+    );
+    await svc.findAll(seller, quotationQuerySchema.parse({ search: 'FFA1', sort: 'invoice' }));
+    // La búsqueda por comprobante solo aporta ids al OR; el filtro que los cruza lleva el alcance.
+    const [, keysArgs] = findMany.mock.calls.map((c) => c[0]) as {
+      where: { sellerId?: string; OR?: unknown[] };
+    }[];
+    expect(keysArgs?.where.sellerId).toBe('u-7');
+    expect(keysArgs?.where.OR).toContainEqual({ id: { in: ['q-3'] } });
+  });
 });
