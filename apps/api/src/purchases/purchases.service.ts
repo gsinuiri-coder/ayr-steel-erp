@@ -763,7 +763,15 @@ export class PurchasesService {
           // venta confirmada entre esa lectura y la reversa cabía en el saldo de la otra compra y
           // la reversa salía igual, a costo completo, sobre un ingreso ya consumido. Bobinas antes
           // que saldos (D-134) y en orden fijo, como «Editar compra».
+          //
+          // D-386 (P3-1 de cc15b): también **todas** las bobinas con `purchaseId` de la compra,
+          // incluidos los flejes que lo heredan (D-060) sin movimiento propio de ella: el
+          // `updateMany` de abajo los anula y antes se tomaban recién ahí, con los saldos en mano.
+          // Solo la fila: no se les abre saldo.
           await this.inventory.lockInOrder(tx, {
+            coilIds: (
+              await tx.coil.findMany({ where: { purchaseId: id }, select: { id: true } })
+            ).map((c) => c.id),
             items: own.map((m) => ({
               businessLineId: m.businessLineId,
               itemType: m.itemType,

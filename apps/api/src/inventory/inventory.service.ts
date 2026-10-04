@@ -50,7 +50,7 @@ import {
 } from '../sales/raw-material';
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
 import { reservedByItem as sumReservedByItem, type HolderViewer } from '../sales/reserved-ledger';
-import { balanceLockKey, compareLockKeys, sortedUniqueIds } from './row-locks';
+import { balanceLockKey, compareLockKeys, markBalanceHeld, sortedUniqueIds } from './row-locks';
 
 /** Candidatos que se traen antes de rankear y recortar el buscador de ítems (D-290). */
 const ITEM_SEARCH_CANDIDATE_POOL = 100;
@@ -882,6 +882,8 @@ export class InventoryService {
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('No se pudo obtener el saldo de inventario del ítem');
+    // D-386: desde acá, una bobina nueva ya no se espera (`lockCoilRows`, P3-2 de cc15b).
+    markBalanceHeld(tx);
     // El saldo es único por (itemType, itemId), no por línea: un movimiento emitido con
     // la línea equivocada actualizaría el saldo de otra línea sin que nada avisara, y el
     // valorizado por línea (RF-51) empezaría a mentir en las dos.

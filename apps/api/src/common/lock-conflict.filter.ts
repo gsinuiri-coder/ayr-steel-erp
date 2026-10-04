@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, ConflictException, Logger } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { Prisma } from '@prisma/client';
+import { LockOrderConflict } from '../inventory/row-locks';
 
 /** D-386: lo que ve el usuario cuando Postgres aborta su operación por otra que usaba lo mismo. */
 export const LOCK_CONFLICT_MESSAGE =
@@ -18,6 +19,8 @@ export const LOCK_CONFLICT_MESSAGE =
  * - un error desconocido cuyo mensaje trae el código o el texto de Postgres.
  */
 export function isLockConflict(error: unknown): boolean {
+  // La toma con `NOWAIT` que habría roto el orden (D-386, P3-2): para el usuario, lo mismo.
+  if (error instanceof LockOrderConflict) return true;
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2034') return true;
     const meta = error.meta as { code?: unknown } | undefined;
