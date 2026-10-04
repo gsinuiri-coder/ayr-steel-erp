@@ -60,7 +60,7 @@ import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
 import { reservedByItem } from './reserved-ledger';
 import { SalesOrdersService } from './sales-orders.service';
-import { coilTieReasons, findCoilTies, lineCoilPool } from './coil-sale-product';
+import { coilTieReasons, findCoilTies, isCoilSaleProduct, lineCoilPool } from './coil-sale-product';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 import { quotationOrderBy } from '../common/list-orderings';
 
@@ -170,12 +170,21 @@ export class QuotationsService {
        * también es el mismo: sin la opción, el importe se recalcula.
        */
       exactAmounts?: { tolerancePen: string; documentLabel: string };
+      /**
+       * D-385: productos de venta de bobina que esta alta admite **sin bobina asignada**. Solo
+       * lo pasa el importador (con `exactAmounts`), para la línea del papel que no encontró
+       * bobina libre; el alta a mano sigue exigiendo la bobina (D-254 R1).
+       */
+      unassignedCoilProducts?: ReadonlySet<string>;
     } = {},
   ): Promise<string> {
     const customer = await this.requireActiveCustomer(tx, input.customerId);
     const lines = await resolveSalesLines(tx, input.items, {
       ...((options.enforcePriceFloor ?? true) ? { priceFloor: this.priceFloor() } : {}),
       ...(options.exactAmounts ? { exactAmounts: options.exactAmounts } : {}),
+      ...(options.exactAmounts && options.unassignedCoilProducts
+        ? { unassignedCoilProducts: options.unassignedCoilProducts }
+        : {}),
       // D-310: el importador de históricos trae hechos consumados y no compite por bobinas.
       ...(options.exactAmounts ? {} : { coilTies: { viewer: actor } }),
     });
@@ -289,6 +298,9 @@ export class QuotationsService {
                   allowedPools: await this.storedCoilPools(tx, id),
                   preexistingCoilIds: await this.storedCoilIds(tx, id),
                 },
+                // D-385: la línea de bobina que el importador dejó sin bobina asignada sigue
+                // así al editar otra cosa del documento; la bobina se elige al confirmar.
+                unassignedCoilProducts: await this.storedUnassignedCoilProducts(tx, id),
               }
             : {}),
           // D-310: la propia cotización no compite consigo misma; las de otros sí.
@@ -505,6 +517,24 @@ export class QuotationsService {
       if (key !== null) pools.add(key.sku);
     }
     return pools;
+  }
+
+  /**
+   * D-385: los productos de venta de bobina que la cotización ya tiene **sin bobina** (la línea
+   * que el importador dejó «sin bobina asignada»). Editar el documento no obliga a elegirla.
+   */
+  private async storedUnassignedCoilProducts(
+    tx: Prisma.TransactionClient,
+    quotationId: string,
+  ): Promise<Set<string>> {
+    const rows = await tx.quotationItem.findMany({
+      where: { quotationId, reserveItemType: { not: InventoryItemType.COIL } },
+      select: {
+        productId: true,
+        product: { select: { sku: true, businessLine: { select: { code: true } } } },
+      },
+    });
+    return new Set(rows.filter((r) => isCoilSaleProduct(r.product)).map((r) => r.productId));
   }
 
   /** Las bobinas que la cotización ya vende: su propia línea no compite consigo misma. */
