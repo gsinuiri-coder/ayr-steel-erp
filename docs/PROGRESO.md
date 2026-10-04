@@ -38,9 +38,16 @@
 - **D-382 propuesta, sin implementar** (pieza aparte, a pedido del dueño):
   - bloquear la anulación de un pedido con comprobante vivo;
   - avisar al anular un pedido que tiene comprobantes manuales anulados;
-  - los dos P2 abiertos de cc16.
-- UAT del dueño en demo: **en espera**. Los puertos 3100 y 3101 los tiene la sesión de cc15b,
-  levantados desde `../ayr-cc15`, y no se tocaron.
+  - los dos P2 abiertos de cc16;
+  - (5) anular un pedido con OPs cerradas, a partir de una lectura de código, sin implementar.
+    Hoy se anula sin aviso, y lo fabricado y no despachado queda en inventario **suelto**: nada lo
+    vende ni lo reasigna. La alerta de «reserva consumida» contradice al botón. Se recomienda, como
+    mínimo, un aviso con casilla que diga cuánto hay fabricado y qué pasa con eso, y que el API lo
+    exija confirmado. Detalle en la fila D-382.
+- UAT del dueño en demo (2026-10-03): **confirmado**.
+  - Los puertos 3100 y 3101 los tenía la sesión de cc15b. Los cerré con autorización explícita
+    del dueño y levanté `dev:demo` desde `../ayr-cc16`, sin `db:demo`.
+  - Al terminar, la demo se cerró.
 - Registro de riesgo (toca datos): `MoveDocumentToOrderService.move` y el cambio de una línea en
   `planOrderLines`/`reactivateWithOrderLines`.
 
