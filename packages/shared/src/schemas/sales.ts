@@ -998,9 +998,54 @@ export const updateSalesSettingsSchema = z.object({
 });
 export type UpdateSalesSettingsInput = z.infer<typeof updateSalesSettingsSchema>;
 
-/** Anular un pedido: libera sus reservas activas (D-066). Motivo obligatorio. */
-export const cancelSalesOrderSchema = z.object({ reason: reasonSchema });
+/**
+ * Anular un pedido: libera sus reservas activas (D-066). Motivo obligatorio.
+ *
+ * D-383: `acknowledgeFabricated` es la casilla «Entiendo que lo fabricado queda en inventario sin
+ * pedido». Con producto fabricado sin despachar, el API rechaza la anulación sin ella. Llega como
+ * booleano opcional y el servicio decide, para que la regla no dependa de un literal de Zod.
+ */
+export const cancelSalesOrderSchema = z.object({
+  reason: reasonSchema,
+  acknowledgeFabricated: z.boolean().optional(),
+});
 export type CancelSalesOrderInput = z.infer<typeof cancelSalesOrderSchema>;
+
+/** D-383: una línea del pedido con producto fabricado vivo que todavía no salió. */
+export const fabricatedLooseLineSchema = z.object({
+  salesOrderItemId: z.string().uuid(),
+  lineNumber: z.number().int(),
+  sku: z.string(),
+  description: z.string(),
+  /** Fabricado vivo (ingresos de producción no revertidos) menos lo despachado vigente. */
+  qty: z.string(),
+  unit: z.string(),
+  /** Las órdenes de producción de donde salió, con su estado. */
+  productionOrders: z.array(z.object({ code: z.string(), status: z.string() })),
+  /**
+   * `true` si la línea se fabrica contra pedido (`isMadeToOrder`: cobertura, plancha, accesorio):
+   * al anular, ese stock queda suelto porque ningún pedido ni el mostrador toma producto así.
+   * `false` (p. ej. drywall): queda libre en inventario y otro pedido lo puede reservar.
+   */
+  madeToOrder: z.boolean(),
+});
+export type FabricatedLooseLineDto = z.infer<typeof fabricatedLooseLineSchema>;
+
+/**
+ * D-383: qué pasaría al anular el pedido, para el diálogo. Solo lectura y sin bloqueos: la
+ * anulación vuelve a comprobar todo con sus locks.
+ */
+export const orderCancelPreviewSchema = z.object({
+  /** Lo que impide anular: OP en curso, comprobante vivo, despachos vigentes. Vacío = se puede. */
+  blocks: z.array(z.string()),
+  /** Producto fabricado sin despachar: con alguno, la anulación exige la casilla. */
+  fabricated: z.array(fabricatedLooseLineSchema),
+  /** Comprobantes manuales anulados del pedido: si el papel sigue vigente, conviene no anular. */
+  annulledManualDocuments: z.array(
+    z.object({ id: z.string().uuid(), number: z.string().nullable() }),
+  ),
+});
+export type OrderCancelPreviewDto = z.infer<typeof orderCancelPreviewSchema>;
 
 // --------------------------------------------------------------------------
 // Fase 7 — cola de producción (RF-37, RF-38; D-092..D-096)

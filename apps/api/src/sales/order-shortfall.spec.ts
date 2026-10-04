@@ -766,11 +766,16 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
           .mockResolvedValue([]),
         reservation: { findMany: jest.fn().mockResolvedValue([activeReservation]), updateMany },
         salesOrder: { update: jest.fn() },
+        // D-383: sin comprobantes, despachos ni producción que bloqueen la anulación.
+        salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
+        fiscalDocument: { findMany: jest.fn().mockResolvedValue([]) },
+        dispatch: { findMany: jest.fn().mockResolvedValue([]) },
+        productionReport: { findMany: jest.fn().mockResolvedValue([]) },
       };
       (prisma as { $transaction: unknown }).$transaction = jest.fn(
         (fn: (t: unknown) => Promise<unknown>) => fn(tx),
       );
-      await service.cancel(ADMIN, 'o-1', 'el cliente desistió');
+      await service.cancel(ADMIN, 'o-1', { reason: 'el cliente desistió' });
       expect(updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -809,11 +814,16 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
           .mockResolvedValue([]),
         reservation: { findMany: jest.fn().mockResolvedValue([consumed]), updateMany },
         salesOrder: { update: jest.fn() },
+        // D-383: sin comprobantes, despachos ni producción que bloqueen la anulación.
+        salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
+        fiscalDocument: { findMany: jest.fn().mockResolvedValue([]) },
+        dispatch: { findMany: jest.fn().mockResolvedValue([]) },
+        productionReport: { findMany: jest.fn().mockResolvedValue([]) },
       };
       (prisma as { $transaction: unknown }).$transaction = jest.fn(
         (fn: (t: unknown) => Promise<unknown>) => fn(tx),
       );
-      await service.cancel(ADMIN, 'o-1', 'el cliente desistió');
+      await service.cancel(ADMIN, 'o-1', { reason: 'el cliente desistió' });
       expect(updateMany).toHaveBeenCalledWith({
         where: { id: { in: ['res-2'] } },
         data: { shortfallQty: '0' },
@@ -845,11 +855,16 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         salesOrder: { update: jest.fn() },
+        // D-383: sin comprobantes, despachos ni producción que bloqueen la anulación.
+        salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
+        fiscalDocument: { findMany: jest.fn().mockResolvedValue([]) },
+        dispatch: { findMany: jest.fn().mockResolvedValue([]) },
+        productionReport: { findMany: jest.fn().mockResolvedValue([]) },
       };
       (prisma as { $transaction: unknown }).$transaction = jest.fn(
         (fn: (t: unknown) => Promise<unknown>) => fn(tx),
       );
-      await service.cancel(ADMIN, 'o-1', 'error de carga');
+      await service.cancel(ADMIN, 'o-1', { reason: 'error de carga' });
       const entry = auditEntry() as { before: object };
       expect(entry.before).not.toHaveProperty('shortfalls');
     });

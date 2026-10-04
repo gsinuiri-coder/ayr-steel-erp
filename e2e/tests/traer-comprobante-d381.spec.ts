@@ -116,10 +116,12 @@ async function annulledWithCancelledOrder(api: APIRequestContext, trail: Invoici
     `/api/invoicing/documents/${draft.id}/register-manual`,
     { series: 'F904', correlative },
   );
-  await postJson(api, `/api/sales/orders/${wrong.id}/cancel`, {
+  // D-383: primero el comprobante y después el pedido. Con el comprobante vivo, el pedido ya no
+  // se anula.
+  await postJson(api, `/api/invoicing/documents/${invoice.id}/annul`, {
     reason: 'mal ingreso (E2E D-381)',
   });
-  await postJson(api, `/api/invoicing/documents/${invoice.id}/annul`, {
+  await postJson(api, `/api/sales/orders/${wrong.id}/cancel`, {
     reason: 'mal ingreso (E2E D-381)',
   });
 

@@ -120,7 +120,7 @@ const documentInclude = {
     },
   },
   seriesRef: { select: { series: true } },
-  salesOrder: { select: { id: true, seq: true, sellerId: true } },
+  salesOrder: { select: { id: true, seq: true, sellerId: true, status: true } },
   dispatch: { select: { id: true, seq: true, salesOrder: { select: { sellerId: true } } } },
   affectedDocument: {
     select: {
@@ -1910,8 +1910,24 @@ export class InvoicingService {
     if (ids.length === 0) return;
     const orderItems = await tx.salesOrderItem.findMany({
       where: { id: { in: ids } },
-      select: { id: true, lineNumber: true, qty: true },
+      select: {
+        id: true,
+        lineNumber: true,
+        qty: true,
+        salesOrder: { select: { seq: true, status: true } },
+      },
     });
+    // D-383: anular un pedido exige que no tenga comprobante vivo, pero un borrador creado antes
+    // de anularlo podía registrarse o emitirse después y dejar un comprobante vivo sobre un
+    // pedido anulado (así nació FFA1-00001389, D-381). Crear el borrador ya lo impedía
+    // (`resolveLines`); este es el último punto en el que se puede decir que no. La anulación
+    // toma el lock de los borradores del pedido, así que este control ve el estado ya escrito.
+    const cancelled = orderItems.find((o) => o.salesOrder.status === 'CANCELLED');
+    if (cancelled) {
+      throw new ConflictException(
+        `El pedido ${salesOrderCode(cancelled.salesOrder.seq)} está anulado: este borrador ya no se registra ni se emite. Descártalo`,
+      );
+    }
     // D-346: la misma función neta de NC que el guard de creación; con otra, un borrador que
     // pasó la creación después de una NC se rechazaba justo al emitir.
     const invoicedById = await invoicedByOrderItem(tx, ids, { excludeDocumentId: document.id });
@@ -3309,6 +3325,7 @@ export class InvoicingService {
       customerIsGeneric: row.customer.isSystem,
       salesOrderId: row.salesOrderId,
       salesOrderCode: row.salesOrder ? salesOrderCode(row.salesOrder.seq) : null,
+      salesOrderStatus: row.salesOrder?.status ?? null,
       dispatchId: row.dispatchId,
       dispatchCode: row.dispatch ? toDispatchCode(row.dispatch.seq) : null,
       affectedDocumentId: row.affectedDocumentId,

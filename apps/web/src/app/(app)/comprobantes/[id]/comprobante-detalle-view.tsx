@@ -131,6 +131,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     retry: (count, err) => !(err instanceof ApiError && err.status === 401) && count < 2,
   });
   const d = document.data;
+  // D-383 (P2 de cc16): el pedido del comprobante está anulado.
+  const orderCancelled = d?.salesOrderStatus === 'CANCELLED';
   // HOTFIX-DESFASE: un 401 del detalle no decide solo que la sesión murió — lo decide
   // `SessionProvider` con `/auth/me`, que es el re-login estándar (`/login?next=…`). Acá se
   // le pide que vuelva a mirar: si la sesión cayó, redirige; si sigue viva, el 401 era de
@@ -775,7 +777,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               {
                 key: 'reactivate',
                 label: 'Reactivar',
-                show: isAdmin && canReactivate(d),
+                // D-383 (P2 de cc16): con el pedido anulado las dos reactivaciones bloquean
+                // siempre; en su lugar, el aviso de abajo dice cuál es el camino (D-381).
+                show: isAdmin && canReactivate(d) && !orderCancelled,
                 disabled: busy,
                 onSelect: () => {
                   if (busy) return;
@@ -785,7 +789,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               {
                 key: 'reactivate-with-order-lines',
                 label: 'Reactivar con las líneas del pedido',
-                show: isAdmin && canReactivateWithOrderLines(d),
+                show: isAdmin && canReactivateWithOrderLines(d) && !orderCancelled,
                 disabled: busy,
                 onSelect: () => {
                   if (busy) return;
@@ -810,6 +814,15 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       </div>
 
       {/* Los avisos de estado. Cada uno dice qué pasó y qué hacer, no solo qué pasó. */}
+      {isAdmin && orderCancelled && d.origin === 'MANUAL' && canReactivate(d) && (
+        <Alert data-testid="annulled-order-cancelled">
+          <AlertDescription>
+            Su pedido {d.salesOrderCode} está anulado: este comprobante ya no se reactiva sobre él.
+            Si el papel sigue vigente, abre el pedido correcto (del mismo cliente) y usa «⋯ → Traer
+            comprobante anulado».
+          </AlertDescription>
+        </Alert>
+      )}
       {d.status === 'ISSUED' && (
         <Alert variant={d.isStalled ? 'destructive' : 'default'}>
           <AlertDescription>
