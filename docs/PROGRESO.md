@@ -37,10 +37,25 @@
   la línea sin bobina asignada como defecto. Antes el `--execute` la ataba a una bobina con la
   regla de D-254 (saldo ≥ papel, reserva de los kilos del papel) o dejaba el documento fuera de la
   corrección de importes.
-- **Reacomodo:** sobre `main` `a9fee5a` (con D-383); solo hubo conflicto en este archivo.
-- **Para la ventana:** verificar en la foto que `BOB030AZUL` exista en el catálogo. Si no existe,
-  la fila queda en rojo y no se crea sola. Runbook en `docs/handoff/ventana-cc17.md`; UAT en
-  `docs/uat/cc17.md`.
+- **Reacomodo:** sobre `main` `a9fee5a` (con D-383); solo hubo conflicto en este archivo. CI
+  37189015171 en `e6c2789`: verde.
+- **Ampliación del dueño antes del UAT (mismo PR):**
+  - **(C) tolerancia de espesor:** la bobina se busca del mismo color con espesor dentro de ±0.02 mm
+    del papel (la constante de coberturas), aunque sea de otro SKU. La línea toma el producto de la
+    bobina. El barrido empareja con la misma tolerancia (decisión del dueño). La sugerencia sigue
+    pidiendo ≥ los kg del papel (decisión del dueño).
+  - **(D) la sugerencia se quita o se cambia:** en la vista previa y en la cotización.
+- **Foto `READ ONLY` de producción** (2026-10-04 08:47 UTC, con OK del dueño,
+  `local-data/cc17/foto-azul-production-2026-10-04T0847.json`):
+  - `BOB030AZUL` no existe;
+  - hay 9 bobinas AZUL de 0.28 con saldo, ninguna ≥ 4192 kg;
+  - candidatas para FFA1-1419 con las dos tolerancias: `…-4154-27`, `…-4180-25` y `…-4182-26`.
+- **Demo:** refrescada desde production con OK del dueño: `db:reset-dev --branch demo` con la
+  contraseña rotada, después `env:demo` y `db:demo`.
+- **Regla del dueño: máximo 10 ramas en Neon.** Registrada en `AGENTS.md` §3.3 y en
+  `docs/ENTORNOS.md`. Después de la ventana se listan las ramas y se propone el borrado (runbook,
+  paso 10).
+- Runbook en `docs/handoff/ventana-cc17.md`; UAT en `docs/uat/cc17.md`.
 
 ## 2026-10-04 — Ventana D-383 (desplegada, PR #90, sin migración)
 

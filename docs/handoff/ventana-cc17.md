@@ -22,14 +22,19 @@ propone el comando exacto y espera.
   importador nuevo.
 - El preview del importador suma `unitConversion` a cada fila y convierte toneladas a kilos. Con
   la web vieja la conversión ya se aplica (la hace la API), pero no se muestra el «→ kg».
+- D-385 (C/D): el preview suma `paperCoilSku`, `coilProductOptions` y producto y espesor por
+  candidata, y busca con tolerancia de espesor. Hay dos rutas nuevas para quitar o cambiar la
+  bobina de una línea (`GET …/items/:lineNumber/coil-candidates` y `PUT …/items/:lineNumber/coil`),
+  que la web vieja no llama. Con la web vieja, una fila con varios productos en tolerancia y sin
+  bobina no tiene selector de producto: el merge va enseguida.
 
 Por eso el merge va **enseguida** del deploy de la API, y FFA1-1419 se importa **después** del
 merge.
 
 ## 0. UAT en demo [dueño]
 
-Cuando la ventana de D-383 libere el demo. `dev:demo` desde `../ayr-cc17` en 3100/3101; **sin**
-`db:demo` salvo pedido del dueño. Guion: `docs/uat/cc17.md`.
+`dev:demo` desde `../ayr-cc17` en 3100/3101, con demo refrescada desde production el 2026-10-04
+(OK del dueño). Guion: `docs/uat/cc17.md`.
 
 ## 1. Reacomodar sobre `main` y CI [agente]
 
@@ -59,12 +64,12 @@ scratchpad que use `scripts/lib.mjs#run`. Esa revisión es la vuelta atrás y se
 Transacción `READ ONLY` contra `production`, con OK del dueño por la conexión (D-251). JSON en
 `local-data/cc17/`; acá solo el resumen.
 
-| Qué se mira                                                 | Esperado / para qué                                                                                                                                 |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cotizaciones con la marca `Factura externa: FFA1-1419`      | ninguna viva (si hay una, el importador la rechaza por D-368)                                                                                       |
-| Producto `BOB030AZUL` activo en la línea de reventa         | **tiene que existir**. Si no existe, la fila queda en rojo («ni producto de venta BOB030AZUL en el catálogo»): no se crea solo. Se le dice al dueño |
-| Bobinas AZUL de 0.30 abiertas, con saldo, sin reserva ni OP | lista con saldos: decide si FFA1-1419 entra con bobina o sin ella                                                                                   |
-| Cliente de FFA1-1419 en el maestro                          | activo, o el padrón lo resuelve en el preview                                                                                                       |
+| Qué se mira                                             | Esperado / para qué                                                                                                                            |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cotizaciones con la marca `Factura externa: FFA1-1419`  | ninguna viva (si hay una, el importador la rechaza por D-368)                                                                                  |
+| Productos `BOB028AZUL` … `BOB032AZUL` activos           | al menos uno (foto del 2026-10-04: solo `BOB028AZUL`). Con ninguno la fila queda en rojo; no se crea nada                                      |
+| Bobinas AZUL de 0.28 a 0.32 abiertas, con saldo, libres | lista con saldos (foto del 2026-10-04: candidatas en ±1 % `…-4154-27`, `…-4180-25`, `…-4182-26`; ninguna ≥ 4192, así que entra sin sugerencia) |
+| Cliente de FFA1-1419 en el maestro                      | activo, o el padrón lo resuelve en el preview                                                                                                  |
 
 Si algo no coincide, se para y se le muestra al dueño.
 
@@ -101,24 +106,38 @@ Diff de runtime contra `<SHA>` vacío, Vercel `success`, `smoke:prod` contra `ve
 
 - Fila de FFA1-1419: **4192.000** kg con «4.192 TONELADA → 4,192 kg», valor de venta 12,789.15,
   total 15,091.20.
-- Si la foto del paso 3 mostró una bobina libre de 4192 kg o más del pool, la fila se ata sola. Si
-  no, «Sin bobina asignada» con su aviso, y la fila no bloquea.
+- «papel: BOB030AZUL · producto: BOB028AZUL». Si la foto del paso 3 mostró una bobina libre de
+  0.28 a 0.32 con 4192 kg o más, se sugiere (se puede quitar). Si no, «Sin bobina asignada» con su
+  aviso, y la fila no bloquea.
 - Confirmar la importación. La cotización nace emitida.
 
 No escribe kardex ni reservas: una cotización no toca inventario (D-054).
 
-## 8. Confirmar la cotización [dueño, cuando llegue la bobina]
+## 8. Confirmar la cotización [dueño]
 
-Recién con la bobina recibida (saldo dentro de ±1 % de 4192 kg: entre 4150.08 y 4233.92 kg).
-**Confirmar** → elegir la bobina en el selector → **Confirmar**. Reserva el saldo entero de esa
-bobina; el pedido factura 4192 kg y S/ 15,091.20.
+Con una bobina AZUL de 0.28 a 0.32 libre y saldo dentro de ±1 % de 4192 kg (entre 4150.08 y
+4233.92 kg); según la foto del 2026-10-04 ya hay tres de 0.28. **Confirmar** → elegir la bobina en
+el selector → **Confirmar**. Reserva el saldo entero de esa bobina; la línea pasa a su producto
+(`BOB028AZUL`) y el pedido factura 4192 kg y S/ 15,091.20.
 
 ## 9. Verificación [agente, foto `READ ONLY` con OK del dueño]
 
-- La cotización de FFA1-1419: `EMITTED`, sin vencimiento, una línea `BOB030AZUL`, `qty` 4192.000,
+- La cotización de FFA1-1419: `EMITTED`, sin vencimiento, una línea `BOB028AZUL` (descripción del
+  papel, 0.30), `qty` 4192.000,
   subtotal 12789.1500, total 15091.2000; `reserve_item_type` ≠ `COIL` hasta el paso 8.
 - Después del paso 8: pedido con la línea `COIL` sobre la bobina elegida, `reserve_qty` = su
   saldo, reserva `ACTIVE` por ese saldo; auditoría `sales.order.confirm` con `coilAssignments`.
+
+## 10. Ramas de Neon: máximo 10 [agente, propuesta al dueño]
+
+Regla del dueño (2026-10-04, `AGENTS.md` §3.3). Después de la ventana, listar las ramas
+(`neonctl branches list --output json` por `scripts/lib.mjs#run` con `quiet: true`, solo nombre,
+id, padre y fecha) y proponer cuáles borrar para quedar en 10 o menos.
+
+- **Se conservan:** `production`, `demo`, `ci`, `dev` y `respaldo-pre-v4-20260915`.
+- **También se conservan** los dos respaldos del 03/10 hasta que cumplan 7 días.
+- **No se borra nada sin el OK del dueño por nombre.** Antes de borrar, verificar que el id
+  coincida con el nombre.
 
 ## Vuelta atrás
 
