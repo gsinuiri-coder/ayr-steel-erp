@@ -908,7 +908,7 @@ export class InventoryService {
   async lockItemsForReversal(tx: Prisma.TransactionClient, items: ItemRef[]): Promise<void> {
     const coilIds = [
       ...new Set(items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
-    ].sort();
+    ].sort((a, b) => a.localeCompare(b));
     if (coilIds.length > 0) {
       await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
     }
