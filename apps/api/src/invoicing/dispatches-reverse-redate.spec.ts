@@ -49,12 +49,20 @@ function build(declaring: { id: string; number: string } | null = null) {
       update: jest.fn().mockResolvedValue({}),
     },
     inventoryMovement: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([
+          { businessLineId: 'trading', itemType: 'PRODUCT', itemId: 'upvc', unit: 'NIU' },
+        ]),
       findUniqueOrThrow: jest
         .fn()
         .mockResolvedValue({ operationDate: new Date('2026-09-19T00:00:00.000Z') }),
     },
   };
-  const inventory = { reverse: jest.fn().mockResolvedValue({}) };
+  const inventory = {
+    lockInOrder: jest.fn().mockResolvedValue(undefined),
+    reverse: jest.fn().mockResolvedValue({}),
+  };
   const audit = { write: jest.fn().mockResolvedValue(undefined) };
   const svc = new DispatchesService({} as never, audit as never, inventory as never, {} as never);
   const internals = svc as unknown as Record<string, unknown>;
@@ -83,6 +91,18 @@ describe('DispatchesService.reverseInTx (D-288)', () => {
     });
     expect(declaringDocument).toHaveBeenCalledWith(tx, expect.anything(), null);
     expect(inventory.reverse).toHaveBeenCalledWith(tx, 327n, 'admin', 'devolución', '2026-09-25');
+    // D-386: la reserva y el conjunto de inventario se toman antes de la primera reversa.
+    expect(inventory.lockInOrder).toHaveBeenCalledWith(tx, {
+      coilIds: [],
+      items: [{ businessLineId: 'trading', itemType: 'PRODUCT', itemId: 'upvc', unit: 'NIU' }],
+    });
+    expect(inventory.lockInOrder.mock.invocationCallOrder[0]).toBeLessThan(
+      Number(inventory.reverse.mock.invocationCallOrder[0]),
+    );
+    const reservationLock = tx.$queryRaw.mock.calls.findIndex((c: unknown[]) =>
+      (c[0] as string[]).join('?').includes('"reservations"'),
+    );
+    expect(reservationLock).toBeGreaterThan(0);
     expect(restoreReservationQty).toHaveBeenCalled();
     expect(tx.dispatch.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'REVERSED' }) }),
