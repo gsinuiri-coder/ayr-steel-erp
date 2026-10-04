@@ -920,24 +920,27 @@ export class InventoryService {
    * con saldos ya en mano (P3-2 de cc15b; ventana mínima, documentada en D-386).
    *
    * No escribe movimientos; crea el saldo vacío de un ítem que todavía no lo tiene, igual que
-   * cualquier movimiento (`lockBalance`).
+   * cualquier movimiento (`lockBalance`). Devuelve las bobinas que quedaron bloqueadas (las que
+   * existían), para quien tiene que distinguir una bobina inexistente (`CoilsService.lockCoil`).
    */
   async lockInOrder(
     tx: Prisma.TransactionClient,
     set: { coilIds?: readonly string[]; items?: readonly ItemRef[] },
-  ): Promise<void> {
+  ): Promise<string[]> {
     const items = set.items ?? [];
     const coilIds = sortedUniqueIds([
       ...(set.coilIds ?? []),
       ...items.filter((i) => i.itemType === InventoryItemType.COIL).map((i) => i.itemId),
     ]);
-    if (coilIds.length > 0) {
-      await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
-    }
+    const lockedCoilIds =
+      coilIds.length > 0
+        ? await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env))
+        : [];
     const unique = [...new Map(items.map((i) => [balanceLockKey(i), i])).values()].sort((a, b) =>
       compareLockKeys(balanceLockKey(a), balanceLockKey(b)),
     );
     for (const item of unique) await this.lockBalance(tx, item);
+    return lockedCoilIds;
   }
 
   /**
