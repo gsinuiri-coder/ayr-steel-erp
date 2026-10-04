@@ -53,6 +53,7 @@ import {
   updateQuotationSchema,
   type CancelQuotationInput,
   type CancelSalesOrderInput,
+  type OrderCancelPreviewDto,
   type ReassignSellerInput,
   type ConfirmQuotationInput,
   type CreateQuotationInput,
@@ -360,7 +361,22 @@ export class SalesController {
     return this.orders.createDirect(actor, body);
   }
 
-  /** Anular el pedido y liberar sus reservas (D-046: solo ADMINISTRADOR). */
+  /**
+   * D-383: qué pasaría al anular el pedido —bloqueos, producto fabricado sin despachar y
+   * comprobantes manuales anulados—, para el diálogo. Solo lectura y sin bloqueos. Ruta fija
+   * antes de `orders/:id/cancel` por costumbre del proyecto; no colisionan.
+   */
+  @Get('orders/:id/cancel-preview')
+  @Roles(Role.ADMINISTRADOR)
+  cancelOrderPreview(@Param('id', ParseUUIDPipe) id: string): Promise<OrderCancelPreviewDto> {
+    return this.orders.cancelPreview(id);
+  }
+
+  /**
+   * Anular el pedido y liberar sus reservas (D-046: solo ADMINISTRADOR). D-383: se bloquea con un
+   * comprobante vivo o un despacho vigente, y con producto fabricado sin despachar exige
+   * `acknowledgeFabricated`.
+   */
   @Post('orders/:id/cancel')
   @Roles(Role.ADMINISTRADOR)
   cancelOrder(
@@ -368,7 +384,7 @@ export class SalesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(cancelSalesOrderSchema)) body: CancelSalesOrderInput,
   ): Promise<SalesOrderDto> {
-    return this.orders.cancel(actor, id, body.reason);
+    return this.orders.cancel(actor, id, body);
   }
 
   /**
