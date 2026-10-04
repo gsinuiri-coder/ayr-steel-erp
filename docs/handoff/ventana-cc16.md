@@ -4,18 +4,18 @@
 
 Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232).
 
-| Qué | Resultado |
-| --- | --------- |
-| CI del PR #87 | Corrida 37164000717 en `ff5fd2b`: E2E 497 pasados y 3 saltados; smoke Neon `ci` 36 pasados; lint, typecheck, unitarios y Sonar en verde |
-| UAT | Confirmado por el dueño en demo (`dev:demo` desde `../ayr-cc16` en 3100/3101, sin `db:demo`). La demo de cc15b se cerró con autorización explícita del dueño |
-| Revisión API anterior (vuelta atrás) | `ayr-steel-erp-api-00078-pg7`, `git-sha=5bd99ba` |
-| Paso 1: deploy de la API | **`ayr-steel-erp-api-00079-gwg`**, al 100 %, `git-sha=ff5fd2b`, `/health` 200, `smoke:prod` 7/7 con la web vieja |
-| Paso 2: merge del #87 | `main` = **`6da0154`**, diff de runtime vacío contra `ff5fd2b`, Vercel `success`, `smoke:prod` 8/8 en `vercel.app` y 8/8 en `v2.mareliac.pe` |
-| Foto `READ ONLY` previa | 2026-10-04 00:48 UTC (`local-data/cc16/foto-production-2026-10-04T0048.json`). FFA1-00001389 `ANNULLED`, sin cobros, notas de crédito ni despachos; PED-000044 `CANCELLED`; PED-000056 con **0 comprobantes (el borrador ya no estaba)**, 7 líneas, total 6438 y 7 reservas activas |
-| Respaldo Neon | `respaldo-pre-cc16-20261003` (`br-late-poetry-aewbwyl6`), hija de `production`, `ready` |
-| Paso por la interfaz (dueño) | 2026-10-04 01:13 UTC: «Traer comprobante anulado» con el motivo «faltaba un item» |
-| Despacho (dueño) | 2026-10-04 01:15 UTC: «Despachar a la fecha del comprobante». Resultado: **DES-000056 fechado el 27/09/2026**, no el 20/08, con las 7 líneas y enlazado a 1389. PED-000056 quedó `FULFILLED` |
-| Foto `READ ONLY` posterior | 2026-10-04 02:47 UTC (`local-data/cc16/foto-posterior-2026-10-04T0247.json`) |
+| Qué                                  | Resultado                                                                                                                                                                                                                                                                           |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI del PR #87                        | Corrida 37164000717 en `ff5fd2b`: E2E 497 pasados y 3 saltados; smoke Neon `ci` 36 pasados; lint, typecheck, unitarios y Sonar en verde                                                                                                                                             |
+| UAT                                  | Confirmado por el dueño en demo (`dev:demo` desde `../ayr-cc16` en 3100/3101, sin `db:demo`). La demo de cc15b se cerró con autorización explícita del dueño                                                                                                                        |
+| Revisión API anterior (vuelta atrás) | `ayr-steel-erp-api-00078-pg7`, `git-sha=5bd99ba`                                                                                                                                                                                                                                    |
+| Paso 1: deploy de la API             | **`ayr-steel-erp-api-00079-gwg`**, al 100 %, `git-sha=ff5fd2b`, `/health` 200, `smoke:prod` 7/7 con la web vieja                                                                                                                                                                    |
+| Paso 2: merge del #87                | `main` = **`6da0154`**, diff de runtime vacío contra `ff5fd2b`, Vercel `success`, `smoke:prod` 8/8 en `vercel.app` y 8/8 en `v2.mareliac.pe`                                                                                                                                        |
+| Foto `READ ONLY` previa              | 2026-10-04 00:48 UTC (`local-data/cc16/foto-production-2026-10-04T0048.json`). FFA1-00001389 `ANNULLED`, sin cobros, notas de crédito ni despachos; PED-000044 `CANCELLED`; PED-000056 con **0 comprobantes (el borrador ya no estaba)**, 7 líneas, total 6438 y 7 reservas activas |
+| Respaldo Neon                        | `respaldo-pre-cc16-20261003` (`br-late-poetry-aewbwyl6`), hija de `production`, `ready`                                                                                                                                                                                             |
+| Paso por la interfaz (dueño)         | 2026-10-04 01:13 UTC: «Traer comprobante anulado» con el motivo «faltaba un item»                                                                                                                                                                                                   |
+| Despacho (dueño)                     | 2026-10-04 01:15 UTC: «Despachar a la fecha del comprobante». Resultado: **DES-000056 fechado el 27/09/2026**, no el 20/08, con las 7 líneas y enlazado a 1389. PED-000056 quedó `FULFILLED`                                                                                        |
+| Foto `READ ONLY` posterior           | 2026-10-04 02:47 UTC (`local-data/cc16/foto-posterior-2026-10-04T0247.json`)                                                                                                                                                                                                        |
 
 **Foto posterior:**
 
