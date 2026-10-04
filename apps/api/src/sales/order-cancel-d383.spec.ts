@@ -35,6 +35,7 @@ describe('D-383 — anular un pedido', () => {
       createdAt?: Date;
       totalPen: Prisma.Decimal;
       creditNotes: { totalPen: Prisma.Decimal }[];
+      items?: { id: string }[];
     }[];
     dispatches: { seq: number }[];
     reports: {
@@ -51,7 +52,15 @@ describe('D-383 — anular un pedido', () => {
       itemId: string;
       _sum: { reserveQty: Prisma.Decimal | null };
     }[];
+    /** Filas de `groupBy` de lo emitido y lo acreditado por línea (`invoicedByOrderItem`). */
+    emitted?: unknown[];
+    credited?: unknown[];
   }
+
+  const sumRow = (salesOrderItemId: string, qty: string, total: string) => ({
+    salesOrderItemId,
+    _sum: { qty: D(qty), subtotalPen: D(total), igvPen: D('0'), totalPen: D(total) },
+  });
 
   function happy(): Scenario {
     return { docs: [], dispatches: [], reports: [], movements: [], shipped: [] };
@@ -63,6 +72,7 @@ describe('D-383 — anular un pedido', () => {
       docType: 'FACTURA',
       status: 'ACCEPTED',
       createdAt: new Date('2026-10-03T15:00:00.000Z'),
+      items: [] as { id: string }[],
       ...d,
     }));
 
@@ -106,7 +116,7 @@ describe('D-383 — anular un pedido', () => {
         lineNumber: 1,
         productId: 'p-1',
         description: 'Cobertura roja a medida',
-        product: { sku: 'COB-ROJO', unit: 'MTR' },
+        product: { sku: 'COB-ROJO', unit: 'MTR', roofingKind: 'A_MEDIDA', lengthMm: null },
       },
     ];
     const tx = {
@@ -133,6 +143,13 @@ describe('D-383 — anular un pedido', () => {
         ),
       },
       fiscalDocument: { findMany: jest.fn().mockResolvedValue(withDocDefaults(s.docs)) },
+      // `invoicedByOrderItem`: emitido y acreditado por línea (neto de D-346).
+      fiscalDocumentItem: {
+        groupBy: jest
+          .fn()
+          .mockResolvedValueOnce(s.emitted ?? [])
+          .mockResolvedValueOnce(s.credited ?? []),
+      },
       dispatch: { findMany: jest.fn().mockResolvedValue(s.dispatches) },
       productionReport: { findMany: jest.fn().mockResolvedValue(s.reports) },
       inventoryMovement: { findMany: jest.fn().mockResolvedValue(s.movements) },
@@ -322,6 +339,42 @@ describe('D-383 — anular un pedido', () => {
       await service.cancel(ADMIN, 'o-1', { reason: 'anulación de venta de mostrador' });
       expect(tx.salesOrder.update).toHaveBeenCalled();
     });
+
+    it('neto por línea (D-346): con la línea acreditada entera no bloquea aunque el papel difiera en céntimos', async () => {
+      const s = happy();
+      // El total del papel es 118.03 y la NC total suma sus líneas, 118.00: por importe quedaría
+      // «sin acreditar» para siempre, pero por cantidad la línea ya no está facturada.
+      s.docs = [
+        {
+          number: 'FFA1-00000020',
+          origin: 'MANUAL',
+          totalPen: D('118.03'),
+          creditNotes: [{ totalPen: D('118.00') }],
+          items: [{ id: 'fdi-1' }],
+        },
+      ];
+      s.emitted = [sumRow('soi-1', '10', '100')];
+      s.credited = [sumRow('soi-1', '10', '100')];
+      const { service, tx } = await build(s);
+      await service.cancel(ADMIN, 'o-1', { reason: 'venta deshecha con nota de crédito' });
+      expect(tx.salesOrder.update).toHaveBeenCalled();
+    });
+
+    it('neto por línea: con algo todavía facturado, bloquea y nombra el comprobante', async () => {
+      const s = happy();
+      s.docs = [
+        {
+          number: 'FFA1-00000021',
+          origin: 'MANUAL',
+          totalPen: D('118'),
+          creditNotes: [{ totalPen: D('118') }],
+          items: [{ id: 'fdi-1' }],
+        },
+      ];
+      s.emitted = [sumRow('soi-1', '10', '100')];
+      s.credited = [sumRow('soi-1', '4', '40')];
+      await rejects(s, BadRequestException, /FFA1-00000021 vigente/);
+    });
   });
 
   describe('(2) producto fabricado sin despachar', () => {
@@ -329,7 +382,7 @@ describe('D-383 — anular un pedido', () => {
       await rejects(
         withFabricated(happy()),
         ConflictException,
-        'El pedido PED-000007 tiene producto fabricado sin despachar (línea 1 COB-ROJO: 24.6 MTR (OP-000012)). Al anularlo queda en inventario sin pedido y nadie lo toma hasta revertir la producción: confirma que lo entiendes para anular',
+        'El pedido PED-000007 tiene producto fabricado sin despachar (línea 1 COB-ROJO: 24.6 MTR (OP-000012)). Al anularlo queda en inventario sin pedido. Lo fabricado contra pedido no lo toma ningún otro pedido ni el mostrador hasta revertir la producción. Confirma que lo entiendes para anular',
       );
     });
 
@@ -454,7 +507,7 @@ describe('D-383 — anular un pedido', () => {
       lineNumber: 1,
       productId: 'p-1',
       description: 'Cobertura',
-      product: { sku: 'COB-ROJO', unit: 'MTR' },
+      product: { sku: 'COB-ROJO', unit: 'MTR', roofingKind: 'A_MEDIDA', lengthMm: null },
     };
 
     it('sin reportes vivos no hace más consultas', async () => {
@@ -479,6 +532,7 @@ describe('D-383 — anular un pedido', () => {
           qty: '20.000',
           unit: 'MTR',
           productionOrders: [{ code: 'OP-000012', status: 'CLOSED' }],
+          madeToOrder: true,
         },
       ]);
     });

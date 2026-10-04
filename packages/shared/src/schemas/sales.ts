@@ -1022,6 +1022,12 @@ export const fabricatedLooseLineSchema = z.object({
   unit: z.string(),
   /** Las órdenes de producción de donde salió, con su estado. */
   productionOrders: z.array(z.object({ code: z.string(), status: z.string() })),
+  /**
+   * `true` si la línea se fabrica contra pedido (`isMadeToOrder`: cobertura, plancha, accesorio):
+   * al anular, ese stock queda suelto porque ningún pedido ni el mostrador toma producto así.
+   * `false` (p. ej. drywall): queda libre en inventario y otro pedido lo puede reservar.
+   */
+  madeToOrder: z.boolean(),
 });
 export type FabricatedLooseLineDto = z.infer<typeof fabricatedLooseLineSchema>;
 

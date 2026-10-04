@@ -19,6 +19,8 @@ import {
   toDecimal,
   type FabricatedLooseLineDto,
 } from '@ayr/shared';
+import { invoicedByOrderItem } from '../invoicing/invoicing-net';
+import { isMadeToOrder } from './sales-lines';
 
 /**
  * D-383: lo que hay que mirar antes de anular un pedido, compartido por la anulación (con sus
@@ -59,10 +61,12 @@ export async function commercialCancelBlocks(
     await db.salesOrderItem.findMany({ where: { salesOrderId: orderId }, select: { id: true } })
   ).map((i) => i.id);
   const [candidates, dispatches] = await Promise.all([
-    // Vivos y borradores en una sola consulta (el presupuesto de la vista previa no cambia).
+    // Facturas y boletas vivas y en borrador, en una sola consulta. Las notas de crédito en
+    // borrador no bloquean: no facturan nada, y el mostrador puede dejar una a medias entre
+    // crearla y emitirla (autorrevisión de D-383, P3).
     db.fiscalDocument.findMany({
       where: {
-        docType: { in: [...SALE_DOC_TYPES, FiscalDocType.NOTA_CREDITO] },
+        docType: { in: [...SALE_DOC_TYPES] },
         status: { in: [...LIVE_DOCUMENT_STATUSES, FiscalDocumentStatus.DRAFT] },
         archivedAt: null,
         OR: [{ salesOrderId: orderId }, { items: { some: { salesOrderItemId: { in: itemIds } } } }],
@@ -78,6 +82,12 @@ export async function commercialCancelBlocks(
           where: { status: { in: [...LIVE_DOCUMENT_STATUSES] }, archivedAt: null },
           select: { totalPen: true },
         },
+        // ¿Factura alguna línea del pedido, o solo cuelga de la cabecera?
+        items: {
+          where: { salesOrderItemId: { in: itemIds } },
+          select: { id: true },
+          take: 1,
+        },
       },
       orderBy: { number: 'asc' },
     }),
@@ -91,18 +101,35 @@ export async function commercialCancelBlocks(
   // venta está deshecha por ese camino. Es lo que hace el mostrador al anular una boleta fuera
   // del plazo de baja (`PosService.void`: nota de crédito total y después `cancel`), y no se
   // bloquea.
-  const docs = candidates.filter((d) => {
-    if (d.status === FiscalDocumentStatus.DRAFT || !SALE_DOC_TYPES.includes(d.docType)) {
-      return false;
-    }
+  //
+  // El criterio es el **neto por línea** de D-346 (`invoicedByOrderItem`: lo facturado vivo menos
+  // lo acreditado vivo, por cantidad): si ninguna línea del pedido queda facturada, la venta está
+  // deshecha aunque el total del papel difiera en céntimos de la suma de sus líneas (autorrevisión
+  // de D-383, P2). Solo un comprobante que no factura ninguna línea —cuelga de la cabecera— se mide
+  // por importe, al céntimo.
+  const live = candidates.filter((d) => d.status !== FiscalDocumentStatus.DRAFT);
+  const notFullyCredited = (d: (typeof live)[number]) => {
     const credited = d.creditNotes.reduce<Decimal>(
       (acc, n) => acc.plus(toDecimal(n.totalPen.toString())),
       new Decimal(0),
     );
-    // Al céntimo, la escala del papel (D-377): una nota total no se pierde por un resto en el
-    // cuarto decimal (revisión del segundo modelo de D-383, P2).
     return credited.toDecimalPlaces(2).lt(toDecimal(d.totalPen.toString()).toDecimalPlaces(2));
-  });
+  };
+  let docs: typeof live = [];
+  if (live.length > 0) {
+    const net = await invoicedByOrderItem(db, itemIds);
+    const stillInvoiced = [...net.values()].some((n) => n.qty.gt(0));
+    const byLine = live.filter((d) => d.items.length > 0);
+    const headerOnly = live.filter((d) => d.items.length === 0 && notFullyCredited(d));
+    docs = [
+      ...(stillInvoiced
+        ? byLine.filter(notFullyCredited).length > 0
+          ? byLine.filter(notFullyCredited)
+          : byLine
+        : []),
+      ...headerOnly,
+    ];
+  }
   const blocks: string[] = [];
   if (docs.length > 0) {
     const numbers = docs.map((d) => d.number ?? 'sin número').join(', ');
@@ -210,7 +237,7 @@ export async function fabricatedLooseLines(
         lineNumber: true,
         productId: true,
         description: true,
-        product: { select: { sku: true, unit: true } },
+        product: { select: { sku: true, unit: true, roofingKind: true, lengthMm: true } },
       },
     }),
     db.inventoryMovement.findMany({
@@ -256,6 +283,7 @@ export async function fabricatedLooseLines(
       description: item.description,
       qty: loose.toFixed(3),
       unit: item.product.unit,
+      madeToOrder: isMadeToOrder(item.product),
       productionOrders: [...(opsOfItem.get(item.id) ?? new Map<string, string>()).entries()]
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([code, status]) => ({ code, status })),
@@ -293,5 +321,8 @@ export function fabricatedNeedsAcknowledgement(
         `línea ${String(l.lineNumber)} ${l.sku}: ${toDecimal(l.qty).toString()} ${l.unit} (${l.productionOrders.map((o) => o.code).join(', ')})`,
     )
     .join('; ');
-  return `El pedido ${orderCode} tiene producto fabricado sin despachar (${detail}). Al anularlo queda en inventario sin pedido y nadie lo toma hasta revertir la producción: confirma que lo entiendes para anular`;
+  const loose = lines.some((l) => l.madeToOrder)
+    ? ' Lo fabricado contra pedido no lo toma ningún otro pedido ni el mostrador hasta revertir la producción.'
+    : '';
+  return `El pedido ${orderCode} tiene producto fabricado sin despachar (${detail}). Al anularlo queda en inventario sin pedido.${loose} Confirma que lo entiendes para anular`;
 }
