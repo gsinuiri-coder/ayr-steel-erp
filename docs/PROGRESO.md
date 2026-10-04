@@ -35,7 +35,7 @@
   seguir D-374. Guion UAT: `docs/uat/cc16.md`. Manual: caso 6.
 - Revisión del dueño del PR #87 (2026-10-03): sale antes que cc15b. Está de acuerdo con no abrir el
   despacho a la fecha del papel al terminar.
-- **D-382 propuesta, sin implementar** (pieza aparte, a pedido del dueño):
+- **D-383 propuesta, sin implementar** (pieza aparte, a pedido del dueño):
   - bloquear la anulación de un pedido con comprobante vivo;
   - avisar al anular un pedido que tiene comprobantes manuales anulados;
   - los dos P2 abiertos de cc16;
@@ -43,7 +43,7 @@
     Hoy se anula sin aviso, y lo fabricado y no despachado queda en inventario **suelto**: nada lo
     vende ni lo reasigna. La alerta de «reserva consumida» contradice al botón. Se recomienda, como
     mínimo, un aviso con casilla que diga cuánto hay fabricado y qué pasa con eso, y que el API lo
-    exija confirmado. Detalle en la fila D-382.
+    exija confirmado. Detalle en la fila D-383.
 - UAT del dueño en demo (2026-10-03): **confirmado**.
   - Los puertos 3100 y 3101 los tenía la sesión de cc15b. Los cerré con autorización explícita
     del dueño y levanté `dev:demo` desde `../ayr-cc16`, sin `db:demo`.
