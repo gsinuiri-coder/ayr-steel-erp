@@ -290,6 +290,10 @@ test.describe('D-387 — estados de la columna «Comprobante»', () => {
         'Número del Excel, aún sin comprobante registrado',
       );
       await expect(invoiceOf(id)).toHaveClass(/text-muted-foreground/);
+      await expect(invoiceOf(id)).toHaveAttribute(
+        'aria-label',
+        `${key}: Número del Excel, aún sin comprobante registrado`,
+      );
       await expect(invoiceOf(id).getByRole('link')).toHaveCount(0);
     }
 
@@ -307,6 +311,10 @@ test.describe('D-387 — estados de la columna «Comprobante»', () => {
     const mismatch = invoiceOf(ids.mismatch);
     await expect(mismatch).toHaveAttribute('data-state', 'mismatch');
     await expect(mismatch).toHaveClass(/text-tone-warning-foreground/);
+    // No solo color: un ícono con nombre accesible lo dice (WCAG 1.4.1).
+    await expect(
+      mismatch.getByRole('img', { name: `No coincide con el número del Excel ${keys.mismatch}` }),
+    ).toBeVisible();
     await expect(mismatch).toHaveText(`${series}-00001001`);
     await expect(mismatch).toHaveAttribute(
       'title',

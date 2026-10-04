@@ -90,6 +90,11 @@ describe('normalizeInvoiceNumber y compareImportedInvoiceNumbers — la comparac
     ['FFA1-00001419', 'FFA1-0001419', true],
     ['FFA1-1419', 'BBV1', false],
     ['FFA1-1419', '', false],
+    ['FFA1-00001419', '000', false],
+    ['FFA1-00001419', '0', false],
+    ['FFA1-00001419', '12', false],
+    ['FFA1-00001419', '001419', true],
+    ['F001-00000012', '0000001', false],
     [null, 'FFA1', false],
   ])('el buscador: %s contiene %j → %s', (value, search, expected) => {
     expect(invoiceNumberContains(value, search)).toBe(expected);
@@ -301,13 +306,13 @@ describe('QuotationsService.findAll — columna, buscador y orden (D-387)', () =
     // Con serie, Postgres acota por el prefijo; la comparación normalizada decide en memoria.
     expect(searchArgs?.where.AND).toEqual([
       { notes: { startsWith: 'Factura externa: ' } },
-      { notes: { startsWith: 'Factura externa: ffa1-', mode: 'insensitive' } },
+      { notes: { startsWith: 'Factura externa: FFA1-', mode: 'insensitive' } },
     ]);
     const docArgs = documents.mock.calls[0] as unknown as [
       { where: { number: unknown; status: unknown; docType: unknown; archivedAt: unknown } },
     ];
     expect(docArgs[0].where).toMatchObject({
-      number: { startsWith: 'ffa1-', mode: 'insensitive' },
+      number: { startsWith: 'FFA1-', mode: 'insensitive' },
       docType: { in: ['FACTURA', 'BOLETA'] },
       status: { in: ['ISSUED', 'SEND_ERROR', 'ACCEPTED', 'VOID_PENDING'] },
       archivedAt: null,
@@ -361,5 +366,42 @@ describe('QuotationsService.findAll — columna, buscador y orden (D-387)', () =
     }[];
     expect(keysArgs?.where.sellerId).toBe('u-7');
     expect(keysArgs?.where.OR).toContainEqual({ id: { in: ['q-3'] } });
+  });
+
+  it('la lista y el orden piden solo los vigentes del pedido vivo: ni anulados, ni borradores, ni notas de crédito', async () => {
+    const LIVE_FILTER = {
+      where: {
+        docType: { in: ['FACTURA', 'BOLETA'] },
+        status: { in: ['ISSUED', 'SEND_ERROR', 'ACCEPTED', 'VOID_PENDING'] },
+        archivedAt: null,
+        number: { not: null },
+      },
+      select: { id: true, number: true },
+      orderBy: [{ issueDate: 'asc' }, { number: 'asc' }],
+    };
+    const LIVE_ORDER = { where: { status: { not: 'CANCELLED' } }, take: 1 };
+    const { svc, findMany } = service();
+    await svc.findAll(admin, quotationQuerySchema.parse({}));
+    await svc.findAll(admin, quotationQuerySchema.parse({ sort: 'invoice' }));
+    const [list, keys, page] = findMany.mock.calls.map((c) => c[0]) as {
+      include?: { salesOrders: { select: { fiscalDocuments: unknown } } };
+      select?: { salesOrders: { select: { fiscalDocuments: unknown } } };
+    }[];
+    for (const orders of [
+      list?.include?.salesOrders,
+      keys?.select?.salesOrders,
+      page?.include?.salesOrders,
+    ]) {
+      expect(orders).toMatchObject(LIVE_ORDER);
+      expect(orders?.select.fiscalDocuments).toEqual(LIVE_FILTER);
+    }
+  });
+
+  it('con menos de tres caracteres significativos no busca por comprobante', async () => {
+    const { svc, findMany, documents } = service();
+    await svc.findAll(admin, quotationQuerySchema.parse({ search: '000' }));
+    expect(documents).not.toHaveBeenCalled();
+    // Solo `count` y la página: ninguna consulta de candidatos.
+    expect(findMany).toHaveBeenCalledTimes(1);
   });
 });

@@ -23,6 +23,7 @@ import {
   externalInvoiceOf,
   importedInvoiceNumber,
   invoiceNumberContains,
+  invoiceSearchNeedle,
   LIVE_DOCUMENT_STATUSES,
   quotationInvoiceState,
   shownInvoiceNumber,
@@ -1421,14 +1422,18 @@ export class QuotationsService {
    * `invoiceNumberContains`, normalizado, para los dos: `FFA1-1419` encuentra a `FFA1-00001419`.
    */
   private async idsByInvoiceNumber(search: string): Promise<string[]> {
-    const series = /^([A-Z][A-Z0-9]{3})-/i.exec(search.trim())?.[1];
+    // Menos de tres caracteres significativos («0», «12»): no se busca por comprobante. Los ceros
+    // de relleno del sistema harían coincidir a todos, y el `id IN` crecería con el histórico.
+    const needle = invoiceSearchNeedle(search);
+    if (needle === null) return [];
+    const series = /^([A-Z][A-Z0-9]{3})-/.exec(needle)?.[1];
     const [imported, documents] = await Promise.all([
       this.prisma.quotation.findMany({
         where: {
           AND: [
             { notes: { startsWith: EXTERNAL_INVOICE_NOTES_PREFIX } },
             series === undefined
-              ? { notes: { contains: search, mode: 'insensitive' } }
+              ? { notes: { contains: needle, mode: 'insensitive' } }
               : {
                   notes: {
                     startsWith: `${EXTERNAL_INVOICE_NOTES_PREFIX}${series}-`,
@@ -1444,7 +1449,7 @@ export class QuotationsService {
           ...liveInvoiceDocuments.where,
           number:
             series === undefined
-              ? { contains: search, mode: 'insensitive' }
+              ? { contains: needle, mode: 'insensitive' }
               : { startsWith: `${series}-`, mode: 'insensitive' },
           salesOrder: { status: { not: SalesOrderStatus.CANCELLED }, quotationId: { not: null } },
         },

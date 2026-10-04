@@ -644,16 +644,30 @@ export function normalizeInvoiceNumber(value: string): string | null {
   return `${series.toUpperCase()}-${String(Number(correlative))}`;
 }
 
+/** D-387: caracteres significativos mínimos para buscar por comprobante. */
+export const INVOICE_SEARCH_MIN_CHARS = 3;
+
 /**
- * D-387: si el buscador de la lista encuentra este número de comprobante: por el texto tal cual
- * (sin mayúsculas de por medio) o normalizado, así `FFA1-1419` encuentra a `FFA1-00001419`.
+ * D-387: lo que el buscador compara contra los números de comprobante, ya normalizado: un número
+ * entero (`FFA1-0001419` → `FFA1-1419`), solo dígitos sin los ceros de adelante (`001419` →
+ * `1419`) o el texto en mayúsculas (`ffa1-` → `FFA1-`). `null` con menos de
+ * `INVOICE_SEARCH_MIN_CHARS`: buscar «0» o «1» coincidiría con todos los comprobantes.
+ */
+export function invoiceSearchNeedle(search: string): string | null {
+  const raw = search.trim().toUpperCase();
+  const needle = normalizeInvoiceNumber(raw) ?? (/^\d+$/.test(raw) ? raw.replace(/^0+/, '') : raw);
+  return needle.length >= INVOICE_SEARCH_MIN_CHARS ? needle : null;
+}
+
+/**
+ * D-387: si el buscador de la lista encuentra este número de comprobante. Se comparan las formas
+ * normalizadas: `FFA1-1419` encuentra a `FFA1-00001419`, y los ceros de relleno del correlativo
+ * del sistema no hacen que «000» coincida con todos.
  */
 export function invoiceNumberContains(value: string | null, search: string): boolean {
-  const needle = search.trim().toUpperCase();
-  if (value === null || needle === '') return false;
-  if (value.toUpperCase().includes(needle)) return true;
-  const normalized = normalizeInvoiceNumber(value);
-  return normalized?.includes(normalizeInvoiceNumber(needle) ?? needle) === true;
+  const needle = invoiceSearchNeedle(search);
+  if (value === null || needle === null) return false;
+  return (normalizeInvoiceNumber(value) ?? value.trim().toUpperCase()).includes(needle);
 }
 
 /** D-387: un comprobante vigente (factura o boleta) del pedido de la cotización. */
