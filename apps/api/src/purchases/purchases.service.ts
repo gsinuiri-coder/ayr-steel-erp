@@ -606,6 +606,26 @@ export class PurchasesService {
           orderBy: { lineNumber: 'asc' },
         });
 
+        // D-386 (segundo modelo, P2-2): los saldos de los productos de la compra se toman todos
+        // antes del primer ingreso y por clave, no en el orden de las líneas (una compra b, a se
+        // cruzaba con un despacho a, b). Las bobinas nacen en esta recepción: no hay que tomarlas.
+        if (purchase.type === PurchaseType.FINISHED_GOOD) {
+          await this.inventory.lockInOrder(tx, {
+            items: items.flatMap((item) =>
+              item.productId === null
+                ? []
+                : [
+                    {
+                      businessLineId: purchase.businessLineId,
+                      itemType: 'PRODUCT' as const,
+                      itemId: item.productId,
+                      unit: item.unit,
+                    },
+                  ],
+            ),
+          });
+        }
+
         for (const item of items) {
           if (purchase.type === PurchaseType.COIL) {
             await this.coils.create(tx, {

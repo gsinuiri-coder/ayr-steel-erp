@@ -888,3 +888,21 @@ export async function rawMaterialLockSet(
   }
   return [...all];
 }
+
+/**
+ * D-386 (autorrevisión P2-1): las bobinas de los agregados con promesas vivas que alcanzarían
+ * estos **atributos** —los que una bobina va a tener después de cambiarle el acabado, el color o
+ * el espesor—, sin bloquear. Quien mueve una bobina de agregado las suma a su toma inicial: el
+ * guardrail las pide después y, sin esto, eran filas nuevas con saldos en mano.
+ */
+export async function rawMaterialCoilsForAttributes(
+  tx: Prisma.TransactionClient,
+  attributes: CoilAttributes[],
+  toleranceMm: string,
+): Promise<string[]> {
+  const all = new Set<string>();
+  for (const spec of await findSpecsAffectedByAttributes(tx, attributes, toleranceMm)) {
+    for (const id of await rawMaterialCoilIds(tx, spec, toleranceMm)) all.add(id);
+  }
+  return [...all];
+}

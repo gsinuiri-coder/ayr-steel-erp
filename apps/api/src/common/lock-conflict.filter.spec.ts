@@ -30,6 +30,9 @@ describe('isLockConflict', () => {
     ['P2010 con otro código de Postgres', known('P2010', { code: '23505' })],
     ['un error de dominio', new BadRequestException('no')],
     ['un Error suelto que menciona deadlock', new Error('deadlock detected')],
+    // Segundo modelo P3-3: un correlativo con «40001» no es un fallo de serialización.
+    ['un P2002 cuyo mensaje trae un correlativo 40001', known('P2002', {}, 'F001-40001 duplicado')],
+    ['un P2010 cuyo mensaje trae 40001 sin código', known('P2010', {}, 'F001-40001 duplicado')],
   ])('no confunde %s', (_label, error) => {
     expect(isLockConflict(error)).toBe(false);
   });

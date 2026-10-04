@@ -24,8 +24,11 @@ export function isLockConflict(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2034') return true;
     const meta = error.meta as { code?: unknown } | undefined;
-    if (error.code === 'P2010' && (meta?.code === '40P01' || meta?.code === '40001')) return true;
-    return mentionsLockConflict(error.message);
+    if (error.code !== 'P2010') return false;
+    if (meta?.code === '40P01' || meta?.code === '40001') return true;
+    // Segundo modelo P3-3: del texto, solo las frases de Postgres; un «40001» suelto podría ser
+    // un correlativo dentro del mensaje de otro error.
+    return /deadlock detected|could not serialize access/i.test(error.message);
   }
   if (error instanceof Prisma.PrismaClientUnknownRequestError) {
     return mentionsLockConflict(error.message);
@@ -51,11 +54,14 @@ export class LockConflictFilter extends BaseExceptionFilter {
 
   override catch(exception: unknown, host: ArgumentsHost): void {
     if (host.getType() === 'http' && isLockConflict(exception)) {
-      // Se registra para poder medir cuántos quedan: el orden único de D-386 debería dejarlos
-      // en cero entre las operaciones que lo respetan.
-      this.logger.warn(
-        `Conflicto de bloqueo abortado por Postgres: ${(exception as Error).message.slice(0, 300)}`,
-      );
+      // Se registra para poder medir cuántos quedan: el orden único de D-386 debería dejar los
+      // deadlocks en cero entre las operaciones que lo respetan. La toma con `NOWAIT` se
+      // distingue: es un rechazo esperable con contención real, no un ciclo.
+      const kind =
+        exception instanceof LockOrderConflict
+          ? 'Toma de bobinas con NOWAIT rechazada (D-386)'
+          : 'Conflicto de bloqueo abortado por Postgres';
+      this.logger.warn(`${kind}: ${(exception as Error).message.slice(0, 300)}`);
       super.catch(new ConflictException(LOCK_CONFLICT_MESSAGE), host);
       return;
     }

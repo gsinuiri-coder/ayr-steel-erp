@@ -40,7 +40,7 @@ import { itemRefOf } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
-import { assertRawMaterialInvariant } from '../sales/raw-material';
+import { assertRawMaterialInvariant, rawMaterialCoilsForAttributes } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
@@ -891,6 +891,32 @@ export class CoilOperationsService {
     // límite contra Neon de forma intermitente — un 500 en una operación normal.
     await this.prisma.$transaction(
       async (tx) => {
+        // D-386 (autorrevisión P2-1): con un acabado nuevo la bobina puede pasar a otro agregado,
+        // y el guardrail de abajo lo mira. Sus bobinas se toman ahora, junto con la propia y su
+        // agregado actual, en una sola sentencia; antes las pedía el guardrail con saldos en mano.
+        if (input.finishId !== undefined) {
+          const [current, finish] = await Promise.all([
+            tx.coil.findUnique({
+              where: { id: coilId },
+              select: { businessLineId: true, thicknessMm: true },
+            }),
+            tx.finish.findUnique({ where: { id: input.finishId }, select: { colorId: true } }),
+          ]);
+          if (current && finish) {
+            const destination = await rawMaterialCoilsForAttributes(
+              tx,
+              [
+                {
+                  businessLineId: current.businessLineId,
+                  colorId: finish.colorId,
+                  thicknessMm: current.thicknessMm.toFixed(2),
+                },
+              ],
+              roofingToleranceMm(this.env),
+            );
+            await this.inventory.lockInOrder(tx, { coilIds: [coilId, ...destination] });
+          }
+        }
         const coil = await this.coils.lockCoil(tx, coilId);
         if (coil.status === CoilStatus.CANCELLED) {
           throw new BadRequestException('La bobina está anulada: no se puede editar');

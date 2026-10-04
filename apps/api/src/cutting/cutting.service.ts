@@ -36,7 +36,7 @@ import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
-import { itemRefOf, lockCoilRows } from '../inventory/row-locks';
+import { itemRefOf } from '../inventory/row-locks';
 import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
@@ -95,7 +95,9 @@ export class CuttingService {
       async (tx) => {
         // Lock en orden determinístico: evita interbloqueos si dos envíos comparten bobinas
         // (lo cual además fallará más abajo porque una ya no estará OPEN).
-        await lockCoilRows(tx, coilIds);
+        // D-386: con sus agregados, que el guardrail de abajo vuelve a pedir (autorrevisión P2-1:
+        // sin ellos, una bobina del agregado con id menor iba con `NOWAIT`).
+        await this.inventory.lockInOrder(tx, { coilIds });
         const coils = await tx.coil.findMany({ where: { id: { in: coilIds } } });
         const byId = new Map(coils.map((c) => [c.id, c]));
 
@@ -615,8 +617,13 @@ export class CuttingService {
         throw new BadRequestException('No hay bobinas pendientes de recepción en esta orden');
       }
 
-      // D-386: todas las bobinas pendientes en una sola sentencia y por id, antes del bucle (la
-      // fila de la orden no trae orden propio: cada bobina se tomaba en el orden de lectura).
+      // D-386: las filas pendientes de la orden (documento) antes que sus bobinas, como recibir y
+      // revertir (segundo modelo, P2-1); después todas las bobinas en una sola sentencia y por id
+      // (antes, cada una en el orden de lectura de la orden, sin orden propio).
+      await tx.$queryRaw`
+        SELECT "id" FROM "cutting_order_coils"
+        WHERE "id" = ANY(${pending.map((r) => r.id)}::uuid[]) ORDER BY "id" FOR UPDATE
+      `;
       await this.inventory.lockInOrder(tx, { coilIds: pending.map((r) => r.coilId) });
       for (const row of pending) {
         await tx.cuttingOrderCoil.update({

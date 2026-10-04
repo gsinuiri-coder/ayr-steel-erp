@@ -404,15 +404,20 @@ interface Tally {
   conflicts: string[];
   unexpected: string[];
   outcomes: Map<string, number>;
+  /** Cuántas veces terminó bien cada operación del par, por posición. */
+  okByOp: number[];
 }
 
 function newTally(): Tally {
-  return { conflicts: [], unexpected: [], outcomes: new Map() };
+  return { conflicts: [], unexpected: [], outcomes: new Map(), okByOp: [] };
 }
 
 /** Corre las dos a la vez y clasifica: éxito, rechazo de dominio, conflicto de bloqueo u otro. */
 async function race(tally: Tally, label: string, ops: (() => Promise<unknown>)[]): Promise<void> {
   const results = await Promise.allSettled(ops.map((op) => op()));
+  results.forEach((r, i) => {
+    tally.okByOp[i] = (tally.okByOp[i] ?? 0) + (r.status === 'fulfilled' ? 1 : 0);
+  });
   const shape = results
     .map((r) => {
       if (r.status === 'fulfilled') return 'ok';
@@ -436,6 +441,10 @@ function expectClean(tally: Tally, name: string): void {
   console.warn(`[D-386] ${name}: ${JSON.stringify(Object.fromEntries(tally.outcomes))}`);
   expect(tally.unexpected).toEqual([]);
   expect(tally.conflicts).toEqual([]);
+  // Autorrevisión P2-2: un par en el que una operación nunca terminó bien no probó nada (una
+  // fixture rota que rechaza siempre con 400 daba verde). Cada operación, al menos una vez.
+  expect(tally.okByOp.length).toBeGreaterThan(0);
+  for (const ok of tally.okByOp) expect(ok).toBeGreaterThan(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +655,50 @@ describe('D-386 (A6) — una bobina del agregado frente a despacho y anulación 
       expectClean(tally, `${name} × anulación de compra`);
     },
   );
+});
+
+/**
+ * Autorrevisión P2-3: los dos cambios más grandes de M3 con bobinas del agregado — la reversa de
+ * un reporte de coberturas (antes: saldo del producto, después la bobina) y confirmar la venta de
+ * una bobina entera (las nombradas entran ahora con su agregado).
+ */
+describe('D-386 (M3) — coberturas y venta de bobina contra el agregado (contra la base)', () => {
+  it('revertir un reporte de coberturas × despacho de otra bobina del agregado', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const agg = await roofingAggregate(3);
+      await mount(agg.productionOrderId, coilAt(agg, 0).coilId);
+      await report(agg.productionOrderId);
+      const reportRow = await prisma.productionReport.findFirstOrThrow({
+        where: { productionOrderId: agg.productionOrderId },
+        orderBy: { seq: 'desc' },
+      });
+      const order = await directOrder([{ saleCoilId: coilAt(agg, 1).coilId }]);
+      await race(tally, `iteración ${i}`, [
+        () =>
+          roofing.reverseReport(
+            admin,
+            agg.productionOrderId,
+            reportRow.id,
+            reverseMovementSchema.parse({ reason: 'cc18 revertir reporte' }),
+          ),
+        () => dispatchAll(order),
+      ]);
+    }
+    expectClean(tally, 'revertir reporte de coberturas × despacho');
+  });
+
+  it('confirmar la venta de una bobina entera × anulación de la compra de otra del agregado', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const agg = await roofingAggregate(3);
+      await race(tally, `iteración ${i}`, [
+        () => directOrder([{ saleCoilId: coilAt(agg, 2).coilId }]),
+        () => cancelPurchase(coilAt(agg, 1).purchaseId),
+      ]);
+    }
+    expectClean(tally, 'venta de bobina × anulación de compra');
+  });
 });
 
 /** M3b: la forma real del error de Prisma ante un deadlock es la que `isLockConflict` reconoce. */

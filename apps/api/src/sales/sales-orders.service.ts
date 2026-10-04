@@ -118,7 +118,7 @@ import {
 } from '../auth/seller-scope';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
-import { lockCoilRows } from '../inventory/row-locks';
+import { balanceLockKey, compareLockKeys, lockCoilRows } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   assertStripsNotAssigned,
@@ -1631,9 +1631,11 @@ export class SalesOrdersService {
     options?: ReserveOptions,
   ): Promise<number> {
     let written = 0;
+    // D-386: la misma clave y el mismo comparador que la puerta única (`compareLockKeys`).
     const sorted = [...items].sort((a, b) =>
-      `${a.reserveItemType}:${a.reserveItemId}`.localeCompare(
-        `${b.reserveItemType}:${b.reserveItemId}`,
+      compareLockKeys(
+        balanceLockKey({ itemType: a.reserveItemType, itemId: a.reserveItemId }),
+        balanceLockKey({ itemType: b.reserveItemType, itemId: b.reserveItemId }),
       ),
     );
 

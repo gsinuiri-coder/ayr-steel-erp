@@ -86,9 +86,10 @@ export function markBalanceHeld(tx: Prisma.TransactionClient): void {
  * usuario es lo mismo —otra operación usaba ese inventario— y la salida también.
  */
 export class LockOrderConflict extends Error {
-  readonly code = '40P01';
+  /** `55P03` (`lock_not_available`): no es un deadlock, y el log lo distingue (autorrevisión P3-5). */
+  readonly code = '55P03';
   constructor() {
-    super('40P01: bobina tomada por otra operación; esperar habría roto el orden de bloqueos');
+    super('NOWAIT: bobina tomada por otra operación; esperar habría roto el orden de bloqueos');
   }
 }
 
@@ -101,9 +102,13 @@ function isLockNotAvailable(error: unknown): boolean {
   );
 }
 
-/** Sin duplicados y en el orden de los bloqueos (el de `ORDER BY "id"` sobre un `uuid`). */
+/**
+ * Sin duplicados, **en minúsculas** —como los devuelve Postgres; un `uuid` en mayúsculas que
+ * acepta `ParseUUIDPipe` es la misma fila (autorrevisión P3-4)— y en el orden de los bloqueos (el
+ * de `ORDER BY "id"` sobre un `uuid`).
+ */
 export function sortedUniqueIds(ids: readonly string[]): string[] {
-  return [...new Set(ids)].sort(compareLockKeys);
+  return [...new Set(ids.map((id) => id.toLowerCase()))].sort(compareLockKeys);
 }
 
 /** La clave de orden de un saldo: tipo de ítem y después id (`COIL` antes que `PRODUCT`). */

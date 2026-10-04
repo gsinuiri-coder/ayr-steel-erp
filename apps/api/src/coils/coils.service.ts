@@ -357,7 +357,9 @@ export class CoilsService {
    */
   async lockCoil(tx: Prisma.TransactionClient, coilId: string): Promise<Coil> {
     const locked = await this.inventory.lockInOrder(tx, { coilIds: [coilId] });
-    if (!locked.includes(coilId)) throw new NotFoundException('Bobina no encontrada');
+    if (!locked.includes(coilId.toLowerCase())) {
+      throw new NotFoundException('Bobina no encontrada');
+    }
     return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
   }
 

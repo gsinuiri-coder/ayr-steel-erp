@@ -29,6 +29,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { InventoryService, minRunningAfterReplace } from '../inventory/inventory.service';
+import { balanceLockKey, compareLockKeys } from '../inventory/row-locks';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { findLiveStripAssignments } from '../production/production-assignments';
@@ -37,6 +38,7 @@ import {
   assertRawMaterialInvariant,
   findRawMaterialShortfalls,
   lockRawMaterialCoils,
+  rawMaterialCoilsForAttributes,
 } from '../sales/raw-material';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { computeDueDate, receptionCost } from './purchase-math';
@@ -123,7 +125,13 @@ export class ReceivedPurchaseEditService {
           // agregado con promesas que ellas cubren, en orden de id, igual que confirmar un pedido
           // o una salida de `record`. Así `replaceEntry`, que las vuelve a pedir, ya las tiene y
           // no las toma después del saldo (revisiones de cc15b: deadlock con un pedido).
-          await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
+          // D-386 (autorrevisión P2-1): y las del agregado al que se mudaría una bobina que cambia
+          // de color o de espesor, que el guardrail del final pide; en la misma sentencia.
+          await lockRawMaterialCoils(
+            tx,
+            [...coilIds, ...(await this.destinationAggregateCoils(tx, id, input))],
+            roofingToleranceMm(this.env),
+          );
         }
         // Y los saldos de kardex que la edición puede tocar, **antes** de leer los movimientos
         // posteriores: quien consume o ingresa toma el saldo, no la bobina, así que sin este lock
@@ -200,6 +208,47 @@ export class ReceivedPurchaseEditService {
     );
   }
 
+  /**
+   * D-386: las bobinas de los agregados que alcanzarían las bobinas de la compra con el acabado
+   * (color) o el espesor que pide la edición. Sin cambios de ese tipo, ninguna.
+   */
+  private async destinationAggregateCoils(
+    tx: Prisma.TransactionClient,
+    purchaseId: string,
+    input: EditReceivedPurchaseInput,
+  ): Promise<string[]> {
+    const edits = (input.items ?? []).filter(
+      (e) => e.finishId !== undefined || e.thicknessMm !== undefined,
+    );
+    if (edits.length === 0) return [];
+    const coils = await tx.coil.findMany({
+      where: { purchaseId, purchaseItemId: { in: edits.map((e) => e.itemId) } },
+      select: { purchaseItemId: true, businessLineId: true, colorId: true, thicknessMm: true },
+    });
+    const finishIds = edits.flatMap((e) => (e.finishId === undefined ? [] : [e.finishId]));
+    const colorByFinish = new Map(
+      (
+        await tx.finish.findMany({
+          where: { id: { in: finishIds } },
+          select: { id: true, colorId: true },
+        })
+      ).map((f) => [f.id, f.colorId]),
+    );
+    const attributes = coils.flatMap((c) => {
+      const edit = edits.find((e) => e.itemId === c.purchaseItemId);
+      if (!edit) return [];
+      return [
+        {
+          businessLineId: c.businessLineId,
+          colorId:
+            edit.finishId === undefined ? c.colorId : (colorByFinish.get(edit.finishId) ?? null),
+          thicknessMm: edit.thicknessMm ?? c.thicknessMm.toFixed(2),
+        },
+      ];
+    });
+    return rawMaterialCoilsForAttributes(tx, attributes, roofingToleranceMm(this.env));
+  }
+
   /** Bloquea los saldos de los ítems de kardex de la compra y de los productos de destino. */
   private async lockBalances(
     tx: Prisma.TransactionClient,
@@ -250,8 +299,9 @@ export class ReceivedPurchaseEditService {
       }
     }
     // Orden fijo para no cruzarse con otra transacción que bloquee los mismos saldos.
-    const unique = [...new Map(refs.map((r) => [`${r.itemType}:${r.itemId}`, r])).values()].sort(
-      (a, b) => `${a.itemType}:${a.itemId}`.localeCompare(`${b.itemType}:${b.itemId}`),
+    // D-386: la misma clave y el mismo comparador que la puerta única.
+    const unique = [...new Map(refs.map((r) => [balanceLockKey(r), r])).values()].sort((a, b) =>
+      compareLockKeys(balanceLockKey(a), balanceLockKey(b)),
     );
     for (const ref of unique) {
       await this.inventory.lockAvailability(tx, {

@@ -1028,8 +1028,11 @@ export class ProductionService {
         // operario había liberado a mano antes, que no deben volver a la orden.
         const closedAt = new Date();
         // D-386: los flejes que sueltan merma (con sus agregados), después sus saldos y el del
-        // producto que recibe el ajuste del cierre, todo antes de la primera salida.
+        // producto que recibe el ajuste del cierre, todo antes de la primera salida. También los
+        // flejes consumidos enteros: el cierre los termina (D-360) y antes se tomaban recién en ese
+        // `updateMany`, con saldos en mano (segundo modelo, P2-4).
         await this.inventory.lockInOrder(tx, {
+          coilIds: rows.map((r) => r.coilId),
           items: [
             ...rows
               .filter((r) =>
@@ -1428,6 +1431,9 @@ export class ProductionService {
         where: { productionOrderId: orderId, releasedAt: null },
         select: { coilId: true },
       });
+      // D-386 (segundo modelo, P2-4): los flejes que la terminación de abajo puede escribir, por la
+      // puerta y de una vez, en vez del bloqueo implícito de su `updateMany`.
+      await this.inventory.lockInOrder(tx, { coilIds: held.map((h) => h.coilId) });
       const released = await tx.productionOrderConsumption.updateMany({
         where: { productionOrderId: orderId, releasedAt: null },
         data: { releasedAt: new Date() },
