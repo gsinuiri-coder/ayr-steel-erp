@@ -114,10 +114,31 @@ y rescates.
   con el nombre, sin tocar las fijas. Se conservan los dos respaldos post-día-D más recientes y
   los checkpoints declarados hasta su fecha.
 
-### Ramas de ensayo/respaldo vigentes (2026-09-17)
+### Ramas vigentes (2026-10-04, después de la ventana de cc17): 9 de 10
 
-Ninguna se borra sin OK del dueño por nombre (regla dura de `CLAUDE.md`). `ensayo-pitr-20260917`
-queda para verificación del dueño; se borra cuando lo autorice.
+Ninguna se borra sin OK del dueño por nombre (`AGENTS.md` §3.3).
+
+| Rama                                 | id                                | Qué es                       | Se conserva                                             |
+| ------------------------------------ | --------------------------------- | ---------------------------- | ------------------------------------------------------- |
+| `production`                         | `br-steep-night-ae8n7t1k`         | datos reales                 | siempre                                                 |
+| `dev`                                | `br-wandering-butterfly-aehckak7` | sintéticos                   | siempre                                                 |
+| `ci`                                 | `br-misty-band-ae9s41t7`          | migraciones + smoke de la CI | siempre                                                 |
+| `demo`                               | `br-solitary-smoke-aegbos8k`      | UAT (copia de production)    | siempre                                                 |
+| `respaldo-pre-v4-20260915`           | `br-sweet-resonance-aegd7jdg`     | respaldo del día D           | siempre                                                 |
+| `respaldo-pre-log3-20260930`         | `br-super-wave-aeoucd2y`          | respaldo de ventana          | hasta proponer su borrado (más de 7 días el 2026-10-08) |
+| `respaldo-pre-cc08-20261001`         | `br-proud-glade-aev4qddf`         | respaldo de ventana          | hasta proponer su borrado (más de 7 días el 2026-10-08) |
+| `respaldo-pre-cc16-20261003`         | `br-late-poetry-aewbwyl6`         | respaldo de cc16             | hasta el 2026-10-11 (decisión del dueño)                |
+| `respaldo-pre-replaceentry-20261003` | `br-rapid-river-ae59y2vw`         | respaldo de cc15b            | hasta el 2026-10-11                                     |
+
+**Borradas el 2026-10-04 con OK del dueño por nombre** (id verificado, sin ramas hijas, endpoint
+`idle`): `respaldo-pre-correcciones-02-20260924`, `respaldo-pre-corr04b-20260926`,
+`respaldo-pre-corr03b-20260926`, `respaldo-pre-drywall-20260927`,
+`respaldo-pre-import-compras-20260927`, `respaldo-pre-c06-20260928`,
+`respaldo-pre-fechas-2026-09-29` y `respaldo-pre-deploy-20260930`. `ensayo-pitr-20260917` ya no
+estaba en la lista.
+
+`neonctl endpoints list` aborta en Windows (código 0xC0000409). Los endpoints se leen por la API
+de Neon (`GET /projects/{id}/endpoints`), con `NEON_API_KEY` en el header y nunca por argv.
 
 ## demo
 

@@ -16,12 +16,17 @@ Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff
 - **Datos:** ninguno. FFA1-1419 la importa el dueño y elige la bobina cuando almacén confirme
   cuál salió. El agente no importa ni confirma nada.
 - **Cierre:** demo apagado; worktree y rama `cc17/importador-bobina` borrados.
-- **Ramas de Neon: 17, el máximo es 10 (regla del dueño).** Propuesta, **pendiente del OK del dueño
-  por nombre** y sin borrar nada todavía:
-  - se conservan las 5 fijas (`production`, `dev`, `ci`, `demo`, `respaldo-pre-v4-20260915`) y
-    los 2 respaldos del 03/10 (`respaldo-pre-cc16-20261003` y
-    `respaldo-pre-replaceentry-20261003`, hasta cumplir 7 días: 2026-10-10 y 2026-10-11);
-  - se borran 7 para quedar en 10; el detalle está en el reporte de cierre al dueño.
+- **Ramas de Neon: de 17 a 9 (regla del dueño: máximo 10).** El dueño aprobó por nombre borrar 8;
+  antes de cada borrado se verificó que el id coincidiera, que no tuviera ramas hijas y que su
+  endpoint estuviera `idle`:
+  - `respaldo-pre-correcciones-02-20260924`, `respaldo-pre-corr04b-20260926` y
+    `respaldo-pre-corr03b-20260926`;
+  - `respaldo-pre-drywall-20260927`, `respaldo-pre-import-compras-20260927` y
+    `respaldo-pre-c06-20260928`;
+  - `respaldo-pre-fechas-2026-09-29` y `respaldo-pre-deploy-20260930`.
+- **Quedan** las 5 fijas, `respaldo-pre-log3-20260930`, `respaldo-pre-cc08-20261001`,
+  `respaldo-pre-cc16-20261003` y `respaldo-pre-replaceentry-20261003`. Los dos del 03/10 se
+  conservan hasta el 2026-10-11. Lista con ids en `docs/ENTORNOS.md`.
 
 ## 2026-10-04 — cc17: D-385, importador de ventas con TONELADA y bobina sin stock (PR #94)
 
