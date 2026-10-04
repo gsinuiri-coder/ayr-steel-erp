@@ -649,13 +649,28 @@ export class QuotationsService {
       (
         await this.prisma.product.findMany({
           where: { id: { in: [...new Set(source.items.map((i) => i.productId))] } },
-          select: { id: true, sku: true, unit: true, roofingKind: true },
+          select: {
+            id: true,
+            sku: true,
+            unit: true,
+            roofingKind: true,
+            businessLine: { select: { code: true } },
+          },
         })
       ).map((p) => [p.id, p]),
     );
     for (const i of source.items) {
       const product = productShapes.get(i.productId);
       if (isWholeCoil(i) || product === undefined) continue;
+      // D-385 (autorrevisión cc17): la línea de bobina que el importador dejó sin bobina se copia
+      // igual, sin bobina (D-322); quien edita el duplicado la elige.
+      if (isCoilSaleProduct(product)) {
+        unassignedCoilProducts.add(i.productId);
+        warnings.push(
+          `Línea ${String(i.lineNumber)}: ${product.sku} no tiene bobina asignada; elegí una con «Bobina completa (venta directa)».`,
+        );
+        continue;
+      }
       const why = duplicateShapeChange(
         { unit: i.unit, hasPieces: i.pieces.length > 0, hasPiecesHint: i.piecesHint !== null },
         product,

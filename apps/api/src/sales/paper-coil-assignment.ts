@@ -77,8 +77,13 @@ export async function paperCoilChoices(
   tx: Prisma.TransactionClient,
   line: UnassignedPaperCoilLine,
   quotationId: string,
+  /** El pedido que se está creando: su propia reserva no le quita la bobina (re-chequeo). */
+  exceptSalesOrderId?: string,
 ): Promise<ConfirmCoilChoiceDto[]> {
-  const pool = await coilPoolFor(tx, line.pool, '0.000', { exceptQuotationIds: [quotationId] });
+  const pool = await coilPoolFor(tx, line.pool, '0.000', {
+    exceptQuotationIds: [quotationId],
+    ...(exceptSalesOrderId ? { exceptSalesOrderIds: [exceptSalesOrderId] } : {}),
+  });
   return pool.candidates.map((c) => ({
     coilId: c.coilId,
     code: c.code,
@@ -119,16 +124,21 @@ export interface PaperCoilAssignment {
 }
 
 /**
- * D-385: valida, **bajo el lock de las bobinas**, la bobina que se eligió para cada línea sin
- * bobina asignada. Toda línea así necesita una; ninguna otra línea acepta una. La bobina tiene
- * que estar libre en el pool de la línea y su saldo dentro de la tolerancia de los kilos del
- * papel. La doble promesa contra otro pedido la corta igual `createReservations`, que vuelve a
- * bloquear la bobina y comprueba el disponible.
+ * D-385: valida la bobina que se eligió para cada línea sin bobina asignada. Toda línea así
+ * necesita una; ninguna otra línea acepta una. La bobina tiene que estar libre en el pool de la
+ * línea y su saldo dentro de la tolerancia de los kilos del papel.
+ *
+ * **No toma locks.** `confirm` la llama dos veces: antes de crear el pedido, para armar sus
+ * líneas, y otra vez después de `createReservations` —que bloquea la unión de bobinas en orden de
+ * id, el único orden que no se cruza con otra confirmación (autorrevisión cc17, P2-1)— con
+ * `exceptSalesOrderId` para no contarse la reserva recién hecha. Si la segunda lectura no da lo
+ * mismo que la primera, algo cambió en el medio y se rechaza.
  */
 export async function resolvePaperCoilAssignments(
   tx: Prisma.TransactionClient,
   quotation: { id: string; notes: string | null },
   requested: readonly { lineNumber: number; saleCoilId: string }[],
+  options: { exceptSalesOrderId?: string } = {},
 ): Promise<PaperCoilAssignment[]> {
   const lines = await unassignedPaperCoilLines(tx, quotation);
   const byLine = new Map(lines.map((l) => [l.lineNumber, l]));
@@ -140,23 +150,14 @@ export async function resolvePaperCoilAssignments(
     }
   }
   if (lines.length === 0) return [];
-
-  // Las bobinas, en orden de id y antes que los saldos: el mismo orden de locks que
-  // `createReservations` y el despacho.
-  const coilIds = [...new Set(requested.map((r) => r.saleCoilId))].sort();
-  if (coilIds.length > 0) {
-    await tx.$queryRaw`
-      SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-    `;
-  }
-  if (coilIds.length < requested.length) {
+  if (new Set(requested.map((r) => r.saleCoilId)).size < requested.length) {
     throw new BadRequestException('La misma bobina no puede atender dos líneas');
   }
 
   const out: PaperCoilAssignment[] = [];
   for (const line of lines) {
     const choice = requested.find((r) => r.lineNumber === line.lineNumber);
-    const choices = await paperCoilChoices(tx, line, quotation.id);
+    const choices = await paperCoilChoices(tx, line, quotation.id, options.exceptSalesOrderId);
     if (!choice) {
       throw new BadRequestException(
         paperCoilBlocker(line, choices) ??

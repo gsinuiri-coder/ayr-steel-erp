@@ -10,6 +10,7 @@ import {
   MAX_VALUE,
   money,
   roundTo,
+  SCALE,
   toDecimal,
   toFixedString,
   type DecimalInput,
@@ -863,13 +864,16 @@ export function paperCoilWeightCheck(
 ): { ok: boolean; minKg: string; maxKg: string } {
   const paper = toDecimal(paperKg);
   const margin = paper.times(toDecimal(PAPER_COIL_WEIGHT_TOLERANCE));
-  const min = paper.minus(margin);
-  const max = paper.plus(margin);
+  // Los bordes se redondean **hacia adentro** a la escala de kilos, y se compara contra esos
+  // mismos bordes: lo que la pantalla muestra como límite es exactamente lo que se acepta
+  // (revisión de segundo modelo cc17, P3-1). Los saldos ya vienen a tres decimales.
+  const min = paper.minus(margin).toDecimalPlaces(SCALE.KG, Decimal.ROUND_CEIL);
+  const max = paper.plus(margin).toDecimalPlaces(SCALE.KG, Decimal.ROUND_FLOOR);
   const balance = toDecimal(balanceKg);
   return {
     ok: balance.gte(min) && balance.lte(max),
-    minKg: toFixedString(min, 'KG'),
-    maxKg: toFixedString(max, 'KG'),
+    minKg: min.toFixed(SCALE.KG),
+    maxKg: max.toFixed(SCALE.KG),
   };
 }
 

@@ -297,7 +297,9 @@ const importUnitPriceSchema = z
  * sin problema, y la única salida era quitarla.
  */
 export const quotationImportIssueSchema = z.object({
-  field: z.enum(['customer', 'product', 'qty', 'unitPrice', 'pieces', 'row']),
+  // D-385: `unit` es la unidad del papel; no depende de lo que se edite en la fila y la pantalla
+  // lo conserva siempre.
+  field: z.enum(['customer', 'product', 'qty', 'unit', 'unitPrice', 'pieces', 'row']),
   severity: z.enum(['error', 'warning']),
   message: z.string(),
 });

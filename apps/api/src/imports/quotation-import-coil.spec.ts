@@ -603,6 +603,23 @@ describe('readPaperLines', () => {
     });
   });
 
+  it('D-385: una bobina en toneladas se lee en kilos, igual que el preview; un servicio en TNE no', () => {
+    const [coil, service] = readPaperLines(
+      csv([
+        { ...BOB_AZUL, unit: 'TONELADA', qty: '4.192' },
+        {
+          sku: 'CONFORMADO',
+          name: 'SERVICIO DE CONFORMADO',
+          unit: 'TONELADA',
+          qty: '30.26',
+          net: '6052',
+        },
+      ]),
+    );
+    expect(coil?.qty).toBe('4192.000');
+    expect(service?.qty).toBe('30.260');
+  });
+
   it('un trío que no cuadra deja IGV y total en null', () => {
     const [line] = readPaperLines(csv([{ ...BOB_AZUL, total: '20000' }]));
     expect(line?.igvAmountPen).toBeNull();

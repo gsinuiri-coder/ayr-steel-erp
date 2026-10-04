@@ -462,7 +462,8 @@ export class SalesOrdersService {
         // maestro de hoy también es lo que arregla solas las cotizaciones anteriores a
         // D-134, que guardaron `PRODUCT` + metros.
         // D-385: la línea de bobina que el importador dejó sin bobina se ata acá a la bobina
-        // elegida, bajo su lock y con la tolerancia del papel. Sin elección no se confirma.
+        // elegida, con la tolerancia del papel. Sin elección no se confirma. Se vuelve a validar
+        // bajo lock después de reservar (abajo).
         const coilAssignments = await resolvePaperCoilAssignments(
           tx,
           quotation,
@@ -581,6 +582,29 @@ export class SalesOrdersService {
           allowShortfall,
           shortfalls,
         });
+        // D-385: ya con las bobinas bloqueadas por `createReservations` (la unión, en orden de
+        // id), la bobina elegida se vuelve a validar: si cambió entre la primera lectura y el
+        // lock —la montaron en una OP, la tomó otra cotización, se movió su saldo—, no se confirma.
+        if (coilAssignments.length > 0) {
+          const recheck = await resolvePaperCoilAssignments(
+            tx,
+            quotation,
+            input.coilAssignments ?? [],
+            { exceptSalesOrderId: order.id },
+          );
+          const same = (a: (typeof recheck)[number]) =>
+            coilAssignments.some(
+              (b) =>
+                b.lineNumber === a.lineNumber &&
+                b.coilId === a.coilId &&
+                b.balanceKg === a.balanceKg,
+            );
+          if (recheck.length !== coilAssignments.length || !recheck.every(same)) {
+            throw new ConflictException(
+              'La bobina elegida cambió mientras se confirmaba: vuelve a abrir Confirmar y elígela de nuevo',
+            );
+          }
+        }
 
         // D-186: confirmar ya deja las órdenes en cola. Cada línea que reserva materia prima
         // es una línea que se fabrica contra el pedido (D-134/D-171), y su OP nace por el

@@ -8,6 +8,7 @@ import {
   derivedUnitValue,
   describePieces,
   IMPORT_UNIT_PRICE_PATTERN,
+  importPaperUnit,
   importRowNetPen,
   importUnitPriceText,
   piecesMeters,
@@ -929,6 +930,7 @@ function ImportRow({
           </div>
         )}
         <Issue row={row} field="qty" />
+        <Issue row={row} field="unit" />
       </td>
       <td className="py-3 pr-3 text-right">
         {excluded ? (
@@ -1243,6 +1245,23 @@ function resolveRow(
       if (coilChosen && issue.severity === 'error') continue;
       issues.push(issue);
     }
+    // D-385: lo de la unidad del papel no depende de lo editable y se conserva siempre (una
+    // unidad que no se reconoce bloquea la fila).
+    if (issue.field === 'unit') issues.push(issue);
+  }
+  // D-385: una fila en toneladas a la que se le eligió a mano un producto en kilos no se
+  // reconvierte sola (el unitario saldría del valor ÷ toneladas): la cantidad se corrige a mano.
+  if (
+    importPaperUnit(raw.rawUnit) === 'TNE' &&
+    raw.unitConversion === null &&
+    unit === 'KGM' &&
+    qty === raw.qty
+  ) {
+    issues.push({
+      field: 'unit',
+      severity: 'error',
+      message: `La fila está en ${raw.rawUnit} y el producto se vende en kilos: escribe la cantidad en kg (× 1000).`,
+    });
   }
   if (raw.coilLine && productId !== null && !coilChosen && raw.coilCandidates.length > 0) {
     if (!issues.some((i) => i.field === 'product' && i.severity === 'error')) {

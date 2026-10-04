@@ -282,14 +282,14 @@ export class QuotationImportService {
     const qty = paper.qty;
     if (paper.unit === undefined) {
       issues.push({
-        field: 'qty',
+        field: 'unit',
         severity: 'error',
         message: `La unidad «${rawUnit}» no se reconoce (se aceptan ${Object.keys(QUOTATION_IMPORT_UNITS).join(', ')}): la línea queda para revisión.`,
       });
     } else if (paper.unit === Unit.TNE && product === null) {
       // Sin producto no se sabe si hay que convertir: la cantidad queda como en el papel.
       issues.push({
-        field: 'qty',
+        field: 'unit',
         severity: 'warning',
         message: `La fila está en ${rawUnit}: si el producto que elijas se vende en kilos, multiplica la cantidad por 1000.`,
       });
@@ -475,7 +475,7 @@ export class QuotationImportService {
     const out = new Map<number, CoilRowResolution>();
     const coilish = raw
       .map((r, index) => ({ index, code: field(r, 'sku'), description: field(r, 'productName') }))
-      .filter((r) => /^\s*BOB/i.test(r.code) || /\bBOBINA\b/i.test(r.description));
+      .filter((r) => isCoilRow(raw[r.index] ?? {}));
     if (coilish.length === 0) return out;
 
     const known = await knownCoilAttributes(this.prisma);
@@ -946,7 +946,11 @@ export function readPaperLines(buffer: Buffer): PaperLine[] {
   assertColumns(raw[0] ?? {});
   return raw.map((r, i) => {
     const docType = field(r, 'docType');
-    const qty = parseAmount(field(r, 'qty'));
+    // D-385 (autorrevisión cc17, P1-2): la misma lectura de la cantidad que el preview. Una fila
+    // de bobina se vende siempre en kilos (su producto de venta es `KGM`), así que en toneladas
+    // se convierte; el resto de las filas no sabe acá su producto y queda como en el papel, que
+    // es lo que hace el preview con un producto en `TNE`.
+    const qty = paperQtyOf(r, isCoilRow(r) ? Unit.KGM : null).qty;
     const net = parseAmount(field(r, 'netAmount'));
     const currency = field(r, 'currency');
     const rate = parseAmount(field(r, 'exchangeRate'));
@@ -1032,6 +1036,11 @@ function parseAmount(value: string): Decimal | null {
   } catch {
     return null;
   }
+}
+
+/** D-252/D-254: es fila de bobina la que trae un código `BOB…` o una descripción de bobina. */
+function isCoilRow(raw: Record<string, unknown>): boolean {
+  return /^\s*BOB/i.test(field(raw, 'sku')) || /\bBOBINA\b/i.test(field(raw, 'productName'));
 }
 
 /**

@@ -185,8 +185,36 @@ describe('D-385 — elegir la bobina al confirmar', () => {
       paperKg: '4192.000',
       balanceKg: '4180.500',
     });
-    // Bajo el lock de la bobina.
-    expect(tx.$queryRaw).toHaveBeenCalled();
+    // Sin lock propio: el lock de las bobinas lo toma `createReservations`, sobre la unión y en
+    // orden de id; tomarlo antes rompía ese orden (P2-1 de las dos revisiones de cc17).
+    expect(tx.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('el re-chequeo después de reservar no se cuenta la reserva del propio pedido', async () => {
+    const tx = txWith([{ id: COIL_ID, code: 'BOB-0042', balance: '4180.500' }]);
+    await resolvePaperCoilAssignments(
+      tx as never,
+      IMPORTED,
+      [{ lineNumber: 1, saleCoilId: COIL_ID }],
+      { exceptSalesOrderId: 'o-1' },
+    );
+    const { reservedByItem } = jest.requireMock<{ reservedByItem: jest.Mock }>('./reserved-ledger');
+    expect(reservedByItem).toHaveBeenLastCalledWith(expect.anything(), 'COIL', [COIL_ID], {
+      exceptQuotationIds: ['q-1'],
+      exceptSalesOrderIds: ['o-1'],
+    });
+  });
+
+  it('el borde redondea hacia adentro y compara contra lo que muestra', () => {
+    // 4192.123 ± 1 % = 4150.20177 .. 4234.04423 → se muestran y comparan 4150.202 .. 4234.044.
+    expect(paperCoilWeightCheck('4192.123', '0')).toMatchObject({
+      minKg: '4150.202',
+      maxKg: '4234.044',
+    });
+    expect(paperCoilWeightCheck('4192.123', '4150.202').ok).toBe(true);
+    expect(paperCoilWeightCheck('4192.123', '4150.201').ok).toBe(false);
+    expect(paperCoilWeightCheck('4192.123', '4234.044').ok).toBe(true);
+    expect(paperCoilWeightCheck('4192.123', '4234.045').ok).toBe(false);
   });
 
   it('una bobina fuera del ±1 % se bloquea mostrando los dos pesos', async () => {
