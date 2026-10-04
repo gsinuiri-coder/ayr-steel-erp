@@ -2,6 +2,25 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 (Lima) — Ventana cc15b (D-382 desplegada, PR #88, sin migración) y limpia:v4 retirada (PR #89)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc15b.md`.
+
+- **PR #89 (D-384):** `limpia:v4` retirada; merge `43e606b`, sin deploy (no toca runtime).
+- **PR #88 (cc15b, D-382):** UAT del dueño en demo sobre `99e76b0`; CI 37172441456 en verde.
+  API `ayr-steel-erp-api-00080-wgf` (`git-sha=99e76b0`, 100 %, `/health` 200; antes `00079-gwg`);
+  smoke 8/8. Merge `80cb7ed`, Vercel `success`, smoke 8/8 en los dos dominios. Salidas completas
+  del smoke en `local-data/ayr-cc15/`.
+- **En producción desde hoy:** `InventoryService.replaceEntry`; «Editar compra» corrige precio y
+  cantidad con reserva activa (si el saldo final la cubre) y con otra compra posterior del mismo
+  producto; bloqueo del cambio de color o espesor de una bobina comprometida; anular una compra de
+  producto ya no se bloquea por una entrada ajena posterior (foto: solo E001-1766 cambia, y la
+  siguen parando sus reservas), con los ítems bloqueados antes del guardrail.
+- **Respaldo posterior:** `respaldo-pre-replaceentry-20261003` (`br-rapid-river-ae59y2vw`),
+  `ready`. Pedido por el dueño antes de usar «Editar compra» con reserva activa o compra posterior.
+- **Cierre:** demo apagado; worktrees `../ayr-cc15`, `../ayr-c15x` y `../ayr-lv4` borrados con
+  sus ramas locales y remotas, con `local-data` copiada y verificada antes.
+
 ## 2026-10-04 — Ventana cc16 (D-381 desplegada, PR #87, sin migración) y FFA1-00001389 traída
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle está en
