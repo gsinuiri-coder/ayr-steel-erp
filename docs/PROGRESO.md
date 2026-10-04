@@ -79,6 +79,19 @@
 - Pendiente del dueño: decisiones 1-3, que el papel de Nubefact sea por las siete líneas, el
   vendedor correcto y el número D-381.
 
+## Pendiente — Orden único de bloqueos en despacho y reversas (pieza propia)
+
+Decisión del dueño (2026-10-03): sesión aparte, **después de cc15b y D-383**; sin tocar antes.
+Origen: P2-1 y P2-2 de `docs/revision/cc15b-p2b-segundo-modelo.md`, previos a cc15b.
+
+- **Despacho** (`dispatches.service.ts` ~340-374): bloquea solo las bobinas nombradas; `record`
+  de una salida de bobina expande el agregado después, y los saldos de producto se toman en el
+  orden de las líneas. Puede cruzarse con la anulación de una compra o con confirmar un pedido.
+- **Reversas de varios ítems** (despacho, venta, producción): iteran los ítems sin ordenar.
+- **Arreglo sugerido:** tomar al inicio, con `InventoryService.lockItemsForReversal` (o una
+  generalización), bobinas con sus agregados y después saldos en orden fijo, como la anulación
+  de compras y «Editar compra».
+
 ## 2026-10-03 — cc15b: D-372 sesión 2b y D-382, `replaceEntry` (PR sin merge)
 
 - **Rama `cc15b/reemplazo-con-reserva`** desde `main` `56e068e`, en `../ayr-cc15`. Sin migración y
@@ -125,12 +138,9 @@
     `InventoryService.lockItemsForReversal`: bobinas antes que saldos (D-134).
   - **Pasada de Sonnet de contexto limpio solo sobre P2-B** (pedida por el dueño,
     `docs/revision/cc15b-p2b-segundo-modelo.md`): sin P0 ni P1; sin ciclo contra «Editar
-    compra», `replaceEntry`, `reverse` ni una reserva nueva. **Anotados, previos a este cambio y
-    fuera de alcance:** P2-1, el despacho (`dispatches.service.ts` ~340-374) bloquea solo las
-    bobinas nombradas y toma los saldos de producto en el orden de las líneas, así que puede
-    cruzarse con la anulación o con confirmar un pedido; P2-2, las reversas de varios ítems
-    (despacho, venta, producción) iteran sin ordenar. Arreglo sugerido para los dos: llamar a
-    `lockItemsForReversal` al inicio. P3: la anulación no bloquea los flejes heredados antes de
+    compra», `replaceEntry`, `reverse` ni una reserva nueva. P2-1 y P2-2, previos a este cambio,
+    van como pieza propia: «Orden único de bloqueos en despacho y reversas» (arriba). P3: la
+    anulación no bloquea los flejes heredados antes de
     cancelarlos; la segunda toma de bobinas en `reverse` puede ampliar el conjunto.
   - **P3-B cerrado:** tests contra la base de la regla de bobina (una entrada ajena sigue
     bloqueando) y del ajuste ajeno en producto. P3-C corregido (E2E); P3-A
