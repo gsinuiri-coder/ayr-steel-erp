@@ -128,13 +128,16 @@ export function CancelOrderDialog({
                   Línea {l.lineNumber} · <span className="font-medium">{l.sku}</span> ·{' '}
                   {toDecimal(l.qty).toString()} {l.unit} ·{' '}
                   {l.productionOrders.map((o) => o.code).join(', ')}
+                  {l.madeToOrder ? ' · queda suelto' : ' · queda libre para otros pedidos'}
                 </li>
               ))}
             </ul>
             <p className="text-sm text-amber-700 dark:text-amber-400">
-              Al anular, lo fabricado queda en inventario sin pedido. Ningún pedido nuevo ni el
-              mostrador lo toman: queda suelto hasta revertir la producción (reabrir la orden y
-              revertir sus reportes).
+              Al anular, lo fabricado queda en inventario sin pedido.
+              {p.fabricated.some((l) => l.madeToOrder) &&
+                ' Lo fabricado contra pedido (coberturas, planchas, accesorios) no lo toma ningún pedido nuevo ni el mostrador: queda suelto hasta revertir la producción (reabrir la orden y revertir sus reportes).'}
+              {p.fabricated.some((l) => !l.madeToOrder) &&
+                ' Lo que es producto de stock queda libre y otro pedido lo puede reservar.'}
             </p>
             <span className="flex items-start gap-2">
               <Checkbox

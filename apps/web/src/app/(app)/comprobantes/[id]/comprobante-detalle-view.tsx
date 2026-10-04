@@ -814,7 +814,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       </div>
 
       {/* Los avisos de estado. Cada uno dice qué pasó y qué hacer, no solo qué pasó. */}
-      {isAdmin && orderCancelled && canReactivate(d) && (
+      {isAdmin && orderCancelled && d.origin === 'MANUAL' && canReactivate(d) && (
         <Alert data-testid="annulled-order-cancelled">
           <AlertDescription>
             Su pedido {d.salesOrderCode} está anulado: este comprobante ya no se reactiva sobre él.

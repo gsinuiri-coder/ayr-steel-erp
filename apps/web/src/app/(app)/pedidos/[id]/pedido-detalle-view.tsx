@@ -132,7 +132,11 @@ export function PedidoDetalleView({ id }: { id: string }) {
       setCancelOpen(false);
       invalidateSales(queryClient, { orderId: id, quotationId: o?.quotationId ?? undefined });
     },
-    onError,
+    onError: (err: unknown) => {
+      onError(err);
+      // D-383: lo que bloquea pudo cambiar; el diálogo vuelve a preguntar.
+      void queryClient.invalidateQueries({ queryKey: ['sales-order', id, 'cancel-preview'] });
+    },
   });
 
   const release = useMutation({
@@ -450,7 +454,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
               // puede, y se dice desde el menú.
               {
                 key: 'move-document',
-                label: 'Traer comprobante anulado',
+                label: o.isEditable
+                  ? 'Traer comprobante anulado'
+                  : 'Traer comprobante anulado (el pedido ya tiene comprobante)',
                 show: isAdmin && canOperate,
                 disabled: busy || !o.isEditable,
                 title: o.isEditable
