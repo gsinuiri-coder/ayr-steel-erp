@@ -90,7 +90,48 @@ export const QUOTATION_IMPORT_UNITS: Record<string, string> = {
   KILOGRAMO: 'KGM',
   UNIDAD: 'NIU',
   TONELADA: 'TNE',
+  // D-385: las variantes de tonelada que el papel puede traer, y los códigos UN/EDI tal cual
+  // (no son una interpretación: son la unidad misma).
+  TN: 'TNE',
+  TON: 'TNE',
+  TNE: 'TNE',
+  MTR: 'MTR',
+  KGM: 'KGM',
+  NIU: 'NIU',
 };
+
+/** D-385: kilos por tonelada. */
+export const KG_PER_TONNE = 1000;
+
+/**
+ * D-385: la unidad UN/EDI de la columna `UNIDAD MEDIDA`, sin mayúsculas ni espacios de más.
+ * `null` si la celda viene vacía (la columna es opcional y entonces no hay nada que convertir);
+ * `undefined` si trae algo que no está en {@link QUOTATION_IMPORT_UNITS}: eso **no se adivina**
+ * y la fila queda para revisión.
+ */
+export function importPaperUnit(raw: string): string | null | undefined {
+  const key = raw.trim().replace(/\s+/g, ' ').toUpperCase();
+  if (key === '') return null;
+  return QUOTATION_IMPORT_UNITS[key];
+}
+
+/**
+ * D-385: la cantidad de la fila en la unidad del producto. Solo hay una conversión: el papel
+ * dice **tonelada** y el producto se vende en **kilos** (las bobinas): la cantidad se multiplica
+ * por mil. El valor de venta del papel no se toca —manda el importe (D-169)— y el unitario, que
+ * sale de dividirlo entre la cantidad, queda solo por kilo. Un producto que se vende en toneladas
+ * (el servicio de conformado) conserva la cantidad del papel, decisión del dueño 2026-10-04.
+ */
+export function importQtyInProductUnit(
+  qty: Decimal,
+  paperUnit: string | null | undefined,
+  productUnit: string | null,
+): { qty: Decimal; convertedFromTonnes: boolean } {
+  if (paperUnit === 'TNE' && productUnit === 'KGM') {
+    return { qty: qty.times(KG_PER_TONNE), convertedFromTonnes: true };
+  }
+  return { qty, convertedFromTonnes: false };
+}
 
 /** Tope de filas de un archivo. Una carga mensual real ronda las 150. */
 export const MAX_QUOTATION_IMPORT_ROWS = 1_000;
@@ -397,6 +438,11 @@ export const quotationImportRowSchema = quotationImportRowInputSchema
     /** D-254: lo disponible en el pool, en kg. `null` fuera de una línea de bobina. */
     coilPoolAvailableKg: z.string().nullable(),
     saleCoilId: z.string().uuid().nullable(),
+    /**
+     * D-385: la cantidad tal como venía en el papel cuando se convirtió (tonelada → kg), para que
+     * la vista previa muestre «4.192 TONELADA → 4,192 kg». `null` si no hubo conversión.
+     */
+    unitConversion: z.object({ paperQty: z.string(), paperUnit: z.string() }).nullable(),
     currency: z.string(),
     /** Solo informativo: con qué tipo de cambio se llevó el precio a soles. */
     exchangeRate: z.string().nullable(),

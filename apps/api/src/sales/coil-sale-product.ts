@@ -122,6 +122,25 @@ export async function findCoilSaleProducts(
 }
 
 /**
+ * D-385: el producto de venta **activo** de un SKU canónico de bobina, sin pasar por una bobina.
+ * Lo usa el importador cuando el pool no tiene ninguna bobina libre que corresponda: la línea
+ * entra igual, con el producto y sin bobina. Si el catálogo no lo tiene, `null`: no se crea nada.
+ */
+export async function findCoilSaleProductBySku(
+  tx: Prisma.TransactionClient,
+  canonicalSku: string,
+): Promise<CoilSaleProduct | null> {
+  return tx.product.findFirst({
+    where: {
+      sku: canonicalSku,
+      isActive: true,
+      businessLine: { code: BusinessLineCode.TRADING },
+    },
+    select: { id: true, sku: true, name: true, businessLineId: true },
+  });
+}
+
+/**
  * D-252: los tokens de color o tipo que el catálogo conoce, para el normalizador. Los colores
  * del catálogo (por su color comercial) y los tipos sin color.
  */

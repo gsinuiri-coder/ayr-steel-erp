@@ -92,6 +92,14 @@ function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean
     unit: 'KGM',
     roofingKind: null,
   };
+  // El servicio de conformado se vende en toneladas (FFA1-1372 de agosto).
+  const conformado = {
+    id: 'p-conf',
+    sku: 'CONFORMADO',
+    name: 'SERVICIO DE CONFORMADO',
+    unit: 'TNE',
+    roofingKind: null,
+  };
   const prisma = {
     customer: {
       findMany: jest
@@ -116,8 +124,24 @@ function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean
                   ],
             );
           }
-          return Promise.resolve(where.sku.in.includes('BOB38AZUL') ? [looseProduct] : []);
+          return Promise.resolve([
+            ...(where.sku.in.includes('BOB38AZUL') ? [looseProduct] : []),
+            ...(where.sku.in.includes('CONFORMADO') ? [conformado] : []),
+          ]);
         },
+      ),
+      // D-385: el producto de venta por SKU canónico, cuando el pool no tiene bobina.
+      findFirst: jest.fn(({ where }: { where: { sku: string } }) =>
+        Promise.resolve(
+          opts.canonical === false || where.sku !== 'BOB038AZUL'
+            ? null
+            : {
+                id: 'p-canon',
+                sku: 'BOB038AZUL',
+                name: 'Bobina Azul 0.38',
+                businessLineId: 'bl-t',
+              },
+        ),
       ),
     },
     quotation: { findMany: jest.fn().mockResolvedValue([]) },
@@ -178,11 +202,29 @@ describe('QuotationImportService.preview — filas de bobina (R1)', () => {
     expect(row?.issues.map((i) => i.message).join(' ')).toMatch(/2 bobinas/);
   });
 
-  it('sin bobina con esa cantidad, la fila queda bloqueada con el disponible del pool', async () => {
+  it('D-385: sin bobina con esa cantidad, la fila entra sin bobina asignada (aviso, no error)', async () => {
     const { service } = build({ coils: [coilRow('c-1', '100')] });
     const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
-    expect(row?.coilCandidates).toEqual([]);
-    expect(row?.issues.map((i) => i.message).join(' ')).toMatch(/ninguna bobina libre.*100\.000/);
+    expect(row).toMatchObject({
+      coilLine: true,
+      productId: 'p-canon',
+      productSku: 'BOB038AZUL',
+      saleCoilId: null,
+      coilCandidates: [],
+      netAmountPen: '12439.8300',
+    });
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+    const warning = row?.issues.find((i) => i.severity === 'warning');
+    expect(warning?.message).toMatch(/ninguna bobina libre.*100\.000.*sin bobina asignada/);
+  });
+
+  it('D-385: sin bobina en el pool y sin el producto en el catálogo, queda para revisión', async () => {
+    const { service } = build({ coils: [], canonical: false });
+    const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
+    expect(row?.productId).toBeNull();
+    expect(row?.issues.find((i) => i.severity === 'error')?.message).toMatch(
+      /ni producto de venta BOB038AZUL/,
+    );
   });
 
   it('un color que el catálogo no tiene queda para revisión, sin crear nada', async () => {
@@ -209,6 +251,79 @@ describe('QuotationImportService.preview — filas de bobina (R1)', () => {
     );
     expect(rows.map((r) => r.saleCoilId)).toEqual([null, null]);
     expect(rows[0]?.issues.map((i) => i.message).join(' ')).toMatch(/misma bobina/);
+  });
+});
+
+describe('D-385 — unidad TONELADA', () => {
+  // FFA1-1419 de setiembre, con datos inventados en lo que no hace al caso.
+  const TN_ROW: Row = {
+    key: 'FFA1-1419',
+    sku: 'BOB38AZUL',
+    name: 'BOBINA ALUZINC AZUL 0.38 X 1200 RAL 5002',
+    unit: 'TONELADA',
+    qty: '4.192',
+    net: '12789.15',
+  };
+
+  it('una bobina en toneladas se lee en kilos: 4.192 TONELADA → 4192 kg, importe intacto', async () => {
+    const { service } = build({ coils: [coilRow('c-1', '4192')] });
+    const [row] = (await service.preview('v.csv', csv([TN_ROW]))).rows;
+    expect(row).toMatchObject({
+      qty: '4192.000',
+      netAmountPen: '12789.1500',
+      // El unitario sale del importe ÷ los kilos: por kilo, no por tonelada.
+      unitPricePen: '3.0508468511',
+      unitConversion: { paperQty: '4.192', paperUnit: 'TONELADA' },
+      // Con los kilos ya convertidos, el pool encuentra la bobina y se asigna como siempre.
+      saleCoilId: 'c-1',
+    });
+    // La conversión explica la diferencia de unidad: no hay aviso de producto equivocado.
+    expect(row?.issues).toEqual([]);
+  });
+
+  it.each(['TN', 'ton', 'Tne', ' tonelada '])('acepta la variante «%s»', async (unit) => {
+    const { service } = build({ coils: [coilRow('c-1', '4192')] });
+    const [row] = (await service.preview('v.csv', csv([{ ...TN_ROW, unit }]))).rows;
+    expect(row?.qty).toBe('4192.000');
+  });
+
+  it('TONELADA sin bobina libre: entra sin bobina asignada con los kilos y el importe del papel', async () => {
+    const { service } = build({ coils: [] });
+    const [row] = (await service.preview('v.csv', csv([TN_ROW]))).rows;
+    expect(row).toMatchObject({
+      qty: '4192.000',
+      netAmountPen: '12789.1500',
+      productId: 'p-canon',
+      saleCoilId: null,
+    });
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('un producto que se vende en toneladas conserva la cantidad (CONFORMADO, decisión 2026-10-04)', async () => {
+    const { service } = build();
+    const [row] = (
+      await service.preview(
+        'v.csv',
+        csv([{ sku: 'CONFORMADO', unit: 'TONELADA', qty: '30.26', net: '6052' }]),
+      )
+    ).rows;
+    expect(row).toMatchObject({ qty: '30.260', unitConversion: null, productId: 'p-conf' });
+    expect(row?.issues).toEqual([]);
+  });
+
+  it('una unidad desconocida deja la línea sin resolver y no adivina', async () => {
+    const { service } = build();
+    const [row] = (await service.preview('v.csv', csv([{ ...BOB_AZUL, unit: 'QUINTAL' }]))).rows;
+    expect(row?.qty).toBe('4194.000');
+    expect(row?.issues.find((i) => i.severity === 'error')?.message).toMatch(
+      /La unidad «QUINTAL» no se reconoce/,
+    );
+  });
+
+  it('KILOGRAMO sigue igual: sin conversión', async () => {
+    const { service } = build();
+    const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
+    expect(row).toMatchObject({ qty: '4194.000', unitConversion: null });
   });
 });
 
@@ -389,6 +504,52 @@ describe('QuotationImportService.confirm — lo que viaja a la cotización', () 
     expect(input.items[0]).not.toHaveProperty('igvAmountPen');
     expect(input.items[0]).not.toHaveProperty('saleCoilId');
     expect(input.items[0]).not.toHaveProperty('netAmountPen');
+  });
+
+  it('D-385: la fila sin bobina admite su producto de bobina sin bobina asignada; la que la trae, no', async () => {
+    const { service, quotations } = build();
+    const tx = {
+      $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
+      quotation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 5 }),
+      },
+    };
+    (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
+      fn: (t: unknown) => Promise<unknown>,
+    ) => fn(tx);
+    const base = {
+      documentKey: 'FFA1-1419',
+      issueDate: '2026-09-08',
+      customerId: '11111111-1111-4111-8111-111111111111',
+      unitPricePen: '3.0508468511',
+      netAmountPen: '12789.1500',
+    };
+    await service.confirm({ id: 'u-1' } as never, {
+      rows: [
+        {
+          ...base,
+          rowNumber: 1,
+          productId: '22222222-2222-4222-8222-222222222222',
+          qty: '4192.000',
+        },
+        {
+          ...base,
+          rowNumber: 2,
+          productId: '44444444-4444-4444-8444-444444444444',
+          qty: '4192.000',
+          saleCoilId: '33333333-3333-4333-8333-333333333333',
+        },
+      ],
+    });
+    const [, , , options] = quotations.createInTx.mock.calls[0] as [
+      unknown,
+      unknown,
+      unknown,
+      { unassignedCoilProducts: Set<string> },
+    ];
+    expect([...options.unassignedCoilProducts]).toEqual(['22222222-2222-4222-8222-222222222222']);
   });
 
   it('P14 §3.5: la fila editada manda el unitario entero, sin cortarlo a cuatro', async () => {

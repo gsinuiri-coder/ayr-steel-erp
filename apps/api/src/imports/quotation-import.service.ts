@@ -5,6 +5,8 @@ import {
   defaultRoofingPlan,
   derivedUnitValue,
   importDocTypeOf,
+  importPaperUnit,
+  importQtyInProductUnit,
   importUnitPriceText,
   EXTERNAL_INVOICE_NOTES_PREFIX,
   externalInvoiceOf,
@@ -38,6 +40,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   COIL_SALE_IDENTITY_SELECT,
   coilPoolFor,
+  findCoilSaleProductBySku,
   findCoilSaleProducts,
   knownCoilAttributes,
 } from '../sales/coil-sale-product';
@@ -269,7 +272,28 @@ export class QuotationImportService {
       });
     }
 
-    const qty = parseAmount(field(raw, 'qty'));
+    if (coil?.warning) {
+      issues.push({ field: 'product', severity: 'warning', message: coil.warning });
+    }
+
+    // D-385: la cantidad en la unidad del producto (tonelada → kg si el producto se vende en kg).
+    const rawUnit = field(raw, 'unit');
+    const paper = paperQtyOf(raw, product?.unit ?? null);
+    const qty = paper.qty;
+    if (paper.unit === undefined) {
+      issues.push({
+        field: 'qty',
+        severity: 'error',
+        message: `La unidad «${rawUnit}» no se reconoce (se aceptan ${Object.keys(QUOTATION_IMPORT_UNITS).join(', ')}): la línea queda para revisión.`,
+      });
+    } else if (paper.unit === Unit.TNE && product === null) {
+      // Sin producto no se sabe si hay que convertir: la cantidad queda como en el papel.
+      issues.push({
+        field: 'qty',
+        severity: 'warning',
+        message: `La fila está en ${rawUnit}: si el producto que elijas se vende en kilos, multiplica la cantidad por 1000.`,
+      });
+    }
     if (qty?.gt(0) !== true) {
       issues.push({
         field: 'qty',
@@ -354,9 +378,14 @@ export class QuotationImportService {
     // Un aviso, no un error: la unidad del papel es informativa y la que manda es la del
     // producto. Que no coincidan casi siempre significa que el SKU se mapeó al producto
     // equivocado, y eso vale la pena verlo antes de crear 71 cotizaciones.
-    const rawUnit = field(raw, 'unit');
-    const expected = QUOTATION_IMPORT_UNITS[rawUnit.toUpperCase()];
-    if (product && expected !== undefined && expected !== product.unit) {
+    // D-385: la conversión tonelada → kg es la explicación de la diferencia; no se avisa.
+    const expected = paper.unit;
+    if (
+      product &&
+      typeof expected === 'string' &&
+      expected !== product.unit &&
+      !paper.convertedFromTonnes
+    ) {
       issues.push({
         field: 'product',
         // Aviso y no error: la unidad que manda es la del producto, y el API acepta la línea
@@ -390,6 +419,10 @@ export class QuotationImportService {
       coilCandidates: coil?.candidates ?? [],
       coilPoolAvailableKg: coil?.availableKg ?? null,
       saleCoilId: coil?.saleCoilId ?? null,
+      unitConversion:
+        paper.convertedFromTonnes && paper.paperQty !== null
+          ? { paperQty: paper.paperQty, paperUnit: rawUnit }
+          : null,
       // El lector recorta a 512 y el schema del confirm topa en 240: sin este recorte, un
       // nombre largo tumbaba el archivo entero con un error de Zod que la pantalla no sabe
       // atribuir a ninguna fila.
@@ -455,15 +488,40 @@ export class QuotationImportService {
           availableKg: null,
           saleCoilId: null,
           problem: `No se pudo interpretar el código de bobina: ${parsed.reason}. La línea queda para revisión.`,
+          warning: null,
         });
         continue;
       }
-      const qty = parseAmount(field(raw[row.index] ?? {}, 'qty'));
+      // D-385: el producto de venta de bobina se vende en kilos, así que una fila en toneladas
+      // se lee en kilos **antes** de buscar en el pool.
+      const qty = paperQtyOf(raw[row.index] ?? {}, Unit.KGM).qty;
       const pool = await coilPoolFor(
         this.prisma,
         { thicknessMm: parsed.thicknessMm, attribute: parsed.attribute },
         qty === null ? '0' : toFixedString(qty, 'KG'),
       );
+      if (pool.candidates.length === 0) {
+        // D-385: sin bobina libre que corresponda, la línea **entra igual** con el producto de
+        // venta del SKU y sin bobina: la cotización nace emitida con los kilos y el importe del
+        // papel, y la bobina se elige al confirmar (D-054 sigue: sin bobina no se confirma). Si
+        // el catálogo no tiene ese producto, la fila queda para revisión: no se crea nada.
+        const found = await findCoilSaleProductBySku(this.prisma, parsed.sku);
+        out.set(row.index, {
+          product: found
+            ? { id: found.id, sku: found.sku, name: found.name, unit: Unit.KGM, roofingKind: null }
+            : null,
+          candidates: [],
+          availableKg: pool.availableKg,
+          saleCoilId: null,
+          problem: found
+            ? null
+            : `${parsed.sku}: no hay bobina libre del pool ni producto de venta ${parsed.sku} en el catálogo. La línea queda para revisión.`,
+          warning: found
+            ? `${parsed.sku}: ninguna bobina libre del pool tiene ${qty === null ? 'la cantidad' : `${toFixedString(qty, 'KG')} kg`} (disponible en el pool: ${pool.availableKg} kg). La cotización entra sin bobina asignada; la bobina se elige al confirmar.`
+            : null,
+        });
+        continue;
+      }
       const product = await this.coilSaleProductOf(
         pool.candidates.map((c) => c.coilId),
         parsed.sku,
@@ -474,13 +532,12 @@ export class QuotationImportService {
         availableKg: pool.availableKg,
         saleCoilId: pool.autoCoilId,
         problem:
-          pool.candidates.length > 0 && product === null
+          product === null
             ? `${parsed.sku}: las bobinas del pool no tienen producto de venta; revisa el catálogo antes de importar.`
-            : pool.candidates.length === 0
-              ? `${parsed.sku}: ninguna bobina libre del pool tiene ${qty === null ? 'la cantidad' : `${toFixedString(qty, 'KG')} kg`} (disponible en el pool: ${pool.availableKg} kg). La línea queda para revisión.`
-              : pool.autoCoilId === null
-                ? `${parsed.sku}: hay ${String(pool.candidates.length)} bobinas que pueden atender la línea; elige cuál.`
-                : null,
+            : pool.autoCoilId === null
+              ? `${parsed.sku}: hay ${String(pool.candidates.length)} bobinas que pueden atender la línea; elige cuál.`
+              : null,
+        warning: null,
       });
     }
 
@@ -794,6 +851,13 @@ export class QuotationImportService {
                   tolerancePen: IMPORT_ROUNDING_TOLERANCE_PEN,
                   documentLabel: documentKey,
                 },
+                // D-385: una línea de bobina sin bobina libre que corresponda entra con el
+                // producto de venta y sin bobina («sin bobina asignada»); la bobina se elige al
+                // confirmar la cotización. Solo para las filas que no traen bobina: una que sí la
+                // trae sigue siendo una venta de esa bobina.
+                unassignedCoilProducts: new Set(
+                  rows.filter((r) => r.saleCoilId === undefined).map((r) => r.productId),
+                ),
               },
             );
             await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
@@ -970,6 +1034,28 @@ function parseAmount(value: string): Decimal | null {
   }
 }
 
+/**
+ * D-385: la cantidad de la fila en la unidad del producto, y la unidad del papel ya traducida
+ * (`null` si la celda viene vacía, `undefined` si no se reconoce: eso bloquea la fila). Con un
+ * producto en kilos y el papel en toneladas, la cantidad se multiplica por mil; el valor de venta
+ * no se toca, y el unitario —`valor ÷ cantidad`— queda por kilo.
+ */
+function paperQtyOf(
+  raw: Record<string, unknown>,
+  productUnit: string | null,
+): {
+  qty: Decimal | null;
+  paperQty: string | null;
+  unit: string | null | undefined;
+  convertedFromTonnes: boolean;
+} {
+  const unit = importPaperUnit(field(raw, 'unit'));
+  const paper = parseAmount(field(raw, 'qty'));
+  if (paper === null) return { qty: null, paperQty: null, unit, convertedFromTonnes: false };
+  const { qty, convertedFromTonnes } = importQtyInProductUnit(paper, unit, productUnit);
+  return { qty, paperQty: paper.toString(), unit, convertedFromTonnes };
+}
+
 /** Agrupa por `SERIE - NÚMERO` conservando el orden en que aparecen en el archivo. */
 function groupByDocument(
   rows: readonly QuotationImportRowInput[],
@@ -1007,6 +1093,8 @@ interface CoilRowResolution {
   saleCoilId: string | null;
   /** El motivo por el que la fila queda para revisión, o `null` si se resolvió sola. */
   problem: string | null;
+  /** D-385: un aviso que no bloquea (la línea entra sin bobina asignada). */
+  warning: string | null;
 }
 
 /**
