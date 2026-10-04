@@ -13,6 +13,7 @@ import {
 import {
   Decimal,
   LIVE_DOCUMENT_STATUSES,
+  businessToday,
   dispatchCode,
   productionOrderCode,
   toDecimal,
@@ -31,6 +32,19 @@ import {
 /** Factura y boleta: lo que factura las líneas del pedido. */
 const SALE_DOC_TYPES: readonly FiscalDocType[] = [FiscalDocType.FACTURA, FiscalDocType.BOLETA];
 
+const DOC_TYPE_LABEL: Record<FiscalDocType, string> = {
+  [FiscalDocType.FACTURA]: 'factura',
+  [FiscalDocType.BOLETA]: 'boleta',
+  [FiscalDocType.NOTA_CREDITO]: 'nota de crédito',
+  [FiscalDocType.GUIA_REMISION_REMITENTE]: 'guía de remisión',
+};
+
+/** El día de negocio (Lima) de un instante, como `03/10/2026`. */
+function dayLabel(at: Date): string {
+  const [y, m, d] = businessToday(at).split('-');
+  return `${d ?? ''}/${m ?? ''}/${y ?? ''}`;
+}
+
 /**
  * Los bloqueos comerciales: un comprobante vivo que factura el pedido (por cabecera o por línea)
  * y los despachos vigentes. Mensajes listos para el usuario, en el orden en que hay que
@@ -45,15 +59,19 @@ export async function commercialCancelBlocks(
     await db.salesOrderItem.findMany({ where: { salesOrderId: orderId }, select: { id: true } })
   ).map((i) => i.id);
   const [candidates, dispatches] = await Promise.all([
+    // Vivos y borradores en una sola consulta (el presupuesto de la vista previa no cambia).
     db.fiscalDocument.findMany({
       where: {
-        docType: { in: [...SALE_DOC_TYPES] },
-        status: { in: [...LIVE_DOCUMENT_STATUSES] },
+        docType: { in: [...SALE_DOC_TYPES, FiscalDocType.NOTA_CREDITO] },
+        status: { in: [...LIVE_DOCUMENT_STATUSES, FiscalDocumentStatus.DRAFT] },
         archivedAt: null,
         OR: [{ salesOrderId: orderId }, { items: { some: { salesOrderItemId: { in: itemIds } } } }],
       },
       select: {
         number: true,
+        docType: true,
+        status: true,
+        createdAt: true,
         origin: true,
         totalPen: true,
         creditNotes: {
@@ -74,11 +92,16 @@ export async function commercialCancelBlocks(
   // del plazo de baja (`PosService.void`: nota de crédito total y después `cancel`), y no se
   // bloquea.
   const docs = candidates.filter((d) => {
+    if (d.status === FiscalDocumentStatus.DRAFT || !SALE_DOC_TYPES.includes(d.docType)) {
+      return false;
+    }
     const credited = d.creditNotes.reduce<Decimal>(
       (acc, n) => acc.plus(toDecimal(n.totalPen.toString())),
       new Decimal(0),
     );
-    return credited.lt(toDecimal(d.totalPen.toString()));
+    // Al céntimo, la escala del papel (D-377): una nota total no se pierde por un resto en el
+    // cuarto decimal (revisión del segundo modelo de D-383, P2).
+    return credited.toDecimalPlaces(2).lt(toDecimal(d.totalPen.toString()).toDecimalPlaces(2));
   });
   const blocks: string[] = [];
   if (docs.length > 0) {
@@ -88,6 +111,20 @@ export async function commercialCancelBlocks(
       : 'anúlalo (un manual, internamente; uno emitido por el ERP, con baja o nota de crédito)';
     blocks.push(
       `El pedido ${orderCode} tiene ${docs.length === 1 ? 'el comprobante' : 'los comprobantes'} ${numbers} vigente${docs.length === 1 ? '' : 's'}: ${how} antes de anular el pedido`,
+    );
+  }
+  // Decisión del dueño (revisión del PR #90): un borrador también bloquea, nombrándolo. Sin
+  // borrado automático: el borrador puede ser el intento de reingreso de un papel vigente.
+  const drafts = candidates.filter((d) => d.status === FiscalDocumentStatus.DRAFT);
+  if (drafts.length > 0) {
+    const named = drafts
+      .map(
+        (d) =>
+          `${DOC_TYPE_LABEL[d.docType]} del ${dayLabel(d.createdAt)} por S/ ${toDecimal(d.totalPen.toString()).toFixed(2)}`,
+      )
+      .join('; ');
+    blocks.push(
+      `El pedido ${orderCode} tiene ${drafts.length === 1 ? 'un borrador de comprobante' : `${String(drafts.length)} borradores de comprobante`}: elimina primero ${drafts.length === 1 ? 'el borrador' : 'los borradores'} (${named}) antes de anular el pedido`,
     );
   }
   if (dispatches.length > 0) {

@@ -191,7 +191,7 @@ test.describe('D-383 — anular un pedido', () => {
     }
   });
 
-  test('comprobante vivo y despacho vigente bloquean; un borrador de un pedido anulado ya no se registra', async () => {
+  test('comprobante vivo, despacho vigente y borrador bloquean, cada uno con su mensaje', async () => {
     const trail: InvoicingTrail = {
       documentIds: [],
       dispatchIds: [],
@@ -262,23 +262,31 @@ test.describe('D-383 — anular un pedido', () => {
       expect(afterReverse.blocks).toEqual([]);
       expect(afterReverse.annulledManualDocuments.map((d) => d.number)).toEqual([invoice.number]);
 
-      // Un borrador creado antes de anular ya no se registra después.
-      const lateDraft = await createInvoice(api, {
+      // Decisión del dueño: un borrador también bloquea, nombrado, y no se borra solo.
+      const draftAgain = await createInvoice(api, {
         docType: 'FACTURA',
         customerId: customer.id,
         salesOrderId: order.id,
         items: [{ salesOrderItemId: line.id, qty: line.qty }],
       });
-      trail.documentIds!.push(lateDraft.id);
+      trail.documentIds!.push(draftAgain.id);
+      const byDraft = await api.post(cancelUrl, { data: { reason: 'con borrador (E2E)' } });
+      expect(byDraft.status()).toBe(400);
+      expect(await byDraft.text()).toMatch(
+        /tiene un borrador de comprobante: elimina primero el borrador \(factura del \d{2}\/\d{2}\/\d{4} por S\/ \d+\.\d{2}\)/,
+      );
+      expect(
+        (await getJson<FiscalDocumentDto>(api, `/api/invoicing/documents/${draftAgain.id}`)).status,
+      ).toBe('DRAFT');
+
+      // Eliminado el borrador, el pedido se anula. (Que un borrador de un pedido anulado ya no
+      // se registra es la otra mitad de la carrera; la cubren los unitarios.)
+      const discarded = await api.delete(`/api/invoicing/documents/${draftAgain.id}`, {
+        data: { reason: 'borrador de prueba (E2E D-383)' },
+      });
+      expect(discarded.status()).toBe(204);
       const cancelled = await api.post(cancelUrl, { data: { reason: 'ahora sí (E2E D-383)' } });
       expect(cancelled.status()).toBe(201);
-      const late = await api.post(`/api/invoicing/documents/${lateDraft.id}/register-manual`, {
-        data: { series: 'F905', correlative: uniqueCorrelative() + 1 },
-      });
-      expect(late.status()).toBe(409);
-      expect(await late.text()).toContain(
-        'está anulado: este borrador ya no se registra ni se emite',
-      );
     } finally {
       await purgeInvoicingTrail(api, trail);
     }
