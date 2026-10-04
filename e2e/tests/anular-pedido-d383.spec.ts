@@ -153,7 +153,7 @@ test.describe('D-383 — anular un pedido', () => {
       const dialog = page.getByRole('dialog', { name: `Anular ${order.code}` });
       const fabricated = dialog.getByTestId('cancel-fabricated');
       await expect(fabricated).toContainText('Línea 1');
-      await expect(fabricated).toContainText('24.6 MTR');
+      await expect(fabricated).toContainText('24.6 m');
       await expect(fabricated).toContainText(op.code);
       await expect(dialog).toContainText('queda en inventario sin pedido');
 

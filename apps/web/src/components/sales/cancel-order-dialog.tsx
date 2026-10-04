@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toDecimal, type OrderCancelPreviewDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { unitSymbol } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -126,7 +127,7 @@ export function CancelOrderDialog({
               {p.fabricated.map((l) => (
                 <li key={l.salesOrderItemId}>
                   Línea {l.lineNumber} · <span className="font-medium">{l.sku}</span> ·{' '}
-                  {toDecimal(l.qty).toString()} {l.unit} ·{' '}
+                  {toDecimal(l.qty).toString()} {unitSymbol(l.unit)} ·{' '}
                   {l.productionOrders.map((o) => o.code).join(', ')}
                   {l.madeToOrder ? ' · queda suelto' : ' · queda libre para otros pedidos'}
                 </li>
