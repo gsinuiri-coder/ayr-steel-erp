@@ -860,7 +860,9 @@ export async function purgeSalesTrail(
         .catch(() => undefined);
     }
     await api
-      .post(`/api/sales/orders/${orderId}/cancel`, { data: { reason: 'Limpieza de prueba E2E' } })
+      .post(`/api/sales/orders/${orderId}/cancel`, {
+        data: { reason: 'Limpieza de prueba E2E', acknowledgeFabricated: true },
+      })
       .catch(() => undefined);
   }
   for (const quotationId of trail.quotationIds ?? []) {

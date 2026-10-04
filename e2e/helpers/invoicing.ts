@@ -1019,7 +1019,9 @@ export async function purgeInvoicingTrail(
   // 5. Pedidos: anular libera las reservas y desbloquea la bobina.
   for (const orderId of trail.orderIds ?? []) {
     await api
-      .post(`/api/sales/orders/${orderId}/cancel`, { data: { reason } })
+      .post(`/api/sales/orders/${orderId}/cancel`, {
+        data: { reason, acknowledgeFabricated: true },
+      })
       .catch(() => undefined);
   }
 

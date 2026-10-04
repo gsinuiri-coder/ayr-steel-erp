@@ -14,6 +14,7 @@ import {
   INVOICE_DOC_TYPES,
   PAYMENT_METHODS,
   PAYMENT_TERMS,
+  SALES_ORDER_STATUSES,
   TRANSFER_MODES,
   TransferMode,
 } from '../enums';
@@ -736,6 +737,11 @@ export const fiscalDocumentSchema = z.object({
   customerIsGeneric: z.boolean(),
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
+  /**
+   * D-383 (P2 de cc16): el estado del pedido. Con el comprobante anulado y el pedido anulado, el
+   * detalle avisa que se trae a otro pedido (D-381) en vez de ofrecer las reactivaciones.
+   */
+  salesOrderStatus: z.enum(SALES_ORDER_STATUSES).nullable(),
   /** Solo en la guía de remisión: el despacho que documenta. No es el despacho de una factura. */
   dispatchId: z.string().uuid().nullable(),
   dispatchCode: z.string().nullable(),
