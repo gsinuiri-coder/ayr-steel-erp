@@ -287,7 +287,11 @@ test.describe('D-385 — importar una bobina en TONELADA sin stock y elegir la b
         expect.objectContaining({ coilId: coil.id, productSku: coilSku, thicknessMm: '0.28' }),
       ]);
 
-      const result = await commitImport(api, [toInput(previewRow)]);
+      // Como la pantalla: la fila viaja con la descripción del papel («NOMBRE PRODUCTO»), que es
+      // de donde el servidor lee el espesor de referencia (D-385 C).
+      const result = await commitImport(api, [
+        { ...toInput(previewRow), description: row.productName },
+      ]);
       const listed = await getJson<{ items: { id: string; code: string }[] }>(
         api,
         '/api/sales/quotations?pageSize=200',
