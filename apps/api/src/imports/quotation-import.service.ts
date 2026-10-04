@@ -5,6 +5,7 @@ import {
   Decimal,
   defaultRoofingPlan,
   parseCanonicalCoilSku,
+  thicknessWithin,
   derivedUnitValue,
   importDocTypeOf,
   importPaperUnit,
@@ -43,9 +44,12 @@ import { DocumentLookupService } from '../customers/document-lookup.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import {
+  COIL_SALE_IDENTITY_SELECT,
   coilPoolFor,
+  coilPoolKeyOf,
   coilSaleProductsByCoil,
   findCoilSaleProductsBySkus,
+  isCoilSaleProduct,
   knownCoilAttributes,
 } from '../sales/coil-sale-product';
 import { detailsLengths } from '../sales/sales-lines';
@@ -597,6 +601,68 @@ export class QuotationImportService {
     return out;
   }
 
+  /**
+   * D-385 (C), segundo modelo cc17 P2-1: en el confirm, cada fila de bobina tiene que quedar
+   * dentro de la tolerancia de espesor **del papel** y del mismo color comercial o tipo: la bobina
+   * elegida o, sin bobina, el producto de bobina con que entra. El papel es la descripción de la
+   * fila (el «NOMBRE PRODUCTO» del archivo); si no se interpreta, no hay contra qué medir y
+   * rigen las validaciones de siempre. Sin esto, un request con una bobina 0.50 para un papel 0.30
+   * entraba, porque la línea toma el producto de la propia bobina.
+   */
+  private async assertWithinPaperTolerance(
+    tx: Prisma.TransactionClient,
+    rows: readonly QuotationImportRowInput[],
+  ): Promise<void> {
+    const withPaper = rows.filter((r) => r.description !== undefined);
+    if (withPaper.length === 0) return;
+    const known = await knownCoilAttributes(tx);
+    const tolerance = roofingToleranceMm(this.env);
+    const coilIds = withPaper.flatMap((r) => (r.saleCoilId ? [r.saleCoilId] : []));
+    const coils = new Map(
+      (coilIds.length === 0
+        ? []
+        : await tx.coil.findMany({
+            where: { id: { in: coilIds } },
+            select: { id: true, code: true, ...COIL_SALE_IDENTITY_SELECT },
+          })
+      ).map((c) => [c.id, c]),
+    );
+    const productIds = withPaper.flatMap((r) => (r.saleCoilId ? [] : [r.productId]));
+    const products = new Map(
+      (productIds.length === 0
+        ? []
+        : await tx.product.findMany({
+            where: { id: { in: productIds } },
+            select: { id: true, sku: true, businessLine: { select: { code: true } } },
+          })
+      ).map((p) => [p.id, p]),
+    );
+    for (const row of withPaper) {
+      const paper = normalizeCoilSku({ description: row.description }, known);
+      if (!paper.ok) continue;
+      const within = (key: { thicknessMm: string; attribute: string } | null) =>
+        key !== null &&
+        key.attribute === paper.attribute &&
+        thicknessWithin(key.thicknessMm, paper.thicknessMm, tolerance);
+      const at = `Fila ${String(row.rowNumber)}`;
+      if (row.saleCoilId) {
+        const coil = coils.get(row.saleCoilId);
+        if (coil && !within(coilPoolKeyOf(coil))) {
+          throw new BadRequestException(
+            `${at}: la bobina ${coil.code} (${toDecimal(coil.thicknessMm.toString()).toFixed(2)} mm) no es del color del papel o no está dentro de ±${tolerance} mm de ${paper.sku}`,
+          );
+        }
+        continue;
+      }
+      const product = products.get(row.productId);
+      if (product && isCoilSaleProduct(product) && !within(parseCanonicalCoilSku(product.sku))) {
+        throw new BadRequestException(
+          `${at}: ${product.sku} no está dentro de ±${tolerance} mm de ${paper.sku}`,
+        );
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------
   // D-158 — el padrón
   // -------------------------------------------------------------------------
@@ -821,6 +887,10 @@ export class QuotationImportService {
                 `Ya existe la cotización ${quotationCode(existing.seq)} relacionada con el comprobante ${documentKey}.`,
               );
             }
+            // D-385 (C): la bobina, o el producto de bobina sin bobina, dentro de la tolerancia
+            // de espesor del papel. El pool del servidor ya no lo cubre: la línea toma el producto
+            // de la propia bobina (segundo modelo cc17, P2-1).
+            await this.assertWithinPaperTolerance(tx, rows);
 
             const id = await this.quotations.createInTx(
               tx,

@@ -547,8 +547,17 @@ export async function coilPoolFor(
         pool.toleranceMm === undefined
           ? toFixedString(pool.thicknessMm, 'MM')
           : {
-              gte: toFixedString(center.minus(toDecimal(pool.toleranceMm)), 'MM'),
-              lte: toFixedString(center.plus(toDecimal(pool.toleranceMm)), 'MM'),
+              // Hacia adentro: con una tolerancia de entorno que no sea múltiplo de 0.01
+              // (`0.025`), redondear al medio admitía 0.33 para un papel 0.30 (segundo modelo,
+              // P3-1). Los espesores van a dos decimales.
+              gte: center
+                .minus(toDecimal(pool.toleranceMm))
+                .toDecimalPlaces(2, Decimal.ROUND_CEIL)
+                .toFixed(2),
+              lte: center
+                .plus(toDecimal(pool.toleranceMm))
+                .toDecimalPlaces(2, Decimal.ROUND_FLOOR)
+                .toFixed(2),
             },
     },
     select: {

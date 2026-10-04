@@ -62,7 +62,7 @@ import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { findPriceChanges, recordPriceChanges } from './price-changes';
 import { buildQuotationPdf } from './quotation-pdf';
 import { rawMaterialSpecLabels } from './raw-material';
-import { reservedByItem } from './reserved-ledger';
+import { liveTemporaryWhere, reservedByItem } from './reserved-ledger';
 import { SalesOrdersService } from './sales-orders.service';
 import {
   coilPoolFor,
@@ -612,11 +612,25 @@ export class QuotationsService {
       tx,
       found.candidates.map((c) => c.coilId),
     );
+    // Una bobina que ya vende otra línea del mismo documento no se ofrece (segundo modelo, P3-2):
+    // `coilPoolFor` excluye a la propia cotización entera y la mostraba como libre.
+    const taken = new Set(
+      (
+        await tx.quotationItem.findMany({
+          where: {
+            quotationId,
+            id: { not: item.id },
+            reserveItemType: InventoryItemType.COIL,
+          },
+          select: { reserveItemId: true },
+        })
+      ).map((r) => r.reserveItemId),
+    );
     return {
       paperSku: pool.sku,
       candidates: found.candidates.flatMap((c) => {
         const product = products.get(c.coilId);
-        return product
+        return product && !taken.has(c.coilId)
           ? [
               {
                 coilId: c.coilId,
@@ -688,6 +702,18 @@ export class QuotationsService {
         let after: Record<string, string | number | null>;
         if (input.saleCoilId === null) {
           if (before.coilId === null) return;
+          // Una línea sin bobina no tiene qué apartar: con una reserva temporal vigente,
+          // recalcularla intentaría reservar el producto de venta de bobina, que nunca tiene
+          // saldo, y la operación moría con un error de stock (segundo modelo cc17, P2-3).
+          const temporary = await tx.quotationReservation.findFirst({
+            where: { quotationId, ...liveTemporaryWhere() },
+            select: { id: true },
+          });
+          if (temporary) {
+            throw new BadRequestException(
+              'La cotización tiene una reserva temporal vigente: libérala antes de quitar la bobina.',
+            );
+          }
           // El producto se queda: es el de la bobina que tenía, del pool del papel.
           await tx.quotationItem.update({
             where: { id: item.id },

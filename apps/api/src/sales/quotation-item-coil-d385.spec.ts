@@ -13,6 +13,7 @@ jest.mock('../production/production-assignments', () => ({
 }));
 jest.mock('./reserved-ledger', () => ({
   reservedByItem: jest.fn().mockResolvedValue(new Map()),
+  liveTemporaryWhere: () => ({}),
 }));
 
 const D = (v: string) => new Prisma.Decimal(v);
@@ -29,6 +30,10 @@ function serviceWith(opts: {
   coils?: { id: string; balance: string; thickness: string }[];
   /** Otra línea de la misma cotización que ya vende esa bobina. */
   otherLineWithCoil?: boolean;
+  /** Una reserva temporal vigente sobre la cotización (D-185). */
+  temporary?: boolean;
+  /** Otra línea de la misma cotización vende C29 (el diálogo no la ofrece). */
+  otherLineSellsC29?: boolean;
 }) {
   const coils = opts.coils ?? [
     { id: C28, balance: '4200', thickness: '0.28' },
@@ -63,8 +68,17 @@ function serviceWith(opts: {
           where.lineNumber !== undefined ? item : opts.otherLineWithCoil ? { lineNumber: 2 } : null,
         ),
       ),
-      findMany: jest.fn().mockResolvedValue([]),
+      // `findCoilTies` (otras cotizaciones) no trae nada; las otras líneas de esta cotización,
+      // si se pide, venden C29.
+      findMany: jest.fn(({ where }: { where: { quotationId?: string } }) =>
+        Promise.resolve(
+          where.quotationId !== undefined && opts.otherLineSellsC29 ? [{ reserveItemId: C29 }] : [],
+        ),
+      ),
       update,
+    },
+    quotationReservation: {
+      findFirst: jest.fn().mockResolvedValue(opts.temporary ? { id: 'r-1' } : null),
     },
     color: { findMany: jest.fn().mockResolvedValue([{ code: 'AZUL' }]) },
     coil: {
@@ -173,6 +187,21 @@ describe('QuotationsService.setItemCoil (D-385 B)', () => {
         saleCoilId: null,
       }),
     ).rejects.toThrow(/confirmada/);
+  });
+
+  it('con una reserva temporal vigente, quitar la bobina pide liberarla antes (P2-3)', async () => {
+    const { svc, update } = serviceWith({ current: 'COIL', temporary: true });
+    await expect(svc.setItemCoil(ACTOR, 'q-1', 1, { saleCoilId: null })).rejects.toThrow(
+      /reserva temporal vigente: libérala antes de quitar la bobina/,
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('la bobina que vende otra línea del documento no se ofrece como candidata (P3-2)', async () => {
+    const { svc } = serviceWith({ current: 'COIL', otherLineSellsC29: true });
+    await expect(svc.setItemCoil(ACTOR, 'q-1', 1, { saleCoilId: C29 })).rejects.toThrow(
+      /no es candidata/,
+    );
   });
 
   it('quitarla cuando ya no tiene bobina no escribe nada', async () => {

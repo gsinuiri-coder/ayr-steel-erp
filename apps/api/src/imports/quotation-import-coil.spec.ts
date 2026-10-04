@@ -327,6 +327,87 @@ describe('D-385 (A) — bobina dentro de la tolerancia de espesor del papel', ()
   });
 });
 
+describe('D-385 (C) — el confirm del importador exige la tolerancia del papel (P2-1)', () => {
+  function confirmWith(
+    coils: ReturnType<typeof coilRow>[],
+    products: { id: string; sku: string }[],
+  ) {
+    const { service, quotations } = build({ coils, products });
+    const tx = {
+      $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
+      quotation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 9 }),
+      },
+      color: { findMany: jest.fn().mockResolvedValue([{ code: 'AZUL' }, { code: 'ROJO' }]) },
+      coil: {
+        findMany: jest.fn().mockResolvedValue(coils.map((c) => ({ ...c }))),
+      },
+      product: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue(products.map((p) => ({ ...p, businessLine: { code: 'TRADING' } }))),
+      },
+    };
+    (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
+      fn: (t: unknown) => Promise<unknown>,
+    ) => fn(tx);
+    return { service, quotations };
+  }
+  const row = (o: Record<string, unknown>) => ({
+    rowNumber: 1,
+    documentKey: 'FFA1-1419',
+    issueDate: '2026-09-08',
+    customerId: '11111111-1111-4111-8111-111111111111',
+    productId: '28282828-2828-4828-8828-282828282828',
+    qty: '4192.000',
+    unitPricePen: '3.0508468511',
+    netAmountPen: '12789.1500',
+    description: 'BOBINA ALUZINC AZUL 0.30 X 1200 RAL 5002',
+    ...o,
+  });
+  const C = '33333333-3333-4333-8333-333333333333';
+
+  it('una bobina 0.28 para un papel 0.30 entra', async () => {
+    const { service, quotations } = confirmWith(
+      [{ ...coilRow(C, '4200', '0.28'), code: 'B-028' }],
+      [],
+    );
+    await service.confirm({ id: 'u-1' } as never, { rows: [row({ saleCoilId: C })] });
+    expect(quotations.createInTx).toHaveBeenCalled();
+  });
+
+  it('una bobina 0.50 para un papel 0.30 no entra, aunque el producto sea el de la bobina', async () => {
+    const { service, quotations } = confirmWith(
+      [{ ...coilRow(C, '4200', '0.50'), code: 'B-050' }],
+      [],
+    );
+    await expect(
+      service.confirm({ id: 'u-1' } as never, { rows: [row({ saleCoilId: C })] }),
+    ).rejects.toMatchObject({
+      response: {
+        errors: {
+          'FFA1-1419': [expect.stringMatching(/B-050 \(0\.50 mm\) .* ±0\.02 mm de BOB030AZUL/)],
+        },
+      },
+    });
+    expect(quotations.createInTx).not.toHaveBeenCalled();
+  });
+
+  it('sin bobina, un producto de bobina fuera de la tolerancia no entra', async () => {
+    const { service } = confirmWith(
+      [],
+      [{ id: '28282828-2828-4828-8828-282828282828', sku: 'BOB040AZUL' }],
+    );
+    await expect(
+      service.confirm({ id: 'u-1' } as never, { rows: [row({})] }),
+    ).rejects.toMatchObject({
+      response: { errors: { 'FFA1-1419': [expect.stringMatching(/BOB040AZUL no está dentro/)] } },
+    });
+  });
+});
+
 describe('D-385 — unidad TONELADA', () => {
   // FFA1-1419 de setiembre, con datos inventados en lo que no hace al caso.
   const TN_ROW: Row = {
