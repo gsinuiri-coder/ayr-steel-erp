@@ -837,8 +837,11 @@ describe('InventoryService.replaceEntry (D-382)', () => {
   });
 });
 
-/** D-382 (P2-B): la anulación de una compra bloquea bobinas antes que saldos (D-134). */
-describe('InventoryService.lockItemsForReversal', () => {
+/**
+ * D-386 (nació en D-382, P2-B): la puerta única de bloqueos. Bobinas antes que saldos (D-134),
+ * el conjunto de bobinas en una sola sentencia y los saldos en orden de `itemType:itemId`.
+ */
+describe('InventoryService.lockInOrder', () => {
   let service: InventoryService;
 
   beforeEach(async () => {
@@ -869,12 +872,14 @@ describe('InventoryService.lockItemsForReversal', () => {
       if (locksWhenCoils < 0) locksWhenCoils = balanceLocks(fake.executed).length;
       return Promise.resolve([]);
     });
-    await service.lockItemsForReversal(fake.tx, [
-      ref('PRODUCT', 'p-2'),
-      ref('COIL', 'c-1'),
-      ref('PRODUCT', 'p-2'),
-      ref('PRODUCT', 'p-1'),
-    ]);
+    await service.lockInOrder(fake.tx, {
+      items: [
+        ref('PRODUCT', 'p-2'),
+        ref('COIL', 'c-1'),
+        ref('PRODUCT', 'p-2'),
+        ref('PRODUCT', 'p-1'),
+      ],
+    });
     expect(locksWhenCoils).toBe(0);
     expect(balanceLocks(fake.executed)).toHaveLength(3);
   });
@@ -883,9 +888,52 @@ describe('InventoryService.lockItemsForReversal', () => {
     const fake = createFakeTx(STOCK_LINE);
     const tx = fake.tx as unknown as { coil: { findMany: jest.Mock } };
     tx.coil.findMany = jest.fn(() => Promise.resolve([]));
-    await service.lockItemsForReversal(fake.tx, [ref('PRODUCT', 'p-1')]);
+    await service.lockInOrder(fake.tx, { items: [ref('PRODUCT', 'p-1')] });
     expect(tx.coil.findMany).not.toHaveBeenCalled();
     expect(balanceLocks(fake.executed)).toHaveLength(1);
+  });
+
+  it('los saldos van en orden de itemType:itemId, sea cual sea el orden de entrada', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const order: string[] = [];
+    const tx = fake.tx as unknown as { $queryRaw: jest.Mock; coil: { findMany: jest.Mock } };
+    const inner = tx.$queryRaw.getMockImplementation() as (
+      s: TemplateStringsArray,
+      ...v: unknown[]
+    ) => Promise<unknown>;
+    tx.$queryRaw = jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (strings.join('?').includes('inventory_balances')) {
+        order.push(`${String(values[0])}:${String(values[1])}`);
+      }
+      return inner(strings, ...values);
+    });
+    tx.coil.findMany = jest.fn(() => Promise.resolve([]));
+    await service.lockInOrder(fake.tx, {
+      items: [ref('PRODUCT', 'b'), ref('PRODUCT', 'a'), ref('COIL', 'z'), ref('COIL', 'c')],
+    });
+    expect(order).toEqual(['COIL:c', 'COIL:z', 'PRODUCT:a', 'PRODUCT:b']);
+  });
+
+  it('las bobinas nombradas sin saldo entran en la misma sentencia que las de los ítems, ordenadas', async () => {
+    const fake = createFakeTx(STOCK_LINE);
+    const coilLocks: string[][] = [];
+    const tx = fake.tx as unknown as { $queryRaw: jest.Mock; coil: { findMany: jest.Mock } };
+    const inner = tx.$queryRaw.getMockImplementation() as (
+      s: TemplateStringsArray,
+      ...v: unknown[]
+    ) => Promise<unknown>;
+    tx.$queryRaw = jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (strings.join('?').includes('"coils"')) coilLocks.push(values[0] as string[]);
+      return inner(strings, ...values);
+    });
+    tx.coil.findMany = jest.fn(() => Promise.resolve([]));
+    await service.lockInOrder(fake.tx, {
+      coilIds: ['c-9', 'c-2'],
+      items: [ref('COIL', 'c-5'), ref('PRODUCT', 'p-1')],
+    });
+    expect(coilLocks).toEqual([['c-2', 'c-5', 'c-9']]);
+    // Las nombradas en `coilIds` no abren saldo: solo la de `items` y el producto.
+    expect(balanceLocks(fake.executed)).toHaveLength(2);
   });
 });
 

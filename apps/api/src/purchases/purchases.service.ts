@@ -606,6 +606,26 @@ export class PurchasesService {
           orderBy: { lineNumber: 'asc' },
         });
 
+        // D-386 (segundo modelo, P2-2): los saldos de los productos de la compra se toman todos
+        // antes del primer ingreso y por clave, no en el orden de las líneas (una compra b, a se
+        // cruzaba con un despacho a, b). Las bobinas nacen en esta recepción: no hay que tomarlas.
+        if (purchase.type === PurchaseType.FINISHED_GOOD) {
+          await this.inventory.lockInOrder(tx, {
+            items: items.flatMap((item) =>
+              item.productId === null
+                ? []
+                : [
+                    {
+                      businessLineId: purchase.businessLineId,
+                      itemType: 'PRODUCT' as const,
+                      itemId: item.productId,
+                      unit: item.unit,
+                    },
+                  ],
+            ),
+          });
+        }
+
         for (const item of items) {
           if (purchase.type === PurchaseType.COIL) {
             await this.coils.create(tx, {
@@ -763,15 +783,22 @@ export class PurchasesService {
           // venta confirmada entre esa lectura y la reversa cabía en el saldo de la otra compra y
           // la reversa salía igual, a costo completo, sobre un ingreso ya consumido. Bobinas antes
           // que saldos (D-134) y en orden fijo, como «Editar compra».
-          await this.inventory.lockItemsForReversal(
-            tx,
-            own.map((m) => ({
+          //
+          // D-386 (P3-1 de cc15b): también **todas** las bobinas con `purchaseId` de la compra,
+          // incluidos los flejes que lo heredan (D-060) sin movimiento propio de ella: el
+          // `updateMany` de abajo los anula y antes se tomaban recién ahí, con los saldos en mano.
+          // Solo la fila: no se les abre saldo.
+          await this.inventory.lockInOrder(tx, {
+            coilIds: (
+              await tx.coil.findMany({ where: { purchaseId: id }, select: { id: true } })
+            ).map((c) => c.id),
+            items: own.map((m) => ({
               businessLineId: m.businessLineId,
               itemType: m.itemType,
               itemId: m.itemId,
               unit: m.unit,
             })),
-          );
+          });
           // Para decidir qué es "posterior" cuentan TODOS los movimientos de la compra,
           // incluidos los ya revertidos y sus reversas: son suyos igual.
           await this.assertNothingMovedAfter(tx, own);

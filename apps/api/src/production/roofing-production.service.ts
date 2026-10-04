@@ -72,6 +72,7 @@ import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofi
 import { DRAFT_INCLUDE, toDraftDto } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { itemRefOf } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   assertCoilsNotReserved,
@@ -590,6 +591,25 @@ export class RoofingProductionService {
           coilCode: string;
           assignedKg: string;
         }[] = [];
+        // D-386: todas las bobinas del montaje con sus agregados en una sola sentencia, y el
+        // saldo de las que se reabren (D-193 revierte su ajuste de cierre), antes del bucle. Era
+        // el cruce que el comentario de arriba aceptaba: la bobina i y su saldo en mano mientras
+        // se pedía la i+1, y el agregado bloqueado recién en la comprobación final.
+        const reopenRefs =
+          reopenIds.size === 0
+            ? []
+            : (
+                await tx.coil.findMany({
+                  where: { id: { in: coilIds.filter((id) => reopenIds.has(id)) } },
+                  select: { id: true, businessLineId: true },
+                })
+              ).map((c) => ({
+                businessLineId: c.businessLineId,
+                itemType: InventoryItemType.COIL,
+                itemId: c.id,
+                unit: Unit.KGM,
+              }));
+        await this.inventory.lockInOrder(tx, { coilIds, items: reopenRefs });
         for (const coilId of coilIds) {
           const coil = await this.coils.lockCoil(tx, coilId);
 
@@ -1199,6 +1219,33 @@ export class RoofingProductionService {
       exceptReservationIds: order.reservationId ? [order.reservationId] : [],
       exceptSalesOrderIds: salesOrderId === null ? [] : [salesOrderId],
     };
+    // D-386: bobinas con sus agregados, después los saldos de las bobinas y del producto, de una
+    // vez y antes de la primera salida (pedido y reserva ya se tomaron arriba). Van todas las
+    // bobinas montadas y no solo la del reparto: «reportar y cerrar» sigue con el cierre en la
+    // misma transacción, y el despunte del cierre sale de cualquiera de ellas; así el cierre no
+    // pide filas nuevas con saldos ya en mano.
+    const mountedCoilIds = (
+      await tx.productionOrderConsumption.findMany({
+        where: { productionOrderId: orderId, releasedAt: null },
+        select: { coilId: true },
+      })
+    ).map((r) => r.coilId);
+    await this.inventory.lockInOrder(tx, {
+      items: [
+        ...[...mountedCoilIds, ...allocations.map((a) => a.coilId)].map((coilId) => ({
+          businessLineId: order.businessLineId,
+          itemType: InventoryItemType.COIL,
+          itemId: coilId,
+          unit: Unit.KGM,
+        })),
+        {
+          businessLineId: order.businessLineId,
+          itemType: InventoryItemType.PRODUCT,
+          itemId: order.productId,
+          unit: outputUnit,
+        },
+      ],
+    });
     for (const allocation of allocations) {
       await this.coils.lockCoil(tx, allocation.coilId);
       // **La custodia se actualiza ANTES de emitir el kardex.** El saldo baja con el
@@ -1962,6 +2009,31 @@ export class RoofingProductionService {
     const closedAt = new Date();
     let scrapCostPen = new Decimal(0);
     const scrapped: string[] = [];
+    // D-386: las bobinas que el cierre baja (con sus agregados), después los saldos de las que
+    // sueltan despunte y el del producto que recibe el ajuste, de una vez. Va después del pedido y
+    // la reserva (que el despunte descuenta abajo) y antes de la primera salida.
+    const productUnit = (
+      await tx.product.findUniqueOrThrow({ where: { id: order.productId }, select: { unit: true } })
+    ).unit;
+    const lockCloseSet = (scrapCoilIds: readonly string[]) =>
+      this.inventory.lockInOrder(tx, {
+        coilIds: rows.map((r) => r.coilId),
+        items: [
+          ...scrapCoilIds.map((coilId) => ({
+            businessLineId: order.businessLineId,
+            itemType: InventoryItemType.COIL,
+            itemId: coilId,
+            unit: Unit.KGM,
+          })),
+          {
+            businessLineId: order.businessLineId,
+            itemType: InventoryItemType.PRODUCT,
+            itemId: order.productId,
+            unit: productUnit,
+          },
+        ],
+      });
+    if (!scrapKg.gt(0)) await lockCloseSet([]);
     if (scrapKg.gt(0)) {
       // Los kilos del despunte también salen de lo que el pedido prometía, así que la
       // reserva se descuenta **antes** de emitirlos — igual que en `report`. Sin esto,
@@ -1993,6 +2065,7 @@ export class RoofingProductionService {
         })),
         scrapKg,
       );
+      await lockCloseSet(allocations.map((a) => a.coilId));
       // Fuera del bucle: es la misma para todas las asignaciones y adentro sería una
       // consulta por rollo dentro de una transacción con presupuesto acotado.
       const scope = await this.ownPromiseScope(tx, order);
@@ -2090,15 +2163,11 @@ export class RoofingProductionService {
     );
     let adjusted = false;
     if (!adjustPen.isZero()) {
-      const product = await tx.product.findUniqueOrThrow({
-        where: { id: order.productId },
-        select: { unit: true },
-      });
       const movement = await this.inventory.adjustCost(tx, {
         businessLineId: order.businessLineId,
         itemType: 'PRODUCT',
         itemId: order.productId,
-        unit: product.unit,
+        unit: productUnit,
         amountPen: toFixedString(adjustPen, 'MONEY'),
         refType: 'PRODUCTION',
         refId: orderId,
@@ -2221,6 +2290,32 @@ export class RoofingProductionService {
         }
         const coilOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
 
+        // La reserva sobre el producto que este reporte fabricó, si la orden nació de un pedido.
+        let reservationLineId: string | null = null;
+        let onProduct: Awaited<ReturnType<typeof findLineReservation>> = null;
+        if (order.reservationId) {
+          const reservation = await tx.reservation.findUniqueOrThrow({
+            where: { id: order.reservationId },
+            select: { salesOrderItemId: true },
+          });
+          reservationLineId = reservation.salesOrderItemId;
+          onProduct = await findLineReservation(
+            tx,
+            reservation.salesOrderItemId,
+            InventoryItemType.PRODUCT,
+            order.productId,
+          );
+        }
+        // D-386 (P2-2 de cc15b): la reserva, después las bobinas con sus agregados y al final los
+        // saldos, todos antes de mirar qué se movió después y antes de la primera reversa. Antes
+        // se tomaba el saldo del producto (al revertir el ingreso) y recién después cada bobina.
+        if (onProduct) {
+          await tx.$queryRaw`
+            SELECT "id" FROM "reservations" WHERE "id" = ${onProduct.id}::uuid FOR UPDATE
+          `;
+        }
+        await this.inventory.lockInOrder(tx, { items: movements.map(itemRefOf) });
+
         // El producto es fungible dentro de su saldo, así que "movimientos posteriores" a
         // secas sería demasiado estricto: otro reporte del mismo perfil es inofensivo. Lo que
         // bloquea es que después haya **salido** producto (un despacho, una merma: pudo ser
@@ -2247,23 +2342,9 @@ export class RoofingProductionService {
         // justo por este reporte — la reversa se bloqueaba a sí misma con el mensaje "anula el
         // pedido o libera la reserva", en el caso normal y no en un borde.
         let reducedProductQty: string | null = null;
-        let reservationLineId: string | null = null;
-        if (order.reservationId) {
-          const reservation = await tx.reservation.findUniqueOrThrow({
-            where: { id: order.reservationId },
-            select: { salesOrderItemId: true },
-          });
-          reservationLineId = reservation.salesOrderItemId;
-          const onProduct = await findLineReservation(
-            tx,
-            reservation.salesOrderItemId,
-            InventoryItemType.PRODUCT,
-            order.productId,
-          );
-          if (onProduct) {
-            const reduced = await reduceReservation(tx, onProduct.id, outputQty, actor.id);
-            reducedProductQty = reduced.toFixed(3);
-          }
+        if (onProduct) {
+          const reduced = await reduceReservation(tx, onProduct.id, outputQty, actor.id);
+          reducedProductQty = reduced.toFixed(3);
         }
 
         // Primero sale el producto y después vuelven los kilos: al revés, la bobina
@@ -2387,6 +2468,20 @@ export class RoofingProductionService {
         const movements = liveMovements(own);
         const adjust = movements.find((m) => m.itemType === 'PRODUCT' && m.type === 'ADJUST');
         const scrapOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
+
+        // D-386: las bobinas que vuelven a la orden y las del despunte (con sus agregados),
+        // después los saldos de lo que se revierte, antes de mirar qué se movió después del
+        // cierre. Antes se tomaba el saldo del producto (la reversa del ajuste) y después cada
+        // bobina.
+        await this.inventory.lockInOrder(tx, {
+          coilIds: (
+            await tx.productionOrderConsumption.findMany({
+              where: { productionOrderId: orderId, releasedAt: order.closedAt },
+              select: { coilId: true },
+            })
+          ).map((r) => r.coilId),
+          items: movements.map(itemRefOf),
+        });
 
         if (adjust) {
           const after = await tx.inventoryMovement.findMany({

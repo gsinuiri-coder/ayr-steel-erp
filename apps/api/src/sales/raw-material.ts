@@ -11,6 +11,7 @@ import {
   findLiveStripAssignments,
   type StripAssignment,
 } from '../production/production-assignments';
+import { lockCoilRows } from '../inventory/row-locks';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
 import {
   byCodeUnit,
@@ -276,9 +277,7 @@ export async function rawMaterialAvailability(
   const ids = candidates.map((c) => c.id).filter((id) => !without.has(id));
 
   if (options.lockCoils === true && ids.length > 0) {
-    await tx.$queryRaw`
-      SELECT "id" FROM "coils" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE
-    `;
+    await lockCoilRows(tx, ids);
   }
 
   // D-185: las dos sumas de lo reservado pasan por `reservedByItem`, que suma firme y
@@ -852,11 +851,24 @@ async function findSpecsAffectedByAttributes(
  */
 export async function lockRawMaterialCoils(
   tx: Prisma.TransactionClient,
-  coilIds: string[],
+  coilIds: readonly string[],
   toleranceMm: string,
-): Promise<void> {
+): Promise<string[]> {
+  return lockCoilRows(tx, await rawMaterialLockSet(tx, coilIds, toleranceMm));
+}
+
+/**
+ * D-386: el conjunto que bloquea `lockRawMaterialCoils` —las bobinas y las de cada agregado con
+ * promesas vivas que alcanzan—, **sin bloquearlo**, para quien tiene que sumarle otras bobinas y
+ * pedir todo en una sola sentencia (confirmar un pedido).
+ */
+export async function rawMaterialLockSet(
+  tx: Prisma.TransactionClient,
+  coilIds: readonly string[],
+  toleranceMm: string,
+): Promise<string[]> {
   const ids = [...new Set(coilIds)];
-  if (ids.length === 0) return;
+  if (ids.length === 0) return [];
   const attributes = await tx.coil.findMany({
     where: { id: { in: ids } },
     select: { businessLineId: true, colorId: true, thicknessMm: true },
@@ -874,8 +886,23 @@ export async function lockRawMaterialCoils(
   for (const spec of specs) {
     for (const id of await rawMaterialCoilIds(tx, spec, toleranceMm)) all.add(id);
   }
-  const sorted = [...all].sort(byCodeUnit);
-  await tx.$queryRaw`
-    SELECT "id" FROM "coils" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE
-  `;
+  return [...all];
+}
+
+/**
+ * D-386 (autorrevisión P2-1): las bobinas de los agregados con promesas vivas que alcanzarían
+ * estos **atributos** —los que una bobina va a tener después de cambiarle el acabado, el color o
+ * el espesor—, sin bloquear. Quien mueve una bobina de agregado las suma a su toma inicial: el
+ * guardrail las pide después y, sin esto, eran filas nuevas con saldos en mano.
+ */
+export async function rawMaterialCoilsForAttributes(
+  tx: Prisma.TransactionClient,
+  attributes: CoilAttributes[],
+  toleranceMm: string,
+): Promise<string[]> {
+  const all = new Set<string>();
+  for (const spec of await findSpecsAffectedByAttributes(tx, attributes, toleranceMm)) {
+    for (const id of await rawMaterialCoilIds(tx, spec, toleranceMm)) all.add(id);
+  }
+  return [...all];
 }

@@ -118,6 +118,7 @@ import {
 } from '../auth/seller-scope';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
+import { balanceLockKey, compareLockKeys, lockCoilRows } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   assertStripsNotAssigned,
@@ -187,6 +188,7 @@ import {
   findRawMaterialSpecsByCombo,
   rawMaterialAvailabilities,
   rawMaterialCoilIds,
+  rawMaterialLockSet,
   type RawMaterialSpecRef,
 } from './raw-material';
 
@@ -1629,9 +1631,11 @@ export class SalesOrdersService {
     options?: ReserveOptions,
   ): Promise<number> {
     let written = 0;
+    // D-386: la misma clave y el mismo comparador que la puerta única (`compareLockKeys`).
     const sorted = [...items].sort((a, b) =>
-      `${a.reserveItemType}:${a.reserveItemId}`.localeCompare(
-        `${b.reserveItemType}:${b.reserveItemId}`,
+      compareLockKeys(
+        balanceLockKey({ itemType: a.reserveItemType, itemId: a.reserveItemId }),
+        balanceLockKey({ itemType: b.reserveItemType, itemId: b.reserveItemId }),
       ),
     );
 
@@ -1656,12 +1660,14 @@ export class SalesOrdersService {
     // conjuntos se solapan: una transacción tiene la #5 y espera la #3 mientras la otra
     // tiene la #3 y espera la #5. Ordenar dentro de cada lock no alcanza; hay que ordenar
     // el conjunto entero y pedirlo de una vez.
-    const lockIds = [...new Set([...coilIds, ...rawCoilIds])].sort(compareTechnicalCode);
-    if (lockIds.length > 0) {
-      await tx.$queryRaw`
-        SELECT "id" FROM "coils" WHERE "id" = ANY(${lockIds}::uuid[]) ORDER BY "id" FOR UPDATE
-      `;
-    }
+    //
+    // D-386: las bobinas nombradas entran **con sus agregados** (`rawMaterialLockSet`). El
+    // guardrail del agregado que corre después de reservar (`assertRawMaterialInvariant`) las
+    // bloqueaba recién ahí, con los saldos ya en mano: el orden inverso al de todo el resto.
+    await lockCoilRows(tx, [
+      ...(await rawMaterialLockSet(tx, coilIds, roofingToleranceMm(this.env))),
+      ...rawCoilIds,
+    ]);
 
     // D-119: el saldo de una bobina vive bajo **su propia** línea de negocio (Drywall o
     // Metallic Roofing), que puede no ser la del producto que la reserva (venta de bobina

@@ -2,7 +2,6 @@ import type { Prisma, InventoryMovement, Purchase } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import type { InventoryService } from '../inventory/inventory.service';
 import type { AuditService } from '../audit/audit.service';
-import { lockRawMaterialCoils } from '../sales/raw-material';
 
 const day = (date: Date): string => date.toISOString().slice(0, 10);
 const limaDay = (date: Date): string =>
@@ -16,24 +15,29 @@ const midnightLima = (date: string): Date => new Date(`${date}T05:00:00.000Z`);
 const key = (m: Pick<InventoryMovement, 'itemType' | 'itemId'>): string =>
   `${m.itemType}:${m.itemId}`;
 
-/** Mismo orden de locks que InventoryService: bobinas compatibles y luego saldos. */
+/**
+ * D-386: bobinas compatibles y luego saldos, por la puerta única (`InventoryService.lockInOrder`).
+ * Solo ítems con saldo existente: la línea y la unidad salen del propio saldo, y un ítem sin saldo
+ * es un plan que no corresponde a la base (se rechaza como antes, sin crear uno vacío).
+ */
 async function lockPlanItems(
   tx: Prisma.TransactionClient,
+  inventory: InventoryService,
   itemKeys: readonly string[],
-  toleranceMm: string,
 ): Promise<void> {
-  const keys = [...new Set(itemKeys)].sort();
-  const coilIds = keys.filter((k) => k.startsWith('COIL:')).map((k) => k.slice(5));
-  await lockRawMaterialCoils(tx, coilIds, toleranceMm);
-  for (const itemKey of keys) {
-    const [itemType, itemId] = itemKey.split(':') as [InventoryMovement['itemType'], string];
-    const rows = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "inventory_balances"
-      WHERE "item_type" = ${itemType}::"InventoryItemType" AND "item_id" = ${itemId}::uuid
-      FOR UPDATE
-    `;
-    if (rows.length !== 1) throw new Error(`No existe saldo bloqueable para ${itemKey}`);
-  }
+  const keys = [...new Set(itemKeys)];
+  const refs = keys.map((k) => {
+    const [itemType, itemId] = k.split(':') as [InventoryMovement['itemType'], string];
+    return { itemType, itemId };
+  });
+  const balances = await tx.inventoryBalance.findMany({
+    where: { OR: refs.map((r) => ({ itemType: r.itemType, itemId: r.itemId })) },
+    select: { itemType: true, itemId: true, businessLineId: true, unit: true },
+  });
+  const found = new Map(balances.map((b) => [key(b), b]));
+  const missing = keys.find((k) => !found.has(k));
+  if (missing !== undefined) throw new Error(`No existe saldo bloqueable para ${missing}`);
+  await inventory.lockInOrder(tx, { items: balances });
 }
 
 export interface ReceivedDateCase {
@@ -227,14 +231,13 @@ export async function executePurchaseReceivedDates(
   actorId: string,
   batchId: string,
   expected: readonly ReceivedDateCase[],
-  toleranceMm: string,
   selectedIds?: readonly string[],
 ): Promise<ReceivedDateCase[]> {
   const expectedSelected = selectSafeCases(expected, selectedIds);
   await lockPlanItems(
     tx,
+    inventory,
     expectedSelected.flatMap((c) => c.items.map((i) => i.key)),
-    toleranceMm,
   );
   const live = await planPurchaseReceivedDates(tx);
   const signature = (rows: readonly ReceivedDateCase[]) => JSON.stringify(rows);
@@ -329,7 +332,6 @@ export async function undoPurchaseReceivedDates(
   audit: AuditService,
   actorId: string,
   batchId: string,
-  toleranceMm: string,
 ): Promise<string[]> {
   const logs = await tx.auditLog.findMany({
     where: { action: 'purchases.received-date-fix', after: { path: ['batchId'], equals: batchId } },
@@ -375,7 +377,7 @@ export async function undoPurchaseReceivedDates(
   )
     throw new Error('Reversas del lote incompletas; no se puede deshacer');
   const ownReversalIds = ownReversals.map((m) => m.id);
-  await lockPlanItems(tx, [...lastBatchMovementByItem.keys()], toleranceMm);
+  await lockPlanItems(tx, inventory, [...lastBatchMovementByItem.keys()]);
   for (const [itemKey, lastId] of lastBatchMovementByItem) {
     const [itemType, itemId] = itemKey.split(':') as [InventoryMovement['itemType'], string];
     const newer = await tx.inventoryMovement.findFirst({

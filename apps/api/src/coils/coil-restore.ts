@@ -16,6 +16,7 @@ import {
 } from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { InventoryService } from '../inventory/inventory.service';
+import { itemRefOf, lockCoilRows } from '../inventory/row-locks';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 
 /**
@@ -238,9 +239,7 @@ export async function loadRestoreContext(
   };
 }> {
   if (lock) {
-    const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "coils" WHERE "id" = ${coilId}::uuid FOR UPDATE
-    `;
+    const locked = await lockCoilRows(tx, [coilId]);
     if (locked.length === 0) throw new NotFoundException('Bobina no encontrada');
   }
   const coil = await tx.coil.findUnique({
@@ -438,9 +437,20 @@ export async function undoCoilRestoreBatch(
     before: l.before as unknown as RestoreAuditBefore,
     after: l.after as unknown as RestoreAuditAfter,
   }));
+  // D-386 (P2-2 de cc15b): todas las bobinas del lote con sus agregados y después sus saldos, de
+  // una vez y antes del preflight. Antes se tomaban de a una, en el orden de lectura del log (sin
+  // orden propio), y la reversa de cada una pedía su agregado con el saldo de la anterior en mano.
+  await inventory.lockInOrder(tx, {
+    items: (
+      await tx.inventoryMovement.findMany({
+        where: { id: { in: items.map((i) => BigInt(i.after.movementId)) } },
+        select: { businessLineId: true, itemType: true, itemId: true, unit: true },
+      })
+    ).map(itemRefOf),
+  });
   // Preflight de todo el lote antes de escribir.
   for (const item of items) {
-    await tx.$queryRaw`SELECT "id" FROM "coils" WHERE "id" = ${item.coilId}::uuid FOR UPDATE`;
+    await lockCoilRows(tx, [item.coilId]);
     const later = await tx.inventoryMovement.count({
       where: {
         itemType: InventoryItemType.COIL,

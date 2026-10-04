@@ -2,6 +2,105 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-04 — cc18: D-386, orden único de bloqueos (PR #96, sin merge)
+
+- **Rama:** `cc18/orden-bloqueos`, en `../ayr-cc18`, desde `main` `9d88277`.
+- **Sin migración. Nada en producción.**
+- **Documentos:**
+  - decisión y orden canónico en `docs/ARQUITECTURA.md` §0.2 (D-386) y §3.3.1;
+  - mapa del PASO 0 en `docs/revision/cc18-mapa-bloqueos.md`;
+  - runbook y handoff en `docs/handoff/ventana-cc18.md`; UAT en `docs/uat/cc18.md`.
+- **Alcance decidido por el dueño en la sesión:**
+  - puerta única **con A6**: `lockCoil` toma la bobina con su agregado, en un commit propio y
+    revertible (`5793cdd`);
+  - entran los bucles de producción hacia adelante;
+  - el grupo C queda como pieza propia (abajo).
+- **Hitos, todos hechos:**
+  - **M1:** puerta única (`lockCoilRows`, `InventoryService.lockInOrder`) y centinela
+    `row-locks.sentinel.spec.ts`.
+  - **M2:** despacho y su reversa.
+  - **M3:** producción de drywall y coberturas, corte, partido, restauración y A5 (confirmar
+    pedido).
+  - **M3b:** un 40P01 o 40001 sale como 409 en español. Antes salía el 500 genérico de Nest,
+    porque no había filtro global.
+  - **A6.**
+  - **M4:** P3-1, los flejes heredados en la anulación; P3-2, `NOWAIT` en una segunda toma
+    fuera de orden. **No se sacrificó.**
+- **Tests contra la base** (`lock-order.db-spec.ts`, en `test:db`): 14 pares, 20 iteraciones por
+  par, con una pausa después de cada toma. **31/31 en verde, ningún 40P01**. La corrida local
+  tarda 534 s.
+  - **Prueba por mutación** con `lockInOrder` sin ordenar los saldos: fallan los 6 pares de
+    producto con `Raw query failed. Code: 40P01 … deadlock detected`.
+  - **Sin A6:** fallan los 2 pares de «cerrar bobina», atajados por el `NOWAIT`. Montar y
+    reportar ya los cubre M3.
+- **Choque con cc19 en la base local de E2E.** El `test:db` de cc18 y el E2E de cc19 compartían
+  `ayr_local_e2e` y se la vaciaron mutuamente en plena corrida. Los E2E de cc19 de esa hora
+  pueden tener rojos falsos. Desde ahí, el guard admite `ayr_local_e2e_<sufijo>` (solo local) y
+  cc18 usa `ayr_local_e2e_cc18`. `dev:demo` acepta `AYR_DEMO_API_PORT`/`AYR_DEMO_WEB_PORT`.
+- **Revisiones:**
+  - autorrevisión, `docs/revision/cc18-autorrevision.md`: 0 P0, 0 P1, 3 P2, 6 P3;
+  - segundo modelo, `docs/revision/cc18-segundo-modelo.md`: 0 P0, 0 P1, 4 P2, 6 P3.
+- **Corregidos de las revisiones:**
+  - `NOWAIT` en corte, en editar una bobina y en «Editar compra» (P2-1 de la autorrevisión);
+  - el db-spec exige un `ok` por operación y suma dos pares (P2-2 y P2-3);
+  - ids en minúsculas (P3-4);
+  - un log propio para el `NOWAIT` (P3-5);
+  - recepción de compra de producto (P2-2 del segundo modelo);
+  - cierre y anulación de OP de drywall (P2-4);
+  - anular la orden de corte (P2-1);
+  - el regex del filtro (P3-3);
+  - un solo comparador (P3-4).
+- **Registro de riesgo (toca kardex y datos), dónde mirar primero:**
+  - `InventoryService.lockInOrder`;
+  - `inventory/row-locks.ts`, con el estado por transacción y el `NOWAIT`;
+  - `DispatchesService.createInTx` y `reverseInTx`;
+  - `CoilsService.lockCoil`;
+  - las tomas iniciales de `production.service.ts` y `roofing-production.service.ts`;
+  - `PurchasesService.receive` y `cancel`.
+
+## Pendiente — Orden de bloqueos entre documentos (OP, pedido, reserva) (pieza propia, grupo C de cc18)
+
+Decisión del dueño (2026-10-04): pieza propia, fuera de cc18. D-386 fija el orden entre
+inventario (reservas → bobinas → saldos), pero entre documentos quedan cruces. Todos existían
+antes de cc18 y ninguno empeoró. Hoy terminan en un 409 con rollback, sin datos a medias.
+
+- **Reversa de reporte de drywall.** Restaura la reserva y escribe el pedido **después** de los
+  saldos (`restoreReservationIfIdle`, que hace reserva → pedido). En cambio:
+  - anular el pedido va pedido → reservas;
+  - el despacho del mismo pedido va reserva → saldo.
+- **Reversa de reporte de coberturas.** `restoreReservationQty` de la reserva de materia prima
+  queda al final, con saldos en mano. Cruza con anular el pedido cuando el id de esa reserva es
+  menor que el de la reserva del producto.
+- **`updateItemQty`.** Va pedido → reservas → bobinas y saldos → OP (`productionOrder.update`);
+  coberturas, en cambio, va OP → pedido.
+- **Cierre de coberturas sin despunte.** Libera la reserva (`releaseRemainingReservation`)
+  después de los saldos.
+- **Propuesta del segundo modelo:**
+  - en las dos reversas, tomar pedido y reservas por id antes de `lockInOrder`;
+  - en `updateItemQty`, tomar las OP de la línea justo después de las reservas.
+
+## Abiertos de cc18 (P2/P3, para la sesión de limpieza)
+
+- **P2, corte.** La arista `cutting_orders` ↔ fila de `cutting_order_coils` entre recibir o
+  revertir y anular sigue abierta. Recibir y revertir deberían tomar `cutting_orders` antes que la
+  fila. Además, anular la orden lee el estado `SENT` de las filas antes de bloquearlas, así que una
+  recepción concurrente que gana podría quedar marcada como `CANCELLED`. Ya pasaba antes de cc18:
+  hay que releer el estado bajo el lock.
+- **P3, re-fechado de despachos** (`invoice-dispatch.service.ts`). Encadena varias tomas en una
+  transacción. Tomar la unión una sola vez.
+- **P3, borrador de comprobante con despacho** (`invoicing.service.ts`). Va pedido → despacho y la
+  reversa va despacho → pedido.
+- **P3, rendimiento: medir.**
+  - `lockCoil` suma de 3 a 6 consultas: los agregados.
+  - El despacho duplica `resolveItemBusinessLineId`, `lockBalance` y `findLineReservation`.
+  - Los borradores llaman a `lockInOrder` por fila.
+  - Cinco transacciones siguen con el timeout por defecto (5 s): merma, anular merma, anular
+    bobina y las dos de film.
+- **P3, centinela.** No ve la tabla con esquema, una cláusula armada aparte, `$queryRawUnsafe`
+  concatenado ni sentencias de más de 600 caracteres.
+- **P3, cobertura del db-spec.** Faltan producción de drywall × despacho, corte (anular × recibir),
+  recepción de compra de producto y mostrador.
+
 ## 2026-10-04 — Ventana cc17 (D-385 desplegada, PR #94, sin migración)
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc17.md`.
@@ -257,7 +356,9 @@ Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle está en
 - Pendiente del dueño: decisiones 1-3, que el papel de Nubefact sea por las siete líneas, el
   vendedor correcto y el número D-381.
 
-## Pendiente — Orden único de bloqueos en despacho y reversas (pieza propia)
+## Resuelto en cc18 (D-386) — Orden único de bloqueos en despacho y reversas
+
+**Implementado en cc18 (PR #96).** El texto de abajo queda como registro.
 
 Decisión del dueño (2026-10-03): sesión aparte, **después de cc15b y D-383**; sin tocar antes.
 **Actualización (dueño, 2026-10-04):** es la **siguiente pieza después de cc17** (D-385,

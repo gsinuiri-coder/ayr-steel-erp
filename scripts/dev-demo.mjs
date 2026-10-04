@@ -27,9 +27,6 @@ if (missing.length) {
   throw new Error(`.env.demo está incompleto (falta ${missing.join(', ')}). Corré pnpm env:demo.`);
 }
 
-console.log(
-  'Levantando api :3100 + web :3101 contra la rama Neon "demo", solo en 127.0.0.1. Ctrl+C para cortar.',
-);
 const isWin = process.platform === 'win32';
 const pnpm = isWin ? 'pnpm.cmd' : 'pnpm';
 
@@ -37,8 +34,24 @@ const pnpm = isWin ? 'pnpm.cmd' : 'pnpm';
 // que mata y levanta lo que haya ahí. Con los dos compartiendo puertos, una corrida de E2E
 // tumbaba la demo del dueño en pleno UAT (2026-10-02), y un E2E que reusara el API de demo
 // escribiría sobre una copia de datos reales. 4000/4001 son del dueño (`dev:preview`).
-const DEMO_API_PORT = '3100';
-const DEMO_WEB_PORT = '3101';
+//
+// `AYR_DEMO_API_PORT`/`AYR_DEMO_WEB_PORT` (cc18): otro par de puertos para una segunda demo
+// mientras otra sesión ocupa 3100/3101. Nunca los de E2E ni los del dueño.
+const RESERVED_PORTS = new Set(['3000', '3001', '4000', '4001']);
+function demoPort(name, fallback) {
+  const raw = (process.env[name] ?? '').trim();
+  if (raw === '') return fallback;
+  const port = Number(raw);
+  if (!/^\d+$/.test(raw) || port < 1024 || port > 65535 || RESERVED_PORTS.has(raw)) {
+    throw new Error(`${name}=${raw} no es un puerto válido para demo (ni 3000/3001 ni 4000/4001).`);
+  }
+  return raw;
+}
+const DEMO_API_PORT = demoPort('AYR_DEMO_API_PORT', '3100');
+const DEMO_WEB_PORT = demoPort('AYR_DEMO_WEB_PORT', '3101');
+console.log(
+  `Levantando api :${DEMO_API_PORT} + web :${DEMO_WEB_PORT} contra la rama Neon "demo", solo en 127.0.0.1. Ctrl+C para cortar.`,
+);
 // El override viaja por entorno y gana sobre `apps/api/.env`: NestJS lee `process.env`.
 //
 // R2/PSE/jobs apagados mientras `demo` sea copia de datos reales (ajustes antes de UAT

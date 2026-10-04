@@ -42,10 +42,10 @@ import type { RequestUser } from '../auth/auth.types';
 import { assertSellerAccess, sellerWhere } from '../auth/seller-scope';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { sortedUniqueIds } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
-import { byCodeUnit } from '../sales/reserved-ledger';
 import { autoTerminateEmptyCoils } from '../coils/coil-auto-terminate';
 import { pendingQty, proratedQty } from './invoicing-math';
 import { dispatchOrderBy } from '../common/list-orderings';
@@ -334,21 +334,37 @@ export class DispatchesService {
       },
     });
 
-    // Orden de locks: bobinas y después saldos, el mismo que usan `production.consume`
-    // y `createReservations`. Invertirlo abre la ventana en la que un envío a corte o
-    // una confirmación de pedido se cruzan con esta salida.
-    const coilIds = [
-      ...new Set(
+    const coilIds = sortedUniqueIds(
+      lines
+        .filter((l) => l.target.itemType === ('COIL' as InventoryItemType))
+        .map((l) => l.target.itemId),
+    );
+    // D-386 (P2-1 de cc15b): el conjunto completo del despacho, **antes** de tocar una sola
+    // reserva o un solo saldo y en el orden canónico: pedido (arriba) → reservas → bobinas con
+    // sus agregados → saldos. Antes se tomaban solo las bobinas nombradas y, línea por línea,
+    // la reserva y el saldo en el orden de las líneas: la salida de una bobina ampliaba el
+    // agregado con saldos ya en mano y dos documentos con los mismos productos en otro orden se
+    // cruzaban con la anulación de una compra o con confirmar un pedido.
+    // Las bobinas de las líneas sin movimiento (D-278) también: el cierre de D-170 escribe su fila.
+    await this.lockDispatchSet(
+      tx,
+      lines.map((l) => l.target.reservationId),
+      coilIds,
+      await Promise.all(
         lines
-          .filter((l) => l.target.itemType === ('COIL' as InventoryItemType))
-          .map((l) => l.target.itemId),
+          .filter((l) => options.deliveredBeforeOpening?.has(l.orderItem.id) !== true)
+          .map(async (l) => ({
+            businessLineId: await this.inventory.resolveItemBusinessLineId(
+              tx,
+              l.target.itemType,
+              l.target.itemId,
+            ),
+            itemType: l.target.itemType,
+            itemId: l.target.itemId,
+            unit: l.target.unit,
+          })),
       ),
-    ].sort(byCodeUnit);
-    if (coilIds.length > 0) {
-      await tx.$queryRaw`
-        SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-      `;
-    }
+    );
 
     let lineNumber = 0;
     for (const line of lines) {
@@ -745,21 +761,30 @@ export class DispatchesService {
       );
     }
 
-    // **Bobinas antes que saldos**, el mismo orden que `create` y que `createReservations`
-    // (la línea de arriba lo promete desde Fase 5b y la reversa no lo cumplía). Sin este
-    // lock, revertir tomaba primero los saldos —dentro de `inventory.reverse`— y recién
-    // después escribía sobre `coils`: orden inverso al de todo el resto, así que dos
-    // transacciones sobre el mismo rollo podían trabarse en un deadlock, y un
-    // `CoilOperationsService.setStatus` concurrente —que sí toma `lockCoil`— podía quedar
-    // pisado por el cambio de estado de D-170.
-    const lockedCoilIds = [
-      ...new Set(dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
-    ].sort(byCodeUnit);
-    if (lockedCoilIds.length > 0) {
-      await tx.$queryRaw`
-            SELECT "id" FROM "coils" WHERE "id" = ANY(${lockedCoilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-          `;
-    }
+    // **El conjunto entero, antes de la primera reversa** (D-386, P2-2 de cc15b), en el mismo
+    // orden que `create`: reservas → bobinas con sus agregados → saldos. Antes se tomaban las
+    // bobinas y después, ítem por ítem en el orden de las líneas, cada saldo y cada reserva: dos
+    // documentos con los mismos productos en otro orden se cruzaban (dos reversas, o la reversa
+    // y la anulación de una compra). Las bobinas siguen tomándose aunque su salida no tenga
+    // movimiento: D-170 reabre su fila más abajo.
+    const lockedCoilIds = sortedUniqueIds(
+      dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId),
+    );
+    const reversedMovements = await tx.inventoryMovement.findMany({
+      where: {
+        id: { in: dispatch.items.flatMap((i) => (i.movementId === null ? [] : [i.movementId])) },
+      },
+      select: { businessLineId: true, itemType: true, itemId: true, unit: true },
+    });
+    const heldReservations = await Promise.all(
+      dispatch.items.map((i) => findLineReservation(tx, i.salesOrderItemId, i.itemType, i.itemId)),
+    );
+    await this.lockDispatchSet(
+      tx,
+      heldReservations.map((r) => r?.id ?? null),
+      lockedCoilIds,
+      reversedMovements,
+    );
 
     for (const item of dispatch.items) {
       if (item.movementId !== null) {
@@ -836,6 +861,35 @@ export class DispatchesService {
   // -------------------------------------------------------------------------
   // D-074 — el estado del pedido lo decide lo despachado
   // -------------------------------------------------------------------------
+
+  /**
+   * D-386: los bloqueos de un despacho o de su reversa, en el orden canónico y de una vez. El
+   * pedido ya lo tomó quien llama; acá van las reservas que el despacho descuenta o restaura
+   * (por id), y después, por la puerta única, las bobinas con sus agregados y los saldos. Las
+   * reservas van antes que las bobinas porque así las toman el reporte de producción (OP →
+   * pedido → reserva → bobina → saldo) y la restauración de una reserva (pedido → reserva →
+   * saldo): tomar el saldo primero y la reserva después cruzaba con ellos.
+   */
+  private async lockDispatchSet(
+    tx: Prisma.TransactionClient,
+    reservationIds: readonly (string | null)[],
+    coilIds: readonly string[],
+    items: readonly {
+      businessLineId: string;
+      itemType: InventoryItemType;
+      itemId: string;
+      unit: string;
+    }[],
+  ): Promise<void> {
+    const reservations = sortedUniqueIds(reservationIds.flatMap((id) => (id === null ? [] : [id])));
+    if (reservations.length > 0) {
+      await tx.$queryRaw`
+        SELECT "id" FROM "reservations" WHERE "id" = ANY(${reservations}::uuid[])
+        ORDER BY "id" FOR UPDATE
+      `;
+    }
+    await this.inventory.lockInOrder(tx, { coilIds, items });
+  }
 
   /**
    * D-170 — **la venta de una bobina entera la cierra** (RF-73).

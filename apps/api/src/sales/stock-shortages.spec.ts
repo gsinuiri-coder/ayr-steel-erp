@@ -12,6 +12,8 @@ import { compareTechnicalCode, SalesOrdersService } from './sales-orders.service
 jest.mock('./raw-material', () => ({
   ...jest.requireActual<typeof rawMaterialModule>('./raw-material'),
   rawMaterialAvailability: jest.fn(),
+  // D-386: sin agregados con promesas, el conjunto a bloquear son las bobinas nombradas.
+  rawMaterialLockSet: jest.fn((_tx: unknown, ids: readonly string[]) => Promise.resolve([...ids])),
   rawMaterialSpecLabels: jest.fn(),
 }));
 

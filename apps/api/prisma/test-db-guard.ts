@@ -50,9 +50,16 @@ function databaseName(url: URL): string {
   return url.pathname.replace(/^\//, '');
 }
 
+/**
+ * `ayr_local_e2e` y, desde cc18, las bases hermanas `ayr_local_e2e_<sufijo>` del mismo Postgres
+ * de Docker: dos sesiones que corren `test:db` o la suite a la vez sobre una sola base se la
+ * vacían una a la otra en plena corrida (pasó con cc18 y cc19). Siguen siendo solo locales.
+ */
+const LOCAL_E2E_NAME = /^ayr_local_e2e(_[a-z0-9]{1,20})?$/;
+
 function isLocalE2E(url: URL): boolean {
   const localHost = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
-  return localHost && databaseName(url) === 'ayr_local_e2e';
+  return localHost && LOCAL_E2E_NAME.test(databaseName(url));
 }
 
 function isRunnerCiE2E(url: URL): boolean {
@@ -79,7 +86,9 @@ function labelOf(name: string, url: string): string {
         `base de pruebas. Solo se admiten: ${ALLOWED.map((c) => c.label).join(', ')}.`,
     );
   }
-  return allowed.label;
+  // Con el nombre de la base: las dos URLs tienen que apuntar a la **misma** base, no solo a la
+  // misma categoría (dos bases locales hermanas comparten etiqueta).
+  return `${allowed.label} → ${databaseName(parsed)}`;
 }
 
 /**

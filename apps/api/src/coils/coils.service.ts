@@ -347,12 +347,19 @@ export class CoilsService {
    * `CoilOperationsService` (partido, merma, edición, anulación) como `CuttingService`
    * (recepción de corte, RF-41): dos operaciones simultáneas sobre la misma bobina no
    * pueden calcular su plan sobre el mismo saldo/ancho antes de que ninguna escriba.
+   *
+   * D-386 (A6): **la bobina junto con su agregado**, en una sola sentencia por id
+   * (`InventoryService.lockInOrder`). Tomarla sola y dejar que la salida de kardex de después
+   * pidiera las demás bobinas del agregado era tomarlas fuera de orden: con esta en mano se
+   * esperaba una de id menor que una confirmación de pedido ya tenía, mientras ella esperaba
+   * esta. Cuando la bobina no alcanza ningún agregado con promesas vivas (lo normal en drywall),
+   * el conjunto es ella sola, como antes.
    */
   async lockCoil(tx: Prisma.TransactionClient, coilId: string): Promise<Coil> {
-    const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "coils" WHERE "id" = ${coilId}::uuid FOR UPDATE
-    `;
-    if (locked.length === 0) throw new NotFoundException('Bobina no encontrada');
+    const locked = await this.inventory.lockInOrder(tx, { coilIds: [coilId] });
+    if (!locked.includes(coilId.toLowerCase())) {
+      throw new NotFoundException('Bobina no encontrada');
+    }
     return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
   }
 

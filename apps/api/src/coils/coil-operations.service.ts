@@ -36,10 +36,11 @@ import { ENV, type Env } from '../config/env';
 import { OperationDateService } from '../common/operation-date.service';
 import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
+import { itemRefOf } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
-import { assertRawMaterialInvariant } from '../sales/raw-material';
+import { assertRawMaterialInvariant, rawMaterialCoilsForAttributes } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
@@ -279,6 +280,18 @@ export class CoilOperationsService {
         if (split.status === CoilSplitStatus.REVERTED) {
           throw new ConflictException('Ese partido ya fue revertido');
         }
+        // D-386 (P2-2 de cc15b): la madre y las hijas con sus agregados, después sus saldos, de
+        // una vez y antes de la primera reversa. Antes se tomaba la madre y después, hija por
+        // hija, cada bobina con su saldo en el orden de los movimientos.
+        await this.inventory.lockInOrder(tx, {
+          coilIds: [split.parentCoilId, ...split.children.map((c) => c.id)],
+          items: liveMovements(
+            await tx.inventoryMovement.findMany({
+              where: { refType: 'SPLIT', refId: splitId },
+              include: { reversals: { select: { id: true } } },
+            }),
+          ).map(itemRefOf),
+        });
         const coil = await this.coils.lockCoil(tx, split.parentCoilId);
         // D-050: la madre puede haberse enviado a corte tercerizado después de este
         // partido (`send()` no deja rastro de kardex), así que revertir aquí devolvería
@@ -878,6 +891,32 @@ export class CoilOperationsService {
     // límite contra Neon de forma intermitente — un 500 en una operación normal.
     await this.prisma.$transaction(
       async (tx) => {
+        // D-386 (autorrevisión P2-1): con un acabado nuevo la bobina puede pasar a otro agregado,
+        // y el guardrail de abajo lo mira. Sus bobinas se toman ahora, junto con la propia y su
+        // agregado actual, en una sola sentencia; antes las pedía el guardrail con saldos en mano.
+        if (input.finishId !== undefined) {
+          const [current, finish] = await Promise.all([
+            tx.coil.findUnique({
+              where: { id: coilId },
+              select: { businessLineId: true, thicknessMm: true },
+            }),
+            tx.finish.findUnique({ where: { id: input.finishId }, select: { colorId: true } }),
+          ]);
+          if (current && finish) {
+            const destination = await rawMaterialCoilsForAttributes(
+              tx,
+              [
+                {
+                  businessLineId: current.businessLineId,
+                  colorId: finish.colorId,
+                  thicknessMm: current.thicknessMm.toFixed(2),
+                },
+              ],
+              roofingToleranceMm(this.env),
+            );
+            await this.inventory.lockInOrder(tx, { coilIds: [coilId, ...destination] });
+          }
+        }
         const coil = await this.coils.lockCoil(tx, coilId);
         if (coil.status === CoilStatus.CANCELLED) {
           throw new BadRequestException('La bobina está anulada: no se puede editar');

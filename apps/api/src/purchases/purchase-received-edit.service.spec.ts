@@ -13,6 +13,8 @@ jest.mock('../sales/raw-material', () => ({
   assertRawMaterialInvariant: jest.fn(),
   findRawMaterialShortfalls: jest.fn(),
   lockRawMaterialCoils: jest.fn(),
+  // D-386: sin agregados con promesas, el destino de un cambio de color o espesor no suma bobinas.
+  rawMaterialCoilsForAttributes: jest.fn().mockResolvedValue([]),
 }));
 
 /**

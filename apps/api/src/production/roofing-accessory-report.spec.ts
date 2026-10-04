@@ -131,6 +131,7 @@ function build(setup: Setup) {
     },
   };
   const inventory = {
+    lockInOrder: jest.fn().mockResolvedValue(undefined),
     record: jest.fn((_tx: unknown, args: { type: string; itemType: string; qty: string }) => {
       movements.push(args);
       return Promise.resolve({ totalCost: D('50') });

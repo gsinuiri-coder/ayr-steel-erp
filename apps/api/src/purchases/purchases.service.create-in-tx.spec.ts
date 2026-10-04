@@ -188,19 +188,29 @@ describe('PurchasesService.cancel — saldos bloqueados antes del guardrail (D-3
         }),
       },
       coil: {
-        findMany: jest.fn().mockResolvedValue([]),
+        // D-386 (P3-1 de cc15b): la toma inicial lee **todas** las bobinas con el `purchaseId`
+        // (sin filtro de estado), incluidos los flejes heredados; las demás lecturas, vacías.
+        findMany: jest
+          .fn()
+          .mockImplementation((args: { where: { status?: unknown } }) =>
+            Promise.resolve(args.where.status === undefined ? [{ id: 'fleje-1' }] : []),
+          ),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
     };
     const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    let lockedCoilIds: string[] = [];
     Object.assign(svc, {
       operationDate: { resolve: () => '2026-10-03' },
       audit: { write: jest.fn().mockResolvedValue(undefined) },
       inventory: {
-        lockItemsForReversal: jest.fn().mockImplementation((_tx, refs: { itemId: string }[]) => {
-          calls.push(`lock:${refs.map((r) => r.itemId).join(',')}`);
-          return Promise.resolve();
-        }),
+        lockInOrder: jest
+          .fn()
+          .mockImplementation((_tx, set: { coilIds: string[]; items: { itemId: string }[] }) => {
+            lockedCoilIds = set.coilIds;
+            calls.push(`lock:${set.items.map((r) => r.itemId).join(',')}`);
+            return Promise.resolve();
+          }),
         reverse: jest.fn().mockImplementation(() => {
           calls.push('reverse');
           return Promise.resolve();
@@ -218,5 +228,50 @@ describe('PurchasesService.cancel — saldos bloqueados antes del guardrail (D-3
     await svc.cancel(ACTOR, 'pu-1', { reason: 'Anular' });
     expect(calls.slice(0, 3)).toEqual(['own', 'lock:prod-b,prod-a,prod-b', 'later']);
     expect(calls.filter((c) => c === 'reverse')).toHaveLength(3);
+    expect(lockedCoilIds).toEqual(['fleje-1']);
+  });
+});
+
+describe('PurchasesService.receive — saldos por clave antes del primer ingreso (D-386)', () => {
+  it('una compra de producto toma todos sus saldos de una vez, antes de cualquier record', async () => {
+    const stop = new Error('fin deliberado en la toma');
+    const record = jest.fn();
+    const lockInOrder = jest.fn().mockRejectedValue(stop);
+    const tx = {
+      purchase: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      purchaseItem: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'i1', productId: 'prod-b', unit: 'NIU' },
+          { id: 'i2', productId: null, unit: 'NIU' },
+          { id: 'i3', productId: 'prod-a', unit: 'NIU' },
+        ]),
+      },
+    };
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    Object.assign(svc, {
+      operationDate: { resolve: () => '2026-10-04' },
+      inventory: { lockInOrder, record },
+      prisma: {
+        purchase: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'pu-1',
+            status: 'DRAFT',
+            type: 'FINISHED_GOOD',
+            businessLineId: 'bl-1',
+            items: [],
+          }),
+        },
+        $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    });
+
+    await expect(svc.receive(ACTOR, 'pu-1')).rejects.toBe(stop);
+    expect(record).not.toHaveBeenCalled();
+    expect(lockInOrder).toHaveBeenCalledWith(tx, {
+      items: [
+        { businessLineId: 'bl-1', itemType: 'PRODUCT', itemId: 'prod-b', unit: 'NIU' },
+        { businessLineId: 'bl-1', itemType: 'PRODUCT', itemId: 'prod-a', unit: 'NIU' },
+      ],
+    });
   });
 });
