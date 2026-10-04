@@ -2,6 +2,25 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-04 — Ventana D-383 (desplegada, PR #90, sin migración)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle y la **lista completa de lo
+que queda abierto en el proyecto** están en `docs/handoff/ventana-d383.md`.
+
+- **UAT:** confirmado por el dueño en demo sobre `e7a1c14`.
+- **Ajuste del UAT:** `b4857c1` muestra la unidad legible (`unitSymbol`). El dueño aceptó una
+  sola casilla para todas las líneas.
+- **Reacomodo:** sobre `main` `e828f1d`, solo de docs; el código quedó idéntico. Se desplegó
+  **`4528b65`**, con la CI 37181329875 en verde (E2E 503, smoke 36).
+- **API:** `ayr-steel-erp-api-00081-p5g`. La vuelta atrás es `00080-wgf`. El smoke pasó 8/8.
+- **Merge del #90:** `main` = `7e7ba9d`, Vercel `success`, smoke 8/8 en los dos dominios.
+- **Impacto hoy:**
+  - PED-000001, PED-000015 y PED-000019 piden la casilla para anularse (fabricado sin despachar);
+  - PED-000047 se bloquea por FFA1-00001367 vigente;
+  - hay 0 borradores.
+- **Cierre:** demo apagada; worktree `../ayr-d383` y rama `d383/proteger-anular-pedido` borrados,
+  con su `local-data` copiada.
+
 ## 2026-10-03 — D-383: proteger la anulación de un pedido (PR #90 sin merge)
 
 - Rama `d383/proteger-anular-pedido` desde `main` = `6da0154`, ya con cc16 en producción. Sin
