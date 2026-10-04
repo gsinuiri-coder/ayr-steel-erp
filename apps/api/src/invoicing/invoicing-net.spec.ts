@@ -542,12 +542,19 @@ describe('orderProgress y la reválida al emitir usan la misma función — D-34
       salesOrderItemId: 'line-1',
       affectedItemId: null,
     });
-    async function reassert(rows: Row[], qty: string) {
+    async function reassert(rows: Row[], qty: string, orderStatus = 'CONFIRMED') {
       const service = Object.create(InvoicingService.prototype) as { assertStillAvailable: Assert };
       const client = fakeClient(rows);
       const tx = {
         salesOrderItem: {
-          findMany: jest.fn().mockResolvedValue([{ id: 'line-1', lineNumber: 1, qty: D('100') }]),
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'line-1',
+              lineNumber: 1,
+              qty: D('100'),
+              salesOrder: { seq: 1, status: orderStatus },
+            },
+          ]),
         },
         fiscalDocumentItem: client.fiscalDocumentItem,
       };
@@ -565,6 +572,12 @@ describe('orderProgress y la reválida al emitir usan la misma función — D-34
     it('un borrador por más de lo acreditado se rechaza al emitir', async () => {
       await expect(reassert([invoice(), creditNote('40', FORTY)], '41')).rejects.toThrow(
         'quedan 40.000',
+      );
+    });
+
+    it('D-383: un borrador de un pedido anulado ya no se registra ni se emite', async () => {
+      await expect(reassert([], '1', 'CANCELLED')).rejects.toThrow(
+        'El pedido PED-000001 está anulado: este borrador ya no se registra ni se emite. Descártalo',
       );
     });
 

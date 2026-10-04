@@ -71,6 +71,7 @@ import {
   type ReservationDto,
   type ReservationQuery,
   type SalesOrderDto,
+  type OrderCancelPreviewDto,
   type SalesOrderListItemDto,
   type SalesOrderQuery,
   type ProductStockDto,
@@ -87,6 +88,13 @@ import {
   statusCondition,
 } from '@ayr/shared';
 import { deriveOrderReadiness, deriveOrderStage, orderStagesWhere } from './order-readiness';
+import {
+  annulledManualDocuments,
+  commercialCancelBlocks,
+  fabricatedLooseLines,
+  fabricatedNeedsAcknowledgement,
+  productionCancelBlock,
+} from './order-cancel-checks';
 import {
   shortfallAudit,
   splitReservable,
@@ -2194,7 +2202,12 @@ export class SalesOrdersService {
    * Si el pedido venía de una cotización, esa cotización vuelve a `EMITIDA` cuando sigue
    * vigente — el cliente puede volver a aceptarla— y queda `VENCIDA` cuando ya no.
    */
-  async cancel(actor: RequestUser, id: string, reason: string): Promise<SalesOrderDto> {
+  async cancel(
+    actor: RequestUser,
+    id: string,
+    input: { reason: string; acknowledgeFabricated?: boolean },
+  ): Promise<SalesOrderDto> {
+    const { reason } = input;
     await this.prisma.$transaction(async (tx) => {
       const order = await this.lockOrder(tx, id);
       if (order.status === SalesOrderStatus.CANCELLED) {
@@ -2244,6 +2257,27 @@ export class SalesOrdersService {
         throw new BadRequestException(
           `No se puede anular: ${detail} está fabricando con el material reservado. Anula la orden de producción primero.`,
         );
+      }
+
+      // D-383 (1): con un comprobante vivo o un despacho vigente, la venta sigue en pie y anular
+      // el pedido la deja colgada (FFA1-00001389 quedó vivo sobre un pedido anulado, D-381). Se
+      // deshace primero la venta. Los borradores del pedido se bloquean antes, en orden de id:
+      // uno que se esté registrando espera a este commit y `assertStillAvailable` ve el pedido
+      // ya anulado. Crear un comprobante o un despacho toma el lock del pedido, que ya es nuestro.
+      await tx.$queryRaw`
+        SELECT "id" FROM "fiscal_documents"
+        WHERE "sales_order_id" = ${id}::uuid AND "status" = 'DRAFT'
+        ORDER BY "id" FOR UPDATE
+      `;
+      const orderCode = salesOrderCode(order.seq);
+      const commercial = await commercialCancelBlocks(tx, id, orderCode);
+      if (commercial.length > 0) throw new BadRequestException(commercial.join('. '));
+
+      // D-383 (2): lo fabricado contra el pedido que todavía no salió queda en inventario sin
+      // pedido y nadie lo toma. No se impide, pero se exige verlo: la casilla del diálogo.
+      const fabricated = await fabricatedLooseLines(tx, id);
+      if (fabricated.length > 0 && input.acknowledgeFabricated !== true) {
+        throw new ConflictException(fabricatedNeedsAcknowledgement(orderCode, fabricated));
       }
 
       if (idleIds.length > 0) {
@@ -2342,11 +2376,56 @@ export class SalesOrdersService {
           cancelledProductionOrders: liveOrders
             .filter((op) => idleIds.includes(op.id))
             .map((op) => productionOrderCode(op.seq)),
+          // D-383 (2): lo que quedó en inventario sin pedido, y que se confirmó verlo.
+          ...(fabricated.length > 0
+            ? {
+                acknowledgedFabricated: true,
+                fabricatedLoose: fabricated.map((l) => ({
+                  lineNumber: l.lineNumber,
+                  sku: l.sku,
+                  qty: l.qty,
+                  unit: l.unit,
+                  productionOrders: l.productionOrders.map((o) => o.code),
+                })),
+              }
+            : {}),
         },
       });
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * D-383: qué pasaría al anular, para el diálogo. **Solo lectura y sin bloqueos**: corre las
+   * mismas comprobaciones que `cancel` sin sus locks; la anulación vuelve a comprobar todo.
+   *
+   * Presupuesto (llamadas a Prisma, verificado por test): el pedido, 1 de la OP en curso, 3 de
+   * los bloqueos comerciales (líneas, comprobantes, despachos), 1 de lo fabricado si no hay
+   * reportes vivos (4 si los hay) y 1 de los anulados manuales.
+   */
+  async cancelPreview(id: string): Promise<OrderCancelPreviewDto> {
+    const order = await this.prisma.salesOrder.findUnique({
+      where: { id },
+      select: { seq: true, status: true },
+    });
+    if (!order) throw new NotFoundException('Pedido no encontrado');
+    const orderCode = salesOrderCode(order.seq);
+    const blocks: string[] = [];
+    if (order.status === SalesOrderStatus.CANCELLED) blocks.push('El pedido ya está anulado');
+    if (order.status === SalesOrderStatus.FULFILLED) {
+      blocks.push('Un pedido ya atendido no se anula');
+    }
+    // Lecturas simples, una por vez: sin transacción, el cliente de Prisma vale como `tx`.
+    const reader: Prisma.TransactionClient = this.prisma;
+    const production = await productionCancelBlock(reader, id);
+    if (production) blocks.push(production);
+    blocks.push(...(await commercialCancelBlocks(reader, id, orderCode)));
+    return {
+      blocks,
+      fabricated: await fabricatedLooseLines(reader, id),
+      annulledManualDocuments: await annulledManualDocuments(reader, id),
+    };
   }
 
   // -------------------------------------------------------------------------
