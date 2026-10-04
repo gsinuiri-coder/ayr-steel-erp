@@ -17,6 +17,7 @@ import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { useSession } from '@/lib/session';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
+import { QuotationInvoice } from '@/components/sales/quotation-invoice';
 import {
   URL_PAGINATION_DEFAULTS,
   useUrlPagination,
@@ -217,8 +218,11 @@ export function CotizacionesView() {
                     {q.code}
                   </Link>
                 </TableCell>
-                <TableCell className="whitespace-nowrap" data-testid="quotation-external-invoice">
-                  {q.externalInvoice}
+                <TableCell className="whitespace-nowrap" data-testid="quotation-invoice-cell">
+                  <QuotationInvoice
+                    externalInvoice={q.externalInvoice}
+                    invoiceDocuments={q.invoiceDocuments}
+                  />
                 </TableCell>
                 <TableCell className={CUSTOMER_CELL_CLASSNAME}>
                   <Link

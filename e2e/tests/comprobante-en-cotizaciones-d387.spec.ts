@@ -1,6 +1,17 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { adminApi, adminCredentials, getJson } from '../helpers/api';
-import { deactivateTrail, type ProductDto } from '../helpers/production';
+import { adminApi, adminCredentials, createSupplier, getJson, postJson } from '../helpers/api';
+import {
+  createInvoice,
+  purgeInvoicingTrail,
+  type FiscalDocumentDto,
+  type InvoicingTrail,
+} from '../helpers/invoicing';
+import {
+  deactivateTrail,
+  today,
+  uniqueDocumentNumber,
+  type ProductDto,
+} from '../helpers/production';
 import {
   commitImport,
   customerCell,
@@ -14,29 +25,33 @@ import {
   createSellableProduct,
   purgeSalesTrail,
   type CustomerDto,
+  type SalesOrderDto,
 } from '../helpers/sales';
 
 /**
- * D-387 — el comprobante de las cotizaciones importadas, a la vista en la lista.
+ * D-387 — la columna «Comprobante» de la lista de cotizaciones, en sus cuatro estados.
  *
- * El número de la factura de papel vive solo en la marca del importador (`Factura externa: …`,
- * primera línea de las observaciones, D-152). La lista lo muestra en una columna justo después
- * del número de cotización, lo ordena (serie y correlativo como número) y lo encuentra por el
- * buscador; la cotización que no se importó deja la celda vacía. El detalle lo repite en la
- * cabecera. Todo en la densidad de escritorio: sin scroll horizontal entre 1366 y 1920 px.
+ * El número del Excel vive solo en la marca del importador (`Factura externa: …`, D-152), y no
+ * es un comprobante: hasta que el pedido de la cotización tiene una factura o boleta vigente en
+ * el sistema, la columna lo muestra en gris («solo referencia»). Con comprobante vigente muestra
+ * el del sistema, con check y enlace («registrado»), o en ámbar si su número no es el del Excel
+ * («no coincide»). Sin una cosa ni la otra queda vacía. Un comprobante anulado no cuenta.
  *
- * Importa y anula cotizaciones: nunca contra producción (D-126, regla dura 9).
+ * Importa, confirma y factura: nunca contra producción (D-126, regla dura 9).
  */
 
 const isProduction = !!process.env.E2E_BASE_URL;
-test.skip(isProduction, 'Importa cotizaciones: nunca contra producción (D-126, regla dura 9).');
+test.skip(isProduction, 'Importa y factura: nunca contra producción (D-126, regla dura 9).');
 
-test.describe.configure({ timeout: 240_000 });
+test.describe.configure({ timeout: 300_000 });
+
+const LINE = 'roofing';
 
 interface ListedQuotation {
   id: string;
   code: string;
   externalInvoice: string | null;
+  invoiceDocuments: { id: string; number: string }[];
 }
 
 /** Una serie propia de la corrida (`Z` + tres letras): aísla el orden de lo que ya hay en la base. */
@@ -76,25 +91,92 @@ async function expectNoHorizontalScroll(page: Page): Promise<void> {
   expect(overflow.table).toBeLessThanOrEqual(0);
 }
 
-test.describe('D-387 — comprobante en la lista de cotizaciones', () => {
+test.describe('D-387 — estados de la columna «Comprobante»', () => {
   let api: APIRequestContext;
   let customer: CustomerDto;
   let product: ProductDto;
+  let supplierId = '';
+  let purchaseId = '';
   const series = uniqueSeries();
-  /** Correlativos elegidos para que el orden de texto y el numérico no coincidan. */
-  const keys = [`${series}-1000`, `${series}-999`, `${series}-12`];
-  const quotationIds: string[] = [];
-  let manualId = '';
+  /** Del Excel: los correlativos se eligen para que el orden de texto y el numérico no coincidan. */
+  const keys = {
+    reference: `${series}-12`,
+    registered: `${series}-999`,
+    mismatch: `${series}-1000`,
+    annulled: `${series}-77`,
+  };
+  const ids: Record<keyof typeof keys | 'none', string> = {
+    reference: '',
+    registered: '',
+    mismatch: '',
+    annulled: '',
+    none: '',
+  };
+  const trail: InvoicingTrail = { documentIds: [], orderIds: [] };
+
+  /** Confirma la cotización y registra a mano su factura con el correlativo indicado. */
+  async function invoice(quotationId: string, correlative: number): Promise<FiscalDocumentDto> {
+    const order = await postJson<SalesOrderDto>(
+      api,
+      `/api/sales/quotations/${quotationId}/confirm`,
+      {},
+    );
+    trail.orderIds!.push(order.id);
+    const line = order.items[0]!;
+    const draft = await createInvoice(api, {
+      docType: 'FACTURA',
+      customerId: customer.id,
+      salesOrderId: order.id,
+      items: [{ salesOrderItemId: line.id, qty: line.qty }],
+    });
+    trail.documentIds!.push(draft.id);
+    return postJson<FiscalDocumentDto>(
+      api,
+      `/api/invoicing/documents/${draft.id}/register-manual`,
+      {
+        series,
+        correlative,
+      },
+    );
+  }
 
   test.beforeAll(async ({ baseURL }) => {
+    // Compra, importación, tres pedidos con su factura y una anulación: más que el tope de un hook.
+    test.setTimeout(180_000);
     api = await adminApi(baseURL!);
     customer = await createCustomer(api);
+    const supplier = await createSupplier(api, { name: 'E2E Proveedor D-387' });
+    supplierId = supplier.id;
     product = await createSellableProduct(api, {
-      lineCode: 'roofing',
+      lineCode: LINE,
       unit: 'KGM',
       listPricePen: '2.0000',
     });
-    const rows: SheetRow[] = keys.map((documentKey) => ({
+    const purchase = await postJson<{ id: string }>(api, '/api/purchases', {
+      supplierId,
+      businessLine: LINE,
+      type: 'FINISHED_GOOD',
+      docType: 'FACTURA',
+      series: 'F001',
+      number: uniqueDocumentNumber(),
+      issueDate: today(),
+      currency: 'PEN',
+      igvRate: '18',
+      paymentTerms: 'CONTADO',
+      items: [
+        {
+          productId: product.id,
+          description: 'Material E2E D-387',
+          qty: '1000',
+          unit: 'KGM',
+          unitPrice: '1',
+        },
+      ],
+    });
+    purchaseId = purchase.id;
+    await postJson(api, `/api/purchases/${purchase.id}/receive`);
+
+    const rows: SheetRow[] = Object.values(keys).map((documentKey) => ({
       issueDate: '03/08/2026',
       docType: 'Factura',
       documentKey,
@@ -108,108 +190,182 @@ test.describe('D-387 — comprobante en la lista de cotizaciones', () => {
     const preview = await previewImport(api, rows);
     expect(preview.rows.flatMap((r) => r.issues.filter((i) => i.severity === 'error'))).toEqual([]);
     await commitImport(api, preview.rows.map(toInput));
-    const manual = await createQuotation(api, {
-      customerId: customer.id,
-      businessLine: 'roofing',
-      productId: product.id,
-      qty: '10',
-    });
-    manualId = manual.id;
     const mine = await listed(api, `customerId=${customer.id}`);
-    quotationIds.push(...mine.map((q) => q.id));
+    for (const [state, key] of Object.entries(keys) as [keyof typeof keys, string][]) {
+      ids[state] = mine.find((q) => q.externalInvoice === key)!.id;
+    }
+    ids.none = (
+      await createQuotation(api, {
+        customerId: customer.id,
+        businessLine: LINE,
+        productId: product.id,
+        qty: '10',
+      })
+    ).id;
+
+    // Registrado: el mismo número que el Excel (el sistema lo guarda con ocho dígitos).
+    await invoice(ids.registered, 999);
+    // No coincide: otro correlativo.
+    await invoice(ids.mismatch, 1001);
+    // Anulado: no cuenta como vigente; la fila vuelve a «solo referencia».
+    const annulled = await invoice(ids.annulled, 77);
+    await postJson(api, `/api/invoicing/documents/${annulled.id}/annul`, {
+      reason: 'E2E D-387: un comprobante anulado no cuenta',
+    });
   });
 
   test.afterAll(async () => {
-    await purgeSalesTrail(api, { quotationIds });
-    await deactivateTrail(api, { productIds: [product.id], customerIds: [customer.id] });
+    // Anular tres comprobantes, sus pedidos y la compra pasa del tope de 45 s de un hook.
+    test.setTimeout(180_000);
+    await purgeInvoicingTrail(api, {
+      ...trail,
+      purchaseId,
+      supplierId,
+      productIds: [product.id],
+    });
+    await purgeSalesTrail(api, { quotationIds: Object.values(ids) });
+    await deactivateTrail(api, { customerIds: [customer.id] });
     await api.dispose();
   });
 
-  test('la API trae el comprobante, lo busca y lo ordena como número', async () => {
+  test('la API trae la marca y los comprobantes vigentes; busca y ordena por el número mostrado', async () => {
     const mine = await listed(api, `customerId=${customer.id}`);
-    expect(mine.map((q) => q.externalInvoice).sort()).toEqual([...keys, null].sort());
-    expect(mine.find((q) => q.id === manualId)?.externalInvoice).toBeNull();
-
-    // El buscador: por la serie, por el número entero y sin distinguir mayúsculas.
-    const bySeries = await listed(api, `search=${series.toLowerCase()}`);
-    expect(bySeries.map((q) => q.externalInvoice).sort()).toEqual([...keys].sort());
-    // Los dígitos del texto también se comparan con el número de cotización (`COT-…999`, que en
-    // una base longeva existe): se miran solo las filas con comprobante.
-    const byNumber = await listed(api, `search=${series}-999`);
-    expect(byNumber.flatMap((q) => q.externalInvoice ?? [])).toEqual([`${series}-999`]);
-
-    // Serie y correlativo como número: 12 < 999 < 1000 (como texto sería 1000 < 12 < 999).
-    const asc = await listed(api, `search=${series}&sort=invoice&dir=asc`);
-    expect(asc.map((q) => q.externalInvoice)).toEqual([
-      `${series}-12`,
-      `${series}-999`,
-      `${series}-1000`,
+    const byId = new Map(mine.map((q) => [q.id, q]));
+    expect(byId.get(ids.reference)?.invoiceDocuments).toEqual([]);
+    expect(byId.get(ids.annulled)?.invoiceDocuments).toEqual([]);
+    expect(byId.get(ids.registered)?.invoiceDocuments.map((d) => d.number)).toEqual([
+      `${series}-00000999`,
     ]);
-    const desc = await listed(api, `search=${series}&sort=invoice&dir=desc`);
-    expect(desc.map((q) => q.externalInvoice)).toEqual([
-      `${series}-1000`,
-      `${series}-999`,
-      `${series}-12`,
+    expect(byId.get(ids.mismatch)?.invoiceDocuments.map((d) => d.number)).toEqual([
+      `${series}-00001001`,
     ]);
-    // Con la no importada en la lista, va detrás en los dos sentidos.
-    const withManual = await listed(api, `customerId=${customer.id}&sort=invoice&dir=desc`);
-    expect(withManual.at(-1)?.id).toBe(manualId);
+    expect(byId.get(ids.none)).toMatchObject({ externalInvoice: null, invoiceDocuments: [] });
+
+    // El buscador encuentra el registrado por su número sin ceros, y el que no coincide por los
+    // dos números: el del sistema y el del Excel.
+    const ofSeries = (rows: ListedQuotation[]) =>
+      rows.filter((q) => q.externalInvoice?.startsWith(series)).map((q) => q.id);
+    expect(ofSeries(await listed(api, `search=${series}-999`))).toEqual([ids.registered]);
+    expect(ofSeries(await listed(api, `search=${series}-1001`))).toEqual([ids.mismatch]);
+    expect(ofSeries(await listed(api, `search=${series}-1000`))).toEqual([ids.mismatch]);
+
+    // Orden por el número mostrado: 12 y 77 (Excel), 999 y 1001 (sistema); la manual al final.
+    const asc = await listed(api, `customerId=${customer.id}&sort=invoice&dir=asc`);
+    expect(asc.map((q) => q.id)).toEqual([
+      ids.reference,
+      ids.annulled,
+      ids.registered,
+      ids.mismatch,
+      ids.none,
+    ]);
   });
 
-  test('la columna va después del código, ordena, se busca y no desborda entre 1366 y 1920 px', async ({
+  test('la columna distingue los cuatro estados, ordena y no desborda entre 1366 y 1920 px', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1366, height: 768 });
     await loginAsAdmin(page);
     await page.goto(`/cotizaciones?search=${customer.docNumber}`);
     const table = page.locator('main table');
-    await expect(table.getByRole('row')).toHaveCount(1 + 4, { timeout: 60_000 });
-
+    await expect(table.getByRole('row')).toHaveCount(1 + 5, { timeout: 60_000 });
     const headers = await table.getByRole('columnheader').allInnerTexts();
     expect(headers.map((h) => h.trim()).slice(0, 2)).toEqual(['Código', 'Comprobante']);
 
-    const manualRow = table
-      .getByRole('row')
-      .filter({ has: page.locator(`a[href="/cotizaciones/${manualId}"]`) });
-    await expect(manualRow.getByTestId('quotation-external-invoice')).toHaveText('');
+    const cellOf = (id: string) =>
+      table
+        .getByRole('row')
+        .filter({ has: page.locator(`a[href="/cotizaciones/${id}"]`) })
+        .getByTestId('quotation-invoice-cell');
+    const invoiceOf = (id: string) => cellOf(id).getByTestId('quotation-external-invoice');
+
+    // Solo referencia: el número del Excel, en gris y con el aviso.
+    for (const [id, key] of [
+      [ids.reference, keys.reference],
+      [ids.annulled, keys.annulled],
+    ] as const) {
+      await expect(invoiceOf(id)).toHaveAttribute('data-state', 'reference');
+      await expect(invoiceOf(id)).toHaveText(key);
+      await expect(invoiceOf(id)).toHaveAttribute(
+        'title',
+        'Número del Excel, aún sin comprobante registrado',
+      );
+      await expect(invoiceOf(id)).toHaveClass(/text-muted-foreground/);
+      await expect(invoiceOf(id).getByRole('link')).toHaveCount(0);
+    }
+
+    // Registrado: el número del sistema, con check y enlace al comprobante.
+    const registered = invoiceOf(ids.registered);
+    await expect(registered).toHaveAttribute('data-state', 'registered');
+    await expect(registered.getByLabel('Comprobante registrado')).toBeVisible();
+    await expect(registered.getByRole('link', { name: `${series}-00000999` })).toHaveAttribute(
+      'href',
+      /^\/comprobantes\//,
+    );
+    await expect(registered).not.toHaveClass(/text-muted-foreground|text-tone-warning/);
+
+    // No coincide: ámbar (tono warning), con los dos números en el tooltip.
+    const mismatch = invoiceOf(ids.mismatch);
+    await expect(mismatch).toHaveAttribute('data-state', 'mismatch');
+    await expect(mismatch).toHaveClass(/text-tone-warning-foreground/);
+    await expect(mismatch).toHaveText(`${series}-00001001`);
+    await expect(mismatch).toHaveAttribute(
+      'title',
+      `Comprobante registrado: ${series}-00001001. Número del Excel: ${keys.mismatch}`,
+    );
+
+    // Sin nada: la celda vacía.
+    await expect(cellOf(ids.none)).toHaveText('');
     await expectNoHorizontalScroll(page);
 
-    // Ordenar por la columna: clic asc, clic desc.
-    const invoiceCells = table.getByTestId('quotation-external-invoice');
+    // Ordenar por la columna, en los dos sentidos.
+    const shown = table.getByTestId('quotation-invoice-cell');
     await table.getByRole('columnheader', { name: 'Comprobante' }).click();
     await expect(page).toHaveURL(/sort=invoice/);
-    await expect(invoiceCells).toHaveText([`${series}-12`, `${series}-999`, `${series}-1000`, '']);
+    await expect(shown).toHaveText([
+      keys.reference,
+      keys.annulled,
+      `${series}-00000999`,
+      `${series}-00001001`,
+      '',
+    ]);
     await table.getByRole('columnheader', { name: 'Comprobante' }).click();
     await expect(page).toHaveURL(/dir=desc/);
-    await expect(invoiceCells).toHaveText([`${series}-1000`, `${series}-999`, `${series}-12`, '']);
+    await expect(shown).toHaveText([
+      `${series}-00001001`,
+      `${series}-00000999`,
+      keys.annulled,
+      keys.reference,
+      '',
+    ]);
 
-    // El buscador de la lista encuentra por el comprobante.
+    // El buscador de la lista encuentra por el número del Excel aunque no coincida.
     await page.goto('/cotizaciones');
     await page
       .getByPlaceholder('Buscar por código, comprobante, cliente o documento…')
-      .fill(`${series}-999`);
-    await expect(page).toHaveURL(new RegExp(`search=${series}-999`));
-    await expect(invoiceCells.filter({ hasText: series })).toHaveText([`${series}-999`]);
+      .fill(keys.mismatch);
+    await expect(page).toHaveURL(new RegExp(`search=${keys.mismatch}`));
+    await expect(shown.filter({ hasText: series })).toHaveText([`${series}-00001001`]);
 
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto(`/cotizaciones?search=${customer.docNumber}`);
-    await expect(table.getByRole('row')).toHaveCount(1 + 4, { timeout: 60_000 });
+    await expect(table.getByRole('row')).toHaveCount(1 + 5, { timeout: 60_000 });
     await expectNoHorizontalScroll(page);
   });
 
-  test('el detalle de la importada muestra el comprobante en la cabecera; la manual no', async ({
-    page,
-  }) => {
-    const imported = (await listed(api, `search=${series}-999`)).find(
-      (q) => q.externalInvoice === `${series}-999`,
-    );
+  test('la cabecera del detalle muestra el mismo estado', async ({ page }) => {
     await loginAsAdmin(page);
-    await page.goto(`/cotizaciones/${imported!.id}`);
-    await expect(page.getByTestId('quotation-external-invoice')).toHaveText(`${series}-999`, {
-      timeout: 60_000,
-    });
-    await page.goto(`/cotizaciones/${manualId}`);
+    const header = page.getByTestId('quotation-external-invoice');
+    for (const [id, state, text] of [
+      [ids.reference, 'reference', keys.reference],
+      [ids.registered, 'registered', `${series}-00000999`],
+      [ids.mismatch, 'mismatch', `${series}-00001001`],
+    ] as const) {
+      await page.goto(`/cotizaciones/${id}`);
+      await expect(header).toHaveAttribute('data-state', state, { timeout: 60_000 });
+      await expect(header).toHaveText(text);
+    }
+    await page.goto(`/cotizaciones/${ids.none}`);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('quotation-external-invoice')).toHaveCount(0);
+    await expect(header).toHaveCount(0);
   });
 });

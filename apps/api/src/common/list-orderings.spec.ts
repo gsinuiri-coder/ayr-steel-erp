@@ -33,7 +33,7 @@ const DEFAULTS = {
 };
 
 const cases = [
-  // D-387: «invoice» se ordena en memoria (`orderByImportedInvoice`), no con un orderBy de Prisma;
+  // D-387: «invoice» se ordena en memoria (`orderByInvoiceNumber`), no con un orderBy de Prisma;
   // su prueba vive en `sales/imported-invoice-d387.spec.ts`.
   [
     'cotizaciones',

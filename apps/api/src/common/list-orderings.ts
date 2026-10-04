@@ -1,7 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import {
   compareImportedInvoiceNumbers,
-  importedInvoiceNumber,
   type CoilQuery,
   type CustomerQuery,
   type DispatchQuery,
@@ -23,7 +22,7 @@ import { listOrderBy } from './list-sort';
 /**
  * D-387: `invoice` no tiene fragmento de `orderBy` (el número vive en las observaciones): con esa
  * clave queda el orden de siempre y `QuotationsService.findAll` ordena con
- * `orderByImportedInvoice`.
+ * `orderByInvoiceNumber`.
  */
 export function quotationOrderBy(
   query: Pick<QuotationQuery, 'sort' | 'dir'>,
@@ -43,27 +42,26 @@ export function quotationOrderBy(
 }
 
 /**
- * D-387: la lista de cotizaciones ordenada por el comprobante importado. Las importadas van
- * primero en los dos sentidos —serie y correlativo como número, `compareImportedInvoiceNumbers`—
- * y las demás detrás; el número de cotización descendente desempata, como el orden de siempre.
+ * D-387: la lista de cotizaciones ordenada por el número que muestra la columna «Comprobante»
+ * (`invoice`: el comprobante vigente o, sin él, el de la marca; `shownInvoiceNumber`). Las que
+ * tienen número van primero en los dos sentidos —serie y correlativo como número,
+ * `compareImportedInvoiceNumbers`, así `FFA1-00001419` y `FFA1-1419` empatan— y las demás
+ * detrás; el número de cotización descendente desempata, como el orden de siempre.
  */
-export function orderByImportedInvoice<T extends { seq: number; notes: string | null }>(
+export function orderByInvoiceNumber<T extends { seq: number; invoice: string | null }>(
   rows: readonly T[],
   dir: SortDirection = 'asc',
 ): T[] {
   const sign = dir === 'desc' ? -1 : 1;
-  return rows
-    .map((row) => ({ row, invoice: importedInvoiceNumber(row.notes) }))
-    .sort((a, b) => {
-      if (a.invoice !== null && b.invoice !== null) {
-        const byInvoice = compareImportedInvoiceNumbers(a.invoice, b.invoice);
-        if (byInvoice !== 0) return sign * byInvoice;
-      } else if (a.invoice !== b.invoice) {
-        return a.invoice === null ? 1 : -1;
-      }
-      return b.row.seq - a.row.seq;
-    })
-    .map(({ row }) => row);
+  return [...rows].sort((a, b) => {
+    if (a.invoice !== null && b.invoice !== null) {
+      const byInvoice = compareImportedInvoiceNumbers(a.invoice, b.invoice);
+      if (byInvoice !== 0) return sign * byInvoice;
+    } else if (a.invoice !== b.invoice) {
+      return a.invoice === null ? 1 : -1;
+    }
+    return b.seq - a.seq;
+  });
 }
 
 export function salesOrderOrderBy(

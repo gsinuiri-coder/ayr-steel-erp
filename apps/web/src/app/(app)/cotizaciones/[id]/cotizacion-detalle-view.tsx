@@ -42,6 +42,7 @@ import {
   type ConfirmQuotationRequest,
 } from '@/components/sales/confirm-quotation-dialog';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
+import { QuotationInvoice } from '@/components/sales/quotation-invoice';
 import {
   formatExpiry,
   remainingLabel,
@@ -329,10 +330,13 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       )}
 
       <StatStrip>
-        {/* D-387: la factura de papel de una importada, la misma lectura que la lista. */}
-        {q.externalInvoice !== null && (
+        {/* D-387: el mismo estado que la columna de la lista; sin nada, no aparece. */}
+        {(q.externalInvoice !== null || q.invoiceDocuments.length > 0) && (
           <Stat label="Comprobante">
-            <span data-testid="quotation-external-invoice">{q.externalInvoice}</span>
+            <QuotationInvoice
+              externalInvoice={q.externalInvoice}
+              invoiceDocuments={q.invoiceDocuments}
+            />
           </Stat>
         )}
         <Stat label="Emisión">{formatDate(q.issueDate)}</Stat>

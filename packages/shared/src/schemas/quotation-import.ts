@@ -632,6 +632,88 @@ export function compareImportedInvoiceNumbers(a: string, b: string): number {
 }
 
 /**
+ * D-387: un número de comprobante normalizado para **comparar**: serie en mayúsculas y
+ * correlativo sin ceros a la izquierda (`FFA1-00001419` y `ffa1-1419` → `FFA1-1419`); `null` si no
+ * tiene la forma `SERIE-NÚMERO`. El del sistema guarda el correlativo a ocho dígitos y el del
+ * papel no: compararlos como texto los haría distintos siempre.
+ */
+export function normalizeInvoiceNumber(value: string): string | null {
+  const match = IMPORTED_INVOICE_NUMBER.exec(value.trim());
+  if (match === null) return null;
+  const [, series = '', correlative = '0'] = match;
+  return `${series.toUpperCase()}-${String(Number(correlative))}`;
+}
+
+/**
+ * D-387: si el buscador de la lista encuentra este número de comprobante: por el texto tal cual
+ * (sin mayúsculas de por medio) o normalizado, así `FFA1-1419` encuentra a `FFA1-00001419`.
+ */
+export function invoiceNumberContains(value: string | null, search: string): boolean {
+  const needle = search.trim().toUpperCase();
+  if (value === null || needle === '') return false;
+  if (value.toUpperCase().includes(needle)) return true;
+  const normalized = normalizeInvoiceNumber(value);
+  return normalized?.includes(normalizeInvoiceNumber(needle) ?? needle) === true;
+}
+
+/** D-387: un comprobante vigente (factura o boleta) del pedido de la cotización. */
+export interface QuotationInvoiceDocument {
+  id: string;
+  number: string;
+}
+
+/**
+ * D-387: qué dice la columna «Comprobante» de una cotización, calculado al leer:
+ *
+ * - `REFERENCE`: hay número en la marca del importador y ningún comprobante vigente en el sistema;
+ * - `REGISTERED`: el pedido tiene comprobante vigente y, si hay número en la marca, alguno coincide
+ *   con él (vale también para una cotización no importada);
+ * - `MISMATCH`: hay comprobante vigente y ninguno coincide con el número de la marca;
+ * - `NONE`: ni una cosa ni la otra.
+ */
+export type QuotationInvoiceState =
+  | { kind: 'NONE' }
+  | { kind: 'REFERENCE'; reference: string }
+  | { kind: 'REGISTERED'; reference: string | null; documents: QuotationInvoiceDocument[] }
+  | { kind: 'MISMATCH'; reference: string; documents: QuotationInvoiceDocument[] };
+
+/**
+ * D-387: el estado de la columna «Comprobante». `reference` es `importedInvoiceNumber` de la
+ * cotización; `documents`, los comprobantes vigentes de su pedido, el primero el que se muestra.
+ * La coincidencia se mide con `normalizeInvoiceNumber`, la misma lectura para los dos lados.
+ */
+export function quotationInvoiceState(
+  reference: string | null,
+  documents: readonly QuotationInvoiceDocument[],
+): QuotationInvoiceState {
+  if (documents.length === 0) {
+    return reference === null ? { kind: 'NONE' } : { kind: 'REFERENCE', reference };
+  }
+  const docs = [...documents];
+  if (reference === null) return { kind: 'REGISTERED', reference: null, documents: docs };
+  const wanted = normalizeInvoiceNumber(reference);
+  const matches = docs.some((d) => wanted !== null && normalizeInvoiceNumber(d.number) === wanted);
+  return matches
+    ? { kind: 'REGISTERED', reference, documents: docs }
+    : { kind: 'MISMATCH', reference, documents: docs };
+}
+
+/**
+ * D-387: el número que la columna muestra —el primer comprobante vigente o, sin él, el de la
+ * marca—, que es también el que ordena la lista. `null` en `NONE`.
+ */
+export function shownInvoiceNumber(state: QuotationInvoiceState): string | null {
+  switch (state.kind) {
+    case 'NONE':
+      return null;
+    case 'REFERENCE':
+      return state.reference;
+    default:
+      return state.documents[0]?.number ?? null;
+  }
+}
+
+/**
  * D-256 (3), repaso de RF-S4b: las observaciones **sin** la marca de procedencia. El duplicado
  * de una cotización importada es una cotización viva de hoy (D-157), no el comprobante: sin
  * esto nacía con la marca, quedaba exenta al editarla y el barrido la tomaba como un segundo

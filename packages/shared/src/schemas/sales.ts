@@ -734,6 +734,12 @@ export const quotationSchema = z.object({
    * la marca del importador con `importedInvoiceNumber`; `null` en las demás.
    */
   externalInvoice: z.string().nullable(),
+  /**
+   * D-387: facturas y boletas **vigentes** del pedido vivo de la cotización (sin anuladas, sin
+   * borradores ni notas de crédito), por fecha de emisión. Con `externalInvoice` arman el estado
+   * de la columna «Comprobante» (`quotationInvoiceState`).
+   */
+  invoiceDocuments: z.array(z.object({ id: z.string().uuid(), number: z.string() })),
   /** Pedido que nació de confirmarla (D-065). Null mientras no se confirma. */
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
