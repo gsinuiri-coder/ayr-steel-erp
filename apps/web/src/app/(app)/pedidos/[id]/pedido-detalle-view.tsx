@@ -66,6 +66,7 @@ import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { OrderDocumentLinks } from '@/components/sales/order-documents';
 import { AnnulledDocumentsCard } from '@/components/invoicing/annulled-documents-card';
 import { MoveToOrderDialog } from '@/components/invoicing/move-to-order-dialog';
+import { CancelOrderDialog } from '@/components/sales/cancel-order-dialog';
 import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import { RowActions } from '@/components/row-actions';
@@ -124,8 +125,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
   }
 
   const cancel = useMutation({
-    mutationFn: (reason: string) =>
-      api<SalesOrderDto>(`/sales/orders/${id}/cancel`, { method: 'POST', body: { reason } }),
+    mutationFn: (body: { reason: string; acknowledgeFabricated: boolean }) =>
+      api<SalesOrderDto>(`/sales/orders/${id}/cancel`, { method: 'POST', body }),
     onSuccess: () => {
       toast.success('Pedido anulado y reservas liberadas');
       setCancelOpen(false);
@@ -257,7 +258,11 @@ export function PedidoDetalleView({ id }: { id: string }) {
   // D-311: una reserva consumida la consumió una **entrega** (despacho) o una orden de
   // producción. Solo la segunda impide anular hasta revertir la orden; la primera ya es un
   // hecho consumado y el aviso dice dónde se entregó.
-  const consumed = o.reservations.filter((r) => r.status === 'CONSUMED' && r.dispatchId === null);
+  // D-383 (3): solo las consumidas por una OP **viva** impiden anular (el DTO trae
+  // `productionOrderId` solo para la OP en borrador o en curso).
+  const consumedByLiveOrder = o.reservations.filter(
+    (r) => r.status === 'CONSUMED' && r.dispatchId === null && r.productionOrderId !== null,
+  );
   const delivered = o.reservations.filter((r) => r.status === 'CONSUMED' && r.dispatchId !== null);
   const deliveryCodes = [
     ...new Map(delivered.map((r) => [r.dispatchId, r.dispatchCode] as const)).entries(),
@@ -440,12 +445,17 @@ export function PedidoDetalleView({ id }: { id: string }) {
                 },
               },
               // D-381: el comprobante anulado de un pedido anulado pasa a este, con sus líneas. La
-              // lista del diálogo dice por qué no se puede, si no se puede.
+              // lista del diálogo dice por qué no se puede un candidato. D-383 (P2 de cc16): con
+              // un comprobante vivo o un borrador en el pedido (no editable, D-187) ninguno se
+              // puede, y se dice desde el menú.
               {
                 key: 'move-document',
                 label: 'Traer comprobante anulado',
                 show: isAdmin && canOperate,
-                disabled: busy,
+                disabled: busy || !o.isEditable,
+                title: o.isEditable
+                  ? undefined
+                  : 'El pedido ya tiene un comprobante (vivo o en borrador): anúlalo o descártalo primero',
                 onSelect: () => {
                   setMoveOpen(true);
                 },
@@ -527,12 +537,17 @@ export function PedidoDetalleView({ id }: { id: string }) {
           </AlertDescription>
         </Alert>
       )}
-      {consumed.length > 0 && o.status !== 'CANCELLED' && (
+      {/*
+        D-383 (3): solo con una OP **viva** sobre la reserva consumida. Con la OP cerrada la
+        anulación se permite (el diálogo avisa de lo fabricado), y este aviso decía lo contrario
+        mientras el botón seguía activo.
+      */}
+      {consumedByLiveOrder.length > 0 && o.status !== 'CANCELLED' && (
         <Alert>
           <AlertDescription>
-            {consumed.length === 1
+            {consumedByLiveOrder.length === 1
               ? 'Una reserva ya fue consumida'
-              : `${consumed.length} reservas ya fueron consumidas`}{' '}
+              : `${consumedByLiveOrder.length} reservas ya fueron consumidas`}{' '}
             por producción: el pedido no se puede anular hasta revertir o anular esa orden.
           </AlertDescription>
         </Alert>
@@ -787,15 +802,14 @@ export function PedidoDetalleView({ id }: { id: string }) {
         />
       )}
 
-      <ReasonDialog
+      {/* D-383: el diálogo pregunta al API qué pasaría antes de dejar confirmar. */}
+      <CancelOrderDialog
+        order={{ id: o.id, code: o.code }}
         open={cancelOpen}
         onOpenChange={setCancelOpen}
-        title={`Anular ${o.code}`}
-        description="Libera las reservas activas y devuelve el material al disponible. Si el pedido vino de una cotización vigente, esa cotización vuelve a estar emitida."
-        confirmLabel="Anular pedido"
         pending={cancel.isPending}
-        onConfirm={(reason) => {
-          cancel.mutate(reason);
+        onConfirm={(input) => {
+          cancel.mutate(input);
         }}
       />
 

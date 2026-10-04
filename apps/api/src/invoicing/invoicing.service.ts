@@ -120,7 +120,7 @@ const documentInclude = {
     },
   },
   seriesRef: { select: { series: true } },
-  salesOrder: { select: { id: true, seq: true, sellerId: true } },
+  salesOrder: { select: { id: true, seq: true, sellerId: true, status: true } },
   dispatch: { select: { id: true, seq: true, salesOrder: { select: { sellerId: true } } } },
   affectedDocument: {
     select: {
@@ -3325,6 +3325,7 @@ export class InvoicingService {
       customerIsGeneric: row.customer.isSystem,
       salesOrderId: row.salesOrderId,
       salesOrderCode: row.salesOrder ? salesOrderCode(row.salesOrder.seq) : null,
+      salesOrderStatus: row.salesOrder?.status ?? null,
       dispatchId: row.dispatchId,
       dispatchCode: row.dispatch ? toDispatchCode(row.dispatch.seq) : null,
       affectedDocumentId: row.affectedDocumentId,
