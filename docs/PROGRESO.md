@@ -32,8 +32,12 @@
 - **P3 corregido:** los bordes de la tolerancia.
 - **Riesgos aceptados**, registrados en D-385:
   - el confirm del importador admite sin bobina toda fila `BOB…` sin `saleCoilId`;
-  - la excepción de edición es por producto, no por línea;
-  - el barrido trata la línea sin bobina como defecto de R1.
+  - la excepción de edición es por producto, no por línea.
+- **Barrido, corregido a pedido del dueño:** `pnpm sweep:imported` (CLI, sin pantalla) ya no toma
+  la línea sin bobina asignada como defecto. Antes el `--execute` la ataba a una bobina con la
+  regla de D-254 (saldo ≥ papel, reserva de los kilos del papel) o dejaba el documento fuera de la
+  corrección de importes.
+- **Reacomodo:** sobre `main` `a9fee5a` (con D-383); solo hubo conflicto en este archivo.
 - **Para la ventana:** verificar en la foto que `BOB030AZUL` exista en el catálogo. Si no existe,
   la fila queda en rojo y no se crea sola. Runbook en `docs/handoff/ventana-cc17.md`; UAT en
   `docs/uat/cc17.md`.

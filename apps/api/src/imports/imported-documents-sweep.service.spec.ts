@@ -244,6 +244,37 @@ describe('ImportedDocumentsSweepService.report', () => {
     expect(documents[0]?.unpairedPaperRows).toEqual([1]);
   });
 
+  it('D-385: la línea sin bobina asignada (producto canónico, sin bobina) no es un hallazgo y no se ata', async () => {
+    // Con la bobina única del pool presente: antes el execute la ataba con la regla de D-254.
+    const unassigned = line(1, {
+      sku: 'BOB038AZUL',
+      productId: 'p-canon',
+      subtotal: '12439.8310',
+      igv: '2239.1690',
+      total: '14679.0000',
+    });
+    const { service, quotations } = build(
+      fakePrisma({ quotations: [quotationRow([unassigned], { status: 'EMITTED' })] }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    expect(documents[0]?.findings).toEqual([]);
+    const run = await service.execute(ACTOR, [paperLine()]);
+    expect(run.fixed).toEqual([]);
+    expect(quotations.update).not.toHaveBeenCalled();
+  });
+
+  it('D-385: con importes que no son del papel, se corrigen los importes y la línea sigue sin bobina', async () => {
+    const unassigned = line(1, { sku: 'BOB038AZUL', productId: 'p-canon' });
+    const { service } = build(
+      fakePrisma({ quotations: [quotationRow([unassigned], { status: 'EMITTED' })] }),
+    );
+    const { documents } = await service.report([paperLine()]);
+    const [finding] = documents[0]?.findings ?? [];
+    expect(finding?.product).toBeNull();
+    expect(finding?.amounts?.paper.net).toBe('12439.8310');
+    expect(finding?.newSku).toBe('BOB038AZUL');
+  });
+
   it('sin candidatas en el pool no hay bobina a la que atarla', async () => {
     const { service } = build(fakePrisma({ quotations: [quotationRow([line(1)])], coils: [] }));
     const { documents } = await service.report([paperLine()]);

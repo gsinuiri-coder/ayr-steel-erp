@@ -490,7 +490,17 @@ export class ImportedDocumentsSweepService {
       }
       const source = paper[pair.paperIndex];
       if (!source) continue;
-      const product = await this.productFinding(line, lineKeys[i] ?? '', doc.scope);
+      // D-385: la línea de una cotización que el importador dejó **sin bobina asignada** —ya con
+      // el producto canónico de su pool, sin bobina— no es el defecto de R1 (COT-000002 tenía un
+      // `BOB…` suelto, con otro SKU). Su bobina se elige al confirmar, con la tolerancia del papel
+      // y reservando el saldo entero: el barrido no la ata (el execute la ataba a la única
+      // candidata con saldo ≥ el papel, por los kilos del papel) ni deja por ella el documento
+      // fuera de la corrección de importes. Solo en cotizaciones: un pedido nunca la tiene, porque
+      // confirmar exige la bobina.
+      const product =
+        doc.kind === 'COTIZACION' && isPaperUnassignedCoilLine(line, lineKeys[i] ?? '')
+          ? null
+          : await this.productFinding(line, lineKeys[i] ?? '', doc.scope);
       const amounts = amountsFinding(line, source);
       // Repaso de RF-S4b (P2-1): una diferencia de importe mayor de lo que puede explicar el
       // redondeo (la cota de D-169) no es el defecto que corrige el barrido: es un precio que
@@ -658,6 +668,19 @@ export class ImportedDocumentsSweepService {
 /** El SKU tal como se compara: sin espacios a los costados y en mayúsculas. */
 function normalizedSku(sku: string): string {
   return sku.trim().toUpperCase();
+}
+
+/**
+ * D-385: la línea «sin bobina asignada» del importador: un producto de venta de bobina **con el
+ * SKU canónico de su pool** y sin bobina. El `BOB…` suelto de COT-000002 tiene otro SKU
+ * (`BOB38AZUL` frente a `BOB038AZUL`) y sigue siendo un hallazgo de R1.
+ */
+function isPaperUnassignedCoilLine(line: DocLine, lineKey: string): boolean {
+  return (
+    line.reserveItemType !== InventoryItemType.COIL &&
+    isCoilSaleProduct(line.product) &&
+    normalizedSku(line.product.sku) === normalizedSku(lineKey)
+  );
 }
 
 /**
