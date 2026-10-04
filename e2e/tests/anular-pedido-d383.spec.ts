@@ -240,7 +240,8 @@ test.describe('D-383 — anular un pedido', () => {
       // Despacho vigente: tampoco.
       const dispatch = await dispatchOrder(api, {
         salesOrderId: order.id,
-        items: [{ salesOrderItemId: line.id, qty: line.qty, weightKg: '25' }],
+        // La mitad: con la línea entera el pedido queda atendido, y uno atendido no se anula.
+        items: [{ salesOrderItemId: line.id, qty: '5', weightKg: '12.5' }],
       });
       trail.dispatchIds!.push(dispatch.id);
       await postJson(api, `/api/invoicing/documents/${invoice.id}/annul`, {
