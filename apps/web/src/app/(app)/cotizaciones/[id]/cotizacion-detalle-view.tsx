@@ -37,7 +37,10 @@ import {
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
-import { ConfirmQuotationDialog } from '@/components/sales/confirm-quotation-dialog';
+import {
+  ConfirmQuotationDialog,
+  type ConfirmQuotationRequest,
+} from '@/components/sales/confirm-quotation-dialog';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
 import {
   formatExpiry,
@@ -69,10 +72,10 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   }
 
   const confirm = useMutation({
-    mutationFn: (shortfall?: { confirmShortfall: true; shortfallReason: string }) =>
+    mutationFn: (request: ConfirmQuotationRequest) =>
       api<SalesOrderDto>(`/sales/quotations/${id}/confirm`, {
         method: 'POST',
-        ...(shortfall ? { body: shortfall } : {}),
+        ...(Object.keys(request).length > 0 ? { body: request } : {}),
       }),
     onSuccess: (order) => {
       toast.success(
@@ -260,11 +263,18 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               {unassignedCoilLines(q.items)
                 .map((i) => `Línea ${String(i.lineNumber)} (${i.productSku})`)
                 .join(', ')}
-              : no tiene una bobina asignada, así que no se puede confirmar. Edita la cotización y{' '}
-              {isImportedQuotation(q.notes)
-                ? 'elige la bobina con «Convertir en venta de bobina»'
-                : 'quita la línea y elige la bobina con «Bobina completa (venta directa)»'}
-              .
+              {isImportedQuotation(q.notes) ? (
+                // D-385: la importada elige la bobina al confirmar, entre las libres del SKU.
+                <>
+                  : sin bobina asignada. Al confirmar se elige la bobina entre las libres de ese SKU
+                  (con un saldo dentro del ±1 % de los kilos del papel) y recién ahí se reserva.
+                </>
+              ) : (
+                <>
+                  : no tiene una bobina asignada, así que no se puede confirmar. Edita la cotización
+                  y quita la línea y elige la bobina con «Bobina completa (venta directa)».
+                </>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -438,8 +448,8 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         pending={confirm.isPending}
-        onConfirm={(shortfall) => {
-          confirm.mutate(shortfall);
+        onConfirm={(request) => {
+          confirm.mutate(request);
         }}
       />
 

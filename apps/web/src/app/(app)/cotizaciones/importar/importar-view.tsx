@@ -921,6 +921,13 @@ function ImportRow({
             }}
           />
         )}
+        {raw.unitConversion && (
+          // D-385: la fila venía en toneladas y el producto se vende en kilos.
+          <div className="mt-1 w-40 text-right text-xs text-muted-foreground">
+            {raw.unitConversion.paperQty} {raw.unitConversion.paperUnit} →{' '}
+            {formatQty(trimDecimals(raw.qty), 'kg')}
+          </div>
+        )}
         <Issue row={row} field="qty" />
       </td>
       <td className="py-3 pr-3 text-right">
@@ -1053,6 +1060,12 @@ function CoilRowCell({
       <div className="text-xs text-muted-foreground">
         {raw.rawSku} · pool: {formatQty(raw.coilPoolAvailableKg ?? '0.000', 'kg')} disponibles
       </div>
+      {raw.coilCandidates.length === 0 && raw.productId !== null && (
+        // D-385: entra sin bobina; se elige al confirmar la cotización.
+        <Badge variant="outline" className="w-fit text-xs">
+          Sin bobina asignada
+        </Badge>
+      )}
       {raw.coilCandidates.length > 0 && (
         <Select value={row.saleCoilId ?? ''} onValueChange={onChoose} disabled={disabled}>
           <SelectTrigger
@@ -1072,6 +1085,11 @@ function CoilRowCell({
       )}
     </div>
   );
+}
+
+/** `4192.000` → `4192`, `4190.500` → `4190.5`: la cantidad sin ceros de relleno. */
+function trimDecimals(value: string): string {
+  return value.includes('.') ? value.replace(/\.?0+$/, '') : value;
 }
 
 /** `BOB-0012 · 1200.00 mm · 4,194.000 kg`: lo que distingue a dos bobinas del mismo pool. */
