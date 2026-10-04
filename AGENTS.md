@@ -132,8 +132,8 @@ Reglas de convivencia, sin excepción:
    `inventory_movements` ni `inventory_balances`, salvo estas excepciones, nombradas con su
    decisión en el test centinela (`apps/api/src/inventory/kardex-writers.sentinel.spec.ts`):
    la herramienta de fecha de la carga inicial (D-285: solo `operation_date`, con el permiso del
-   trigger y auditoría), el reset de la base de pruebas (D-018, `TRUNCATE` con el guard de D-181)
-   y la limpia de `production` para V-4 (D-208, `TRUNCATE`). El centinela barre `apps/api/src`,
+   trigger y auditoría) y el reset de la base de pruebas (D-018, `TRUNCATE` con el guard de
+   D-181). La limpia de V-4 (D-208) se retiró del repo (D-384). El centinela barre `apps/api/src`,
    `apps/api/prisma`, `scripts/`, `packages/` y `e2e/`, y falla si aparece un escritor nuevo. El
    kardex es append-only: las reversas son movimientos inversos, nunca edición de saldos.
 9. **`Decimal`, nunca `number`,** para dinero, pesos y dimensiones.

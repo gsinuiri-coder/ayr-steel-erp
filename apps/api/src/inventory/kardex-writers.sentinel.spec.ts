@@ -70,14 +70,7 @@ const EXCEPTIONS = new Map<string, Exception>([
       mustMatch: /TRUNCATE TABLE/,
     },
   ],
-  [
-    'apps/api/prisma/production-cleanup-v4.ts',
-    {
-      decision: 'D-208',
-      what: 'TRUNCATE de la limpia de V-4 (pnpm limpia:v4)',
-      mustMatch: /TRUNCATE TABLE/,
-    },
-  ],
+  // D-208 (limpia de V-4) ya no es excepción: D-384 retiró `production-cleanup-v4.ts` del repo.
 ]);
 
 function listFiles(dir: string): string[] {

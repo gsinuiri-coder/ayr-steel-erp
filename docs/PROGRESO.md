@@ -13,8 +13,8 @@
 - **Qué sale:** `apps/api/prisma/production-cleanup-v4.ts`, `scripts/production-cleanup-v4.mjs`, el
   script de `package.json` y sus 4 reglas `ask` de `.claude/settings.json`. `docs/ENTORNOS.md`
   marca el checklist de V-4 como histórico. El código queda en la historia de git (`ca1fa4d`).
-- **Pendiente al reacomodar cc15b (PR #88):** el centinela de escritores del kardex va sin la
-  excepción D-208 y la regla dura 8 de `AGENTS.md` deja de nombrarla.
+- **Mergeado (PR #89, `43e606b`).** Al reacomodar cc15b (PR #88) el centinela de escritores del
+  kardex quedó sin la excepción D-208 y la regla dura 8 de `AGENTS.md` dejó de nombrarla.
 - Sin cambio de runtime: ni API ni web usan estos archivos (no hay deploy).
 
 ## 2026-10-03 — cc16: D-381, traer un comprobante manual anulado a otro pedido (PR #87 sin merge)
@@ -97,7 +97,8 @@ Origen: P2-1 y P2-2 de `docs/revision/cc15b-p2b-segundo-modelo.md`, previos a cc
 - **Rama `cc15b/reemplazo-con-reserva`** desde `main` `56e068e`, en `../ayr-cc15`. Sin migración y
   nada en producción. Runbook `docs/handoff/ventana-cc15b.md`, guion `docs/uat/cc15b.md`.
 - **Primer commit:** regla dura 8 de `AGENTS.md` con el texto aprobado y el centinela
-  `kardex-writers.sentinel.spec.ts` (excepciones D-285, D-018, D-208). **D-382.**
+  `kardex-writers.sentinel.spec.ts` (excepciones D-285 y D-018; D-208 salió al retirarse
+  `limpia:v4` por D-384). **D-382.**
 - **`InventoryService.replaceEntry`:** mismo camino interno que `record`/`reverse`; reservas y
   materia prima sobre el estado final; precondición en SQL bajo el lock; saldo corrido en cada
   fecha posterior no negativo. `reverse` toma las bobinas antes que el saldo al revertir un
