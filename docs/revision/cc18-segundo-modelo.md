@@ -135,31 +135,31 @@ caminos comunes: el conjunto tomado de antemano cubre lo que las guardas piden d
 
 ## Tabla: par de operaciones → ¿puede cruzarse?
 
-| Par | ¿Puede cruzarse? | Por qué |
-| --- | --- | --- |
-| Despacho × despacho (otros pedidos, mismos ítems) | no | Pedido propio; reservas por id; bobinas en una sentencia; saldos por clave. |
-| Despacho × anulación de compra | no | Compra → bobinas+agregado → saldos. Cubierto por el db-spec. |
-| Despacho × confirmar pedido | no | Ambos: bobinas con agregado → saldos por clave. Cubierto. |
-| Despacho × «Editar compra» / `replaceEntry` | no | Compra → bobinas → saldos ordenados. Cubierto. |
-| Despacho × reversa de despacho (otro pedido) | no | Mismo orden. |
-| Despacho × reportar (mismo pedido) | no | Reportar toma el pedido; el despacho espera ahí. |
-| Despacho × reportar (otro pedido) | no | Bobinas → saldos en ambos. |
-| Despacho × reversa de reporte de coberturas | no | La reversa toma primero la reserva del producto. |
-| Despacho × reversa de reporte de drywall (mismo pedido) | solo grupo C | Reserva → saldo contra saldo → reserva; ya existía. |
-| Anulación × anulación / «Editar compra» (misma compra) | no | Las serializa la fila de la compra. |
-| Anulación de compra × reportar, cerrar, montar, corte | no | Bobinas antes que saldos en todos. |
-| Anulación de compra × cierre/anulación de OP de drywall | solo en teoría (P2-4) | UPDATE implícito fuera de la puerta. |
-| Confirmar × partido, merma, cerrar bobina | no | Bobinas con agregado → saldos. |
-| `updateItemQty` × montar en la OP de la línea | solo grupo C | Bobinas y saldos → OP, contra OP → bobinas. |
-| Montar × reportar × cerrar (misma OP) | no | Las serializa la fila de la OP. |
-| Reversa de reporte de coberturas × anular pedido | solo grupo C | Reserva de materia prima al final. |
-| Reversa de reporte de drywall × anular pedido | solo grupo C | Reserva → pedido después de los saldos. |
-| Una bobina (cerrar, partir, mermar, editar) × despacho, confirmar, producción | no | `lockCoil` con agregado; la edición con cambio de agregado da 409 por `NOWAIT` con contención. |
-| Corte: recibir × anular (misma bobina) | sí (P2-1) | Ya existía antes. |
-| `purchases.receive` de producto × despacho, confirmar | sí (P2-2) | Saldos en el orden de las líneas. |
-| Re-fechado de despachos × otros | sí (P3-1) | Conjuntos sucesivos. |
-| Borrador de comprobante × reversa de despacho | sí (P3-2) | Pedido → despacho contra despacho → pedido. |
-| Restaurar bobina, deshacer lote × demás | no | En el orden canónico. |
+| Par                                                                           | ¿Puede cruzarse?      | Por qué                                                                                        |
+| ----------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------- |
+| Despacho × despacho (otros pedidos, mismos ítems)                             | no                    | Pedido propio; reservas por id; bobinas en una sentencia; saldos por clave.                    |
+| Despacho × anulación de compra                                                | no                    | Compra → bobinas+agregado → saldos. Cubierto por el db-spec.                                   |
+| Despacho × confirmar pedido                                                   | no                    | Ambos: bobinas con agregado → saldos por clave. Cubierto.                                      |
+| Despacho × «Editar compra» / `replaceEntry`                                   | no                    | Compra → bobinas → saldos ordenados. Cubierto.                                                 |
+| Despacho × reversa de despacho (otro pedido)                                  | no                    | Mismo orden.                                                                                   |
+| Despacho × reportar (mismo pedido)                                            | no                    | Reportar toma el pedido; el despacho espera ahí.                                               |
+| Despacho × reportar (otro pedido)                                             | no                    | Bobinas → saldos en ambos.                                                                     |
+| Despacho × reversa de reporte de coberturas                                   | no                    | La reversa toma primero la reserva del producto.                                               |
+| Despacho × reversa de reporte de drywall (mismo pedido)                       | solo grupo C          | Reserva → saldo contra saldo → reserva; ya existía.                                            |
+| Anulación × anulación / «Editar compra» (misma compra)                        | no                    | Las serializa la fila de la compra.                                                            |
+| Anulación de compra × reportar, cerrar, montar, corte                         | no                    | Bobinas antes que saldos en todos.                                                             |
+| Anulación de compra × cierre/anulación de OP de drywall                       | solo en teoría (P2-4) | UPDATE implícito fuera de la puerta.                                                           |
+| Confirmar × partido, merma, cerrar bobina                                     | no                    | Bobinas con agregado → saldos.                                                                 |
+| `updateItemQty` × montar en la OP de la línea                                 | solo grupo C          | Bobinas y saldos → OP, contra OP → bobinas.                                                    |
+| Montar × reportar × cerrar (misma OP)                                         | no                    | Las serializa la fila de la OP.                                                                |
+| Reversa de reporte de coberturas × anular pedido                              | solo grupo C          | Reserva de materia prima al final.                                                             |
+| Reversa de reporte de drywall × anular pedido                                 | solo grupo C          | Reserva → pedido después de los saldos.                                                        |
+| Una bobina (cerrar, partir, mermar, editar) × despacho, confirmar, producción | no                    | `lockCoil` con agregado; la edición con cambio de agregado da 409 por `NOWAIT` con contención. |
+| Corte: recibir × anular (misma bobina)                                        | sí (P2-1)             | Ya existía antes.                                                                              |
+| `purchases.receive` de producto × despacho, confirmar                         | sí (P2-2)             | Saldos en el orden de las líneas.                                                              |
+| Re-fechado de despachos × otros                                               | sí (P3-1)             | Conjuntos sucesivos.                                                                           |
+| Borrador de comprobante × reversa de despacho                                 | sí (P3-2)             | Pedido → despacho contra despacho → pedido.                                                    |
+| Restaurar bobina, deshacer lote × demás                                       | no                    | En el orden canónico.                                                                          |
 
 ## Resolución (autor, 2026-10-04)
 

@@ -29,6 +29,7 @@ Quedan riesgos de comportamiento en caminos poco frecuentes:
    - «Editar compra» con cambio de color o espesor (`purchase-received-edit.service.ts`).
 
    El guardrail pide después el agregado destino, que es nuevo para la transacción.
+
 2. **P2: el db-spec puede pasar sin ejercitar nada.** Cualquier `HttpException` cuenta como
    «rechazo de dominio»: si una fixture queda mal y las dos operaciones fallan siempre con 400, el
    test sale verde.
@@ -50,6 +51,7 @@ Quedan riesgos de comportamiento en caminos poco frecuentes:
 
    Cinco transacciones con el timeout por defecto de Prisma (5 s) ahora hacen más trabajo: merma,
    anular merma, anular bobina y film (abrir y volver a sellar). Propuesta: medir.
+
 7. **P3: falsos negativos del centinela.** No ve la tabla con esquema, la cláusula armada en otro
    fragmento, `$queryRawUnsafe` concatenado ni sentencias de más de 600 caracteres.
 8. **P3: guard de la base de pruebas.** Confirmar que ningún otro guard exija `ayr_local_e2e`
