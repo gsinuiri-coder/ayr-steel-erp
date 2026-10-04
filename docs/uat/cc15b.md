@@ -27,6 +27,11 @@ ventas ni consumos (en producción, la línea 1 de E001-1766).
    pondera el precio corregido con el de la otra compra.
 2. Cambiar el **producto** de esa línea: sigue **Bloqueado** (el cambio de producto no pasa por el
    reemplazo).
+3. Después de corregir el precio de la compra **anterior**, la compra **posterior** del mismo
+   producto se sigue pudiendo **anular** (⋯ → Anular), si no tiene pagos y el saldo que queda
+   cubre las reservas (en producción, E001-1766 la siguen parando sus reservas). Con una venta o
+   un despacho de ese producto después de la compra posterior, anularla sigue **bloqueado**:
+   «… ya tiene movimientos posteriores».
 
 ## 3. Bobina que respalda material prometido (puntos 3 y 5)
 

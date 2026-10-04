@@ -15,7 +15,10 @@
   - «Editar compra» corrige precio y cantidad con `replaceEntry`: ahora también con reserva activa
     (si la reserva cabe en el saldo final) y con otra compra posterior del mismo producto;
   - la vista previa bloquea el cambio de color o espesor de una bobina que respalda material
-    prometido.
+    prometido;
+  - anular una compra de producto terminado ya no se bloquea por una **entrada** ajena posterior
+    (P2-2). Foto READ ONLY de producción del 2026-10-03: ninguna compra pasa de anulable a
+    bloqueada; solo E001-1766 pasa el guardrail, y la siguen parando sus reservas.
 - **La API nueva convive con la web vieja:** no hay campos ni caminos nuevos en el plan (los avisos
   nuevos viajan en `warnings`, que la web de cc15a ya muestra). Se mergea después del smoke igual.
 - **Salida completa de cada smoke en un archivo** (`smoke-cc15b-*.log`), antes de filtrar.

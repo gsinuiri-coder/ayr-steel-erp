@@ -102,9 +102,27 @@
   y segundo modelo centrado en romper `replaceEntry` `docs/revision/cc15b-segundo-modelo.md`
   (P1-1 corregido: salida anulada entre fechas dejaba el saldo corrido negativo; P2-1 y P2-2
   corregidos: orden de locks bobinas → saldo en la edición y en `reverse`; P3-3 corregido).
-- **Pendiente de decisión del dueño:** tras corregir una compra por reemplazo, otra compra
-  **posterior** del mismo producto ya no se puede anular (el ingreso nuevo tiene id mayor y la
-  anulación mide «posterior» por id; P2-2 de la autorrevisión).
+- **P2-2 de la autorrevisión, resuelto en este PR (decisión del dueño, opción (a), 2026-10-03):**
+  tras corregir una compra por reemplazo, otra compra **posterior** del mismo producto quedaba sin
+  poder anularse (el ingreso nuevo tiene id mayor y la anulación mide «posterior» por id). Ahora,
+  en producto terminado, una **entrada** ajena posterior no bloquea la anulación (misma regla que
+  la precondición de `replaceEntry`); en bobina todo sigue bloqueando. El filtro va en la consulta
+  (`laterMovementsWhere`, `purchase-cancel.ts`). La reversa sigue comprobando saldo final y
+  reservas. Tests: unitarios (incluido «nunca bloquea más que antes»), 4 contra la base
+  (`purchase-cancel.db-spec.ts`) y un E2E. Trabajado en `../ayr-c15x` (rama
+  `cc15b/anular-ajenas`) para no tocar demo.
+  - **Foto READ ONLY de producción (2026-10-03, con OK del dueño; script de un solo uso ya
+    borrado; detalle en `local-data/foto-d382/`):** 18 compras recibidas; 11 bloqueadas con la
+    regla de hoy y 10 con la nueva; **ninguna pasa de anulable a bloqueada**. La única que cambia
+    es E001-1766: la bloqueaba una entrada de E001-1731 (2026-09-27). Con la regla nueva pasa el
+    guardrail, pero la reversa la sigue parando por reservas: PERFILU y PERFILH quedarían en 0
+    con 7 y 4 reservados; ALVEOLAR11800, en 1 con 4 reservados.
+  - **Revisión Sonnet de contexto limpio solo sobre este cambio**
+    (`docs/revision/cc15b-anulacion-segundo-modelo.md`): sin P0 ni P1. P2-A corregido: la
+    anulación bloquea los saldos de los productos antes del guardrail (una venta concurrente cabía
+    en el saldo de la otra compra y la reversa salía a costo completo). P3-C corregido (E2E); P3-A
+    (deriva de ±0,0001 sin aviso al anular) y P3-B (bobina y ajuste ajeno probados como forma de
+    la consulta) aceptados.
 - **Test frágil identificado:** `auth.service.spec.ts` «rechaza correo inexistente con 401» calcula
   un hash Argon2 real y supera los 5 s cuando corren lint y typecheck en paralelo; solo, y en la
   CI, pasa.
