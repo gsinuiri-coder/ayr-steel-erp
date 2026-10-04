@@ -57,9 +57,10 @@ otra tarea autorizada.
 - Decisión: D-387 en `docs/ARQUITECTURA.md` §0.2. Guion UAT: `docs/uat/cc19.md`.
 - Revisiones: `docs/revision/cc19-autorrevision.md` y `docs/revision/cc19-segundo-modelo.md`.
 - **Sin migración.** El deploy no escribe datos. **Toca la API y la web.**
-- Sesión en paralelo: cc18 (`../ayr-cc18`, D-386, solo API). Si entra antes a `main`, esta rama se
-  reacomoda encima y se espera la CI otra vez. Conflicto esperable: la tabla de §0.2 y
-  `docs/PROGRESO.md`.
+- Sesión en paralelo: cc18 (D-386, solo API). **Entró primero:** API `00083-q96` con
+  `git-sha=43d2bd4`; `main` quedó en `523c198` tras el PR #98 de docs. Esta rama se reacomodó sobre
+  `523c198`. Los conflictos fueron solo de docs: §0.2 y `docs/PROGRESO.md`, donde quedaron las dos
+  entradas. El código combinó limpio, incluido `sales-orders.service.ts`, que tocan las dos ramas.
 
 ### Qué cambia
 
@@ -123,7 +124,10 @@ git diff --name-only origin/main origin/cc19/comprobante-en-cotizaciones -- apps
 ```
 
 La revisión vigente de Cloud Run, su `git-sha` y su tráfico se leen con un `.mjs` en el
-scratchpad que use `scripts/lib.mjs#run`. Esa revisión es la vuelta atrás y se anota acá.
+scratchpad que use `scripts/lib.mjs#run`. Esa revisión es la vuelta atrás y se anota acá:
+**`ayr-steel-erp-api-00083-q96`, `git-sha=43d2bd4` (la de cc18), al 100 %**. El commit a desplegar
+tiene que contener `43d2bd4` (`git merge-base --is-ancestor 43d2bd4 <SHA>`): si no, el deploy le
+quitaría D-386 a producción.
 
 **Sin foto de producción:** no hay datos que verificar. El conteo de la marca se hizo en demo y está
 en D-387.
