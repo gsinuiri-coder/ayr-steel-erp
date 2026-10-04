@@ -13,6 +13,8 @@ jest.mock('./price-changes', () => ({
   findPriceChanges: jest.fn(),
 }));
 jest.mock('./coil-sale-product', () => ({
+  // D-385: ninguna línea guardada es un `BOB…` sin bobina en estos documentos.
+  isCoilSaleProduct: jest.fn().mockReturnValue(false),
   lineCoilPool: jest.fn().mockResolvedValue({
     sku: 'BOB038AZUL',
     thicknessMm: '0.38',

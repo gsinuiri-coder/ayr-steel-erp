@@ -122,6 +122,72 @@ export async function findCoilSaleProducts(
 }
 
 /**
+ * D-385 (A): el producto de venta de cada bobina, por id. Con tolerancia de espesor las
+ * candidatas de una línea pueden ser de SKU distintos (`BOB028AZUL` para un papel `BOB030AZUL`),
+ * y la línea toma el de la bobina elegida. Una bobina sin producto activo no aparece.
+ */
+export async function coilSaleProductsByCoil(
+  tx: Prisma.TransactionClient,
+  coilIds: readonly string[],
+): Promise<Map<string, CoilSaleProduct>> {
+  const out = new Map<string, CoilSaleProduct>();
+  if (coilIds.length === 0) return out;
+  const coils = await tx.coil.findMany({
+    where: { id: { in: [...coilIds] } },
+    select: { id: true, ...COIL_SALE_IDENTITY_SELECT },
+  });
+  const products = await findCoilSaleProducts(tx, coils);
+  for (const coil of coils) {
+    const product = products.get(coilSaleSkus(coil).canonical);
+    if (product) out.set(coil.id, product);
+  }
+  return out;
+}
+
+/**
+ * D-385: el producto de venta **activo** de un SKU canónico de bobina, sin pasar por una bobina.
+ * Lo usa el importador cuando el pool no tiene ninguna bobina libre que corresponda: la línea
+ * entra igual, con el producto y sin bobina. Si el catálogo no lo tiene, `null`: no se crea nada.
+ */
+export async function findCoilSaleProductBySku(
+  tx: Prisma.TransactionClient,
+  canonicalSku: string,
+): Promise<CoilSaleProduct | null> {
+  return tx.product.findFirst({
+    where: {
+      sku: canonicalSku,
+      isActive: true,
+      businessLine: { code: BusinessLineCode.TRADING },
+    },
+    select: { id: true, sku: true, name: true, businessLineId: true },
+  });
+}
+
+/**
+ * D-385 (A): los productos de venta **activos** de varios SKU canónicos (los del mismo color con
+ * espesor dentro de la tolerancia del papel), en el orden en que se piden.
+ */
+export async function findCoilSaleProductsBySkus(
+  tx: Prisma.TransactionClient,
+  canonicalSkus: readonly string[],
+): Promise<CoilSaleProduct[]> {
+  if (canonicalSkus.length === 0) return [];
+  const rows = await tx.product.findMany({
+    where: {
+      sku: { in: [...canonicalSkus] },
+      isActive: true,
+      businessLine: { code: BusinessLineCode.TRADING },
+    },
+    select: { id: true, sku: true, name: true, businessLineId: true },
+  });
+  const bySku = new Map(rows.map((r) => [r.sku, r]));
+  return canonicalSkus.flatMap((sku) => {
+    const product = bySku.get(sku);
+    return product ? [product] : [];
+  });
+}
+
+/**
  * D-252: los tokens de color o tipo que el catálogo conoce, para el normalizador. Los colores
  * del catálogo (por su color comercial) y los tipos sin color.
  */
@@ -357,6 +423,8 @@ export interface CoilPoolCandidate {
   widthMm: string;
   /** Saldo del kardex de la bobina, en kg. */
   balanceKg: string;
+  /** D-385 (A): su espesor; con tolerancia puede no ser el del SKU que se busca. */
+  thicknessMm: string;
 }
 
 export interface CoilPool {
@@ -460,21 +528,43 @@ export function coilTieReasons(
  */
 export async function coilPoolFor(
   tx: Prisma.TransactionClient,
-  pool: { thicknessMm: string; attribute: string },
+  /**
+   * D-385 (A): con `toleranceMm`, el espesor no tiene que ser exacto: entra toda bobina del mismo
+   * color comercial o tipo con espesor dentro de ±tolerancia (la de coberturas), aunque sea de
+   * otro SKU. Sin ella, el pool de siempre (D-254): espesor exacto.
+   */
+  pool: { thicknessMm: string; attribute: string; toleranceMm?: string },
   qty: string,
   scope: ReservedScope = {},
   viewer?: { id: string; role: Role },
 ): Promise<CoilPool> {
+  const center = toDecimal(pool.thicknessMm);
   const coils = await tx.coil.findMany({
     where: {
       kind: CoilKind.COIL,
       status: CoilStatus.OPEN,
-      thicknessMm: toFixedString(pool.thicknessMm, 'MM'),
+      thicknessMm:
+        pool.toleranceMm === undefined
+          ? toFixedString(pool.thicknessMm, 'MM')
+          : {
+              // Hacia adentro: con una tolerancia de entorno que no sea múltiplo de 0.01
+              // (`0.025`), redondear al medio admitía 0.33 para un papel 0.30 (segundo modelo,
+              // P3-1). Los espesores van a dos decimales.
+              gte: center
+                .minus(toDecimal(pool.toleranceMm))
+                .toDecimalPlaces(2, Decimal.ROUND_CEIL)
+                .toFixed(2),
+              lte: center
+                .plus(toDecimal(pool.toleranceMm))
+                .toDecimalPlaces(2, Decimal.ROUND_FLOOR)
+                .toFixed(2),
+            },
     },
     select: {
       id: true,
       code: true,
       widthMm: true,
+      thicknessMm: true,
       finish: { select: { kind: true, color: { select: { code: true } } } },
     },
     orderBy: { code: 'asc' },
@@ -524,6 +614,7 @@ export async function coilPoolFor(
         code: coil.code,
         widthMm: coil.widthMm.toFixed(2),
         balanceKg: toFixedString(balance, 'KG'),
+        thicknessMm: coil.thicknessMm.toFixed(2),
       });
     }
   }

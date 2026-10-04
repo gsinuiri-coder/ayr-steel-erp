@@ -2,6 +2,61 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-04 — cc17: D-385, importador de ventas con TONELADA y bobina sin stock (PR #94 sin merge)
+
+- D-385 aprobada por el dueño. Caso real: FFA1-1419 (`BOB030AZUL`, 4.192 TONELADA, 12 789.153),
+  leído del archivo `local-data/VENTAS SETIEMBRE.xlsx` del checkout principal, sin copiarlo.
+- **Contradicción con el alcance, decidida por el dueño:** el archivo de agosto ya trae una fila en
+  TONELADA que no es bobina (FFA1-1372, servicio de conformado, 30.26, producto en TNE). La
+  conversión aplica solo si el producto se vende en kg. También decidió reservar el saldo entero
+  de la bobina elegida.
+- Implementación en API, web, unitarios y E2E `importador-bobina-d385.spec.ts`. Sin migración,
+  nada en producción. No se usó demo ni se corrió la suite en local, porque había otra sesión en la
+  ventana de D-383. **La CI es el juez.**
+- **CI 37187224063 en `64a6721`: verde.** E2E 504 pasados y 3 saltados; smoke de Neon `ci` 36
+  pasados y 2 saltados; lint, typecheck, unitarios y Sonar en verde. La corrida anterior
+  (37184869394) tuvo 1 rojo del spec nuevo: era un defecto del test (el mensaje de bloqueo era otro,
+  correcto), no del producto.
+- Archivos reales en local: el agosto real se importa igual, con el conformado en 30.260 t, y
+  setiembre da 4192.000 kg con el importe del papel. El spec se salta en la CI, que no tiene
+  `local-data`.
+- Revisiones:
+  - autorrevisión, `docs/revision/cc17-autorrevision.md`: 0 P0, 2 P1, 5 P2, 6 P3;
+  - segundo modelo, `docs/revision/cc17-segundo-modelo.md`: 0 P0, 1 P1, 3 P2, 4 P3.
+- **P1 corregidos:**
+  - la pantalla descartaba los avisos de unidad;
+  - el barrido no convertía las toneladas.
+- **P2 corregidos:**
+  - el lock previo de la bobina rompía el orden único de locks;
+  - duplicar una importada con línea sin bobina daba 400.
+- **P3 corregido:** los bordes de la tolerancia.
+- **Riesgos aceptados**, registrados en D-385:
+  - el confirm del importador admite sin bobina toda fila `BOB…` sin `saleCoilId`;
+  - la excepción de edición es por producto, no por línea.
+- **Barrido, corregido a pedido del dueño:** `pnpm sweep:imported` (CLI, sin pantalla) ya no toma
+  la línea sin bobina asignada como defecto. Antes el `--execute` la ataba a una bobina con la
+  regla de D-254 (saldo ≥ papel, reserva de los kilos del papel) o dejaba el documento fuera de la
+  corrección de importes.
+- **Reacomodo:** sobre `main` `a9fee5a` (con D-383); solo hubo conflicto en este archivo. CI
+  37189015171 en `e6c2789`: verde.
+- **Ampliación del dueño antes del UAT (mismo PR):**
+  - **(C) tolerancia de espesor:** la bobina se busca del mismo color con espesor dentro de ±0.02 mm
+    del papel (la constante de coberturas), aunque sea de otro SKU. La línea toma el producto de la
+    bobina. El barrido empareja con la misma tolerancia (decisión del dueño). La sugerencia sigue
+    pidiendo ≥ los kg del papel (decisión del dueño).
+  - **(D) la sugerencia se quita o se cambia:** en la vista previa y en la cotización.
+- **Foto `READ ONLY` de producción** (2026-10-04 08:47 UTC, con OK del dueño,
+  `local-data/cc17/foto-azul-production-2026-10-04T0847.json`):
+  - `BOB030AZUL` no existe;
+  - hay 9 bobinas AZUL de 0.28 con saldo, ninguna ≥ 4192 kg;
+  - candidatas para FFA1-1419 con las dos tolerancias: `…-4154-27`, `…-4180-25` y `…-4182-26`.
+- **Demo:** refrescada desde production con OK del dueño: `db:reset-dev --branch demo` con la
+  contraseña rotada, después `env:demo` y `db:demo`.
+- **Regla del dueño: máximo 10 ramas en Neon.** Registrada en `AGENTS.md` §3.3 y en
+  `docs/ENTORNOS.md`. Después de la ventana se listan las ramas y se propone el borrado (runbook,
+  paso 10).
+- Runbook en `docs/handoff/ventana-cc17.md`; UAT en `docs/uat/cc17.md`.
+
 ## 2026-10-04 — Ventana D-383 (desplegada, PR #90, sin migración)
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle y la **lista completa de lo

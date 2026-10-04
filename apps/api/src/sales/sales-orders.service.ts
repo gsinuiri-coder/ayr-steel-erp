@@ -101,6 +101,12 @@ import {
   sumShortfalls,
   type ShortfallLine,
 } from './order-shortfall';
+import {
+  paperCoilBlocker,
+  paperCoilChoices,
+  resolvePaperCoilAssignments,
+  unassignedPaperCoilLines,
+} from './paper-coil-assignment';
 import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
@@ -134,7 +140,12 @@ import {
   theoreticalKgForMeters,
   toSalesItemDto,
 } from './sales-lines';
-import { coilPoolFor, coilPoolKeyOfProduct, findCoilTies } from './coil-sale-product';
+import {
+  coilPoolFor,
+  coilPoolKeyOfProduct,
+  findCoilTies,
+  isCoilSaleProduct,
+} from './coil-sale-product';
 import { reservationDispatches } from './reservation-dispatches';
 import {
   fabricatedAliveQty,
@@ -261,7 +272,8 @@ const shortageQuotationInclude = {
         select: {
           sku: true,
           lengthMm: true,
-          businessLine: { select: { inventoryStrategy: true } },
+          // D-385: el código de la línea dice si es un producto de venta de bobina.
+          businessLine: { select: { inventoryStrategy: true, code: true } },
         },
       },
       pieces: { orderBy: { lineNumber: 'asc' } },
@@ -449,6 +461,17 @@ export class SalesOrdersService {
         // prometería material que ya no es el que ese SKU necesita. Recalcular contra el
         // maestro de hoy también es lo que arregla solas las cotizaciones anteriores a
         // D-134, que guardaron `PRODUCT` + metros.
+        // D-385: la línea de bobina que el importador dejó sin bobina se ata acá a la bobina
+        // elegida, con la tolerancia del papel. Sin elección no se confirma. Se vuelve a validar
+        // bajo lock después de reservar (abajo).
+        const coilAssignments = await resolvePaperCoilAssignments(
+          tx,
+          quotation,
+          input.coilAssignments ?? [],
+          { toleranceMm: roofingToleranceMm(this.env) },
+        );
+        const assignedByLine = new Map(coilAssignments.map((a) => [a.lineNumber, a]));
+
         const rawMaterialByLine = await this.resolveRawMaterial(
           tx,
           quotation.items.map((i) => ({
@@ -480,6 +503,29 @@ export class SalesOrdersService {
                 // recalcular reemplazan lo que la cotización había congelado; el resto se
                 // copia tal cual.
                 const raw = rawMaterialByLine.get(i.lineNumber);
+                // D-385: la bobina elegida reserva su **saldo entero**: la venta la cierra. La
+                // cantidad y el importe de la línea siguen siendo los del papel.
+                const coil = assignedByLine.get(i.lineNumber);
+                if (coil) {
+                  return {
+                    lineNumber: i.lineNumber,
+                    productId: coil.productId,
+                    description: i.description,
+                    qty: i.qty,
+                    unit: Unit.KGM,
+                    listPricePen: i.listPricePen,
+                    unitPricePen: i.unitPricePen,
+                    valuePerMeterPen: i.valuePerMeterPen,
+                    piecesHint: i.piecesHint,
+                    subtotalPen: i.subtotalPen,
+                    igvPen: i.igvPen,
+                    totalPen: i.totalPen,
+                    reserveItemType: InventoryItemTypeEnum.COIL,
+                    reserveItemId: coil.coilId,
+                    reserveQty: coil.balanceKg,
+                    reserveUnit: Unit.KGM,
+                  };
+                }
                 return {
                   lineNumber: i.lineNumber,
                   productId: i.productId,
@@ -537,6 +583,29 @@ export class SalesOrdersService {
           allowShortfall,
           shortfalls,
         });
+        // D-385: ya con las bobinas bloqueadas por `createReservations` (la unión, en orden de
+        // id), la bobina elegida se vuelve a validar: si cambió entre la primera lectura y el
+        // lock —la montaron en una OP, la tomó otra cotización, se movió su saldo—, no se confirma.
+        if (coilAssignments.length > 0) {
+          const recheck = await resolvePaperCoilAssignments(
+            tx,
+            quotation,
+            input.coilAssignments ?? [],
+            { toleranceMm: roofingToleranceMm(this.env), exceptSalesOrderId: order.id },
+          );
+          const same = (a: (typeof recheck)[number]) =>
+            coilAssignments.some(
+              (b) =>
+                b.lineNumber === a.lineNumber &&
+                b.coilId === a.coilId &&
+                b.balanceKg === a.balanceKg,
+            );
+          if (recheck.length !== coilAssignments.length || !recheck.every(same)) {
+            throw new ConflictException(
+              'La bobina elegida cambió mientras se confirmaba: vuelve a abrir Confirmar y elígela de nuevo',
+            );
+          }
+        }
 
         // D-186: confirmar ya deja las órdenes en cola. Cada línea que reserva materia prima
         // es una línea que se fabrica contra el pedido (D-134/D-171), y su OP nace por el
@@ -567,6 +636,20 @@ export class SalesOrdersService {
           where: { id: quotationId },
           data: { status: QuotationStatus.CONFIRMED, confirmedAt: new Date() },
         });
+        // D-385: la cotización confirmada dice qué bobina vendió, igual que la que la trajo
+        // asignada desde el importador.
+        for (const a of coilAssignments) {
+          await tx.quotationItem.update({
+            where: { id: a.itemId },
+            data: {
+              productId: a.productId,
+              reserveItemType: InventoryItemTypeEnum.COIL,
+              reserveItemId: a.coilId,
+              reserveQty: a.balanceKg,
+              reserveUnit: Unit.KGM,
+            },
+          });
+        }
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -582,6 +665,16 @@ export class SalesOrdersService {
             convertedTemporaryLines: converted,
             productionOrders: productionOrderIds.length,
             ...(shortfalls.length > 0 ? { shortfalls: shortfalls.map((s) => ({ ...s })) } : {}),
+            ...(coilAssignments.length > 0
+              ? {
+                  coilAssignments: coilAssignments.map((a) => ({
+                    lineNumber: a.lineNumber,
+                    coilCode: a.coilCode,
+                    paperKg: a.paperKg,
+                    reservedKg: a.balanceKg,
+                  })),
+                }
+              : {}),
           },
         });
         return order.id;
@@ -652,12 +745,50 @@ export class SalesOrdersService {
       select: { expiresAt: true },
     });
 
+    // D-385: la línea de bobina sin bobina asignada de una importada no reserva un producto (que
+    // nunca tiene saldo): se elige la bobina en el diálogo. Va aparte del cálculo de reserva.
+    const unassigned = await unassignedPaperCoilLines(
+      this.prisma,
+      quotation,
+      roofingToleranceMm(this.env),
+    );
+    const unassignedNumbers = new Set(unassigned.map((l) => l.lineNumber));
     const {
-      lines: previewLines,
+      lines: reservedLines,
       blockers: lineBlockers,
       shortfallNotes,
-    } = await this.previewLinesOf(quotationId, quotation.items);
+    } = await this.previewLinesOf(
+      quotationId,
+      quotation.items.filter((i) => !unassignedNumbers.has(i.lineNumber)),
+    );
     blockers.push(...lineBlockers);
+    const chooseLines: ConfirmPreviewLineDto[] = [];
+    for (const line of unassigned) {
+      const item = quotation.items.find((i) => i.lineNumber === line.lineNumber);
+      if (!item) continue;
+      const coilChoices = await paperCoilChoices(this.prisma, line, quotationId);
+      const blocker = paperCoilBlocker(line, coilChoices);
+      if (blocker !== null) blockers.push(blocker);
+      chooseLines.push({
+        lineNumber: line.lineNumber,
+        productSku: line.productSku,
+        description: item.description,
+        qty: item.qty.toFixed(3),
+        unit: item.unit,
+        action: 'CHOOSE_COIL',
+        reserveLabel: null,
+        reserveQty: null,
+        reserveUnit: null,
+        availableQty: null,
+        shortfallQty: null,
+        plan: null,
+        coilChoices,
+        paperSku: line.pool.sku,
+      });
+    }
+    const previewLines = [...reservedLines, ...chooseLines].sort(
+      (a, b) => a.lineNumber - b.lineNumber,
+    );
     // D-341: al ADMINISTRADOR el faltante ya no le bloquea (confirma con la bandera y un motivo);
     // al VENDEDOR sí (D-054).
     const canConfirmWithShortfall = actor.role === Role.ADMINISTRADOR && shortfallNotes.length > 0;
@@ -762,6 +893,8 @@ export class SalesOrdersService {
           availableQty: null,
           shortfallQty: null,
           plan: null,
+          coilChoices: [],
+          paperSku: null,
         });
         continue;
       }
@@ -829,6 +962,8 @@ export class SalesOrdersService {
         availableQty: Decimal.max(forThisLine, new Decimal(0)).toFixed(3),
         shortfallQty: shortfall?.toFixed(3) ?? null,
         plan,
+        coilChoices: [],
+        paperSku: null,
       });
     }
 
@@ -895,10 +1030,16 @@ export class SalesOrdersService {
         const forThisLine = available.minus(taken.get(key) ?? new Decimal(0));
         taken.set(key, (taken.get(key) ?? new Decimal(0)).plus(qty));
         if (qty.lte(forThisLine)) continue;
+        // D-385: la línea de bobina que el importador dejó sin bobina cuenta como sin stock, y
+        // se dice por qué: no es que falte el producto, es que no tiene bobina.
+        const unassignedCoil =
+          line.reserveItemType !== InventoryItemTypeEnum.COIL && isCoilSaleProduct(item.product);
         short.push({
           lineNumber: item.lineNumber,
           productSku: item.product.sku,
-          label: labels.get(line.reserveItemId)?.label ?? line.reserveItemId,
+          label: unassignedCoil
+            ? `${item.product.sku} — sin bobina asignada`
+            : (labels.get(line.reserveItemId)?.label ?? line.reserveItemId),
           missingQty: qty.minus(Decimal.max(forThisLine, new Decimal(0))).toFixed(3),
           unit: line.reserveUnit,
         });

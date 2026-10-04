@@ -10,6 +10,7 @@ import {
   MAX_VALUE,
   money,
   roundTo,
+  SCALE,
   toDecimal,
   toFixedString,
   type DecimalInput,
@@ -819,12 +820,62 @@ export const confirmQuotationSchema = z
       .min(5, 'Explica el motivo (mínimo 5 caracteres)')
       .max(500)
       .optional(),
+    /**
+     * D-385: la bobina que atiende cada línea de bobina **sin bobina asignada** de una cotización
+     * importada. Se elige al confirmar, entre las libres del SKU de la línea, y recién ahí se
+     * reserva. Solo esas líneas la aceptan; en cualquier otra es un 400.
+     */
+    coilAssignments: z
+      .array(
+        z.object({
+          lineNumber: z.number().int().positive(),
+          saleCoilId: z.string().uuid(),
+        }),
+      )
+      .max(MAX_SALES_ITEMS)
+      .optional(),
   })
   .refine((v) => v.confirmShortfall !== true || (v.shortfallReason?.length ?? 0) >= 5, {
     message: 'Confirmar con faltante exige un motivo',
     path: ['shortfallReason'],
-  });
+  })
+  .refine(
+    (v) =>
+      new Set((v.coilAssignments ?? []).map((a) => a.lineNumber)).size ===
+      (v.coilAssignments ?? []).length,
+    { message: 'Una línea lleva una sola bobina', path: ['coilAssignments'] },
+  );
 export type ConfirmQuotationInput = z.infer<typeof confirmQuotationSchema>;
+
+/**
+ * D-385: cuánto puede diferir el saldo de la bobina elegida de los kilos del papel, como
+ * fracción de los kilos del papel (0.01 = ±1 %). **La única constante**: la usan el API al
+ * confirmar y la pantalla para marcar las bobinas fuera de rango.
+ */
+export const PAPER_COIL_WEIGHT_TOLERANCE = '0.01';
+
+/**
+ * D-385: el rango de saldos aceptable para una línea de bobina del papel de `paperKg` kilos, y
+ * si `balanceKg` cae dentro (bordes incluidos). Con `Decimal`, nunca con `number`.
+ */
+export function paperCoilWeightCheck(
+  paperKg: DecimalInput,
+  balanceKg: DecimalInput,
+): { ok: boolean; minKg: string; maxKg: string } {
+  const paper = toDecimal(paperKg);
+  const margin = paper.times(toDecimal(PAPER_COIL_WEIGHT_TOLERANCE));
+  // Los bordes se redondean **hacia adentro** a la escala de kilos, y se compara contra esos
+  // mismos bordes: lo que la pantalla muestra como límite es exactamente lo que se acepta
+  // (revisión de segundo modelo cc17, P3-1). Los saldos ya vienen a tres decimales.
+  const min = paper.minus(margin).toDecimalPlaces(SCALE.KG, Decimal.ROUND_CEIL);
+  const max = paper.plus(margin).toDecimalPlaces(SCALE.KG, Decimal.ROUND_FLOOR);
+  const balance = toDecimal(balanceKg);
+  return {
+    ok: balance.gte(min) && balance.lte(max),
+    minKg: min.toFixed(SCALE.KG),
+    maxKg: max.toFixed(SCALE.KG),
+  };
+}
 
 /**
  * D-341: lo que falta de un pedido confirmado con faltante, **sumado por el ítem que se
@@ -861,8 +912,47 @@ export type OrderWithShortfallDto = z.infer<typeof orderWithShortfallSchema>;
  * - `RESERVE_STOCK`: reserva el producto terminado o la bobina que la línea vende; sale de
  *   stock sin orden.
  * - `NONE`: la línea no lleva inventario (un servicio): no reserva ni produce nada.
+ * - `CHOOSE_COIL` (D-385): línea de bobina sin bobina asignada de una cotización importada; se
+ *   elige la bobina en el diálogo (`coilChoices`) y recién entonces reserva.
  */
-export const CONFIRM_LINE_ACTIONS = ['PRODUCE', 'RESERVE_STOCK', 'NONE'] as const;
+export const CONFIRM_LINE_ACTIONS = ['PRODUCE', 'RESERVE_STOCK', 'NONE', 'CHOOSE_COIL'] as const;
+
+/** D-385: una bobina libre del SKU de la línea, para elegir al confirmar. */
+export const confirmCoilChoiceSchema = z.object({
+  coilId: z.string().uuid(),
+  code: z.string(),
+  widthMm: z.string(),
+  balanceKg: z.string(),
+  /** D-385 (A): espesor y producto de venta de la bobina (puede ser otro SKU que el del papel). */
+  thicknessMm: z.string(),
+  productSku: z.string(),
+  /** Si el saldo está dentro de la tolerancia (±1 %) de los kilos del papel. */
+  withinTolerance: z.boolean(),
+});
+export type ConfirmCoilChoiceDto = z.infer<typeof confirmCoilChoiceSchema>;
+
+/**
+ * D-385 (B): quitar (`null`) o cambiar la bobina de una línea de bobina de una cotización
+ * importada, antes de confirmarla. La sugerencia del importador es solo eso.
+ */
+export const setQuotationItemCoilSchema = z.object({
+  saleCoilId: z.string().uuid().nullable(),
+});
+export type SetQuotationItemCoilInput = z.infer<typeof setQuotationItemCoilSchema>;
+
+/**
+ * D-385 (B): las bobinas a las que se puede cambiar esa línea: libres, del color del papel, con
+ * espesor dentro de la tolerancia y saldo ≥ los kilos del papel (la regla de la sugerencia). Una
+ * más liviana, dentro del ±1 %, se elige al confirmar dejando la línea sin bobina.
+ */
+export const quotationItemCoilCandidatesSchema = z.object({
+  lineNumber: z.number().int(),
+  paperSku: z.string().nullable(),
+  toleranceMm: z.string(),
+  currentCoilId: z.string().uuid().nullable(),
+  candidates: z.array(confirmCoilChoiceSchema.omit({ withinTolerance: true })),
+});
+export type QuotationItemCoilCandidatesDto = z.infer<typeof quotationItemCoilCandidatesSchema>;
 export type ConfirmLineAction = (typeof CONFIRM_LINE_ACTIONS)[number];
 
 export const confirmPreviewLineSchema = z.object({
@@ -885,6 +975,10 @@ export const confirmPreviewLineSchema = z.object({
   shortfallQty: z.string().nullable(),
   /** El plan de corte que tendrá la OP (`PRODUCE`), en palabras. */
   plan: z.string().nullable(),
+  /** D-385: las bobinas libres que se pueden elegir (`CHOOSE_COIL`). Vacío en toda otra línea. */
+  coilChoices: z.array(confirmCoilChoiceSchema),
+  /** D-385 (A): el SKU que dice el papel (`CHOOSE_COIL`); `null` en toda otra línea. */
+  paperSku: z.string().nullable(),
 });
 export type ConfirmPreviewLineDto = z.infer<typeof confirmPreviewLineSchema>;
 

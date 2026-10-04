@@ -95,7 +95,14 @@ describe('QuotationsService.duplicate — producto que cambió de subtipo (D-348
           }),
         },
         product: {
-          findMany: jest.fn().mockResolvedValue([{ id: 'p-1', sku: 'ACCES030ROJO', ...ACCESORIO }]),
+          findMany: jest.fn().mockResolvedValue([
+            {
+              id: 'p-1',
+              sku: 'ACCES030ROJO',
+              ...ACCESORIO,
+              businessLine: { code: 'METALLIC_ROOFING' },
+            },
+          ]),
         },
         $transaction: jest.fn(() => ({ quotation: { create } })),
       },

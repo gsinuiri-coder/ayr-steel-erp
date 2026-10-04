@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -30,6 +31,7 @@ import {
   reassignSellerSchema,
   completeReservationSchema,
   confirmQuotationSchema,
+  setQuotationItemCoilSchema,
   createQuotationSchema,
   type CompleteReservationInput,
   type OrderWithShortfallDto,
@@ -62,6 +64,8 @@ import {
   type PaginatedResult,
   type QuotationDto,
   type QuotationDuplicateDto,
+  type QuotationItemCoilCandidatesDto,
+  type SetQuotationItemCoilInput,
   type QuotationListItemDto,
   type QuotationQuery,
   type QuotationStockShortageDto,
@@ -205,6 +209,30 @@ export class SalesController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<QuotationDuplicateDto> {
     return this.quotations.duplicate(actor, id);
+  }
+
+  /**
+   * D-385 (B): las bobinas a las que se puede cambiar una línea de bobina de una cotización
+   * importada, y cuál tiene hoy.
+   */
+  @Get('quotations/:id/items/:lineNumber/coil-candidates')
+  quotationItemCoilCandidates(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('lineNumber', ParseIntPipe) lineNumber: number,
+  ): Promise<QuotationItemCoilCandidatesDto> {
+    return this.quotations.itemCoilOptions(actor, id, lineNumber);
+  }
+
+  /** D-385 (B): quitar (`null`) o cambiar la bobina de esa línea, antes de confirmar. */
+  @Put('quotations/:id/items/:lineNumber/coil')
+  setQuotationItemCoil(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('lineNumber', ParseIntPipe) lineNumber: number,
+    @Body(new ZodValidationPipe(setQuotationItemCoilSchema)) body: SetQuotationItemCoilInput,
+  ): Promise<QuotationDto> {
+    return this.quotations.setItemCoil(actor, id, lineNumber, body);
   }
 
   /** D-186: qué va a hacer confirmar —reservas, órdenes, faltantes— antes de hacerlo. */

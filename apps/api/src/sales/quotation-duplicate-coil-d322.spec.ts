@@ -162,3 +162,54 @@ describe('QuotationsService.duplicate — bobina entera atada a otra cotización
     expect([...call[2].unassignedCoilProducts]).toEqual(['p-bob']);
   });
 });
+
+describe('QuotationsService.duplicate — línea sin bobina asignada (D-385)', () => {
+  it('la línea BOB… que el importador dejó sin bobina se copia sin bobina, con aviso', async () => {
+    const svc = serviceWith({ tied: false });
+    const prisma = (svc as unknown as { prisma: Record<string, Record<string, jest.Mock>> }).prisma;
+    prisma.quotation!.findUnique!.mockResolvedValue({
+      id: 'q-1',
+      seq: 2,
+      customerId: 'c-1',
+      sellerId: 'u-1',
+      notes: 'Factura externa: FFA1-1419',
+      items: [
+        {
+          lineNumber: 1,
+          productId: 'p-bob',
+          description: 'BOBINA ALUZINC AZUL 0.30',
+          qty: D('4192'),
+          unit: 'KGM',
+          unitPricePen: D('3.0508'),
+          valuePerMeterPen: null,
+          piecesHint: null,
+          subtotalPen: D('12789.15'),
+          pieces: [],
+          reserveItemType: 'PRODUCT',
+          reserveItemId: 'p-bob',
+          reserveQty: D('4192'),
+        },
+      ],
+    });
+    prisma.product!.findMany!.mockResolvedValue([
+      {
+        id: 'p-bob',
+        sku: 'BOB030AZUL',
+        unit: 'KGM',
+        roofingKind: null,
+        businessLine: { code: 'TRADING' },
+      },
+    ]);
+    const out = await svc.duplicate(ACTOR, 'q-1');
+    expect(out.warnings).toEqual([
+      'Línea 1: BOB030AZUL no tiene bobina asignada; elegí una con «Bobina completa (venta directa)».',
+    ]);
+    const call = (resolveSalesLines as jest.Mock).mock.calls[0] as [
+      unknown,
+      Record<string, unknown>[],
+      { unassignedCoilProducts: Set<string> },
+    ];
+    expect(call[1][0]).toMatchObject({ productId: 'p-bob', qty: '4192.000' });
+    expect([...call[2].unassignedCoilProducts]).toEqual(['p-bob']);
+  });
+});

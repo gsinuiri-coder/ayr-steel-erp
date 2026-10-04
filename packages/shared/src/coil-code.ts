@@ -284,6 +284,57 @@ export function normalizeCoilSku(
   return byCode ?? { ok: false, reason: 'La línea no trae código ni descripción de bobina' };
 }
 
+/**
+ * D-385 (A): el espesor y el color o tipo de un SKU canónico de bobina (`BOB028AZUL` → 0.28,
+ * `AZUL`). `null` si no tiene esa forma. Sin catálogo: el SKU canónico ya trae el token validado.
+ */
+export function parseCanonicalCoilSku(
+  sku: string,
+): { thicknessMm: string; attribute: string } | null {
+  const match = /^BOB(\d{3})([A-Z][A-Z0-9-]*)$/.exec(sku.trim().toUpperCase());
+  if (!match) return null;
+  const [, digits = '', attribute = ''] = match;
+  return { thicknessMm: toDecimal(digits).div(100).toFixed(2), attribute };
+}
+
+/**
+ * D-385 (A): ¿dos espesores están dentro de la tolerancia de coberturas
+ * (`ROOFING_THICKNESS_TOLERANCE_MM`, ±0.02 mm, bordes incluidos)?
+ */
+export function thicknessWithin(
+  a: DecimalInput,
+  b: DecimalInput,
+  toleranceMm: DecimalInput,
+): boolean {
+  return toDecimal(a).minus(toDecimal(b)).abs().lte(toDecimal(toleranceMm));
+}
+
+/**
+ * D-385 (A): los SKU canónicos del mismo color o tipo cuyo espesor cae dentro de la tolerancia
+ * del papel, de a centésima (`BOB030AZUL` con ±0.02 → 0.28 … 0.32). Los espesores del catálogo
+ * van a dos decimales, así que no hay otro SKU posible en el medio.
+ */
+export function coilSkusWithinThickness(
+  pool: { thicknessMm: DecimalInput; attribute: string },
+  toleranceMm: DecimalInput,
+): { sku: string; thicknessMm: string }[] {
+  const center = toDecimal(pool.thicknessMm);
+  const tolerance = toDecimal(toleranceMm);
+  const out: { sku: string; thicknessMm: string }[] = [];
+  for (
+    let t = center.minus(tolerance).toDecimalPlaces(2, Decimal.ROUND_CEIL);
+    t.lte(center.plus(tolerance));
+    t = t.plus('0.01')
+  ) {
+    if (t.lte(0)) continue;
+    out.push({
+      sku: `${COIL_SKU_PREFIX}${coilThicknessToken(t)}${pool.attribute}`,
+      thicknessMm: t.toFixed(2),
+    });
+  }
+  return out;
+}
+
 /** RF-13: código único de una bobina concreta. `sequence` es el correlativo del proveedor. */
 export function coilCode(input: {
   supplierCode: string;

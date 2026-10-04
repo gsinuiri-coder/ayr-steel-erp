@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { ConfirmLineAction, ConfirmPreviewDto } from '@ayr/shared';
+import {
+  paperCoilWeightCheck,
+  type ConfirmLineAction,
+  type ConfirmPreviewDto,
+  type ConfirmPreviewLineDto,
+  type ConfirmQuotationInput,
+} from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatQty, unitSymbol } from '@/lib/format';
 import { formatExpiry } from '@/components/sales/temporary-reservation';
@@ -20,6 +26,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -34,7 +47,14 @@ const ACTION_LABELS: Record<ConfirmLineAction, string> = {
   PRODUCE: 'Reserva MP y genera OP',
   RESERVE_STOCK: 'Reserva de stock',
   NONE: 'No reserva ni produce',
+  CHOOSE_COIL: 'Elige la bobina',
 };
+
+/** Lo que el diálogo manda al confirmar, además de la fecha que no pide. */
+export type ConfirmQuotationRequest = Pick<
+  ConfirmQuotationInput,
+  'confirmShortfall' | 'shortfallReason' | 'coilAssignments'
+>;
 
 /**
  * D-186: confirmar es **un solo clic después de ver qué va a pasar**: qué se reserva, qué
@@ -56,16 +76,20 @@ export function ConfirmQuotationDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pending: boolean;
-  onConfirm: (shortfall?: { confirmShortfall: true; shortfallReason: string }) => void;
+  onConfirm: (request: ConfirmQuotationRequest) => void;
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const [reason, setReason] = useState('');
+  /** D-385: la bobina elegida por línea (`CHOOSE_COIL`). */
+  const [coils, setCoils] = useState<Record<number, string>>({});
   // Ni el reconocimiento ni el motivo se arrastran de una apertura a la siguiente: el faltante
   // pudo cambiar, y confirmar «a conciencia» con la casilla marcada de antes no es conciencia.
+  // La bobina elegida tampoco: entre una apertura y otra pudo tomarla otro documento.
   useEffect(() => {
     if (open) {
       setAcknowledged(false);
       setReason('');
+      setCoils({});
     }
   }, [open]);
   const preview = useQuery({
@@ -82,7 +106,13 @@ export function ConfirmQuotationDialog({
   const trimmedReason = reason.trim();
   // Con faltante hace falta reconocerlo y explicarlo (mismo mínimo que el API).
   const shortfallPending = withShortfall && (!acknowledged || trimmedReason.length < 5);
-  const blocked = !data || data.blockers.length > 0 || shortfallPending;
+  // D-385: cada línea sin bobina necesita una bobina elegida y dentro de la tolerancia.
+  const chooseLines = data?.lines.filter((l) => l.action === 'CHOOSE_COIL') ?? [];
+  const coilPending = chooseLines.some((l) => {
+    const chosen = l.coilChoices.find((c) => c.coilId === coils[l.lineNumber]);
+    return !chosen?.withinTolerance;
+  });
+  const blocked = !data || data.blockers.length > 0 || shortfallPending || coilPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -139,7 +169,15 @@ export function ConfirmQuotationDialog({
                         </Badge>
                       </TableCell>
                       <TableCell className="max-w-[14rem] text-xs whitespace-normal">
-                        {l.reserveLabel ? (
+                        {l.action === 'CHOOSE_COIL' ? (
+                          <CoilChoice
+                            line={l}
+                            value={coils[l.lineNumber] ?? ''}
+                            onChange={(coilId) => {
+                              setCoils((prev) => ({ ...prev, [l.lineNumber]: coilId }));
+                            }}
+                          />
+                        ) : l.reserveLabel ? (
                           <>
                             {l.reserveLabel}
                             <span className="block tabular-nums">
@@ -247,11 +285,19 @@ export function ConfirmQuotationDialog({
             pendingText="Confirmando…"
             onClick={() => {
               if (pending || blocked) return;
-              onConfirm(
-                withShortfall
+              onConfirm({
+                ...(withShortfall
                   ? { confirmShortfall: true, shortfallReason: trimmedReason }
-                  : undefined,
-              );
+                  : {}),
+                ...(chooseLines.length > 0
+                  ? {
+                      coilAssignments: chooseLines.map((l) => ({
+                        lineNumber: l.lineNumber,
+                        saleCoilId: coils[l.lineNumber] ?? '',
+                      })),
+                    }
+                  : {}),
+              });
             }}
           >
             {withShortfall ? 'Confirmar con faltante' : 'Confirmar'}
@@ -259,5 +305,73 @@ export function ConfirmQuotationDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * D-385: el selector de bobina de una línea sin bobina asignada. Ofrece **todas** las bobinas
+ * libres del SKU; la que cae fuera de la tolerancia del papel se puede elegir para ver por qué no
+ * sirve —los dos pesos— y deja el botón apagado. El API vuelve a comprobarlo bajo lock.
+ */
+function CoilChoice({
+  line,
+  value,
+  onChange,
+}: {
+  line: ConfirmPreviewLineDto;
+  value: string;
+  onChange: (coilId: string) => void;
+}) {
+  if (line.coilChoices.length === 0) {
+    return (
+      <span className="text-destructive">
+        Sin bobina libre de {line.paperSku ?? line.productSku}
+      </span>
+    );
+  }
+  const chosen = line.coilChoices.find((c) => c.coilId === value);
+  const range = paperCoilWeightCheck(line.qty, chosen?.balanceKg ?? line.qty);
+  return (
+    <div className="grid gap-1">
+      {/* D-385 (A): el papel y la bobina elegida, que puede ser de otro SKU en tolerancia. */}
+      <span>
+        papel: <span className="font-mono">{line.paperSku ?? line.productSku}</span>
+        {chosen && (
+          <>
+            {' '}
+            · bobina:{' '}
+            <span className="font-mono font-medium">
+              {chosen.productSku} ({chosen.thicknessMm} mm)
+            </span>
+          </>
+        )}
+      </span>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger
+          className="h-8 w-full text-xs"
+          aria-label={`Bobina de la línea ${String(line.lineNumber)}`}
+        >
+          <SelectValue placeholder="Elige la bobina" />
+        </SelectTrigger>
+        <SelectContent>
+          {line.coilChoices.map((c) => (
+            <SelectItem key={c.coilId} value={c.coilId}>
+              {c.code} · {c.productSku} {c.thicknessMm} mm · {formatQty(c.balanceKg, 'kg')}
+              {c.withinTolerance ? '' : ' · fuera de tolerancia'}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {chosen && !chosen.withinTolerance && (
+        <span className="text-destructive">
+          {chosen.code} tiene {formatQty(chosen.balanceKg, 'kg')} y el papel dice{' '}
+          {formatQty(line.qty, 'kg')}: tiene que estar entre {formatQty(range.minKg, 'kg')} y{' '}
+          {formatQty(range.maxKg, 'kg')}.
+        </span>
+      )}
+      {!chosen && (
+        <span className="text-muted-foreground">Sin bobina asignada: se reserva al confirmar.</span>
+      )}
+    </div>
   );
 }

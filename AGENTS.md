@@ -215,6 +215,11 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
 ### 3.3 Datos reales, Neon y operaciones destructivas
 
 - Nunca se borran `production`, `dev`, `ci`, `demo` ni `respaldo-pre-v4-20260915`.
+- **Máximo 10 ramas en Neon** (regla del dueño, 2026-10-04), contando las cinco de arriba. Antes
+  de crear una rama nueva (respaldo, ensayo, rescate) se listan las ramas; si con la nueva se
+  pasaría de 10, primero se le propone al dueño cuáles borrar, y se borra solo con su OK por
+  nombre. Al cerrar cada ventana se listan las ramas y, si hay más de 10, se propone el borrado
+  con la misma regla de respaldos de abajo.
 - Un respaldo pre-ventana solo se borra con OK explícito del dueño **por nombre**, cuando la
   ventana está cerrada/verificada y existe un respaldo posterior que cubre el mismo estado.
   Conservar siempre los dos respaldos post-día-D más recientes. Tras cada ventana verificada,

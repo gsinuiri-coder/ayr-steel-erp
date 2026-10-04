@@ -74,22 +74,49 @@ function csv(rows: Row[]): Buffer {
   return Buffer.from([HEADERS.join(','), ...body].join('\n'), 'utf8');
 }
 
-const coilRow = (id: string, balance: string) => ({
+const coilRow = (id: string, balance: string, thickness = '0.38', color = 'AZUL') => ({
   id,
   code: `SALDO-${id}`,
   widthMm: D('1200'),
-  thicknessMm: D('0.38'),
-  finish: { code: 'ALZ-AZUL-5002', kind: FinishKind.PREPINTADO, color: { code: 'AZUL' } },
+  thicknessMm: D(thickness),
+  finish: { code: `ALZ-${color}-5002`, kind: FinishKind.PREPINTADO, color: { code: color } },
   balance,
 });
 
-function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean } = {}) {
+/** Los productos de venta de bobina del catálogo (SKU canónicos). */
+const CANON = {
+  id: 'p-canon',
+  sku: 'BOB038AZUL',
+  name: 'Bobina Azul 0.38',
+  businessLineId: 'bl-t',
+};
+
+function build(
+  opts: {
+    coils?: ReturnType<typeof coilRow>[];
+    canonical?: boolean;
+    /** D-385 (A): los productos de bobina que existen; por defecto, solo `BOB038AZUL`. */
+    products?: { id: string; sku: string }[];
+  } = {},
+) {
   const coils = opts.coils ?? [coilRow('c-1', '4194')];
+  const coilProducts =
+    opts.canonical === false
+      ? []
+      : (opts.products?.map((p) => ({ ...p, name: p.sku, businessLineId: 'bl-t' })) ?? [CANON]);
   const looseProduct = {
     id: 'p-loose',
     sku: 'BOB38AZUL',
     name: 'Suelto',
     unit: 'KGM',
+    roofingKind: null,
+  };
+  // El servicio de conformado se vende en toneladas (FFA1-1372 de agosto).
+  const conformado = {
+    id: 'p-conf',
+    sku: 'CONFORMADO',
+    name: 'SERVICIO DE CONFORMADO',
+    unit: 'TNE',
     roofingKind: null,
   };
   const prisma = {
@@ -100,23 +127,20 @@ function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean
     },
     product: {
       findMany: jest.fn(
-        ({ where }: { where: { businessLineId?: string; sku: { in: string[] } } }) => {
-          // findCoilSaleProducts (con línea) devuelve el canónico; el preview de filas comunes, el suelto.
-          if (where.businessLineId !== undefined) {
-            return Promise.resolve(
-              opts.canonical === false
-                ? []
-                : [
-                    {
-                      id: 'p-canon',
-                      sku: 'BOB038AZUL',
-                      name: 'Bobina Azul 0.38',
-                      businessLineId: 'bl-t',
-                    },
-                  ],
-            );
+        ({
+          where,
+        }: {
+          where: { businessLineId?: string; businessLine?: unknown; sku: { in: string[] } };
+        }) => {
+          // Los productos de venta de bobina (por línea de reventa o por su código); el preview
+          // de filas comunes, el suelto y el conformado.
+          if (where.businessLineId !== undefined || where.businessLine !== undefined) {
+            return Promise.resolve(coilProducts.filter((p) => where.sku.in.includes(p.sku)));
           }
-          return Promise.resolve(where.sku.in.includes('BOB38AZUL') ? [looseProduct] : []);
+          return Promise.resolve([
+            ...(where.sku.in.includes('BOB38AZUL') ? [looseProduct] : []),
+            ...(where.sku.in.includes('CONFORMADO') ? [conformado] : []),
+          ]);
         },
       ),
     },
@@ -141,6 +165,8 @@ function build(opts: { coils?: ReturnType<typeof coilRow>[]; canonical?: boolean
     quotations as unknown as QuotationsService,
     {} as CustomersService,
     { lookup: jest.fn() } as unknown as DocumentLookupService,
+    // Sin override: la tolerancia de coberturas por defecto, ±0.02 mm.
+    { ROOFING_THICKNESS_TOLERANCE_MM: '' },
   );
   return { service, prisma, quotations };
 }
@@ -178,11 +204,29 @@ describe('QuotationImportService.preview — filas de bobina (R1)', () => {
     expect(row?.issues.map((i) => i.message).join(' ')).toMatch(/2 bobinas/);
   });
 
-  it('sin bobina con esa cantidad, la fila queda bloqueada con el disponible del pool', async () => {
+  it('D-385: sin bobina con esa cantidad, la fila entra sin bobina asignada (aviso, no error)', async () => {
     const { service } = build({ coils: [coilRow('c-1', '100')] });
     const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
-    expect(row?.coilCandidates).toEqual([]);
-    expect(row?.issues.map((i) => i.message).join(' ')).toMatch(/ninguna bobina libre.*100\.000/);
+    expect(row).toMatchObject({
+      coilLine: true,
+      productId: 'p-canon',
+      productSku: 'BOB038AZUL',
+      saleCoilId: null,
+      coilCandidates: [],
+      netAmountPen: '12439.8300',
+    });
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+    const warning = row?.issues.find((i) => i.severity === 'warning');
+    expect(warning?.message).toMatch(/ninguna bobina libre.*100\.000.*sin bobina asignada/);
+  });
+
+  it('D-385: sin bobina en el pool y sin el producto en el catálogo, queda para revisión', async () => {
+    const { service } = build({ coils: [], canonical: false });
+    const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
+    expect(row?.productId).toBeNull();
+    expect(row?.issues.find((i) => i.severity === 'error')?.message).toMatch(
+      /no hay bobina libre ni producto de venta del mismo color dentro de ±0\.02 mm/,
+    );
   });
 
   it('un color que el catálogo no tiene queda para revisión, sin crear nada', async () => {
@@ -209,6 +253,231 @@ describe('QuotationImportService.preview — filas de bobina (R1)', () => {
     );
     expect(rows.map((r) => r.saleCoilId)).toEqual([null, null]);
     expect(rows[0]?.issues.map((i) => i.message).join(' ')).toMatch(/misma bobina/);
+  });
+});
+
+describe('D-385 (A) — bobina dentro de la tolerancia de espesor del papel', () => {
+  const B030: Row = {
+    key: 'FFA1-1419',
+    sku: 'BOB030AZUL',
+    name: 'BOBINA ALUZINC AZUL 0.30 X 1200 RAL 5002',
+    qty: '4192',
+    net: '12789.15',
+  };
+  const P028 = { id: '28282828-2828-4828-8828-282828282828', sku: 'BOB028AZUL' };
+  const P030 = { id: '30303030-3030-4030-8030-303030303030', sku: 'BOB030AZUL' };
+  const P032 = { id: '32323232-3232-4232-8232-323232323232', sku: 'BOB032AZUL' };
+
+  it('papel BOB030AZUL con una bobina 0.28 de saldo suficiente: se sugiere y la línea toma BOB028AZUL', async () => {
+    const { service } = build({
+      coils: [coilRow('c-28', '4200', '0.28')],
+      products: [P028],
+    });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row).toMatchObject({
+      paperCoilSku: 'BOB030AZUL',
+      saleCoilId: 'c-28',
+      productId: P028.id,
+      productSku: 'BOB028AZUL',
+      qty: '4192.000',
+      netAmountPen: '12789.1500',
+    });
+    expect(row?.coilCandidates[0]).toMatchObject({
+      coilId: 'c-28',
+      thicknessMm: '0.28',
+      productSku: 'BOB028AZUL',
+    });
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('sin bobina y sin el SKU del papel: entra con el único SKU existente en tolerancia', async () => {
+    const { service } = build({ coils: [], products: [P028] });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row).toMatchObject({ productId: P028.id, saleCoilId: null });
+    expect(row?.coilProductOptions).toEqual([
+      { productId: P028.id, sku: 'BOB028AZUL', thicknessMm: '0.28' },
+    ]);
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('sin bobina, con el SKU del papel existente: va con el del papel aunque haya otros', async () => {
+    const { service } = build({ coils: [], products: [P028, P030, P032] });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row?.productId).toBe(P030.id);
+  });
+
+  it('sin bobina, sin el SKU del papel y con dos en tolerancia: quien revisa elige', async () => {
+    const { service } = build({ coils: [], products: [P028, P032] });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row?.productId).toBeNull();
+    expect(row?.coilProductOptions.map((o) => o.sku)).toEqual(['BOB028AZUL', 'BOB032AZUL']);
+    expect(row?.issues.find((i) => i.severity === 'error')?.message).toMatch(
+      /BOB030AZUL no existe y hay 2 productos dentro de ±0\.02 mm: elige la bobina o el producto/,
+    );
+  });
+
+  it('una bobina de otro color no es candidata', async () => {
+    const { service } = build({
+      coils: [coilRow('c-rojo', '4200', '0.30', 'ROJO')],
+      products: [P030],
+    });
+    const [row] = (await service.preview('v.csv', csv([B030]))).rows;
+    expect(row?.coilCandidates).toEqual([]);
+    expect(row?.saleCoilId).toBeNull();
+  });
+});
+
+describe('D-385 (C) — el confirm del importador exige la tolerancia del papel (P2-1)', () => {
+  function confirmWith(
+    coils: ReturnType<typeof coilRow>[],
+    products: { id: string; sku: string }[],
+  ) {
+    const { service, quotations } = build({ coils, products });
+    const tx = {
+      $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
+      quotation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 9 }),
+      },
+      color: { findMany: jest.fn().mockResolvedValue([{ code: 'AZUL' }, { code: 'ROJO' }]) },
+      coil: {
+        findMany: jest.fn().mockResolvedValue(coils.map((c) => ({ ...c }))),
+      },
+      product: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue(products.map((p) => ({ ...p, businessLine: { code: 'TRADING' } }))),
+      },
+    };
+    (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
+      fn: (t: unknown) => Promise<unknown>,
+    ) => fn(tx);
+    return { service, quotations };
+  }
+  const row = (o: Record<string, unknown>) => ({
+    rowNumber: 1,
+    documentKey: 'FFA1-1419',
+    issueDate: '2026-09-08',
+    customerId: '11111111-1111-4111-8111-111111111111',
+    productId: '28282828-2828-4828-8828-282828282828',
+    qty: '4192.000',
+    unitPricePen: '3.0508468511',
+    netAmountPen: '12789.1500',
+    description: 'BOBINA ALUZINC AZUL 0.30 X 1200 RAL 5002',
+    ...o,
+  });
+  const C = '33333333-3333-4333-8333-333333333333';
+
+  it('una bobina 0.28 para un papel 0.30 entra', async () => {
+    const { service, quotations } = confirmWith(
+      [{ ...coilRow(C, '4200', '0.28'), code: 'B-028' }],
+      [],
+    );
+    await service.confirm({ id: 'u-1' } as never, { rows: [row({ saleCoilId: C })] });
+    expect(quotations.createInTx).toHaveBeenCalled();
+  });
+
+  it('una bobina 0.50 para un papel 0.30 no entra, aunque el producto sea el de la bobina', async () => {
+    const { service, quotations } = confirmWith(
+      [{ ...coilRow(C, '4200', '0.50'), code: 'B-050' }],
+      [],
+    );
+    await expect(
+      service.confirm({ id: 'u-1' } as never, { rows: [row({ saleCoilId: C })] }),
+    ).rejects.toMatchObject({
+      response: {
+        errors: {
+          'FFA1-1419': [expect.stringMatching(/B-050 \(0\.50 mm\) .* ±0\.02 mm de BOB030AZUL/)],
+        },
+      },
+    });
+    expect(quotations.createInTx).not.toHaveBeenCalled();
+  });
+
+  it('sin bobina, un producto de bobina fuera de la tolerancia no entra', async () => {
+    const { service } = confirmWith(
+      [],
+      [{ id: '28282828-2828-4828-8828-282828282828', sku: 'BOB040AZUL' }],
+    );
+    await expect(
+      service.confirm({ id: 'u-1' } as never, { rows: [row({})] }),
+    ).rejects.toMatchObject({
+      response: { errors: { 'FFA1-1419': [expect.stringMatching(/BOB040AZUL no está dentro/)] } },
+    });
+  });
+});
+
+describe('D-385 — unidad TONELADA', () => {
+  // FFA1-1419 de setiembre, con datos inventados en lo que no hace al caso.
+  const TN_ROW: Row = {
+    key: 'FFA1-1419',
+    sku: 'BOB38AZUL',
+    name: 'BOBINA ALUZINC AZUL 0.38 X 1200 RAL 5002',
+    unit: 'TONELADA',
+    qty: '4.192',
+    net: '12789.15',
+  };
+
+  it('una bobina en toneladas se lee en kilos: 4.192 TONELADA → 4192 kg, importe intacto', async () => {
+    const { service } = build({ coils: [coilRow('c-1', '4192')] });
+    const [row] = (await service.preview('v.csv', csv([TN_ROW]))).rows;
+    expect(row).toMatchObject({
+      qty: '4192.000',
+      netAmountPen: '12789.1500',
+      // El unitario sale del importe ÷ los kilos: por kilo, no por tonelada.
+      unitPricePen: '3.0508468511',
+      unitConversion: { paperQty: '4.192', paperUnit: 'TONELADA' },
+      // Con los kilos ya convertidos, el pool encuentra la bobina y se asigna como siempre.
+      saleCoilId: 'c-1',
+    });
+    // La conversión explica la diferencia de unidad: no hay aviso de producto equivocado.
+    expect(row?.issues).toEqual([]);
+  });
+
+  it.each(['TN', 'ton', 'Tne', ' tonelada '])('acepta la variante «%s»', async (unit) => {
+    const { service } = build({ coils: [coilRow('c-1', '4192')] });
+    const [row] = (await service.preview('v.csv', csv([{ ...TN_ROW, unit }]))).rows;
+    expect(row?.qty).toBe('4192.000');
+  });
+
+  it('TONELADA sin bobina libre: entra sin bobina asignada con los kilos y el importe del papel', async () => {
+    const { service } = build({ coils: [] });
+    const [row] = (await service.preview('v.csv', csv([TN_ROW]))).rows;
+    expect(row).toMatchObject({
+      qty: '4192.000',
+      netAmountPen: '12789.1500',
+      productId: 'p-canon',
+      saleCoilId: null,
+    });
+    expect(row?.issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('un producto que se vende en toneladas conserva la cantidad (CONFORMADO, decisión 2026-10-04)', async () => {
+    const { service } = build();
+    const [row] = (
+      await service.preview(
+        'v.csv',
+        csv([{ sku: 'CONFORMADO', unit: 'TONELADA', qty: '30.26', net: '6052' }]),
+      )
+    ).rows;
+    expect(row).toMatchObject({ qty: '30.260', unitConversion: null, productId: 'p-conf' });
+    expect(row?.issues).toEqual([]);
+  });
+
+  it('una unidad desconocida deja la línea sin resolver y no adivina', async () => {
+    const { service } = build();
+    const [row] = (await service.preview('v.csv', csv([{ ...BOB_AZUL, unit: 'QUINTAL' }]))).rows;
+    expect(row?.qty).toBe('4194.000');
+    expect(row?.issues.find((i) => i.severity === 'error')?.message).toMatch(
+      /La unidad «QUINTAL» no se reconoce/,
+    );
+  });
+
+  it('KILOGRAMO sigue igual: sin conversión', async () => {
+    const { service } = build();
+    const [row] = (await service.preview('v.csv', csv([BOB_AZUL]))).rows;
+    expect(row).toMatchObject({ qty: '4194.000', unitConversion: null });
   });
 });
 
@@ -391,6 +660,52 @@ describe('QuotationImportService.confirm — lo que viaja a la cotización', () 
     expect(input.items[0]).not.toHaveProperty('netAmountPen');
   });
 
+  it('D-385: la fila sin bobina admite su producto de bobina sin bobina asignada; la que la trae, no', async () => {
+    const { service, quotations } = build();
+    const tx = {
+      $executeRawUnsafe: jest.fn(),
+      $executeRaw: jest.fn(),
+      quotation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 5 }),
+      },
+    };
+    (service as unknown as { prisma: { $transaction: unknown } }).prisma.$transaction = (
+      fn: (t: unknown) => Promise<unknown>,
+    ) => fn(tx);
+    const base = {
+      documentKey: 'FFA1-1419',
+      issueDate: '2026-09-08',
+      customerId: '11111111-1111-4111-8111-111111111111',
+      unitPricePen: '3.0508468511',
+      netAmountPen: '12789.1500',
+    };
+    await service.confirm({ id: 'u-1' } as never, {
+      rows: [
+        {
+          ...base,
+          rowNumber: 1,
+          productId: '22222222-2222-4222-8222-222222222222',
+          qty: '4192.000',
+        },
+        {
+          ...base,
+          rowNumber: 2,
+          productId: '44444444-4444-4444-8444-444444444444',
+          qty: '4192.000',
+          saleCoilId: '33333333-3333-4333-8333-333333333333',
+        },
+      ],
+    });
+    const [, , , options] = quotations.createInTx.mock.calls[0] as [
+      unknown,
+      unknown,
+      unknown,
+      { unassignedCoilProducts: Set<string> },
+    ];
+    expect([...options.unassignedCoilProducts]).toEqual(['22222222-2222-4222-8222-222222222222']);
+  });
+
   it('P14 §3.5: la fila editada manda el unitario entero, sin cortarlo a cuatro', async () => {
     const { service, quotations } = build();
     const tx = {
@@ -440,6 +755,23 @@ describe('readPaperLines', () => {
       totalAmountPen: '14679.0000',
       excluded: false,
     });
+  });
+
+  it('D-385: una bobina en toneladas se lee en kilos, igual que el preview; un servicio en TNE no', () => {
+    const [coil, service] = readPaperLines(
+      csv([
+        { ...BOB_AZUL, unit: 'TONELADA', qty: '4.192' },
+        {
+          sku: 'CONFORMADO',
+          name: 'SERVICIO DE CONFORMADO',
+          unit: 'TONELADA',
+          qty: '30.26',
+          net: '6052',
+        },
+      ]),
+    );
+    expect(coil?.qty).toBe('4192.000');
+    expect(service?.qty).toBe('30.260');
   });
 
   it('un trío que no cuadra deja IGV y total en null', () => {
