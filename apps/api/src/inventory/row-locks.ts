@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { InventoryItemType, Prisma } from '@prisma/client';
 
 /**
  * D-386: **el único `FOR UPDATE` sobre `coils` de todo el código.** El de `inventory_balances`
@@ -43,4 +43,14 @@ export function balanceLockKey(ref: { itemType: string; itemId: string }): strin
 export function compareLockKeys(a: string, b: string): number {
   if (a === b) return 0;
   return a < b ? -1 : 1;
+}
+
+/** Las coordenadas de saldo de un movimiento, para pasarlas a `InventoryService.lockInOrder`. */
+export function itemRefOf(m: {
+  businessLineId: string;
+  itemType: InventoryItemType;
+  itemId: string;
+  unit: string;
+}): { businessLineId: string; itemType: InventoryItemType; itemId: string; unit: string } {
+  return { businessLineId: m.businessLineId, itemType: m.itemType, itemId: m.itemId, unit: m.unit };
 }

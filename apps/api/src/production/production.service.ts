@@ -3,6 +3,7 @@ import {
   BusinessLineCode,
   CoilKind,
   CoilStatus,
+  InventoryItemType,
   ProductionOrderKind,
   ProductionOrderStatus,
   ProductionReportStatus,
@@ -47,6 +48,7 @@ import { drywallStripMismatch, drywallStripSpec, drywallStripWhere } from '../co
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { itemRefOf } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertCoilsNotReserved, markReservationConsumed } from '../sales/reservation-guard';
 import { assertStripsNotAssigned, findLiveStripAssignments } from './production-assignments';
@@ -678,6 +680,26 @@ export class ProductionService {
           },
         });
 
+        // D-386: todos los flejes del reparto, con sus agregados, y después los saldos (flejes y
+        // producto), de una vez y antes de la primera salida. Antes cada fleje se tomaba dentro
+        // del bucle, en orden de montaje, con el saldo del anterior ya en mano.
+        await this.inventory.lockInOrder(tx, {
+          items: [
+            ...allocations.map((a) => ({
+              businessLineId: order.businessLineId,
+              itemType: InventoryItemType.COIL,
+              itemId: a.coilId,
+              unit: Unit.KGM,
+            })),
+            {
+              businessLineId: order.businessLineId,
+              itemType: InventoryItemType.PRODUCT,
+              itemId: order.productId,
+              unit: Unit.NIU,
+            },
+          ],
+        });
+
         let materialCostPen = new Decimal(0);
         for (const allocation of allocations) {
           await this.coils.lockCoil(tx, allocation.coilId);
@@ -832,6 +854,12 @@ export class ProductionService {
           throw new BadRequestException('Ese reporte no tiene un ingreso de piezas que revertir');
         }
         const stripOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
+
+        // D-386 (P2-2 de cc15b): flejes con sus agregados y después saldos, todos antes de mirar
+        // qué se movió después y antes de la primera reversa. Antes se tomaba primero el saldo
+        // del producto (al revertir el ingreso) y recién después cada fleje: el orden inverso al
+        // del resto del sistema.
+        await this.inventory.lockInOrder(tx, { items: movements.map(itemRefOf) });
 
         // Las piezas son fungibles: el saldo del producto lo comparten todas las OP, así
         // que "movimientos posteriores" a secas sería demasiado estricto — otro reporte
@@ -999,6 +1027,28 @@ export class ProductionService {
         // le permite a `reopen` distinguir los flejes que soltó el cierre de los que el
         // operario había liberado a mano antes, que no deben volver a la orden.
         const closedAt = new Date();
+        // D-386: los flejes que sueltan merma (con sus agregados), después sus saldos y el del
+        // producto que recibe el ajuste del cierre, todo antes de la primera salida.
+        await this.inventory.lockInOrder(tx, {
+          items: [
+            ...rows
+              .filter((r) =>
+                toDecimal(r.assignedKg.toString()).gt(toDecimal(r.consumedKg.toString())),
+              )
+              .map((r) => ({
+                businessLineId: order.businessLineId,
+                itemType: InventoryItemType.COIL,
+                itemId: r.coilId,
+                unit: Unit.KGM,
+              })),
+            {
+              businessLineId: order.businessLineId,
+              itemType: InventoryItemType.PRODUCT,
+              itemId: order.productId,
+              unit: Unit.NIU,
+            },
+          ],
+        });
         for (const row of rows) {
           const remaining = toDecimal(row.assignedKg.toString()).minus(
             toDecimal(row.consumedKg.toString()),
@@ -1169,6 +1219,19 @@ export class ProductionService {
         const movements = liveMovements(own);
         const adjust = movements.find((m) => m.itemType === 'PRODUCT' && m.type === 'ADJUST');
         const scrapOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
+
+        // D-386: los flejes que vuelven a la orden y los de la merma (con sus agregados), después
+        // los saldos de lo que se revierte, antes de mirar qué se movió después del cierre. Antes
+        // se tomaba primero el saldo del producto (la reversa del ajuste) y después cada fleje.
+        await this.inventory.lockInOrder(tx, {
+          coilIds: (
+            await tx.productionOrderConsumption.findMany({
+              where: { productionOrderId: orderId, releasedAt: order.closedAt },
+              select: { coilId: true },
+            })
+          ).map((r) => r.coilId),
+          items: movements.map(itemRefOf),
+        });
 
         // El ajuste de costo se repartió sobre el saldo de piezas del momento del cierre:
         // si después salieron piezas o entró otro ajuste (el cierre de otra OP del mismo

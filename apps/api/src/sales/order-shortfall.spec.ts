@@ -30,6 +30,8 @@ jest.mock('./raw-material', () => ({
   findRawMaterialSpecs: jest.fn(),
   rawMaterialCoilIds: jest.fn(),
   rawMaterialAvailability: jest.fn(),
+  // D-386: sin agregados con promesas, el conjunto a bloquear son las bobinas nombradas.
+  rawMaterialLockSet: jest.fn((_tx: unknown, ids: readonly string[]) => Promise.resolve([...ids])),
   rawMaterialSpecLabels: jest.fn(),
   assertRawMaterialInvariant: jest.fn(),
 }));

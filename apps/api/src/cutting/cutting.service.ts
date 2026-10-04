@@ -36,7 +36,7 @@ import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
-import { lockCoilRows } from '../inventory/row-locks';
+import { itemRefOf, lockCoilRows } from '../inventory/row-locks';
 import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
@@ -422,6 +422,19 @@ export class CuttingService {
           );
         }
 
+        const all = await tx.inventoryMovement.findMany({
+          where: { refType: 'CUTTING', refId: row.id },
+          orderBy: { id: 'asc' },
+          include: { reversals: { select: { id: true } } },
+        });
+        // D-386 (P2-2 de cc15b): la madre y los flejes de esta recepción con sus agregados, y
+        // después sus saldos, antes de leer qué se movió después y de la primera reversa. Antes
+        // se tomaba la madre y después, fleje por fleje, cada bobina con su saldo.
+        await this.inventory.lockInOrder(tx, {
+          coilIds: [coilId],
+          items: liveMovements(all).map(itemRefOf),
+        });
+
         const coil = await this.coils.lockCoil(tx, coilId);
         if (coil.status === CoilStatus.IN_THIRD_PARTY) {
           throw new BadRequestException(
@@ -432,11 +445,6 @@ export class CuttingService {
           throw new BadRequestException(`${coil.code} está anulada`);
         }
 
-        const all = await tx.inventoryMovement.findMany({
-          where: { refType: 'CUTTING', refId: row.id },
-          orderBy: { id: 'asc' },
-          include: { reversals: { select: { id: true } } },
-        });
         const movementIds = new Set(all.map((m) => m.id));
         // Igual que RF-16: los pares movimiento+reversa que ya se cancelaron entre sí
         // (por ejemplo un recosteo posterior) no cuentan para nada de lo que sigue.
@@ -607,6 +615,9 @@ export class CuttingService {
         throw new BadRequestException('No hay bobinas pendientes de recepción en esta orden');
       }
 
+      // D-386: todas las bobinas pendientes en una sola sentencia y por id, antes del bucle (la
+      // fila de la orden no trae orden propio: cada bobina se tomaba en el orden de lectura).
+      await this.inventory.lockInOrder(tx, { coilIds: pending.map((r) => r.coilId) });
       for (const row of pending) {
         await tx.cuttingOrderCoil.update({
           where: { id: row.id },

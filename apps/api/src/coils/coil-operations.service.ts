@@ -36,6 +36,7 @@ import { ENV, type Env } from '../config/env';
 import { OperationDateService } from '../common/operation-date.service';
 import { liveMovements } from '../inventory/live-movements';
 import { InventoryService } from '../inventory/inventory.service';
+import { itemRefOf } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
@@ -279,6 +280,18 @@ export class CoilOperationsService {
         if (split.status === CoilSplitStatus.REVERTED) {
           throw new ConflictException('Ese partido ya fue revertido');
         }
+        // D-386 (P2-2 de cc15b): la madre y las hijas con sus agregados, después sus saldos, de
+        // una vez y antes de la primera reversa. Antes se tomaba la madre y después, hija por
+        // hija, cada bobina con su saldo en el orden de los movimientos.
+        await this.inventory.lockInOrder(tx, {
+          coilIds: [split.parentCoilId, ...split.children.map((c) => c.id)],
+          items: liveMovements(
+            await tx.inventoryMovement.findMany({
+              where: { refType: 'SPLIT', refId: splitId },
+              include: { reversals: { select: { id: true } } },
+            }),
+          ).map(itemRefOf),
+        });
         const coil = await this.coils.lockCoil(tx, split.parentCoilId);
         // D-050: la madre puede haberse enviado a corte tercerizado después de este
         // partido (`send()` no deja rastro de kardex), así que revertir aquí devolvería

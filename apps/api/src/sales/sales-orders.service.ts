@@ -188,6 +188,7 @@ import {
   findRawMaterialSpecsByCombo,
   rawMaterialAvailabilities,
   rawMaterialCoilIds,
+  rawMaterialLockSet,
   type RawMaterialSpecRef,
 } from './raw-material';
 
@@ -1657,7 +1658,14 @@ export class SalesOrdersService {
     // conjuntos se solapan: una transacción tiene la #5 y espera la #3 mientras la otra
     // tiene la #3 y espera la #5. Ordenar dentro de cada lock no alcanza; hay que ordenar
     // el conjunto entero y pedirlo de una vez.
-    await lockCoilRows(tx, [...coilIds, ...rawCoilIds]);
+    //
+    // D-386: las bobinas nombradas entran **con sus agregados** (`rawMaterialLockSet`). El
+    // guardrail del agregado que corre después de reservar (`assertRawMaterialInvariant`) las
+    // bloqueaba recién ahí, con los saldos ya en mano: el orden inverso al de todo el resto.
+    await lockCoilRows(tx, [
+      ...(await rawMaterialLockSet(tx, coilIds, roofingToleranceMm(this.env))),
+      ...rawCoilIds,
+    ]);
 
     // D-119: el saldo de una bobina vive bajo **su propia** línea de negocio (Drywall o
     // Metallic Roofing), que puede no ser la del producto que la reserva (venta de bobina

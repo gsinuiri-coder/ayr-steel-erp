@@ -353,7 +353,10 @@ describe('undoCoilRestoreBatch (D-375)', () => {
         count: jest.fn().mockResolvedValue(undone),
       },
       $queryRaw: jest.fn().mockResolvedValue([{ id: 'coil-1' }]),
-      inventoryMovement: { count: jest.fn().mockResolvedValue(later) },
+      inventoryMovement: {
+        count: jest.fn().mockResolvedValue(later),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       coil: {
         update: jest.fn().mockResolvedValue({}),
         findUnique: jest.fn().mockResolvedValue({ status: 'OPEN', code: 'IMPO-AZUL-4150-23' }),
@@ -364,7 +367,7 @@ describe('undoCoilRestoreBatch (D-375)', () => {
 
   it('revierte la entrada en su misma fecha y deja la bobina anulada con su fecha de antes', async () => {
     const tx = fakeTx(0);
-    const inventory = { reverse: jest.fn().mockResolvedValue({}) };
+    const inventory = { lockInOrder: jest.fn(), reverse: jest.fn().mockResolvedValue({}) };
     const audit = { write: jest.fn().mockResolvedValue(undefined) };
     const ids = await undoCoilRestoreBatch(
       tx,
@@ -395,7 +398,7 @@ describe('undoCoilRestoreBatch (D-375)', () => {
 
   it('no escribe nada si la bobina tuvo movimientos después de restaurarse', async () => {
     const tx = fakeTx(1);
-    const inventory = { reverse: jest.fn() };
+    const inventory = { lockInOrder: jest.fn(), reverse: jest.fn() };
     await expect(
       undoCoilRestoreBatch(
         tx,
@@ -437,7 +440,10 @@ describe('undoCoilRestoreBatch — la bobina siguió en uso sin mover kardex (re
         count: jest.fn().mockResolvedValue(0),
       },
       $queryRaw: jest.fn().mockResolvedValue([{ id: 'coil-1' }]),
-      inventoryMovement: { count: jest.fn().mockResolvedValue(0) },
+      inventoryMovement: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       coil: {
         update: jest.fn(),
         findUnique: jest
@@ -446,7 +452,7 @@ describe('undoCoilRestoreBatch — la bobina siguió en uso sin mover kardex (re
       },
       reservation: { count: jest.fn().mockResolvedValue(0) },
     } as unknown as Prisma.TransactionClient;
-    const inventory = { reverse: jest.fn() };
+    const inventory = { lockInOrder: jest.fn(), reverse: jest.fn() };
     await expect(
       undoCoilRestoreBatch(
         tx,

@@ -854,6 +854,19 @@ export async function lockRawMaterialCoils(
   coilIds: readonly string[],
   toleranceMm: string,
 ): Promise<string[]> {
+  return lockCoilRows(tx, await rawMaterialLockSet(tx, coilIds, toleranceMm));
+}
+
+/**
+ * D-386: el conjunto que bloquea `lockRawMaterialCoils` —las bobinas y las de cada agregado con
+ * promesas vivas que alcanzan—, **sin bloquearlo**, para quien tiene que sumarle otras bobinas y
+ * pedir todo en una sola sentencia (confirmar un pedido).
+ */
+export async function rawMaterialLockSet(
+  tx: Prisma.TransactionClient,
+  coilIds: readonly string[],
+  toleranceMm: string,
+): Promise<string[]> {
   const ids = [...new Set(coilIds)];
   if (ids.length === 0) return [];
   const attributes = await tx.coil.findMany({
@@ -873,5 +886,5 @@ export async function lockRawMaterialCoils(
   for (const spec of specs) {
     for (const id of await rawMaterialCoilIds(tx, spec, toleranceMm)) all.add(id);
   }
-  return lockCoilRows(tx, [...all]);
+  return [...all];
 }
