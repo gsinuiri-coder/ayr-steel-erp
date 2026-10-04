@@ -41,15 +41,21 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-async function entry(itemId: string, purchaseId: string, qty: string, totalCost: string) {
+async function entry(
+  itemId: string,
+  purchaseId: string,
+  qty: string,
+  totalCost: string,
+  itemType: 'PRODUCT' | 'COIL' = 'PRODUCT',
+) {
   const movement = await prisma.$transaction((tx) =>
     inventory.record(tx, {
       businessLineId,
-      itemType: 'PRODUCT',
+      itemType,
       itemId,
       type: 'IN',
       qty,
-      unit: 'NIU',
+      unit: itemType === 'COIL' ? 'KGM' : 'NIU',
       unitCost: (Number(totalCost) / Number(qty)).toFixed(4),
       totalCost,
       refType: 'PURCHASE',
@@ -140,6 +146,36 @@ describe('Anulación de compras: qué bloquea (D-382) contra la base', () => {
     await prisma.$transaction((tx) => inventory.reverse(tx, out, actorId, 'db-spec anulada'));
 
     expect(await blockingFor(purchase)).toEqual([]);
+  });
+
+  it('bobina: una entrada ajena posterior sigue bloqueando (P3-B)', async () => {
+    const coilId = randomUUID();
+    const purchase = randomUUID();
+    await entry(coilId, purchase, '1000', '3000', 'COIL');
+    const foreign = await entry(coilId, randomUUID(), '10', '30', 'COIL');
+
+    expect((await blockingFor(purchase)).map((m) => m.id)).toEqual([foreign]);
+  });
+
+  it('producto: un ajuste de costo ajeno posterior sigue bloqueando (P3-B)', async () => {
+    const itemId = randomUUID();
+    const purchase = randomUUID();
+    await entry(itemId, purchase, '10', '200');
+    const adjust = await prisma.$transaction((tx) =>
+      inventory.adjustCost(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        unit: 'NIU',
+        amountPen: '15',
+        refType: 'PURCHASE',
+        refId: randomUUID(),
+        actorId,
+      }),
+    );
+    if (!adjust) throw new Error('La línea no lleva stock');
+
+    expect((await blockingFor(purchase)).map((m) => m.id)).toEqual([adjust.id]);
   });
 
   it('seis entradas ajenas no tapan una salida viva que viene después (el filtro va en la consulta)', async () => {
