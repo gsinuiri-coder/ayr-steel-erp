@@ -1,9 +1,9 @@
 # Runbook: ventana de cc15b (D-372, sesión 2, segunda parte)
 
-**Estado: PREPARADO, sin ejecutar.** Cada paso marcado **[OK]** espera el OK explícito del dueño
-(D-251/D-232). El agente propone el comando exacto y espera.
+**Estado: EJECUTADA el 2026-10-03 (hora de Lima), sin incidencias.** Cada paso tuvo el OK del
+dueño (D-251/D-232); el detalle está en «Ejecución», al final.
 
-- PR: `<PR>` (rama `cc15b/reemplazo-con-reserva`).
+- PR: `#88` (rama `cc15b/reemplazo-con-reserva`), desplegado desde `99e76b0`.
 - **No hay migración** y el deploy no escribe datos. Las correcciones las hace el dueño después,
   por «Editar compra», con motivo y vista previa.
 - **Orden:** reacomodar sobre `main` → CI → resumen de D-232 y OK → **API** → smoke → merge
@@ -74,3 +74,23 @@ Diff de runtime contra `<SHA>` vacío, Vercel `success`, smoke en `vercel.app` y
   `replaceEntry`). En producto terminado con otras existencias, el promedio puede quedar a
   ±0,0001 (la vista previa lo avisa).
 - **Respaldo:** no hay uno previsto: sin migración y sin escritura de datos en el deploy.
+
+## Ejecución (2026-10-03)
+
+- **Antes:** UAT del dueño en demo sobre `99e76b0`, confirmado. CI 37172441456 en `99e76b0`:
+  success (lint, typecheck y unitarios; `test:db`; E2E; smoke de Neon `ci`, verde al relanzarlo
+  tras dos cancelaciones por corridas paralelas; SonarCloud). Diff de migraciones y
+  `schema.prisma` vacío. Producción estaba en `ayr-steel-erp-api-00079-gwg` (`ff5fd2b`).
+- **Paso 1, API:** `pnpm deploy:api --web-origin …` desde el checkout principal en
+  `--detach 99e76b0`. Revisión `ayr-steel-erp-api-00080-wgf`, `git-sha=99e76b0`, 100 % del
+  tráfico, `/health` 200. `pnpm smoke:prod` desde `../ayr-cc15` en `99e76b0`: 8/8 ok (salida
+  completa en `local-data/ayr-cc15/smoke-cc15b-api.log`).
+- **Paso 2, merge:** `AYR_OWNER_PUSH=1 gh pr merge 88 --merge` → `80cb7ed`. Diff de runtime
+  contra `99e76b0` vacío; Vercel `success`. Smoke 8/8 en `ayr-steel-erp-web.vercel.app` y 8/8 en
+  `v2.mareliac.pe` (`smoke-cc15b-vercel.log`, `smoke-cc15b-v2.log`, misma carpeta).
+- **Paso 3, cierre:** demo apagado; `local-data` de `../ayr-cc15` y `../ayr-c15x` copiada al
+  checkout principal y verificada (mismos archivos y tamaños); worktrees, ramas locales y la rama
+  remota `cc15b/reemplazo-con-reserva` borrados.
+- **Respaldo posterior, pedido por el dueño:** `respaldo-pre-replaceentry-20261003`
+  (`br-rapid-river-ae59y2vw`, padre `production` `br-steep-night-ae8n7t1k`), `ready`. El dueño
+  no usa «Editar compra» con reserva activa ni con otra compra posterior hasta tenerlo: ya está.
