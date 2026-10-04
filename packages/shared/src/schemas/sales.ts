@@ -729,6 +729,11 @@ export const quotationSchema = z.object({
   igvPen: z.string(),
   totalPen: z.string(),
   notes: z.string().nullable(),
+  /**
+   * D-387: número de la factura de papel de una cotización importada (`FFA1-1419`), leído de
+   * la marca del importador con `importedInvoiceNumber`; `null` en las demás.
+   */
+  externalInvoice: z.string().nullable(),
   /** Pedido que nació de confirmarla (D-065). Null mientras no se confirma. */
   salesOrderId: z.string().uuid().nullable(),
   salesOrderCode: z.string().nullable(),
@@ -771,8 +776,18 @@ export const quotationListItemSchema = quotationSchema
   });
 export type QuotationListItemDto = z.infer<typeof quotationListItemSchema>;
 
-/** D-323: columnas de la lista de cotizaciones que se ordenan en el servidor. */
-export const QUOTATION_SORT_KEYS = ['code', 'customer', 'issueDate', 'total', 'status'] as const;
+/**
+ * D-323: columnas de la lista de cotizaciones que se ordenan en el servidor. D-387: `invoice`
+ * (el comprobante importado) no es columna de la tabla: el API la ordena leyendo la marca.
+ */
+export const QUOTATION_SORT_KEYS = [
+  'code',
+  'invoice',
+  'customer',
+  'issueDate',
+  'total',
+  'status',
+] as const;
 
 export const quotationQuerySchema = paginationQuerySchema.extend({
   ...sortQueryFields(QUOTATION_SORT_KEYS),
@@ -781,7 +796,7 @@ export const quotationQuerySchema = paginationQuerySchema.extend({
   customerId: z.string().uuid().optional(),
   /** D-119: al menos una línea del documento es de esta línea de negocio. */
   businessLine: z.enum(BUSINESS_LINES).optional(),
-  /** Búsqueda por código de cotización o nombre/documento del cliente (RF-84). */
+  /** Búsqueda por código de cotización, nombre/documento del cliente (RF-84) o comprobante importado (D-387). */
   search: z.string().trim().max(80).optional(),
 });
 export type QuotationQuery = z.infer<typeof quotationQuerySchema>;

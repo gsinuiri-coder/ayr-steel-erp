@@ -329,6 +329,12 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       )}
 
       <StatStrip>
+        {/* D-387: la factura de papel de una importada, la misma lectura que la lista. */}
+        {q.externalInvoice !== null && (
+          <Stat label="Comprobante">
+            <span data-testid="quotation-external-invoice">{q.externalInvoice}</span>
+          </Stat>
+        )}
         <Stat label="Emisión">{formatDate(q.issueDate)}</Stat>
         {/* D-157: sin vencimiento no es una fecha faltante, es una cotización que no vence
             (una importada). El guion de `formatDate` diría lo contrario. */}

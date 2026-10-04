@@ -19,6 +19,7 @@ import {
   defaultValidUntil,
   EXTERNAL_INVOICE_NOTES_PREFIX,
   externalInvoiceOf,
+  importedInvoiceNumber,
   IMPORT_ROUNDING_TOLERANCE_PEN,
   isImportedQuotation,
   DERIVED_UNIT_VALUE_DECIMALS,
@@ -75,7 +76,8 @@ import {
 } from './coil-sale-product';
 import { paperPoolOfLine } from './paper-coil-assignment';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
-import { quotationOrderBy } from '../common/list-orderings';
+import { orderByImportedInvoice, quotationOrderBy } from '../common/list-orderings';
+import { searchSeqOf } from '../common/search-seq';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -1327,7 +1329,8 @@ export class QuotationsService {
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del
     // buscador) se quedaba sin resultados (Fase 7d, hallazgo de revisión).
-    const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
+    const searchSeq = searchSeqOf(query.search);
+    const invoiceIds = query.search ? await this.idsByImportedInvoice(query.search) : [];
     const where: Prisma.QuotationWhereInput = {
       ...quotationSellerWhere(actor),
       // D-289: sin estado, la bandeja omite las anuladas (no si se busca o se acota a un cliente).
@@ -1347,25 +1350,31 @@ export class QuotationsService {
             OR: [
               { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
               { customer: { docNumber: { contains: query.search } } },
-              ...(searchSeq ? [{ seq: Number(searchSeq) }] : []),
+              ...(searchSeq === null ? [] : [{ seq: searchSeq }]),
+              // D-387: el comprobante importado, leído de la marca igual que la columna.
+              ...(invoiceIds.length > 0 ? [{ id: { in: invoiceIds } }] : []),
             ],
           }
         : {}),
     };
     const { skip, take } = toSkipTake(query);
-    const [total, rows] = await Promise.all([
-      this.prisma.quotation.count({ where }),
-      this.prisma.quotation.findMany({
-        where,
-        // La lista muestra totales, no líneas: traer `items` con su producto para 500
-        // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
-        include: { ...quotationInclude, items: false, _count: { select: { items: true } } },
-        // D-323: la columna elegida ordena la lista entera; el número desempata.
-        orderBy: quotationOrderBy(query),
-        skip,
-        take,
-      }),
-    ]);
+    // La lista muestra totales, no líneas: traer `items` con su producto para 500
+    // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
+    const include = { ...quotationInclude, items: false, _count: { select: { items: true } } };
+    const [total, rows] =
+      query.sort === 'invoice'
+        ? await this.findPageByImportedInvoice(where, include, query, skip, take)
+        : await Promise.all([
+            this.prisma.quotation.count({ where }),
+            this.prisma.quotation.findMany({
+              where,
+              include,
+              // D-323: la columna elegida ordena la lista entera; el número desempata.
+              orderBy: quotationOrderBy(query),
+              skip,
+              take,
+            }),
+          ]);
     const actors = await this.resolveActorNames(
       rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
     );
@@ -1379,6 +1388,57 @@ export class QuotationsService {
       return { ...rest, itemCount: r._count.items };
     });
     return paginate(items, total, query);
+  }
+
+  /**
+   * D-387: ids de las cotizaciones importadas cuyo comprobante contiene el texto buscado.
+   * Postgres acota a las importadas que lo mencionan en algún lado de las observaciones, y
+   * `importedInvoiceNumber` —la misma lectura de la columna— decide: buscar «Factura» o un
+   * número que solo aparece más abajo en las observaciones no trae nada.
+   */
+  private async idsByImportedInvoice(search: string): Promise<string[]> {
+    const candidates = await this.prisma.quotation.findMany({
+      where: {
+        AND: [
+          { notes: { startsWith: EXTERNAL_INVOICE_NOTES_PREFIX } },
+          { notes: { contains: search, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, notes: true },
+    });
+    const needle = search.toUpperCase();
+    return candidates
+      .filter((c) => importedInvoiceNumber(c.notes)?.toUpperCase().includes(needle) === true)
+      .map((c) => c.id);
+  }
+
+  /**
+   * D-387: una página ordenada por el comprobante importado. El número vive en las observaciones
+   * y Prisma no ordena por una lectura de ellas: se traen id, número y observaciones de **todas**
+   * las filas del filtro, se ordenan con `orderByImportedInvoice` y se pide la página por id.
+   * Dos consultas, igual que el camino de siempre (`count` + página); solo con esta clave.
+   */
+  private async findPageByImportedInvoice<I extends Prisma.QuotationInclude>(
+    where: Prisma.QuotationWhereInput,
+    include: I,
+    query: QuotationQuery,
+    skip: number,
+    take: number,
+  ): Promise<[number, Prisma.QuotationGetPayload<{ include: I }>[]]> {
+    const keys = await this.prisma.quotation.findMany({
+      where,
+      select: { id: true, seq: true, notes: true },
+    });
+    const pageIds = orderByImportedInvoice(keys, query.dir)
+      .slice(skip, skip + take)
+      .map((k) => k.id);
+    const page = await this.prisma.quotation.findMany({ where: { id: { in: pageIds } }, include });
+    const byId = new Map(page.map((row) => [row.id, row]));
+    const rows = pageIds.flatMap((id) => {
+      const row = byId.get(id);
+      return row === undefined ? [] : [row];
+    });
+    return [keys.length, rows];
   }
 
   async findOne(id: string, actor?: RequestUser): Promise<QuotationDto> {
@@ -1540,6 +1600,7 @@ export class QuotationsService {
       igvPen: row.igvPen.toFixed(4),
       totalPen: row.totalPen.toFixed(4),
       notes: row.notes,
+      externalInvoice: importedInvoiceNumber(row.notes),
       salesOrderId: liveOrder?.id ?? null,
       salesOrderCode: liveOrder ? salesOrderCode(liveOrder.seq) : null,
       pdfKey: row.pdfKey,

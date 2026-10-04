@@ -600,6 +600,38 @@ export function externalInvoiceOf(notes: string | null): string | null {
 }
 
 /**
+ * D-387: forma de un número de comprobante: serie de cuatro (letra y tres letras o dígitos) y
+ * correlativo de hasta ocho dígitos, como lo escribe el papel (`FFA1-1419`, `BBV1-347`).
+ */
+const IMPORTED_INVOICE_NUMBER = /^([A-Z][A-Z0-9]{3})-(\d{1,8})$/i;
+
+/**
+ * D-387: el número de factura de una cotización importada, para **mostrarlo, buscarlo y
+ * ordenar** la lista; `null` si no es importada o si su marca no trae un número con forma de
+ * comprobante.
+ *
+ * Es la única lectura del dato: la columna, el buscador y el orden de la lista pasan por acá. Se
+ * apoya en `externalInvoiceOf` (la marca del importador, primera línea de las observaciones,
+ * D-152) y además exige la forma `SERIE-NÚMERO`: lo que no calza queda vacío, nunca se adivina.
+ * Un número que aparezca más abajo en las observaciones no cuenta: solo la marca.
+ */
+export function importedInvoiceNumber(notes: string | null): string | null {
+  const key = externalInvoiceOf(notes);
+  return key !== null && IMPORTED_INVOICE_NUMBER.test(key) ? key : null;
+}
+
+/**
+ * D-387: orden ascendente de dos números de `importedInvoiceNumber`: por serie y después por
+ * correlativo **como número** (`FFA1-999` antes que `FFA1-1000`), sin distinguir mayúsculas.
+ */
+export function compareImportedInvoiceNumbers(a: string, b: string): number {
+  const [, seriesA = '', numberA = '0'] = IMPORTED_INVOICE_NUMBER.exec(a) ?? [];
+  const [, seriesB = '', numberB = '0'] = IMPORTED_INVOICE_NUMBER.exec(b) ?? [];
+  const bySeries = seriesA.toUpperCase().localeCompare(seriesB.toUpperCase(), 'en');
+  return bySeries === 0 ? Number(numberA) - Number(numberB) : bySeries;
+}
+
+/**
  * D-256 (3), repaso de RF-S4b: las observaciones **sin** la marca de procedencia. El duplicado
  * de una cotización importada es una cotización viva de hoy (D-157), no el comprobante: sin
  * esto nacía con la marca, quedaba exenta al editarla y el barrido la tomaba como un segundo

@@ -57,14 +57,15 @@ export function CotizacionesView() {
   const [url, setUrl] = useUrlState({ ...URL_PAGINATION_DEFAULTS, search: '', status: '' });
   const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
   // La búsqueda va al API (RF-84) para que una cotización fuera de la página actual se
-  // pueda encontrar: por nombre/documento del cliente, o por código (extrae el número de
-  // "COT-…").
+  // pueda encontrar: por nombre/documento del cliente, por código (extrae el número de
+  // "COT-…") o por el comprobante de una importada (D-387).
   const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });
   });
   const status = url.status;
 
-  // D-323: el orden por columna es del servidor (las cinco columnas son de la propia cotización).
+  // D-323: el orden por columna es del servidor. D-387: «Comprobante» lo ordena el API leyendo la
+  // marca del importador.
   const [sort, toggleSort] = useSort<QuotationSortKey>();
 
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
@@ -107,7 +108,7 @@ export function CotizacionesView() {
 
       <div className="flex flex-wrap items-center gap-3">
         <Input
-          placeholder="Buscar por código, cliente o documento…"
+          placeholder="Buscar por código, comprobante, cliente o documento…"
           className="max-w-sm"
           value={searchText}
           onChange={(e) => {
@@ -139,6 +140,16 @@ export function CotizacionesView() {
                 }}
               >
                 Código
+              </SortableTableHead>
+              {/* D-387: la factura de papel de las importadas; vacía en las demás. */}
+              <SortableTableHead
+                active={sort.key === 'invoice'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('invoice');
+                }}
+              >
+                Comprobante
               </SortableTableHead>
               <SortableTableHead
                 active={sort.key === 'customer'}
@@ -187,14 +198,14 @@ export function CotizacionesView() {
             {quotations.isPending &&
               [0, 1, 2].map((i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={7}>
+                  <TableCell colSpan={8}>
                     <Skeleton className="h-5 w-full" />
                   </TableCell>
                 </TableRow>
               ))}
             {quotations.isError && (
               <TableRow>
-                <TableCell colSpan={7} className="text-destructive">
+                <TableCell colSpan={8} className="text-destructive">
                   No se pudieron cargar las cotizaciones.
                 </TableCell>
               </TableRow>
@@ -205,6 +216,9 @@ export function CotizacionesView() {
                   <Link href={`/cotizaciones/${q.id}`} className={LINK_CLASSNAME}>
                     {q.code}
                   </Link>
+                </TableCell>
+                <TableCell className="whitespace-nowrap" data-testid="quotation-external-invoice">
+                  {q.externalInvoice}
                 </TableCell>
                 <TableCell className={CUSTOMER_CELL_CLASSNAME}>
                   <Link
@@ -238,7 +252,7 @@ export function CotizacionesView() {
             ))}
             {quotations.isSuccess && rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   {search || status
                     ? 'Ninguna cotización coincide con el filtro.'
                     : 'No hay cotizaciones todavía.'}
