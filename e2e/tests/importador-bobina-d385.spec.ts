@@ -151,7 +151,10 @@ test.describe('D-385 — importar una bobina en TONELADA sin stock y elegir la b
 
       const noCoil = await api.post(`/api/sales/quotations/${quotationId}/confirm`, { data: {} });
       expect(noCoil.status()).toBe(400);
-      expect(await noCoil.text()).toMatch(/sin bobina asignada|Elige la bobina/);
+      // Con la única bobina libre fuera del ±1 %, el motivo es ese, con los dos pesos.
+      expect(await noCoil.text()).toMatch(
+        /ninguna bobina libre de .* pesa lo del papel \(4192\.000 kg.*tiene 4100\.000 kg/,
+      );
 
       // --- Bobina fuera de la tolerancia: bloquea mostrando los dos pesos ---
       const outOfRange = await api.post(`/api/sales/quotations/${quotationId}/confirm`, {
