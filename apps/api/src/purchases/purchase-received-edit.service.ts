@@ -21,18 +21,23 @@ import {
   type CommitReceivedPurchaseEditInput,
   type EditReceivedPurchaseInput,
   type ReceivedEditPlanDto,
+  type ReceivedPurchaseItemEdit,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import { claimIdempotencyKey } from '../common/idempotency';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
-import { InventoryService } from '../inventory/inventory.service';
+import { InventoryService, minRunningAfterReplace } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { findLiveStripAssignments } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
-import { assertRawMaterialInvariant, findRawMaterialShortfalls } from '../sales/raw-material';
+import {
+  assertRawMaterialInvariant,
+  findRawMaterialShortfalls,
+  lockRawMaterialCoils,
+} from '../sales/raw-material';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { computeDueDate, receptionCost } from './purchase-math';
 import { editedLineAmounts, impliedIgvRatePct, purchaseTotalsOf } from './purchase-draft-edit';
@@ -114,7 +119,11 @@ export class ReceivedPurchaseEditService {
           .map((c) => c.id)
           .sort();
         if (coilIds.length > 0) {
-          await tx.$queryRaw`SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE`;
+          // D-134: bobinas antes que saldos. No solo las de la compra: también las de cada
+          // agregado con promesas que ellas cubren, en orden de id, igual que confirmar un pedido
+          // o una salida de `record`. Así `replaceEntry`, que las vuelve a pedir, ya las tiene y
+          // no las toma después del saldo (revisiones de cc15b: deadlock con un pedido).
+          await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
         }
         // Y los saldos de kardex que la edición puede tocar, **antes** de leer los movimientos
         // posteriores: quien consume o ingresa toma el saldo, no la bobina, así que sin este lock
@@ -259,7 +268,7 @@ export class ReceivedPurchaseEditService {
   private async load(
     tx: Prisma.TransactionClient,
     id: string,
-    touched: ReadonlySet<string> = new Set(),
+    touched: ReadonlyMap<string, ReceivedPurchaseItemEdit> = new Map(),
   ) {
     const purchase = await tx.purchase.findUnique({
       where: { id },
@@ -303,6 +312,15 @@ export class ReceivedPurchaseEditService {
         InventoryItemType.COIL,
         coils.map((c) => c.id),
       );
+      const coilBalances = new Map(
+        (
+          await tx.inventoryBalance.findMany({
+            where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
+            select: { itemId: true, qty: true },
+          })
+        ).map((b) => [b.itemId, toDecimal(b.qty.toString())]),
+      );
+      const tolerance = roofingToleranceMm(this.env);
       for (const item of purchase.items) {
         const coil = coilByItem.get(item.id) ?? null;
         const movements = coil
@@ -316,18 +334,26 @@ export class ReceivedPurchaseEditService {
         const first = live[0] ?? null;
         const ownIn = first?.type === 'IN' ? first : null;
         if (ownIn && receiptDate === null) receiptDate = dateOf(ownIn.operationDate);
-        // D-134: la reversa deja la bobina sin saldo un instante, y `InventoryService.reverse`
-        // rechaza si eso deja corto un agregado con promesas de pedidos. Se simula acá, solo
-        // para las líneas que la edición toca y que no tienen otro bloqueo antes.
+        const edit = touched.get(item.id);
+        const intact = coil !== null && ownIn !== null && live.length === 1;
+        // D-134 sobre el estado **final** (cc15b, punto 3): el reemplazo deja la bobina con la
+        // cantidad nueva, así que solo una baja de kilos puede dejar corto un agregado con
+        // promesas. Un cambio de precio no mueve kilos y no se simula.
+        const newQty = edit?.qty === undefined ? null : toDecimal(edit.qty);
         const backsPromised =
-          coil && ownIn && live.length === 1 && touched.has(item.id)
+          coil && intact && newQty?.lt(item.qty.toString())
             ? (
-                await findRawMaterialShortfalls(tx, [coil.id], roofingToleranceMm(this.env), {
-                  withoutCoilIds: [coil.id],
+                await findRawMaterialShortfalls(tx, [coil.id], tolerance, {
+                  coilQtyOverrides: new Map([[coil.id, newQty]]),
                   firstOnly: true,
                 })
               )[0]
             : undefined;
+        // Punto 5: un cambio de color o de espesor saca la bobina de su agregado.
+        const specPromised =
+          coil && intact && edit
+            ? await this.specPromised(tx, coil.id, item, edit, tolerance)
+            : null;
         loadedItems.push({
           coilId: coil?.id ?? null,
           ownIn,
@@ -335,6 +361,13 @@ export class ReceivedPurchaseEditService {
             ...baseItemFacts(item, finishCode),
             laterMovements: live.filter((m) => m.id !== ownIn?.id).map(laterOf(purchase.id)),
             hasLiveIn: ownIn !== null,
+            balanceQty: toFixedString(coil ? (coilBalances.get(coil.id) ?? '0') : '0', 'KG'),
+            reservedQty: toFixedString(
+              coil ? (ownReserved.get(coil.id) ?? toDecimal('0')) : '0',
+              'KG',
+            ),
+            specPromised,
+            runningLow: await this.runningLow(tx, ownIn, edit),
             backsPromised: backsPromised
               ? backsPromised.orders.map((o) => `${o.code} (${o.qtyKg} kg)`).join(', ')
               : null,
@@ -381,16 +414,19 @@ export class ReceivedPurchaseEditService {
         // La reversa saca el ingreso entero del saldo del producto, que comparte con otras
         // compras: se bloquea si lo reservado no cabe en lo que queda sin este ingreso (D-066).
         let reservationShort = false;
+        let balanceQty = toDecimal('0');
+        let reserved = toDecimal('0');
         if (ownIn) {
           const balance = await tx.inventoryBalance.findUnique({
             where: { itemType_itemId: { itemType: 'PRODUCT', itemId: ownIn.itemId } },
             select: { qty: true },
           });
-          const reserved =
+          reserved =
             (await reservedByItem(tx, InventoryItemType.PRODUCT, [ownIn.itemId])).get(
               ownIn.itemId,
             ) ?? toDecimal('0');
-          const remaining = toDecimal((balance?.qty ?? 0).toString()).minus(ownIn.qty.toString());
+          balanceQty = toDecimal((balance?.qty ?? 0).toString());
+          const remaining = balanceQty.minus(ownIn.qty.toString());
           reservationShort = reserved.gt(0) && reserved.gt(remaining);
         }
         loadedItems.push({
@@ -400,6 +436,10 @@ export class ReceivedPurchaseEditService {
             ...baseItemFacts(item, finishCode),
             laterMovements: later.map(laterOf(purchase.id)),
             hasLiveIn: ownIn !== null,
+            balanceQty: toFixedString(balanceQty, 'KG'),
+            reservedQty: toFixedString(reserved, 'KG'),
+            specPromised: null,
+            runningLow: await this.runningLow(tx, ownIn, touched.get(item.id)),
             backsPromised: null,
             coilStatus: null,
             mountedOrder: null,
@@ -418,6 +458,10 @@ export class ReceivedPurchaseEditService {
             ...baseItemFacts(item, finishCode),
             laterMovements: [],
             hasLiveIn: false,
+            balanceQty: '0.000',
+            reservedQty: '0.000',
+            specPromised: null,
+            runningLow: null,
             backsPromised: null,
             coilStatus: null,
             mountedOrder: null,
@@ -449,6 +493,92 @@ export class ReceivedPurchaseEditService {
       items: loadedItems.map((l) => l.facts),
     };
     return { purchase, facts, items: loadedItems, receiptDate, livePayments };
+  }
+
+  /**
+   * cc15b (revisión P1-1): con una baja de cantidad, el saldo corrido más bajo que quedaría en el
+   * kardex —con las salidas anuladas en su fecha—, si es negativo; si no, `null`. La misma cuenta
+   * que `replaceEntry` vuelve a hacer bajo el lock.
+   */
+  private async runningLow(
+    tx: Prisma.TransactionClient,
+    ownIn: MovementRow | null,
+    edit: ReceivedPurchaseItemEdit | undefined,
+  ): Promise<string | null> {
+    if (!ownIn || edit?.qty === undefined) return null;
+    const origQty = toDecimal(ownIn.qty.toString());
+    const newQty = toDecimal(edit.qty);
+    if (!newQty.lt(origQty)) return null;
+    const all = await tx.inventoryMovement.findMany({
+      where: { itemType: ownIn.itemType, itemId: ownIn.itemId },
+      orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
+      select: { type: true, qty: true, operationDate: true },
+    });
+    const min = minRunningAfterReplace(
+      all.map((m) => ({ ...m, operationDate: dateOf(m.operationDate) })),
+      dateOf(ownIn.operationDate),
+      origQty,
+      newQty,
+    );
+    return min.isNegative() ? toFixedString(min, 'KG') : null;
+  }
+
+  /**
+   * cc15b, punto 5: si la bobina cambia de color o de espesor, deja su agregado de materia prima.
+   * Se simula el agregado sin ella y se quedan los que siguen cortos y que la especificación nueva
+   * **no** cubre (un espesor que sigue dentro de la tolerancia no saca a la bobina de nada).
+   * Devuelve los pedidos que quedarían sin cubrir, o `null`.
+   */
+  private async specPromised(
+    tx: Prisma.TransactionClient,
+    coilId: string,
+    item: { finishId: string | null; thicknessMm: Prisma.Decimal | null },
+    edit: ReceivedPurchaseItemEdit,
+    tolerance: string,
+  ): Promise<string | null> {
+    const finishChange = edit.finishId !== undefined && edit.finishId !== item.finishId;
+    const thicknessChange =
+      edit.thicknessMm !== undefined &&
+      !toDecimal(edit.thicknessMm).equals((item.thicknessMm ?? 0).toString());
+    if (!finishChange && !thicknessChange) return null;
+    const coil = await tx.coil.findUniqueOrThrow({
+      where: { id: coilId },
+      select: { businessLineId: true, colorId: true, thicknessMm: true },
+    });
+    const newColorId =
+      finishChange && edit.finishId !== undefined
+        ? ((
+            await tx.finish.findUnique({
+              where: { id: edit.finishId },
+              select: { colorId: true },
+            })
+          )?.colorId ?? null)
+        : coil.colorId;
+    const newThickness = toDecimal(edit.thicknessMm ?? coil.thicknessMm.toString());
+    if (newColorId === coil.colorId && newThickness.equals(coil.thicknessMm.toString())) {
+      return null;
+    }
+    const shortfalls = await findRawMaterialShortfalls(tx, [coilId], tolerance, {
+      withoutCoilIds: [coilId],
+    });
+    if (shortfalls.length === 0) return null;
+    const specs = await tx.rawMaterialSpec.findMany({
+      where: { id: { in: shortfalls.map((s) => s.specId) } },
+      select: { id: true, businessLineId: true, colorId: true, thicknessMm: true },
+    });
+    const stillCovered = new Set(
+      specs
+        .filter(
+          (s) =>
+            s.businessLineId === coil.businessLineId &&
+            s.colorId === newColorId &&
+            toDecimal(s.thicknessMm.toString()).minus(newThickness).abs().lte(toDecimal(tolerance)),
+        )
+        .map((s) => s.id),
+    );
+    const left = shortfalls.filter((s) => !stillCovered.has(s.specId));
+    if (left.length === 0) return null;
+    return left.flatMap((s) => s.orders.map((o) => `${o.code} (${o.qtyKg} kg)`)).join(', ');
   }
 
   /** Etiquetas y validez de lo que la edición pide como destino (proveedor, producto, acabado). */
@@ -664,52 +794,85 @@ export class ReceivedPurchaseEditService {
             `La línea ${String(item.lineNumber)} no tiene ítem de kardex que corregir`,
           );
         }
-        await promisedMaterialMessage(() =>
-          this.inventory.reverse(
-            tx,
-            ownIn.id,
-            actor.id,
-            `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
-            date,
-            true,
-          ),
-        );
-        reversed.push(ownIn.id.toString());
-        const kardexTotalPen = cents(lineSubtotal.times(exchangeRate));
-        const movement =
+        const kardexCost =
           purchase.type === PurchaseType.COIL
-            ? await this.inventory.record(tx, {
-                businessLineId: purchase.businessLineId,
-                itemType: 'COIL',
-                itemId: targetItemId,
-                type: 'IN',
-                qty: toFixedString(qty, 'KG'),
-                unit: ownIn.unit,
-                unitCost: toFixedString(kardexTotalPen.div(qty), 'MONEY'),
-                totalCost: toFixedString(kardexTotalPen, 'MONEY'),
-                refType: 'PURCHASE',
-                refId: purchase.id,
-                notes: `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
-                actorId: actor.id,
-                operationDate: date,
-                confirmBackdate: true,
-              })
-            : await this.inventory.record(tx, {
-                businessLineId: purchase.businessLineId,
-                itemType: 'PRODUCT',
-                itemId: targetItemId,
-                type: 'IN',
-                qty: toFixedString(qty, 'KG'),
-                unit: item.unit,
-                ...receptionCost(lineSubtotal, qty, exchangeRate),
-                refType: 'PURCHASE',
-                refId: purchase.id,
-                notes: `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
-                actorId: actor.id,
-                operationDate: date,
-                confirmBackdate: true,
-              });
-        if (movement) created.push(movement.id.toString());
+            ? (() => {
+                const totalPen = cents(lineSubtotal.times(exchangeRate));
+                return {
+                  unitCost: toFixedString(totalPen.div(qty), 'MONEY'),
+                  totalCost: toFixedString(totalPen, 'MONEY'),
+                };
+              })()
+            : receptionCost(lineSubtotal, qty, exchangeRate);
+        const note = `Corrección de la compra recibida: ${input.reason}`.slice(0, 240);
+        if (!productChange) {
+          // cc15b: el mismo ítem, por la puerta `replaceEntry` (regla dura 8): reversa y
+          // reingreso en la misma fecha, con las reservas y la materia prima comprobadas sobre
+          // el estado final. La precondición (sin salidas ni ajustes posteriores) la vuelve a
+          // comprobar la primitiva bajo el lock del saldo.
+          const replaced = await promisedMaterialMessage(() =>
+            this.inventory.replaceEntry(tx, {
+              movementId: ownIn.id,
+              qty: toFixedString(qty, 'KG'),
+              unitCost: kardexCost.unitCost,
+              totalCost: kardexCost.totalCost,
+              actorId: actor.id,
+              reason: note,
+            }),
+          );
+          reversed.push(ownIn.id.toString());
+          created.push(replaced.entry.id.toString());
+        } else {
+          // Cambio de producto: el ingreso pasa a otro ítem, así que sigue siendo reversa del
+          // viejo e ingreso del nuevo, con los bloqueos de siempre (sin movimientos posteriores,
+          // sin reservas que la reversa deje sin cubrir).
+          await promisedMaterialMessage(() =>
+            this.inventory.reverse(
+              tx,
+              ownIn.id,
+              actor.id,
+              `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
+              date,
+              true,
+            ),
+          );
+          reversed.push(ownIn.id.toString());
+          const kardexTotalPen = cents(lineSubtotal.times(exchangeRate));
+          const movement =
+            purchase.type === PurchaseType.COIL
+              ? await this.inventory.record(tx, {
+                  businessLineId: purchase.businessLineId,
+                  itemType: 'COIL',
+                  itemId: targetItemId,
+                  type: 'IN',
+                  qty: toFixedString(qty, 'KG'),
+                  unit: ownIn.unit,
+                  unitCost: toFixedString(kardexTotalPen.div(qty), 'MONEY'),
+                  totalCost: toFixedString(kardexTotalPen, 'MONEY'),
+                  refType: 'PURCHASE',
+                  refId: purchase.id,
+                  notes: `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
+                  actorId: actor.id,
+                  operationDate: date,
+                  confirmBackdate: true,
+                })
+              : await this.inventory.record(tx, {
+                  businessLineId: purchase.businessLineId,
+                  itemType: 'PRODUCT',
+                  itemId: targetItemId,
+                  type: 'IN',
+                  qty: toFixedString(qty, 'KG'),
+                  unit: item.unit,
+                  ...receptionCost(lineSubtotal, qty, exchangeRate),
+                  refType: 'PURCHASE',
+                  refId: purchase.id,
+                  notes: `Corrección de la compra recibida: ${input.reason}`.slice(0, 240),
+                  actorId: actor.id,
+                  operationDate: date,
+                  confirmBackdate: true,
+                });
+          if (movement) created.push(movement.id.toString());
+        }
       }
 
       const itemData: Prisma.PurchaseItemUpdateInput = {};
@@ -1049,6 +1212,26 @@ export class ReceivedPurchaseEditService {
         'El kardex sigue siendo de costo promedio: las próximas salidas toman el promedio nuevo de todo lo que hay en existencias.',
       );
     }
+    // cc15b: en producto terminado, el saldo puede mezclar esta compra con otras. El reemplazo
+    // recalcula el promedio de todo, y volver al valor anterior lo recalcula otra vez: con otras
+    // existencias, el redondeo del promedio a 4 decimales puede no dejarlo idéntico.
+    const mixedProduct = changes.some((c) => {
+      // Solo el reemplazo (precio o cantidad): un cambio de producto no recalcula este promedio.
+      if (
+        c.path !== 'REVERSE_REENTRY' ||
+        purchase.type !== PurchaseType.FINISHED_GOOD ||
+        (c.field !== 'unitPrice' && c.field !== 'qty')
+      ) {
+        return false;
+      }
+      const facts = loaded.items.find((l) => l.facts.lineNumber === c.lineNumber)?.facts;
+      return facts !== undefined && toDecimal(facts.balanceQty).gt(toDecimal(facts.qty));
+    });
+    if (mixedProduct) {
+      warnings.push(
+        'El producto tiene existencias de otras compras: deshacer esta corrección (volver a editar con el valor anterior) puede dejar el costo promedio a ±0,0001 del de hoy, por el redondeo del promedio.',
+      );
+    }
     const coilCost = changes.some(
       (c) => purchase.type === PurchaseType.COIL && c.field === 'unitPrice' && c.path !== 'BLOCKED',
     );
@@ -1238,8 +1421,8 @@ async function promisedMaterialMessage<T>(run: () => Promise<T>): Promise<T> {
 }
 
 /** Las líneas que la edición nombra: solo para ellas se simula la reversa (D-134). */
-function touchedItems(input: EditReceivedPurchaseInput): Set<string> {
-  return new Set((input.items ?? []).map((e) => e.itemId));
+function touchedItems(input: EditReceivedPurchaseInput): Map<string, ReceivedPurchaseItemEdit> {
+  return new Map((input.items ?? []).map((e) => [e.itemId, e]));
 }
 
 /** El costo de documento de una bobina antes de la edición (cc15, para la auditoría). */

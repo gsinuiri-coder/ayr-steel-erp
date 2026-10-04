@@ -256,7 +256,11 @@ export async function rawMaterialAvailability(
   tx: Prisma.TransactionClient,
   spec: RawMaterialSpecRef,
   toleranceMm: string,
-  options: RawMaterialScope & { lockCoils?: boolean; withoutCoilIds?: string[] } = {},
+  options: RawMaterialScope & {
+    lockCoils?: boolean;
+    withoutCoilIds?: string[];
+    coilQtyOverrides?: ReadonlyMap<string, Decimal>;
+  } = {},
 ): Promise<RawMaterialAvailability> {
   const candidates = await tx.coil.findMany({
     where: roofingCoilWhere({
@@ -290,8 +294,13 @@ export async function rawMaterialAvailability(
     ids.length === 0 ? [] : findLiveStripAssignments(tx, ids),
     reservedByItem(tx, InventoryItemType.RAW_MATERIAL, [spec.id], options),
   ]);
+  const balanceByCoilId = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
+  // D-372 (cc15b): simular una bobina con otro saldo (el que dejaría un reemplazo de su ingreso).
+  for (const [coilId, qty] of options.coilQtyOverrides ?? []) {
+    if (ids.includes(coilId)) balanceByCoilId.set(coilId, qty);
+  }
   return summarizeAvailability(spec, ids, {
-    balanceByCoilId: new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())])),
+    balanceByCoilId,
     onCoilsById,
     mounted,
     genericById,
@@ -647,6 +656,11 @@ interface ShortfallOptions extends RawMaterialScope {
    * ingreso), sin bloquear. Lo usa la vista previa de la corrección de una compra recibida.
    */
   withoutCoilIds?: string[];
+  /**
+   * D-372 (cc15b): leer el agregado **como si estas bobinas tuvieran este saldo** (el estado
+   * final de un reemplazo de su ingreso), sin bloquear. Mismo uso que `withoutCoilIds`.
+   */
+  coilQtyOverrides?: ReadonlyMap<string, Decimal>;
 }
 
 /**
@@ -723,7 +737,7 @@ export async function findRawMaterialShortfallsFor(
     // guardrail de verdad vuelve a correr con lock cuando la operación escribe.
     const availability = await rawMaterialAvailability(tx, spec, toleranceMm, {
       ...options,
-      lockCoils: options.withoutCoilIds === undefined,
+      lockCoils: options.withoutCoilIds === undefined && options.coilQtyOverrides === undefined,
     });
     if (availability.available.gte(0)) continue;
 
