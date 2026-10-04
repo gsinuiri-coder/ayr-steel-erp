@@ -1,6 +1,7 @@
 # Runbook y handoff: cc18 (D-386, orden único de bloqueos)
 
-**Estado: PR #96 abierto, sin desplegar.** Esta sección se completa en cada paso.
+**Estado: EJECUTADA el 2026-10-04 (hora de Lima), sin incidencias.** Cada paso sensible tuvo el
+OK del dueño (D-251/D-232). El detalle está en «Ejecución», al final.
 
 - Rama `cc18/orden-bloqueos` (worktree `../ayr-cc18`), desde `main` `9d88277`.
 - **No hay migración** y el deploy no escribe datos. **Sin respaldo Neon** (decisión del dueño en
@@ -106,3 +107,32 @@ Verificar:
 - Base local `ayr_local_e2e_cc18` borrada (`DROP DATABASE`, Docker).
 - Worktree, rama local y rama remota borrados.
 - Checkout principal en `main`.
+
+## Ejecución (2026-10-04)
+
+- **Antes:**
+  - UAT del dueño en demo sobre `43d2bd4`: confirmado. Se levantó en 3200/3201, porque cc19
+    tenía 3100/3101.
+  - CI 37227944006 en `43d2bd4`, en verde: lint, typecheck y unitarios; `test:db` 31/31; E2E 505;
+    smoke de Neon `ci` 36; SonarCloud.
+  - La corrida anterior (`24edd13`) tuvo un flaky por `ECONNRESET` del runner (infraestructura) y
+    Sonar por debajo del gate de cobertura de código nuevo (66,7 %). Con los tests de contrato
+    subió a 83,6 % medido en local.
+  - Diff de migraciones y `schema.prisma`, vacío.
+  - Producción estaba en `ayr-steel-erp-api-00082-rlx` (`df5929f`).
+  - La revisión de segundo modelo, sin P0 ni P1 abiertos (dato confirmado al dueño antes del
+    paso 1).
+- **Paso 1, API:**
+  - `pnpm deploy:api --web-origin …` desde el checkout principal en `--detach 43d2bd4`.
+  - Revisión `ayr-steel-erp-api-00083-q96`, `git-sha=43d2bd4`, 100 % del tráfico, `/health` 200.
+  - `pnpm smoke:prod` desde `../ayr-cc18` en `43d2bd4`: 8/8 ok (`local-data/cc18/smoke-cc18-api.log`).
+  - Checkout principal otra vez en `main` y limpio.
+  - Vuelta atrás preparada, no usada: `cmd /c gcloud run services update-traffic
+ayr-steel-erp-api --project ayr-steel-erp --region us-central1 --to-revisions
+ayr-steel-erp-api-00082-rlx=100`.
+- **Paso 2, merge:**
+  - `AYR_OWNER_PUSH=1 gh pr merge 96 --merge` → `1123894`.
+  - Diff de runtime contra `43d2bd4`, vacío. Vercel `success`.
+  - Smoke 8/8 en `ayr-steel-erp-web.vercel.app` y 8/8 en `v2.mareliac.pe` (`smoke-cc18-vercel.log`,
+    `smoke-cc18-v2.log`, misma carpeta).
+- **Cierre:** ver la sección «Cierre»; el PR de docs es el de este archivo.

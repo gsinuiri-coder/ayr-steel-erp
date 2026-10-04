@@ -2,7 +2,24 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-04 — cc18: D-386, orden único de bloqueos (PR #96, sin merge)
+## 2026-10-04 — Ventana cc18 (D-386 desplegada, PR #96, sin migración)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc18.md`.
+
+- **UAT:** confirmado por el dueño en demo, en 3200/3201 porque cc19 ocupaba 3100/3101.
+- **CI 37227944006 en `43d2bd4`, en verde:**
+  - E2E 505 y smoke 36;
+  - `test:db` 31/31;
+  - Sonar pasa, con 83,6 % de cobertura de código nuevo medido en local.
+- **API:** `ayr-steel-erp-api-00083-q96`, `git-sha=43d2bd4`, `/health` 200 y smoke 8/8. La vuelta
+  atrás es `00082-rlx`.
+- **Web:** merge del #96, `main` = `1123894`. Vercel `success` y smoke 8/8 en los dos dominios.
+  Salidas completas en `local-data/cc18/`.
+- **Datos:** ninguno; sin migración y sin respaldo, por decisión del dueño.
+- **Para quien siga:** cc19 (PR #97) también toca la API y sale después. Su despliegue arrastra
+  D-386, así que tiene que partir de `main` `1123894` o posterior.
+
+## 2026-10-04 — cc18: D-386, orden único de bloqueos (PR #96)
 
 - **Rama:** `cc18/orden-bloqueos`, en `../ayr-cc18`, desde `main` `9d88277`.
 - **Sin migración. Nada en producción.**
