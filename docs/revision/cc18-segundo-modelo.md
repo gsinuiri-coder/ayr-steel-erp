@@ -163,4 +163,18 @@ caminos comunes: el conjunto tomado de antemano cubre lo que las guardas piden d
 
 ## Resolución (autor, 2026-10-04)
 
-Se completa al cerrar la sesión.
+Commit `b81d7cc` y siguientes.
+
+| Hallazgo                              | Resolución                                                                                                                                                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| P2-1                                  | **Corregido en parte.** `cancel` toma las filas pendientes de `cutting_order_coils` por id antes que las bobinas. Siguen abiertos, en PROGRESO: la arista `cutting_orders` ↔ fila, que ya existía, y la relectura del estado bajo el lock. |
+| P2-2                                  | **Corregido.** `receive` de producto terminado toma los saldos con `lockInOrder` antes del primer ingreso.                                                                                                                                 |
+| P2-3                                  | **Anotado** como pieza propia del grupo C en PROGRESO, con los dos cruces nuevos.                                                                                                                                                          |
+| P2-4                                  | **Corregido.** El cierre pasa todas las filas como `coilIds`, y la anulación de la OP toma sus flejes por la puerta.                                                                                                                       |
+| P3-1, P3-2, P3-5, P3-6                | **Anotados** en PROGRESO («Abiertos de cc18»). La cobertura de P3-6 se amplió con dos pares: revertir un reporte de coberturas × despacho, y la venta de una bobina × anulación.                                                           |
+| P3-3                                  | **Corregido.** Del texto solo cuentan «deadlock detected» y «could not serialize access», y solo en P2010. Un P2002 o un P2010 con «40001» en el mensaje ya no cuentan.                                                                    |
+| P3-4                                  | **Corregido.** `reserveLines` y «Editar compra» usan `balanceLockKey` y `compareLockKeys`.                                                                                                                                                 |
+| Mapa (`cutting.cancel` antes de cc18) | **Corregido** en `cc18-mapa-bloqueos.md`.                                                                                                                                                                                                  |
+
+Después de las correcciones: `test:db` 31/31 (20 iteraciones por par, 534 s, ningún 40P01), y
+los unitarios del API en verde.

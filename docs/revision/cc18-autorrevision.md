@@ -85,5 +85,16 @@ Quedan riesgos de comportamiento en caminos poco frecuentes:
 
 ## Resolución (autor, 2026-10-04)
 
-Se completa al cerrar la sesión, junto con la revisión de segundo modelo
-(`docs/revision/cc18-segundo-modelo.md`).
+Commit `b81d7cc`.
+
+| Hallazgo | Resolución                                                                                                                                                                                                                                                                                                        |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 (P2)   | **Corregido.** Enviar a corte usa `lockInOrder`. Editar una bobina con otro acabado y «Editar compra» con otro color o espesor suman el agregado destino a la toma inicial (`rawMaterialCoilsForAttributes`).                                                                                                     |
+| 2 (P2)   | **Corregido.** `expectClean` exige que cada operación del par termine bien al menos una vez.                                                                                                                                                                                                                      |
+| 3 (P2)   | **Corregido en parte.** Se sumaron dos pares: revertir un reporte de coberturas × despacho, y la venta de una bobina entera × anulación. El resto queda anotado en PROGRESO.                                                                                                                                      |
+| 4 (P3)   | **Corregido.** `sortedUniqueIds` pasa a minúsculas y `lockCoil` compara en minúsculas.                                                                                                                                                                                                                            |
+| 5 (P3)   | **Corregido.** `LockOrderConflict` lleva `55P03`, el mensaje empieza con «NOWAIT» y el filtro lo registra aparte.                                                                                                                                                                                                 |
+| 6 (P3)   | **Anotado** en PROGRESO («medir»).                                                                                                                                                                                                                                                                                |
+| 7 (P3)   | **Anotado** en PROGRESO. El comentario del centinela ya declara lo que no ve.                                                                                                                                                                                                                                     |
+| 8 (P3)   | **Verificado.** `playwright.config.ts` toma `DATABASE_URL` del entorno con `??=`, y `scripts/local-docker-env.mjs#isKnownTestDb` sigue exigiendo el nombre exacto para las ramas `local` y `local-e2e` de los scripts de diagnóstico. Eso es correcto: esos scripts apuntan a esas dos bases y no a las hermanas. |
+| 9 (P3)   | **Aceptado.** Montar ya exige la misma línea de negocio.                                                                                                                                                                                                                                                          |

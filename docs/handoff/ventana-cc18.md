@@ -20,6 +20,23 @@
 - **Salida completa de cada smoke en un archivo** (`local-data/cc18/smoke-cc18-*.log`), antes de
   filtrar.
 
+## Propuesta para AGENTS.md (no aplicada; la decide el dueño)
+
+Texto propuesto como **regla dura 17**, en §3:
+
+> 17. **Orden único de bloqueos de fila (D-386).** Toda transacción que toca inventario toma sus
+>     filas en el orden documentos → reservas → bobinas → saldos y, dentro de cada nivel, por id
+>     ascendente (`docs/ARQUITECTURA.md` §3.3.1). Las bobinas y los saldos se bloquean solo por la
+>     puerta única: `lockCoilRows` (`apps/api/src/inventory/row-locks.ts`) e
+>     `InventoryService.lockBalance`. Una operación de varios ítems toma su conjunto completo al
+>     inicio con `InventoryService.lockInOrder`, antes de cualquier lectura que decida algo. El
+>     centinela `row-locks.sentinel.spec.ts` falla si aparece un `FOR UPDATE` sobre `coils` o
+>     `inventory_balances` fuera de la puerta. Los pares concurrentes viven en
+>     `lock-order.db-spec.ts`. Un camino nuevo que mueva inventario suma su par ahí.
+
+Recomendación: aplicarla. Fija el orden igual que la regla 8 fija los escritores del kardex, y le
+da al próximo agente la puerta y el test donde sumar un camino nuevo.
+
 ## 0. CI [agente]
 
 ```sh
