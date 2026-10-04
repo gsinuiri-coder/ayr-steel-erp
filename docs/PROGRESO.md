@@ -2,6 +2,46 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-04 — Ventana cc19 (D-387 desplegada, PR #97, sin migración)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc19.md`.
+
+- **UAT:** confirmado por el dueño en demo, sobre `0608782` y con el ajuste de estados incluido.
+- **Reacomodo:**
+  - Sobre `main` `523c198`, que trae D-386 de cc18 y su PR de docs #98. Los conflictos fueron
+    solo de docs.
+  - CI 37235144319 sobre `dc45734`, en verde:
+    - unitarios: 2497;
+    - kardex contra la base: 31;
+    - E2E: 509 pasados y 3 saltados;
+    - smoke de Neon `ci`: 36 pasados y 2 saltados;
+    - Sonar.
+  - `dc45734` contiene `43d2bd4`, verificado antes del deploy.
+- **API:**
+  - Revisión `ayr-steel-erp-api-00084-6vs` con `git-sha=dc45734`, al 100 %, `/health` 200 y
+    `smoke:prod` 8/8.
+  - Vuelta atrás: `00083-q96` (`43d2bd4`, la de cc18).
+- **Web:**
+  - Merge del #97: `main` = `35073be`, sin diff de runtime contra `dc45734`.
+  - Vercel `success` (`…-1szifzgjo-…`).
+  - `smoke:prod` 8/8 en `vercel.app` y 8/8 en `v2.mareliac.pe`.
+  - Salidas completas en `local-data/cc19/`.
+- **Producción, leída por la API** (admin efímero de D-024, sin SQL):
+  - 145 cotizaciones no anuladas: **48 registrado, 97 solo referencia, 0 no coincide, 0 sin nada**;
+  - ninguna con más de un comprobante vigente.
+- **Datos:** ninguno. El deploy no escribe; la sonda de conteo solo crea y borra el admin efímero.
+- **E2E locales de cc19 sin valor como evidencia** (aviso de cc18): antes de que cada sesión usara
+  su propia base, las corridas de cc18 pudieron vaciar `ayr_local_e2e` mientras corrían las de
+  cc19. Ni los verdes ni los rojos locales de esa hora cuentan; el veredicto es la CI del PR #97.
+  cc19 no llegó a crear `ayr_local_e2e_cc19`.
+- **P3 con gatillo — el orden por comprobante lee todas las filas del filtro.**
+  - `sort=invoice` trae `id, seq, notes` y los comprobantes vigentes de **todas** las cotizaciones
+    que pasan el filtro, las ordena en memoria y recién después pagina: hoy son 145 en producción.
+  - **Revisarlo al llegar a 1.000 cotizaciones no anuladas**, o si la lista ordenada por
+    comprobante tarda más que la lista normal.
+  - Salida probable: guardar el número a mostrar en una columna con índice, con migración y
+    backfill. Lo decide el dueño.
+
 ## 2026-10-04 — cc19: D-387, comprobante en cotizaciones y formulario de fecha de despacho (PR #97)
 
 Detalle y runbook en `docs/handoff/ventana-cc19.md`. Sin migración; toca API y web. En paralelo
