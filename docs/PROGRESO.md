@@ -2,6 +2,45 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 — D-383: proteger la anulación de un pedido (PR #90 sin merge)
+
+- Rama `d383/proteger-anular-pedido` desde `main` = `6da0154`, ya con cc16 en producción. Sin
+  migración. Nada en producción.
+- **Bloquea anular:**
+  - un comprobante vivo, medido por el neto por línea de D-346;
+  - un borrador de factura o boleta, nombrado y sin borrado automático (decisión del dueño);
+  - un despacho vigente.
+- **Lo fabricado sin despachar:** aviso con casilla por línea, que el API exige y audita.
+- **Cambios en la pantalla:**
+  - aviso de comprobantes manuales anulados;
+  - la alerta de «consumida» ya no contradice al botón;
+  - los dos P2 de cc16.
+- Registrar o emitir un borrador de un pedido anulado se rechaza, decisión del dueño.
+- **Fotos `READ ONLY` de producción, con OK del dueño:**
+  - de 5 pedidos anulados, **ninguno** tiene fabricado suelto, despachos vigentes ni
+    comprobantes vivos (`local-data/cc16/`);
+  - hay **1 borrador en total** y **ninguno** cuelga de un pedido anulado (`local-data/d383/`).
+- **Revisiones:**
+  - autorrevisión: `docs/revision/d383-autorrevision.md`, 0 P0, 0 P1, 2 P2, 8 P3;
+  - segundo modelo: `docs/revision/d383-segundo-modelo.md`, 0 P0, 0 P1, 2 P2, 5 P3.
+  - **Corregidos:**
+    - el criterio neto por línea y el importe al céntimo;
+    - el motivo del menú, ahora visible en la etiqueta;
+    - el borrador de nota de crédito ya no bloquea;
+    - fabricado suelto o libre según el producto;
+    - el aviso, solo en manuales;
+    - el lock de borradores por línea;
+    - la limpieza E2E, que descarta borradores y avisa.
+  - **Abiertos (P3):**
+    - una sola casilla para todas las líneas, a confirmar con el dueño;
+    - las unidades se muestran como código SUNAT;
+    - la confirmación no queda atada a la vista previa;
+    - `purgeSalesTrail` y `purgeRoofingTrail` siguen sin avisar.
+- **Unitarios locales:** API 2292, web 87, lint, typecheck y formato en verde. La CI es el juez
+  del E2E. Guion UAT en `docs/uat/d383.md`, en espera del UAT de cc15b.
+- **Registro de riesgo (toca datos):** `SalesOrdersService.cancel`, `commercialCancelBlocks`,
+  `fabricatedLooseLines` y `assertStillAvailable`.
+
 ## 2026-10-03 — cc16: D-381, traer un comprobante manual anulado a otro pedido (PR #87 sin merge)
 
 - D-381 confirmada por el dueño, con las decisiones 1-4 (fila de §0.2). El PR de diseño #86 se
