@@ -12,13 +12,16 @@ ventana. Falta: UAT en demo, D-232, deploy y merge.
   - Archivo: `apps/web/src/app/(app)/comprobantes/[id]/dispatch-at-issue-date.tsx`.
   - E2E: caso D-387 en `e2e/tests/despacho-fecha-comprobante-d278.spec.ts`, rojo sin el arreglo.
 - **M2:** columna «Comprobante» en `/cotizaciones`, con buscador y orden.
-  - `packages/shared/src/schemas/quotation-import.ts`: `importedInvoiceNumber` y
-    `compareImportedInvoiceNumbers`.
-  - `apps/api/src/common/list-orderings.ts`: `orderByImportedInvoice`.
-  - `apps/api/src/sales/quotations.service.ts`: `findAll`, `idsByImportedInvoice` y
-    `findPageByImportedInvoice`.
-  - `apps/web/src/app/(app)/cotizaciones/cotizaciones-view.tsx`.
-- **M3:** el comprobante en la cabecera de `cotizacion-detalle-view.tsx`.
+  - `packages/shared/src/schemas/quotation-import.ts`: `importedInvoiceNumber`,
+    `compareImportedInvoiceNumbers`, `normalizeInvoiceNumber`, `quotationInvoiceState`,
+    `shownInvoiceNumber` e `invoiceNumberContains`.
+  - `apps/api/src/common/list-orderings.ts`: `orderByInvoiceNumber`.
+  - `apps/api/src/sales/quotations.service.ts`: `liveInvoiceDocuments`, `findAll`,
+    `idsByInvoiceNumber` y `findPageByImportedInvoice`.
+  - `apps/web/src/components/sales/quotation-invoice.tsx`, usado en `cotizaciones-view.tsx`.
+- **Ajuste del dueño, D-387 (D):** cuatro estados de la columna (solo referencia, registrado, no
+  coincide, vacío), calculados al leer.
+- **M3:** el mismo estado en la cabecera de `cotizacion-detalle-view.tsx`.
 - **Extra con OK del dueño:** `apps/api/src/common/search-seq.ts`. Un RUC ya no da 500 en los
   buscadores de cotizaciones y pedidos.
 
@@ -27,6 +30,7 @@ ventana. Falta: UAT en demo, D-232, deploy y merge.
 - **D-387:**
   - leer el comprobante al vuelo, sin migración (decisión del dueño);
   - arreglar el 500 del RUC en las dos listas (decisión del dueño);
+  - la columna distingue la referencia del Excel del comprobante registrado (ajuste del dueño);
   - la tarjeta de despacho la decide el plan sin fecha.
 
 ## Bloqueos / pendientes
@@ -64,20 +68,21 @@ otra tarea autorizada.
   - columna «Comprobante» en `/cotizaciones`, con orden y buscador;
   - «Comprobante» en la cabecera del detalle de la cotización.
 - **API:**
-  - `externalInvoice` en el DTO de cotización (lista y detalle);
-  - `sort=invoice` en `GET /sales/quotations`;
-  - el buscador de cotizaciones encuentra por comprobante;
+  - `externalInvoice` e `invoiceDocuments` (los comprobantes vigentes del pedido vivo) en el DTO de
+    cotización, en lista y detalle;
+  - `sort=invoice` en `GET /sales/quotations`, por el número mostrado;
+  - el buscador de cotizaciones encuentra por comprobante: la marca y el registrado;
   - `searchSeqOf` en cotizaciones y pedidos: un RUC ya no da 500.
-- **`@ayr/shared`:** `importedInvoiceNumber`, `compareImportedInvoiceNumbers`, `QUOTATION_SORT_KEYS`
-  con `invoice` y `externalInvoice` en `quotationSchema`.
+- **`@ayr/shared`:** `importedInvoiceNumber`, `normalizeInvoiceNumber`, `quotationInvoiceState` y
+  compañía; `QUOTATION_SORT_KEYS` con `invoice`; los dos campos en `quotationSchema`.
 
 ### Convivencia entre versiones
 
-- **API nueva + web vieja:** sin efecto visible. El campo extra del DTO se ignora y la web vieja no
-  manda `sort=invoice`. El arreglo del RUC aplica de inmediato.
-- **Web nueva + API vieja:** la columna sale vacía, y ordenar por «Comprobante» da 400, porque la
-  API vieja no conoce la clave y la lista muestra error.
-- Por eso: **API primero, merge enseguida.**
+- **API nueva + web vieja:** sin efecto visible. Los campos extra del DTO se ignoran y la web vieja
+  no manda `sort=invoice`. El arreglo del RUC aplica de inmediato.
+- **Web nueva + API vieja:** **la lista y el detalle de cotizaciones fallan.** La API vieja no
+  manda `invoiceDocuments`, y el componente lo lee.
+- Por eso: **API primero y merge enseguida, nunca al revés.**
 
 ## Runbook
 

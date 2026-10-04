@@ -7,6 +7,51 @@
 Detalle y runbook en `docs/handoff/ventana-cc19.md`. Sin migración; toca API y web. En paralelo
 con cc18 (D-386, solo API), sin archivos compartidos salvo esta bitácora y §0.2.
 
+**Ajuste del dueño antes del UAT — estados de la columna (D-387 (D)).**
+
+- **Paso 0:**
+  - El camino es cotización → pedido vivo (`sales_orders.quotation_id`) → comprobantes
+    (`fiscal_documents.sales_order_id`).
+  - El modelo admite varios comprobantes vigentes por pedido (facturación parcial). En demo hoy
+    ninguno tiene más de uno: 48 tienen uno y 3 ninguno.
+- **Cuatro estados**, calculados al leer con `quotationInvoiceState`: solo referencia (gris),
+  registrado (check y enlace), no coincide (ámbar, con ícono) y vacío.
+  - Vigente: factura o boleta en `LIVE_DOCUMENT_STATUSES`, sin archivar y con número.
+  - La comparación es normalizada.
+- **Demo, 69 no anuladas:** 48 registrado, 21 solo referencia, 0 no coincide, 0 vacío.
+- **Consultas por pantallazo** (medidas contra demo, página de 25, con el log de Prisma):
+  - lista: de 5 a 6;
+  - ordenada por comprobante: 8;
+  - con búsqueda `FFA1-1389`: 9.
+  - Ninguna por fila.
+- **Tests:**
+  - unitarios `imported-invoice-d387.spec.ts`: 59;
+  - E2E `comprobante-en-cotizaciones-d387.spec.ts` 3/3, con una cotización en cada estado más una
+    con su comprobante anulado;
+  - API entera: 2444 pasados y 2 saltados;
+  - lint, typecheck y formato en verde.
+- **Rojo de infraestructura:** con demo arriba, `auth.service.spec.ts` («rechaza correo
+  inexistente») superó los 5 s del test en la corrida paralela completa. Ese test calcula un hash
+  ficticio. Pasa solo 3 de 3 veces, y la API entera pasa con `--maxWorkers=50%`. No está en el diff.
+- **Revisiones**, sin P0 ni P1:
+  - Autorrevisión, `docs/revision/cc19-estados-autorrevision.md`: 2 P2, 7 P3.
+  - Segundo modelo, `docs/revision/cc19-estados-segundo-modelo.md`: 2 P2, 5 P3.
+- **Corregidos:**
+  - «no coincide» y «solo referencia» ya no se dicen solo con color: ícono o nombre accesible, y
+    tooltip también en el enlace;
+  - buscar «0» o «1» ya no trae todos los comprobantes: mínimo de 3 caracteres significativos y
+    comparación normalizada, sin los ceros de relleno;
+  - unitario del filtro de vigencia en la lista y el orden;
+  - P2-2 del segundo modelo (pedido anulado con comprobante vivo): no ocurre, porque D-383 bloquea
+    esa anulación.
+- **Anotados (P3):**
+  - con varios comprobantes, «registrado» muestra el primero aunque el que coincide sea otro;
+  - VOID_PENDING sigue con check (está en `LIVE_DOCUMENT_STATUSES`);
+  - fragmentos como `A1-1419` no se encuentran, y `FFA1-001` trae de más;
+  - el prefiltro de la marca exige un espacio exacto tras «Factura externa:»;
+  - `findPageByImportedInvoice` merece llamarse `findPageByInvoiceNumber`;
+  - el componente no tiene unitario propio (lo cubre el E2E).
+
 - **Paso 0 A:**
   - El comprobante de una importada vive solo en la marca `Factura externa: <clave>`, en la primera
     línea de las observaciones. Su formato no cambió desde el 2026-09-08.
