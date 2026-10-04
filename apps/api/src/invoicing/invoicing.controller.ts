@@ -30,6 +30,7 @@ import {
   voidDocumentSchema,
   reactivateDocumentSchema,
   reactivateWithOrderLinesSchema,
+  moveDocumentToOrderSchema,
   type CreateCreditNoteInput,
   type CreateCustomerPaymentInput,
   type CreateFiscalSeriesInput,
@@ -55,12 +56,16 @@ import {
   type ReactivateWithOrderLinesInput,
   type ReactivationPreviewDto,
   type OrderAnnulledDocumentDto,
+  type MoveDocumentToOrderInput,
+  type MoveToOrderPreviewDto,
+  type MovableAnnulledDocumentDto,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { FiscalImportService } from './fiscal-import.service';
+import { MoveDocumentToOrderService } from './move-to-order.service';
 import { InvoicingService } from './invoicing.service';
 import { ReceivablesService } from './receivables.service';
 
@@ -79,6 +84,7 @@ export class InvoicingController {
     private readonly invoicing: InvoicingService,
     private readonly receivablesService: ReceivablesService,
     private readonly fiscalImport: FiscalImportService,
+    private readonly moveToOrder: MoveDocumentToOrderService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -494,6 +500,50 @@ export class InvoicingController {
     body: ReactivateWithOrderLinesInput,
   ): Promise<FiscalDocumentDto> {
     await this.fiscalImport.reactivateWithOrderLines(actor, id, body);
+    return this.invoicing.findOne(id);
+  }
+
+  /**
+   * D-381: los manuales anulados del cliente del pedido, de pedidos anulados, que se podrían traer
+   * a él, con el motivo si no se puede. Solo lectura y **sin bloqueos**; se pide al abrir el
+   * diálogo, no al pintar el pedido.
+   */
+  @Get('orders/:salesOrderId/movable-annulled-documents')
+  @Roles(Role.ADMINISTRADOR)
+  movableAnnulledDocuments(
+    @CurrentUser() actor: RequestUser,
+    @Param('salesOrderId', ParseUUIDPipe) salesOrderId: string,
+  ): Promise<MovableAnnulledDocumentDto[]> {
+    return this.moveToOrder.candidates(actor, salesOrderId);
+  }
+
+  /**
+   * D-381: el antes y el después de traer un manual anulado al pedido destino. Pasa por los mismos
+   * bloqueos que la ejecución y no escribe nada.
+   */
+  @Get('documents/:id/move-to-order/:targetOrderId/preview')
+  @Roles(Role.ADMINISTRADOR)
+  previewMoveToOrder(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('targetOrderId', ParseUUIDPipe) targetOrderId: string,
+  ): Promise<MoveToOrderPreviewDto> {
+    return this.moveToOrder.preview(actor, id, targetOrderId);
+  }
+
+  /**
+   * D-381: trae un manual anulado, cuyo pedido de origen está anulado, al pedido destino con las
+   * líneas de ese pedido. Motivo, casilla y total del papel (al céntimo) obligatorios; no despacha.
+   * Sin `idempotencyKey`: un segundo intento ve el comprobante ya `ACCEPTED` y responde 409.
+   */
+  @Post('documents/:id/move-to-order')
+  @Roles(Role.ADMINISTRADOR)
+  async moveDocumentToOrder(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(moveDocumentToOrderSchema)) body: MoveDocumentToOrderInput,
+  ): Promise<FiscalDocumentDto> {
+    await this.moveToOrder.move(actor, id, body);
     return this.invoicing.findOne(id);
   }
 }

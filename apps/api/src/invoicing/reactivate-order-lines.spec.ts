@@ -77,6 +77,8 @@ describe('planOrderLines (D-378)', () => {
         productId: 'p-soi-1',
         description: 'Papel fdi-1',
         unit: 'MTR',
+        // D-381: la línea que factura después; en D-378, la misma de antes.
+        salesOrderItemId: 'soi-1',
         qty: '48.000',
         unitPricePen: '2.0833',
         subtotalPen: '100.0000',
@@ -154,7 +156,11 @@ describe('planOrderLines (D-378)', () => {
       description: 'Otra bobina',
       unit: 'NIU',
     });
-    expect(plan.after.lines[0]).toMatchObject({ description: 'Otra bobina', unit: 'NIU' });
+    expect(plan.after.lines[0]).toMatchObject({
+      description: 'Otra bobina',
+      unit: 'NIU',
+      productChanged: true,
+    });
     // Mismos importes, pero otro material: es un cambio.
     expect(plan.changed).toBe(true);
   });
@@ -196,6 +202,65 @@ describe('planOrderLines (D-378)', () => {
       [5, 'soi-3'],
     ]);
     expect(plan.after.lines.map((l) => l.orderLineNumber)).toEqual([2, 1, 3]);
+  });
+});
+
+describe('planOrderLines con emparejado a otro pedido (D-381)', () => {
+  const row = (id: string, lineNumber: number, salesOrderItemId: string): DocumentLineRow => ({
+    id,
+    lineNumber,
+    productId: `p-${id}`,
+    description: `Papel ${id}`,
+    qty: '1.000',
+    unit: 'NIU',
+    unitPricePen: '10.0000',
+    subtotalPen: '10.0000',
+    igvPen: '1.8000',
+    totalPen: '11.8000',
+    salesOrderItemId,
+  });
+  const target = (id: string, lineNumber: number, productId: string) => ({
+    id,
+    lineNumber,
+    productId,
+    description: `Pedido ${id}`,
+    qty: '1',
+    unit: 'NIU',
+    subtotalPen: '10.0000',
+    igvPen: '1.8000',
+    totalPen: '11.8000',
+  });
+
+  it('P1 de la revisión: cada fila pasa a apuntar a la línea del pedido destino y el antes nombra la de origen', () => {
+    const plan = planOrderLines(
+      [row('fdi-1', 1, 'src-1'), row('fdi-2', 2, 'src-2')],
+      [target('dst-1', 1, 'p-nuevo'), target('dst-2', 2, 'p-fdi-1'), target('dst-3', 3, 'p-fdi-2')],
+      undefined,
+      {
+        pairing: new Map([
+          ['fdi-1', 'dst-2'],
+          ['fdi-2', 'dst-3'],
+        ]),
+        sourceOrderLines: [
+          { id: 'src-1', lineNumber: 1 },
+          { id: 'src-2', lineNumber: 2 },
+        ],
+      },
+    );
+    expect(plan.updates.map((u) => [u.id, u.salesOrderItemId])).toEqual([
+      ['fdi-1', 'dst-2'],
+      ['fdi-2', 'dst-3'],
+    ]);
+    expect(plan.creates.map((c) => [c.lineNumber, c.salesOrderItemId])).toEqual([[3, 'dst-1']]);
+    // El antes: las líneas del pedido de origen; el después: las del destino.
+    expect(plan.before.lines.map((l) => l.orderLineNumber)).toEqual([1, 2]);
+    expect(plan.after.lines.map((l) => [l.lineNumber, l.orderLineNumber, l.added])).toEqual([
+      [1, 2, false],
+      [2, 3, false],
+      [3, 1, true],
+    ]);
+    // Mismo producto: ninguna fila marcada como cambio de producto.
+    expect(plan.after.lines.some((l) => l.productChanged)).toBe(false);
   });
 });
 

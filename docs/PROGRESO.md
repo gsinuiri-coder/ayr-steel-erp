@@ -2,6 +2,55 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-03 — cc16: D-381, traer un comprobante manual anulado a otro pedido (PR #87 sin merge)
+
+- D-381 confirmada por el dueño, con las decisiones 1-4 (fila de §0.2). El PR de diseño #86 se
+  mergeó con la CI en verde y con su autorrevisión.
+- Datos de FFA1-00001389 confirmados por el dueño:
+  - el papel es por las 7 líneas, total S/ 6,438.00;
+  - el vendedor es el de PED-000056;
+  - el borrador de PED-000056 ya está eliminado; se confirma en la foto previa a la ventana.
+- Implementación: API, web, unitarios y el E2E `traer-comprobante-d381.spec.ts`. Sin migración,
+  nada en producción. Por la sesión de cc15b no se levantó demo ni se corrió la suite en local:
+  **la CI es el juez**.
+- **CI 37160575144, en `7802594`: verde.**
+  - E2E: 497 pasados, 3 saltados y 0 fallidos.
+  - El smoke de Neon `ci`, lint, typecheck, unitarios y Sonar, en verde.
+  - **Corrida anterior (37159099316): 2 rojos, ambos del spec nuevo.** Los dos eran defectos del
+    test, no del producto. Con el RUC facturable de CI, `createInvoiceableCustomer` reusa siempre el
+    mismo cliente, así que el «otro cliente» no era otro (respuesta 201) y el diálogo tenía varios
+    candidatos, por lo que no autoseleccionó ninguno. Se corrigió con un RUC propio por caso.
+  - Corrida previa a esa: un error de lint en el test del presupuesto.
+- Unitarios locales: `jest src/invoicing` dio 335 en verde. Typecheck de API y web, y lint de los
+  archivos tocados, limpios.
+- Revisiones:
+  - autorrevisión: `docs/revision/cc16-autorrevision.md`, 0 P0, 0 P1, 2 P2, 7 P3;
+  - segundo modelo: `docs/revision/cc16-segundo-modelo.md`, 0 P0, 0 P1, 2 P2, 5 P3;
+  - corregidos: el test del presupuesto de consultas, el parámetro muerto y el texto del toast;
+  - queda abierta la P2 de la autorrevisión sobre la web: el aviso en el detalle del comprobante
+    anulado cuando su pedido está anulado, y el botón del pedido deshabilitado con motivo. Hoy el
+    motivo se ve en la lista del diálogo.
+- Runbook de la ventana: `docs/handoff/ventana-cc16.md`. Incluye la foto previa, el respaldo, el
+  paso por la interfaz y la **decisión aparte del despacho**: preguntar cuándo salió la mercadería y
+  seguir D-374. Guion UAT: `docs/uat/cc16.md`. Manual: caso 6.
+- Revisión del dueño del PR #87 (2026-10-03): sale antes que cc15b. Está de acuerdo con no abrir el
+  despacho a la fecha del papel al terminar.
+- **D-383 propuesta, sin implementar** (pieza aparte, a pedido del dueño):
+  - bloquear la anulación de un pedido con comprobante vivo;
+  - avisar al anular un pedido que tiene comprobantes manuales anulados;
+  - los dos P2 abiertos de cc16;
+  - (5) anular un pedido con OPs cerradas, a partir de una lectura de código, sin implementar.
+    Hoy se anula sin aviso, y lo fabricado y no despachado queda en inventario **suelto**: nada lo
+    vende ni lo reasigna. La alerta de «reserva consumida» contradice al botón. Se recomienda, como
+    mínimo, un aviso con casilla que diga cuánto hay fabricado y qué pasa con eso, y que el API lo
+    exija confirmado. Detalle en la fila D-383.
+- UAT del dueño en demo (2026-10-03): **confirmado**.
+  - Los puertos 3100 y 3101 los tenía la sesión de cc15b. Los cerré con autorización explícita
+    del dueño y levanté `dev:demo` desde `../ayr-cc16`, sin `db:demo`.
+  - Al terminar, la demo se cerró.
+- Registro de riesgo (toca datos): `MoveDocumentToOrderService.move` y el cambio de una línea en
+  `planOrderLines`/`reactivateWithOrderLines`.
+
 ## 2026-10-03 — D-381: llevar un comprobante manual anulado a otro pedido (diseño, PR de solo docs)
 
 - Caso: `FFA1-00001389` anulado junto con PED-000044; el pedido correcto es PED-000056. Foto

@@ -63,8 +63,19 @@ export interface OrderLinesPlan {
   /**
    * Filas que ya existen: se actualizan por id con estos valores. `productId`, `description` y
    * `unit` son los de la fila salvo que la línea del pedido haya cambiado de producto.
+   *
+   * `salesOrderItemId` es la línea del pedido que la fila factura **después**. En D-378 es la
+   * misma de antes; al traer el comprobante a otro pedido (D-381) es la del destino, y escribirla
+   * es lo que hace que la facturación por línea, el despacho y los reportes lean el pedido nuevo
+   * (revisión del segundo modelo del diseño D-381, P1).
    */
-  updates: ({ id: string; productId: string; description: string; unit: string } & LineAmounts)[];
+  updates: ({
+    id: string;
+    productId: string;
+    description: string;
+    unit: string;
+    salesOrderItemId: string;
+  } & LineAmounts)[];
   /** Filas nuevas, con su número de línea ya asignado. */
   creates: ({
     lineNumber: number;
@@ -117,9 +128,20 @@ function side(lines: ReactivationLineDto[], header?: StoredHeader): Reactivation
 }
 
 /**
+ * D-381: cuando el comprobante cambia de pedido, qué línea del destino factura cada fila
+ * (`pairing`, por id de fila) y las líneas del pedido de **origen**, para que el «antes» siga
+ * nombrando la línea que la fila facturaba (revisión del segundo modelo, P2).
+ */
+export interface MovePlanOptions {
+  pairing: ReadonlyMap<string, string>;
+  sourceOrderLines: readonly { id: string; lineNumber: number }[];
+}
+
+/**
  * Arma el plan. Supone lo que el servicio ya comprobó: todas las líneas del comprobante vienen
  * del pedido, ninguna línea del pedido aparece dos veces y todas las de `documentLines` están en
- * `orderLines`.
+ * `orderLines`. Con `move` (D-381), lo mismo pero a través del emparejado: cada fila tiene su
+ * línea del destino en `move.pairing`.
  *
  * `storedHeader` es la cabecera **grabada** del comprobante, y el «antes» la muestra tal cual
  * (autorrevisión cc13, P2-2): recalcularla con D-377 podía diferir en céntimos en un manual
@@ -129,17 +151,21 @@ export function planOrderLines(
   documentLines: readonly DocumentLineRow[],
   orderLines: readonly OrderLineRow[],
   storedHeader?: StoredHeader,
+  move?: MovePlanOptions,
 ): OrderLinesPlan {
   const orderById = new Map(orderLines.map((o) => [o.id, o]));
-  const byOrderItem = new Map(
-    documentLines.flatMap((d) => (d.salesOrderItemId ? [[d.salesOrderItemId, d] as const] : [])),
+  const targetOf = (d: DocumentLineRow): string | null =>
+    move ? (move.pairing.get(d.id) ?? null) : d.salesOrderItemId;
+  const byOrderItem = new Set(documentLines.flatMap((d) => targetOf(d) ?? []));
+  const beforeLineNumber = new Map(
+    (move ? move.sourceOrderLines : orderLines).map((o) => [o.id, o.lineNumber]),
   );
   const docSorted = [...documentLines].sort((a, b) => a.lineNumber - b.lineNumber);
   const orderSorted = [...orderLines].sort((a, b) => a.lineNumber - b.lineNumber);
 
   const before: ReactivationLineDto[] = docSorted.map((d) => ({
     lineNumber: d.lineNumber,
-    orderLineNumber: d.salesOrderItemId ? (orderById.get(d.salesOrderItemId)?.lineNumber ?? 0) : 0,
+    orderLineNumber: d.salesOrderItemId ? (beforeLineNumber.get(d.salesOrderItemId) ?? 0) : 0,
     description: d.description,
     qty: toFixedString(d.qty.toString(), 'KG'),
     unit: d.unit,
@@ -158,7 +184,8 @@ export function planOrderLines(
   let changed = false;
 
   for (const d of docSorted) {
-    const o = d.salesOrderItemId ? orderById.get(d.salesOrderItemId) : undefined;
+    const target = targetOf(d);
+    const o = target ? orderById.get(target) : undefined;
     if (!o) continue;
     const amounts = fullLineAmounts(o);
     const prev = before.find((b) => b.lineNumber === d.lineNumber);
@@ -171,7 +198,14 @@ export function planOrderLines(
     if (productChanged) changed = true;
     const description = productChanged ? o.description : d.description;
     const unit = productChanged ? o.unit : d.unit;
-    updates.push({ id: d.id, productId: o.productId, description, unit, ...amounts });
+    updates.push({
+      id: d.id,
+      productId: o.productId,
+      description,
+      unit,
+      salesOrderItemId: o.id,
+      ...amounts,
+    });
     afterExisting.push({
       lineNumber: d.lineNumber,
       orderLineNumber: o.lineNumber,
@@ -179,6 +213,7 @@ export function planOrderLines(
       unit,
       ...amounts,
       added: false,
+      ...(productChanged ? { productChanged: true } : {}),
     });
   }
 

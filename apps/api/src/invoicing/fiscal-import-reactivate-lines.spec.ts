@@ -198,6 +198,8 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
       where: { id: 'fdi-1' },
       data: {
         productId: 'p-1',
+        // D-381: el plan dice a qué línea apunta la fila; en D-378 es la misma de antes.
+        salesOrderItemId: 'soi-1',
         description: 'Cobertura roja (papel)',
         unit: 'MTR',
         qty: '48.000',

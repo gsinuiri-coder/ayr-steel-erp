@@ -54,6 +54,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'invoicing.document.create': 'Comprobante creado',
   'invoicing.document.discard-draft': 'Borrador de comprobante descartado',
   'invoicing.document.issue': 'Comprobante emitido',
+  'invoicing.document.move-to-order': 'Comprobante manual anulado traído a otro pedido (D-381)',
   'invoicing.document.reactivate': 'Comprobante importado/manual reactivado (anulado por error)',
   'invoicing.document.reactivate-with-order-lines':
     'Comprobante manual reactivado con las líneas del pedido',
@@ -107,6 +108,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'sales.order.cancel': 'Cancelación de pedido',
   'sales.order.confirm': 'Confirmación de pedido',
   'sales.order.customer': 'Cliente de pedido cambiado',
+  'sales.order.document-moved-in': 'Comprobante traído desde otro pedido (D-381)',
+  'sales.order.document-moved-out': 'Comprobante llevado a otro pedido (D-381)',
   'sales.order.item-price': 'Precio de línea de pedido editado',
   'sales.order.item-qty': 'Cantidad de línea de pedido editada',
   'sales.order.promised-delivery-date': 'Fecha de entrega prometida cambiada',

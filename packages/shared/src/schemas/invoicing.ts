@@ -474,6 +474,12 @@ export const reactivationLineSchema = z.object({
   totalPen: z.string(),
   /** `true` en el después si la línea no estaba en el comprobante. */
   added: z.boolean(),
+  /**
+   * `true` en el después si la fila existente toma otro producto: la línea del pedido cambió de
+   * producto (D-378) o, al traer el comprobante a otro pedido (D-381), se emparejó con una línea
+   * de otro producto. El modal la resalta para que no pase en silencio.
+   */
+  productChanged: z.boolean().optional(),
 });
 export type ReactivationLineDto = z.infer<typeof reactivationLineSchema>;
 
@@ -527,6 +533,55 @@ export const orderAnnulledDocumentSchema = z.object({
   simple: reactivationAvailabilitySchema,
 });
 export type OrderAnnulledDocumentDto = z.infer<typeof orderAnnulledDocumentSchema>;
+
+/**
+ * D-381: traer un comprobante manual anulado, cuyo pedido de origen está anulado, al pedido
+ * destino. Los mismos controles que D-378 (motivo, casilla y total del papel al céntimo) más el
+ * pedido destino.
+ */
+export const moveDocumentToOrderSchema = reactivateWithOrderLinesSchema.extend({
+  targetSalesOrderId: z.string().uuid(),
+});
+export type MoveDocumentToOrderInput = z.infer<typeof moveDocumentToOrderSchema>;
+
+/** D-381: el vendedor de un pedido, para el antes y el después. */
+export const moveSellerSchema = z.object({
+  id: z.string().nullable(),
+  name: z.string().nullable(),
+});
+
+/** D-381: la vista previa del modal. Solo se arma si no hay bloqueos. */
+export const moveToOrderPreviewSchema = z.object({
+  id: z.string(),
+  number: z.string().nullable(),
+  issueDate: z.string(),
+  sourceOrderCode: z.string(),
+  targetOrderCode: z.string(),
+  targetOrderIssueDate: z.string(),
+  /** El vendedor del comprobante es el de su pedido: pasa del de origen al de destino. */
+  sellerBefore: moveSellerSchema,
+  sellerAfter: moveSellerSchema,
+  before: reactivationSideSchema,
+  after: reactivationSideSchema,
+  /** Avisos que no bloquean (fecha del papel anterior al pedido, despacho a la fecha del papel). */
+  warnings: z.array(z.string()),
+});
+export type MoveToOrderPreviewDto = z.infer<typeof moveToOrderPreviewSchema>;
+
+/** D-381: un comprobante anulado que se podría traer al pedido, y si no, por qué. */
+export const movableAnnulledDocumentSchema = z.object({
+  id: z.string().uuid(),
+  number: z.string().nullable(),
+  docType: z.enum(FISCAL_DOC_TYPES),
+  issueDate: z.string(),
+  totalPen: z.string(),
+  sourceOrderId: z.string().uuid().nullable(),
+  sourceOrderCode: z.string().nullable(),
+  annulledAt: z.string().nullable(),
+  annulReason: z.string().nullable(),
+  availability: reactivationAvailabilitySchema,
+});
+export type MovableAnnulledDocumentDto = z.infer<typeof movableAnnulledDocumentSchema>;
 
 /** D-073: interruptor de contingencia y umbral de alerta. Solo ADMINISTRADOR. */
 export const updateInvoicingSettingsSchema = z.object({

@@ -65,6 +65,7 @@ import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { OrderDocumentLinks } from '@/components/sales/order-documents';
 import { AnnulledDocumentsCard } from '@/components/invoicing/annulled-documents-card';
+import { MoveToOrderDialog } from '@/components/invoicing/move-to-order-dialog';
 import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import { RowActions } from '@/components/row-actions';
@@ -83,6 +84,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const [cancelOpen, setCancelOpen] = useState(false);
+  // D-381: traer un comprobante manual anulado (de un pedido anulado) a este pedido.
+  const [moveOpen, setMoveOpen] = useState(false);
   const [releasing, setReleasing] = useState<ReservationDto | null>(null);
   /** D-379: la reserva liberada a mano que se está por restaurar. */
   const [restoring, setRestoring] = useState<ReservationDto | null>(null);
@@ -436,6 +439,17 @@ export function PedidoDetalleView({ id }: { id: string }) {
                   setChangingCustomer(true);
                 },
               },
+              // D-381: el comprobante anulado de un pedido anulado pasa a este, con sus líneas. La
+              // lista del diálogo dice por qué no se puede, si no se puede.
+              {
+                key: 'move-document',
+                label: 'Traer comprobante anulado',
+                show: isAdmin && canOperate,
+                disabled: busy,
+                onSelect: () => {
+                  setMoveOpen(true);
+                },
+              },
               {
                 key: 'cancel',
                 label: 'Anular pedido',
@@ -764,6 +778,14 @@ export function PedidoDetalleView({ id }: { id: string }) {
       <div className="text-xs text-muted-foreground">
         Creado por {o.createdByName ?? '—'} el {formatTimestampDate(o.createdAt)}.
       </div>
+
+      {isAdmin && o.status !== 'CANCELLED' && (
+        <MoveToOrderDialog
+          order={{ id: o.id, code: o.code }}
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
+        />
+      )}
 
       <ReasonDialog
         open={cancelOpen}
