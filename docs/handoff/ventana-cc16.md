@@ -1,5 +1,50 @@
 # Ventana cc16 — D-381: traer FFA1-00001389 a PED-000056
 
+## Ejecutada el 2026-10-03/04 (hora de Lima): sin incidencias
+
+Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232).
+
+| Qué                                  | Resultado                                                                                                                                                                                                                                                                           |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI del PR #87                        | Corrida 37164000717 en `ff5fd2b`: E2E 497 pasados y 3 saltados; smoke Neon `ci` 36 pasados; lint, typecheck, unitarios y Sonar en verde                                                                                                                                             |
+| UAT                                  | Confirmado por el dueño en demo (`dev:demo` desde `../ayr-cc16` en 3100/3101, sin `db:demo`). La demo de cc15b se cerró con autorización explícita del dueño                                                                                                                        |
+| Revisión API anterior (vuelta atrás) | `ayr-steel-erp-api-00078-pg7`, `git-sha=5bd99ba`                                                                                                                                                                                                                                    |
+| Paso 1: deploy de la API             | **`ayr-steel-erp-api-00079-gwg`**, al 100 %, `git-sha=ff5fd2b`, `/health` 200, `smoke:prod` 7/7 con la web vieja                                                                                                                                                                    |
+| Paso 2: merge del #87                | `main` = **`6da0154`**, diff de runtime vacío contra `ff5fd2b`, Vercel `success`, `smoke:prod` 8/8 en `vercel.app` y 8/8 en `v2.mareliac.pe`                                                                                                                                        |
+| Foto `READ ONLY` previa              | 2026-10-04 00:48 UTC (`local-data/cc16/foto-production-2026-10-04T0048.json`). FFA1-00001389 `ANNULLED`, sin cobros, notas de crédito ni despachos; PED-000044 `CANCELLED`; PED-000056 con **0 comprobantes (el borrador ya no estaba)**, 7 líneas, total 6438 y 7 reservas activas |
+| Respaldo Neon                        | `respaldo-pre-cc16-20261003` (`br-late-poetry-aewbwyl6`), hija de `production`, `ready`                                                                                                                                                                                             |
+| Paso por la interfaz (dueño)         | 2026-10-04 01:13 UTC: «Traer comprobante anulado» con el motivo «faltaba un item»                                                                                                                                                                                                   |
+| Despacho (dueño)                     | 2026-10-04 01:15 UTC: «Despachar a la fecha del comprobante». Resultado: **DES-000056 fechado el 27/09/2026**, no el 20/08, con las 7 líneas y enlazado a 1389. PED-000056 quedó `FULFILLED`                                                                                        |
+| Foto `READ ONLY` posterior           | 2026-10-04 02:47 UTC (`local-data/cc16/foto-posterior-2026-10-04T0247.json`)                                                                                                                                                                                                        |
+
+**Foto posterior:**
+
+- FFA1-00001389 está `ACCEPTED` en PED-000056. Conserva número, fecha de emisión (20/08), crédito con
+  vencimiento 20/10 y cliente. Gravada 5455.94, IGV 982.06, total **6438.00**. Sin cobros ni notas de
+  crédito.
+- Las 6 filas originales conservan su id y ahora apuntan a las líneas 2 a 7 de PED-000056. La fila 7,
+  `UPVC6MT` × 42, apunta a la línea 1.
+- Auditoría: `invoicing.document.move-to-order`, `sales.order.document-moved-out` (PED-000044) y
+  `sales.order.document-moved-in` (PED-000056), y después `invoicing.dispatch-at-issue-date`.
+- Kardex: 7 salidas `SALE` del 27/09/2026. Los saldos actuales de esos productos no son negativos.
+  Las reservas de PED-000056 quedaron `CONSUMED`; las de PED-000044 siguen `RELEASED`.
+- El vendedor es el de PED-000056, como decidió el dueño.
+
+**Decisiones del dueño al cierre (2026-10-04):**
+
+- **DES-000056 se queda el 27/09/2026**, por la convención de D-374: es la primera fecha válida del
+  plan, no la del papel. No se corrige.
+- **El respaldo `respaldo-pre-cc16-20261003` se conserva 7 días**, hasta el 2026-10-11. No se borra
+  antes, y después, solo con el OK del dueño por nombre (`AGENTS.md` §3.3).
+
+**Queda abierto:**
+
+1. D-383, la protección de la anulación de pedidos: PR #90 con la CI en verde, en espera del UAT
+   del dueño, que va después del de cc15b.
+2. Proponer el borrado del respaldo a partir del 2026-10-11.
+
+---
+
 Runbook de la ventana de cc16. Cada paso marcado **[OK]** espera el OK explícito del dueño
 (D-251/D-232): el agente propone el comando exacto y espera.
 

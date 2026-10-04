@@ -2,6 +2,26 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-04 — Ventana cc16 (D-381 desplegada, PR #87, sin migración) y FFA1-00001389 traída
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle está en
+`docs/handoff/ventana-cc16.md`.
+
+- **API:** `ayr-steel-erp-api-00079-gwg`, con `git-sha=ff5fd2b`. La vuelta atrás es `00078-pg7`.
+- **Web:** merge del #87, que quedó en `main` como `6da0154`. El smoke pasó 7/7 con la web vieja y
+  8/8 en los dos dominios.
+- **FFA1-00001389:** el dueño la trajo a PED-000056 por la interfaz, después del respaldo
+  `respaldo-pre-cc16-20261003`.
+  - Está `ACCEPTED`, con total 6438.00. Mantiene número y fecha.
+  - Sus 7 filas apuntan a PED-000056.
+  - Quedó la auditoría con el pedido de origen y el de destino.
+- **Despacho:** lo hizo el dueño desde el comprobante. Quedó **DES-000056 del 27/09/2026**, la
+  primera fecha válida del plan (D-374), no la del papel. Sin saldos negativos. PED-000056 quedó
+  `FULFILLED`.
+- **Decisiones del dueño:**
+  - la fecha de DES-000056 **se queda en el 27/09**, por la convención de D-374;
+  - el respaldo se conserva 7 días, **hasta el 2026-10-11**; después se propone borrarlo por nombre.
+
 ## 2026-10-03 — D-384: `pnpm limpia:v4` retirado del repo (PR sin merge)
 
 - **Decisión del dueño:** retirar la limpia total de V-4 (D-208) en lugar de dejarla bloqueada.
