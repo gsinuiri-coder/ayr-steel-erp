@@ -100,6 +100,20 @@ tocar la rama real en ningún momento: todo el ensayo pasó por una rama nueva
 7. La rama `rescate-<fecha>` (o `ensayo-pitr-<fecha>`) se borra solo con OK del dueño **por
    nombre**, y solo después de confirmar que `production` ya está sana — nunca antes.
 
+### Máximo 10 ramas en Neon (regla del dueño, 2026-10-04)
+
+El proyecto tiene como máximo **10 ramas** en Neon, contando las fijas: `production`, `demo`,
+`ci`, `dev` y `respaldo-pre-v4-20260915`. Quedan cinco lugares para respaldos de ventana, ensayos
+y rescates.
+
+- Antes de crear una rama, listarlas (`neonctl branches list --output json` por
+  `scripts/lib.mjs#run` con `quiet: true`). Si con la nueva se pasaría de 10, primero se propone al
+  dueño cuáles borrar.
+- Al cerrar cada ventana, listarlas otra vez. Si hay más de 10, proponer el borrado.
+- Para borrar rige `AGENTS.md` §3.3: OK del dueño **por nombre**, verificando que el id coincida
+  con el nombre, sin tocar las fijas. Se conservan los dos respaldos post-día-D más recientes y
+  los checkpoints declarados hasta su fecha.
+
 ### Ramas de ensayo/respaldo vigentes (2026-09-17)
 
 Ninguna se borra sin OK del dueño por nombre (regla dura de `CLAUDE.md`). `ensayo-pitr-20260917`
