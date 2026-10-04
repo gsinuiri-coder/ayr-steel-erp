@@ -192,6 +192,71 @@ test.describe('D-278 — despacho a la fecha del comprobante', () => {
     }
   });
 
+  test('D-387: cambiar la fecha de despacho no desmonta el formulario mientras se recalcula el plan', async ({
+    page,
+  }) => {
+    const scenario = await setupOrderScenario(api);
+    const trail: string[] = [];
+    try {
+      const invoice = await registeredInvoice(api, scenario, today());
+      trail.push(invoice.id);
+      await loginAsAdmin(page);
+      await page.goto(`/comprobantes/${invoice.id}`);
+      const card = page.getByTestId('dispatch-at-issue-date');
+      const input = card.getByLabel('Fecha de despacho');
+      await expect(input).toHaveValue(today(), { timeout: 60_000 });
+      // Se marca el nodo: si el formulario se desmonta, el campo que vuelve a aparecer no la trae.
+      await input.evaluate((el) => {
+        el.setAttribute('data-same-node', '1');
+      });
+      const sameInput = card.locator('[data-same-node="1"]');
+
+      // El plan de la fecha nueva se retiene: es la ventana en la que el formulario desaparecía.
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.route('**/api/dispatches/at-issue-date/**', async (route) => {
+        if (route.request().url().includes('dispatchDate=')) await held;
+        await route.continue();
+      });
+      const requested = page.waitForRequest((r) => r.url().includes('dispatchDate='));
+      await input.fill(yesterday());
+      await requested;
+      await expect(card).toBeVisible();
+      await expect(sameInput).toHaveValue(yesterday());
+      await expect(sameInput).toBeFocused();
+      release();
+      // La bobina entró hoy: con la fecha de ayer la línea va a revisión. Mismo nodo, mismo foco.
+      await expect(card).toContainText('No se despacha');
+      await expect(sameInput).toHaveValue(yesterday());
+      await expect(sameInput).toBeFocused();
+
+      // Una fecha que el API rechaza (futura) deja el formulario a la vista con el motivo, para
+      // corregirla: antes la tarjeta desaparecía y no volvía sin recargar.
+      await input.fill(addDays(today(), 1));
+      await expect(card.getByTestId('dispatch-plan-error')).toContainText('no puede ser futura');
+      await expect(sameInput).toHaveValue(addDays(today(), 1));
+      await expect(
+        card.getByRole('button', { name: 'Despachar en la fecha seleccionada' }),
+      ).toBeDisabled();
+      await input.fill(today());
+      await expect(card.getByTestId('dispatch-plan-error')).toHaveCount(0);
+      await expect(card).toContainText('Sale del almacén');
+      await expect(sameInput).toHaveValue(today());
+    } finally {
+      await purgeInvoicingTrail(api, {
+        documentIds: trail,
+        orderIds: [scenario.order.id],
+        coilIds: [scenario.coil.id],
+        purchaseId: scenario.purchaseId,
+        supplierId: scenario.supplier.id,
+        finish: scenario.finish,
+        productIds: [scenario.product.id],
+      });
+    }
+  });
+
   test('D-363: un comprobante anulado no muestra el aviso de líneas sin despacho', async ({
     page,
   }) => {

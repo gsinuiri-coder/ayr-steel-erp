@@ -1,14 +1,14 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import type { InvoiceDispatchPlanDto, InvoiceDispatchResultDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { formatDate } from '@/lib/format';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
 import { restoreReservationHref } from '@/lib/restore-reservation';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -43,13 +43,28 @@ export function DispatchAtIssueDate({
 }) {
   const queryClient = useQueryClient();
   const [dispatchDate, setDispatchDate] = useState<string | undefined>(suggestedDate);
-  const [defaultDates, setDefaultDates] = useState<Record<number, string>>({});
-  const plan = useQuery({
-    queryKey: ['fiscal-document', documentId, 'dispatch-at-issue-date', dispatchDate],
+  // D-387: el plan con el default de D-285 decide si la tarjeta existe y rotula el default.
+  // Antes la tarjeta colgaba del plan de la fecha elegida: cada cambio de fecha abría una
+  // consulta sin datos, la tarjeta devolvía `null` hasta la respuesta y el campo volvía como
+  // otro nodo, sin foco (tipear el año se cortaba en cada dígito). Con una fecha que el API
+  // rechaza no volvía nunca. Qué líneas hay no depende de la fecha; solo qué pasa con cada una.
+  const defaultPlan = useQuery({
+    queryKey: ['fiscal-document', documentId, 'dispatch-at-issue-date', undefined],
+    queryFn: () => api<InvoiceDispatchPlanDto>(`/dispatches/at-issue-date/${documentId}`),
+  });
+  const datedPlan = useQuery({
+    // Clave propia (`'on'`): sin fecha, compartir `[…, undefined]` con el default hacía que una
+    // invalidación refrescara esa entrada con esta `queryFn` y un `?dispatchDate=` vacío (400).
+    queryKey: ['fiscal-document', documentId, 'dispatch-at-issue-date', 'on', dispatchDate],
     queryFn: () =>
       api<InvoiceDispatchPlanDto>(
-        `/dispatches/at-issue-date/${documentId}${dispatchDate ? `?dispatchDate=${encodeURIComponent(dispatchDate)}` : ''}`,
+        `/dispatches/at-issue-date/${documentId}?dispatchDate=${encodeURIComponent(dispatchDate ?? '')}`,
       ),
+    enabled: dispatchDate !== undefined,
+    // Mientras llega el plan de la fecha nueva se sigue viendo el anterior, marcado como viejo.
+    placeholderData: keepPreviousData,
+    // Un 4xx (fecha futura, anterior a la carga histórica) no mejora reintentando.
+    retry: (count, err) => !(err instanceof ApiError && err.status < 500) && count < 2,
   });
   const execute = useMutation({
     mutationFn: () =>
@@ -72,26 +87,21 @@ export function DispatchAtIssueDate({
     },
   });
 
-  // D-373 (autorrevisión cc07): con una fecha sugerida, el plan de arriba ya viene con esa fecha
-  // y no sirve para rotular el default de D-285; se pide aparte, sin fecha (misma clave que el
-  // plan por defecto, así que comparte su caché).
-  const defaultPlan = useQuery({
-    queryKey: ['fiscal-document', documentId, 'dispatch-at-issue-date', undefined],
-    queryFn: () => api<InvoiceDispatchPlanDto>(`/dispatches/at-issue-date/${documentId}`),
-    enabled: suggestedDate !== undefined,
-  });
-
-  const lines = plan.data?.lines ?? [];
-  useEffect(() => {
-    const source = suggestedDate !== undefined ? defaultPlan.data : plan.data;
-    if ((suggestedDate === undefined && dispatchDate !== undefined) || source === undefined) return;
-    setDefaultDates(
-      Object.fromEntries(source.lines.map((line) => [line.lineNumber, line.operationDate])),
-    );
-  }, [suggestedDate, dispatchDate, plan.data, defaultPlan.data]);
-  if (lines.length === 0) return null;
-  const actionable = lines.some((l) => l.action !== 'REVIEW');
-  const defaultFirstDate = defaultDates[lines[0]?.lineNumber ?? 0] ?? lines[0]?.operationDate ?? '';
+  const defaultLines = defaultPlan.data?.lines ?? [];
+  if (defaultLines.length === 0) return null;
+  const selected = dispatchDate === undefined ? defaultPlan : datedPlan;
+  // El plan a la vista es el de la fecha del campo: ni el anterior (placeholder) ni uno en error.
+  const planReady = selected.isSuccess && !selected.isPlaceholderData;
+  const planError =
+    selected.isError && !selected.isFetching
+      ? selected.error instanceof ApiError
+        ? selected.error.message
+        : 'No se pudo calcular el plan para esa fecha'
+      : null;
+  const lines = selected.data?.lines ?? defaultLines;
+  const actionable = planReady && lines.some((l) => l.action !== 'REVIEW');
+  const defaultDates = new Map(defaultLines.map((line) => [line.lineNumber, line.operationDate]));
+  const defaultFirstDate = defaultLines[0]?.operationDate ?? '';
 
   return (
     <Alert data-testid="dispatch-at-issue-date">
@@ -121,23 +131,35 @@ export function DispatchAtIssueDate({
         </label>
         <p className="text-xs text-muted-foreground">
           Default D-285:{' '}
-          {Object.entries(defaultDates).length > 0
-            ? lines
-                .map(
-                  (line) =>
-                    `Línea ${String(line.lineNumber)}: ${formatDate(defaultDates[line.lineNumber] ?? '')}`,
-                )
-                .join(' · ')
-            : formatDate(defaultFirstDate)}
+          {defaultLines
+            .map(
+              (line) =>
+                `Línea ${String(line.lineNumber)}: ${formatDate(defaultDates.get(line.lineNumber) ?? '')}`,
+            )
+            .join(' · ')}
           . El kardex debe quedar sin saldo negativo.
         </p>
-        <ul className="list-disc pl-5 text-sm">
+        {planError !== null && (
+          <p data-testid="dispatch-plan-error" className="text-sm text-destructive">
+            {planError}
+          </p>
+        )}
+        {planError === null && !planReady && (
+          <p className="text-xs text-muted-foreground">Recalculando el plan para esa fecha…</p>
+        )}
+        <ul
+          className={cn('list-disc pl-5 text-sm', !planReady && 'opacity-60')}
+          aria-busy={!planReady && planError === null}
+        >
           {lines.map((l) => (
             <li key={l.lineNumber}>
-              Línea {l.lineNumber} · {l.sku} · {l.qty}: {ACTION_LABELS[l.action]}
-              {l.action === 'REVIEW' && l.reason ? ` — ${l.reason}` : ''}
-              {l.firstValidDate ? ` · Primera fecha válida: ${formatDate(l.firstValidDate)}` : ''}
-              {l.restorableReservation !== null && (
+              Línea {l.lineNumber} · {l.sku} · {l.qty}
+              {planError === null && `: ${ACTION_LABELS[l.action]}`}
+              {planError === null && l.action === 'REVIEW' && l.reason ? ` — ${l.reason}` : ''}
+              {planError === null && l.firstValidDate
+                ? ` · Primera fecha válida: ${formatDate(l.firstValidDate)}`
+                : ''}
+              {planError === null && l.restorableReservation !== null && (
                 // D-379: la reserva de lo fabricado se liberó a mano; se repone desde el pedido.
                 <span data-testid="dispatch-restore-reservation" className="block">
                   La reserva de esta línea se liberó a mano.{' '}
@@ -156,9 +178,12 @@ export function DispatchAtIssueDate({
             </li>
           ))}
         </ul>
-        {actionable && (
+        {/* Mientras se recalcula, o con la fecha rechazada, el botón sigue a la vista pero
+            inactivo: el plan que se ve no es el de la fecha del campo. */}
+        {(actionable || !planReady) && (
           <Button
             size="sm"
+            disabled={!actionable}
             pending={execute.isPending}
             pendingText="Despachando…"
             onClick={() => {
