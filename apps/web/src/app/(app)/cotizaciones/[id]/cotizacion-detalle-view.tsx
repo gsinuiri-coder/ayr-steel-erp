@@ -42,6 +42,7 @@ import {
   type ConfirmQuotationRequest,
 } from '@/components/sales/confirm-quotation-dialog';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
+import { QuotationInvoice } from '@/components/sales/quotation-invoice';
 import {
   formatExpiry,
   remainingLabel,
@@ -329,6 +330,15 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       )}
 
       <StatStrip>
+        {/* D-387: el mismo estado que la columna de la lista; sin nada, no aparece. */}
+        {(q.externalInvoice !== null || q.invoiceDocuments.length > 0) && (
+          <Stat label="Comprobante">
+            <QuotationInvoice
+              externalInvoice={q.externalInvoice}
+              invoiceDocuments={q.invoiceDocuments}
+            />
+          </Stat>
+        )}
         <Stat label="Emisión">{formatDate(q.issueDate)}</Stat>
         {/* D-157: sin vencimiento no es una fecha faltante, es una cotización que no vence
             (una importada). El guion de `formatDate` diría lo contrario. */}

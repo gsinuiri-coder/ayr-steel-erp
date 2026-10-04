@@ -1,12 +1,14 @@
 import type { Prisma } from '@prisma/client';
-import type {
-  CoilQuery,
-  CustomerQuery,
-  DispatchQuery,
-  FiscalDocumentQuery,
-  PurchaseQuery,
-  QuotationQuery,
-  SalesOrderQuery,
+import {
+  compareImportedInvoiceNumbers,
+  type CoilQuery,
+  type CustomerQuery,
+  type DispatchQuery,
+  type FiscalDocumentQuery,
+  type PurchaseQuery,
+  type QuotationQuery,
+  type SalesOrderQuery,
+  type SortDirection,
 } from '@ayr/shared';
 import { listOrderBy } from './list-sort';
 
@@ -17,11 +19,17 @@ import { listOrderBy } from './list-sort';
  * Viven acá, y no dentro de cada servicio, para poder probar cada clave sin armar el servicio.
  */
 
+/**
+ * D-387: `invoice` no tiene fragmento de `orderBy` (el número vive en las observaciones): con esa
+ * clave queda el orden de siempre y `QuotationsService.findAll` ordena con
+ * `orderByInvoiceNumber`.
+ */
 export function quotationOrderBy(
   query: Pick<QuotationQuery, 'sort' | 'dir'>,
 ): Prisma.QuotationOrderByWithRelationInput[] {
-  return listOrderBy<NonNullable<QuotationQuery['sort']>, Prisma.QuotationOrderByWithRelationInput>(
-    query,
+  type DbKey = Exclude<NonNullable<QuotationQuery['sort']>, 'invoice'>;
+  return listOrderBy<DbKey, Prisma.QuotationOrderByWithRelationInput>(
+    { sort: query.sort === 'invoice' ? undefined : query.sort, dir: query.dir },
     {
       code: (d) => ({ seq: d }),
       customer: (d) => ({ customer: { name: d } }),
@@ -31,6 +39,29 @@ export function quotationOrderBy(
     },
     [{ seq: 'desc' }],
   );
+}
+
+/**
+ * D-387: la lista de cotizaciones ordenada por el número que muestra la columna «Comprobante»
+ * (`invoice`: el comprobante vigente o, sin él, el de la marca; `shownInvoiceNumber`). Las que
+ * tienen número van primero en los dos sentidos —serie y correlativo como número,
+ * `compareImportedInvoiceNumbers`, así `FFA1-00001419` y `FFA1-1419` empatan— y las demás
+ * detrás; el número de cotización descendente desempata, como el orden de siempre.
+ */
+export function orderByInvoiceNumber<T extends { seq: number; invoice: string | null }>(
+  rows: readonly T[],
+  dir: SortDirection = 'asc',
+): T[] {
+  const sign = dir === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    if (a.invoice !== null && b.invoice !== null) {
+      const byInvoice = compareImportedInvoiceNumbers(a.invoice, b.invoice);
+      if (byInvoice !== 0) return sign * byInvoice;
+    } else if (a.invoice !== b.invoice) {
+      return a.invoice === null ? 1 : -1;
+    }
+    return b.seq - a.seq;
+  });
 }
 
 export function salesOrderOrderBy(

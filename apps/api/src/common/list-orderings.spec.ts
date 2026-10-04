@@ -33,7 +33,14 @@ const DEFAULTS = {
 };
 
 const cases = [
-  ['cotizaciones', quotationOrderBy, QUOTATION_SORT_KEYS, DEFAULTS.quotation],
+  // D-387: «invoice» se ordena en memoria (`orderByInvoiceNumber`), no con un orderBy de Prisma;
+  // su prueba vive en `sales/imported-invoice-d387.spec.ts`.
+  [
+    'cotizaciones',
+    quotationOrderBy,
+    QUOTATION_SORT_KEYS.filter((k) => k !== 'invoice'),
+    DEFAULTS.quotation,
+  ],
   ['pedidos', salesOrderOrderBy, SALES_ORDER_SORT_KEYS, DEFAULTS.salesOrder],
   ['bobinas', coilOrderBy, COIL_SORT_KEYS, DEFAULTS.coil],
   ['clientes', customerOrderBy, CUSTOMER_SORT_KEYS, DEFAULTS.customer],

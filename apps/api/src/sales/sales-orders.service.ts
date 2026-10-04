@@ -160,6 +160,7 @@ import {
 } from './reservation-restore';
 import { liveDocumentsByOrder, orderDocuments } from './order-documents';
 import { salesOrderOrderBy } from '../common/list-orderings';
+import { searchSeqOf } from '../common/search-seq';
 
 import { buildPlantOrderPdf } from './plant-order-pdf';
 import { plantLineMeasures } from './plant-measures';
@@ -3237,7 +3238,7 @@ export class SalesOrdersService {
     // "PED-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o quien
     // pega el código de un pedido para encontrarlo (el uso más común del buscador) se
     // quedaba sin resultados (Fase 7d, hallazgo de revisión).
-    const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
+    const searchSeq = searchSeqOf(query.search);
     const where: Prisma.SalesOrderWhereInput = {
       ...sellerWhere(actor),
       // D-277: `stage` filtra por el estado que se muestra («Listo» incluido); D-289: acepta
@@ -3263,7 +3264,7 @@ export class SalesOrdersService {
             OR: [
               { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
               { customer: { docNumber: { contains: query.search } } },
-              ...(searchSeq ? [{ seq: Number(searchSeq) }] : []),
+              ...(searchSeq === null ? [] : [{ seq: searchSeq }]),
             ],
           }
         : {}),

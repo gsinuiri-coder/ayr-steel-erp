@@ -2,6 +2,107 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-04 — cc19: D-387, comprobante en cotizaciones y formulario de fecha de despacho (PR #97)
+
+Detalle y runbook en `docs/handoff/ventana-cc19.md`. Sin migración; toca API y web. En paralelo
+con cc18 (D-386, solo API), sin archivos compartidos salvo esta bitácora y §0.2.
+
+**Ajuste del dueño antes del UAT — estados de la columna (D-387 (D)).**
+
+- **Paso 0:**
+  - El camino es cotización → pedido vivo (`sales_orders.quotation_id`) → comprobantes
+    (`fiscal_documents.sales_order_id`).
+  - El modelo admite varios comprobantes vigentes por pedido (facturación parcial). En demo hoy
+    ninguno tiene más de uno: 48 tienen uno y 3 ninguno.
+- **Cuatro estados**, calculados al leer con `quotationInvoiceState`: solo referencia (gris),
+  registrado (check y enlace), no coincide (ámbar, con ícono) y vacío.
+  - Vigente: factura o boleta en `LIVE_DOCUMENT_STATUSES`, sin archivar y con número.
+  - La comparación es normalizada.
+- **Demo, 69 no anuladas:** 48 registrado, 21 solo referencia, 0 no coincide, 0 vacío.
+- **Consultas por pantallazo** (medidas contra demo, página de 25, con el log de Prisma):
+  - lista: de 5 a 6;
+  - ordenada por comprobante: 8;
+  - con búsqueda `FFA1-1389`: 9.
+  - Ninguna por fila.
+- **Tests:**
+  - unitarios `imported-invoice-d387.spec.ts`: 59;
+  - E2E `comprobante-en-cotizaciones-d387.spec.ts` 3/3, con una cotización en cada estado más una
+    con su comprobante anulado;
+  - API entera: 2444 pasados y 2 saltados;
+  - lint, typecheck y formato en verde.
+- **Rojo de infraestructura:** con demo arriba, `auth.service.spec.ts` («rechaza correo
+  inexistente») superó los 5 s del test en la corrida paralela completa. Ese test calcula un hash
+  ficticio. Pasa solo 3 de 3 veces, y la API entera pasa con `--maxWorkers=50%`. No está en el diff.
+- **Revisiones**, sin P0 ni P1:
+  - Autorrevisión, `docs/revision/cc19-estados-autorrevision.md`: 2 P2, 7 P3.
+  - Segundo modelo, `docs/revision/cc19-estados-segundo-modelo.md`: 2 P2, 5 P3.
+- **Corregidos:**
+  - «no coincide» y «solo referencia» ya no se dicen solo con color: ícono o nombre accesible, y
+    tooltip también en el enlace;
+  - buscar «0» o «1» ya no trae todos los comprobantes: mínimo de 3 caracteres significativos y
+    comparación normalizada, sin los ceros de relleno;
+  - unitario del filtro de vigencia en la lista y el orden;
+  - P2-2 del segundo modelo (pedido anulado con comprobante vivo): no ocurre, porque D-383 bloquea
+    esa anulación.
+- **Anotados (P3):**
+  - con varios comprobantes, «registrado» muestra el primero aunque el que coincide sea otro;
+  - VOID_PENDING sigue con check (está en `LIVE_DOCUMENT_STATUSES`);
+  - fragmentos como `A1-1419` no se encuentran, y `FFA1-001` trae de más;
+  - el prefiltro de la marca exige un espacio exacto tras «Factura externa:»;
+  - `findPageByImportedInvoice` merece llamarse `findPageByInvoiceNumber`;
+  - el componente no tiene unitario propio (lo cubre el E2E).
+
+- **Paso 0 A:**
+  - El comprobante de una importada vive solo en la marca `Factura externa: <clave>`, en la primera
+    línea de las observaciones. Su formato no cambió desde el 2026-09-08.
+  - Conteo `READ ONLY` en demo: 78 importadas de 80 cotizaciones, y las 78 calzan con
+    `SERIE-NÚMERO` (`FFA1` 61, `BBV1` 17). Las bases locales no tienen importadas.
+- **Paso 0 B:**
+  - Bug reproducido con E2E antes del arreglo: la fecha iba en la `queryKey` del plan y
+    `DispatchAtIssueDate` devolvía `null` mientras cargaba.
+  - Medido: el campo vuelve como otro nodo y sin foco. Con una fecha que el API rechaza, la tarjeta
+    no vuelve sin recargar.
+  - Los otros formularios del detalle no tienen el patrón.
+- **M1:** la visibilidad la decide el plan sin fecha; el de la fecha conserva el anterior y muestra
+  el error en línea. Al arreglarlo apareció un defecto propio, ya corregido: la consulta sin fecha
+  compartía clave con el default y una invalidación pedía `?dispatchDate=` vacío (400).
+- **M2:** columna «Comprobante», buscador y `sort=invoice`. **Decisión del dueño: leerlo al vuelo
+  sin migración.** El orden se hace en memoria en el API.
+- **M3:** «Comprobante» en la cabecera del detalle.
+- **Defecto previo arreglado con OK del dueño:** buscar un RUC daba 500 en cotizaciones y pedidos,
+  por desborde de INT4 en `seq` (`searchSeqOf`).
+- **Tests:**
+  - Unitarios: `imported-invoice-d387.spec.ts` (30), `search-seq.spec.ts` y `list-orderings.spec.ts`.
+    Toda la API: 2414 pasados y 2 saltados.
+  - E2E local: `comprobante-en-cotizaciones-d387.spec.ts` 3/3; D-278, D-373 y D-379 9/9, incluido
+    el caso nuevo de M1, que falla sin el arreglo.
+  - Lint, typecheck y `format:check` en verde.
+  - **La suite E2E completa se corre en la CI, no en local:** la base `ayr_local_e2e` y los puertos
+    3000/3001 se comparten con cc18, y la suite local con builds de producción ya se cayó por
+    memoria.
+- **Revisiones:** las dos, sin P0 ni P1.
+  - Autorrevisión: `docs/revision/cc19-autorrevision.md`, 2 P2 y 6 P3.
+  - Segundo modelo (Sonnet): `docs/revision/cc19-segundo-modelo.md`, 2 P2 y P3 menores.
+- **Corregidos:**
+  - el E2E dependía de que no existiera `COT-…999` (P2-2 del segundo modelo);
+  - faltaba un unitario del alcance por vendedor (P3-3 de la autorrevisión).
+- **Anotados (P2):**
+  - **El buscador de cotizaciones y pedidos compara contra el número todos los dígitos del texto.**
+    Buscar `BBV1-347` trae también la `COT-001347`. Ya era así antes, y cambiarlo cambia el
+    buscador: decisión del dueño.
+  - **La forma `SERIE-NÚMERO` es estricta.** Una marca futura con espacios (`FFA1 - 1419`) o una
+    serie que empiece con dígito quedaría vacía, sin aviso. Hoy hay 0 en demo; se vuelve a contar
+    si cambia el archivo de ventas.
+- **Anotados (P3):**
+  - `sort=invoice` lee `id/seq/notes` de todas las filas del filtro (80 hoy);
+  - cada búsqueda suma una consulta sin límite sobre las importadas;
+  - en M1, cada dígito del año que se tipea pide un plan y el error de los años intermedios
+    parpadea (el campo ya no se desmonta);
+  - el E2E de M1 usa `fill()`, no tipeo dígito a dígito;
+  - el enlace «Restaurar reserva» (D-379) del plan anterior sigue clicable mientras se recalcula;
+  - el pre-llenado del diálogo «Registrar comprobante manual» todavía lee la marca con su propia
+    expresión regular (`comprobante-detalle-view.tsx`), no con `importedInvoiceNumber`.
+
 ## 2026-10-04 — Ventana cc18 (D-386 desplegada, PR #96, sin migración)
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc18.md`.

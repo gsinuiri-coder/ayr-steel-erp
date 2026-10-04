@@ -7,6 +7,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  FiscalDocType,
+  FiscalDocumentStatus,
   Prisma,
   QuotationStatus,
   SalesOrderStatus,
@@ -19,6 +21,12 @@ import {
   defaultValidUntil,
   EXTERNAL_INVOICE_NOTES_PREFIX,
   externalInvoiceOf,
+  importedInvoiceNumber,
+  invoiceNumberContains,
+  invoiceSearchNeedle,
+  LIVE_DOCUMENT_STATUSES,
+  quotationInvoiceState,
+  shownInvoiceNumber,
   IMPORT_ROUNDING_TOLERANCE_PEN,
   isImportedQuotation,
   DERIVED_UNIT_VALUE_DECIMALS,
@@ -75,11 +83,28 @@ import {
 } from './coil-sale-product';
 import { paperPoolOfLine } from './paper-coil-assignment';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
-import { quotationOrderBy } from '../common/list-orderings';
+import { orderByInvoiceNumber, quotationOrderBy } from '../common/list-orderings';
+import { searchSeqOf } from '../common/search-seq';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
+
+/**
+ * D-387: las facturas y boletas **vigentes** de un pedido, para la columna «Comprobante»: estado
+ * vivo (`LIVE_DOCUMENT_STATUSES`, sin anuladas ni borradores), sin archivar y con número. Las
+ * notas de crédito no cuentan. Prisma las trae en una sola consulta para toda la página.
+ */
+const liveInvoiceDocuments = {
+  where: {
+    docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+    status: { in: [...LIVE_DOCUMENT_STATUSES] as FiscalDocumentStatus[] },
+    archivedAt: null,
+    number: { not: null },
+  },
+  select: { id: true, number: true },
+  orderBy: [{ issueDate: 'asc' }, { number: 'asc' }],
+} satisfies Prisma.SalesOrder$fiscalDocumentsArgs;
 
 const quotationInclude = {
   customer: { select: { id: true, name: true, docNumber: true, address: true, docType: true } },
@@ -105,7 +130,7 @@ const quotationInclude = {
   // como mucho uno vigente. Mostrar el anulado haría creer que sigue confirmada.
   salesOrders: {
     where: { status: { not: SalesOrderStatus.CANCELLED } },
-    select: { id: true, seq: true },
+    select: { id: true, seq: true, fiscalDocuments: liveInvoiceDocuments },
     take: 1,
   },
 } satisfies Prisma.QuotationInclude;
@@ -1327,7 +1352,8 @@ export class QuotationsService {
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del
     // buscador) se quedaba sin resultados (Fase 7d, hallazgo de revisión).
-    const searchSeq = query.search ? query.search.replace(/\D/g, '') : '';
+    const searchSeq = searchSeqOf(query.search);
+    const invoiceIds = query.search ? await this.idsByInvoiceNumber(query.search) : [];
     const where: Prisma.QuotationWhereInput = {
       ...quotationSellerWhere(actor),
       // D-289: sin estado, la bandeja omite las anuladas (no si se busca o se acota a un cliente).
@@ -1347,25 +1373,31 @@ export class QuotationsService {
             OR: [
               { customer: { name: { contains: query.search, mode: 'insensitive' as const } } },
               { customer: { docNumber: { contains: query.search } } },
-              ...(searchSeq ? [{ seq: Number(searchSeq) }] : []),
+              ...(searchSeq === null ? [] : [{ seq: searchSeq }]),
+              // D-387: el comprobante de la columna (el registrado o el de la marca).
+              ...(invoiceIds.length > 0 ? [{ id: { in: invoiceIds } }] : []),
             ],
           }
         : {}),
     };
     const { skip, take } = toSkipTake(query);
-    const [total, rows] = await Promise.all([
-      this.prisma.quotation.count({ where }),
-      this.prisma.quotation.findMany({
-        where,
-        // La lista muestra totales, no líneas: traer `items` con su producto para 500
-        // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
-        include: { ...quotationInclude, items: false, _count: { select: { items: true } } },
-        // D-323: la columna elegida ordena la lista entera; el número desempata.
-        orderBy: quotationOrderBy(query),
-        skip,
-        take,
-      }),
-    ]);
+    // La lista muestra totales, no líneas: traer `items` con su producto para 500
+    // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
+    const include = { ...quotationInclude, items: false, _count: { select: { items: true } } };
+    const [total, rows] =
+      query.sort === 'invoice'
+        ? await this.findPageByImportedInvoice(where, include, query, skip, take)
+        : await Promise.all([
+            this.prisma.quotation.count({ where }),
+            this.prisma.quotation.findMany({
+              where,
+              include,
+              // D-323: la columna elegida ordena la lista entera; el número desempata.
+              orderBy: quotationOrderBy(query),
+              skip,
+              take,
+            }),
+          ]);
     const actors = await this.resolveActorNames(
       rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
     );
@@ -1379,6 +1411,105 @@ export class QuotationsService {
       return { ...rest, itemCount: r._count.items };
     });
     return paginate(items, total, query);
+  }
+
+  /**
+   * D-387: ids de las cotizaciones cuyo comprobante contiene el texto buscado, por los **dos**
+   * números de la columna: el de la marca del importador (también cuando no coincide con el
+   * registrado) y el de un comprobante vigente del pedido. Postgres acota los candidatos y la
+   * comparación final es la de la columna: `importedInvoiceNumber` para la marca —buscar
+   * «Factura» o un número que solo aparece más abajo en las observaciones no trae nada— e
+   * `invoiceNumberContains`, normalizado, para los dos: `FFA1-1419` encuentra a `FFA1-00001419`.
+   */
+  private async idsByInvoiceNumber(search: string): Promise<string[]> {
+    // Menos de tres caracteres significativos («0», «12»): no se busca por comprobante. Los ceros
+    // de relleno del sistema harían coincidir a todos, y el `id IN` crecería con el histórico.
+    const needle = invoiceSearchNeedle(search);
+    if (needle === null) return [];
+    const series = /^([A-Z][A-Z0-9]{3})-/.exec(needle)?.[1];
+    const [imported, documents] = await Promise.all([
+      this.prisma.quotation.findMany({
+        where: {
+          AND: [
+            { notes: { startsWith: EXTERNAL_INVOICE_NOTES_PREFIX } },
+            series === undefined
+              ? { notes: { contains: needle, mode: 'insensitive' } }
+              : {
+                  notes: {
+                    startsWith: `${EXTERNAL_INVOICE_NOTES_PREFIX}${series}-`,
+                    mode: 'insensitive',
+                  },
+                },
+          ],
+        },
+        select: { id: true, notes: true },
+      }),
+      this.prisma.fiscalDocument.findMany({
+        where: {
+          ...liveInvoiceDocuments.where,
+          number:
+            series === undefined
+              ? { contains: needle, mode: 'insensitive' }
+              : { startsWith: `${series}-`, mode: 'insensitive' },
+          salesOrder: { status: { not: SalesOrderStatus.CANCELLED }, quotationId: { not: null } },
+        },
+        select: { number: true, salesOrder: { select: { quotationId: true } } },
+      }),
+    ]);
+    const ids = new Set<string>();
+    for (const q of imported) {
+      if (invoiceNumberContains(importedInvoiceNumber(q.notes), search)) ids.add(q.id);
+    }
+    for (const d of documents) {
+      const quotationId = d.salesOrder?.quotationId;
+      if (quotationId && invoiceNumberContains(d.number, search)) ids.add(quotationId);
+    }
+    return [...ids];
+  }
+
+  /**
+   * D-387: una página ordenada por el número que muestra la columna «Comprobante» —el
+   * comprobante vigente o, sin él, el de la marca—. Prisma no ordena por esa lectura: se traen
+   * id, número, observaciones y comprobantes vigentes de **todas** las filas del filtro, se
+   * ordenan con `orderByInvoiceNumber` y se pide la página por id. Solo con esta clave.
+   */
+  private async findPageByImportedInvoice<I extends Prisma.QuotationInclude>(
+    where: Prisma.QuotationWhereInput,
+    include: I,
+    query: QuotationQuery,
+    skip: number,
+    take: number,
+  ): Promise<[number, Prisma.QuotationGetPayload<{ include: I }>[]]> {
+    const rows = await this.prisma.quotation.findMany({
+      where,
+      select: {
+        id: true,
+        seq: true,
+        notes: true,
+        salesOrders: {
+          where: { status: { not: SalesOrderStatus.CANCELLED } },
+          select: { fiscalDocuments: liveInvoiceDocuments },
+          take: 1,
+        },
+      },
+    });
+    const keys = rows.map((r) => ({
+      id: r.id,
+      seq: r.seq,
+      invoice: shownInvoiceNumber(
+        quotationInvoiceState(importedInvoiceNumber(r.notes), invoiceDocumentsOf(r.salesOrders[0])),
+      ),
+    }));
+    const pageIds = orderByInvoiceNumber(keys, query.dir)
+      .slice(skip, skip + take)
+      .map((k) => k.id);
+    const page = await this.prisma.quotation.findMany({ where: { id: { in: pageIds } }, include });
+    const byId = new Map(page.map((row) => [row.id, row]));
+    const ordered = pageIds.flatMap((id) => {
+      const row = byId.get(id);
+      return row === undefined ? [] : [row];
+    });
+    return [keys.length, ordered];
   }
 
   async findOne(id: string, actor?: RequestUser): Promise<QuotationDto> {
@@ -1540,6 +1671,8 @@ export class QuotationsService {
       igvPen: row.igvPen.toFixed(4),
       totalPen: row.totalPen.toFixed(4),
       notes: row.notes,
+      externalInvoice: importedInvoiceNumber(row.notes),
+      invoiceDocuments: invoiceDocumentsOf(liveOrder),
       salesOrderId: liveOrder?.id ?? null,
       salesOrderCode: liveOrder ? salesOrderCode(liveOrder.seq) : null,
       pdfKey: row.pdfKey,
@@ -1606,4 +1739,13 @@ function assertNoTypedImportMarker(currentNotes: string | null, newNotes?: strin
       `Las observaciones no pueden empezar con «${EXTERNAL_INVOICE_NOTES_PREFIX.trim()}»: esa marca la pone el importador de comprobantes`,
     );
   }
+}
+
+/** D-387: los comprobantes vigentes del pedido vivo, como los lee la columna «Comprobante». */
+function invoiceDocumentsOf(
+  order: { fiscalDocuments: { id: string; number: string | null }[] } | undefined,
+): { id: string; number: string }[] {
+  return (order?.fiscalDocuments ?? []).flatMap((d) =>
+    d.number === null ? [] : [{ id: d.id, number: d.number }],
+  );
 }
