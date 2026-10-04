@@ -2,6 +2,42 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-04 — cc17: D-385, importador de ventas con TONELADA y bobina sin stock (PR #94 sin merge)
+
+- D-385 aprobada por el dueño. Caso real: FFA1-1419 (`BOB030AZUL`, 4.192 TONELADA, 12 789.153),
+  leído del archivo `local-data/VENTAS SETIEMBRE.xlsx` del checkout principal, sin copiarlo.
+- **Contradicción con el alcance, decidida por el dueño:** el archivo de agosto ya trae una fila en
+  TONELADA que no es bobina (FFA1-1372, servicio de conformado, 30.26, producto en TNE). La
+  conversión aplica solo si el producto se vende en kg. También decidió reservar el saldo entero
+  de la bobina elegida.
+- Implementación en API, web, unitarios y E2E `importador-bobina-d385.spec.ts`. Sin migración,
+  nada en producción. No se usó demo ni se corrió la suite en local, porque había otra sesión en la
+  ventana de D-383. **La CI es el juez.**
+- **CI 37187224063 en `64a6721`: verde.** E2E 504 pasados y 3 saltados; smoke de Neon `ci` 36
+  pasados y 2 saltados; lint, typecheck, unitarios y Sonar en verde. La corrida anterior
+  (37184869394) tuvo 1 rojo del spec nuevo: era un defecto del test (el mensaje de bloqueo era otro,
+  correcto), no del producto.
+- Archivos reales en local: el agosto real se importa igual, con el conformado en 30.260 t, y
+  setiembre da 4192.000 kg con el importe del papel. El spec se salta en la CI, que no tiene
+  `local-data`.
+- Revisiones:
+  - autorrevisión, `docs/revision/cc17-autorrevision.md`: 0 P0, 2 P1, 5 P2, 6 P3;
+  - segundo modelo, `docs/revision/cc17-segundo-modelo.md`: 0 P0, 1 P1, 3 P2, 4 P3.
+- **P1 corregidos:**
+  - la pantalla descartaba los avisos de unidad;
+  - el barrido no convertía las toneladas.
+- **P2 corregidos:**
+  - el lock previo de la bobina rompía el orden único de locks;
+  - duplicar una importada con línea sin bobina daba 400.
+- **P3 corregido:** los bordes de la tolerancia.
+- **Riesgos aceptados**, registrados en D-385:
+  - el confirm del importador admite sin bobina toda fila `BOB…` sin `saleCoilId`;
+  - la excepción de edición es por producto, no por línea;
+  - el barrido trata la línea sin bobina como defecto de R1.
+- **Para la ventana:** verificar en la foto que `BOB030AZUL` exista en el catálogo. Si no existe,
+  la fila queda en rojo y no se crea sola. Runbook en `docs/handoff/ventana-cc17.md`; UAT en
+  `docs/uat/cc17.md`.
+
 ## 2026-10-04 — Ventana D-383 (desplegada, PR #90, sin migración)
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle y la **lista completa de lo
