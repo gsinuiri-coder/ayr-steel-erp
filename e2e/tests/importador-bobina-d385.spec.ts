@@ -239,4 +239,117 @@ test.describe('D-385 — importar una bobina en TONELADA sin stock y elegir la b
       await purgeSalesTrail(api, { orderIds, quotationIds });
     }
   });
+
+  test('A + B: papel BOB030 con una bobina 0.28 → sugerida → quitarla → confirmar bloquea → elegirla → reserva entera', async () => {
+    const color = await createColor(api, '#0e4c96');
+    const finish = await createRoofingFinish(api, { colorId: color.id });
+    const supplier = await createSupplier(api, { name: 'E2E Proveedor D-385 tolerancia' });
+    // La bobina real está registrada como 0.28 (BOB028…), con los kg del papel o más y dentro del
+    // ±1 %: la sugiere el importador y sirve al confirmar.
+    const { coil } = await buyRoofingCoil(api, {
+      supplierId: supplier.id,
+      finishId: finish.id,
+      colorId: color.id,
+      weightKg: '4200',
+      thicknessMm: '0.28',
+      widthMm: '1200',
+    });
+    const customer = await createCustomer(api);
+    const paperSku = `BOB030${color.code}`;
+    const coilSku = `BOB028${color.code}`;
+
+    const quotationIds: string[] = [];
+    const orderIds: string[] = [];
+    try {
+      const row: SheetRow = {
+        issueDate: '08/09/2026',
+        docType: 'Factura',
+        documentKey: documentKey(),
+        customer: customerCell(customer),
+        sku: paperSku,
+        productName: `BOBINA ALUZINC ${color.code} 0.30 X 1200 RAL 5002`,
+        unit: 'TONELADA',
+        qty: '4.1920000000',
+        netAmount: '12789.153',
+        igv: '2302.04754',
+        totalAmount: '15091.200',
+      };
+      const parsed = await previewImport(api, [row]);
+      const previewRow = parsed.rows[0]! as (typeof parsed.rows)[number] & {
+        paperCoilSku: string | null;
+        coilCandidates: { coilId: string; productSku: string; thicknessMm: string }[];
+      };
+      // A: el papel dice BOB030, la bobina candidata es 0.28 y la línea toma BOB028.
+      expect(previewRow.paperCoilSku).toBe(paperSku);
+      expect(previewRow.saleCoilId).toBe(coil.id);
+      expect(previewRow.productSku).toBe(coilSku);
+      expect(previewRow.coilCandidates).toEqual([
+        expect.objectContaining({ coilId: coil.id, productSku: coilSku, thicknessMm: '0.28' }),
+      ]);
+
+      const result = await commitImport(api, [toInput(previewRow)]);
+      const listed = await getJson<{ items: { id: string; code: string }[] }>(
+        api,
+        '/api/sales/quotations?pageSize=200',
+      );
+      const quotationId = listed.items.find((q) => q.code === result.codes[0])!.id;
+      quotationIds.push(quotationId);
+      const imported = await getJson<QuotationDto>(api, `/api/sales/quotations/${quotationId}`);
+      expect(imported.items[0]).toMatchObject({
+        reserveItemType: 'COIL',
+        reserveItemId: coil.id,
+        productSku: coilSku,
+        qty: '4192.000',
+        subtotalPen: '12789.1500',
+      });
+      // La descripción sigue siendo la del papel.
+      expect(imported.items[0]!.description).toContain('0.30');
+
+      // B: la sugerencia se quita en la cotización.
+      const candidates = await getJson<{ candidates: { coilId: string }[] }>(
+        api,
+        `/api/sales/quotations/${quotationId}/items/1/coil-candidates`,
+      );
+      expect(candidates.candidates.map((c) => c.coilId)).toContain(coil.id);
+      const removed = await api.put(`/api/sales/quotations/${quotationId}/items/1/coil`, {
+        data: { saleCoilId: null },
+      });
+      expect(removed.ok(), await removed.text()).toBe(true);
+      const unassigned = await getJson<QuotationDto>(api, `/api/sales/quotations/${quotationId}`);
+      expect(unassigned.items[0]!.reserveItemType).not.toBe('COIL');
+      expect(unassigned.items[0]!.productSku).toBe(coilSku);
+
+      // Confirmar sin elegir: bloquea.
+      const blocked = await api.post(`/api/sales/quotations/${quotationId}/confirm`, { data: {} });
+      expect(blocked.status()).toBe(400);
+      expect(await blocked.text()).toMatch(/sin bobina asignada\. Elige la bobina al confirmar/);
+
+      // Elegirla al confirmar: reserva la bobina entera; la línea factura el papel.
+      const preview = await getJson<ConfirmPreviewDto>(
+        api,
+        `/api/sales/quotations/${quotationId}/confirm-preview`,
+      );
+      expect(preview.blockers).toEqual([]);
+      expect(preview.lines[0]).toMatchObject({ action: 'CHOOSE_COIL' });
+      const confirmed = await api.post(`/api/sales/quotations/${quotationId}/confirm`, {
+        data: { coilAssignments: [{ lineNumber: 1, saleCoilId: coil.id }] },
+      });
+      expect(confirmed.ok(), await confirmed.text()).toBe(true);
+      const order = (await confirmed.json()) as SalesOrderDto;
+      orderIds.push(order.id);
+      expect(order.items[0]).toMatchObject({
+        reserveItemType: 'COIL',
+        reserveItemId: coil.id,
+        reserveQty: '4200.000',
+        productSku: coilSku,
+        qty: '4192.000',
+        subtotalPen: '12789.1500',
+      });
+      expect(order.reservations.filter((r) => r.status === 'ACTIVE')).toEqual([
+        expect.objectContaining({ itemType: 'COIL', itemId: coil.id, qty: '4200.000' }),
+      ]);
+    } finally {
+      await purgeSalesTrail(api, { orderIds, quotationIds });
+    }
+  });
 });
