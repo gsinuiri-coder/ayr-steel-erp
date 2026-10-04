@@ -11,6 +11,7 @@ import {
   findLiveStripAssignments,
   type StripAssignment,
 } from '../production/production-assignments';
+import { lockCoilRows } from '../inventory/row-locks';
 import { roofingCoilWhere } from '../production/roofing-coil-match';
 import {
   byCodeUnit,
@@ -276,9 +277,7 @@ export async function rawMaterialAvailability(
   const ids = candidates.map((c) => c.id).filter((id) => !without.has(id));
 
   if (options.lockCoils === true && ids.length > 0) {
-    await tx.$queryRaw`
-      SELECT "id" FROM "coils" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE
-    `;
+    await lockCoilRows(tx, ids);
   }
 
   // D-185: las dos sumas de lo reservado pasan por `reservedByItem`, que suma firme y
@@ -852,11 +851,11 @@ async function findSpecsAffectedByAttributes(
  */
 export async function lockRawMaterialCoils(
   tx: Prisma.TransactionClient,
-  coilIds: string[],
+  coilIds: readonly string[],
   toleranceMm: string,
-): Promise<void> {
+): Promise<string[]> {
   const ids = [...new Set(coilIds)];
-  if (ids.length === 0) return;
+  if (ids.length === 0) return [];
   const attributes = await tx.coil.findMany({
     where: { id: { in: ids } },
     select: { businessLineId: true, colorId: true, thicknessMm: true },
@@ -874,8 +873,5 @@ export async function lockRawMaterialCoils(
   for (const spec of specs) {
     for (const id of await rawMaterialCoilIds(tx, spec, toleranceMm)) all.add(id);
   }
-  const sorted = [...all].sort(byCodeUnit);
-  await tx.$queryRaw`
-    SELECT "id" FROM "coils" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE
-  `;
+  return lockCoilRows(tx, [...all]);
 }

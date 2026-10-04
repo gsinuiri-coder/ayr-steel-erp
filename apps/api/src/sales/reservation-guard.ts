@@ -6,6 +6,7 @@ import {
   type Prisma,
 } from '@prisma/client';
 import { Decimal, toDecimal } from '@ayr/shared';
+import { lockCoilRows } from '../inventory/row-locks';
 import { assertRawMaterialInvariantFor, findRawMaterialSpecs } from './raw-material';
 import {
   byCodeUnit,
@@ -457,9 +458,7 @@ export async function assertCoilsNotReserved(
   // Mismo lock, mismo orden y mismo motivo que `assertStripsNotAssigned` (D-060): sin él
   // queda una ventana en la que el chequeo ve el ledger vacío, una confirmación de pedido
   // commitea, y la operación sigue adelante sobre material ya prometido.
-  await tx.$queryRaw`
-    SELECT "id" FROM "coils" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE
-  `;
+  await lockCoilRows(tx, sorted);
   await assertNotReserved(
     tx,
     sorted.map((id) => ({ itemType: InventoryItemType.COIL, itemId: id })),

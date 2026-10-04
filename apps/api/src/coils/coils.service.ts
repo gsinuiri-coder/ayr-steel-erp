@@ -39,6 +39,7 @@ import {
 } from '@ayr/shared';
 import { toSharedLineCode, toPrismaLineCode } from '../common/business-line-code';
 import { InventoryService } from '../inventory/inventory.service';
+import { lockCoilRows } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { ensureCoilSaleProduct } from '../sales/coil-sale-product';
 import { buildCoilPdf, buildCoilsReportPdf } from './coil-pdf';
@@ -349,9 +350,8 @@ export class CoilsService {
    * pueden calcular su plan sobre el mismo saldo/ancho antes de que ninguna escriba.
    */
   async lockCoil(tx: Prisma.TransactionClient, coilId: string): Promise<Coil> {
-    const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "coils" WHERE "id" = ${coilId}::uuid FOR UPDATE
-    `;
+    // D-386: la fila se pide por la puerta única de bloqueos de bobina.
+    const locked = await lockCoilRows(tx, [coilId]);
     if (locked.length === 0) throw new NotFoundException('Bobina no encontrada');
     return tx.coil.findUniqueOrThrow({ where: { id: coilId } });
   }

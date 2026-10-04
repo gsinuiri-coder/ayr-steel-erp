@@ -763,15 +763,14 @@ export class PurchasesService {
           // venta confirmada entre esa lectura y la reversa cabía en el saldo de la otra compra y
           // la reversa salía igual, a costo completo, sobre un ingreso ya consumido. Bobinas antes
           // que saldos (D-134) y en orden fijo, como «Editar compra».
-          await this.inventory.lockItemsForReversal(
-            tx,
-            own.map((m) => ({
+          await this.inventory.lockInOrder(tx, {
+            items: own.map((m) => ({
               businessLineId: m.businessLineId,
               itemType: m.itemType,
               itemId: m.itemId,
               unit: m.unit,
             })),
-          );
+          });
           // Para decidir qué es "posterior" cuentan TODOS los movimientos de la compra,
           // incluidos los ya revertidos y sus reversas: son suyos igual.
           await this.assertNothingMovedAfter(tx, own);

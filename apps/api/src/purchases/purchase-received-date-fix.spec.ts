@@ -30,6 +30,14 @@ const entry = (over: Partial<MovementForClassification> = {}): MovementForClassi
   ...over,
 });
 
+/** El saldo que ya existe del ítem de los fixtures (la puerta de bloqueos, D-386, lo lee). */
+const PRODUCT_BALANCE = {
+  itemType: 'PRODUCT',
+  itemId: 'product-1',
+  businessLineId: 'line-1',
+  unit: 'NIU',
+};
+
 describe('clasificación de fechas recibidas', () => {
   it('incluye una entrada limpia sin salida ni apertura intermedia', () => {
     const m = entry();
@@ -89,7 +97,7 @@ describe('ejecución del lote', () => {
     } as InventoryMovement;
     const expected = classifyReceivedDate(target, [m], [m])!;
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([{ id: 'balance' }]),
+      inventoryBalance: { findMany: jest.fn().mockResolvedValue([PRODUCT_BALANCE]) },
       purchase: {
         findMany: jest.fn().mockResolvedValue([target]),
         update: jest.fn().mockResolvedValue({}),
@@ -98,6 +106,7 @@ describe('ejecución del lote', () => {
       coil: { update: jest.fn() },
     };
     const inventory = {
+      lockInOrder: jest.fn().mockResolvedValue(undefined),
       record: jest.fn().mockResolvedValue({ id: 2n }),
       reverse: jest.fn().mockResolvedValue({}),
     };
@@ -109,7 +118,6 @@ describe('ejecución del lote', () => {
       'actor-1',
       'batch-1',
       [expected],
-      '0.01',
       [target.id],
     );
     expect(inventory.record.mock.invocationCallOrder[0]).toBeLessThan(
@@ -131,7 +139,7 @@ describe('undo de lote', () => {
       totalCost: new Prisma.Decimal('8'),
     } as InventoryMovement;
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([{ id: 'balance' }]),
+      inventoryBalance: { findMany: jest.fn().mockResolvedValue([PRODUCT_BALANCE]) },
       auditLog: {
         findMany: jest.fn().mockResolvedValue([
           {
@@ -172,6 +180,7 @@ describe('undo de lote', () => {
       coil: { update: jest.fn() },
     };
     const inventory = {
+      lockInOrder: jest.fn().mockResolvedValue(undefined),
       reverse: jest.fn().mockResolvedValue({}),
       record: jest.fn().mockResolvedValue({}),
     };
@@ -183,7 +192,6 @@ describe('undo de lote', () => {
         audit as unknown as AuditService,
         'actor-1',
         batchId,
-        '0.01',
       ),
     ).resolves.toEqual([target.id]);
     expect(inventory.reverse).toHaveBeenCalledWith(
@@ -223,7 +231,7 @@ describe('undo de lote', () => {
 
   it('bloquea el lote completo si el ítem tuvo un movimiento posterior', async () => {
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([{ id: 'balance' }]),
+      inventoryBalance: { findMany: jest.fn().mockResolvedValue([PRODUCT_BALANCE]) },
       auditLog: {
         findMany: jest.fn().mockResolvedValue([
           {
@@ -255,7 +263,7 @@ describe('undo de lote', () => {
       },
       purchase: { findUniqueOrThrow: jest.fn(), update: jest.fn() },
     };
-    const inventory = { reverse: jest.fn(), record: jest.fn() };
+    const inventory = { lockInOrder: jest.fn(), reverse: jest.fn(), record: jest.fn() };
     await expect(
       undoPurchaseReceivedDates(
         tx as unknown as Prisma.TransactionClient,
@@ -263,7 +271,6 @@ describe('undo de lote', () => {
         { write: jest.fn() } as unknown as AuditService,
         'actor-1',
         'lote',
-        '0.01',
       ),
     ).rejects.toThrow('movimientos posteriores');
     expect(inventory.reverse).not.toHaveBeenCalled();

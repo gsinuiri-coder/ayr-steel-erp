@@ -16,6 +16,7 @@ import {
 } from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { InventoryService } from '../inventory/inventory.service';
+import { lockCoilRows } from '../inventory/row-locks';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 
 /**
@@ -238,9 +239,7 @@ export async function loadRestoreContext(
   };
 }> {
   if (lock) {
-    const locked = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "coils" WHERE "id" = ${coilId}::uuid FOR UPDATE
-    `;
+    const locked = await lockCoilRows(tx, [coilId]);
     if (locked.length === 0) throw new NotFoundException('Bobina no encontrada');
   }
   const coil = await tx.coil.findUnique({
@@ -440,7 +439,7 @@ export async function undoCoilRestoreBatch(
   }));
   // Preflight de todo el lote antes de escribir.
   for (const item of items) {
-    await tx.$queryRaw`SELECT "id" FROM "coils" WHERE "id" = ${item.coilId}::uuid FOR UPDATE`;
+    await lockCoilRows(tx, [item.coilId]);
     const later = await tx.inventoryMovement.count({
       where: {
         itemType: InventoryItemType.COIL,

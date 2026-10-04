@@ -42,6 +42,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { assertSellerAccess, sellerWhere } from '../auth/seller-scope';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { lockCoilRows } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
 import { findLineReservation, resolveDispatchTarget } from '../sales/reservation-transfer';
@@ -344,11 +345,7 @@ export class DispatchesService {
           .map((l) => l.target.itemId),
       ),
     ].sort(byCodeUnit);
-    if (coilIds.length > 0) {
-      await tx.$queryRaw`
-        SELECT "id" FROM "coils" WHERE "id" = ANY(${coilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-      `;
-    }
+    await lockCoilRows(tx, coilIds);
 
     let lineNumber = 0;
     for (const line of lines) {
@@ -755,11 +752,7 @@ export class DispatchesService {
     const lockedCoilIds = [
       ...new Set(dispatch.items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
     ].sort(byCodeUnit);
-    if (lockedCoilIds.length > 0) {
-      await tx.$queryRaw`
-            SELECT "id" FROM "coils" WHERE "id" = ANY(${lockedCoilIds}::uuid[]) ORDER BY "id" FOR UPDATE
-          `;
-    }
+    await lockCoilRows(tx, lockedCoilIds);
 
     for (const item of dispatch.items) {
       if (item.movementId !== null) {

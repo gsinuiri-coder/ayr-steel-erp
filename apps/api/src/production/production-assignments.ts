@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { ProductionOrderStatus, type Prisma } from '@prisma/client';
 import { Decimal, productionOrderCode, toDecimal } from '@ayr/shared';
+import { lockCoilRows } from '../inventory/row-locks';
 
 /**
  * Guardrail transversal de Fase 4 (D-060).
@@ -97,10 +98,7 @@ export async function assertStripsNotAssigned(
   action: string,
 ): Promise<void> {
   if (coilIds.length === 0) return;
-  const sorted = [...new Set(coilIds)].sort();
-  await tx.$queryRaw`
-    SELECT "id" FROM "coils" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE
-  `;
+  await lockCoilRows(tx, coilIds);
   const assignments = await findLiveStripAssignments(tx, coilIds);
   if (assignments.length === 0) return;
   const detail = assignments.map((a) => `${a.coilCode} (${a.orderCode})`).join(', ');

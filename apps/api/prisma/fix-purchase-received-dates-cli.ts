@@ -11,8 +11,6 @@ import { assertExternalOutputsOff } from '../src/common/external-outputs';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { InventoryService } from '../src/inventory/inventory.service';
 import { AuditService } from '../src/audit/audit.service';
-import { ENV, type Env } from '../src/config/env';
-import { roofingToleranceMm } from '../src/production/roofing-coil-match';
 import {
   executePurchaseReceivedDates,
   planPurchaseReceivedDates,
@@ -97,7 +95,6 @@ async function main(): Promise<void> {
     const db = app.get(PrismaService);
     const inventory = app.get(InventoryService);
     const audit = app.get(AuditService);
-    const toleranceMm = roofingToleranceMm(app.get<Env>(ENV));
     if (undo) {
       if (!execute) {
         const logs = await db.auditLog.findMany({
@@ -111,7 +108,7 @@ async function main(): Promise<void> {
         return;
       }
       const ids = await db.$transaction(
-        (tx) => undoPurchaseReceivedDates(tx, inventory, audit, actor.id, undo, toleranceMm),
+        (tx) => undoPurchaseReceivedDates(tx, inventory, audit, actor.id, undo),
         { timeout: 300_000 },
       );
       console.warn(
@@ -156,7 +153,6 @@ async function main(): Promise<void> {
           actor.id,
           saved.batchId,
           saved.cases,
-          toleranceMm,
           saved.selectedIds,
         ),
       { timeout: 300_000 },

@@ -50,6 +50,7 @@ import {
 } from '../sales/raw-material';
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
 import { reservedByItem as sumReservedByItem, type HolderViewer } from '../sales/reserved-ledger';
+import { balanceLockKey, compareLockKeys, sortedUniqueIds } from './row-locks';
 
 /** Candidatos que se traen antes de rankear y recortar el buscador de ítems (D-290). */
 const ITEM_SEARCH_CANDIDATE_POOL = 100;
@@ -899,21 +900,42 @@ export class InventoryService {
   }
 
   /**
-   * D-382 (revisión de P2-2, P2-B): bloquea varios ítems en el orden de D-134 — primero las
-   * bobinas (con sus agregados, como `record` y `reverse`), después los saldos, cada grupo en
-   * orden de id — para quien necesita leer «qué se movió después» antes de revertir (la anulación
-   * de una compra). Tomar un saldo de producto antes que una bobina cruzaba el orden de confirmar
-   * un pedido o reportar producción. No escribe nada.
+   * D-386: **la puerta única de los bloqueos de inventario de una operación.** Recibe el conjunto
+   * completo —las bobinas que la operación toca sin moverlas (`coilIds`) y los ítems cuyo saldo
+   * va a mover (`items`)— y lo toma en el orden canónico:
+   *
+   * 1. todas las bobinas —las nombradas, las de `items` y las de cada agregado con promesas vivas
+   *    que alcanzan—, en **una sola** sentencia por id ascendente (`lockRawMaterialCoils`);
+   * 2. después los saldos de `items`, sin duplicados, por `itemType:itemId` (`COIL` antes que
+   *    `PRODUCT`), uno por uno.
+   *
+   * Se llama al inicio de la transacción, después de los documentos y las reservas (que van
+   * antes, D-386) y **antes de cualquier lectura que decida algo**. Lo que la operación pida
+   * después (`record`, `reverse`, `replaceEntry`, el guardrail del agregado) ya lo tiene: volver
+   * a pedir una fila propia no espera. Nació de `lockItemsForReversal` (D-382), que hacía lo
+   * mismo solo para la anulación de compras.
+   *
+   * Cubre el conjunto visible en este instante: si entre esta llamada y un `record` posterior
+   * otra transacción confirma una promesa sobre un agregado nuevo, `record` toma esas bobinas
+   * con saldos ya en mano (P3-2 de cc15b; ventana mínima, documentada en D-386).
+   *
+   * No escribe movimientos; crea el saldo vacío de un ítem que todavía no lo tiene, igual que
+   * cualquier movimiento (`lockBalance`).
    */
-  async lockItemsForReversal(tx: Prisma.TransactionClient, items: ItemRef[]): Promise<void> {
-    const coilIds = [
-      ...new Set(items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId)),
-    ].sort((a, b) => a.localeCompare(b));
+  async lockInOrder(
+    tx: Prisma.TransactionClient,
+    set: { coilIds?: readonly string[]; items?: readonly ItemRef[] },
+  ): Promise<void> {
+    const items = set.items ?? [];
+    const coilIds = sortedUniqueIds([
+      ...(set.coilIds ?? []),
+      ...items.filter((i) => i.itemType === InventoryItemType.COIL).map((i) => i.itemId),
+    ]);
     if (coilIds.length > 0) {
       await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
     }
-    const unique = [...new Map(items.map((i) => [`${i.itemType}:${i.itemId}`, i])).values()].sort(
-      (a, b) => `${a.itemType}:${a.itemId}`.localeCompare(`${b.itemType}:${b.itemId}`),
+    const unique = [...new Map(items.map((i) => [balanceLockKey(i), i])).values()].sort((a, b) =>
+      compareLockKeys(balanceLockKey(a), balanceLockKey(b)),
     );
     for (const item of unique) await this.lockBalance(tx, item);
   }

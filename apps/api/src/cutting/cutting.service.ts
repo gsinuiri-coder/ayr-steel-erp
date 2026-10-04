@@ -36,6 +36,7 @@ import { planCoilSplit } from '../coils/coil-split-math';
 import { CoilsService } from '../coils/coils.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { lockCoilRows } from '../inventory/row-locks';
 import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
@@ -94,10 +95,7 @@ export class CuttingService {
       async (tx) => {
         // Lock en orden determinístico: evita interbloqueos si dos envíos comparten bobinas
         // (lo cual además fallará más abajo porque una ya no estará OPEN).
-        const sortedIds = [...coilIds].sort();
-        await tx.$queryRaw`
-        SELECT "id" FROM "coils" WHERE "id" = ANY(${sortedIds}::uuid[]) ORDER BY "id" FOR UPDATE
-      `;
+        await lockCoilRows(tx, coilIds);
         const coils = await tx.coil.findMany({ where: { id: { in: coilIds } } });
         const byId = new Map(coils.map((c) => [c.id, c]));
 

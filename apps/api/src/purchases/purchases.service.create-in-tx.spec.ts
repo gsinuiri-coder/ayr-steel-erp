@@ -197,8 +197,8 @@ describe('PurchasesService.cancel — saldos bloqueados antes del guardrail (D-3
       operationDate: { resolve: () => '2026-10-03' },
       audit: { write: jest.fn().mockResolvedValue(undefined) },
       inventory: {
-        lockItemsForReversal: jest.fn().mockImplementation((_tx, refs: { itemId: string }[]) => {
-          calls.push(`lock:${refs.map((r) => r.itemId).join(',')}`);
+        lockInOrder: jest.fn().mockImplementation((_tx, set: { items: { itemId: string }[] }) => {
+          calls.push(`lock:${set.items.map((r) => r.itemId).join(',')}`);
           return Promise.resolve();
         }),
         reverse: jest.fn().mockImplementation(() => {
