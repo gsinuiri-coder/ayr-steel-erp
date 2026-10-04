@@ -30,16 +30,18 @@ Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232).
   Las reservas de PED-000056 quedaron `CONSUMED`; las de PED-000044 siguen `RELEASED`.
 - El vendedor es el de PED-000056, como decidió el dueño.
 
+**Decisiones del dueño al cierre (2026-10-04):**
+
+- **DES-000056 se queda el 27/09/2026**, por la convención de D-374: es la primera fecha válida del
+  plan, no la del papel. No se corrige.
+- **El respaldo `respaldo-pre-cc16-20261003` se conserva 7 días**, hasta el 2026-10-11. No se borra
+  antes, y después, solo con el OK del dueño por nombre (`AGENTS.md` §3.3).
+
 **Queda abierto:**
 
-1. **Confirmar con el dueño la fecha del despacho.** Quedó el 27/09/2026, que es la primera fecha
-   válida que dio el plan (D-374, punto 4). No es la fecha del papel (20/08), y el dueño había
-   quedado en indicar la fecha real de salida. Si la salida real fue otra, se decide con el dueño
-   cómo corregirla antes de tocar nada.
-2. D-383, la protección de la anulación de pedidos: PR #90 con la CI en verde, en espera del UAT
+1. D-383, la protección de la anulación de pedidos: PR #90 con la CI en verde, en espera del UAT
    del dueño, que va después del de cc15b.
-3. El respaldo `respaldo-pre-cc16-20261003` se propone para borrar según §3.3 de `AGENTS.md`,
-   cuando el dueño lo indique por nombre.
+2. Proponer el borrado del respaldo a partir del 2026-10-11.
 
 ---
 

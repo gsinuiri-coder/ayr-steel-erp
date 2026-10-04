@@ -18,9 +18,9 @@ Cada paso sensible tuvo el OK del dueño (D-251/D-232). El detalle está en
 - **Despacho:** lo hizo el dueño desde el comprobante. Quedó **DES-000056 del 27/09/2026**, la
   primera fecha válida del plan (D-374), no la del papel. Sin saldos negativos. PED-000056 quedó
   `FULFILLED`.
-- **Abierto:**
-  - confirmar con el dueño que la salida real fue el 27/09;
-  - el respaldo, para borrar por nombre cuando el dueño lo indique.
+- **Decisiones del dueño:**
+  - la fecha de DES-000056 **se queda en el 27/09**, por la convención de D-374;
+  - el respaldo se conserva 7 días, **hasta el 2026-10-11**; después se propone borrarlo por nombre.
 
 ## 2026-10-03 — D-384: `pnpm limpia:v4` retirado del repo (PR sin merge)
 
