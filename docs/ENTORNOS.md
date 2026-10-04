@@ -477,6 +477,10 @@ production`. Si alguna muta datos, se dice en `PROGRESO.md` cuál y qué hace.
 
 ## Checklist de la ventana V-4 (limpia total + migraciones + inventario real)
 
+> **Histórico.** La ventana V-4 se ejecutó el 2026-09-15. `pnpm limpia:v4` (D-208) se retiró del
+> repo por D-384 (2026-10-03): los comandos de abajo ya no existen y se conservan solo como
+> registro. El código sigue en la historia de git.
+
 La ventana más delicada del proyecto hasta ahora: vacía todo lo transaccional de `production`
 (D-208, `pnpm limpia:v4`) y exige tipo en acabados (D-209) antes de cargar el inventario real
 (D-206/D-207). Cada paso lleva quién lo hace — **dueño** o **agente** — y se anota en
