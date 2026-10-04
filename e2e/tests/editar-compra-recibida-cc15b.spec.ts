@@ -174,4 +174,39 @@ test.describe('D-372 sesión 2 (cc15b)', () => {
       avgCost: '25.0000',
     });
   });
+
+  test('P2-2 (D-382): tras corregir la compra anterior, la posterior se sigue pudiendo anular', async () => {
+    const supplier = await createSupplier(api, { name: 'E2E Proveedor cc15b anular' });
+    const product = await createSellableProduct(api, { lineCode: LINE, listPricePen: '50.0000' });
+    const first = await buyProduct(api, supplier.id, product.id, '10', '20');
+    const second = await buyProduct(api, supplier.id, product.id, '4', '20');
+    await postJson(api, `/api/purchases/${first.id}/received-edit`, {
+      items: [{ itemId: first.items[0]!.id, unitPrice: '27' }],
+      reason: 'Precio antes de anular la posterior (E2E cc15b)',
+    });
+
+    // El reingreso de la primera tiene id mayor que la segunda, pero es una entrada: no bloquea.
+    await postJson(api, `/api/purchases/${second.id}/cancel`, {
+      reason: 'Anular la posterior tras un reemplazo (E2E cc15b)',
+    });
+    expect(await balanceOf(api, 'PRODUCT', product.id)).toMatchObject({
+      qty: '10.000',
+      avgCost: '27.0000',
+    });
+
+    // Con una reserva que el saldo final cubre, también (D-066 se comprueba en la reversa).
+    const third = await buyProduct(api, supplier.id, product.id, '4', '20');
+    const customer = await createCustomer(api);
+    await createDirectOrder(api, {
+      customerId: customer.id,
+      businessLine: LINE,
+      items: [{ productId: product.id, qty: '2', unitPricePen: '50.0000' }],
+    });
+    // Un pedido directo reserva, no saca stock. La salida posterior que bloquea se prueba contra
+    // la base (purchase-cancel.db-spec).
+    await postJson(api, `/api/purchases/${third.id}/cancel`, {
+      reason: 'Anular con una reserva que el saldo cubre (E2E cc15b)',
+    });
+    expect((await balanceOf(api, 'PRODUCT', product.id)).qty).toBe('10.000');
+  });
 });

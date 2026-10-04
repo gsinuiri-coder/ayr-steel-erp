@@ -1,4 +1,15 @@
+import type { InventoryItemType, Prisma } from '@prisma/client';
 import { liveMovements } from '../inventory/live-movements';
+
+/** Un movimiento de la compra, como lo lee la anulación. */
+export interface OwnMovement {
+  id: bigint;
+  itemType: InventoryItemType;
+  itemId: string;
+  type: string;
+  reversalOfId: bigint | null;
+  reversals: unknown[];
+}
 
 /**
  * Contra qué movimiento de la compra se mide «posterior» en cada ítem, para el guardrail de la
@@ -42,4 +53,56 @@ export function lastOwnMovementByLiveItem(
   }
   for (const [itemId, id] of lastLiveIn) lastOwnId.set(itemId, id);
   return lastOwnId;
+}
+
+/**
+ * Qué movimientos ajenos y vivos, posteriores a la compra, bloquean su anulación
+ * (`assertNothingMovedAfter`). `null` si la compra no tiene ítems que medir.
+ *
+ * - Lo ya anulado no bloquea (ni el movimiento revertido ni su reversa), y se filtra **en la
+ *   consulta**, antes del límite de filas (segunda revisión de cc15a, P2-1).
+ * - D-382 (cc15b, P2-2): en **producto terminado**, una **entrada** ajena posterior (otra compra,
+ *   una producción, una apertura) no bloquea, igual que en la precondición de
+ *   `InventoryService.replaceEntry`: la reversa de la anulación saca solo lo que entró con esta
+ *   compra y el saldo final se comprueba en `reverse` (no negativo, reservas D-066). Sin esto, el
+ *   reingreso de un reemplazo, que tiene id mayor aunque su fecha sea anterior, dejaba sin poder
+ *   anularse cualquier compra posterior del mismo producto. El filtro va en la consulta por el
+ *   mismo motivo que el de lo anulado: en memoria, cinco entradas tapaban una salida viva.
+ * - En **bobina** cualquier movimiento ajeno sigue bloqueando, entradas incluidas: la anulación
+ *   también cancela la ficha de la bobina, y una entrada ajena viva la dejaría cancelada con
+ *   saldo en el kardex.
+ */
+export function laterMovementsWhere(
+  movements: OwnMovement[],
+): Prisma.InventoryMovementWhereInput | null {
+  const lastOwnId = lastOwnMovementByLiveItem(movements);
+  if (lastOwnId.size === 0) return null;
+  const itemTypes = new Map(movements.map((m) => [m.itemId, m.itemType]));
+  return {
+    OR: [...lastOwnId].map(([itemId, id]) =>
+      itemTypes.get(itemId) === 'PRODUCT'
+        ? { itemId, id: { gt: id }, type: { not: 'IN' as const } }
+        : { itemId, id: { gt: id } },
+    ),
+    reversalOfId: null,
+    reversals: { none: {} },
+    id: { notIn: movements.map((m) => m.id) },
+  };
+}
+
+/** Hasta cinco movimientos que bloquean la anulación (para nombrarlos en el mensaje). */
+export async function findBlockingLaterMovements(
+  tx: Prisma.TransactionClient,
+  movements: OwnMovement[],
+) {
+  const where = laterMovementsWhere(movements);
+  if (where === null) return [];
+  const later = await tx.inventoryMovement.findMany({
+    where,
+    orderBy: { id: 'asc' },
+    include: { reversals: { select: { id: true } } },
+    take: 5,
+  });
+  const ownIds = new Set(movements.map((m) => m.id));
+  return liveMovements(later).filter((m) => !ownIds.has(m.id));
 }
