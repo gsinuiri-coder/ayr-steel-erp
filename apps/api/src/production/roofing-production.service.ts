@@ -956,11 +956,6 @@ export class RoofingProductionService {
     // El schema solo garantiza que venga una de las dos formas: cuál corresponde lo decide el
     // subtipo del producto de la orden, que solo el servicio conoce.
     const accessory = isAccessory(product);
-    if (accessory && override !== undefined) {
-      throw new BadRequestException(
-        'El reporte de un accesorio no admite la casilla de tolerancia: sigue con el 1 %',
-      );
-    }
     if (accessory && input.meters === undefined) {
       throw new BadRequestException(
         `${product.sku} es un accesorio: reporta los metros lineales de bobina que usó, no largos`,
@@ -1155,9 +1150,8 @@ export class RoofingProductionService {
       theoreticalKg: neededKg,
       availableKg: rowRemainingKg,
       declaredKg,
-      // D-388: el accesorio (reporte por metros) queda fuera: sigue con el 1 % sin casilla
-      // (decisión del dueño). Las franjas son de las planchas y la cobertura a medida.
-      ...(accessory ? {} : { overrideBands: { authorized: override !== undefined } }),
+      // D-389: el accesorio (reporte por metros) también entra con la casilla, como las planchas.
+      overrideBands: { authorized: override !== undefined },
     });
     if (!mounted.ok) throw mountedKgRejection(mounted);
     if (mounted.note !== null) deviation.unshift(mounted.note);
