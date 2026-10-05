@@ -929,6 +929,14 @@ export class RoofingProductionService {
     input: ReportRoofingPiecesInput,
     operationDate: string,
   ): Promise<RawMaterialShortfall[]> {
+    // D-388: la casilla para pasar el 1 % es solo del administrador. Se valida acá, en la API y
+    // antes de tocar nada; la pantalla solo acompaña.
+    const override = input.toleranceOverride;
+    if (override !== undefined && actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        'Solo un administrador puede autorizar un reporte fuera de la tolerancia',
+      );
+    }
     const order = await lockOrder(tx, orderId);
     assertKind(order, ProductionOrderKind.ROOFING);
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
@@ -957,6 +965,11 @@ export class RoofingProductionService {
     // El schema solo garantiza que venga una de las dos formas: cuál corresponde lo decide el
     // subtipo del producto de la orden, que solo el servicio conoce.
     const accessory = isAccessory(product);
+    if (accessory && override !== undefined) {
+      throw new BadRequestException(
+        'El reporte de un accesorio no admite la casilla de tolerancia: sigue con el 1 %',
+      );
+    }
     if (accessory && input.meters === undefined) {
       throw new BadRequestException(
         `${product.sku} es un accesorio: reporta los metros lineales de bobina que usó, no largos`,
@@ -1144,21 +1157,16 @@ export class RoofingProductionService {
     // D-246: si el teórico pasa lo montado y el acero ya salió (lo declarado cabe, o el
     // exceso entra en la tolerancia), el reporte se topa en lo montado en vez de bloquear.
     // El teórico queda en la fila del reporte como dato; el kardex sale por `outKg`.
-    // D-388: la casilla para pasar el 1 % es solo del administrador, y se valida acá, no en la
-    // pantalla. Entre el 1 % y el 5 % sin casilla, el rechazo lleva su código y las cifras para
-    // que la pantalla la ofrezca; por encima del 5 % no hay casilla.
-    const override = input.toleranceOverride;
-    if (override !== undefined && actor.role !== Role.ADMINISTRADOR) {
-      throw new ForbiddenException(
-        'Solo un administrador puede autorizar un reporte fuera de la tolerancia',
-      );
-    }
+    // D-388: entre el 1 % y el 5 % sin casilla, el rechazo lleva su código y las cifras para que
+    // la pantalla la ofrezca; por encima del 5 % no hay casilla.
     const mounted = mountedKgForReport({
       label: row.coil.code,
       theoreticalKg: neededKg,
       availableKg: rowRemainingKg,
       declaredKg,
-      overrideBands: { authorized: override !== undefined },
+      // D-388: el accesorio (reporte por metros) queda fuera: sigue con el 1 % sin casilla
+      // (decisión del dueño). Las franjas son de las planchas y la cobertura a medida.
+      ...(accessory ? {} : { overrideBands: { authorized: override !== undefined } }),
     });
     if (!mounted.ok) {
       throw new BadRequestException(
@@ -1446,7 +1454,10 @@ export class RoofingProductionService {
           differencePct: mounted.excess.excessPct,
           reason: appliedOverride.reason,
           reasonLabel: TOLERANCE_OVERRIDE_REASON_LABELS[appliedOverride.reason],
-          detail: appliedOverride.detail ?? null,
+          detail:
+            appliedOverride.detail === undefined || appliedOverride.detail === ''
+              ? null
+              : appliedOverride.detail,
         },
       });
     }

@@ -4,7 +4,7 @@ import {
   MAX_VALUE,
   roundTo,
   toDecimal,
-  type Decimal,
+  Decimal,
   type DecimalInput,
 } from '../decimal';
 import {
@@ -568,7 +568,8 @@ export function mountedKgForReport(input: {
       theoreticalKg: theoretical.toFixed(3),
       availableKg: available.toFixed(3),
       excessKg: excess.toFixed(3),
-      excessPct: excess.div(theoretical).times(100).toFixed(2),
+      // Hacia arriba: lo que pasó el 1 % (o el 5 %) nunca se muestra como «1.00 %» o «5.00 %».
+      excessPct: excess.div(theoretical).times(100).toFixed(2, Decimal.ROUND_UP),
       tolerancePct: pct,
       maxPct: ratioPct(THEORETICAL_KG_OVERRIDE_MAX_RATIO),
     };

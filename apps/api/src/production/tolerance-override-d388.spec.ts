@@ -216,3 +216,45 @@ describe('el motivo', () => {
     );
   });
 });
+
+describe('reportInTx — la casilla es solo del administrador (D-388)', () => {
+  it('un no administrador con casilla recibe 403 antes de tocar la base', async () => {
+    const { RoofingProductionService } = await import('./roofing-production.service');
+    const { ForbiddenException } = await import('@nestjs/common');
+    const svc = Object.create(RoofingProductionService.prototype) as InstanceType<
+      typeof RoofingProductionService
+    >;
+    const tx = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error('no debía tocar la base');
+        },
+      },
+    );
+    for (const role of ['SUPERVISOR_PLANTA', 'VENDEDOR'] as const) {
+      await expect(
+        svc.reportInTx(
+          tx as never,
+          { id: 'u-1', role } as never,
+          'op-1',
+          {
+            pieces: [{ lengthMm: '3600', qty: 428 }],
+            toleranceOverride: { reason: 'LIGHTER_COIL' },
+          } as never,
+          '2026-10-05',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    }
+  });
+});
+
+describe('el porcentaje que se muestra', () => {
+  it('se redondea hacia arriba: lo que pasó el 1 % o el 5 % nunca dice «1.00 %» ni «5.00 %»', () => {
+    expect(report('1000', '989.99')).toMatchObject({ excess: { excessPct: '1.01' } });
+    expect(report('1000', '949.97', true)).toMatchObject({
+      code: TOLERANCE_EXCEEDED,
+      excess: { excessPct: '5.01' },
+    });
+  });
+});

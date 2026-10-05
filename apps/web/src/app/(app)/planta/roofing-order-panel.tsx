@@ -13,6 +13,8 @@ import {
   piecesMeters,
   piecesTheoreticalKg,
   Role,
+  TOLERANCE_EXCEEDED,
+  TOLERANCE_OVERRIDE_REQUIRED,
   roofingConsumptionDeviation,
   mountedKgForReport,
   toDecimal,
@@ -321,6 +323,13 @@ export function RoofingOrderPanel({
           ? `${order.code}: fila agregada al borrador`
           : `${order.code}: fila ${String(editing.rowNumber)} corregida`,
       );
+      // D-388: una fila corregida es otro exceso: la casilla que se marcó para la anterior no
+      // vale para esta, y el administrador la vuelve a marcar si hace falta.
+      if (editing !== null) {
+        setOverrides((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([id]) => id !== editing.id)),
+        );
+      }
       // Tras agregar, el editor queda vacío: lo que falta del plan ya lo ocupa el borrador.
       onDraft({ rows: [EMPTY_PIECE_ROW], consumedKg: '', editingDraftId: null });
       invalidate();
@@ -388,6 +397,18 @@ export function RoofingOrderPanel({
       invalidate();
     },
     onError: (err) => {
+      // D-388: la fila pasó la tolerancia entre que se leyó el borrador y se ejecutó (o falta la
+      // casilla). Su mensaje habla de «motivo», así que va antes que el del despunte: se avisa y
+      // se relee el borrador para que aparezca la casilla.
+      if (
+        err instanceof ApiError &&
+        (err.code === TOLERANCE_OVERRIDE_REQUIRED || err.code === TOLERANCE_EXCEEDED)
+      ) {
+        reasonToSend.current = null;
+        toast.error(err.message);
+        invalidate();
+        return;
+      }
       // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
       if (err instanceof ApiError && /motivo/i.test(err.message) && closeMode.current) {
         setAskingReason(true);
