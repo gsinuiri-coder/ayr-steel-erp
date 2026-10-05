@@ -72,10 +72,15 @@ export function AccessoryReportCard({
   const [asking, setAsking] = useState(false);
   const reasonToSend = useRef<string | null>(null);
   const [closeMode, setCloseMode] = useState(false);
-  /** D-389: las cifras del reporte que pasó la tolerancia del 1 % (las trae el rechazo del API). */
-  const [tolerance, setTolerance] = useState<MountedKgExcess | null>(null);
+  /**
+   * D-389: el rechazo por tolerancia, con sus cifras y la huella de lo que se mandó (bobina,
+   * metros y kilos). El aviso y la casilla valen solo mientras esa huella siga siendo la de la
+   * pantalla: cambiar la bobina, los metros o los kilos es otro exceso que nadie vio.
+   */
+  const [rejected, setRejected] = useState<{ excess: MountedKgExcess; fingerprint: string } | null>(
+    null,
+  );
   const [override, setOverride] = useState<ToleranceOverrideState>(EMPTY_OVERRIDE);
-  const toleranceOverride = tolerance === null ? null : overrideInput(override, tolerance);
   const key = useIdempotencyKey();
 
   const coil =
@@ -90,6 +95,10 @@ export function AccessoryReportCard({
   const validMeters = typedMeters !== null;
   const typedPieces = /^\d+$/.test(piecesCount.trim()) ? Number(piecesCount.trim()) : null;
   const validPieces = piecesCount.trim() === '' || (typedPieces !== null && typedPieces > 0);
+  const fingerprint = `${coil?.coilId ?? ''}|${typedMeters?.toFixed(3) ?? ''}|${consumedKg.trim()}`;
+  const tolerance =
+    rejected !== null && rejected.fingerprint === fingerprint ? rejected.excess : null;
+  const toleranceOverride = tolerance === null ? null : overrideInput(override, tolerance);
   // Los kilos teóricos con el ancho de la bobina montada: la misma cuenta que hace el API.
   const theoreticalKg =
     validMeters && coil
@@ -148,7 +157,7 @@ export function AccessoryReportCard({
       setMeters('');
       setPiecesCount('');
       setConsumedKg('');
-      setTolerance(null);
+      setRejected(null);
       setOverride(EMPTY_OVERRIDE);
       onDone(updated, variables.close);
     },
@@ -157,7 +166,8 @@ export function AccessoryReportCard({
       // reenvía con ella. Va **antes** que el motivo del despunte: su mensaje también habla de
       // «motivo», y confundirlos abría el diálogo del despunte en bucle (revisión de cc20).
       if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
-        setTolerance(err.details?.excess ?? null);
+        const excess = err.details?.excess;
+        setRejected(excess === undefined ? null : { excess, fingerprint });
         reasonToSend.current = null;
         if (err.details?.excess === undefined) toast.error(err.message);
         return;
@@ -225,7 +235,7 @@ export function AccessoryReportCard({
                   onChange={(e) => {
                     setMeters(e.target.value);
                     // Otros metros, otro exceso: la casilla vale solo para las cifras que se vieron.
-                    setTolerance(null);
+                    setRejected(null);
                     setOverride(EMPTY_OVERRIDE);
                   }}
                 />
@@ -304,6 +314,7 @@ export function AccessoryReportCard({
               <div
                 className="grid gap-3 rounded-lg border border-tone-warning-foreground/40 bg-tone-warning p-3 text-sm text-tone-warning-foreground"
                 data-testid="tolerance-override"
+                role="alert"
               >
                 <ToleranceOverrideRow
                   title={`Reporte de ${order.code}`}

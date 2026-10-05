@@ -15,7 +15,7 @@ import { createCustomer } from '../helpers/sales';
  * D-389 — el accesorio también entra con la casilla al pasar la tolerancia del 1 %.
  *
  * Bobina de 1 000 kg con 4,04 kg/m (1 000 mm × 0,50 mm × densidad 8 × 1,01): rinde 247,5 m. Un
- * reporte de 255 m equivale a 1 030,2 kg teóricos, un 2,93 % más que lo montado. La tarjeta del
+ * reporte de 255 m equivale a 1 030,2 kg teóricos, un 2,94 % más que lo montado (redondeado hacia arriba). La tarjeta del
  * accesorio (reporte directo, sin borrador) muestra el aviso con la casilla y reenvía. Con
  * «Reportar y cerrar» el rechazo habla de «motivo», como el del despunte: el diálogo del despunte
  * **no** se abre (era un bucle en la revisión de cc20).
@@ -149,6 +149,7 @@ test.describe('D-389 — accesorio fuera de tolerancia', () => {
       // El diálogo del despunte no se abre: el rechazo con código va antes que el «motivo».
       await expect(page.getByRole('dialog', { name: 'Cerrar con despunte alto' })).toHaveCount(0);
       await expect(reportAndClose).toBeDisabled();
+      // La casilla vale para lo que se rechazó: otros kilos son otro exceso y el aviso se va;      // volver a lo rechazado lo trae de nuevo.      const kg = panel.getByLabel('kg consumido (opcional)');      await kg.fill('1000');      await expect(block).toHaveCount(0);      await kg.fill('');      await expect(block).toContainText('2.94 %');
 
       await block
         .getByRole('checkbox', {
