@@ -9,6 +9,7 @@ import {
 } from '../enums';
 import { FINISH_KIND_LABELS } from './finish';
 import { monthSchema, operationDateSchema } from './operation';
+import { SALES_MARGIN_LINES } from './report-lines';
 
 /**
  * Reportes con corte mensual (RF-90..RF-94, adelanto de la Fase 7f).
@@ -281,6 +282,8 @@ export const salesMarginQuerySchema = z
   .object({
     from: operationDateSchema,
     to: operationDateSchema,
+    /** cc23 (D-391): la pestaña de la línea; sin ella, «Todas». */
+    businessLine: z.enum(SALES_MARGIN_LINES).optional(),
   })
   .refine((v) => v.from <= v.to, { message: 'El rango termina antes de empezar' });
 export type SalesMarginQuery = z.infer<typeof salesMarginQuerySchema>;
