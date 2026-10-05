@@ -1611,7 +1611,7 @@ export class ProductionService {
 
   /**
    * D-388: los reportes que entraron fuera de la tolerancia del 1 % con la casilla de un
-   * administrador, leídos de su entrada de auditoría en el historial de la orden (no hay
+   * usuario (D-389), leídos de su entrada de auditoría en el historial de la orden (no hay
    * columna). Una consulta para toda la orden, por el índice `(entity, entity_id, at)`.
    */
   private async reportToleranceOverrides(

@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -37,7 +31,6 @@ import {
   piecesMeters,
   productionOrderCode,
   remainingPlanPieces,
-  Role,
   roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
@@ -106,6 +99,7 @@ import {
   resolveActorNames,
   restoreReservationIfIdle,
   appliedToleranceOverride,
+  assertToleranceReasonApplies,
   mountedKgRejection,
   TOLERANCE_OVERRIDE_AUDIT_ACTION,
   toleranceOverrideAuditAfter,
@@ -931,14 +925,9 @@ export class RoofingProductionService {
     input: ReportRoofingPiecesInput,
     operationDate: string,
   ): Promise<RawMaterialShortfall[]> {
-    // D-388: la casilla para pasar el 1 % es solo del administrador. Se valida acá, en la API y
-    // antes de tocar nada; la pantalla solo acompaña.
+    // D-388/D-389: la casilla la marca cualquiera que pueda reportar (el controlador ya limita los
+    // roles); sin administrador de por medio desde D-389.
     const override = input.toleranceOverride;
-    if (override !== undefined && actor.role !== Role.ADMINISTRADOR) {
-      throw new ForbiddenException(
-        'Solo un administrador puede autorizar un reporte fuera de la tolerancia',
-      );
-    }
     const order = await lockOrder(tx, orderId);
     assertKind(order, ProductionOrderKind.ROOFING);
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
@@ -967,11 +956,6 @@ export class RoofingProductionService {
     // El schema solo garantiza que venga una de las dos formas: cuál corresponde lo decide el
     // subtipo del producto de la orden, que solo el servicio conoce.
     const accessory = isAccessory(product);
-    if (accessory && override !== undefined) {
-      throw new BadRequestException(
-        'El reporte de un accesorio no admite la casilla de tolerancia: sigue con el 1 %',
-      );
-    }
     if (accessory && input.meters === undefined) {
       throw new BadRequestException(
         `${product.sku} es un accesorio: reporta los metros lineales de bobina que usó, no largos`,
@@ -1159,23 +1143,24 @@ export class RoofingProductionService {
     // D-246: si el teórico pasa lo montado y el acero ya salió (lo declarado cabe, o el
     // exceso entra en la tolerancia), el reporte se topa en lo montado en vez de bloquear.
     // El teórico queda en la fila del reporte como dato; el kardex sale por `outKg`.
-    // D-388: entre el 1 % y el 5 % sin casilla, el rechazo lleva su código y las cifras para que
-    // la pantalla la ofrezca; por encima del 5 % no hay casilla.
+    // D-388/D-389: pasado el 1 % sin casilla, el rechazo lleva su código y las cifras para que
+    // la pantalla la ofrezca; pasado el 5 % el aviso es más fuerte, sin tope (D-389).
     const mounted = mountedKgForReport({
       label: row.coil.code,
       theoreticalKg: neededKg,
       availableKg: rowRemainingKg,
       declaredKg,
-      // D-388: el accesorio (reporte por metros) queda fuera: sigue con el 1 % sin casilla
-      // (decisión del dueño). Las franjas son de las planchas y la cobertura a medida.
-      ...(accessory ? {} : { overrideBands: { authorized: override !== undefined } }),
+      // D-389: el accesorio (reporte por metros) también entra con la casilla, como las planchas.
+      overrideBands: { authorized: override !== undefined },
     });
     if (!mounted.ok) throw mountedKgRejection(mounted);
     if (mounted.note !== null) deviation.unshift(mounted.note);
     const applied = appliedToleranceOverride(mounted, override);
     if (applied !== null) {
+      // D-389: el motivo tiene que aplicar a la dirección del exceso.
+      assertToleranceReasonApplies(applied.override.reason);
       deviation.unshift(
-        `Fuera de tolerancia, autorizado por un administrador: ${toleranceOverrideLabel(applied.override)}.`,
+        `Fuera de tolerancia, confirmado con la casilla: ${toleranceOverrideLabel(applied.override)}.`,
       );
     }
     const outKg = mounted.kg;

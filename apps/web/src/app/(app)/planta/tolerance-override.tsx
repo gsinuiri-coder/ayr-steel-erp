@@ -2,8 +2,9 @@
 
 import {
   TOLERANCE_OVERRIDE_REASON_LABELS,
-  TOLERANCE_OVERRIDE_REASONS,
+  TOLERANCE_OVERRIDE_REASONS_OVER,
   toleranceOverrideSchema,
+  type MountedKgExcess,
   type RoofingReportDraftDto,
   type ToleranceOverrideInput,
   type ToleranceOverrideReason,
@@ -12,20 +13,31 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { formatQty } from '@/lib/format';
 
-/** D-388: lo que el administrador marcó para una fila del borrador. */
+/** D-388/D-389: lo que se marcó para una fila fuera de tolerancia (la casilla y el motivo). */
 export interface ToleranceOverrideState {
   checked: boolean;
   reason: ToleranceOverrideReason | '';
   detail: string;
+  /**
+   * D-389: el exceso (kg) para el que se marcó. Si la fila cambia de exceso —se corrige o se quita
+   * otra fila de la misma bobina—, la casilla deja de valer y hay que volver a confirmar: sin tope,
+   * un 3 % confirmado no puede pasar como un 90 %.
+   */
+  forExcessKg?: string;
 }
 
 export const EMPTY_OVERRIDE: ToleranceOverrideState = { checked: false, reason: '', detail: '' };
 
-/** La casilla de una fila, lista para viajar al API, o `null` si falta algo. */
+/**
+ * La casilla de una fila, lista para viajar al API, o `null` si falta algo o si se marcó para
+ * otro exceso que el de ahora.
+ */
 export function overrideInput(
   state: ToleranceOverrideState | undefined,
+  excess?: MountedKgExcess | null,
 ): ToleranceOverrideInput | null {
   if (state === undefined || !state.checked || state.reason === '') return null;
+  if (excess !== undefined && excess !== null && state.forExcessKg !== excess.excessKg) return null;
   const parsed = toleranceOverrideSchema.safeParse({
     reason: state.reason,
     ...(state.detail.trim() === '' ? {} : { detail: state.detail.trim() }),
@@ -41,21 +53,103 @@ export function rowsOutOfTolerance(
 }
 
 /**
- * D-388: el aviso de las filas que pasan la tolerancia del 1 % y, para un administrador, la
- * casilla con el motivo. Aparece **solo** cuando alguna fila lo necesita. Quien no es
- * administrador ve el bloqueo y a quién pedírselo: la API lo rechaza igual.
+ * D-389: el aviso de una fila que pasa la tolerancia del 1 % —con el texto fuerte pasado el 5 %—
+ * y la casilla con el motivo. La marca **cualquiera que pueda reportar**: desde D-389 no hace
+ * falta un administrador. Los motivos son los que aplican a un exceso hacia arriba.
+ */
+export function ToleranceOverrideRow({
+  title,
+  label,
+  excess,
+  value,
+  onChange,
+  disabled,
+}: {
+  /** El encabezado del aviso: «Fila 2 de OP-000034 (BOB…)» o «Reporte de OP-000034». */
+  title: string;
+  /** Lo que nombran los controles para el lector de pantalla: «la fila 2 de OP-000034». */
+  label: string;
+  excess: MountedKgExcess;
+  value: ToleranceOverrideState;
+  onChange: (next: ToleranceOverrideState) => void;
+  disabled: boolean;
+}) {
+  const id = `tolerancia-${label.replace(/\W+/g, '-')}`;
+  return (
+    <div className="grid gap-2" data-severe={excess.severe ? 'true' : 'false'}>
+      {excess.severe && (
+        <p className="font-semibold">
+          Diferencia mayor al {excess.maxPct} %: revisa cantidad, largo y bobina antes de confirmar.
+        </p>
+      )}
+      <p>
+        <strong>{title} fuera de tolerancia:</strong> lo reportado equivale a{' '}
+        {formatQty(excess.theoreticalKg, 'kg')} y quedan {formatQty(excess.availableKg, 'kg')}{' '}
+        montados. Diferencia {formatQty(excess.excessKg, 'kg')} ({excess.excessPct} % del teórico):
+        pasa el {excess.tolerancePct} %. Para confirmar, marca la casilla y elige el motivo; se
+        descuentan los {formatQty(excess.availableKg, 'kg')} montados y la bobina queda en 0.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-[auto_minmax(0,16rem)_minmax(0,1fr)] sm:items-center">
+        <label className="flex items-center gap-2 font-medium" htmlFor={`${id}-check`}>
+          <Checkbox
+            id={`${id}-check`}
+            aria-label={`Confirmar ${label} fuera de tolerancia`}
+            checked={value.checked && value.forExcessKg === excess.excessKg}
+            disabled={disabled}
+            onCheckedChange={(checked) => {
+              onChange({ ...value, checked: checked === true, forExcessKg: excess.excessKg });
+            }}
+          />
+          Confirmo el reporte fuera de tolerancia
+        </label>
+        <select
+          aria-label={`Motivo de ${label}`}
+          className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
+          disabled={disabled || !value.checked}
+          value={value.reason}
+          onChange={(e) => {
+            onChange({
+              ...value,
+              reason: e.target.value as ToleranceOverrideReason | '',
+              forExcessKg: excess.excessKg,
+            });
+          }}
+        >
+          <option value="">Elige el motivo…</option>
+          {TOLERANCE_OVERRIDE_REASONS_OVER.map((r) => (
+            <option key={r} value={r}>
+              {TOLERANCE_OVERRIDE_REASON_LABELS[r]}
+            </option>
+          ))}
+        </select>
+        <Input
+          aria-label={`Detalle del motivo de ${label}`}
+          placeholder={value.reason === 'OTHER' ? 'Explica el motivo' : 'Detalle (opcional)'}
+          maxLength={200}
+          disabled={disabled || !value.checked}
+          value={value.detail}
+          onChange={(e) => {
+            onChange({ ...value, detail: e.target.value, forExcessKg: excess.excessKg });
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * D-388/D-389: el aviso de las filas del borrador que pasan la tolerancia del 1 %, cada una con
+ * su casilla. Aparece **solo** cuando alguna fila lo necesita.
  */
 export function ToleranceOverrideFields({
   orderCode,
   rows,
-  isAdmin,
   value,
   onChange,
   disabled,
 }: {
   orderCode: string;
   rows: readonly RoofingReportDraftDto[];
-  isAdmin: boolean;
   value: Readonly<Record<string, ToleranceOverrideState>>;
   onChange: (draftId: string, next: ToleranceOverrideState) => void;
   disabled: boolean;
@@ -66,77 +160,21 @@ export function ToleranceOverrideFields({
       className="grid gap-3 rounded-lg border border-tone-warning-foreground/40 bg-tone-warning p-3 text-sm text-tone-warning-foreground"
       data-testid="tolerance-override"
     >
-      {rows.map((d) => {
-        const excess = d.outOfTolerance;
-        if (excess === null) return null;
-        const state = value[d.id] ?? EMPTY_OVERRIDE;
-        const id = `tolerancia-${d.id}`;
-        return (
-          <div key={d.id} className="grid gap-2">
-            <p>
-              <strong>
-                Fila {d.rowNumber} de {orderCode} ({d.coilCode}) fuera de tolerancia:
-              </strong>{' '}
-              lo reportado equivale a {formatQty(excess.theoreticalKg, 'kg')} y quedan{' '}
-              {formatQty(excess.availableKg, 'kg')} montados. Diferencia{' '}
-              {formatQty(excess.excessKg, 'kg')} ({excess.excessPct} % del teórico): pasa el{' '}
-              {excess.tolerancePct} %. Hasta el {excess.maxPct} % lo autoriza un administrador; se
-              descuentan los {formatQty(excess.availableKg, 'kg')} montados y la bobina queda en 0.
-            </p>
-            {isAdmin ? (
-              <div className="grid gap-2 sm:grid-cols-[auto_minmax(0,16rem)_minmax(0,1fr)] sm:items-center">
-                <label className="flex items-center gap-2 font-medium" htmlFor={`${id}-check`}>
-                  <Checkbox
-                    id={`${id}-check`}
-                    aria-label={`Autorizar la fila ${String(d.rowNumber)} de ${orderCode} fuera de tolerancia`}
-                    checked={state.checked}
-                    disabled={disabled}
-                    onCheckedChange={(checked) => {
-                      onChange(d.id, { ...state, checked: checked === true });
-                    }}
-                  />
-                  Autorizo el reporte fuera de tolerancia
-                </label>
-                <select
-                  aria-label={`Motivo de la fila ${String(d.rowNumber)} de ${orderCode}`}
-                  className="h-8 rounded-md border bg-background px-2 text-sm text-foreground"
-                  disabled={disabled || !state.checked}
-                  value={state.reason}
-                  onChange={(e) => {
-                    onChange(d.id, {
-                      ...state,
-                      reason: e.target.value as ToleranceOverrideReason | '',
-                    });
-                  }}
-                >
-                  <option value="">Elige el motivo…</option>
-                  {TOLERANCE_OVERRIDE_REASONS.map((r) => (
-                    <option key={r} value={r}>
-                      {TOLERANCE_OVERRIDE_REASON_LABELS[r]}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  aria-label={`Detalle del motivo de la fila ${String(d.rowNumber)} de ${orderCode}`}
-                  placeholder={
-                    state.reason === 'OTHER' ? 'Explica el motivo' : 'Detalle (opcional)'
-                  }
-                  maxLength={200}
-                  disabled={disabled || !state.checked}
-                  value={state.detail}
-                  onChange={(e) => {
-                    onChange(d.id, { ...state, detail: e.target.value });
-                  }}
-                />
-              </div>
-            ) : (
-              <p className="font-medium">
-                No se puede ejecutar así: lo autoriza un administrador desde esta misma pantalla.
-              </p>
-            )}
-          </div>
-        );
-      })}
+      {rows.map((d) =>
+        d.outOfTolerance === null ? null : (
+          <ToleranceOverrideRow
+            key={d.id}
+            title={`Fila ${String(d.rowNumber)} de ${orderCode} (${d.coilCode})`}
+            label={`la fila ${String(d.rowNumber)} de ${orderCode}`}
+            excess={d.outOfTolerance}
+            value={value[d.id] ?? EMPTY_OVERRIDE}
+            onChange={(next) => {
+              onChange(d.id, next);
+            }}
+            disabled={disabled}
+          />
+        ),
+      )}
     </div>
   );
 }

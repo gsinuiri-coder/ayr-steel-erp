@@ -3,7 +3,8 @@ import {
   piecesTheoreticalKg,
   THEORETICAL_KG_OVERRIDE_MAX_RATIO,
   THEORETICAL_KG_TOLERANCE_RATIO,
-  TOLERANCE_EXCEEDED,
+  toDecimal,
+  TOLERANCE_OVERRIDE_REASONS_OVER,
   TOLERANCE_OVERRIDE_REQUIRED,
   toleranceOverrideLabel,
   toleranceOverrideSchema,
@@ -11,9 +12,9 @@ import {
 import { checkDraftRows, type DraftCheckState } from './roofing-drafts';
 
 /**
- * D-388 — la casilla del administrador para pasar la tolerancia del 1 % en el reporte de
+ * D-388/D-389 — la casilla para pasar la tolerancia del 1 % en el reporte de
  * coberturas. Tres franjas con la base de siempre (el exceso sobre el teórico, D-246):
- * hasta 1 % como siempre; más de 1 % y hasta 5 % solo con la casilla; más de 5 % nunca.
+ * hasta 1 % como siempre; más de 1 %, sin tope, con la casilla (D-389); pasado el 5 %, aviso fuerte.
  */
 
 const ROOFING = (authorized: boolean) => ({ overrideBands: { authorized } });
@@ -54,7 +55,8 @@ describe('mountedKgForReport — las tres franjas (sale más de lo montado)', ()
         maxPct: '5',
       },
     });
-    expect(!r.ok && r.message).toContain('lo autoriza un administrador');
+    expect(!r.ok && r.message).toContain('marca la casilla y elige el motivo');
+    expect(!r.ok && r.message).not.toContain('administrador');
   });
 
   it('apenas más de 1 %: con casilla entra, con el consumo topado en lo montado', () => {
@@ -64,17 +66,30 @@ describe('mountedKgForReport — las tres franjas (sale más de lo montado)', ()
     expect(r.ok && r.excess?.excessPct).toBe('1.01');
   });
 
-  it('5 % exacto: todavía se puede autorizar', () => {
-    expect(report('1000', '950')).toMatchObject({ ok: false, code: TOLERANCE_OVERRIDE_REQUIRED });
-    expect(report('1000', '950', true)).toMatchObject({ ok: true, overridden: true });
-  });
-
-  it('más de 5 %: bloqueado siempre, aunque venga la casilla', () => {
-    for (const authorized of [false, true]) {
-      const r = report('1000', '949.9', authorized);
-      expect(r).toMatchObject({ ok: false, code: TOLERANCE_EXCEEDED });
-      expect(!r.ok && r.message).toContain('Revisa la cantidad, el largo o la bobina');
+  // D-389: sin tope. 1,5 %, 5 % exacto, 8 % y 30 %: sin casilla piden la casilla; con ella entran
+  // y el consumo es lo montado. Pasado el 5 %, el aviso es el fuerte.
+  it.each([
+    ['1,5 %', '985', false],
+    ['5 % exacto', '950', false],
+    ['8 %', '920', true],
+    ['30 %', '700', true],
+  ])('%s: sin casilla la pide; con casilla entra topado en lo montado', (_l, available, severe) => {
+    const without = report('1000', available);
+    expect(without).toMatchObject({
+      ok: false,
+      code: TOLERANCE_OVERRIDE_REQUIRED,
+      excess: { severe },
+    });
+    if (severe) {
+      expect(!without.ok && without.message).toMatch(
+        /^Diferencia mayor al 5 %: revisa cantidad, largo y bobina antes de confirmar\./,
+      );
+    } else {
+      expect(!without.ok && without.message).not.toContain('Diferencia mayor');
     }
+    const withOverride = report('1000', available, true);
+    expect(withOverride).toMatchObject({ ok: true, overridden: true, excess: { severe } });
+    expect(withOverride.ok && withOverride.kg.toFixed(3)).toBe(toDecimal(available).toFixed(3));
   });
 
   it('sin material montado no hay franja: monta más material', () => {
@@ -167,7 +182,7 @@ describe('el caso real: XSY-ALZ-ROJO-3020-0.28-4184-10', () => {
     expect(result.rows[0]?.outOfTolerance).toMatchObject({ excessKg: '68.805', excessPct: '1.62' });
   });
 
-  it('el borrador rechaza la fila de más del 5 % al ingresarla', () => {
+  it('D-389: el borrador acepta la fila de más del 5 % y la marca con el aviso fuerte', () => {
     const state: DraftCheckState = {
       orderSeq: 1,
       productSku: 'COB-ROJO-028',
@@ -186,8 +201,10 @@ describe('el caso real: XSY-ALZ-ROJO-3020-0.28-4184-10', () => {
     const result = checkDraftRows(state, [
       { coilId: 'c-1', pieces: [{ lengthMm: '3600', qty: 445 }] },
     ]);
-    expect(result).toMatchObject({ ok: false, rowNumber: 1 });
-    expect(!result.ok && result.message).toContain('Revisa la cantidad, el largo o la bobina');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.rows[0]?.outKg.toFixed(3)).toBe('4184.000');
+    expect(result.rows[0]?.outOfTolerance).toMatchObject({ severe: true });
   });
 });
 
@@ -204,6 +221,10 @@ describe('el motivo', () => {
     expect(toleranceOverrideSchema.safeParse(input).success).toBe(valid);
   });
 
+  it('D-389: hacia arriba solo aplican «más liviana» y «Otro»', () => {
+    expect(TOLERANCE_OVERRIDE_REASONS_OVER).toEqual(['LIGHTER_COIL', 'OTHER']);
+  });
+
   it('en palabras', () => {
     expect(toleranceOverrideLabel({ reason: 'LIGHTER_COIL' })).toBe(
       'Bobina más liviana que el nominal',
@@ -217,10 +238,9 @@ describe('el motivo', () => {
   });
 });
 
-describe('reportInTx — la casilla es solo del administrador (D-388)', () => {
-  it('un no administrador con casilla recibe 403 antes de tocar la base', async () => {
+describe('reportInTx — D-389: la casilla no es solo del administrador', () => {
+  it('un supervisor de planta con casilla no recibe 403: sigue a la orden', async () => {
     const { RoofingProductionService } = await import('./roofing-production.service');
-    const { ForbiddenException } = await import('@nestjs/common');
     const svc = Object.create(RoofingProductionService.prototype) as InstanceType<
       typeof RoofingProductionService
     >;
@@ -228,24 +248,22 @@ describe('reportInTx — la casilla es solo del administrador (D-388)', () => {
       {},
       {
         get: () => {
-          throw new Error('no debía tocar la base');
+          throw new Error('llegó a la base');
         },
       },
     );
-    for (const role of ['SUPERVISOR_PLANTA', 'VENDEDOR'] as const) {
-      await expect(
-        svc.reportInTx(
-          tx as never,
-          { id: 'u-1', role } as never,
-          'op-1',
-          {
-            pieces: [{ lengthMm: '3600', qty: 428 }],
-            toleranceOverride: { reason: 'LIGHTER_COIL' },
-          } as never,
-          '2026-10-05',
-        ),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-    }
+    await expect(
+      svc.reportInTx(
+        tx as never,
+        { id: 'u-1', role: 'SUPERVISOR_PLANTA' } as never,
+        'op-1',
+        {
+          pieces: [{ lengthMm: '3600', qty: 428 }],
+          toleranceOverride: { reason: 'LIGHTER_COIL' },
+        } as never,
+        '2026-10-05',
+      ),
+    ).rejects.toThrow('llegó a la base');
   });
 });
 
@@ -253,8 +271,8 @@ describe('el porcentaje que se muestra', () => {
   it('se redondea hacia arriba: lo que pasó el 1 % o el 5 % nunca dice «1.00 %» ni «5.00 %»', () => {
     expect(report('1000', '989.99')).toMatchObject({ excess: { excessPct: '1.01' } });
     expect(report('1000', '949.97', true)).toMatchObject({
-      code: TOLERANCE_EXCEEDED,
-      excess: { excessPct: '5.01' },
+      ok: true,
+      excess: { excessPct: '5.01', severe: true },
     });
   });
 });

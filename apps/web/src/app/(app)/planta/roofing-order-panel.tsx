@@ -13,7 +13,6 @@ import {
   piecesMeters,
   piecesTheoreticalKg,
   Role,
-  TOLERANCE_EXCEEDED,
   TOLERANCE_OVERRIDE_REQUIRED,
   roofingConsumptionDeviation,
   mountedKgForReport,
@@ -163,18 +162,17 @@ export function RoofingOrderPanel({
 }) {
   const queryClient = useQueryClient();
   const { user } = useSession();
-  const isAdmin = user.role === Role.ADMINISTRADOR;
   /** D-388: la casilla y el motivo de cada fila del borrador que pasa la tolerancia del 1 %. */
   const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
   const outOfTolerance = rowsOutOfTolerance(order.drafts);
   const overridesPayload = outOfTolerance.flatMap((d) => {
-    const input = overrideInput(overrides[d.id]);
+    const input = overrideInput(overrides[d.id], d.outOfTolerance);
     return input === null ? [] : [{ draftId: d.id, ...input }];
   });
   /** Todas las filas fuera de tolerancia tienen su casilla y su motivo completos. */
   const overridesReady =
     outOfTolerance.length === 0 ||
-    (isAdmin && outOfTolerance.every((d) => overrideInput(overrides[d.id]) !== null));
+    outOfTolerance.every((d) => overrideInput(overrides[d.id], d.outOfTolerance) !== null);
   /** Motivo del despunte cuando el cierre lo exige (D-089). */
   const [askingReason, setAskingReason] = useState(false);
   /** Qué botón disparó la ejecución: decide si también cierra. Solo para el rótulo. */
@@ -400,10 +398,7 @@ export function RoofingOrderPanel({
       // D-388: la fila pasó la tolerancia entre que se leyó el borrador y se ejecutó (o falta la
       // casilla). Su mensaje habla de «motivo», así que va antes que el del despunte: se avisa y
       // se relee el borrador para que aparezca la casilla.
-      if (
-        err instanceof ApiError &&
-        (err.code === TOLERANCE_OVERRIDE_REQUIRED || err.code === TOLERANCE_EXCEEDED)
-      ) {
+      if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
         reasonToSend.current = null;
         toast.error(err.message);
         invalidate();
@@ -929,7 +924,6 @@ export function RoofingOrderPanel({
             <ToleranceOverrideFields
               orderCode={order.code}
               rows={outOfTolerance}
-              isAdmin={isAdmin}
               value={overrides}
               disabled={busy}
               onChange={(draftId, next) => {
@@ -1541,8 +1535,8 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       theoreticalKg: newKg,
       availableKg: coilKg.minus(taken),
       declaredKg: kg === '' ? null : kg,
-      // D-388: la fila de la franja 1–5 % entra al borrador; la autoriza un administrador al
-      // ejecutar. Más del 5 % sigue en rojo.
+      // D-388/D-389: la fila que pasa el 1 % entra al borrador (sin tope); al ejecutar se confirma
+      // con la casilla y el motivo.
       overrideBands: { authorized: true },
     });
     if (!mounted.ok) {
@@ -1559,7 +1553,10 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       mounted.overridden && mounted.excess !== null
         ? `Fuera de tolerancia: la diferencia (${mounted.excess.excessKg} kg, ` +
           `${mounted.excess.excessPct} % del teórico) pasa el ${mounted.excess.tolerancePct} %. ` +
-          'Puedes agregar la fila, pero ejecutarla lo autoriza un administrador con la casilla ' +
+          (mounted.excess.severe
+            ? `Diferencia mayor al ${mounted.excess.maxPct} %: revisa cantidad, largo y bobina antes de confirmar. `
+            : '') +
+          'Puedes agregar la fila; al ejecutar, confirma con la casilla ' +
           'y el motivo.'
         : mounted.note;
   }

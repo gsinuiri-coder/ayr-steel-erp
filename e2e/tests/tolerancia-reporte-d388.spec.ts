@@ -1,13 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import {
-  adminApi,
-  adminCredentials,
-  createUser,
-  getJson,
-  postJson,
-  type CreatedUser,
-} from '../helpers/api';
+import { adminApi, createUser, getJson, postJson, type CreatedUser } from '../helpers/api';
 import { apiAs, createCuttingSupplier, ROLE_PASSWORD, today } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -171,7 +164,7 @@ async function login(page: Page, email: string, password: string): Promise<void>
   await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 }
 
-test.describe('D-388 — fuera de tolerancia con la casilla del administrador', () => {
+test.describe('D-388/D-389 — fuera de tolerancia con la casilla', () => {
   let api: APIRequestContext;
   let supervisor: CreatedUser;
   let supervisorApi: APIRequestContext;
@@ -237,16 +230,18 @@ test.describe('D-388 — fuera de tolerancia con la casilla del administrador', 
       toleranceOverrides: [{ draftId: row!.id }],
     });
     expect(noReason.status()).toBe(400);
-    const notAdmin = await commit(supervisorApi, order.id, {
+    // D-389: «Bobina más pesada» no explica un exceso hacia arriba.
+    const heavier = await commit(supervisorApi, order.id, {
       close: true,
-      toleranceOverrides: [{ draftId: row!.id, reason: 'LIGHTER_COIL' }],
+      toleranceOverrides: [{ draftId: row!.id, reason: 'HEAVIER_COIL' }],
     });
-    expect(notAdmin.status()).toBe(403);
+    expect(heavier.status()).toBe(400);
     // Nada se movió con los rechazos.
     expect((await getJson<CoilState>(api, `/api/coils/${coilId}`)).availableKg).toBe('4184.000');
 
-    // Aceptado: casilla + motivo, «Ejecutar y cerrar».
-    const accepted = await commit(api, order.id, {
+    // Aceptado por un supervisor de planta (D-389: sin administrador): casilla + motivo,
+    // «Ejecutar y cerrar».
+    const accepted = await commit(supervisorApi, order.id, {
       close: true,
       toleranceOverrides: [
         { draftId: row!.id, reason: 'LIGHTER_COIL', detail: 'Pesó 4 184 kg en la balanza' },
@@ -266,7 +261,7 @@ test.describe('D-388 — fuera de tolerancia con la casilla del administrador', 
       excessKg: '68.805',
       excessPct: '1.62',
     });
-    expect(report?.rawMaterialWarning).toContain('Fuera de tolerancia, autorizado');
+    expect(report?.rawMaterialWarning).toContain('Fuera de tolerancia, confirmado con la casilla');
 
     // La auditoría propia, en el historial de la orden.
     const audit = await getJson<{ items: { action: string; after: Record<string, unknown> }[] }>(
@@ -301,63 +296,93 @@ test.describe('D-388 — fuera de tolerancia con la casilla del administrador', 
     });
   });
 
-  test('más del 5 %: bloqueado en el borrador y en el reporte directo, aun con casilla', async () => {
-    const { order } = await orderWithCoil(api, s, PIECES_OVER_5);
-    const draft = await addDraft(api, order.id, PIECES_OVER_5);
-    expect(draft.status()).toBe(400);
-    expect(await draft.text()).toContain('Revisa la cantidad, el largo o la bobina');
+  test('D-389: más del 5 % se acepta con la casilla, con el aviso fuerte, y se revierte', async () => {
+    const { order, coilId } = await orderWithCoil(api, s, PIECES_OVER_5);
+    // El reporte directo también: sin casilla pide la casilla con el texto fuerte, y «Bobina más
+    // pesada» no se acepta. No mueve nada.
+    const direct = (body: Record<string, unknown>) =>
+      supervisorApi.post(`/api/production/roofing/${order.id}/report`, {
+        data: {
+          pieces: [{ lengthMm: PIECE_MM, qty: PIECES_OVER_5 }],
+          ...body,
+          idempotencyKey: randomUUID(),
+        },
+      });
+    const directWithout = await direct({});
+    expect(directWithout.status()).toBe(400);
+    expect(((await directWithout.json()) as { message: string }).message).toContain(
+      'Diferencia mayor al 5 %',
+    );
+    expect((await direct({ toleranceOverride: { reason: 'HEAVIER_COIL' } })).status()).toBe(400);
+    expect((await getJson<CoilState>(api, `/api/coils/${coilId}`)).availableKg).toBe('4184.000');
 
-    const direct = await api.post(`/api/production/roofing/${order.id}/report`, {
-      data: {
-        pieces: [{ lengthMm: PIECE_MM, qty: PIECES_OVER_5 }],
-        toleranceOverride: { reason: 'HEAVIER_COIL' },
-        idempotencyKey: randomUUID(),
-      },
+    // El borrador acepta la fila y la marca con el aviso fuerte (445 planchas: 5,68 %).
+    const draft = await addDraft(api, order.id, PIECES_OVER_5);
+    expect(draft.ok(), await draft.text()).toBe(true);
+    const [row] = (await draft.json()) as (DraftDto & {
+      outOfTolerance: { severe: boolean } | null;
+    })[];
+    expect(row?.outOfTolerance).toMatchObject({ severe: true });
+
+    // Sin casilla, el rechazo trae el texto fuerte.
+    const without = await commit(supervisorApi, order.id, {});
+    expect(without.status()).toBe(400);
+    const body = (await without.json()) as { code?: string; message: string };
+    expect(body.code).toBe('TOLERANCE_OVERRIDE_REQUIRED');
+    expect(body.message).toContain('Diferencia mayor al 5 %: revisa cantidad, largo y bobina');
+
+    // Con la casilla entra (sin cerrar), topado en el saldo.
+    const accepted = await commit(supervisorApi, order.id, {
+      toleranceOverrides: [{ draftId: row!.id, reason: 'OTHER', detail: 'Bobina de prueba E2E' }],
     });
-    expect(direct.status()).toBe(400);
-    expect(((await direct.json()) as { code?: string }).code).toBe('TOLERANCE_EXCEEDED');
+    expect(accepted.ok(), await accepted.text()).toBe(true);
+    expect((await getJson<CoilState>(api, `/api/coils/${coilId}`)).availableKg).toBe('0.000');
+    const [report] = (await getJson<OrderDto>(api, `/api/production/${order.id}`)).reports.filter(
+      (r) => r.status === 'ACTIVE',
+    );
+    expect(report?.coils.map((c) => c.kg)).toEqual(['4184.000']);
+
+    // La reversa del reporte devuelve los 4 184 kg.
+    await postJson(api, `/api/production/roofing/${order.id}/reports/${report!.id}/reverse`, {
+      reason: 'E2E D-389: revertir el reporte sobre 5 %',
+    });
+    expect((await getJson<CoilState>(api, `/api/coils/${coilId}`)).availableKg).toBe('4184.000');
   });
 
-  test('en pantalla: el supervisor ve el bloqueo; el administrador marca la casilla y ejecuta', async ({
+  test('en pantalla: el supervisor de planta marca la casilla y ejecuta (D-389)', async ({
     page,
   }) => {
     const { order, coilId } = await orderWithCoil(api, s, PIECES);
     const added = await addDraft(api, order.id, PIECES);
     expect(added.ok(), await added.text()).toBe(true);
 
-    // Supervisor de planta: ve las cifras y a quién pedírselo; no puede ejecutar.
     await login(page, supervisor.email, ROLE_PASSWORD);
     await page.goto(`/planta?op=${order.id}`);
     const panel = page.locator(`#panel-${order.id}`);
     const block = panel.getByTestId('tolerance-override');
     await expect(block).toContainText('68.805', { timeout: 60_000 });
     await expect(block).toContainText('1.62 %');
-    await expect(block).toContainText('lo autoriza un administrador');
-    await expect(block.getByRole('checkbox')).toHaveCount(0);
-    await expect(
-      panel.getByRole('button', { name: `Ejecutar el borrador y cerrar ${order.code}` }),
-    ).toBeDisabled();
+    await expect(block).not.toContainText('administrador');
+    await expect(block).not.toContainText('Diferencia mayor');
     await expect(panel.getByRole('table', { name: `Borrador de ${order.code}` })).toContainText(
       'Fuera de tolerancia (1.62 %)',
     );
-
-    // Administrador: casilla, motivo y «Ejecutar y cerrar».
-    await page.context().clearCookies();
-    const { email, password } = adminCredentials();
-    await login(page, email, password);
-    await page.goto(`/planta?op=${order.id}`);
-    await expect(block).toContainText('68.805', { timeout: 60_000 });
     const execute = panel.getByRole('button', {
       name: `Ejecutar el borrador y cerrar ${order.code}`,
     });
     await expect(execute).toBeDisabled();
     await block
-      .getByRole('checkbox', { name: `Autorizar la fila 1 de ${order.code} fuera de tolerancia` })
+      .getByRole('checkbox', { name: `Confirmar la fila 1 de ${order.code} fuera de tolerancia` })
       .click();
     await expect(execute).toBeDisabled();
-    await block
-      .getByRole('combobox', { name: `Motivo de la fila 1 de ${order.code}` })
-      .selectOption('OTHER');
+    const reason = block.getByRole('combobox', { name: `Motivo de la fila 1 de ${order.code}` });
+    // Solo los motivos que aplican a un exceso hacia arriba.
+    await expect(reason.locator('option')).toHaveText([
+      'Elige el motivo…',
+      'Bobina más liviana que el nominal',
+      'Otro',
+    ]);
+    await reason.selectOption('OTHER');
     // «Otro» exige el texto.
     await expect(execute).toBeDisabled();
     await block

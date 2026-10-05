@@ -2,6 +2,51 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-05 — cc21: D-389, pasar la tolerancia del 1 % avisa y no bloquea (PR #102 y #103)
+
+Reemplaza de D-388 el tope del 5 % y la regla de solo administrador. Detalle y runbook en
+`docs/handoff/ventana-cc21.md`. Sin migración; toca la API y la web.
+
+- **PR #102 (planchas y a medida):**
+  - pasado el 1 % no hay tope: se acepta con la casilla y un motivo;
+  - pasado el 5 %, aviso fuerte sin bloqueo;
+  - sin administrador;
+  - motivos según la dirección: hacia arriba no va «Bobina más pesada»;
+  - la casilla queda atada al exceso que se vio.
+- **PR #103 (accesorio, apilado sobre el #102):** la tarjeta muestra la casilla y reenvía. El
+  rechazo con código se atiende antes que el diálogo del despunte, sin bucle; un E2E lo fija.
+- **Tests:**
+  - unitarios de producción: 188;
+  - E2E local `tolerancia-reporte-d388.spec.ts` (3) y `tolerancia-accesorio-d389.spec.ts` (2):
+    1,5 %, 5 % exacto, 8 % y 30 % aceptados con casilla; rechazo sin casilla o sin motivo;
+    supervisor que acepta; consumo topado; reversa sobre 5 %; accesorio sin bucle;
+  - base propia `ayr_local_e2e_cc21`;
+  - cobertura de líneas nuevas medida en local: 87,5 % (PR #102).
+- **Revisiones del PR #102:**
+  - autorrevisión (`docs/revision/cc21-autorrevision.md`): 0 P0, 1 P1, 2 P2, 6 P3;
+  - segundo modelo (`docs/revision/cc21-segundo-modelo.md`): 0 P0, 0 P1, 3 P2, varios P3.
+  - **Corregidos:** la casilla atada al exceso (P2-1), el E2E del reporte directo sobre 5 %
+    (P2-2), los comentarios que hablaban de administrador o de tope, el 5 % del editor, y
+    `severe` en la auditoría.
+  - **P1-1, riesgo de política, presentado al dueño:** sin tope, una bobina equivocada casi vacía
+    se confirma con la casilla y deja las planchas valorizadas por una fracción del material
+    (el caso que D-249 había cerrado).
+- **Revisiones del PR #103:**
+  - autorrevisión (`docs/revision/cc21-accesorio-autorrevision.md`): 0 P0, 1 P1, 3 P2, 3 P3;
+  - segundo modelo (`docs/revision/cc21-accesorio-segundo-modelo.md`): sin P0 ni P1.
+  - **Corregidos:** la casilla del accesorio queda atada a la huella del rechazo (bobina, metros y
+    kilos; P1, y P2 del segundo modelo), y el aviso se anuncia como alerta (P2).
+  - **No aplica (P2-3):** la casilla y el despunte no se dan juntos. Si lo reportado pasa lo
+    montado, la bobina se vacía y no queda despunte.
+  - **Anotados:** falta un unitario de la API para el accesorio con la casilla (lo cubre el E2E);
+    el regex «motivo» del despunte todavía capturaría un rechazo sin código que diga «motivo».
+- **P3 anotados:**
+  - el motivo puede empujar a «más liviana» cuando el exceso nace de otra fila de la misma bobina;
+  - el badge del borrador no distingue el aviso fuerte;
+  - `TOLERANCE_OVERRIDE_REASONS_OVER` no es una tupla `as const` (para que `includes` acepte
+    cualquier motivo);
+  - la prueba «el supervisor no recibe 403» depende de que `lockOrder` sea lo primero.
+
 ## 2026-10-05 — Ventana cc20 (D-388 desplegada, PR #100, sin migración)
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc20.md`.
@@ -77,20 +122,12 @@ Urgente: la producción del cliente estaba detenida por el caso real. Detalle y 
   - P3: el % se redondea hacia arriba;
   - P3: un detalle vacío se guarda como `null`;
   - P3: el comentario de `assertLive` volvió a su función.
-- **Riesgo aceptado (P1 de la autorrevisión), decisión 1 del dueño (no cambiar la base):** la
-  franja se mide **por reporte**. Si el último tramo de una bobina se parte en varias filas, la que
-  la vacía carga todo el exceso y puede pasar el 5 % aunque el total no lo pase. El caso real va en
-  **una** fila. Si en planta aparece partido, la salida es medir la franja contra lo que la bobina
-  rindió en total: es otra decisión.
 - **P2/P3 anotados:**
   - con varias bobinas montadas, la casilla vacía una sin avisar que otra montada sigue con saldo;
   - una casilla de más (fila dentro del 1 %) no deja rastro, y un `draftId` ajeno o repetido se
     ignora: falta un unitario de ese mapeo;
   - la etiqueta «Fuera de tolerancia» sigue en un reporte revertido;
-  - «Bobina más pesada que el nominal» no explica un exceso hacia arriba; queda como opción del
-    dueño;
   - el detalle de cada orden suma una consulta a `audit_log`, también en drywall;
-  - el accesorio sin casilla queda **pendiente**, si el dueño lo pide.
 - **Fuera de alcance, pendiente:** el sobrante de una bobina que se usa en otra producción (punto 9
   del brief).
 
