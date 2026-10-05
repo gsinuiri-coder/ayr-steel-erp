@@ -23,6 +23,11 @@
       "Bash(git push *--force*)",
       "Bash(git push *--delete*)",
       "Bash(git push *-f *)",
+      "Bash(git push *-f)",
+      "Bash(git push *+main*)",
+      "Bash(git push *:main*)",
+      "Bash(git push *-d *)",
+      "Bash(git push *-d)",
       "Read(**/.env*)",
       "Bash(grep *.env*)",
       "Bash(sed *.env*)",
@@ -31,6 +36,10 @@
       "Bash(tail *.env*)"
     ],
     "ask": [
+      "Bash(rm -rf *)",
+      "Bash(git branch -D *)",
+      "Bash(pnpm deploy:web*)",
+      "Bash(pnpm * deploy:web*)",
       "Bash(gcloud run deploy *)",
       "Bash(gcloud run services update *)",
       "Bash(gcloud run services replace *)",
