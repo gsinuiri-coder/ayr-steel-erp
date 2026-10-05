@@ -1,5 +1,29 @@
 # Ventana cc20 — D-388: casilla para superar la tolerancia del 1 % en el reporte
 
+## Ejecutada el 2026-10-05: sin incidencias
+
+Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232).
+
+| Qué                            | Resultado                                                                                                                                       |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| UAT                            | Confirmado por el dueño en demo: caso real a medida (OP-000033, 1,62 %) y planchas (OP-000034, 1,97 %)                                          |
+| CI del PR #100                 | Corrida 37258995892 sobre `9d70d02`: unitarios 2542, E2E 512, smoke de Neon `ci` 36, Sonar en verde (antes, 56 % de cobertura nueva; corregido) |
+| Condiciones                    | Sin migración; PR `CLEAN` sobre `main` `cfc72af`; nadie operando                                                                                |
+| Revisión API anterior (vuelta) | `ayr-steel-erp-api-00084-6vs`, `git-sha=dc45734`                                                                                                |
+| Paso 1: deploy de la API       | **`ayr-steel-erp-api-00085-np4`**, al 100 %, `git-sha=9d70d02`, `/health` 200, `smoke:prod` 8/8 con la web vieja                                |
+| Paso 2: merge del #100         | `main` = **`e6c8dab`**, diff de runtime vacío, Vercel `success` (`…-6mz4tf5uy-…`), `smoke:prod` 8/8 en `vercel.app` y en `v2.mareliac.pe`       |
+| Datos                          | Ninguno en producción. El caso real lo reporta el cliente                                                                                       |
+| Neon                           | 9 ramas de 10; no se creó ninguna                                                                                                               |
+
+**Vuelta atrás desde el merge.** Las dos juntas, con OK del dueño:
+
+```sh
+cmd /c gcloud run services update-traffic ayr-steel-erp-api --region us-central1 --project ayr-steel-erp --to-revisions ayr-steel-erp-api-00084-6vs=100
+vercel rollback https://ayr-steel-erp-gfh4iysi3-gsinuiricoders-projects.vercel.app --scope gsinuiricoders-projects --yes
+```
+
+El segundo vuelve al despliegue de producción de `cfc72af`.
+
 ## Resumen
 
 Sesión cc20, PR #100 (rama `cc20/tolerancia-reporte`, desde `main` `cfc72af`). La pieza es
