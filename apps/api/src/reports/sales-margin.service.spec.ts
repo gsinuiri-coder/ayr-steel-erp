@@ -1,6 +1,6 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
-import { LIVE_DOCUMENT_STATUSES, salesMarginQuerySchema } from '@ayr/shared';
+import { LIVE_DOCUMENT_STATUSES, salesMarginQuerySchema, sum as decimalSum } from '@ayr/shared';
 import { SalesMarginService } from './sales-margin.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -507,5 +507,148 @@ describe('SalesMarginService — costo no rastreable (D-285)', () => {
     expect(report.totals.untraceableOrderCount).toBe(1);
     expect(report.totals.untraceableSalesPen).toBe('1000.0000');
     expect(report.totals.excludedOrderCount).toBe(0);
+  });
+});
+
+/**
+ * cc23 (D-391): ventas y margen por línea. Cada pestaña es la porción de esa línea de los
+ * mismos pedidos que suma «Todas»; la suma de las pestañas, más lo que no tiene línea (una
+ * línea libre del comprobante), es exactamente «Todas».
+ */
+describe('SalesMarginService — por línea (cc23)', () => {
+  const LINES = ['drywall', 'metallic-roofing', 'roofing', 'services', 'trading'] as const;
+
+  // o1: mixto drywall + Aluzinc + servicio, con una nota de crédito de Aluzinc. o2: reventa,
+  // costo parcial. o3: facturación parcial no comparable (Aluzinc). o4: no rastreable (UPVC).
+  // d6: venta directa sin pedido, con una línea libre sin producto.
+  const seeds: Seeds = {
+    documents: [
+      { id: 'd1', orderId: 'o1', orderSeq: 1, subtotal: '1500.0000' },
+      { id: 'd2', orderId: 'o1', orderSeq: 1, subtotal: '200.0000', docType: 'NOTA_CREDITO' },
+      { id: 'd3', orderId: 'o2', orderSeq: 2, subtotal: '800.0000' },
+      { id: 'd4', orderId: 'o3', orderSeq: 3, subtotal: '300.0000' },
+      { id: 'd5', orderId: 'o4', orderSeq: 4, subtotal: '120.0000' },
+      { id: 'd6', orderId: null, orderSeq: null, subtotal: '90.0000' },
+    ],
+    salesByLine: [
+      { documentId: 'd1', line: 'drywall', subtotal: '1000.0000' },
+      { documentId: 'd1', line: 'metallic-roofing', subtotal: '400.0000' },
+      { documentId: 'd1', line: 'services', subtotal: '100.0000' },
+      { documentId: 'd2', line: 'metallic-roofing', subtotal: '200.0000' },
+      { documentId: 'd3', line: 'trading', subtotal: '800.0000' },
+      { documentId: 'd4', line: 'metallic-roofing', subtotal: '300.0000' },
+      { documentId: 'd5', line: 'roofing', subtotal: '120.0000' },
+      { documentId: 'd6', line: 'drywall', subtotal: '60.0000' },
+      { documentId: 'd6', line: null, subtotal: '30.0000' },
+    ],
+    costs: [
+      { orderId: 'o1', invoiceId: 'd1', line: 'drywall', cost: '700.0000' },
+      { orderId: 'o1', invoiceId: 'd1', line: 'metallic-roofing', cost: '250.0000' },
+      { orderId: 'o2', invoiceId: null, line: 'trading', cost: '500.0000' },
+      { orderId: 'o3', invoiceId: null, line: 'metallic-roofing', cost: '900.0000' },
+    ],
+    outside: [{ orderId: 'o3', count: 1 }],
+    pending: [
+      { orderId: 'o1', pending: false },
+      { orderId: 'o2', pending: true },
+      { orderId: 'o3', pending: false },
+      { orderId: 'o4', pending: false, untraceable: true },
+    ],
+  };
+
+  /** Suma exacta de importes (Decimal), con la escala de dinero. */
+  const sum = (values: string[]): string => decimalSum(values).toFixed(4);
+
+  it('las pestañas más lo que no tiene línea suman exactamente «Todas»', async () => {
+    const { service } = await buildService(seeds);
+    const all = await service.salesMargin(RANGE);
+    const tabs = await Promise.all(
+      LINES.map((businessLine) => service.salesMargin({ ...RANGE, businessLine })),
+    );
+    const noLine = all.totalsByLine.find((t) => t.businessLine === null);
+    expect(noLine?.salesPen).toBe('30.0000');
+
+    for (const key of ['salesPen', 'marginPen'] as const) {
+      expect(sum([...tabs.map((t) => t.totals[key]), noLine!.salesPen])).toBe(all.totals[key]);
+    }
+    for (const key of ['costPen', 'excludedSalesPen', 'untraceableSalesPen'] as const) {
+      expect(sum(tabs.map((t) => t.totals[key]))).toBe(all.totals[key]);
+    }
+    for (const key of ['partialOrderCount'] as const) {
+      expect(tabs.reduce((acc, t) => acc + t.totals[key], 0)).toBe(all.totals[key]);
+    }
+    // Y cada pestaña dice lo mismo que su fila de «Totales por línea» en «Todas».
+    for (const [i, line] of LINES.entries()) {
+      const row = all.totalsByLine.find((t) => t.businessLine === line);
+      const tab = tabs[i]!;
+      expect(tab.totalsByLine).toEqual(row === undefined ? [] : [row]);
+      expect(tab.totals.salesPen).toBe(row?.salesPen ?? '0.0000');
+      expect(tab.totals.costPen).toBe(row?.costPen ?? '0.0000');
+    }
+  });
+
+  it('el total de «Todas» no cambia con cc23', async () => {
+    const { service } = await buildService(seeds);
+    const all = await service.salesMargin(RANGE);
+    // o1 (1300 − 950) + o2 (800 − 500) + d6 (90 − 0); o3 excluido y o4 no rastreable.
+    expect(all.totals).toMatchObject({
+      salesPen: '2190.0000',
+      costPen: '1450.0000',
+      excludedOrderCount: 1,
+      excludedSalesPen: '300.0000',
+      untraceableOrderCount: 1,
+      untraceableSalesPen: '120.0000',
+      partialOrderCount: 1,
+    });
+    expect(all.orders).toHaveLength(5);
+  });
+
+  it('la fila de un pedido mixto es su porción de la línea, con sus comprobantes', async () => {
+    const { service } = await buildService(seeds);
+    const aluzinc = await service.salesMargin({ ...RANGE, businessLine: 'metallic-roofing' });
+    const o1 = aluzinc.orders.find((o) => o.salesOrderId === 'o1')!;
+    // 400 de la factura menos 200 de la nota de crédito; costo 250 de la salida de Aluzinc.
+    expect(o1).toMatchObject({ salesPen: '200.0000', costPen: '250.0000', marginPen: '-50.0000' });
+    expect(o1.documents.map((d) => [d.id, d.salesPen, d.costPen])).toEqual([
+      ['d1', '400.0000', '250.0000'],
+      // La nota de crédito no declara despacho: sin costo propio, como en «Todas».
+      ['d2', '-200.0000', null],
+    ]);
+    // o3 (no comparable) aparece en su pestaña, fuera de los totales, con su venta de la línea.
+    expect(aluzinc.orders.find((o) => o.salesOrderId === 'o3')).toMatchObject({
+      inTotals: false,
+      costPen: null,
+      salesPen: '300.0000',
+    });
+    expect(aluzinc.totals.excludedOrderCount).toBe(1);
+  });
+
+  it('un pedido sin nada de la línea no aparece en su pestaña', async () => {
+    const { service } = await buildService(seeds);
+    const trading = await service.salesMargin({ ...RANGE, businessLine: 'trading' });
+    expect(trading.orders.map((o) => o.salesOrderId)).toEqual(['o2']);
+    expect(trading.totals.partialOrderCount).toBe(1);
+    const roofing = await service.salesMargin({ ...RANGE, businessLine: 'roofing' });
+    expect(roofing.orders.map((o) => [o.salesOrderId, o.costStatus])).toEqual([
+      ['o4', 'NO_RASTREABLE'],
+    ]);
+    expect(roofing.totals.untraceableSalesPen).toBe('120.0000');
+    expect(roofing.totals.salesPen).toBe('0.0000');
+  });
+
+  it('Servicios trae su venta y ningún costo registrado (D-392 se declara en la pantalla)', async () => {
+    const { service } = await buildService(seeds);
+    const services = await service.salesMargin({ ...RANGE, businessLine: 'services' });
+    expect(services.totals.salesPen).toBe('100.0000');
+    expect(services.totals.costPen).toBe('0.0000');
+  });
+
+  it('una línea fuera de la matriz no pasa la validación', () => {
+    expect(salesMarginQuerySchema.safeParse({ ...RANGE, businessLine: 'acero' }).success).toBe(
+      false,
+    );
+    expect(salesMarginQuerySchema.safeParse({ ...RANGE, businessLine: 'services' }).success).toBe(
+      true,
+    );
   });
 });
