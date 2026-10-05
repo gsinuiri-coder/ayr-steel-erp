@@ -47,7 +47,6 @@ import {
   toDecimal,
   toFixedString,
   toleranceOverrideLabel,
-  TOLERANCE_OVERRIDE_REASON_LABELS,
   Unit,
   type CancelProductionOrderInput,
   type CloseRoofingOrderInput,
@@ -106,7 +105,10 @@ import {
   recomputeStatus,
   resolveActorNames,
   restoreReservationIfIdle,
+  appliedToleranceOverride,
+  mountedKgRejection,
   TOLERANCE_OVERRIDE_AUDIT_ACTION,
+  toleranceOverrideAuditAfter,
   type LockedOrder,
 } from './production-shared';
 import { ProductionService } from './production.service';
@@ -1168,25 +1170,12 @@ export class RoofingProductionService {
       // (decisión del dueño). Las franjas son de las planchas y la cobertura a medida.
       ...(accessory ? {} : { overrideBands: { authorized: override !== undefined } }),
     });
-    if (!mounted.ok) {
-      throw new BadRequestException(
-        mounted.code === undefined
-          ? mounted.message
-          : {
-              statusCode: 400,
-              error: 'Bad Request',
-              code: mounted.code,
-              message: mounted.message,
-              excess: mounted.excess,
-            },
-      );
-    }
+    if (!mounted.ok) throw mountedKgRejection(mounted);
     if (mounted.note !== null) deviation.unshift(mounted.note);
-    // La casilla solo cuenta si de verdad hizo falta: dentro del 1 % no deja rastro.
-    const appliedOverride = mounted.overridden && override !== undefined ? override : null;
-    if (appliedOverride !== null) {
+    const applied = appliedToleranceOverride(mounted, override);
+    if (applied !== null) {
       deviation.unshift(
-        `Fuera de tolerancia, autorizado por un administrador: ${toleranceOverrideLabel(appliedOverride)}.`,
+        `Fuera de tolerancia, autorizado por un administrador: ${toleranceOverrideLabel(applied.override)}.`,
       );
     }
     const outKg = mounted.kg;
@@ -1436,29 +1425,21 @@ export class RoofingProductionService {
 
     // D-388: la autorización tiene su propia entrada, en el historial de la orden y con el
     // reporte adentro: es lo que el detalle de la orden lee para su etiqueta «Fuera de tolerancia».
-    if (appliedOverride !== null && mounted.excess !== null) {
+    if (applied !== null) {
       await this.audit.write(tx, {
         actorId: actor.id,
         action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
         entity: 'production_orders',
         entityId: orderId,
-        after: {
+        after: toleranceOverrideAuditAfter({
           reportId: report.id,
-          productionOrderId: orderId,
-          productionOrderCode: productionOrderCode(order.seq),
+          orderId,
+          orderSeq: order.seq,
           coilId: row.coilId,
           coilCode: row.coil.code,
-          theoreticalKg: mounted.excess.theoreticalKg,
           realKg: toFixedString(outKg, 'KG'),
-          differenceKg: mounted.excess.excessKg,
-          differencePct: mounted.excess.excessPct,
-          reason: appliedOverride.reason,
-          reasonLabel: TOLERANCE_OVERRIDE_REASON_LABELS[appliedOverride.reason],
-          detail:
-            appliedOverride.detail === undefined || appliedOverride.detail === ''
-              ? null
-              : appliedOverride.detail,
-        },
+          applied,
+        }),
       });
     }
 

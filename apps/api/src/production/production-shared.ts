@@ -6,7 +6,13 @@ import {
   type Prisma,
   type PrismaClient,
 } from '@prisma/client';
-import { TOLERANCE_OVERRIDE_REASONS } from '@ayr/shared';
+import {
+  productionOrderCode,
+  TOLERANCE_OVERRIDE_REASON_LABELS,
+  TOLERANCE_OVERRIDE_REASONS,
+  type MountedKgExcess,
+  type ToleranceOverrideInput,
+} from '@ayr/shared';
 import { z } from 'zod';
 import { restoreReservation } from '../sales/reservation-guard';
 
@@ -77,6 +83,68 @@ export const toleranceOverrideAuditSchema = z.object({
   differenceKg: z.string(),
   differencePct: z.string(),
 });
+
+/**
+ * D-388: el rechazo de `mountedKgForReport`. Con código (la franja 1–5 % sin casilla, o más del
+ * 5 %) el cuerpo lleva el código y las cifras, que la pantalla lee para ofrecer la casilla; sin
+ * código es el mensaje de siempre.
+ */
+export function mountedKgRejection(result: {
+  message: string;
+  code?: string;
+  excess?: MountedKgExcess;
+}): BadRequestException {
+  return new BadRequestException(
+    result.code === undefined
+      ? result.message
+      : {
+          statusCode: 400,
+          error: 'Bad Request',
+          code: result.code,
+          message: result.message,
+          excess: result.excess,
+        },
+  );
+}
+
+/**
+ * D-388: la casilla que de verdad se aplicó. Solo cuenta si el reporte pasó la tolerancia y
+ * entró por la franja autorizada: una casilla dentro del 1 % no deja rastro.
+ */
+export function appliedToleranceOverride(
+  mounted: { overridden: boolean; excess: MountedKgExcess | null },
+  override: ToleranceOverrideInput | undefined,
+): { override: ToleranceOverrideInput; excess: MountedKgExcess } | null {
+  if (!mounted.overridden || mounted.excess === null || override === undefined) return null;
+  return { override, excess: mounted.excess };
+}
+
+/** D-388: el `after` de la auditoría propia del reporte autorizado fuera de tolerancia. */
+export function toleranceOverrideAuditAfter(input: {
+  reportId: string;
+  orderId: string;
+  orderSeq: number;
+  coilId: string;
+  coilCode: string;
+  realKg: string;
+  applied: { override: ToleranceOverrideInput; excess: MountedKgExcess };
+}): Prisma.InputJsonObject {
+  const { override, excess } = input.applied;
+  return {
+    reportId: input.reportId,
+    productionOrderId: input.orderId,
+    productionOrderCode: productionOrderCode(input.orderSeq),
+    coilId: input.coilId,
+    coilCode: input.coilCode,
+    theoreticalKg: excess.theoreticalKg,
+    realKg: input.realKg,
+    differenceKg: excess.excessKg,
+    differencePct: excess.excessPct,
+    reason: override.reason,
+    reasonLabel: TOLERANCE_OVERRIDE_REASON_LABELS[override.reason],
+    detail: override.detail === undefined || override.detail === '' ? null : override.detail,
+  };
+}
 
 /** Corta si la orden ya es terminal. `action` completa "no se puede <action>". */
 export function assertLive(order: { status: ProductionOrderStatus }, action: string): void {
