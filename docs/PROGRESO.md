@@ -2,6 +2,37 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-05 — Ventana cc20 (D-388 desplegada, PR #100, sin migración)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc20.md`.
+
+- **UAT:** confirmado por el dueño en demo, en dos casos armados a su pedido:
+  - el caso real con la cobertura a medida `COB028ROJO`: COT-000086, PED-000057, OP-000033,
+    bobina `XSY-ALZ-ROJO-3020-0.28-4184-10`, 1,62 %;
+  - un caso con planchas `PL040RJ36MT`: COT-000087, PED-000058, OP-000034, bobina
+    `IMPO-ALZ-ROJO-3020-0.38-4616-32`, 355 planchas, 92,765 kg, 1,97 %.
+- **SonarCloud** marcó 56 % de cobertura en las líneas nuevas: la API solo estaba cubierta por el
+  E2E.
+  - Se corrigió con `9d70d02`: los helpers puros de `production-shared` y unitarios del borrador y
+    de la etiqueta. En local quedó en 95 %.
+  - El agente había dicho que la CI estaba en verde antes de verificarlo; lo corrigió ante el
+    dueño.
+- **CI 37258995892 sobre `9d70d02`, en verde:** unitarios 2542, E2E 512, smoke de Neon `ci` 36,
+  Sonar.
+- **API:** `ayr-steel-erp-api-00085-np4`, con `git-sha=9d70d02`, al 100 %, `/health` 200 y
+  `smoke:prod` 8/8 con la web vieja. La vuelta atrás es `00084-6vs`.
+- **Web:**
+  - merge del #100: `main` = `e6c8dab`, sin diff de runtime contra `9d70d02`;
+  - Vercel `success` (`…-6mz4tf5uy-…`);
+  - `smoke:prod` 8/8 en `vercel.app` y 8/8 en `v2.mareliac.pe`.
+  - Las salidas completas están en `local-data/cc20/`.
+- **Vuelta atrás de las dos, juntas:** tráfico a `00084-6vs` y `vercel rollback` al despliegue de
+  `cfc72af` (`…-gfh4iysi3-…`). Los comandos están en el handoff.
+- **Datos de producción:** ninguno. El caso real lo reporta el cliente: una sola fila, la casilla y
+  «Ejecutar y cerrar».
+- **Ramas de Neon:** 9 de 10. No se creó ninguna; no hay nada que borrar.
+- **Bases locales:** `ayr_local_e2e_cc20` borrada al cerrar.
+
 ## 2026-10-05 — cc20: D-388, casilla para superar la tolerancia del 1 % en el reporte (PR #100)
 
 Urgente: la producción del cliente estaba detenida por el caso real. Detalle y runbook en
