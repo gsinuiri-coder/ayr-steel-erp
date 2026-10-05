@@ -116,6 +116,7 @@ Reglas de convivencia, sin excepción:
    antes de la ventana. Si falla el deploy, el merge o el smoke, la vuelta atrás es automática:
    la API a la revisión anterior y el revert del merge, otro smoke y el registro escrito, sin
    arreglos en caliente.
+
 2. **Credenciales nunca en argv ni impresas.** Los comandos que podrían imprimirlas (p. ej.
    `neonctl`) van en modo silencioso y con `--output json`. Las cadenas de conexión viajan por
    entorno o archivo, jamás por línea de comandos.
