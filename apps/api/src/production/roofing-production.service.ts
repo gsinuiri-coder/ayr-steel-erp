@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -37,7 +31,6 @@ import {
   piecesMeters,
   productionOrderCode,
   remainingPlanPieces,
-  Role,
   roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
@@ -106,6 +99,7 @@ import {
   resolveActorNames,
   restoreReservationIfIdle,
   appliedToleranceOverride,
+  assertToleranceReasonApplies,
   mountedKgRejection,
   TOLERANCE_OVERRIDE_AUDIT_ACTION,
   toleranceOverrideAuditAfter,
@@ -931,14 +925,9 @@ export class RoofingProductionService {
     input: ReportRoofingPiecesInput,
     operationDate: string,
   ): Promise<RawMaterialShortfall[]> {
-    // D-388: la casilla para pasar el 1 % es solo del administrador. Se valida acá, en la API y
-    // antes de tocar nada; la pantalla solo acompaña.
+    // D-388/D-389: la casilla la marca cualquiera que pueda reportar (el controlador ya limita los
+    // roles); sin administrador de por medio desde D-389.
     const override = input.toleranceOverride;
-    if (override !== undefined && actor.role !== Role.ADMINISTRADOR) {
-      throw new ForbiddenException(
-        'Solo un administrador puede autorizar un reporte fuera de la tolerancia',
-      );
-    }
     const order = await lockOrder(tx, orderId);
     assertKind(order, ProductionOrderKind.ROOFING);
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
@@ -1174,8 +1163,10 @@ export class RoofingProductionService {
     if (mounted.note !== null) deviation.unshift(mounted.note);
     const applied = appliedToleranceOverride(mounted, override);
     if (applied !== null) {
+      // D-389: el motivo tiene que aplicar a la dirección del exceso.
+      assertToleranceReasonApplies(applied.override.reason);
       deviation.unshift(
-        `Fuera de tolerancia, autorizado por un administrador: ${toleranceOverrideLabel(applied.override)}.`,
+        `Fuera de tolerancia, confirmado con la casilla: ${toleranceOverrideLabel(applied.override)}.`,
       );
     }
     const outKg = mounted.kg;

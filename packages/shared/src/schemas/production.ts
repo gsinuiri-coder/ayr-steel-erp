@@ -84,20 +84,17 @@ export const MAX_CONSUMPTION_DEVIATION_RATIO = 0.1;
 export const THEORETICAL_KG_TOLERANCE_RATIO = '0.01';
 
 /**
- * D-388 — el tope de la franja que un **administrador** puede autorizar, como fracción del
- * teórico (la misma base que `THEORETICAL_KG_TOLERANCE_RATIO`).
+ * D-389 (reemplaza el tope de D-388) — el **umbral de aviso fuerte**, como fracción del teórico
+ * (la misma base que `THEORETICAL_KG_TOLERANCE_RATIO`).
  *
- * Entre el 1 % y este 5 % el reporte de coberturas se acepta solo con la casilla marcada y un
- * motivo (una bobina real más liviana o más pesada que su nominal). Por encima no hay casilla:
- * una diferencia así ya no es el rollo, es una cantidad, un largo o una bobina mal elegida.
+ * Pasado el 1 % el reporte de coberturas nunca se rechaza: se acepta con la casilla y un motivo,
+ * en cualquier porcentaje. Pasado este 5 % el aviso cambia de tono —«revisa cantidad, largo y
+ * bobina antes de confirmar»—, con la misma casilla y sin bloqueo.
  */
 export const THEORETICAL_KG_OVERRIDE_MAX_RATIO = '0.05';
 
-/** D-388: código del rechazo que la pantalla lee para ofrecer la casilla (franja 1–5 %). */
+/** D-388: código del rechazo que la pantalla lee para ofrecer la casilla (más del 1 %). */
 export const TOLERANCE_OVERRIDE_REQUIRED = 'TOLERANCE_OVERRIDE_REQUIRED';
-
-/** D-388: código del rechazo sin casilla posible (más del 5 %). */
-export const TOLERANCE_EXCEEDED = 'TOLERANCE_EXCEEDED';
 
 /**
  * D-388: las cifras de un reporte que pasa lo montado, para el mensaje, la casilla y la
@@ -110,7 +107,10 @@ export interface MountedKgExcess {
   /** `excessKg ÷ theoreticalKg × 100`, con dos decimales. */
   excessPct: string;
   tolerancePct: string;
+  /** D-389: el umbral del aviso fuerte (5 %). */
   maxPct: string;
+  /** D-389: la diferencia pasa el 5 %: el aviso usa el texto fuerte. */
+  severe: boolean;
 }
 
 /** D-388: la cifra de un ratio como porcentaje entero para los mensajes (`'0.05'` → `'5'`). */
@@ -473,8 +473,8 @@ export type MountedKgResult =
   | {
       ok: false;
       message: string;
-      /** D-388: `TOLERANCE_OVERRIDE_REQUIRED` o `TOLERANCE_EXCEEDED`, con sus cifras. */
-      code?: typeof TOLERANCE_OVERRIDE_REQUIRED | typeof TOLERANCE_EXCEEDED;
+      /** D-388: `TOLERANCE_OVERRIDE_REQUIRED`, con sus cifras. */
+      code?: typeof TOLERANCE_OVERRIDE_REQUIRED;
       excess?: MountedKgExcess;
     };
 
@@ -491,15 +491,15 @@ export type MountedKgResult =
  * Fuera de eso sí falta material montado y el reporte se rechaza. Vive acá porque la pantalla
  * de planta, el borrador y el reporte del API tienen que dar exactamente el mismo veredicto.
  *
- * **D-388 — tres franjas, solo en coberturas** (quien pasa `overrideBands`; drywall no lo pasa y
- * conserva el rechazo de siempre). Con la misma base —el exceso sobre el teórico—:
+ * **D-388/D-389 — la casilla, solo en coberturas** (quien pasa `overrideBands`; drywall no lo
+ * pasa y conserva el rechazo de siempre). Con la misma base —el exceso sobre el teórico—:
  *
  * - hasta `THEORETICAL_KG_TOLERANCE_RATIO` (1 %): como siempre, sin casilla;
- * - más de 1 % y hasta `THEORETICAL_KG_OVERRIDE_MAX_RATIO` (5 %): se acepta solo con
- *   `overrideBands.authorized`; sin ella, `TOLERANCE_OVERRIDE_REQUIRED` con las cifras;
- * - más de 5 %: `TOLERANCE_EXCEEDED`, siempre, sin casilla.
+ * - más de 1 %, **sin tope** (D-389): se acepta con `overrideBands.authorized`; sin ella,
+ *   `TOLERANCE_OVERRIDE_REQUIRED` con las cifras. Pasado `THEORETICAL_KG_OVERRIDE_MAX_RATIO`
+ *   (5 %) el aviso es más fuerte (`excess.severe`), pero no bloquea.
  *
- * En las dos franjas aceptadas el kardex sale por lo montado: el consumo nunca pasa el saldo.
+ * Aceptado, el kardex sale por lo montado: el consumo nunca pasa el saldo.
  */
 export function mountedKgForReport(input: {
   /** Quién tiene el material: el código de la bobina, o de la orden en drywall. */
@@ -510,8 +510,8 @@ export function mountedKgForReport(input: {
   /** Kilos que planta declara para este reporte, o `null` si no declaró. */
   declaredKg: DecimalInput | null;
   /**
-   * D-388: el reporte de coberturas usa las tres franjas; `authorized` es la casilla del
-   * administrador. Sin este campo (drywall), el 1 % sigue siendo un rechazo sin más.
+   * D-388/D-389: el reporte de coberturas usa la casilla; `authorized` es la casilla (la marca
+   * quien reporta). Sin este campo (drywall), el 1 % sigue siendo un rechazo sin más.
    */
   overrideBands?: { authorized: boolean };
 }): MountedKgResult {
@@ -563,7 +563,9 @@ export function mountedKgForReport(input: {
           'salió todo el acero, monta el material que falta.',
       };
     }
-    // D-388: las dos franjas de coberturas, con la misma base (el exceso sobre el teórico).
+    // D-389: pasado el 1 %, en cualquier porcentaje, entra con la casilla y el motivo. Pasado el
+    // 5 % el aviso es más fuerte, pero tampoco bloquea.
+    const severe = excess.gt(theoretical.times(toDecimal(THEORETICAL_KG_OVERRIDE_MAX_RATIO)));
     excessInfo = {
       theoreticalKg: theoretical.toFixed(3),
       availableKg: available.toFixed(3),
@@ -572,29 +574,20 @@ export function mountedKgForReport(input: {
       excessPct: excess.div(theoretical).times(100).toFixed(2, Decimal.ROUND_UP),
       tolerancePct: pct,
       maxPct: ratioPct(THEORETICAL_KG_OVERRIDE_MAX_RATIO),
+      severe,
     };
-    const figures =
-      `${label} tiene ${available.toFixed(3)} kg montados y lo reportado equivale a ` +
-      `${theoretical.toFixed(3)} kg: la diferencia (${excess.toFixed(3)} kg, ` +
-      `${excessInfo.excessPct} % del teórico)`;
-    if (excess.gt(theoretical.times(toDecimal(THEORETICAL_KG_OVERRIDE_MAX_RATIO)))) {
-      return {
-        ok: false,
-        code: TOLERANCE_EXCEEDED,
-        excess: excessInfo,
-        message:
-          `${figures} pasa el ${excessInfo.maxPct} %, que no se puede autorizar. Revisa la ` +
-          'cantidad, el largo o la bobina.',
-      };
-    }
     if (!input.overrideBands.authorized) {
+      const figures =
+        `${label} tiene ${available.toFixed(3)} kg montados y lo reportado equivale a ` +
+        `${theoretical.toFixed(3)} kg: la diferencia es de ${excess.toFixed(3)} kg ` +
+        `(${excessInfo.excessPct} % del teórico).`;
       return {
         ok: false,
         code: TOLERANCE_OVERRIDE_REQUIRED,
         excess: excessInfo,
-        message:
-          `${figures} pasa la tolerancia del ${pct} % (hasta el ${excessInfo.maxPct} % lo ` +
-          'autoriza un administrador, con la casilla y el motivo).',
+        message: severe
+          ? `Diferencia mayor al ${excessInfo.maxPct} %: revisa cantidad, largo y bobina antes de confirmar. ${figures} Para confirmar, marca la casilla y elige el motivo.`
+          : `${figures} Pasa la tolerancia del ${pct} %: para confirmar, marca la casilla y elige el motivo.`,
       };
     }
     overridden = true;

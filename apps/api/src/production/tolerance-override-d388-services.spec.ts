@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { TOLERANCE_OVERRIDE_REQUIRED } from '@ayr/shared';
 import {
   appliedToleranceOverride,
+  assertToleranceReasonApplies,
   mountedKgRejection,
   TOLERANCE_OVERRIDE_AUDIT_ACTION,
   toleranceOverrideAuditAfter,
@@ -25,6 +26,7 @@ const EXCESS = {
   excessPct: '1.62',
   tolerancePct: '1',
   maxPct: '5',
+  severe: false,
 };
 
 describe('mountedKgRejection', () => {
@@ -287,5 +289,19 @@ describe('ProductionService — la etiqueta del detalle, leída de la auditoría
       svc as unknown as { reportToleranceOverrides: (id: string, has: boolean) => Promise<unknown> }
     ).reportToleranceOverrides('op-1', false);
     expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('assertToleranceReasonApplies — D-389: el motivo según la dirección', () => {
+  it.each(['LIGHTER_COIL', 'OTHER'] as const)('%s aplica a un exceso hacia arriba', (reason) => {
+    expect(() => {
+      assertToleranceReasonApplies(reason);
+    }).not.toThrow();
+  });
+
+  it('«Bobina más pesada» no explica que lo reportado pase lo montado', () => {
+    expect(() => {
+      assertToleranceReasonApplies('HEAVIER_COIL');
+    }).toThrow(/Bobina más pesada que el nominal/);
   });
 });

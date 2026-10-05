@@ -54,10 +54,27 @@ describe('checkDraftRows (D-191)', () => {
       [
         { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 5 }] }, // 80.8 kg
         { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 2 }] }, // 32.32 kg > 19.2
+        { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 1 }] }, // ya no queda nada montado
       ],
     );
-    expect(result).toMatchObject({ ok: false, rowNumber: 2 });
-    if (!result.ok) expect(result.message).toMatch(/el borrador ya ocupa 80\.800 kg/);
+    // D-389: la fila 2 pasa lo que dejó la 1 (sin tope desde D-389): entra marcada y se topa en
+    // esos 19.2 kg; la fila 3 ya no tiene kilos montados.
+    expect(result).toMatchObject({ ok: false, rowNumber: 3 });
+    if (!result.ok) expect(result.message).toMatch(/el borrador ya ocupa 100\.000 kg/);
+    const firstTwo = checkDraftRows(
+      state({
+        planPieces: [{ lengthMm: '4000.00', qty: 100 }],
+        coils: [{ coilId: 'c1', coilCode: 'B-1', remainingKg: new Decimal('100'), geometry }],
+      }),
+      [
+        { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 5 }] },
+        { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 2 }] },
+      ],
+    );
+    expect(firstTwo.ok && firstTwo.rows[1]?.outOfTolerance).toMatchObject({
+      availableKg: '19.200',
+      severe: true,
+    });
   });
 
   it('con varias bobinas exige indicar de cuál; una bobina bajada rechaza la fila', () => {

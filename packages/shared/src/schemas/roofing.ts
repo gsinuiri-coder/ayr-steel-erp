@@ -684,6 +684,16 @@ export type MountRoofingCoilInput = z.infer<typeof mountRoofingCoilSchema>;
  */
 export const TOLERANCE_OVERRIDE_REASONS = ['LIGHTER_COIL', 'HEAVIER_COIL', 'OTHER'] as const;
 export type ToleranceOverrideReason = (typeof TOLERANCE_OVERRIDE_REASONS)[number];
+
+/**
+ * D-389: los motivos que aplican a un exceso **hacia arriba** —lo reportado pesa en teoría más de
+ * lo que había montado, o sea que la bobina rindió más metros que su nominal—: una bobina más
+ * liviana, u «Otro». «Bobina más pesada» no explica ese exceso y no se ofrece ni se acepta.
+ */
+export const TOLERANCE_OVERRIDE_REASONS_OVER: readonly ToleranceOverrideReason[] = [
+  'LIGHTER_COIL',
+  'OTHER',
+];
 export const TOLERANCE_OVERRIDE_REASON_LABELS: Record<ToleranceOverrideReason, string> = {
   LIGHTER_COIL: 'Bobina más liviana que el nominal',
   HEAVIER_COIL: 'Bobina más pesada que el nominal',
@@ -871,6 +881,8 @@ export const roofingReportDraftSchema = z.object({
       excessPct: z.string(),
       tolerancePct: z.string(),
       maxPct: z.string(),
+      /** D-389: pasa el 5 %: el aviso usa el texto fuerte. */
+      severe: z.boolean(),
     })
     .nullable(),
 });

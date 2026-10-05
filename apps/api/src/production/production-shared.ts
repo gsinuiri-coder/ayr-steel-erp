@@ -10,6 +10,7 @@ import {
   productionOrderCode,
   TOLERANCE_OVERRIDE_REASON_LABELS,
   TOLERANCE_OVERRIDE_REASONS,
+  TOLERANCE_OVERRIDE_REASONS_OVER,
   type MountedKgExcess,
   type ToleranceOverrideInput,
 } from '@ayr/shared';
@@ -232,4 +233,17 @@ export async function resolveActorNames(
     select: { id: true, name: true },
   });
   return new Map(users.map((u) => [u.id, u.name]));
+}
+
+/**
+ * D-389: el motivo tiene que aplicar a la dirección del exceso. El reporte que pasa lo montado es
+ * un exceso **hacia arriba** —la bobina rindió más que su nominal—: «Bobina más pesada» no lo
+ * explica y se rechaza (la pantalla tampoco lo ofrece).
+ */
+export function assertToleranceReasonApplies(reason: ToleranceOverrideInput['reason']): void {
+  if (!TOLERANCE_OVERRIDE_REASONS_OVER.includes(reason)) {
+    throw new BadRequestException(
+      `«${TOLERANCE_OVERRIDE_REASON_LABELS[reason]}» no explica que lo reportado pase lo montado: elige otro motivo`,
+    );
+  }
 }
