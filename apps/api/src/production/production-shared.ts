@@ -72,6 +72,7 @@ export const TOLERANCE_OVERRIDE_AUDIT_ACTION = 'production.roofing.report-tolera
 
 /** D-388: lo que el detalle de la orden lee de esa entrada (el resto queda para quien audita). */
 export const toleranceOverrideAuditSchema = z.object({
+  reportId: z.string(),
   reason: z.enum(TOLERANCE_OVERRIDE_REASONS),
   detail: z.string().nullable(),
   differenceKg: z.string(),

@@ -1426,15 +1426,16 @@ export class RoofingProductionService {
       },
     });
 
-    // D-388: la autorización tiene su propia entrada, sobre el reporte: es lo que el detalle de
-    // la orden lee para mostrar «Fuera de tolerancia» con su motivo.
+    // D-388: la autorización tiene su propia entrada, en el historial de la orden y con el
+    // reporte adentro: es lo que el detalle de la orden lee para su etiqueta «Fuera de tolerancia».
     if (appliedOverride !== null && mounted.excess !== null) {
       await this.audit.write(tx, {
         actorId: actor.id,
         action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
-        entity: 'production_reports',
-        entityId: report.id,
+        entity: 'production_orders',
+        entityId: orderId,
         after: {
+          reportId: report.id,
           productionOrderId: orderId,
           productionOrderCode: productionOrderCode(order.seq),
           coilId: row.coilId,

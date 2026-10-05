@@ -1531,7 +1531,7 @@ export class ProductionService {
     const availableKg = new Map(balances.map((b) => [b.itemId, b.qty.toFixed(3)]));
     const [coilsByReport, overridesByReport] = await Promise.all([
       this.reportCoils(order.reports.map((r) => r.id)),
-      this.reportToleranceOverrides(order.reports.map((r) => r.id)),
+      this.reportToleranceOverrides(id, order.reports.length > 0),
     ]);
     const actors = await this.resolveActorNames([
       order.createdById,
@@ -1611,27 +1611,28 @@ export class ProductionService {
 
   /**
    * D-388: los reportes que entraron fuera de la tolerancia del 1 % con la casilla de un
-   * administrador, leídos de su entrada de auditoría (no hay columna). Una consulta para toda la
-   * orden, por el índice `(entity, entity_id, at)`.
+   * administrador, leídos de su entrada de auditoría en el historial de la orden (no hay
+   * columna). Una consulta para toda la orden, por el índice `(entity, entity_id, at)`.
    */
   private async reportToleranceOverrides(
-    reportIds: readonly string[],
+    orderId: string,
+    hasReports: boolean,
   ): Promise<Map<string, NonNullable<ProductionReportDto['toleranceOverride']>>> {
-    if (reportIds.length === 0) return new Map();
+    if (!hasReports) return new Map();
     const rows = await this.prisma.auditLog.findMany({
       where: {
-        entity: 'production_reports',
-        entityId: { in: [...reportIds] },
+        entity: 'production_orders',
+        entityId: orderId,
         action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
       },
-      select: { entityId: true, after: true },
+      select: { after: true },
     });
     const byReport = new Map<string, NonNullable<ProductionReportDto['toleranceOverride']>>();
     for (const row of rows) {
       const parsed = toleranceOverrideAuditSchema.safeParse(row.after);
-      if (row.entityId === null || !parsed.success) continue;
-      const { reason, detail, differenceKg, differencePct } = parsed.data;
-      byReport.set(row.entityId, {
+      if (!parsed.success) continue;
+      const { reportId, reason, detail, differenceKg, differencePct } = parsed.data;
+      byReport.set(reportId, {
         reason,
         detail,
         label: toleranceOverrideLabel({ reason, ...(detail === null ? {} : { detail }) }),
