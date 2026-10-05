@@ -135,6 +135,74 @@ P1.
   desconocidas. Cada pestaña mostraría «Todas» con otro rótulo. Por eso el orden es API primero y
   después merge.
 
-## Ventana
+## Ventana ejecutada (2026-10-05, 04:06–04:15 Lima) — **desplegada**
 
-Pendiente.
+La ventana se hizo con el OK previo del dueño (D-397), sin paradas por acción. **Estado final:
+desplegado y sin vuelta atrás.**
+
+Antes de entrar se verificó, a las 04:06:
+
+- PR #105 abierto;
+- CI 37284015576 sobre `cbed5aa` en verde: lint, typecheck y unitarios, E2E completo en el
+  Postgres del runner, smoke de Neon `ci`, y Sonar con su quality gate;
+- autorrevisión y segundo modelo sin P0 ni P1;
+- UAT local escrito.
+
+1. **Vuelta atrás anotada:** API `ayr-steel-erp-api-00086-ds5` (`git-sha=8abc4dc`) al 100 %, y
+   `main` en `81cd656`.
+2. **Migraciones en el PR:** 0. No hacía falta respaldo de Neon, y no se creó ni se borró
+   ninguna rama.
+3. **API:** se desplegó `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+   desde `../ayr-cc23`, limpio en `cbed5aa`.
+   - Revisión **`ayr-steel-erp-api-00087-pcg`**, con `git-sha=cbed5aa`, al 100 %.
+   - `/health` 200.
+   - `smoke:prod` 8/8 con la web vieja.
+4. **Merge del #105:** `main` = **`999fd01`**.
+   - `git diff --quiet cbed5aa origin/main -- apps packages Dockerfile …` dio exit 0: sin diff
+     de runtime.
+   - Vercel en `success` para `999fd01`.
+5. **Verificación final:**
+   - `smoke:prod` 8/8 en `ayr-steel-erp-web.vercel.app` y 8/8 en `v2.mareliac.pe`;
+   - `/health` 200 por `v2.mareliac.pe/api/health`;
+   - los reportes **no** se revisaron dentro de producción: no se creó un usuario propio ni se
+     usaron otras herramientas (D-397).
+6. **Vuelta atrás:** no hizo falta. Si el dueño la necesita, son las dos juntas:
+   `cmd /c gcloud run services update-traffic ayr-steel-erp-api --region us-central1 --project ayr-steel-erp --to-revisions ayr-steel-erp-api-00086-ds5=100`,
+   y un commit de revert del merge `999fd01` en `main`.
+
+Las salidas del deploy y de los tres smokes quedaron en `local-data/cc23/` del checkout
+principal, que no está en git.
+
+## Para el dueño al despertar: qué revisar en producción
+
+Entrar como administrador en `https://v2.mareliac.pe`.
+
+1. **Ventas y margen, mes en curso:** `https://v2.mareliac.pe/reportes/ventas-margen`.
+   - En «Todas», anotar la **Venta sin IGV** y el **Costo de venta** de la franja. Tienen que ser
+     los mismos de ayer: «Todas» no cambió.
+   - Abrir cada pestaña y comparar su Venta y su Costo con la fila de su línea en «Totales por
+     línea» de «Todas»:
+     - `…/reportes/ventas-margen?linea=drywall`
+     - `…?linea=metallic-roofing`
+     - `…?linea=roofing`
+     - `…?linea=services`
+     - `…?linea=trading`
+   - La suma de las ventas de las pestañas, más la fila «Sin línea» si la hay, tiene que dar la
+     Venta de «Todas».
+   - En Servicios tiene que decir «Sin costo registrado».
+2. **Ventas y margen, un rango con historia:**
+   `https://v2.mareliac.pe/reportes/ventas-margen?from=2026-09-01&to=2026-09-30` y sus pestañas
+   (`&linea=…`). Es la misma comparación, con un mes cerrado.
+3. **Inventario valorizado:** `https://v2.mareliac.pe/reportes/inventario-valorizado`.
+   - Anotar el **Total** de «Todas».
+   - Abrir `?linea=drywall`, `?linea=metallic-roofing`, `?linea=roofing` y `?linea=trading`. El
+     Total de cada una tiene que coincidir con su fila de «Totales por línea», y la suma de las
+     cuatro con el «Total general» (hasta 0,0001 por línea de redondeo, D-402).
+   - En Drywall y Coberturas Aluzinc, la tarjeta **Bobinas (kg)** tiene que coincidir con la
+     suma de «Saldo (kg)» de su tabla de bobinas.
+4. **Comportamiento:**
+   - refrescar en una pestaña la conserva;
+   - retroceder vuelve a la pestaña anterior;
+   - `…/reportes/ventas-margen?linea=acero` cae a «Todas» y limpia la URL;
+   - el Excel solo aparece en «Todas».
+5. **Decidir las provisionales D-398..D-404** y si se hace M4/M5 en otra pieza.
