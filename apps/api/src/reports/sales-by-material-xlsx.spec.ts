@@ -39,6 +39,7 @@ const coil = (code: string, kg: string, cost: string) => ({
 const REPORT: SalesByMaterialDto = {
   from: '2026-09-01',
   to: '2026-09-30',
+  businessLine: 'metallic-roofing',
   rows: [
     {
       kind: 'COBERTURA',
@@ -79,10 +80,11 @@ const REPORT: SalesByMaterialDto = {
   ],
   untraceableSalesPen: '500.0000',
   reconciliation: {
-    roofingSalesPen: '900.0000',
+    lineSalesPen: '900.0000',
     coilSalesPen: '0.0000',
     unclassifiedSalesPen: '0.0000',
   },
+  noLineSalesPen: '0.0000',
 };
 
 function sheet(buffer: Buffer, name: string): unknown[][] {

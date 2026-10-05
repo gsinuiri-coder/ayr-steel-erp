@@ -150,7 +150,10 @@ export class ReportsController {
     sendXlsx(res, salesMarginXlsx(report));
   }
 
-  /** D-354. Ventas por material de Coberturas Aluzinc. Solo ADMINISTRADOR: lleva costos. */
+  /**
+   * D-354. Ventas por material. Solo ADMINISTRADOR: lleva costos. cc24 (D-406, D-407):
+   * `businessLine` es la pestaña (Coberturas Aluzinc o Drywall); sin ella, Coberturas Aluzinc.
+   */
   @Roles(Role.ADMINISTRADOR)
   @Get('sales-by-material')
   salesByMaterialReport(
@@ -166,7 +169,10 @@ export class ReportsController {
     @Query(new ZodValidationPipe(salesByMaterialQuerySchema)) query: SalesByMaterialQuery,
     @Res() res: Response,
   ): Promise<void> {
-    sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(query)));
+    // cc24 (D-396, criterio de D-399): sin exportación por línea; el Excel sigue siendo el de
+    // Coberturas Aluzinc, la vista que ya lo tenía, aunque llegue otra línea.
+    const { businessLine: _line, ...aluzinc } = query;
+    sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(aluzinc)));
   }
 
   /**

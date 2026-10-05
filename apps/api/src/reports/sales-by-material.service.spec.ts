@@ -1,6 +1,11 @@
 import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
-import { Decimal, kgPerMeter, type SalesByMaterialQuery } from '@ayr/shared';
+import {
+  Decimal,
+  kgPerMeter,
+  salesByMaterialQuerySchema,
+  type SalesByMaterialQuery,
+} from '@ayr/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { SalesByMaterialService } from './sales-by-material.service';
 
@@ -28,10 +33,14 @@ interface LineSeed {
   unit?: 'MTR' | 'NIU' | 'KGM';
   thickness?: string;
   color?: string | null;
+  /** cc24: un producto de Drywall, fabricado (perfil) o comprado, con sus kilos por pieza. */
+  drywall?: { source: 'MANUFACTURED' | 'PURCHASED'; pieceWeightKg?: string };
 }
 
 interface Seeds {
   lines: LineSeed[];
+  /** D-407: la venta del rango sin producto. */
+  noLine?: string | null;
   invoiced?: Record<string, string>;
   facts?: Record<string, { produced: string; orders?: number; dispatched?: string }>;
   usage?: {
@@ -50,7 +59,28 @@ interface Seeds {
 function lineRow(s: LineSeed): Record<string, unknown> {
   const nc = s.docType === 'NOTA_CREDITO';
   const coil = s.coilSale === true;
+  const dw = s.drywall;
+  if (dw !== undefined) {
+    // Perfil de Drywall: NIU con largo, sin acabado ni color, espesor del fleje (D-344).
+    return {
+      ...lineRow({ ...s, drywall: undefined, kind: null, unit: 'NIU' }),
+      sku: 'PARANTE-64',
+      product_line: 'drywall',
+      source: dw.source,
+      piece_weight_kg: dw.pieceWeightKg === undefined ? d('1.500') : d(dw.pieceWeightKg),
+      roofing_kind: null,
+      length_mm: d(s.lengthMm ?? '3000'),
+      p_width: d('120.00'),
+      p_thickness: d(s.thickness ?? '0.45'),
+      p_density: null,
+      p_finish_kind: null,
+      p_color: null,
+    };
+  }
   return {
+    product_line: coil ? 'trading' : 'metallic-roofing',
+    source: coil ? 'PURCHASED' : 'MANUFACTURED',
+    piece_weight_kg: null,
     document_id: `00000000-0000-0000-0000-${(s.doc ?? '1').padStart(12, '0')}`,
     number: `F001-${s.doc ?? '1'}`,
     doc_type: s.docType ?? 'FACTURA',
@@ -113,6 +143,11 @@ async function build(seeds: Seeds): Promise<{ service: SalesByMaterialService; c
         })),
       );
     }
+    if (sql.includes('AS "sales_pen"')) {
+      return Promise.resolve([
+        { sales_pen: seeds.noLine === undefined || seeds.noLine === null ? null : d(seeds.noLine) },
+      ]);
+    }
     if (sql.includes('GROUP BY 1')) {
       return Promise.resolve(
         Object.entries(seeds.invoiced ?? {}).map(([id, qty]) => ({
@@ -153,7 +188,7 @@ describe('SalesByMaterialService (D-354)', () => {
     const report = await service.report(SEPT);
 
     // Presupuesto fijo: cuatro consultas, sin importar cuántas líneas haya.
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(5);
     expect(report.rows).toHaveLength(1);
     const row = report.rows[0]!;
     expect(row).toMatchObject({ kind: 'COBERTURA', thicknessMm: '0.30', colorLabel: 'ROJO' });
@@ -289,7 +324,7 @@ describe('SalesByMaterialService (D-354)', () => {
     });
     expect(report.untraceableSalesPen).toBe('1800.0000');
     // El cuadre suma trazable + no trazable.
-    expect(report.reconciliation.roofingSalesPen).toBe('3000.0000');
+    expect(report.reconciliation.lineSalesPen).toBe('3000.0000');
   });
 
   it('sin producción aún, desde stock y sin pedido: no trazables con su motivo, nunca estimados', async () => {
@@ -321,7 +356,7 @@ describe('SalesByMaterialService (D-354)', () => {
       ['SIN_PEDIDO', '60.0000', '2.000'],
     ]);
     expect(report.total.salesPen).toBe('0.0000');
-    expect(report.reconciliation.roofingSalesPen).toBe('760.0000');
+    expect(report.reconciliation.lineSalesPen).toBe('760.0000');
   });
 
   it('bobina entera: peso real = kilos vendidos, ML teórico de sus kilos, costo de su salida', async () => {
@@ -340,7 +375,7 @@ describe('SalesByMaterialService (D-354)', () => {
     expect(row.costPen).toBe('3000.0000');
     expect(report.reconciliation).toMatchObject({
       coilSalesPen: '4000.0000',
-      roofingSalesPen: '0.0000',
+      lineSalesPen: '0.0000',
     });
   });
 
@@ -381,7 +416,7 @@ describe('SalesByMaterialService (D-354)', () => {
     const report = await service.report({ ...SEPT, thicknessMm: '0.4', color: 'azul' });
     expect(report.rows.map((r) => [r.thicknessMm, r.colorLabel])).toEqual([['0.40', 'AZUL']]);
     expect(report.total.salesPen).toBe('500.0000');
-    expect(report.reconciliation.roofingSalesPen).toBe('800.0000');
+    expect(report.reconciliation.lineSalesPen).toBe('800.0000');
   });
 
   it('el ML sale de la unidad: plancha en kilos o en piezas sin largo → «No trazable», nunca un cero', async () => {
@@ -408,7 +443,7 @@ describe('SalesByMaterialService (D-354)', () => {
       ['SIN_METRO', '0.000', '1500.0000'],
       ['SIN_METRO', '0.000', '200.0000'],
     ]);
-    expect(report.reconciliation.roofingSalesPen).toBe('1700.0000');
+    expect(report.reconciliation.lineSalesPen).toBe('1700.0000');
   });
 
   it('un producto de la línea sin subtipo cuenta en el cuadre y no en las filas', async () => {
@@ -423,10 +458,11 @@ describe('SalesByMaterialService (D-354)', () => {
   it('sin líneas de pedido en el rango no gasta más consultas', async () => {
     const { service, calls } = await build({ lines: [] });
     await service.report(SEPT);
-    expect(calls).toHaveLength(1);
+    // Las líneas del rango y la venta sin línea (D-407), en paralelo.
+    expect(calls).toHaveLength(2);
   });
 
-  it('presupuesto fijo: cuatro consultas con 1 línea y con 60 (sin N+1)', async () => {
+  it('presupuesto fijo: cinco consultas con 1 línea y con 60 (sin N+1)', async () => {
     const seeds = (n: number): Seeds => {
       const items = Array.from({ length: n }, (_, i) => `soi-${String(i)}`);
       return {
@@ -444,8 +480,148 @@ describe('SalesByMaterialService (D-354)', () => {
     for (const n of [1, 60]) {
       const { service, calls } = await build(seeds(n));
       const report = await service.report(SEPT);
-      expect(calls).toHaveLength(4);
+      expect(calls).toHaveLength(5);
       expect(report.rows[0]!.lineCount).toBe(n);
     }
+  });
+});
+
+/**
+ * cc24 (D-406, D-407, D-413..D-415): «Ventas por material» por línea. Coberturas Aluzinc sigue
+ * igual (por defecto); Drywall agrupa los perfiles por espesor del fleje, con «Galvanizado», y
+ * deja lo comprado en el cuadre. La venta sin producto se declara aparte.
+ */
+describe('SalesByMaterialService — por línea (cc24)', () => {
+  const DRY = { ...SEPT, businessLine: 'drywall' } as const;
+
+  it('sin pestaña es Coberturas Aluzinc, y la consulta filtra por la línea pedida', async () => {
+    const aluzinc = await build({ lines: [] });
+    expect((await aluzinc.service.report(SEPT)).businessLine).toBe('metallic-roofing');
+    const drywall = await build({ lines: [] });
+    expect((await drywall.service.report(DRY)).businessLine).toBe('drywall');
+  });
+
+  it('un perfil producido para su línea: fila Perfiles × espesor, «Galvanizado», teórico = piezas × kg/pieza', async () => {
+    const { service } = await build({
+      lines: [
+        {
+          drywall: { source: 'MANUFACTURED', pieceWeightKg: '1.500' },
+          qty: '100',
+          subtotal: '1200.0000',
+        },
+      ],
+      invoiced: { 'soi-1': '100' },
+      facts: { 'soi-1': { produced: '100' } },
+      usage: [
+        { item: 'soi-1', coil: 'F-1', kg: '120.000', cost: '360.0000' },
+        { item: 'soi-1', coil: 'F-2', kg: '40.000', cost: '120.0000' },
+      ],
+    });
+    const report = await service.report(DRY);
+    expect(report.rows).toHaveLength(1);
+    const row = report.rows[0]!;
+    expect(row).toMatchObject({
+      kind: 'PERFIL',
+      thicknessMm: '0.45',
+      colorLabel: 'Galvanizado',
+      // 100 piezas × 3 m.
+      metersSold: '300.000',
+      theoreticalKg: '150.000',
+      realKg: '160.000',
+      yieldKg: '-10.000',
+      salesPen: '1200.0000',
+      costPen: '480.0000',
+    });
+    // Metros y teórico se reparten entre los flejes por sus kilos (3:1).
+    expect(row.coils.map((c) => [c.code, c.meters, c.theoreticalKg])).toEqual([
+      ['F-1', '225.000', '112.500'],
+      ['F-2', '75.000', '37.500'],
+    ]);
+  });
+
+  it('un perfil hecho a stock (sin OP propia) es no trazable «desde stock», nunca estimado', async () => {
+    const { service } = await build({
+      lines: [{ drywall: { source: 'MANUFACTURED' }, qty: '50', subtotal: '600.0000' }],
+      invoiced: { 'soi-1': '50' },
+      facts: { 'soi-1': { produced: '0', orders: 0, dispatched: '50' } },
+    });
+    const report = await service.report(DRY);
+    expect(report.rows).toEqual([]);
+    expect(report.untraceable).toMatchObject([
+      { kind: 'PERFIL', reason: 'DESDE_STOCK', salesPen: '600.0000', colorLabel: 'Galvanizado' },
+    ]);
+    expect(report.reconciliation.lineSalesPen).toBe('600.0000');
+  });
+
+  it('un producto comprado de Drywall cuenta en el cuadre y no en las filas', async () => {
+    const { service } = await build({
+      lines: [{ drywall: { source: 'PURCHASED' }, qty: '10', subtotal: '80.0000' }],
+    });
+    const report = await service.report(DRY);
+    expect(report.rows).toEqual([]);
+    expect(report.untraceable).toEqual([]);
+    expect(report.reconciliation).toMatchObject({
+      lineSalesPen: '80.0000',
+      unclassifiedSalesPen: '80.0000',
+    });
+  });
+
+  it('cuadre de la línea = filas + no trazable + sin subtipo, sin contar la bobina entera', async () => {
+    const { service } = await build({
+      lines: [
+        {
+          doc: '1',
+          item: 'soi-1',
+          drywall: { source: 'MANUFACTURED' },
+          qty: '100',
+          subtotal: '1000.0000',
+        },
+        {
+          doc: '2',
+          item: 'soi-2',
+          drywall: { source: 'MANUFACTURED' },
+          qty: '20',
+          subtotal: '250.0000',
+        },
+        { doc: '3', item: null, drywall: { source: 'PURCHASED' }, qty: '5', subtotal: '40.0000' },
+        { doc: '4', item: 'soi-4', coilSale: true, qty: '1000.000', subtotal: '4000.0000' },
+      ],
+      invoiced: { 'soi-1': '100', 'soi-2': '20', 'soi-4': '1000.000' },
+      facts: { 'soi-1': { produced: '100' }, 'soi-2': { produced: '0', orders: 0 } },
+      usage: [
+        { item: 'soi-1', coil: 'F-1', kg: '150.000', cost: '450.0000' },
+        { item: 'soi-4', coil: 'B-9', kg: '1000.000', cost: '3000.0000' },
+      ],
+    });
+    const report = await service.report(DRY);
+    const rows = report.rows.filter((r) => r.kind !== 'BOBINA');
+    const coil = report.rows.filter((r) => r.kind === 'BOBINA');
+    const untraceable = report.untraceable.filter((u) => u.kind !== 'BOBINA');
+    const lineSum = new Decimal(0)
+      .plus(rows.reduce((acc, r) => acc.plus(r.salesPen), new Decimal(0)))
+      .plus(untraceable.reduce((acc, u) => acc.plus(u.salesPen), new Decimal(0)))
+      .plus(report.reconciliation.unclassifiedSalesPen);
+    expect(lineSum.toFixed(4)).toBe(report.reconciliation.lineSalesPen);
+    expect(report.reconciliation.lineSalesPen).toBe('1290.0000');
+    // D-413: la bobina entera de Drywall se queda en su pestaña, en la otra parte del cuadre.
+    expect(coil.map((r) => r.salesPen)).toEqual(['4000.0000']);
+    expect(report.reconciliation.coilSalesPen).toBe('4000.0000');
+  });
+
+  it('D-407: la venta sin producto del rango se declara, con signo', async () => {
+    const withNoLine = await build({ lines: [], noLine: '35.5000' });
+    expect((await withNoLine.service.report(SEPT)).noLineSalesPen).toBe('35.5000');
+    const none = await build({ lines: [], noLine: null });
+    expect((await none.service.report(DRY)).noLineSalesPen).toBe('0.0000');
+  });
+
+  it('una línea fuera de la matriz no pasa la validación', () => {
+    expect(salesByMaterialQuerySchema.safeParse({ ...SEPT, businessLine: 'roofing' }).success).toBe(
+      false,
+    );
+    expect(salesByMaterialQuerySchema.safeParse({ ...SEPT, businessLine: 'acero' }).success).toBe(
+      false,
+    );
+    expect(salesByMaterialQuerySchema.safeParse(DRY).success).toBe(true);
   });
 });

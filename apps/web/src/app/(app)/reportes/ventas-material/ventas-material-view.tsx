@@ -5,19 +5,24 @@ import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  BUSINESS_LINE_LABELS,
+  BusinessLine,
   PROFIT_SOURCES_NOTICE,
   Role,
-  SALES_MATERIAL_KINDS,
+  SALES_BY_MATERIAL_LINES,
   SALES_MATERIAL_KIND_LABELS,
   SALES_MATERIAL_UNTRACEABLE_LABELS,
   businessToday,
   type SalesByMaterialDto,
+  type SalesByMaterialLine,
   type SalesMaterialFiguresDto,
   type SalesMaterialKind,
   type SalesMaterialRowDto,
 } from '@ayr/shared';
 import { FilterChip } from '@/components/filter-chip';
 import { HeaderActions } from '@/components/header-actions';
+import { LineTabs } from '@/components/line-tabs';
+import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import { RoleGate } from '@/components/role-gate';
 import { Button } from '@/components/ui/button';
 import {
@@ -53,7 +58,30 @@ import { cn, LINK_CLASSNAME } from '@/lib/utils';
 const RANGES = ['month', 'prev'] as const;
 
 /**
- * D-354 — Ventas por material de Coberturas Aluzinc. **Solo administrador**.
+ * cc24 (D-406, D-407): una pestaña por línea, sin «Todas», Coberturas Aluzinc por defecto. Al
+ * cambiar de pestaña sobrevive el rango; tipo, espesor y color son de la línea y se descartan.
+ */
+const LINE_TABS: LineTabsConfig = {
+  lines: SALES_BY_MATERIAL_LINES,
+  includeAll: false,
+  keep: ['range', 'from', 'to'],
+};
+
+/** Los tipos de fila de cada pestaña (D-413: la bobina entera, en la línea de su bobina). */
+const KINDS_BY_LINE: Record<SalesByMaterialLine, readonly SalesMaterialKind[]> = {
+  [BusinessLine.METALLIC_ROOFING]: ['COBERTURA', 'ACCESORIO', 'BOBINA', 'PLANCHA'],
+  [BusinessLine.DRYWALL]: ['PERFIL', 'BOBINA'],
+};
+
+/** Lo que el cuadre deja fuera de las filas, según la línea (D-354, D-414). */
+const UNCLASSIFIED_LABEL: Record<SalesByMaterialLine, string> = {
+  [BusinessLine.METALLIC_ROOFING]: 'Productos de la línea sin subtipo',
+  [BusinessLine.DRYWALL]: 'Productos comprados de Drywall (sin bobina)',
+};
+
+/**
+ * D-354 — Ventas por material. **Solo administrador**. cc24: por línea (Coberturas Aluzinc y
+ * Drywall).
  *
  * Una fila por tipo × espesor × color del producto vendido, con las columnas de la planilla del
  * cliente. La venta es la de «Ventas y margen» (comprobantes del rango, sin IGV, netos de notas
@@ -61,6 +89,11 @@ const RANGES = ['month', 'prev'] as const;
  * líneas. Lo que no se puede trazar va aparte, con su motivo, y no se estima.
  */
 export function VentasMaterialView() {
+  const { tab, select } = useLineTab(LINE_TABS);
+  // Sin «Todas», la pestaña siempre es una línea de este reporte.
+  const line = tab as SalesByMaterialLine;
+  const lineLabel = BUSINESS_LINE_LABELS[line];
+  const kinds = KINDS_BY_LINE[line];
   const [url, setUrl] = useUrlState({
     range: '',
     from: '',
@@ -74,11 +107,11 @@ export function VentasMaterialView() {
   // «Todo» no se ofrece; si llega por URL, se lee como el mes en curso.
   const dates = resolveKardexDates(range === 'all' ? 'month' : range, url.from, url.to, today);
   const validRange = dates.from !== '' && dates.to !== '' && dates.from <= dates.to;
-  const kind = (SALES_MATERIAL_KINDS as readonly string[]).includes(url.tipo)
+  const kind = (kinds as readonly string[]).includes(url.tipo)
     ? (url.tipo as SalesMaterialKind)
     : undefined;
 
-  const base = `from=${dates.from}&to=${dates.to}`;
+  const base = `from=${dates.from}&to=${dates.to}&businessLine=${line}`;
   const filters = new URLSearchParams();
   if (kind !== undefined) filters.set('kind', kind);
   if (url.espesor !== '') filters.set('thicknessMm', url.espesor);
@@ -119,21 +152,32 @@ export function VentasMaterialView() {
         <div>
           <h1 className="text-lg font-semibold">Ventas por material</h1>
           <p className="text-xs text-muted-foreground">
-            Coberturas Aluzinc. Comprobantes emitidos en el rango, sin IGV; peso real y costo de las
+            {lineLabel}. Comprobantes emitidos en el rango, sin IGV; peso real y costo de las
             bobinas que consumió la producción.
           </p>
         </div>
-        <HeaderActions
-          primary={['xlsx']}
-          actions={[
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              download: `/api/reports/sales-by-material/xlsx?${qs}`,
-            },
-          ]}
-        />
+        {/* D-396 con el criterio de D-399: sin exportación por línea. El Excel de siempre es el
+            de Coberturas Aluzinc y solo se ofrece en esa pestaña. */}
+        {line === BusinessLine.METALLIC_ROOFING && (
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: `/api/reports/sales-by-material/xlsx?${qs}`,
+              },
+            ]}
+          />
+        )}
       </div>
+
+      <LineTabs
+        lines={LINE_TABS.lines}
+        includeAll={LINE_TABS.includeAll}
+        value={tab}
+        onChange={select}
+      />
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex items-center gap-2" role="group" aria-label="Rango de fechas">
@@ -179,7 +223,7 @@ export function VentasMaterialView() {
           onChange={(v) => {
             setUrl({ tipo: v });
           }}
-          options={SALES_MATERIAL_KINDS.map((k) => ({
+          options={kinds.map((k) => ({
             value: k,
             label: SALES_MATERIAL_KIND_LABELS[k],
           }))}
@@ -251,7 +295,7 @@ export function VentasMaterialView() {
                 {data.rows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={17} className="text-muted-foreground">
-                      No hay ventas trazables de Coberturas Aluzinc en ese rango.
+                      No hay ventas trazables de {lineLabel} en ese rango.
                     </TableCell>
                   </TableRow>
                 )}
@@ -323,18 +367,36 @@ export function VentasMaterialView() {
 
           <p className="text-xs text-muted-foreground" data-testid="cuadre-ventas-margen">
             {/* Lo que se muestra es el cuadre por comprobante, sin filtros: la venta de todas las
-                líneas de Coberturas Aluzinc facturadas en el rango. «Ventas y margen» la suma en
-                su fila de la línea salvo los pedidos que deja fuera de sus totales (no
-                comparables o no rastreables), y las bobinas enteras las cuenta dentro de
-                Comercialización (D-247): la leyenda lo dice para no prometer una cifra que allá
-                no aparece tal cual. */}
-            Cuadre con Ventas y margen (sin filtros): venta de Coberturas Aluzinc facturada en el
-            rango {formatMoney(data.reconciliation.roofingSalesPen)} (allá, en la fila de la línea,
-            más los pedidos que deja fuera de sus totales); bobinas enteras de Coberturas Aluzinc{' '}
-            {formatMoney(data.reconciliation.coilSalesPen)} (allá, dentro de Comercialización).
+                líneas de la línea de negocio facturadas en el rango. «Ventas y margen» la suma en
+                la pestaña de la línea, contando los pedidos que deja fuera de sus totales (no
+                comparables o no rastreables), y las bobinas enteras las cuenta dentro de Reventa
+                (D-247, D-413): la leyenda lo dice para no prometer una cifra que allá no aparece
+                tal cual. */}
+            Cuadre con Ventas y margen (sin filtros): venta de {lineLabel} facturada en el rango{' '}
+            {formatMoney(data.reconciliation.lineSalesPen)} (allá, en la pestaña de la línea, más
+            los pedidos que deja fuera de sus totales); bobinas enteras de {lineLabel}{' '}
+            {formatMoney(data.reconciliation.coilSalesPen)} (allá, dentro de Reventa).
             {data.reconciliation.unclassifiedSalesPen !== '0.0000' &&
-              ` Productos de la línea sin subtipo, fuera de las filas: ${formatMoney(data.reconciliation.unclassifiedSalesPen)}.`}
+              ` ${UNCLASSIFIED_LABEL[line]}, fuera de las filas: ${formatMoney(data.reconciliation.unclassifiedSalesPen)}.`}
           </p>
+          {/* D-407: lo que no tiene línea de negocio no se reparte entre las pestañas. */}
+          {data.noLineSalesPen !== '0.0000' && (
+            <p
+              role="status"
+              className="text-xs text-muted-foreground"
+              data-testid="aviso-sin-linea"
+            >
+              En el rango hay {formatMoney(data.noLineSalesPen)} de venta sin línea de negocio
+              (líneas de comprobante sin producto). No entra en ninguna pestaña:{' '}
+              <Link
+                className={LINK_CLASSNAME}
+                href={`/reportes/ventas-margen?from=${dates.from}&to=${dates.to}`}
+              >
+                ver en Ventas y margen
+              </Link>
+              .
+            </p>
+          )}
         </>
       )}
 
@@ -513,9 +575,11 @@ function MaterialBreakdownDialog({
           </DialogDescription>
         </DialogHeader>
         <p className="text-xs text-muted-foreground">
-          Peso teórico de la fila = suma del teórico de estas bobinas (metros rolados × ancho ×
-          espesor de la bobina × densidad del acabado, sin el 1 % de merma). Peso real y Costo prod.
-          = suma de Kg consumidos y Costo prod.
+          {row?.kind === 'PERFIL'
+            ? // D-414: Drywall no rola metros; su teórico es el peso por pieza del catálogo.
+              'Peso teórico de la fila = piezas vendidas × kg por pieza del producto, repartido entre los flejes por sus kilos. '
+            : 'Peso teórico de la fila = suma del teórico de estas bobinas (metros rolados × ancho × espesor de la bobina × densidad del acabado, sin el 1 % de merma). '}
+          Peso real y Costo prod. = suma de Kg consumidos y Costo prod.
         </p>
         <div className="max-h-[65vh] overflow-auto rounded-md border">
           <Table data-testid="bobinas-material">

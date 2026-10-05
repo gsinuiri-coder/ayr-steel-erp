@@ -72,6 +72,9 @@ function row(s: RowSeed): DocumentLineRow {
     line_number: s.line ?? 1,
     description: 'línea',
     line_code: s.lineCode ?? (engine ? 'metallic-roofing' : 'trading'),
+    product_line: s.lineCode ?? (engine ? 'metallic-roofing' : 'trading'),
+    source: 'MANUFACTURED',
+    piece_weight_kg: null,
     in_engine: engine,
     is_credit: credit,
     customer_name: 'CLIENTE SAC',
@@ -149,6 +152,8 @@ describe('assembleDocumentProfitability (C06)', () => {
     });
     const report = assembleSalesByMaterial({
       query: { from: '2026-08-01', to: '2026-08-31' },
+      businessLine: 'metallic-roofing',
+      noLineSalesPen: '0',
       lines: rows.map((r) => toInvoiceLine({ ...r, sku: r.sku ?? '', unit: r.unit ?? '' })),
       facts: engine.facts,
       usage: engine.usage,

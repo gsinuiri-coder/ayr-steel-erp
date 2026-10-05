@@ -28,6 +28,17 @@ export const INVENTORY_VALUATION_LINES = [
 
 export const COIL_REPORT_LINES = [BusinessLine.DRYWALL, BusinessLine.METALLIC_ROOFING] as const;
 
+/**
+ * cc24 (D-406, D-407): las pestañas de «Ventas por material», sin «Todas» y con Coberturas
+ * Aluzinc primera y por defecto. Coberturas Aluzinc y Drywall agrupan por material (tipo o
+ * color comercial × espesor).
+ */
+export const SALES_BY_MATERIAL_LINES = [
+  BusinessLine.METALLIC_ROOFING,
+  BusinessLine.DRYWALL,
+] as const;
+export type SalesByMaterialLine = (typeof SALES_BY_MATERIAL_LINES)[number];
+
 /** D-392: líneas cuyo reporte de ventas declara «sin costo registrado» en vez de un margen. */
 export const NO_COST_REPORT_LINES: readonly BusinessLine[] = [BusinessLine.SERVICES];
 
