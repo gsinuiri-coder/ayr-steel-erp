@@ -43,9 +43,11 @@ D-389 en `docs/ARQUITECTURA.md` §0.2. Decisiones del dueño:
 
 ## Bloqueos / pendientes
 
-- **Riesgo P1 de política, presentado al dueño:** sin tope, la casilla deja pasar el caso de
-  D-249, una bobina equivocada casi vacía.
+- **Riesgo P1 de política, aceptado por el dueño el 2026-10-05; reabre D-249:** sin tope, la
+  casilla deja pasar el caso de D-249, una bobina equivocada casi vacía. Si aparece un margen
+  inflado en RF-S4a, mirar primero los reportes «Fuera de tolerancia» con `severe` en la auditoría.
 - Los P2 y P3 anotados están en `docs/PROGRESO.md`, entrada cc21.
+- Neon: 9 ramas de 10; esta sesión no creó ninguna.
 
 ## Cómo verificar
 
@@ -53,6 +55,29 @@ D-389 en `docs/ARQUITECTURA.md` §0.2. Decisiones del dueño:
 - E2E: `pnpm exec playwright test e2e/tests/tolerancia-reporte-d388.spec.ts e2e/tests/tolerancia-accesorio-d389.spec.ts`,
   con una base propia `ayr_local_e2e_<sufijo>`.
 - Pantalla: el guion `docs/uat/cc21.md`.
+
+## Ventana ejecutada (2026-10-05)
+
+Cada paso con el OK del dueño.
+
+- **CI:**
+  - la primera corrida (37268720500, sobre `35fd985`) quedó en rojo por
+    `borrador-reportes-f8s3.spec.ts:228`, un test de D-191 que esperaba el rechazo de la fila que
+    pasa el saldo;
+  - se ajustó a D-389 en `8abc4dc`;
+  - la 37271094413 quedó en verde: unitarios 2548, E2E 514, smoke de Neon `ci` 36, SonarCloud con
+    85,7 % de cobertura nueva y 0 issues;
+  - diff de runtime `35fd985`..`8abc4dc`: vacío.
+- **API:**
+  - `ayr-steel-erp-api-00086-ds5`, `git-sha=8abc4dc`, al 100 %;
+  - `/health` 200;
+  - `smoke:prod` 8/8;
+  - la vuelta atrás es `00085-np4`.
+- **Web:**
+  - merge del #102: `main` = `6f1ccd7`, sin diff de runtime contra `8abc4dc`;
+  - Vercel en `success`;
+  - `smoke:prod` 8/8 en `ayr-steel-erp-web.vercel.app` y en `v2.mareliac.pe`.
+- **Salidas:** en `local-data/cc21/` del checkout principal (deploy y los tres smokes).
 
 ## Siguiente sesión
 

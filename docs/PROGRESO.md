@@ -2,6 +2,27 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-05 — Ventana cc21 (D-389 desplegada, PR #102, sin migración)
+
+Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc21.md`.
+
+- **UAT:** confirmado por el dueño en demo, con un supervisor de planta: planchas `PL040RJ36MT`
+  sobre el 5 % y el accesorio `ACCES030ROJO` sobre el 1 %.
+- **Riesgo aceptado por el dueño:** sin tope, el caso de la bobina equivocada casi vacía; reabre
+  D-249 (ver D-389).
+- **CI 37268720500 sobre `35fd985`, en rojo:** `borrador-reportes-f8s3.spec.ts:228` (D-191) seguía
+  esperando el rechazo de la fila que pasa el saldo. Rojo de producto en el test, no del código:
+  se ajustó a D-389 en `8abc4dc` (la fila entra marcada y la tercera se rechaza).
+- **CI 37271094413 sobre `8abc4dc`, en verde:** unitarios 2548 (2 omitidos), E2E 514 (3 omitidos),
+  smoke de Neon `ci` 36 (2 omitidos), SonarCloud con 85,7 % de cobertura nueva y 0 issues.
+- **Diff de runtime** entre `35fd985` (lo probado en demo) y `8abc4dc`: vacío.
+- **API:** `ayr-steel-erp-api-00086-ds5`, con `git-sha=8abc4dc`, al 100 %, `/health` 200 y
+  `smoke:prod` 8/8 con la web vieja. La vuelta atrás es `00085-np4`.
+- **Web:**
+  - merge del #102: `main` = `6f1ccd7`, sin diff de runtime contra `8abc4dc`;
+  - Vercel en `success`;
+  - `smoke:prod` 8/8 en `ayr-steel-erp-web.vercel.app` y en `v2.mareliac.pe`.
+
 ## 2026-10-05 — cc21: D-389, pasar la tolerancia del 1 % avisa y no bloquea (PR #102 y #103)
 
 Reemplaza de D-388 el tope del 5 % y la regla de solo administrador. Detalle y runbook en
@@ -28,9 +49,11 @@ Reemplaza de D-388 el tope del 5 % y la regla de solo administrador. Detalle y r
   - **Corregidos:** la casilla atada al exceso (P2-1), el E2E del reporte directo sobre 5 %
     (P2-2), los comentarios que hablaban de administrador o de tope, el 5 % del editor, y
     `severe` en la auditoría.
-  - **P1-1, riesgo de política, presentado al dueño:** sin tope, una bobina equivocada casi vacía
-    se confirma con la casilla y deja las planchas valorizadas por una fracción del material
-    (el caso que D-249 había cerrado).
+  - **P1-1, riesgo de política, aceptado por el dueño el 2026-10-05 (reabre D-249):** sin tope,
+    una bobina equivocada casi vacía se confirma con la casilla y deja las planchas valorizadas
+    por una fracción del material (el caso que D-249 había cerrado). Si aparece un margen inflado
+    en RF-S4a, mirar primero los reportes con la etiqueta «Fuera de tolerancia» y `severe` en la
+    auditoría.
 - **Revisiones del PR #103:**
   - autorrevisión (`docs/revision/cc21-accesorio-autorrevision.md`): 0 P0, 1 P1, 3 P2, 3 P3;
   - segundo modelo (`docs/revision/cc21-accesorio-segundo-modelo.md`): sin P0 ni P1.
