@@ -12,6 +12,9 @@
     ],
     "deny": [
       "Bash(gh repo sync*)",
+      "Bash(git push *--force*)",
+      "Bash(git push *--delete*)",
+      "Bash(git push *-f *)",
       "Read(**/.env*)",
       "Bash(grep *.env*)",
       "Bash(sed *.env*)",
