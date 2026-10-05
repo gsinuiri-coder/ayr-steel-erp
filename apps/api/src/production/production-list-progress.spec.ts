@@ -173,6 +173,8 @@ describe('ProductionService.findAll — avance en metros de plancha', () => {
         productionOrder: { findUnique: jest.fn().mockResolvedValue(order('ROOFING', reversed)) },
         productionReport: { findMany: activeFindMany },
         inventoryBalance: { findMany: jest.fn().mockResolvedValue([]) },
+        // D-388: la etiqueta «Fuera de tolerancia» del detalle se lee de la auditoría de la orden.
+        auditLog: { findMany: jest.fn().mockResolvedValue([]) },
         inventoryMovement: { findMany: jest.fn().mockResolvedValue([]) },
         user: { findMany: jest.fn().mockResolvedValue([]) },
       } as never,
