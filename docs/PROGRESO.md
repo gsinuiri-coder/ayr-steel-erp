@@ -2,6 +2,31 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-05 — Ventana cc23 (D-390..D-396 desplegadas, PR #105, sin migración)
+
+Ventana desatendida con OK previo del dueño (D-397). Detalle y lista de revisión para el dueño en
+`docs/handoff/ventana-cc23.md`.
+
+- **Antes de la ventana:**
+  - CI 37284015576 sobre `cbed5aa` en verde: lint, typecheck y unitarios, E2E completo en el
+    runner, smoke de Neon `ci` y Sonar;
+  - 0 migraciones;
+  - revisiones sin P0 ni P1.
+- **Vuelta atrás anotada:** API `00086-ds5` (`git-sha=8abc4dc`) y `main` `81cd656`.
+- **API:**
+  - `ayr-steel-erp-api-00087-pcg`, con `git-sha=cbed5aa`, al 100 %;
+  - `/health` 200;
+  - `smoke:prod` 8/8 con la web vieja.
+- **Web:**
+  - merge del #105: `main` = `999fd01`, sin diff de runtime contra `cbed5aa`;
+  - Vercel en `success`;
+  - `smoke:prod` 8/8 en `ayr-steel-erp-web.vercel.app` y en `v2.mareliac.pe`.
+- **Vuelta atrás:** no hizo falta.
+- **Los reportes no se revisaron dentro de producción:** los revisa el dueño, con las URL del
+  handoff.
+- **Neon:** no se creó ni se borró ninguna rama.
+- **Salidas:** en `local-data/cc23/` del checkout principal.
+
 ## 2026-10-05 — cc23: reportes por línea de negocio con pestañas en la URL (PR #105, sin migración)
 
 Sesión desatendida con OK previo del dueño y UAT por defecto (D-397). Detalle, Paso 0 y revisiones
@@ -36,7 +61,7 @@ en `docs/handoff/ventana-cc23.md`.
 - **Registro de riesgo:** la pieza no escribe kardex ni datos. Si un número por línea no
   cuadra, mirar primero `SalesMarginService.assemble` (`viewLine`, `viewCostRows`) y
   `InventoryValuationService.valuation` (`inView`).
-- **Ventana:** pendiente.
+- **Ventana:** desplegada el 2026-10-05 entre las 04:06 y las 04:15 (Lima). Detalle en la entrada «Ventana cc23».
 
 ## 2026-10-05 — Ventana cc21 (D-389 desplegada, PR #102, sin migración)
 
