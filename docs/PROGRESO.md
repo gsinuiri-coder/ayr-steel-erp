@@ -2,6 +2,42 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-05 — cc23: reportes por línea de negocio con pestañas en la URL (PR #105, sin migración)
+
+Sesión desatendida con OK previo del dueño y UAT por defecto (D-397). Detalle, Paso 0 y revisiones
+en `docs/handoff/ventana-cc23.md`.
+
+- **Hecho, M1 a M3:**
+  - pestañas por línea con estado en `?linea=`: cambiar de pestaña entra al historial, conserva
+    el rango, y una línea inválida o sin reporte cae a «Todas» y corrige la URL;
+  - ventas y margen por línea, con «Todas» y Servicios «sin costo registrado»;
+  - inventario valorizado por línea (kg en bobinas, unidades en UPVC y Reventa);
+  - la matriz vive en `@ayr/shared` (`report-lines.ts`);
+  - la API valida `businessLine` (400 fuera de la matriz) y sigue siendo solo para administrador.
+- **Sacrificados:** M4 (ventas por material) y M5 (bobinas), en orden estricto.
+- **Decisiones:**
+  - D-390..D-397, del dueño;
+  - D-398..D-404, provisionales y pendientes del dueño: sin línea, Excel, material de OPs,
+    rango en la URL, redondeo del inventario, bobina de Reventa, Servicios en «Todas».
+- **Tests:**
+  - unitarios de la API `src/reports`: 136;
+  - web: 96, de los que 9 son de `line-tabs`;
+  - E2E `reportes-por-linea-cc23.spec.ts`: 3/3 contra build de producción, en base propia
+    `ayr_local_e2e_cc23`.
+- **Las pestañas suman «Todas».** En ventas y margen, la suma es exacta contando «Sin línea»
+  (D-398). En inventario, hasta 0,0001 por línea por redondeo (D-402).
+- **Revisiones:**
+  - autorrevisión: 0 P0 y 0 P1; P3-3, P3-8 y P3-9 corregidos;
+  - segundo modelo (Sonnet): 0 P0 y 0 P1;
+  - los P2 y P3 quedan anotados en el handoff.
+- **UAT local:** `docs/uat/cc23.md`.
+- **Rojos locales de infraestructura en specs ajenos:** el PSE apagado en
+  `reportes-costeo-rf-s4a` M2 y el dry-run de `normalizacion-bobinas-rf-s4b`.
+- **Registro de riesgo:** la pieza no escribe kardex ni datos. Si un número por línea no
+  cuadra, mirar primero `SalesMarginService.assemble` (`viewLine`, `viewCostRows`) y
+  `InventoryValuationService.valuation` (`inView`).
+- **Ventana:** pendiente.
+
 ## 2026-10-05 — Ventana cc21 (D-389 desplegada, PR #102, sin migración)
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc21.md`.

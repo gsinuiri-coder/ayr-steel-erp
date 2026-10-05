@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   PROFIT_SOURCES_NOTICE,
   BUSINESS_LINE_LABELS,
   FISCAL_DOC_TYPE_LABELS,
+  NO_COST_REPORT_LINES,
   Role,
+  SALES_MARGIN_LINES,
   businessToday,
   type MarginCostStatus,
   type SalesMarginDto,
@@ -16,6 +17,9 @@ import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { HeaderActions } from '@/components/header-actions';
+import { LineTabs } from '@/components/line-tabs';
+import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -40,15 +44,23 @@ import {
  * cuyo costo cubre más que eso. Prorratear daría un número inventado.
  */
 export function VentasMargenView() {
-  const [from, setFrom] = useState(firstOfMonth());
-  const [to, setTo] = useState(businessToday());
+  // cc23 (D-395): el rango va en la URL, como los filtros de D-289, para que refrescar y
+  // retroceder vuelvan al mismo estado; la pestaña de línea, con `useLineTab`.
+  const [url, setUrl] = useUrlState({ from: firstOfMonth(), to: businessToday() });
+  const { from, to } = url;
+  const { tab, line, select } = useLineTab(LINE_TABS);
+  // D-392: Servicios no tiene costo registrado; su pestaña muestra solo la venta.
+  const noCost = line !== undefined && NO_COST_REPORT_LINES.includes(line);
+  const validRange = DATE.test(from) && DATE.test(to) && from <= to;
+  const qs = `from=${from}&to=${to}${line === undefined ? '' : `&businessLine=${line}`}`;
 
   const report = useQuery({
-    queryKey: ['report', 'sales-margin', from, to],
-    queryFn: () => api<SalesMarginDto>(`/reports/sales-margin?from=${from}&to=${to}`),
-    enabled: from <= to,
+    queryKey: ['report', 'sales-margin', from, to, line ?? 'todas'],
+    queryFn: () => api<SalesMarginDto>(`/reports/sales-margin?${qs}`),
+    enabled: validRange,
   });
 
+  const cols: Columns = { cost: !noCost, opMaterial: line === undefined };
   const excluded = report.data?.orders.filter((o) => o.costStatus === 'NO_COMPARABLE') ?? [];
   // D-285: despachados sin salida de kardex; su costo no se puede rastrear.
   const untraceable = report.data?.orders.filter((o) => o.costStatus === 'NO_RASTREABLE') ?? [];
@@ -76,7 +88,7 @@ export function VentasMargenView() {
               max={to}
               value={from}
               onChange={(e) => {
-                if (e.target.value) setFrom(e.target.value);
+                if (e.target.value) setUrl({ from: e.target.value });
               }}
             />
           </div>
@@ -88,25 +100,47 @@ export function VentasMargenView() {
               min={from}
               value={to}
               onChange={(e) => {
-                if (e.target.value) setTo(e.target.value);
+                if (e.target.value) setUrl({ to: e.target.value });
               }}
             />
           </div>
-          {/* Descarga directa contra el API (patrón D-149), con el mismo rango que se ve. */}
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: `/api/reports/sales-margin/xlsx?from=${from}&to=${to}`,
-              },
-            ]}
-          />
+          {/* Descarga directa contra el API (patrón D-149), con el mismo rango que se ve.
+              D-396: sin exportación por línea; el Excel es el de «Todas» y solo se ofrece ahí. */}
+          {line === undefined && (
+            <HeaderActions
+              primary={['xlsx']}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  download: `/api/reports/sales-margin/xlsx?from=${from}&to=${to}`,
+                },
+              ]}
+            />
+          )}
         </div>
       </div>
 
-      {report.data && (
+      <LineTabs
+        lines={LINE_TABS.lines}
+        includeAll={LINE_TABS.includeAll}
+        value={tab}
+        onChange={select}
+      />
+
+      {!validRange && (
+        <p role="alert" className="text-sm text-destructive">
+          El rango de fechas no es válido.
+        </p>
+      )}
+
+      {report.data && noCost && (
+        <StatStrip className="sm:grid-cols-2 lg:grid-cols-2">
+          <Stat label="Venta sin IGV">{formatMoney(report.data.totals.salesPen)}</Stat>
+          <Stat label="Costo y margen">{NO_COST_LABEL}</Stat>
+        </StatStrip>
+      )}
+      {report.data && !noCost && (
         <StatStrip className="sm:grid-cols-2 lg:grid-cols-4">
           <Stat label="Venta sin IGV">{formatMoney(report.data.totals.salesPen)}</Stat>
           <Stat label="Costo de venta">{formatMoney(report.data.totals.costPen)}</Stat>
@@ -117,7 +151,7 @@ export function VentasMargenView() {
         </StatStrip>
       )}
 
-      {report.data && report.data.totals.partialOrderCount > 0 && (
+      {report.data && !noCost && report.data.totals.partialOrderCount > 0 && (
         <p role="status" className="text-xs text-muted-foreground">
           {report.data.totals.partialOrderCount === 1
             ? '1 pedido tiene costo parcial: hay líneas facturadas que todavía no salieron del almacén, así que el margen de arriba es un techo.'
@@ -144,25 +178,37 @@ export function VentasMargenView() {
                     <TableHead>Cliente</TableHead>
                     <TableHead className="hidden lg:table-cell">Vendedor</TableHead>
                     <TableHead className="text-right">Venta</TableHead>
-                    <TableHead className="text-right">Costo</TableHead>
-                    <TableHead className="text-right">Margen</TableHead>
-                    <TableHead className="text-right">%</TableHead>
-                    <TableHead className="hidden text-right xl:table-cell">
-                      Material de OPs
-                    </TableHead>
-                    <TableHead>Costo</TableHead>
+                    {cols.cost && (
+                      <>
+                        <TableHead className="text-right">Costo</TableHead>
+                        <TableHead className="text-right">Margen</TableHead>
+                        <TableHead className="text-right">%</TableHead>
+                      </>
+                    )}
+                    {cols.opMaterial && (
+                      <TableHead className="hidden text-right xl:table-cell">
+                        Material de OPs
+                      </TableHead>
+                    )}
+                    {cols.cost && <TableHead>Costo</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {included.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-muted-foreground">
-                        No hay comprobantes emitidos en ese rango.
+                      <TableCell colSpan={columnCount(cols)} className="text-muted-foreground">
+                        {line === undefined
+                          ? 'No hay comprobantes emitidos en ese rango.'
+                          : 'No hay ventas de esta línea en ese rango.'}
                       </TableCell>
                     </TableRow>
                   )}
                   {included.map((order) => (
-                    <OrderRow key={order.salesOrderId ?? order.documents[0]?.id} order={order} />
+                    <OrderRow
+                      key={order.salesOrderId ?? order.documents[0]?.id}
+                      order={order}
+                      cols={cols}
+                    />
                   ))}
                 </TableBody>
               </Table>
@@ -185,9 +231,11 @@ export function VentasMargenView() {
                       <TableHead>Pedido</TableHead>
                       <TableHead>Cliente</TableHead>
                       <TableHead className="text-right">Venta en el rango</TableHead>
-                      <TableHead className="hidden text-right xl:table-cell">
-                        Material de OPs
-                      </TableHead>
+                      {cols.opMaterial && (
+                        <TableHead className="hidden text-right xl:table-cell">
+                          Material de OPs
+                        </TableHead>
+                      )}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -196,9 +244,11 @@ export function VentasMargenView() {
                         <TableCell className="font-mono">{order.orderCode ?? '—'}</TableCell>
                         <TableCell>{order.customerName}</TableCell>
                         <TableCell className="text-right">{formatMoney(order.salesPen)}</TableCell>
-                        <TableCell className="hidden text-right xl:table-cell">
-                          {formatMoney(order.opMaterialCostPen)}
-                        </TableCell>
+                        {cols.opMaterial && (
+                          <TableCell className="hidden text-right xl:table-cell">
+                            {formatMoney(order.opMaterialCostPen)}
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -238,54 +288,78 @@ export function VentasMargenView() {
             </section>
           )}
 
-          <section className="space-y-2">
-            <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
-            <div className="overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Línea</TableHead>
-                    <TableHead className="text-right">Venta</TableHead>
-                    <TableHead className="text-right">Costo</TableHead>
-                    <TableHead className="text-right">Margen</TableHead>
-                    <TableHead className="text-right">%</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.data.totalsByLine.length === 0 && (
+          {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
+          {line === undefined && (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={5} className="text-muted-foreground">
-                        Sin ventas en el rango.
-                      </TableCell>
+                      <TableHead>Línea</TableHead>
+                      <TableHead className="text-right">Venta</TableHead>
+                      <TableHead className="text-right">Costo</TableHead>
+                      <TableHead className="text-right">Margen</TableHead>
+                      <TableHead className="text-right">%</TableHead>
                     </TableRow>
-                  )}
-                  {report.data.totalsByLine.map((t) => (
-                    <TableRow key={t.businessLine ?? 'sin-linea'}>
-                      <TableCell>
-                        {t.businessLine === null
-                          ? 'Sin línea (servicios y ajustes)'
-                          : BUSINESS_LINE_LABELS[t.businessLine]}
-                      </TableCell>
-                      <TableCell className="text-right">{formatMoney(t.salesPen)}</TableCell>
-                      <TableCell className="text-right">{formatMoney(t.costPen)}</TableCell>
-                      <TableCell className="text-right">{formatMoney(t.marginPen)}</TableCell>
-                      <TableCell className="text-right">
-                        {t.marginPct === null ? '—' : `${t.marginPct} %`}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+                  </TableHeader>
+                  <TableBody>
+                    {report.data.totalsByLine.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-muted-foreground">
+                          Sin ventas en el rango.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {report.data.totalsByLine.map((t) => (
+                      <TableRow key={t.businessLine ?? 'sin-linea'}>
+                        <TableCell>
+                          {t.businessLine === null
+                            ? 'Sin línea (servicios y ajustes)'
+                            : BUSINESS_LINE_LABELS[t.businessLine]}
+                        </TableCell>
+                        <TableCell className="text-right">{formatMoney(t.salesPen)}</TableCell>
+                        {t.businessLine !== null &&
+                        NO_COST_REPORT_LINES.includes(t.businessLine) ? (
+                          // D-392: la venta de Servicios suma igual; su costo no está registrado.
+                          <TableCell colSpan={3} className="text-right text-muted-foreground">
+                            {NO_COST_LABEL}
+                          </TableCell>
+                        ) : (
+                          <>
+                            <TableCell className="text-right">{formatMoney(t.costPen)}</TableCell>
+                            <TableCell className="text-right">{formatMoney(t.marginPen)}</TableCell>
+                            <TableCell className="text-right">
+                              {t.marginPct === null ? '—' : `${t.marginPct} %`}
+                            </TableCell>
+                          </>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
+          )}
         </>
       )}
     </RoleGate>
   );
 }
 
+/** Qué columnas lleva la tabla: sin costo en Servicios (D-392), sin material de OPs por línea. */
+interface Columns {
+  cost: boolean;
+  opMaterial: boolean;
+}
+
+/** Pedido, cliente, vendedor y venta, más las columnas que la pestaña lleve. */
+function columnCount(cols: Columns): number {
+  return 4 + (cols.cost ? 4 : 0) + (cols.opMaterial ? 1 : 0);
+}
+
 /** Una fila de pedido con sus comprobantes debajo. */
-function OrderRow({ order }: { order: SalesMarginOrderDto }) {
+function OrderRow({ order, cols }: { order: SalesMarginOrderDto; cols: Columns }) {
   return (
     <>
       <TableRow data-testid="fila-pedido">
@@ -293,21 +367,29 @@ function OrderRow({ order }: { order: SalesMarginOrderDto }) {
         <TableCell>{order.customerName}</TableCell>
         <TableCell className="hidden lg:table-cell">{order.sellerName ?? '—'}</TableCell>
         <TableCell className="text-right">{formatMoney(order.salesPen)}</TableCell>
-        <TableCell className="text-right">
-          {order.costPen === null ? '—' : formatMoney(order.costPen)}
-        </TableCell>
-        <TableCell className="text-right">
-          {order.marginPen === null ? '—' : formatMoney(order.marginPen)}
-        </TableCell>
-        <TableCell className="text-right">
-          {order.marginPct === null ? '—' : `${order.marginPct} %`}
-        </TableCell>
-        <TableCell className="hidden text-right xl:table-cell text-muted-foreground">
-          {formatMoney(order.opMaterialCostPen)}
-        </TableCell>
-        <TableCell>
-          <CostStatusBadge status={order.costStatus} />
-        </TableCell>
+        {cols.cost && (
+          <>
+            <TableCell className="text-right">
+              {order.costPen === null ? '—' : formatMoney(order.costPen)}
+            </TableCell>
+            <TableCell className="text-right">
+              {order.marginPen === null ? '—' : formatMoney(order.marginPen)}
+            </TableCell>
+            <TableCell className="text-right">
+              {order.marginPct === null ? '—' : `${order.marginPct} %`}
+            </TableCell>
+          </>
+        )}
+        {cols.opMaterial && (
+          <TableCell className="hidden text-right xl:table-cell text-muted-foreground">
+            {formatMoney(order.opMaterialCostPen)}
+          </TableCell>
+        )}
+        {cols.cost && (
+          <TableCell>
+            <CostStatusBadge status={order.costStatus} />
+          </TableCell>
+        )}
       </TableRow>
       {order.documents.map((d) => (
         <TableRow key={d.id} className="bg-muted/40 text-xs">
@@ -315,21 +397,25 @@ function OrderRow({ order }: { order: SalesMarginOrderDto }) {
           <TableCell>{FISCAL_DOC_TYPE_LABELS[d.docType]}</TableCell>
           <TableCell className="hidden lg:table-cell">{formatDate(d.issueDate)}</TableCell>
           <TableCell className="text-right">{formatMoney(d.salesPen)}</TableCell>
-          <TableCell className="text-right">
-            {d.costPen === null ? (
-              <span title="El despacho de este comprobante no está declarado (D-205)">—</span>
-            ) : (
-              formatMoney(d.costPen)
-            )}
-          </TableCell>
-          <TableCell className="text-right">
-            {d.marginPen === null ? '—' : formatMoney(d.marginPen)}
-          </TableCell>
-          <TableCell className="text-right">
-            {d.marginPct === null ? '—' : `${d.marginPct} %`}
-          </TableCell>
-          <TableCell className="hidden xl:table-cell" />
-          <TableCell />
+          {cols.cost && (
+            <>
+              <TableCell className="text-right">
+                {d.costPen === null ? (
+                  <span title="El despacho de este comprobante no está declarado (D-205)">—</span>
+                ) : (
+                  formatMoney(d.costPen)
+                )}
+              </TableCell>
+              <TableCell className="text-right">
+                {d.marginPen === null ? '—' : formatMoney(d.marginPen)}
+              </TableCell>
+              <TableCell className="text-right">
+                {d.marginPct === null ? '—' : `${d.marginPct} %`}
+              </TableCell>
+            </>
+          )}
+          {cols.opMaterial && <TableCell className="hidden xl:table-cell" />}
+          {cols.cost && <TableCell />}
         </TableRow>
       ))}
     </>
@@ -349,6 +435,18 @@ function CostStatusBadge({ status }: { status: MarginCostStatus }) {
   }
   return <Badge variant="destructive">{COST_STATUS_LABELS[status]}</Badge>;
 }
+
+/** cc23 (D-391, D-393): todas las líneas, con «Todas» primera y por defecto; el rango sobrevive. */
+const LINE_TABS: LineTabsConfig = {
+  lines: SALES_MARGIN_LINES,
+  includeAll: true,
+  keep: ['from', 'to'],
+};
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** D-392: lo que se declara en lugar del costo y el margen de Servicios. */
+const NO_COST_LABEL = 'Sin costo registrado';
 
 /** Primer día del mes de negocio en curso, que es el rango por defecto más útil. */
 function firstOfMonth(): string {

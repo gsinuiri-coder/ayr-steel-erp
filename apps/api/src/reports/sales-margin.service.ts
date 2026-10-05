@@ -398,6 +398,9 @@ export class SalesMarginService {
     let untraceableSales = ZERO;
     let excludedSales = ZERO;
 
+    // cc23 (D-391): la pestaña de la línea; `undefined` es «Todas», el reporte de siempre.
+    const viewLine = query.businessLine;
+
     for (const docs of buckets.values()) {
       // Un bucket nunca nace vacío —se crea al empujarle su primer comprobante—, así que
       // esto no puede ocurrir; se comprueba en vez de afirmarlo para no dejar una aserción
@@ -405,7 +408,6 @@ export class SalesMarginService {
       const [first] = docs;
       if (first === undefined) continue;
       const orderId = first.sales_order_id;
-      const sales = docs.reduce((acc, d) => acc.plus(signedSubtotal(d)), ZERO);
 
       const costStatus = resolveCostStatus({
         orderId,
@@ -433,16 +435,47 @@ export class SalesMarginService {
                 (r.invoice_id !== null && inRangeDocIds.has(r.invoice_id)),
             );
 
+      // cc23 (D-391): con una línea elegida, la fila del pedido es **su porción de esa línea**:
+      // la venta de las líneas de sus comprobantes que son de esa línea y, de `orderCostRows`
+      // —las mismas filas que suma «Todas»—, las de esa línea. No cambia cómo se calcula el
+      // costo: se agrupa lo mismo que «Todas» ya abre en `totalsByLine`, y por eso las
+      // pestañas suman el total de «Todas». Un pedido sin nada de esa línea no aparece.
+      const viewCostRows =
+        viewLine === undefined
+          ? orderCostRows
+          : orderCostRows.filter((r) => r.business_line_code === viewLine);
+      const viewDocs =
+        viewLine === undefined
+          ? docs
+          : docs.filter(
+              (d) =>
+                (salesLinesByDocument.get(d.id) ?? []).some(
+                  (r) => r.business_line_code === viewLine,
+                ) || viewCostRows.some((r) => r.invoice_id === d.id),
+            );
+      if (viewLine !== undefined && viewDocs.length === 0 && viewCostRows.length === 0) continue;
+      const docSalesInView = (d: DocumentRow): Decimal =>
+        viewLine === undefined ? signedSubtotal(d) : lineSales(d, viewLine, salesLinesByDocument);
+      const sales = viewDocs.reduce((acc, d) => acc.plus(docSalesInView(d)), ZERO);
+
       // En `NO_COMPARABLE` el costo del pedido cubre más venta que la del rango, así que no se
       // muestra: un costo entero contra una venta parcial es peor que ningún costo.
       const cost = inTotals
-        ? orderCostRows.reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
+        ? viewCostRows.reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
         : null;
 
-      const documentDtos: SalesMarginDocumentDto[] = docs.map((d) => {
-        const docSales = signedSubtotal(d);
+      const documentDtos: SalesMarginDocumentDto[] = viewDocs.map((d) => {
+        const docSales = docSalesInView(d);
         // Fuera de los totales, el comprobante tampoco muestra costo (autorrevisión P2-7).
-        const docCost = inTotals ? (costByDocument.get(d.id) ?? null) : null;
+        const docCost = !inTotals
+          ? null
+          : viewLine === undefined
+            ? (costByDocument.get(d.id) ?? null)
+            : costByDocument.has(d.id)
+              ? viewCostRows
+                  .filter((r) => r.invoice_id === d.id)
+                  .reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
+              : null;
         return {
           id: d.id,
           number: d.number,
@@ -512,6 +545,7 @@ export class SalesMarginService {
     }
 
     const totalsByLine: SalesMarginLineTotalDto[] = [...lineTotals.entries()]
+      .filter(([line]) => viewLine === undefined || line === viewLine)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([line, v]) => ({
         businessLine: line === SIN_LINEA ? null : fromDbLineCode(line),
@@ -547,6 +581,21 @@ const SIN_LINEA = '__sin_linea__';
 
 function isString(v: string | null): v is string {
   return v !== null;
+}
+
+/**
+ * cc23: la venta de un comprobante en una línea, sin IGV y con signo, desde sus líneas (la
+ * misma fuente que `totalsByLine`).
+ */
+function lineSales(
+  doc: DocumentRow,
+  line: string,
+  salesLinesByDocument: Map<string, SalesByLineRow[]>,
+): Decimal {
+  const sign = doc.doc_type === 'NOTA_CREDITO' ? -1 : 1;
+  return (salesLinesByDocument.get(doc.id) ?? [])
+    .filter((r) => r.business_line_code === line)
+    .reduce((acc, r) => acc.plus(toDecimal(r.subtotal_pen.toString()).times(sign)), ZERO);
 }
 
 /** Sin IGV y con signo: una nota de crédito resta. */

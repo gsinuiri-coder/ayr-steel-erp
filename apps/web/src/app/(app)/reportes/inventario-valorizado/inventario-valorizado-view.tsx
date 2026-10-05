@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
+  COIL_BUSINESS_LINES,
   COIL_STATUS_LABELS,
+  INVENTORY_VALUATION_LINES,
   coilGroupLabel,
   Role,
   type InventoryValuationCoilGroupDto,
@@ -15,6 +17,8 @@ import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney, formatQty } from '@/lib/format';
 import { HeaderActions } from '@/components/header-actions';
+import { LineTabs } from '@/components/line-tabs';
+import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -45,12 +49,24 @@ import { LINK_CLASSNAME } from '@/lib/utils';
  */
 const COST_DECIMALS = 4;
 
+/** cc23 (D-391, D-393): las líneas con inventario, con «Todas» primera y por defecto. */
+const LINE_TABS: LineTabsConfig = { lines: INVENTORY_VALUATION_LINES, includeAll: true };
+
 export function InventarioValorizadoView() {
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const { tab, line, select } = useLineTab(LINE_TABS);
+  // D-391: kilos en las líneas con bobinas; unidades en Coberturas (UPVC) y Reventa, que no
+  // tienen bobinas propias (la bobina de reventa vive en la línea que la compró, D-116).
+  const hasCoils = line === undefined || COIL_BUSINESS_LINES.includes(line);
 
   const report = useQuery({
-    queryKey: ['report', 'inventory-valuation'],
-    queryFn: () => api<InventoryValuationDto>('/reports/inventory-valuation'),
+    queryKey: ['report', 'inventory-valuation', line ?? 'todas'],
+    queryFn: () =>
+      api<InventoryValuationDto>(
+        line === undefined
+          ? '/reports/inventory-valuation'
+          : `/reports/inventory-valuation?businessLine=${line}`,
+      ),
   });
 
   const toggle = (key: string): void => {
@@ -74,23 +90,40 @@ export function InventarioValorizadoView() {
           </p>
         </div>
         {/* Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que
-            esta pantalla, así que no hay dos caminos que puedan divergir. */}
-        <HeaderActions
-          primary={['xlsx']}
-          actions={[
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              download: '/api/reports/inventory-valuation/xlsx',
-            },
-          ]}
-        />
+            esta pantalla, así que no hay dos caminos que puedan divergir. D-396: sin
+            exportación por línea; el Excel es el de «Todas» y solo se ofrece ahí. */}
+        {line === undefined && (
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: '/api/reports/inventory-valuation/xlsx',
+              },
+            ]}
+          />
+        )}
       </div>
 
-      {report.data && (
-        <StatStrip className="sm:grid-cols-3 lg:grid-cols-3">
+      <LineTabs
+        lines={LINE_TABS.lines}
+        includeAll={LINE_TABS.includeAll}
+        value={tab}
+        onChange={select}
+      />
+
+      {report.data && hasCoils && (
+        <StatStrip className="sm:grid-cols-2 lg:grid-cols-4">
           <Stat label="Bobinas">{formatMoney(report.data.totals.coilValuePen)}</Stat>
+          <Stat label="Bobinas (kg)">{formatQty(report.data.totals.coilQtyKg, 'kg')}</Stat>
           <Stat label="Productos">{formatMoney(report.data.totals.productValuePen)}</Stat>
+          <Stat label="Total">{formatMoney(report.data.totals.totalValuePen)}</Stat>
+        </StatStrip>
+      )}
+      {report.data && !hasCoils && (
+        <StatStrip className="sm:grid-cols-2 lg:grid-cols-2">
+          <Stat label="Productos con stock">{report.data.products.length}</Stat>
           <Stat label="Total">{formatMoney(report.data.totals.totalValuePen)}</Stat>
         </StatStrip>
       )}
@@ -104,43 +137,45 @@ export function InventarioValorizadoView() {
 
       {report.data && (
         <>
-          <section className="space-y-2">
-            <h2 className="text-sm font-semibold">Bobinas con saldo</h2>
-            <div className="overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-background">
-                  <TableRow>
-                    <TableHead>Línea</TableHead>
-                    <TableHead className="text-right">Espesor</TableHead>
-                    <TableHead>Color</TableHead>
-                    <TableHead className="text-right">Bobinas</TableHead>
-                    <TableHead className="text-right">Saldo (kg)</TableHead>
-                    <TableHead className="text-right">Costo/kg</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.data.coilGroups.length === 0 && (
+          {hasCoils && (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold">Bobinas con saldo</h2>
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
-                      <TableCell colSpan={7} className="text-muted-foreground">
-                        No hay bobinas con saldo.
-                      </TableCell>
+                      <TableHead>Línea</TableHead>
+                      <TableHead className="text-right">Espesor</TableHead>
+                      <TableHead>Color</TableHead>
+                      <TableHead className="text-right">Bobinas</TableHead>
+                      <TableHead className="text-right">Saldo (kg)</TableHead>
+                      <TableHead className="text-right">Costo/kg</TableHead>
+                      <TableHead className="text-right">Valor</TableHead>
                     </TableRow>
-                  )}
-                  {report.data.coilGroups.map((group) => (
-                    <CoilGroupRows
-                      key={group.key}
-                      group={group}
-                      open={open.has(group.key)}
-                      onToggle={() => {
-                        toggle(group.key);
-                      }}
-                    />
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+                  </TableHeader>
+                  <TableBody>
+                    {report.data.coilGroups.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-muted-foreground">
+                          No hay bobinas con saldo.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {report.data.coilGroups.map((group) => (
+                      <CoilGroupRows
+                        key={group.key}
+                        group={group}
+                        open={open.has(group.key)}
+                        onToggle={() => {
+                          toggle(group.key);
+                        }}
+                      />
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
+          )}
 
           <section className="space-y-2">
             <h2 className="text-sm font-semibold">Productos con stock</h2>
@@ -183,45 +218,50 @@ export function InventarioValorizadoView() {
             </div>
           </section>
 
-          <section className="space-y-2">
-            <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
-            <div className="overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Línea</TableHead>
-                    <TableHead className="text-right">Bobinas</TableHead>
-                    <TableHead className="text-right">Productos</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.data.totalsByLine.map((t) => (
-                    <TableRow key={t.businessLine}>
-                      <TableCell>{BUSINESS_LINE_LABELS[t.businessLine]}</TableCell>
-                      <TableCell className="text-right">{formatMoney(t.coilValuePen)}</TableCell>
-                      <TableCell className="text-right">{formatMoney(t.productValuePen)}</TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatMoney(t.totalValuePen)}
+          {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
+          {line === undefined && (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Línea</TableHead>
+                      <TableHead className="text-right">Bobinas</TableHead>
+                      <TableHead className="text-right">Productos</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {report.data.totalsByLine.map((t) => (
+                      <TableRow key={t.businessLine}>
+                        <TableCell>{BUSINESS_LINE_LABELS[t.businessLine]}</TableCell>
+                        <TableCell className="text-right">{formatMoney(t.coilValuePen)}</TableCell>
+                        <TableCell className="text-right">
+                          {formatMoney(t.productValuePen)}
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          {formatMoney(t.totalValuePen)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="border-t-2">
+                      <TableCell className="font-semibold">Total general</TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {formatMoney(report.data.totals.coilValuePen)}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {formatMoney(report.data.totals.productValuePen)}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold">
+                        {formatMoney(report.data.totals.totalValuePen)}
                       </TableCell>
                     </TableRow>
-                  ))}
-                  <TableRow className="border-t-2">
-                    <TableCell className="font-semibold">Total general</TableCell>
-                    <TableCell className="text-right font-semibold">
-                      {formatMoney(report.data.totals.coilValuePen)}
-                    </TableCell>
-                    <TableCell className="text-right font-semibold">
-                      {formatMoney(report.data.totals.productValuePen)}
-                    </TableCell>
-                    <TableCell className="text-right font-semibold">
-                      {formatMoney(report.data.totals.totalValuePen)}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </div>
-          </section>
+                  </TableBody>
+                </Table>
+              </div>
+            </section>
+          )}
         </>
       )}
     </RoleGate>

@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import {
   businessToday,
   coilMonthReportQuerySchema,
+  inventoryValuationQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
   salesByMaterialQuerySchema,
@@ -14,6 +15,7 @@ import {
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
   type InventoryValuationDto,
+  type InventoryValuationQuery,
   type KardexPepsQuery,
   type KardexPepsReportDto,
   type KardexSheetQuery,
@@ -105,11 +107,17 @@ export class ReportsController {
    */
   @Roles(Role.ADMINISTRADOR)
   @Get('inventory-valuation')
-  inventoryValuationReport(): Promise<InventoryValuationDto> {
-    return this.inventoryValuation.valuation();
+  inventoryValuationReport(
+    // cc23: la pestaña de la línea (D-391), validada contra la matriz; fuera de ella, 400.
+    @Query(new ZodValidationPipe(inventoryValuationQuerySchema)) query: InventoryValuationQuery,
+  ): Promise<InventoryValuationDto> {
+    return this.inventoryValuation.valuation(query);
   }
 
-  /** RF-S4a/M2. Solo ADMINISTRADOR, por el mismo motivo. */
+  /**
+   * RF-S4a/M2. Solo ADMINISTRADOR, por el mismo motivo. cc23: `businessLine` es la pestaña de
+   * la línea (D-391), validada contra la matriz; una línea fuera de ella es 400.
+   */
   @Roles(Role.ADMINISTRADOR)
   @Get('sales-margin')
   salesMarginReport(
@@ -137,7 +145,8 @@ export class ReportsController {
     @Query(new ZodValidationPipe(salesMarginQuerySchema)) query: SalesMarginQuery,
     @Res() res: Response,
   ): Promise<void> {
-    const report = await this.salesMargin.salesMargin(query);
+    // cc23 (D-396): sin exportación por línea; el Excel sigue siendo el de «Todas».
+    const report = await this.salesMargin.salesMargin({ from: query.from, to: query.to });
     sendXlsx(res, salesMarginXlsx(report));
   }
 
