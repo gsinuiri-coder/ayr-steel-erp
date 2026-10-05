@@ -5,7 +5,9 @@ import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   piecesTheoreticalKg,
+  TOLERANCE_OVERRIDE_REQUIRED,
   toDecimal,
+  type MountedKgExcess,
   type ProductionOrderDto,
   type RoofingBatchOrderDto,
 } from '@ayr/shared';
@@ -20,6 +22,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  EMPTY_OVERRIDE,
+  overrideInput,
+  ToleranceOverrideRow,
+  type ToleranceOverrideState,
+} from './tolerance-override';
 
 /**
  * D-343: el reporte de una orden de **accesorio** — metros lineales de bobina, sin detalle de largos.
@@ -64,6 +72,15 @@ export function AccessoryReportCard({
   const [asking, setAsking] = useState(false);
   const reasonToSend = useRef<string | null>(null);
   const [closeMode, setCloseMode] = useState(false);
+  /**
+   * D-389: el rechazo por tolerancia, con sus cifras y la huella de lo que se mandó (bobina,
+   * metros y kilos). El aviso y la casilla valen solo mientras esa huella siga siendo la de la
+   * pantalla: cambiar la bobina, los metros o los kilos es otro exceso que nadie vio.
+   */
+  const [rejected, setRejected] = useState<{ excess: MountedKgExcess; fingerprint: string } | null>(
+    null,
+  );
+  const [override, setOverride] = useState<ToleranceOverrideState>(EMPTY_OVERRIDE);
   const key = useIdempotencyKey();
 
   const coil =
@@ -78,6 +95,10 @@ export function AccessoryReportCard({
   const validMeters = typedMeters !== null;
   const typedPieces = /^\d+$/.test(piecesCount.trim()) ? Number(piecesCount.trim()) : null;
   const validPieces = piecesCount.trim() === '' || (typedPieces !== null && typedPieces > 0);
+  const fingerprint = `${coil?.coilId ?? ''}|${typedMeters?.toFixed(3) ?? ''}|${consumedKg.trim()}`;
+  const tolerance =
+    rejected !== null && rejected.fingerprint === fingerprint ? rejected.excess : null;
+  const toleranceOverride = tolerance === null ? null : overrideInput(override, tolerance);
   // Los kilos teóricos con el ancho de la bobina montada: la misma cuenta que hace el API.
   const theoreticalKg =
     validMeters && coil
@@ -114,6 +135,8 @@ export function AccessoryReportCard({
           ? { closeConsumedKg: toDecimal(closeKg.trim()).toFixed(3) }
           : {}),
         ...(close && reason ? { closeReason: reason } : {}),
+        // D-389: la casilla y el motivo, solo cuando el API pidió la casilla.
+        ...(toleranceOverride === null ? {} : { toleranceOverride }),
         operationDate,
         confirmBackdate: confirmBackdate || undefined,
       };
@@ -134,9 +157,21 @@ export function AccessoryReportCard({
       setMeters('');
       setPiecesCount('');
       setConsumedKg('');
+      setRejected(null);
+      setOverride(EMPTY_OVERRIDE);
       onDone(updated, variables.close);
     },
     onError: (err, variables) => {
+      // D-389: el reporte pasó la tolerancia del 1 %: se muestra el aviso con la casilla y se
+      // reenvía con ella. Va **antes** que el motivo del despunte: su mensaje también habla de
+      // «motivo», y confundirlos abría el diálogo del despunte en bucle (revisión de cc20).
+      if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
+        const excess = err.details?.excess;
+        setRejected(excess === undefined ? null : { excess, fingerprint });
+        reasonToSend.current = null;
+        if (err.details?.excess === undefined) toast.error(err.message);
+        return;
+      }
       // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
       if (variables.close && err instanceof ApiError && /motivo/i.test(err.message)) {
         setAsking(true);
@@ -157,6 +192,8 @@ export function AccessoryReportCard({
   };
 
   const busy = disabled || send.isPending || closing;
+  /** D-389: con el aviso a la vista, se reenvía solo con la casilla y el motivo completos. */
+  const toleranceBlocked = tolerance !== null && toleranceOverride === null;
   const canSend =
     validMeters &&
     validPieces &&
@@ -197,6 +234,9 @@ export function AccessoryReportCard({
                   value={meters}
                   onChange={(e) => {
                     setMeters(e.target.value);
+                    // Otros metros, otro exceso: la casilla vale solo para las cifras que se vieron.
+                    setRejected(null);
+                    setOverride(EMPTY_OVERRIDE);
                   }}
                 />
               </div>
@@ -270,11 +310,27 @@ export function AccessoryReportCard({
                 }}
               />
             </div>
+            {tolerance !== null && (
+              <div
+                className="grid gap-3 rounded-lg border border-tone-warning-foreground/40 bg-tone-warning p-3 text-sm text-tone-warning-foreground"
+                data-testid="tolerance-override"
+                role="alert"
+              >
+                <ToleranceOverrideRow
+                  title={`Reporte de ${order.code}`}
+                  label={`la cantidad reportada de ${order.code}`}
+                  excess={tolerance}
+                  value={override}
+                  onChange={setOverride}
+                  disabled={busy}
+                />
+              </div>
+            )}
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant="outline"
                 aria-label={`Reportar los metros de ${order.code}`}
-                disabled={!canSend || busy}
+                disabled={!canSend || busy || toleranceBlocked}
                 pending={send.isPending && !closeMode}
                 pendingText="Guardando…"
                 onClick={() => {
@@ -285,7 +341,7 @@ export function AccessoryReportCard({
               </Button>
               <Button
                 aria-label={`Reportar y cerrar ${order.code}`}
-                disabled={!canSend || busy}
+                disabled={!canSend || busy || toleranceBlocked}
                 pending={send.isPending && closeMode}
                 pendingText="Cerrando…"
                 onClick={() => {

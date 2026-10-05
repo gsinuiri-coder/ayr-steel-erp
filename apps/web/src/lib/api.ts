@@ -1,3 +1,5 @@
+import type { MountedKgExcess } from '@ayr/shared';
+
 /**
  * Cliente HTTP del web. Habla con `/api/*` (mismo origen; Next reenvía al API, D-015).
  * Si recibe 401 intenta un refresh (una sola vez, en vuelo compartido) y reintenta.
@@ -13,6 +15,11 @@ export class ApiError extends Error {
      * confirmando" de cualquier otro 400, sin reconocer el texto del mensaje.
      */
     public readonly code?: string,
+    /**
+     * D-389: el resto del cuerpo del error cuando trae datos de dominio (hoy, `excess` de
+     * `TOLERANCE_OVERRIDE_REQUIRED`: las cifras para ofrecer la casilla).
+     */
+    public readonly details?: { excess?: MountedKgExcess },
   ) {
     super(message);
     this.name = 'ApiError';
@@ -23,6 +30,7 @@ interface ErrorBody {
   message?: string | string[];
   errors?: Record<string, string[] | undefined>;
   code?: string;
+  excess?: MountedKgExcess;
 }
 
 let refreshInFlight: Promise<boolean> | null = null;
@@ -47,7 +55,13 @@ async function toError(res: Response): Promise<ApiError> {
   const message = Array.isArray(body.message)
     ? body.message.join(', ')
     : (body.message ?? `Error ${res.status}`);
-  return new ApiError(res.status, message, body.errors, body.code);
+  return new ApiError(
+    res.status,
+    message,
+    body.errors,
+    body.code,
+    body.excess === undefined ? undefined : { excess: body.excess },
+  );
 }
 
 export interface ApiOptions {
