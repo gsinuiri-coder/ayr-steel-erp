@@ -86,6 +86,8 @@ export type CoilMonthReportSectionDto = z.infer<typeof coilMonthReportSectionSch
  */
 export const coilMonthReportSchema = z.object({
   month: monthSchema,
+  /** cc24 (D-408): la línea filtrada (la pestaña); `null` sin filtro, las dos líneas. */
+  businessLine: z.enum(BUSINESS_LINES).nullable(),
   /** Primer y último día del mes, `YYYY-MM-DD`, para rotular el corte sin recalcularlo. */
   from: z.string(),
   to: z.string(),

@@ -138,6 +138,7 @@ const EMPTY_SECTION = {
 
 const COIL_MONTH: CoilMonthReportDto = {
   month: '2026-08',
+  businessLine: null,
   from: '2026-08-01',
   to: '2026-08-31',
   sealed: EMPTY_SECTION,

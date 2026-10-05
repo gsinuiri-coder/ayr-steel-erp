@@ -333,11 +333,14 @@ export function buildCoilMonthReportPdf(
   report: CoilMonthReportDto,
   generatedAt: string,
 ): Promise<Buffer> {
-  const doc = newDoc(`Reporte mensual de bobinas ${report.month}`);
+  // cc24 (D-408): el PDF sigue la pestaña; la línea va en el título.
+  const line =
+    report.businessLine === null ? '' : ` — ${BUSINESS_LINE_LABELS[report.businessLine]}`;
+  const doc = newDoc(`Reporte mensual de bobinas ${report.month}${line}`);
   const result = collect(doc);
   header(
     doc,
-    `Reporte mensual de bobinas — del ${report.from} al ${report.to} — generado ${generatedAt}`,
+    `Reporte mensual de bobinas${line} — del ${report.from} al ${report.to} — generado ${generatedAt}`,
   );
   let y = MARGIN + 40;
   for (const [title, film, section] of [

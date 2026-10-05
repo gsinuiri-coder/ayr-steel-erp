@@ -211,6 +211,7 @@ export class ReportsService {
 
     return {
       month,
+      businessLine: query.businessLine ?? null,
       from,
       to: endOfMonth(month),
       sealed,

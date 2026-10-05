@@ -95,7 +95,7 @@ export class ReportsController {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="reporte-bobinas-${report.month}.pdf"`,
+      `attachment; filename="reporte-bobinas-${report.month}${report.businessLine === null ? '' : `-${report.businessLine}`}.pdf"`,
     );
     res.send(buffer);
   }

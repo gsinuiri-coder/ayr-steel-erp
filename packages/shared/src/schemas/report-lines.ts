@@ -26,7 +26,8 @@ export const INVENTORY_VALUATION_LINES = [
   BusinessLine.TRADING,
 ] as const;
 
-export const COIL_REPORT_LINES = [BusinessLine.DRYWALL, BusinessLine.METALLIC_ROOFING] as const;
+/** cc24 (D-408, D-418): Coberturas Aluzinc primera y por defecto, como en «Ventas por material». */
+export const COIL_REPORT_LINES = [BusinessLine.METALLIC_ROOFING, BusinessLine.DRYWALL] as const;
 
 /**
  * cc24 (D-406, D-407): las pestañas de «Ventas por material», sin «Todas» y con Coberturas

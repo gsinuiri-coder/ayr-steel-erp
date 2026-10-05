@@ -85,6 +85,36 @@ test.describe('Reportes por línea (cc24)', () => {
     }
   });
 
+  test('bobinas: Aluzinc por defecto, el mes y la pestaña en la URL, descargas por línea', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page);
+    await page.goto('/reportes/bobinas?mes=2026-09');
+    await expect(page.getByRole('heading', { name: 'Reporte mensual de bobinas' })).toBeVisible();
+    await expect(page.getByTestId('pestanas-linea').getByRole('tab')).toHaveText([
+      'Coberturas Aluzinc',
+      'Drywall',
+    ]);
+    await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      'href',
+      '/api/reports/coils/xlsx?month=2026-09&businessLine=metallic-roofing',
+    );
+
+    await tab(page, 'Drywall').click();
+    await expect(page).toHaveURL('/reportes/bobinas?mes=2026-09&linea=drywall');
+    await page.reload();
+    await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByLabel('Mes')).toHaveValue('2026-09');
+
+    await page.goBack();
+    await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
+
+    await page.goto('/reportes/bobinas?linea=services');
+    await expect(page).toHaveURL('/reportes/bobinas');
+    await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
+  });
+
   test('la venta por material de cada línea es la de ventas y margen', async ({ baseURL }) => {
     const api = await adminApi(baseURL!);
     const range = `from=${FROM}&to=${businessToday()}`;
