@@ -229,21 +229,21 @@ export function salesMarginXlsx(report: SalesMarginDto): { buffer: Buffer; filen
           t.businessLine === null
             ? 'Sin línea (servicios y ajustes)'
             : BUSINESS_LINE_LABELS[t.businessLine];
-        // D-392/D-409: Servicios no tiene costo registrado y queda fuera del margen; su fila
+        // D-392/D-409/D-419: Servicios y «Sin línea» no tienen costo registrado y quedan fuera del margen; su fila
         // no muestra un costo 0 con margen del 100 %, igual que en la pantalla.
-        return t.businessLine !== null && NO_COST_REPORT_LINES.includes(t.businessLine)
+        return t.businessLine === null || NO_COST_REPORT_LINES.includes(t.businessLine)
           ? [label, num(t.salesPen), null, null, null]
           : [label, num(t.salesPen), num(t.costPen), num(t.marginPen), num(t.marginPct)];
       }),
       [
-        'Total del rango (margen sin Servicios)',
+        'Total del rango (margen sin Servicios ni líneas sin producto)',
         num(report.totals.salesPen),
         num(report.totals.costPen),
         num(report.totals.marginPen),
         num(report.totals.marginPct),
       ],
       [
-        'Servicios: sin costo registrado, fuera del margen',
+        'Sin costo registrado (Servicios y líneas sin producto), fuera del margen',
         num(report.totals.noCostSalesPen),
         null,
         null,

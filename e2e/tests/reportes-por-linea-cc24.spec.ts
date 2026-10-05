@@ -165,12 +165,17 @@ test.describe('Reportes por línea (cc24)', () => {
     }
   });
 
-  test('«Todas» de ventas y margen: el margen sin Servicios', async ({ baseURL }) => {
+  test('«Todas» de ventas y margen: el margen sin Servicios ni «Sin línea»', async ({
+    baseURL,
+  }) => {
     const api = await adminApi(baseURL!);
     const range = `from=${FROM}&to=${businessToday()}`;
     const all = await getJson<SalesMarginDto>(api, `/api/reports/sales-margin?${range}`);
-    const services = all.totalsByLine.find((t) => t.businessLine === 'services')?.salesPen ?? '0';
-    expect(all.totals.noCostSalesPen).toBe(toDecimal(services).toFixed(4));
+    // D-409 y D-419: la venta sin costo registrado es la de Servicios más la «Sin línea».
+    const noCost = all.totalsByLine
+      .filter((t) => t.businessLine === 'services' || t.businessLine === null)
+      .map((t) => t.salesPen);
+    expect(all.totals.noCostSalesPen).toBe(sum(noCost).toFixed(4));
     expect(all.totals.marginPen).toBe(
       toDecimal(all.totals.salesPen)
         .minus(all.totals.noCostSalesPen)

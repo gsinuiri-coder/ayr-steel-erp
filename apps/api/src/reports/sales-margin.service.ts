@@ -583,9 +583,15 @@ export class SalesMarginService {
     // fila de «Totales por línea» (con la de los pedidos excluidos, D-412); en la pestaña de
     // Servicios, toda la venta; en las demás pestañas, nada. El costo no cambia: Servicios no
     // tiene kardex (`NOOP`).
+    // D-419: en «Todas» también queda fuera la venta «Sin línea» (líneas escritas a mano, sin
+    // producto, D-398): tampoco tiene costo registrado. Su fila de costo es siempre 0, porque
+    // toda fila de costo lleva la línea de un producto o de un movimiento.
     const noCostSales =
       viewLine === undefined
-        ? NO_COST_REPORT_LINES.reduce((acc, l) => acc.plus(lineTotals.get(l)?.sales ?? ZERO), ZERO)
+        ? [...NO_COST_REPORT_LINES, SIN_LINEA].reduce(
+            (acc, l) => acc.plus(lineTotals.get(l)?.sales ?? ZERO),
+            ZERO,
+          )
         : noCostView
           ? totalSales
           : ZERO;

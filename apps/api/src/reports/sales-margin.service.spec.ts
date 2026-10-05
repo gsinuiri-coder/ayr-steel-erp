@@ -568,9 +568,11 @@ describe('SalesMarginService — por línea (cc23)', () => {
     const noLine = all.totalsByLine.find((t) => t.businessLine === null);
     expect(noLine?.salesPen).toBe('30.0000');
 
-    for (const key of ['salesPen', 'marginPen'] as const) {
-      expect(sum([...tabs.map((t) => t.totals[key]), noLine!.salesPen])).toBe(all.totals[key]);
-    }
+    expect(sum([...tabs.map((t) => t.totals.salesPen), noLine!.salesPen])).toBe(
+      all.totals.salesPen,
+    );
+    // D-409/D-419: el margen de «Todas» no cuenta Servicios ni «Sin línea»: es el de las pestañas.
+    expect(sum(tabs.map((t) => t.totals.marginPen))).toBe(all.totals.marginPen);
     for (const key of ['costPen', 'excludedSalesPen', 'untraceableSalesPen'] as const) {
       expect(sum(tabs.map((t) => t.totals[key]))).toBe(all.totals[key]);
     }
@@ -600,6 +602,20 @@ describe('SalesMarginService — por línea (cc23)', () => {
       partialOrderCount: 1,
     });
     expect(all.orders).toHaveLength(5);
+  });
+
+  it('D-419: el margen de «Todas» deja fuera Servicios y «Sin línea»; la venta los cuenta', async () => {
+    const { service } = await buildService(seeds);
+    const all = await service.salesMargin(RANGE);
+    // Servicios 100 (o1) + «Sin línea» 30 (d6): 130 sin costo registrado.
+    expect(all.totals).toMatchObject({
+      salesPen: '2190.0000',
+      noCostSalesPen: '130.0000',
+      costPen: '1450.0000',
+      // (2190 − 130) − 1450.
+      marginPen: '610.0000',
+    });
+    expect(all.totalsByLine.find((t) => t.businessLine === null)?.costPen).toBe('0.0000');
   });
 
   it('la fila de un pedido mixto es su porción de la línea, con sus comprobantes', async () => {

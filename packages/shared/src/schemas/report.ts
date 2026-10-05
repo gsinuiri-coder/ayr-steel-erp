@@ -364,9 +364,10 @@ export const salesMarginSchema = z.object({
     /** Toda la venta de los totales, Servicios incluida (D-409). */
     salesPen: z.string(),
     /**
-     * D-409: la parte de `salesPen` de las líneas sin costo registrado (Servicios, D-392). Se
-     * muestra aparte y no entra al margen: `marginPen` y `marginPct` se calculan sobre
-     * `salesPen − noCostSalesPen`. En la pestaña de Servicios es toda su venta.
+     * D-409 y D-419: la parte de `salesPen` sin costo registrado: Servicios (D-392) y, en «Todas»,
+     * la venta «Sin línea» (líneas sin producto, D-398). Se muestra aparte y no entra al margen:
+     * `marginPen` y `marginPct` se calculan sobre `salesPen − noCostSalesPen`. En la pestaña de
+     * Servicios es toda su venta.
      */
     noCostSalesPen: z.string(),
     costPen: z.string(),

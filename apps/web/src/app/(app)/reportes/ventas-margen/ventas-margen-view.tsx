@@ -151,17 +151,24 @@ export function VentasMargenView() {
           }
         >
           <Stat label="Venta sin IGV">{formatMoney(report.data.totals.salesPen)}</Stat>
-          {/* D-409: en «Todas», la venta de Servicios suma a la venta y queda fuera del margen. */}
+          {/* D-409/D-419: en «Todas», la venta sin costo registrado (Servicios y líneas sin producto)
+              suma a la venta y queda fuera del margen. */}
           {line === undefined && (
-            <Stat label={`Servicios · ${NO_COST_LABEL.toLowerCase()}`}>
+            <Stat label="Sin costo registrado (Servicios y líneas sin producto)">
               {formatMoney(report.data.totals.noCostSalesPen)}
             </Stat>
           )}
           <Stat label="Costo de venta">{formatMoney(report.data.totals.costPen)}</Stat>
-          <Stat label={line === undefined ? 'Margen (sin Servicios)' : 'Margen'}>
+          <Stat
+            label={line === undefined ? 'Margen (sin Servicios ni líneas sin producto)' : 'Margen'}
+          >
             {formatMoney(report.data.totals.marginPen)}
           </Stat>
-          <Stat label={line === undefined ? 'Margen % (sin Servicios)' : 'Margen %'}>
+          <Stat
+            label={
+              line === undefined ? 'Margen % (sin Servicios ni líneas sin producto)' : 'Margen %'
+            }
+          >
             {report.data.totals.marginPct === null ? '—' : `${report.data.totals.marginPct} %`}
           </Stat>
         </StatStrip>
@@ -337,9 +344,9 @@ export function VentasMargenView() {
                             : BUSINESS_LINE_LABELS[t.businessLine]}
                         </TableCell>
                         <TableCell className="text-right">{formatMoney(t.salesPen)}</TableCell>
-                        {t.businessLine !== null &&
+                        {t.businessLine === null ||
                         NO_COST_REPORT_LINES.includes(t.businessLine) ? (
-                          // D-392: la venta de Servicios suma igual; su costo no está registrado.
+                          // D-392/D-419: Servicios y «Sin línea» suman igual; su costo no está registrado.
                           <TableCell colSpan={3} className="text-right text-muted-foreground">
                             {NO_COST_LABEL}
                           </TableCell>
