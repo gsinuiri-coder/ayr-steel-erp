@@ -35,6 +35,7 @@ interface DraftDto {
   meters: string;
   theoreticalKg: string;
   consumedKg: string | null;
+  outOfTolerance?: { availableKg: string; severe: boolean } | null;
 }
 
 const draftsPath = (opId: string) => `/api/production/roofing/${opId}/drafts`;
@@ -226,13 +227,17 @@ test.describe('D-191 — borrador de reportes por orden (API)', () => {
   });
 
   test('los kilos de una bobina se acumulan entre filas, y anular la orden descarta el borrador', async () => {
-    // Se montan solo 100 kg: 20 m (80.8 kg) entran; otra fila de 8 m (32.32 kg) ya no.
+    // Se montan solo 100 kg: 20 m (80.8 kg) entran. Otra fila de 8 m (32.32 kg) entra marcada
+    // fuera de tolerancia contra los 19.2 kg que quedan (D-389: sin tope), y una tercera ya no
+    // tiene de dónde consumir.
     const { scenario, opId, trail } = await setup(api);
     try {
       await mountCoil(api, opId, { coilId: scenario.coil.id, qtyKg: '100' });
       await postJson(api, draftsPath(opId), { pieces: pieces([4, 5]) });
-      const tooMuch = await postExpectingError(api, draftsPath(opId), { pieces: pieces([4, 2]) });
-      expect(tooMuch.message).toMatch(/el borrador ya ocupa 80\.800 kg/);
+      const drafts = await postJson<DraftDto[]>(api, draftsPath(opId), { pieces: pieces([4, 2]) });
+      expect(drafts[1]?.outOfTolerance).toMatchObject({ availableKg: '19.200', severe: true });
+      const tooMuch = await postExpectingError(api, draftsPath(opId), { pieces: pieces([4, 1]) });
+      expect(tooMuch.message).toMatch(/el borrador ya ocupa 100\.000 kg/);
 
       const cancelled = await postJson<ProductionOrderDto>(
         api,
