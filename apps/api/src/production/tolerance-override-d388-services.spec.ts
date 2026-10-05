@@ -93,6 +93,7 @@ describe('toleranceOverrideAuditAfter — la entrada de auditoría', () => {
       realKg: '4184.000',
       differenceKg: '68.805',
       differencePct: '1.62',
+      severe: false,
       reason: 'LIGHTER_COIL',
       reasonLabel: 'Bobina más liviana que el nominal',
       detail: 'pesó 4 184',

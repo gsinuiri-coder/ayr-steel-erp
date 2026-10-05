@@ -166,13 +166,13 @@ export function RoofingOrderPanel({
   const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
   const outOfTolerance = rowsOutOfTolerance(order.drafts);
   const overridesPayload = outOfTolerance.flatMap((d) => {
-    const input = overrideInput(overrides[d.id]);
+    const input = overrideInput(overrides[d.id], d.outOfTolerance);
     return input === null ? [] : [{ draftId: d.id, ...input }];
   });
   /** Todas las filas fuera de tolerancia tienen su casilla y su motivo completos. */
   const overridesReady =
     outOfTolerance.length === 0 ||
-    outOfTolerance.every((d) => overrideInput(overrides[d.id]) !== null);
+    outOfTolerance.every((d) => overrideInput(overrides[d.id], d.outOfTolerance) !== null);
   /** Motivo del despunte cuando el cierre lo exige (D-089). */
   const [askingReason, setAskingReason] = useState(false);
   /** Qué botón disparó la ejecución: decide si también cierra. Solo para el rótulo. */
@@ -1554,7 +1554,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
         ? `Fuera de tolerancia: la diferencia (${mounted.excess.excessKg} kg, ` +
           `${mounted.excess.excessPct} % del teórico) pasa el ${mounted.excess.tolerancePct} %. ` +
           (mounted.excess.severe
-            ? 'Diferencia mayor al 5 %: revisa cantidad, largo y bobina antes de confirmar. '
+            ? `Diferencia mayor al ${mounted.excess.maxPct} %: revisa cantidad, largo y bobina antes de confirmar. `
             : '') +
           'Puedes agregar la fila; al ejecutar, confirma con la casilla ' +
           'y el motivo.'

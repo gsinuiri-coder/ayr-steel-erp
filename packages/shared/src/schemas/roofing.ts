@@ -679,7 +679,7 @@ export const mountRoofingCoilSchema = z
 export type MountRoofingCoilInput = z.infer<typeof mountRoofingCoilSchema>;
 
 /**
- * D-388 — por qué un administrador autoriza un reporte fuera de la tolerancia del 1 %: la bobina
+ * D-388/D-389 — por qué se confirma un reporte fuera de la tolerancia del 1 %: la bobina
  * real no pesa lo que dice su nominal, o «Otro», que exige explicarlo.
  */
 export const TOLERANCE_OVERRIDE_REASONS = ['LIGHTER_COIL', 'HEAVIER_COIL', 'OTHER'] as const;
@@ -701,7 +701,7 @@ export const TOLERANCE_OVERRIDE_REASON_LABELS: Record<ToleranceOverrideReason, s
 };
 
 /**
- * D-388: la casilla del administrador con su motivo. El detalle es opcional salvo en «Otro»,
+ * D-388/D-389: la casilla con su motivo (la marca quien reporta). El detalle es opcional salvo en «Otro»,
  * donde es el motivo mismo.
  */
 export const toleranceOverrideSchema = z
@@ -771,8 +771,8 @@ export const reportRoofingBaseSchema = z.object({
   consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   notes: z.string().trim().max(240).optional(),
   /**
-   * D-388: la casilla del administrador para un reporte que pasa lo montado entre el 1 % y el
-   * 5 % del teórico. Solo ADMINISTRADOR (la API lo valida). Fuera de esa franja no se usa.
+   * D-388/D-389: la casilla para un reporte que pasa lo montado más del 1 % del teórico, sin tope.
+   * La marca quien reporta (D-389); la API exige un motivo que aplique a la dirección del exceso.
    */
   toleranceOverride: toleranceOverrideSchema.optional(),
   ...backdatableFields,
@@ -844,7 +844,7 @@ export const commitRoofingDraftsSchema = z.object({
   closeConsumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   closeReason: reasonSchema.optional(),
   /**
-   * D-388: la casilla del administrador para las filas que pasan la tolerancia (las marcadas
+   * D-388/D-389: la casilla para las filas que pasan la tolerancia (las marcadas
    * con `outOfTolerance` en el borrador). Nada se guarda en la fila: viaja al ejecutar.
    */
   toleranceOverrides: z
@@ -870,8 +870,8 @@ export const roofingReportDraftSchema = z.object({
   notes: z.string().nullable(),
   createdAt: z.string(),
   /**
-   * D-388: la fila pasa lo montado entre el 1 % y el 5 % del teórico y necesita la casilla de un
-   * administrador al ejecutar. Calculado al leer el borrador; `null` si no hace falta.
+   * D-388/D-389: la fila pasa lo montado más del 1 % del teórico (sin tope) y necesita la casilla
+   * al ejecutar. Calculado al leer el borrador; `null` si no hace falta.
    */
   outOfTolerance: z
     .object({

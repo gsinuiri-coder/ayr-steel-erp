@@ -62,8 +62,8 @@ export interface DraftRowCheck {
   /** Lo que la fila va a sacar de la bobina al ejecutarse (D-246). */
   outKg: Decimal;
   /**
-   * D-388: la fila pasa lo montado entre el 1 % y el 5 % del teórico; al ejecutarla hace falta
-   * la casilla de un administrador. `null` dentro de tolerancia.
+   * D-388/D-389: la fila pasa lo montado más del 1 % del teórico (sin tope); al ejecutarla hace falta
+   * la casilla y un motivo. `null` dentro de tolerancia.
    */
   outOfTolerance: MountedKgExcess | null;
 }

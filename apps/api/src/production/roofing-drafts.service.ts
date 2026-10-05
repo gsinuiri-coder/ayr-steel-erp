@@ -237,7 +237,7 @@ export class RoofingDraftsService {
         this.assertRoomForReports(state.liveReports, drafts.length);
         this.validate(state, drafts.map(toRowLike), 'all');
 
-        // D-388: la casilla del administrador viaja por fila al ejecutar. Una fila que la
+        // D-388/D-389: la casilla viaja por fila al ejecutar. Una fila que la
         // necesita y no la trae se rechaza adentro de `reportInTx` con su código y su número de
         // fila; una casilla de más (la fila ya entra en el 1 %) no deja rastro.
         const overrides = new Map(

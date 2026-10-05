@@ -1148,8 +1148,8 @@ export class RoofingProductionService {
     // D-246: si el teórico pasa lo montado y el acero ya salió (lo declarado cabe, o el
     // exceso entra en la tolerancia), el reporte se topa en lo montado en vez de bloquear.
     // El teórico queda en la fila del reporte como dato; el kardex sale por `outKg`.
-    // D-388: entre el 1 % y el 5 % sin casilla, el rechazo lleva su código y las cifras para que
-    // la pantalla la ofrezca; por encima del 5 % no hay casilla.
+    // D-388/D-389: pasado el 1 % sin casilla, el rechazo lleva su código y las cifras para que
+    // la pantalla la ofrezca; pasado el 5 % el aviso es más fuerte, sin tope (D-389).
     const mounted = mountedKgForReport({
       label: row.coil.code,
       theoreticalKg: neededKg,

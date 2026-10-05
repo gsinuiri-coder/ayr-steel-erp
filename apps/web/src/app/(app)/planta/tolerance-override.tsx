@@ -18,15 +18,26 @@ export interface ToleranceOverrideState {
   checked: boolean;
   reason: ToleranceOverrideReason | '';
   detail: string;
+  /**
+   * D-389: el exceso (kg) para el que se marcó. Si la fila cambia de exceso —se corrige o se quita
+   * otra fila de la misma bobina—, la casilla deja de valer y hay que volver a confirmar: sin tope,
+   * un 3 % confirmado no puede pasar como un 90 %.
+   */
+  forExcessKg?: string;
 }
 
 export const EMPTY_OVERRIDE: ToleranceOverrideState = { checked: false, reason: '', detail: '' };
 
-/** La casilla de una fila, lista para viajar al API, o `null` si falta algo. */
+/**
+ * La casilla de una fila, lista para viajar al API, o `null` si falta algo o si se marcó para
+ * otro exceso que el de ahora.
+ */
 export function overrideInput(
   state: ToleranceOverrideState | undefined,
+  excess?: MountedKgExcess | null,
 ): ToleranceOverrideInput | null {
   if (state === undefined || !state.checked || state.reason === '') return null;
+  if (excess !== undefined && excess !== null && state.forExcessKg !== excess.excessKg) return null;
   const parsed = toleranceOverrideSchema.safeParse({
     reason: state.reason,
     ...(state.detail.trim() === '' ? {} : { detail: state.detail.trim() }),
@@ -83,10 +94,10 @@ export function ToleranceOverrideRow({
           <Checkbox
             id={`${id}-check`}
             aria-label={`Confirmar ${label} fuera de tolerancia`}
-            checked={value.checked}
+            checked={value.checked && value.forExcessKg === excess.excessKg}
             disabled={disabled}
             onCheckedChange={(checked) => {
-              onChange({ ...value, checked: checked === true });
+              onChange({ ...value, checked: checked === true, forExcessKg: excess.excessKg });
             }}
           />
           Confirmo el reporte fuera de tolerancia
@@ -97,7 +108,11 @@ export function ToleranceOverrideRow({
           disabled={disabled || !value.checked}
           value={value.reason}
           onChange={(e) => {
-            onChange({ ...value, reason: e.target.value as ToleranceOverrideReason | '' });
+            onChange({
+              ...value,
+              reason: e.target.value as ToleranceOverrideReason | '',
+              forExcessKg: excess.excessKg,
+            });
           }}
         >
           <option value="">Elige el motivo…</option>
@@ -114,7 +129,7 @@ export function ToleranceOverrideRow({
           disabled={disabled || !value.checked}
           value={value.detail}
           onChange={(e) => {
-            onChange({ ...value, detail: e.target.value });
+            onChange({ ...value, detail: e.target.value, forExcessKg: excess.excessKg });
           }}
         />
       </div>

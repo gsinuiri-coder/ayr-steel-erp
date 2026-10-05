@@ -141,6 +141,8 @@ export function toleranceOverrideAuditAfter(input: {
     realKg: input.realKg,
     differenceKg: excess.excessKg,
     differencePct: excess.excessPct,
+    // D-389: pasó el 5 % (aviso fuerte). Sin tope, es la marca para revisar después.
+    severe: excess.severe,
     reason: override.reason,
     reasonLabel: TOLERANCE_OVERRIDE_REASON_LABELS[override.reason],
     detail: override.detail === undefined || override.detail === '' ? null : override.detail,

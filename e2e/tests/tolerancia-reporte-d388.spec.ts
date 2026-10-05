@@ -164,7 +164,7 @@ async function login(page: Page, email: string, password: string): Promise<void>
   await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 }
 
-test.describe('D-388 — fuera de tolerancia con la casilla del administrador', () => {
+test.describe('D-388/D-389 — fuera de tolerancia con la casilla', () => {
   let api: APIRequestContext;
   let supervisor: CreatedUser;
   let supervisorApi: APIRequestContext;
@@ -298,6 +298,24 @@ test.describe('D-388 — fuera de tolerancia con la casilla del administrador', 
 
   test('D-389: más del 5 % se acepta con la casilla, con el aviso fuerte, y se revierte', async () => {
     const { order, coilId } = await orderWithCoil(api, s, PIECES_OVER_5);
+    // El reporte directo también: sin casilla pide la casilla con el texto fuerte, y «Bobina más
+    // pesada» no se acepta. No mueve nada.
+    const direct = (body: Record<string, unknown>) =>
+      supervisorApi.post(`/api/production/roofing/${order.id}/report`, {
+        data: {
+          pieces: [{ lengthMm: PIECE_MM, qty: PIECES_OVER_5 }],
+          ...body,
+          idempotencyKey: randomUUID(),
+        },
+      });
+    const directWithout = await direct({});
+    expect(directWithout.status()).toBe(400);
+    expect(((await directWithout.json()) as { message: string }).message).toContain(
+      'Diferencia mayor al 5 %',
+    );
+    expect((await direct({ toleranceOverride: { reason: 'HEAVIER_COIL' } })).status()).toBe(400);
+    expect((await getJson<CoilState>(api, `/api/coils/${coilId}`)).availableKg).toBe('4184.000');
+
     // El borrador acepta la fila y la marca con el aviso fuerte (445 planchas: 5,68 %).
     const draft = await addDraft(api, order.id, PIECES_OVER_5);
     expect(draft.ok(), await draft.text()).toBe(true);
