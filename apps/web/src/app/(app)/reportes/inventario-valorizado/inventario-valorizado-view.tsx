@@ -57,8 +57,6 @@ export function InventarioValorizadoView() {
   const { tab, line, select } = useLineTab(LINE_TABS);
   // D-391: kilos en las líneas con bobinas; unidades en Coberturas (UPVC) y Reventa, que no
   // tienen bobinas propias (la bobina de reventa vive en la línea que la compró, D-116).
-  const hasCoils = line === undefined || COIL_BUSINESS_LINES.includes(line);
-
   const report = useQuery({
     queryKey: ['report', 'inventory-valuation', line ?? 'todas'],
     queryFn: () =>
@@ -68,6 +66,12 @@ export function InventarioValorizadoView() {
           : `/reports/inventory-valuation?businessLine=${line}`,
       ),
   });
+  // cc23, autorrevisión P3-10: si una bobina con saldo tuviera otra línea (la regla vive en la
+  // aplicación, no en la base), su valor está en el «Total» y la tabla se muestra igual.
+  const hasCoils =
+    line === undefined ||
+    COIL_BUSINESS_LINES.includes(line) ||
+    (report.data?.coilGroups.length ?? 0) > 0;
 
   const toggle = (key: string): void => {
     setOpen((prev) => {

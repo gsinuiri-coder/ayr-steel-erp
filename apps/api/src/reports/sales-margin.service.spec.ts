@@ -651,3 +651,102 @@ describe('SalesMarginService — por línea (cc23)', () => {
     );
   });
 });
+
+/**
+ * cc24 (D-412): la venta de Servicios no depende del estado de costo del pedido. En un pedido
+ * mixto con costo no comparable o no rastreable por otra línea, el servicio suma en su pestaña y
+ * en «Todas»; queda fuera solo el resto.
+ */
+describe('SalesMarginService — Servicios no depende del costo (cc24, D-412)', () => {
+  const LINES = ['drywall', 'metallic-roofing', 'roofing', 'services', 'trading'] as const;
+  const sum = (values: string[]): string => decimalSum(values).toFixed(4);
+
+  // o1: drywall + servicio, no rastreable. o2: Aluzinc + servicio, no comparable. o3: drywall
+  // con costo completo.
+  const seeds: Seeds = {
+    documents: [
+      { id: 'd1', orderId: 'o1', orderSeq: 1, subtotal: '1050.0000' },
+      { id: 'd2', orderId: 'o2', orderSeq: 2, subtotal: '330.0000' },
+      { id: 'd3', orderId: 'o3', orderSeq: 3, subtotal: '400.0000' },
+    ],
+    salesByLine: [
+      { documentId: 'd1', line: 'drywall', subtotal: '1000.0000' },
+      { documentId: 'd1', line: 'services', subtotal: '50.0000' },
+      { documentId: 'd2', line: 'metallic-roofing', subtotal: '300.0000' },
+      { documentId: 'd2', line: 'services', subtotal: '30.0000' },
+      { documentId: 'd3', line: 'drywall', subtotal: '400.0000' },
+    ],
+    costs: [
+      { orderId: 'o2', invoiceId: null, line: 'metallic-roofing', cost: '900.0000' },
+      { orderId: 'o3', invoiceId: 'd3', line: 'drywall', cost: '250.0000' },
+    ],
+    outside: [{ orderId: 'o2', count: 1 }],
+    pending: [
+      { orderId: 'o1', pending: false, untraceable: true },
+      { orderId: 'o2', pending: false },
+      { orderId: 'o3', pending: false },
+    ],
+  };
+
+  it('en la pestaña Servicios el servicio de un pedido no rastreable o no comparable suma', async () => {
+    const { service } = await buildService(seeds);
+    const services = await service.salesMargin({ ...RANGE, businessLine: 'services' });
+    expect(services.totals).toMatchObject({
+      salesPen: '80.0000',
+      excludedOrderCount: 0,
+      excludedSalesPen: '0.0000',
+      untraceableOrderCount: 0,
+      untraceableSalesPen: '0.0000',
+    });
+    expect(services.orders.every((o) => o.inTotals)).toBe(true);
+  });
+
+  it('en «Todas» el servicio suma a la venta y a su fila; la venta excluida es solo el resto', async () => {
+    const { service } = await buildService(seeds);
+    const all = await service.salesMargin(RANGE);
+    expect(all.totals).toMatchObject({
+      // o3 400 + servicios de o1 (50) y o2 (30).
+      salesPen: '480.0000',
+      costPen: '250.0000',
+      untraceableOrderCount: 1,
+      untraceableSalesPen: '1000.0000',
+      excludedOrderCount: 1,
+      excludedSalesPen: '300.0000',
+    });
+    expect(all.totalsByLine.find((t) => t.businessLine === 'services')?.salesPen).toBe('80.0000');
+  });
+
+  it('las pestañas siguen sumando «Todas»', async () => {
+    const { service } = await buildService(seeds);
+    const all = await service.salesMargin(RANGE);
+    const tabs = await Promise.all(
+      LINES.map((businessLine) => service.salesMargin({ ...RANGE, businessLine })),
+    );
+    for (const key of ['salesPen', 'costPen', 'excludedSalesPen', 'untraceableSalesPen'] as const) {
+      expect(sum(tabs.map((t) => t.totals[key]))).toBe(all.totals[key]);
+    }
+  });
+});
+
+describe('SalesMarginService — costo del comprobante en la pestaña de una línea (cc24, P3-4)', () => {
+  it('un comprobante que solo declara el despacho de otra línea no muestra costo 0', async () => {
+    const { service } = await buildService({
+      documents: [{ id: 'd1', orderId: 'o1', subtotal: '1500.0000' }],
+      salesByLine: [
+        { documentId: 'd1', line: 'drywall', subtotal: '1000.0000' },
+        { documentId: 'd1', line: 'roofing', subtotal: '500.0000' },
+      ],
+      costs: [{ orderId: 'o1', invoiceId: 'd1', line: 'drywall', cost: '600.0000' }],
+      pending: [{ orderId: 'o1', pending: true }],
+    });
+    const roofing = await service.salesMargin({ ...RANGE, businessLine: 'roofing' });
+    expect(roofing.orders[0]?.documents[0]).toMatchObject({
+      salesPen: '500.0000',
+      costPen: null,
+      marginPen: null,
+      marginPct: null,
+    });
+    const drywall = await service.salesMargin({ ...RANGE, businessLine: 'drywall' });
+    expect(drywall.orders[0]?.documents[0]).toMatchObject({ costPen: '600.0000' });
+  });
+});

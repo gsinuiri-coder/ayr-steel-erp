@@ -328,7 +328,11 @@ export const salesMarginOrderSchema = z.object({
   /** Margen sobre venta en puntos porcentuales (§7). Null si el costo no es comparable. */
   marginPct: z.string().nullable(),
   costStatus: z.enum(MARGIN_COST_STATUSES),
-  /** Falso en `NO_COMPARABLE`: la fila se ve pero no suma. */
+  /**
+   * Falso en `NO_COMPARABLE` y `NO_RASTREABLE`: la fila se ve pero no suma. D-412: en la
+   * pestaña de una línea sin costo registrado (Servicios) siempre es verdadero, porque esa
+   * venta no depende del costo de las otras líneas del pedido.
+   */
   inTotals: z.boolean(),
   documents: z.array(salesMarginDocumentSchema),
 });

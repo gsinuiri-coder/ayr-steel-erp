@@ -61,9 +61,13 @@ export function VentasMargenView() {
   });
 
   const cols: Columns = { cost: !noCost, opMaterial: line === undefined };
-  const excluded = report.data?.orders.filter((o) => o.costStatus === 'NO_COMPARABLE') ?? [];
+  // D-412: en Servicios, la venta suma aunque el pedido tenga un costo no comparable o no
+  // rastreable por otra línea (`inTotals`); esas secciones son solo de lo que quedó fuera.
+  const excluded =
+    report.data?.orders.filter((o) => !o.inTotals && o.costStatus === 'NO_COMPARABLE') ?? [];
   // D-285: despachados sin salida de kardex; su costo no se puede rastrear.
-  const untraceable = report.data?.orders.filter((o) => o.costStatus === 'NO_RASTREABLE') ?? [];
+  const untraceable =
+    report.data?.orders.filter((o) => !o.inTotals && o.costStatus === 'NO_RASTREABLE') ?? [];
   const included = report.data?.orders.filter((o) => o.inTotals) ?? [];
 
   return (
@@ -223,6 +227,7 @@ export function VentasMargenView() {
                 declaran su despacho. Su costo cubre más venta que la que se ve acá, así que se
                 muestra la venta y se deja el costo vacío: quedan fuera de los totales de arriba
                 (venta excluida: {formatMoney(report.data.totals.excludedSalesPen)}).
+                {line === undefined && SERVICES_STILL_COUNT}
               </p>
               <div className="overflow-x-auto rounded-md border">
                 <Table>
@@ -264,6 +269,7 @@ export function VentasMargenView() {
                 Estos pedidos se despacharon sin su salida de inventario, así que no se sabe su
                 costo. Quedan fuera de los totales de arriba (venta excluida:{' '}
                 {formatMoney(report.data.totals.untraceableSalesPen)}).
+                {line === undefined && SERVICES_STILL_COUNT}
               </p>
               <div className="overflow-x-auto rounded-md border">
                 <Table>
@@ -447,6 +453,10 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** D-392: lo que se declara en lugar del costo y el margen de Servicios. */
 const NO_COST_LABEL = 'Sin costo registrado';
+
+/** D-412: por qué la venta de la fila puede ser mayor que la venta excluida. */
+const SERVICES_STILL_COUNT =
+  ' Si alguno de estos pedidos tiene venta de Servicios, esa venta no depende del costo y sí suma arriba.';
 
 /** Primer día del mes de negocio en curso, que es el rango por defecto más útil. */
 function firstOfMonth(): string {

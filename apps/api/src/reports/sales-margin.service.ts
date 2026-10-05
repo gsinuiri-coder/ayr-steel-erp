@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import {
   Decimal,
   LIVE_DOCUMENT_STATUSES,
+  NO_COST_REPORT_LINES,
   salesOrderCode,
   toDateOnly,
   toDecimal,
@@ -400,6 +401,9 @@ export class SalesMarginService {
 
     // cc23 (D-391): la pestaña de la línea; `undefined` es «Todas», el reporte de siempre.
     const viewLine = query.businessLine;
+    // D-412: en la pestaña de una línea sin costo registrado (Servicios, D-392) la venta no
+    // depende del estado de costo del pedido, que lo deciden las otras líneas.
+    const noCostView = viewLine !== undefined && isNoCostLine(viewLine);
 
     for (const docs of buckets.values()) {
       // Un bucket nunca nace vacío —se crea al empujarle su primer comprobante—, así que
@@ -417,7 +421,8 @@ export class SalesMarginService {
         docs,
         costByDocument,
       });
-      const inTotals = costStatus !== 'NO_COMPARABLE' && costStatus !== 'NO_RASTREABLE';
+      const comparable = costStatus !== 'NO_COMPARABLE' && costStatus !== 'NO_RASTREABLE';
+      const inTotals = comparable || noCostView;
 
       // **Las filas de costo que le tocan a este pedido**, elegidas una sola vez: de acá salen
       // tanto el monto de la fila como su apertura por línea de negocio, y por eso los dos no
@@ -466,15 +471,16 @@ export class SalesMarginService {
 
       const documentDtos: SalesMarginDocumentDto[] = viewDocs.map((d) => {
         const docSales = docSalesInView(d);
-        // Fuera de los totales, el comprobante tampoco muestra costo (autorrevisión P2-7).
+        // Fuera de los totales, el comprobante tampoco muestra costo (autorrevisión P2-7). En
+        // la pestaña de una línea, solo lo muestra si un despacho **de esa línea** lo declara:
+        // que otra línea lo declare no dice nada del costo de esta (cc23, autorrevisión P3-4).
+        const docLineRows = viewCostRows.filter((r) => r.invoice_id === d.id);
         const docCost = !inTotals
           ? null
           : viewLine === undefined
             ? (costByDocument.get(d.id) ?? null)
-            : costByDocument.has(d.id)
-              ? viewCostRows
-                  .filter((r) => r.invoice_id === d.id)
-                  .reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
+            : docLineRows.length > 0
+              ? docLineRows.reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
               : null;
         return {
           id: d.id,
@@ -508,14 +514,20 @@ export class SalesMarginService {
         documents: documentDtos,
       });
 
-      if (costStatus === 'NO_RASTREABLE') {
-        untraceableOrderCount += 1;
-        untraceableSales = untraceableSales.plus(sales);
-        continue;
-      }
       if (!inTotals) {
-        excludedOrderCount += 1;
-        excludedSales = excludedSales.plus(sales);
+        // D-412: en «Todas», la venta de Servicios de este pedido no depende de su costo y
+        // suma igual al total de ventas y a su fila de «Totales por línea». Queda fuera solo
+        // el resto, que es lo que tiene un costo no comparable o no rastreable.
+        const noCost =
+          viewLine === undefined ? addNoCostSales(docs, salesLinesByDocument, lineTotals) : ZERO;
+        totalSales = totalSales.plus(noCost);
+        if (costStatus === 'NO_RASTREABLE') {
+          untraceableOrderCount += 1;
+          untraceableSales = untraceableSales.plus(sales.minus(noCost));
+        } else {
+          excludedOrderCount += 1;
+          excludedSales = excludedSales.plus(sales.minus(noCost));
+        }
         continue;
       }
       if (costStatus === 'PARCIAL') partialOrderCount += 1;
@@ -596,6 +608,33 @@ function lineSales(
   return (salesLinesByDocument.get(doc.id) ?? [])
     .filter((r) => r.business_line_code === line)
     .reduce((acc, r) => acc.plus(toDecimal(r.subtotal_pen.toString()).times(sign)), ZERO);
+}
+
+/** D-392: una línea cuyo reporte declara «sin costo registrado» (Servicios). */
+function isNoCostLine(line: string): boolean {
+  return (NO_COST_REPORT_LINES as readonly string[]).includes(line);
+}
+
+/**
+ * D-412: la venta de las líneas sin costo registrado de los comprobantes de un pedido que quedó
+ * fuera de los totales. La suma a su fila de `lineTotals` y la devuelve, para que el total de
+ * ventas la cuente y la venta excluida no.
+ */
+function addNoCostSales(
+  docs: DocumentRow[],
+  salesLinesByDocument: Map<string, SalesByLineRow[]>,
+  lineTotals: Map<string, { sales: Decimal; cost: Decimal }>,
+): Decimal {
+  let total = ZERO;
+  for (const line of NO_COST_REPORT_LINES) {
+    const sales = docs.reduce((acc, d) => acc.plus(lineSales(d, line, salesLinesByDocument)), ZERO);
+    if (sales.isZero()) continue;
+    const bucket = lineTotals.get(line) ?? { sales: ZERO, cost: ZERO };
+    bucket.sales = bucket.sales.plus(sales);
+    lineTotals.set(line, bucket);
+    total = total.plus(sales);
+  }
+  return total;
 }
 
 /** Sin IGV y con signo: una nota de crédito resta. */
