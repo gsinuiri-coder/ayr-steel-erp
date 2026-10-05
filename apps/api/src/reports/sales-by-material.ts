@@ -596,6 +596,8 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
     untraceableSalesPen: toFixedString(untraceableSales, 'MONEY'),
     reconciliation: {
       lineSalesPen: toFixedString(lineSales, 'MONEY'),
+      // Convivencia con la web anterior a cc24 (ver el esquema).
+      roofingSalesPen: toFixedString(lineSales, 'MONEY'),
       coilSalesPen: toFixedString(coilSales, 'MONEY'),
       unclassifiedSalesPen: toFixedString(unclassifiedSales, 'MONEY'),
     },
