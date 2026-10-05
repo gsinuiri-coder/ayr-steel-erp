@@ -1,10 +1,40 @@
 # Ventana cc19 — D-387: comprobante en cotizaciones y formulario de fecha de despacho
 
+## Ejecutada el 2026-10-04: sin incidencias
+
+Cada paso sensible tuvo el OK explícito del dueño (D-251/D-232).
+
+| Qué                                              | Resultado                                                                                                                                                                                               |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UAT                                              | Confirmado por el dueño en demo, sobre `0608782`, con los estados de la columna                                                                                                                         |
+| Reacomodo                                        | Sobre `main` `523c198` (D-386 de cc18 y su PR de docs #98); conflictos solo de docs                                                                                                                     |
+| CI del PR #97                                    | Corrida 37235144319 sobre `dc45734`: unitarios 2497, kardex contra la base 31, E2E 509 pasados y 3 saltados, smoke de Neon `ci` 36 pasados y 2 saltados, Sonar en verde                                 |
+| Condiciones del dueño                            | `dc45734` contiene `43d2bd4`; sin migración; la API nueva es compatible con la web de `523c198`; nadie operando                                                                                         |
+| Revisión API anterior (vuelta)                   | `ayr-steel-erp-api-00083-q96`, `git-sha=43d2bd4`                                                                                                                                                        |
+| Paso 1: deploy de la API                         | **`ayr-steel-erp-api-00084-6vs`**, al 100 %, `git-sha=dc45734`, `/health` 200, `smoke:prod` 8/8 con la web vieja (`local-data/cc19/smoke-prod-api-dc45734.txt`)                                         |
+| Paso 2: merge del #97                            | `main` = **`35073be`**, diff de runtime vacío contra `dc45734`, Vercel `success` (`…-1szifzgjo-…`), `smoke:prod` 8/8 en `vercel.app` y 8/8 en `v2.mareliac.pe` (`local-data/cc19/smoke-prod-web-*.txt`) |
+| Conteo en producción (por la API, admin efímero) | 145 no anuladas: 48 registrado, 97 solo referencia, 0 no coincide, 0 sin nada; ninguna con varios comprobantes (`local-data/cc19/conteo-estados-produccion.txt`)                                        |
+| Datos                                            | Ninguno                                                                                                                                                                                                 |
+
+**Vuelta atrás desde el merge.** La API vieja con la web nueva rompe la lista de cotizaciones, así
+que se vuelven **las dos juntas**, con OK del dueño:
+
+```sh
+cmd /c gcloud run services update-traffic ayr-steel-erp-api --region us-central1 --project ayr-steel-erp --to-revisions ayr-steel-erp-api-00083-q96=100
+vercel rollback https://ayr-steel-erp-nri2k5atw-gsinuiricoders-projects.vercel.app --scope gsinuiricoders-projects --yes
+```
+
+El segundo comando apunta al despliegue de producción de `523c198`. Después de un rollback, Vercel
+no asigna el dominio a los despliegues nuevos hasta que se vuelva a promover uno.
+
+**E2E locales de cc19:** no valen como evidencia. Antes de que cada sesión usara su propia base, las
+corridas de cc18 pudieron vaciar `ayr_local_e2e` mientras corrían las de cc19. El veredicto es la
+CI.
+
 ## Resumen
 
-Sesión cc19, PR #97. La implementación de los milestones M1, M2 y M3 está completa, con las dos
-revisiones hechas (sin P0 ni P1). CI: ver `gh pr checks 97`, y la corrida final queda anotada en la
-ventana. Falta: UAT en demo, D-232, deploy y merge.
+Sesión cc19, PR #97. Están completos los milestones M1, M2 y M3, y el ajuste de estados. Cada tanda
+tuvo sus dos revisiones, sin P0 ni P1. Está desplegada (ver arriba).
 
 ## Hecho
 
@@ -48,8 +78,12 @@ ventana. Falta: UAT en demo, D-232, deploy y merge.
 
 ## Siguiente sesión
 
-La ventana de cc19, según el runbook de abajo, con el OK del dueño en cada paso sensible. No hay
-otra tarea autorizada.
+Ninguna autorizada por esta sesión. Los pendientes de D-387 son P2/P3 de `docs/PROGRESO.md`:
+
+- el buscador compara los dígitos contra el número de cotización;
+- el orden por comprobante tiene su gatillo de 1.000 cotizaciones.
+
+Se toman solo si el dueño los asigna.
 
 ## Estado al cierre de la implementación
 
