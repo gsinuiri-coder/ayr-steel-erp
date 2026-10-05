@@ -196,7 +196,7 @@ export function VentasMargenView() {
                 <TableBody>
                   {included.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={9} className="text-muted-foreground">
+                      <TableCell colSpan={columnCount(cols)} className="text-muted-foreground">
                         {line === undefined
                           ? 'No hay comprobantes emitidos en ese rango.'
                           : 'No hay ventas de esta línea en ese rango.'}
@@ -351,6 +351,11 @@ export function VentasMargenView() {
 interface Columns {
   cost: boolean;
   opMaterial: boolean;
+}
+
+/** Pedido, cliente, vendedor y venta, más las columnas que la pestaña lleve. */
+function columnCount(cols: Columns): number {
+  return 4 + (cols.cost ? 4 : 0) + (cols.opMaterial ? 1 : 0);
 }
 
 /** Una fila de pedido con sus comprobantes debajo. */

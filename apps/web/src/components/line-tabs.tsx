@@ -21,6 +21,7 @@ export function LineTabs({
 }) {
   return (
     <Tabs
+      activationMode="manual"
       value={value}
       onValueChange={(next) => {
         onChange(next as LineTab);

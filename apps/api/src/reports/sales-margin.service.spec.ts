@@ -574,9 +574,8 @@ describe('SalesMarginService — por línea (cc23)', () => {
     for (const key of ['costPen', 'excludedSalesPen', 'untraceableSalesPen'] as const) {
       expect(sum(tabs.map((t) => t.totals[key]))).toBe(all.totals[key]);
     }
-    for (const key of ['partialOrderCount'] as const) {
-      expect(tabs.reduce((acc, t) => acc + t.totals[key], 0)).toBe(all.totals[key]);
-    }
+    // `partialOrderCount` no se suma entre pestañas: un pedido mixto con costo parcial cuenta
+    // en cada línea que toca (autorrevisión P3-3).
     // Y cada pestaña dice lo mismo que su fila de «Totales por línea» en «Todas».
     for (const [i, line] of LINES.entries()) {
       const row = all.totalsByLine.find((t) => t.businessLine === line);
