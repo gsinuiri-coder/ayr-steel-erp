@@ -222,8 +222,9 @@ Reglas de convivencia, sin excepción:
 package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 significa
   desalineación de runtime y obliga a parar.
 - `pnpm setup:agentes` configura `core.hooksPath=.githooks`. `.githooks/pre-push` permite ramas
-  de trabajo y bloquea cualquier push cuyo destino sea `main`; `AYR_OWNER_PUSH=1` solo se usa
-  después del OK explícito del dueño exigido por D-232.
+  de trabajo y bloquea cualquier push cuyo destino sea `main` salvo con `AYR_OWNER_PUSH=1`, que
+  desde D-411 el agente usa sin OK por acción dentro de la ventana (20:00–07:00 de Lima) y con
+  el resumen de D-232 ya presentado al dueño.
 
 ### 3.3 Datos reales, Neon y operaciones destructivas
 
@@ -343,7 +344,8 @@ Para un spec Playwright suelto usar
 suite completa. `--grep` sí funciona por ser una opción.
 
 Después del push de la rama de trabajo, verificar la CI de GitHub Actions antes de declarar la
-sesión cerrada. Un merge o push a `main` sigue el punto de control de D-232.
+sesión cerrada. Un merge o push a `main` sigue el punto de control de D-232: el resumen al dueño
+va siempre; desde D-411 la ejecución dentro de la ventana no necesita un OK por acción.
 
 ---
 
@@ -411,8 +413,8 @@ diseño/diagnóstico (effort alto) y uno de solo lectura para revisión.
 
 ## 10. Qué NO hacer, resumido
 
-- No empujar ni mergear a `main` sin el resumen y OK explícito de D-232; no usar `gh repo sync`
-  ni borrar ramas protegidas.
+- No empujar ni mergear a `main` sin el resumen de D-232 ni fuera de la ventana de D-411
+  (20:00–07:00 de Lima); no usar `gh repo sync` ni borrar ramas protegidas.
 - No tocar 4000/4001.
 - No correr SQL contra prod ni imprimir credenciales.
 - No inventar alcance ni "aprovechar y de paso arreglar" fuera del milestone.
