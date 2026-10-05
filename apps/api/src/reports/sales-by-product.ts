@@ -148,12 +148,16 @@ export function assembleSalesByProduct(
     const fraction = Decimal.min(ONE, dispatched.div(g.qty));
     const costShare = dispatched.gt(g.qty) ? g.qty.div(dispatched) : ONE;
     const cost = toDecimal(facts.costPen).times(costShare);
+    // La parte trazada se redondea a la escala de dinero y la no trazable es el resto exacto:
+    // así filas + no trazable suman la venta de la línea sin la diferencia de 0,0001 que deja
+    // redondear las dos mitades por separado (autorrevisión de cc24, P3).
+    const tracedSales = toDecimal(toFixedString(g.sales.times(fraction), 'MONEY'));
     if (fraction.lt(ONE)) {
       pushUntraceable(
         g.first,
         'DESPACHO_PARCIAL',
         g.qty.times(ONE.minus(fraction)),
-        g.sales.times(ONE.minus(fraction)),
+        g.sales.minus(tracedSales),
       );
     }
     const row = rows.get(g.first.sku) ?? {
@@ -166,7 +170,7 @@ export function assembleSalesByProduct(
       lineCount: 0,
     };
     row.qty = row.qty.plus(g.qty.times(fraction));
-    row.sales = row.sales.plus(g.sales.times(fraction));
+    row.sales = row.sales.plus(tracedSales);
     row.cost = row.cost.plus(cost);
     row.lineCount += g.count;
     rows.set(g.first.sku, row);

@@ -162,8 +162,11 @@ export function VentasMaterialView() {
         <div>
           <h1 className="text-lg font-semibold">Ventas por material</h1>
           <p className="text-xs text-muted-foreground">
-            {lineLabel}. Comprobantes emitidos en el rango, sin IGV; peso real y costo de las
-            bobinas que consumió la producción.
+            {lineLabel}. Comprobantes emitidos en el rango, sin IGV;{' '}
+            {byProduct
+              ? // D-417 (autorrevisión de cc24, P2-1): sin bobina, el costo es el del despacho.
+                'costo de kardex de los despachos que declaran el comprobante.'
+              : 'peso real y costo de las bobinas que consumió la producción.'}
           </p>
         </div>
         {/* D-396 con el criterio de D-399: sin exportación por línea. El Excel de siempre es el
@@ -263,10 +266,13 @@ export function VentasMaterialView() {
         <p className="text-xs text-destructive">La fecha «Desde» es posterior a «Hasta».</p>
       )}
 
-      {/* C06: el aviso de los dos reportes, en palabras del dueño. */}
-      <p className="text-xs text-muted-foreground" data-testid="aviso-costeo">
-        {PROFIT_SOURCES_NOTICE}
-      </p>
+      {/* C06: el aviso de los dos reportes, en palabras del dueño. No aplica a las pestañas por
+          producto, cuyo costo es el mismo de «Ventas y margen» (D-417). */}
+      {!byProduct && (
+        <p className="text-xs text-muted-foreground" data-testid="aviso-costeo">
+          {PROFIT_SOURCES_NOTICE}
+        </p>
+      )}
 
       {report.isPending && validRange && <Skeleton className="h-64 w-full" />}
       {report.isError && (

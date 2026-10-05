@@ -236,7 +236,7 @@ export function salesMarginXlsx(report: SalesMarginDto): { buffer: Buffer; filen
           : [label, num(t.salesPen), num(t.costPen), num(t.marginPen), num(t.marginPct)];
       }),
       [
-        'Total del rango',
+        'Total del rango (margen sin Servicios)',
         num(report.totals.salesPen),
         num(report.totals.costPen),
         num(report.totals.marginPen),

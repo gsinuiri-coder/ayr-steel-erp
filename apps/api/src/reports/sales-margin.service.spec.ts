@@ -701,6 +701,25 @@ describe('SalesMarginService — Servicios no depende del costo (cc24, D-412)', 
     expect(services.orders.every((o) => o.inTotals)).toBe(true);
   });
 
+  it('un pedido de solo Servicios facturado en dos meses no cuenta como fuera de los totales', async () => {
+    const { service } = await buildService({
+      documents: [{ id: 'd9', orderId: 'o9', orderSeq: 9, subtotal: '70.0000' }],
+      salesByLine: [{ documentId: 'd9', line: 'services', subtotal: '70.0000' }],
+      outside: [{ orderId: 'o9', count: 1 }],
+      pending: [{ orderId: 'o9', pending: true }],
+    });
+    const all = await service.salesMargin(RANGE);
+    expect(all.orders[0]).toMatchObject({ costStatus: 'NO_COMPARABLE', inTotals: true });
+    expect(all.totals).toMatchObject({
+      salesPen: '70.0000',
+      noCostSalesPen: '70.0000',
+      excludedOrderCount: 0,
+    });
+    // Y en su pestaña, el costo parcial no se cuenta: Servicios no tiene costo que sea un piso.
+    const services = await service.salesMargin({ ...RANGE, businessLine: 'services' });
+    expect(services.totals.partialOrderCount).toBe(0);
+  });
+
   it('en «Todas» el servicio suma a la venta y a su fila; la venta excluida es solo el resto', async () => {
     const { service } = await buildService(seeds);
     const all = await service.salesMargin(RANGE);

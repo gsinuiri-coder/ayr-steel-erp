@@ -422,7 +422,17 @@ export class SalesMarginService {
         costByDocument,
       });
       const comparable = costStatus !== 'NO_COMPARABLE' && costStatus !== 'NO_RASTREABLE';
-      const inTotals = comparable || noCostView;
+      // D-412 (autorrevisión de cc24, P2-2): un pedido cuyas líneas son todas sin costo
+      // registrado (solo Servicios) no tiene costo que comparar; su venta suma igual y no cuenta
+      // como «fuera de los totales» aunque se facture en varios meses.
+      const onlyNoCost = docs.every((d) => {
+        const rows = salesLinesByDocument.get(d.id) ?? [];
+        return (
+          rows.length > 0 &&
+          rows.every((r) => r.business_line_code !== null && isNoCostLine(r.business_line_code))
+        );
+      });
+      const inTotals = comparable || noCostView || onlyNoCost;
 
       // **Las filas de costo que le tocan a este pedido**, elegidas una sola vez: de acá salen
       // tanto el monto de la fila como su apertura por línea de negocio, y por eso los dos no
@@ -530,7 +540,8 @@ export class SalesMarginService {
         }
         continue;
       }
-      if (costStatus === 'PARCIAL') partialOrderCount += 1;
+      // En Servicios no hay costo que sea un piso (segundo modelo de cc24, P3).
+      if (costStatus === 'PARCIAL' && !noCostView) partialOrderCount += 1;
       totalSales = totalSales.plus(sales);
       totalCost = totalCost.plus(cost ?? ZERO);
 

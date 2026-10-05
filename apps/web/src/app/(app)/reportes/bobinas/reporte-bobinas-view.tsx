@@ -52,7 +52,7 @@ import { useSort } from '@/lib/use-sort';
  *
  * D-355: las tablas listan solo las bobinas **vigentes** al último día del mes. Las terminadas o
  * agotadas y las anuladas con saldo al inicio se resumen en una línea debajo; una anulada en el
- * mismo mes de su alta no figura. El total general sigue siendo el de todas, y el cuadre (inicio
+ * mismo mes de su alta no figura. El total de la pestaña (cc24, D-408) sigue siendo el de todas, y el cuadre (inicio
  * + altas − salidas = cierre) va debajo.
  */
 /**
@@ -69,7 +69,8 @@ export function ReporteBobinasView() {
   const [url, setUrl] = useUrlState({ mes: businessMonth() });
   const month = MONTH.test(url.mes) ? url.mes : businessMonth();
   const { tab, select } = useLineTab(LINE_TABS);
-  const line = tab;
+  // Sin «Todas», la pestaña siempre es una línea con bobinas.
+  const line = tab as (typeof COIL_REPORT_LINES)[number];
   const qs = `month=${month}&businessLine=${line}`;
 
   const report = useQuery({
@@ -130,7 +131,7 @@ export function ReporteBobinasView() {
 
       {report.data && (
         <StatStrip
-          aria-label="Total general"
+          aria-label={`Total de ${BUSINESS_LINE_LABELS[line]}`}
           className={
             report.data.totals.closingValuePen === null
               ? 'sm:grid-cols-3 lg:grid-cols-3'

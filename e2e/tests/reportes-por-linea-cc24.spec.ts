@@ -105,7 +105,7 @@ test.describe('Reportes por línea (cc24)', () => {
     await expect(page).toHaveURL('/reportes/bobinas?mes=2026-09&linea=drywall');
     await page.reload();
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByLabel('Mes')).toHaveValue('2026-09');
+    await expect(page.locator('#reporte-mes')).toHaveValue('2026-09');
 
     await page.goBack();
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
@@ -154,7 +154,14 @@ test.describe('Reportes por línea (cc24)', () => {
               ...products.untraceable.map((u) => u.salesPen),
               material.reconciliation.coilSalesPen,
             ]);
-      expect(parts.toFixed(4)).toBe(material.reconciliation.lineSalesPen);
+      if (products === null) {
+        // El motor de D-354 redondea por separado la parte trazada y la no trazable de cada
+        // línea prorrateada: a lo sumo 0,0001 por porción no trazable.
+        const gap = parts.minus(toDecimal(material.reconciliation.lineSalesPen)).abs();
+        expect(gap.lte(toDecimal('0.0001').times(material.untraceable.length))).toBe(true);
+      } else {
+        expect(parts.toFixed(4)).toBe(material.reconciliation.lineSalesPen);
+      }
     }
   });
 

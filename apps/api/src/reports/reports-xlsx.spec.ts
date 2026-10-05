@@ -247,7 +247,7 @@ describe('reports-xlsx', () => {
       const { buffer } = salesMarginXlsx(margin);
       const sheet = sheetOf(buffer, 'Totales');
 
-      expect(cell(sheet, 'A3')?.v).toBe('Total del rango');
+      expect(cell(sheet, 'A3')?.v).toBe('Total del rango (margen sin Servicios)');
       expect(cell(sheet, 'A4')?.v).toBe('Servicios: sin costo registrado, fuera del margen');
       expect(cell(sheet, 'A6')?.v).toBe('Pedidos con costo parcial');
       expect(cell(sheet, 'B7')?.v).toBe(1);

@@ -84,6 +84,15 @@ describe('assembleSalesByProduct (cc24, D-417)', () => {
     ]);
   });
 
+  it('despacho parcial con un tercio: trazado y no trazable suman la venta exacta', () => {
+    const out = assembleSalesByProduct(
+      [line({ qty: '3', salesPen: '100.0000' })],
+      declared([['d1', 'p1', { qty: '1', costPen: '10.0000' }]]),
+    );
+    expect(out.products.rows[0]?.salesPen).toBe('33.3333');
+    expect(out.products.untraceable[0]?.salesPen).toBe('66.6667');
+  });
+
   it('despachado de más contra el comprobante: a lo facturado le toca su parte del costo', () => {
     const out = assembleSalesByProduct(
       [line({})],
