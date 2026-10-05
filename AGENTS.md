@@ -104,6 +104,18 @@ Reglas de convivencia, sin excepción:
    además `AYR_OWNER_PUSH=1`: el hook de `.githooks/pre-push` es una red de seguridad aparte del
    `ask`, no un reemplazo — un hook de git no puede "preguntar" en medio de un `push`, solo
    permitirlo o bloquearlo en el acto.
+
+   **D-411 (2026-10-05, vigente hasta que el dueño diga lo contrario) reemplaza el OK por acción
+   para cinco acciones:** merge a `main`, push a `main` (con `AYR_OWNER_PUSH=1`),
+   `pnpm deploy:api`, `pnpm smoke:prod` y la vuelta atrás de la API con
+   `gcloud run services update-traffic` corren sin OK del dueño. Siguen en pie: la ventana solo
+   corre entre las 20:00 y las 07:00 de Lima, comprobado con la hora real; fuera de ese horario
+   el PR queda listo y se espera. Una migración detiene la sesión y se pregunta. `neonctl`,
+   `db:prod`, `prod:*` y `gcloud run deploy` siguen pidiendo confirmación, y un push con
+   `--force`, `--delete` o `-f` sigue prohibido. D-230 sigue vigente. El UAT del dueño en demo va
+   antes de la ventana. Si falla el deploy, el merge o el smoke, la vuelta atrás es automática:
+   la API a la revisión anterior y el revert del merge, otro smoke y el registro escrito, sin
+   arreglos en caliente.
 2. **Credenciales nunca en argv ni impresas.** Los comandos que podrían imprimirlas (p. ej.
    `neonctl`) van en modo silencioso y con `--output json`. Las cadenas de conexión viajan por
    entorno o archivo, jamás por línea de comandos.
