@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -31,6 +37,7 @@ import {
   piecesMeters,
   productionOrderCode,
   remainingPlanPieces,
+  Role,
   roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
@@ -39,6 +46,7 @@ import {
   toDateOnly,
   toDecimal,
   toFixedString,
+  toleranceOverrideLabel,
   Unit,
   type CancelProductionOrderInput,
   type CloseRoofingOrderInput,
@@ -69,7 +77,7 @@ import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
-import { DRAFT_INCLUDE, toDraftDto } from './roofing-drafts';
+import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { itemRefOf } from '../inventory/row-locks';
@@ -97,6 +105,10 @@ import {
   recomputeStatus,
   resolveActorNames,
   restoreReservationIfIdle,
+  appliedToleranceOverride,
+  mountedKgRejection,
+  TOLERANCE_OVERRIDE_AUDIT_ACTION,
+  toleranceOverrideAuditAfter,
   type LockedOrder,
 } from './production-shared';
 import { ProductionService } from './production.service';
@@ -919,6 +931,14 @@ export class RoofingProductionService {
     input: ReportRoofingPiecesInput,
     operationDate: string,
   ): Promise<RawMaterialShortfall[]> {
+    // D-388: la casilla para pasar el 1 % es solo del administrador. Se valida acá, en la API y
+    // antes de tocar nada; la pantalla solo acompaña.
+    const override = input.toleranceOverride;
+    if (override !== undefined && actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        'Solo un administrador puede autorizar un reporte fuera de la tolerancia',
+      );
+    }
     const order = await lockOrder(tx, orderId);
     assertKind(order, ProductionOrderKind.ROOFING);
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
@@ -947,6 +967,11 @@ export class RoofingProductionService {
     // El schema solo garantiza que venga una de las dos formas: cuál corresponde lo decide el
     // subtipo del producto de la orden, que solo el servicio conoce.
     const accessory = isAccessory(product);
+    if (accessory && override !== undefined) {
+      throw new BadRequestException(
+        'El reporte de un accesorio no admite la casilla de tolerancia: sigue con el 1 %',
+      );
+    }
     if (accessory && input.meters === undefined) {
       throw new BadRequestException(
         `${product.sku} es un accesorio: reporta los metros lineales de bobina que usó, no largos`,
@@ -1134,14 +1159,25 @@ export class RoofingProductionService {
     // D-246: si el teórico pasa lo montado y el acero ya salió (lo declarado cabe, o el
     // exceso entra en la tolerancia), el reporte se topa en lo montado en vez de bloquear.
     // El teórico queda en la fila del reporte como dato; el kardex sale por `outKg`.
+    // D-388: entre el 1 % y el 5 % sin casilla, el rechazo lleva su código y las cifras para que
+    // la pantalla la ofrezca; por encima del 5 % no hay casilla.
     const mounted = mountedKgForReport({
       label: row.coil.code,
       theoreticalKg: neededKg,
       availableKg: rowRemainingKg,
       declaredKg,
+      // D-388: el accesorio (reporte por metros) queda fuera: sigue con el 1 % sin casilla
+      // (decisión del dueño). Las franjas son de las planchas y la cobertura a medida.
+      ...(accessory ? {} : { overrideBands: { authorized: override !== undefined } }),
     });
-    if (!mounted.ok) throw new BadRequestException(mounted.message);
+    if (!mounted.ok) throw mountedKgRejection(mounted);
     if (mounted.note !== null) deviation.unshift(mounted.note);
+    const applied = appliedToleranceOverride(mounted, override);
+    if (applied !== null) {
+      deviation.unshift(
+        `Fuera de tolerancia, autorizado por un administrador: ${toleranceOverrideLabel(applied.override)}.`,
+      );
+    }
     const outKg = mounted.kg;
     const allocationRows: StripAllocationRow[] = [
       {
@@ -1387,6 +1423,26 @@ export class RoofingProductionService {
       },
     });
 
+    // D-388: la autorización tiene su propia entrada, en el historial de la orden y con el
+    // reporte adentro: es lo que el detalle de la orden lee para su etiqueta «Fuera de tolerancia».
+    if (applied !== null) {
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
+        entity: 'production_orders',
+        entityId: orderId,
+        after: toleranceOverrideAuditAfter({
+          reportId: report.id,
+          orderId,
+          orderSeq: order.seq,
+          coilId: row.coilId,
+          coilCode: row.coil.code,
+          realKg: toFixedString(outKg, 'KG'),
+          applied,
+        }),
+      });
+    }
+
     return warnings;
   }
 
@@ -1462,9 +1518,21 @@ export class RoofingProductionService {
     });
 
     const rows = orders.map((order): RoofingBatchOrderDto => {
-      const drafts = order.reportDrafts.map(toDraftDto);
       const planPieces = order.items.map(toPieceLike);
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
+      // D-388: cada fila del borrador sale con su marca de «fuera de tolerancia», medida contra
+      // el estado de esta misma lectura (las bobinas montadas y lo ya reportado).
+      const drafts = draftDtos(
+        {
+          orderSeq: order.seq,
+          productSku: order.product.sku,
+          fixedLengthMm: order.product.lengthMm === null ? null : order.product.lengthMm.toFixed(2),
+          planPieces,
+          reportedMeters: piecesMeters(reportedPieces),
+          coils: draftCoilStates(order.consumptions),
+        },
+        order.reportDrafts,
+      );
       const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
       const salesOrder = order.reservation?.salesOrder ?? null;
       // D-343: un accesorio no tiene plan de largos; su «plan» son los metros que encargó la línea

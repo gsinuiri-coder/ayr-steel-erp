@@ -2,6 +2,67 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-05 — cc20: D-388, casilla para superar la tolerancia del 1 % en el reporte (PR #100)
+
+Urgente: la producción del cliente estaba detenida por el caso real. Detalle y runbook en
+`docs/handoff/ventana-cc20.md`. Sin migración; toca API y web.
+
+- **Fase 0 (decisiones del dueño, D-230):**
+  - **Hacia arriba**, el 1 % de D-246 se mide sobre el teórico del reporte y topa en lo montado.
+  - **Hacia abajo** no hay 1 %: el sobrante es despunte al cerrar (D-089, 10 % con motivo libre).
+    **No se toca.**
+  - **El reporte no termina la bobina montada** (D-360): la termina «Ejecutar y cerrar». Se deja
+    así.
+  - **Drywall** no cambia.
+  - **En pantalla las planchas se reportan solo por el borrador**, que aplicaba el 1 % al ingresar
+    la fila. El dueño eligió **autorizar al confirmar**: el borrador marca la fila y la casilla
+    viaja por fila al ejecutar, sin migración.
+  - **El accesorio** queda fuera, por decisión del dueño tras la revisión.
+- **Hecho:**
+  - franjas en `mountedKgForReport`, con la constante de 5 %;
+  - motivo de lista y su esquema;
+  - `reportInTx` con rol, código y auditoría propia;
+  - el borrador con la marca `outOfTolerance` y la casilla por fila en el commit;
+  - el detalle de la OP con la etiqueta «Fuera de tolerancia»;
+  - la pantalla de planta con la casilla, el motivo y los bloqueos.
+- **Tests:**
+  - unitarios `tolerance-override-d388.spec.ts` (27): las tres franjas, los bordes exactos de 1 % y
+    5 %, la dirección hacia abajo sin cambio, drywall sin cambio, el caso real (4 252,805 kg
+    teóricos, 68,805 kg, 1,62 %), el borrador, el motivo, el 403 y el redondeo;
+  - E2E `tolerancia-reporte-d388.spec.ts` (3): el caso real de punta a punta con sus rechazos, la
+    auditoría y la reversa; más del 5 %; la pantalla del supervisor y del administrador;
+  - regresión local: fase 7, borrador, multi-montar y accesorio, 23/23;
+  - `test:db` 31/31, contra la base propia `ayr_local_e2e_cc20`;
+  - API completa: 2524 (1 rojo propio corregido: un mock sin `auditLog`).
+- **Revisiones:**
+  - autorrevisión (`docs/revision/cc20-autorrevision.md`): 0 P0, 3 P1, 3 P2, 4 P3;
+  - segundo modelo Sonnet (`docs/revision/cc20-segundo-modelo.md`): 0 P0, 0 P1, 3 P2, 4 P3.
+- **Corregidos:**
+  - P1: el accesorio entraba en bucle con el diálogo del despunte; queda fuera de las franjas;
+  - P1: una marca vieja con «Ejecutar y cerrar» abría el diálogo del despunte; ahora el código va
+    primero;
+  - P2: el rol ya se valida al entrar a `reportInTx`, con unitario;
+  - P2: corregir una fila descarta su casilla;
+  - P3: el % se redondea hacia arriba;
+  - P3: un detalle vacío se guarda como `null`;
+  - P3: el comentario de `assertLive` volvió a su función.
+- **Riesgo aceptado (P1 de la autorrevisión), decisión 1 del dueño (no cambiar la base):** la
+  franja se mide **por reporte**. Si el último tramo de una bobina se parte en varias filas, la que
+  la vacía carga todo el exceso y puede pasar el 5 % aunque el total no lo pase. El caso real va en
+  **una** fila. Si en planta aparece partido, la salida es medir la franja contra lo que la bobina
+  rindió en total: es otra decisión.
+- **P2/P3 anotados:**
+  - con varias bobinas montadas, la casilla vacía una sin avisar que otra montada sigue con saldo;
+  - una casilla de más (fila dentro del 1 %) no deja rastro, y un `draftId` ajeno o repetido se
+    ignora: falta un unitario de ese mapeo;
+  - la etiqueta «Fuera de tolerancia» sigue en un reporte revertido;
+  - «Bobina más pesada que el nominal» no explica un exceso hacia arriba; queda como opción del
+    dueño;
+  - el detalle de cada orden suma una consulta a `audit_log`, también en drywall;
+  - el accesorio sin casilla queda **pendiente**, si el dueño lo pide.
+- **Fuera de alcance, pendiente:** el sobrante de una bobina que se usa en otra producción (punto 9
+  del brief).
+
 ## 2026-10-04 — Ventana cc19 (D-387 desplegada, PR #97, sin migración)
 
 Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff/ventana-cc19.md`.

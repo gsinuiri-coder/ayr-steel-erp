@@ -28,6 +28,8 @@ import { ProductionService } from './production.service';
 import {
   checkDraftRows,
   DRAFT_INCLUDE,
+  draftCoilStates,
+  draftDtos,
   toDraftDto,
   type DraftCheckState,
   type DraftRow,
@@ -70,12 +72,23 @@ export class RoofingDraftsService {
   // -------------------------------------------------------------------------
 
   async list(orderId: string): Promise<RoofingReportDraftDto[]> {
-    const rows = await this.prisma.productionReportDraft.findMany({
-      where: { productionOrderId: orderId },
-      include: DRAFT_INCLUDE,
-      orderBy: { seq: 'asc' },
-    });
-    return rows.map(toDraftDto);
+    const [rows, order] = await Promise.all([
+      this.prisma.productionReportDraft.findMany({
+        where: { productionOrderId: orderId },
+        include: DRAFT_INCLUDE,
+        orderBy: { seq: 'asc' },
+      }),
+      this.prisma.productionOrder.findUnique({
+        where: { id: orderId },
+        select: { seq: true, productId: true, status: true },
+      }),
+    ]);
+    // D-388: con la orden en curso, cada fila sale con su marca de «fuera de tolerancia». Es una
+    // lectura sin bloqueo: el veredicto que mueve kardex es el del commit, que revalida todo.
+    if (rows.length === 0 || order?.status !== ProductionOrderStatus.IN_PROGRESS) {
+      return rows.map((draft, index) => toDraftDto(draft, index));
+    }
+    return draftDtos(await this.readState(this.prisma, order, orderId), rows);
   }
 
   // -------------------------------------------------------------------------
@@ -224,7 +237,15 @@ export class RoofingDraftsService {
         this.assertRoomForReports(state.liveReports, drafts.length);
         this.validate(state, drafts.map(toRowLike), 'all');
 
+        // D-388: la casilla del administrador viaja por fila al ejecutar. Una fila que la
+        // necesita y no la trae se rechaza adentro de `reportInTx` con su código y su número de
+        // fila; una casilla de más (la fila ya entra en el 1 %) no deja rastro.
+        const overrides = new Map(
+          (input.toleranceOverrides ?? []).map(({ draftId, ...override }) => [draftId, override]),
+        );
+
         for (const [index, draft] of drafts.entries()) {
+          const toleranceOverride = overrides.get(draft.id);
           try {
             warnings.push(
               ...(await this.roofing.reportInTx(
@@ -239,6 +260,7 @@ export class RoofingDraftsService {
                   })),
                   ...(draft.consumedKg === null ? {} : { consumedKg: draft.consumedKg.toFixed(3) }),
                   ...(draft.notes === null ? {} : { notes: draft.notes }),
+                  ...(toleranceOverride === undefined ? {} : { toleranceOverride }),
                   confirmBackdate: input.confirmBackdate,
                 },
                 operationDate,
@@ -306,6 +328,15 @@ export class RoofingDraftsService {
           : `La orden está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}: no admite reportes`,
       );
     }
+    return this.readState(tx, order, orderId);
+  }
+
+  /** Lo que la validación del borrador lee de la orden, sin bloquear nada. */
+  private async readState(
+    tx: Prisma.TransactionClient,
+    order: { seq: number; productId: string },
+    orderId: string,
+  ): Promise<DraftCheckState & { liveReports: number }> {
     const [product, plan, reports, consumptions] = await Promise.all([
       tx.product.findUniqueOrThrow({
         where: { id: order.productId },
@@ -342,16 +373,7 @@ export class RoofingDraftsService {
       planPieces: plan.map(toPieceLike),
       reportedMeters: piecesMeters(reports.flatMap((r) => r.piecesDetail.map(toPieceLike))),
       liveReports: reports.length,
-      coils: consumptions.map((c) => ({
-        coilId: c.coilId,
-        coilCode: c.coil.code,
-        remainingKg: toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
-        geometry: {
-          widthMm: c.coil.widthMm.toFixed(2),
-          thicknessMm: c.coil.thicknessMm.toFixed(2),
-          densityFactor: c.coil.finish.densityFactor.toFixed(4),
-        },
-      })),
+      coils: draftCoilStates(consumptions),
     };
   }
 

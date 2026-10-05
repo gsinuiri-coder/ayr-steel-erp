@@ -679,6 +679,45 @@ export const mountRoofingCoilSchema = z
 export type MountRoofingCoilInput = z.infer<typeof mountRoofingCoilSchema>;
 
 /**
+ * D-388 — por qué un administrador autoriza un reporte fuera de la tolerancia del 1 %: la bobina
+ * real no pesa lo que dice su nominal, o «Otro», que exige explicarlo.
+ */
+export const TOLERANCE_OVERRIDE_REASONS = ['LIGHTER_COIL', 'HEAVIER_COIL', 'OTHER'] as const;
+export type ToleranceOverrideReason = (typeof TOLERANCE_OVERRIDE_REASONS)[number];
+export const TOLERANCE_OVERRIDE_REASON_LABELS: Record<ToleranceOverrideReason, string> = {
+  LIGHTER_COIL: 'Bobina más liviana que el nominal',
+  HEAVIER_COIL: 'Bobina más pesada que el nominal',
+  OTHER: 'Otro',
+};
+
+/**
+ * D-388: la casilla del administrador con su motivo. El detalle es opcional salvo en «Otro»,
+ * donde es el motivo mismo.
+ */
+export const toleranceOverrideSchema = z
+  .object({
+    reason: z.enum(TOLERANCE_OVERRIDE_REASONS),
+    detail: z.string().trim().max(200).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.reason === 'OTHER' && (v.detail ?? '') === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['detail'],
+        message: 'Con «Otro», explica el motivo',
+      });
+    }
+  });
+export type ToleranceOverrideInput = z.infer<typeof toleranceOverrideSchema>;
+
+/** D-388: el motivo en palabras, con su detalle si lo trae: «Bobina más liviana…: pesó 4 184». */
+export function toleranceOverrideLabel(input: ToleranceOverrideInput): string {
+  const label = TOLERANCE_OVERRIDE_REASON_LABELS[input.reason];
+  if (input.reason === 'OTHER') return input.detail ?? label;
+  return input.detail ? `${label}: ${input.detail}` : label;
+}
+
+/**
  * Reportar los largos que de verdad salieron (D-083). Parcial, N veces, como D-058.
  *
  * **D-343: un accesorio no reporta largos sino metros lineales de bobina.** El cuerpo trae
@@ -721,6 +760,11 @@ export const reportRoofingBaseSchema = z.object({
    */
   consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   notes: z.string().trim().max(240).optional(),
+  /**
+   * D-388: la casilla del administrador para un reporte que pasa lo montado entre el 1 % y el
+   * 5 % del teórico. Solo ADMINISTRADOR (la API lo valida). Fuera de esa franja no se usa.
+   */
+  toleranceOverride: toleranceOverrideSchema.optional(),
   ...backdatableFields,
   ...idempotencyFields,
 });
@@ -789,6 +833,14 @@ export const commitRoofingDraftsSchema = z.object({
   close: z.boolean().optional(),
   closeConsumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   closeReason: reasonSchema.optional(),
+  /**
+   * D-388: la casilla del administrador para las filas que pasan la tolerancia (las marcadas
+   * con `outOfTolerance` en el borrador). Nada se guarda en la fila: viaja al ejecutar.
+   */
+  toleranceOverrides: z
+    .array(z.object({ draftId: z.string().uuid() }).and(toleranceOverrideSchema))
+    .max(50)
+    .optional(),
   ...backdatableFields,
   ...idempotencyFields,
 });
@@ -807,6 +859,20 @@ export const roofingReportDraftSchema = z.object({
   consumedKg: z.string().nullable(),
   notes: z.string().nullable(),
   createdAt: z.string(),
+  /**
+   * D-388: la fila pasa lo montado entre el 1 % y el 5 % del teórico y necesita la casilla de un
+   * administrador al ejecutar. Calculado al leer el borrador; `null` si no hace falta.
+   */
+  outOfTolerance: z
+    .object({
+      theoreticalKg: z.string(),
+      availableKg: z.string(),
+      excessKg: z.string(),
+      excessPct: z.string(),
+      tolerancePct: z.string(),
+      maxPct: z.string(),
+    })
+    .nullable(),
 });
 export type RoofingReportDraftDto = z.infer<typeof roofingReportDraftSchema>;
 

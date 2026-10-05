@@ -387,6 +387,15 @@ export function ProduccionDetalleView({ id }: { id: string }) {
                   <Badge variant={PRODUCTION_REPORT_TONE[r.status]}>
                     {PRODUCTION_REPORT_STATUS_LABELS[r.status]}
                   </Badge>
+                  {/* D-388: entró pasando el 1 % con la casilla de un administrador. */}
+                  {r.toleranceOverride !== null && (
+                    <span className="mt-1 block" data-testid="report-tolerance-override">
+                      <Badge variant="warning">Fuera de tolerancia</Badge>
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        {r.toleranceOverride.excessPct} % · {r.toleranceOverride.label}
+                      </span>
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell className="text-right">
                   {o.status === 'IN_PROGRESS' && r.id === lastActive?.id && (
