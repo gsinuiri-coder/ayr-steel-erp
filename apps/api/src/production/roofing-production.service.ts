@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -31,6 +37,7 @@ import {
   piecesMeters,
   productionOrderCode,
   remainingPlanPieces,
+  Role,
   roofingConsumptionDeviation,
   roofingPlanOverrun,
   roofingPlanProgress,
@@ -39,6 +46,8 @@ import {
   toDateOnly,
   toDecimal,
   toFixedString,
+  toleranceOverrideLabel,
+  TOLERANCE_OVERRIDE_REASON_LABELS,
   Unit,
   type CancelProductionOrderInput,
   type CloseRoofingOrderInput,
@@ -69,7 +78,7 @@ import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
-import { DRAFT_INCLUDE, toDraftDto } from './roofing-drafts';
+import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
 import { itemRefOf } from '../inventory/row-locks';
@@ -97,6 +106,7 @@ import {
   recomputeStatus,
   resolveActorNames,
   restoreReservationIfIdle,
+  TOLERANCE_OVERRIDE_AUDIT_ACTION,
   type LockedOrder,
 } from './production-shared';
 import { ProductionService } from './production.service';
@@ -1134,14 +1144,43 @@ export class RoofingProductionService {
     // D-246: si el teórico pasa lo montado y el acero ya salió (lo declarado cabe, o el
     // exceso entra en la tolerancia), el reporte se topa en lo montado en vez de bloquear.
     // El teórico queda en la fila del reporte como dato; el kardex sale por `outKg`.
+    // D-388: la casilla para pasar el 1 % es solo del administrador, y se valida acá, no en la
+    // pantalla. Entre el 1 % y el 5 % sin casilla, el rechazo lleva su código y las cifras para
+    // que la pantalla la ofrezca; por encima del 5 % no hay casilla.
+    const override = input.toleranceOverride;
+    if (override !== undefined && actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        'Solo un administrador puede autorizar un reporte fuera de la tolerancia',
+      );
+    }
     const mounted = mountedKgForReport({
       label: row.coil.code,
       theoreticalKg: neededKg,
       availableKg: rowRemainingKg,
       declaredKg,
+      overrideBands: { authorized: override !== undefined },
     });
-    if (!mounted.ok) throw new BadRequestException(mounted.message);
+    if (!mounted.ok) {
+      throw new BadRequestException(
+        mounted.code === undefined
+          ? mounted.message
+          : {
+              statusCode: 400,
+              error: 'Bad Request',
+              code: mounted.code,
+              message: mounted.message,
+              excess: mounted.excess,
+            },
+      );
+    }
     if (mounted.note !== null) deviation.unshift(mounted.note);
+    // La casilla solo cuenta si de verdad hizo falta: dentro del 1 % no deja rastro.
+    const appliedOverride = mounted.overridden && override !== undefined ? override : null;
+    if (appliedOverride !== null) {
+      deviation.unshift(
+        `Fuera de tolerancia, autorizado por un administrador: ${toleranceOverrideLabel(appliedOverride)}.`,
+      );
+    }
     const outKg = mounted.kg;
     const allocationRows: StripAllocationRow[] = [
       {
@@ -1387,6 +1426,30 @@ export class RoofingProductionService {
       },
     });
 
+    // D-388: la autorización tiene su propia entrada, sobre el reporte: es lo que el detalle de
+    // la orden lee para mostrar «Fuera de tolerancia» con su motivo.
+    if (appliedOverride !== null && mounted.excess !== null) {
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
+        entity: 'production_reports',
+        entityId: report.id,
+        after: {
+          productionOrderId: orderId,
+          productionOrderCode: productionOrderCode(order.seq),
+          coilId: row.coilId,
+          coilCode: row.coil.code,
+          theoreticalKg: mounted.excess.theoreticalKg,
+          realKg: toFixedString(outKg, 'KG'),
+          differenceKg: mounted.excess.excessKg,
+          differencePct: mounted.excess.excessPct,
+          reason: appliedOverride.reason,
+          reasonLabel: TOLERANCE_OVERRIDE_REASON_LABELS[appliedOverride.reason],
+          detail: appliedOverride.detail ?? null,
+        },
+      });
+    }
+
     return warnings;
   }
 
@@ -1462,9 +1525,21 @@ export class RoofingProductionService {
     });
 
     const rows = orders.map((order): RoofingBatchOrderDto => {
-      const drafts = order.reportDrafts.map(toDraftDto);
       const planPieces = order.items.map(toPieceLike);
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
+      // D-388: cada fila del borrador sale con su marca de «fuera de tolerancia», medida contra
+      // el estado de esta misma lectura (las bobinas montadas y lo ya reportado).
+      const drafts = draftDtos(
+        {
+          orderSeq: order.seq,
+          productSku: order.product.sku,
+          fixedLengthMm: order.product.lengthMm === null ? null : order.product.lengthMm.toFixed(2),
+          planPieces,
+          reportedMeters: piecesMeters(reportedPieces),
+          coils: draftCoilStates(order.consumptions),
+        },
+        order.reportDrafts,
+      );
       const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
       const salesOrder = order.reservation?.salesOrder ?? null;
       // D-343: un accesorio no tiene plan de largos; su «plan» son los metros que encargó la línea

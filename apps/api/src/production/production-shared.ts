@@ -6,6 +6,8 @@ import {
   type Prisma,
   type PrismaClient,
 } from '@prisma/client';
+import { TOLERANCE_OVERRIDE_REASONS } from '@ayr/shared';
+import { z } from 'zod';
 import { restoreReservation } from '../sales/reservation-guard';
 
 /**
@@ -62,6 +64,20 @@ export async function lockOrder(
 }
 
 /** Corta si la orden ya es terminal. `action` completa "no se puede <action>". */
+/**
+ * D-388: la acción de auditoría del reporte de coberturas autorizado fuera de la tolerancia del
+ * 1 %. La escribe el reporte y la lee el detalle de la orden para su etiqueta: un solo nombre.
+ */
+export const TOLERANCE_OVERRIDE_AUDIT_ACTION = 'production.roofing.report-tolerance-override';
+
+/** D-388: lo que el detalle de la orden lee de esa entrada (el resto queda para quien audita). */
+export const toleranceOverrideAuditSchema = z.object({
+  reason: z.enum(TOLERANCE_OVERRIDE_REASONS),
+  detail: z.string().nullable(),
+  differenceKg: z.string(),
+  differencePct: z.string(),
+});
+
 export function assertLive(order: { status: ProductionOrderStatus }, action: string): void {
   if (
     order.status === ProductionOrderStatus.CLOSED ||

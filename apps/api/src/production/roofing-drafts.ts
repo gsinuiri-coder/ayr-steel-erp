@@ -8,6 +8,7 @@ import {
   roofingPlanProgress,
   toDecimal,
   toFixedString,
+  type MountedKgExcess,
   type PieceLike,
   type RoofingReportDraftDto,
 } from '@ayr/shared';
@@ -60,6 +61,11 @@ export interface DraftRowCheck {
   theoreticalKg: Decimal;
   /** Lo que la fila va a sacar de la bobina al ejecutarse (D-246). */
   outKg: Decimal;
+  /**
+   * D-388: la fila pasa lo montado entre el 1 % y el 5 % del teórico; al ejecutarla hace falta
+   * la casilla de un administrador. `null` dentro de tolerancia.
+   */
+  outOfTolerance: MountedKgExcess | null;
 }
 
 export type DraftCheckResult =
@@ -133,6 +139,8 @@ export function checkDraftRows(
       theoreticalKg,
       availableKg: leftKg,
       declaredKg: row.consumedKg ?? null,
+      // D-388: el borrador admite la franja autorizable y la marca; la casilla viaja al ejecutar.
+      overrideBands: { authorized: true },
     });
     if (!mounted.ok) {
       return fail(
@@ -144,7 +152,13 @@ export function checkDraftRows(
 
     usedKg.set(coil.coilId, alreadyKg.plus(mounted.kg));
     draftMeters = draftMeters.plus(meters);
-    checks.push({ coil, meters, theoreticalKg, outKg: mounted.kg });
+    checks.push({
+      coil,
+      meters,
+      theoreticalKg,
+      outKg: mounted.kg,
+      outOfTolerance: mounted.overridden ? mounted.excess : null,
+    });
   }
 
   return { ok: true, rows: checks };
@@ -165,7 +179,11 @@ export const DRAFT_INCLUDE = {
 
 export type DraftRow = Prisma.ProductionReportDraftGetPayload<{ include: typeof DRAFT_INCLUDE }>;
 
-export function toDraftDto(draft: DraftRow, index: number): RoofingReportDraftDto {
+export function toDraftDto(
+  draft: DraftRow,
+  index: number,
+  outOfTolerance: MountedKgExcess | null = null,
+): RoofingReportDraftDto {
   const pieces = draft.pieces.map((p) => ({
     lineNumber: p.lineNumber,
     lengthMm: p.lengthMm.toFixed(2),
@@ -189,5 +207,56 @@ export function toDraftDto(draft: DraftRow, index: number): RoofingReportDraftDt
     consumedKg: draft.consumedKg === null ? null : draft.consumedKg.toFixed(3),
     notes: draft.notes,
     createdAt: draft.createdAt.toISOString(),
+    outOfTolerance,
   };
+}
+
+/** Una fila guardada del borrador, en la forma que valida `checkDraftRows`. */
+export function draftRowLike(draft: DraftRow): DraftRowLike {
+  return {
+    coilId: draft.coilId,
+    pieces: draft.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
+    consumedKg: draft.consumedKg === null ? null : draft.consumedKg.toFixed(3),
+  };
+}
+
+/** Las bobinas montadas de la orden, como las lee la validación del borrador. */
+export function draftCoilStates(
+  consumptions: readonly {
+    coilId: string;
+    assignedKg: Prisma.Decimal;
+    consumedKg: Prisma.Decimal;
+    coil: {
+      code: string;
+      widthMm: Prisma.Decimal;
+      thicknessMm: Prisma.Decimal;
+      finish: { densityFactor: Prisma.Decimal };
+    };
+  }[],
+): DraftCoilState[] {
+  return consumptions.map((c) => ({
+    coilId: c.coilId,
+    coilCode: c.coil.code,
+    remainingKg: toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
+    geometry: {
+      widthMm: c.coil.widthMm.toFixed(2),
+      thicknessMm: c.coil.thicknessMm.toFixed(2),
+      densityFactor: c.coil.finish.densityFactor.toFixed(4),
+    },
+  }));
+}
+
+/**
+ * D-388: las filas del borrador con su marca `outOfTolerance`, calculada al leer contra el estado
+ * de ahora (la misma validación que al ingresar y al ejecutar). Si el borrador ya no valida —el
+ * estado cambió por debajo—, ninguna fila se marca: el error lo da quien lo ejecute.
+ */
+export function draftDtos(
+  state: DraftCheckState,
+  drafts: readonly DraftRow[],
+): RoofingReportDraftDto[] {
+  const check = drafts.length === 0 ? null : checkDraftRows(state, drafts.map(draftRowLike));
+  return drafts.map((draft, index) =>
+    toDraftDto(draft, index, check?.ok ? (check.rows[index]?.outOfTolerance ?? null) : null),
+  );
 }

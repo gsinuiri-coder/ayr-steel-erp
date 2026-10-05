@@ -26,6 +26,7 @@ import {
   toDateOnly,
   toDecimal,
   toFixedString,
+  toleranceOverrideLabel,
   Unit,
   type CancelProductionOrderInput,
   type CloseProductionOrderInput,
@@ -34,6 +35,7 @@ import {
   type ProductionOrderDto,
   type ProductionOrderListItemDto,
   type ProductionOrderQuery,
+  type ProductionReportDto,
   type ProductionStripOptionDto,
   type ReportPiecesInput,
   type ReverseMovementInput,
@@ -59,6 +61,8 @@ import {
   recomputeStatus as recomputeOrderStatus,
   resolveActorNames as resolveNames,
   restoreReservationIfIdle as restoreIdleReservation,
+  TOLERANCE_OVERRIDE_AUDIT_ACTION,
+  toleranceOverrideAuditSchema,
 } from './production-shared';
 import {
   allocateStripKg,
@@ -1525,7 +1529,10 @@ export class ProductionService {
       select: { itemId: true, qty: true },
     });
     const availableKg = new Map(balances.map((b) => [b.itemId, b.qty.toFixed(3)]));
-    const coilsByReport = await this.reportCoils(order.reports.map((r) => r.id));
+    const [coilsByReport, overridesByReport] = await Promise.all([
+      this.reportCoils(order.reports.map((r) => r.id)),
+      this.reportToleranceOverrides(order.reports.map((r) => r.id)),
+    ]);
     const actors = await this.resolveActorNames([
       order.createdById,
       ...(order.priorityById ? [order.priorityById] : []),
@@ -1597,8 +1604,42 @@ export class ProductionService {
         createdAt: r.createdAt.toISOString(),
         createdByName: actors.get(r.createdById) ?? null,
         revertedAt: r.revertedAt ? r.revertedAt.toISOString() : null,
+        toleranceOverride: overridesByReport.get(r.id) ?? null,
       })),
     };
+  }
+
+  /**
+   * D-388: los reportes que entraron fuera de la tolerancia del 1 % con la casilla de un
+   * administrador, leídos de su entrada de auditoría (no hay columna). Una consulta para toda la
+   * orden, por el índice `(entity, entity_id, at)`.
+   */
+  private async reportToleranceOverrides(
+    reportIds: readonly string[],
+  ): Promise<Map<string, NonNullable<ProductionReportDto['toleranceOverride']>>> {
+    if (reportIds.length === 0) return new Map();
+    const rows = await this.prisma.auditLog.findMany({
+      where: {
+        entity: 'production_reports',
+        entityId: { in: [...reportIds] },
+        action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
+      },
+      select: { entityId: true, after: true },
+    });
+    const byReport = new Map<string, NonNullable<ProductionReportDto['toleranceOverride']>>();
+    for (const row of rows) {
+      const parsed = toleranceOverrideAuditSchema.safeParse(row.after);
+      if (row.entityId === null || !parsed.success) continue;
+      const { reason, detail, differenceKg, differencePct } = parsed.data;
+      byReport.set(row.entityId, {
+        reason,
+        detail,
+        label: toleranceOverrideLabel({ reason, ...(detail === null ? {} : { detail }) }),
+        excessKg: differenceKg,
+        excessPct: differencePct,
+      });
+    }
+    return byReport;
   }
 
   /**
