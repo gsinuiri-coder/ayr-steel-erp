@@ -128,6 +128,7 @@ const BY_MATERIAL: SalesByMaterialDto = {
     unclassifiedSalesPen: '0.0000',
   },
   noLineSalesPen: '0.0000',
+  products: null,
 };
 
 const EMPTY_SECTION = {

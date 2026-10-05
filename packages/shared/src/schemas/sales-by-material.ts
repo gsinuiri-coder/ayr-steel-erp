@@ -187,6 +187,72 @@ export const salesMaterialUntraceableSchema = z.object({
 });
 export type SalesMaterialUntraceableDto = z.infer<typeof salesMaterialUntraceableSchema>;
 
+/**
+ * cc24 (D-417): por qué la venta de un producto sin bobina (Coberturas UPVC, Reventa) no tiene
+ * costo trazable.
+ *
+ * - `SIN_DESPACHO_DECLARADO`: ningún despacho declara el comprobante (D-205/D-213), así que no se
+ *   sabe qué salida de kardex le corresponde.
+ * - `DESPACHO_PARCIAL`: se despachó, contra ese comprobante, menos de lo facturado; la parte
+ *   despachada sí se traza.
+ * - `NOTA_CREDITO`: la nota de crédito resta venta; el costo vuelve, si vuelve, con la reversa
+ *   del despacho del comprobante que afecta.
+ * - `SIN_SALIDA_KARDEX`: el despacho declarado tiene ítems sin salida de kardex (D-285): con
+ *   costo 0 el margen sería del 100 %.
+ */
+export const SALES_PRODUCT_UNTRACEABLE_REASONS = [
+  'SIN_DESPACHO_DECLARADO',
+  'DESPACHO_PARCIAL',
+  'NOTA_CREDITO',
+  'SIN_SALIDA_KARDEX',
+] as const;
+export type SalesProductUntraceableReason = (typeof SALES_PRODUCT_UNTRACEABLE_REASONS)[number];
+
+export const SALES_PRODUCT_UNTRACEABLE_LABELS: Record<SalesProductUntraceableReason, string> = {
+  SIN_DESPACHO_DECLARADO: 'Ningún despacho declara el comprobante',
+  DESPACHO_PARCIAL: 'Despacho parcial: la parte no despachada',
+  NOTA_CREDITO: 'Nota de crédito (resta venta)',
+  SIN_SALIDA_KARDEX: 'Despachado sin salida de kardex',
+};
+
+/** cc24 (D-417): una fila por producto, con el costo de kardex de lo despachado. */
+export const salesProductRowSchema = z.object({
+  sku: z.string(),
+  name: z.string(),
+  /** Unidad de venta (`MTR`, `NIU`, `KGM`…). */
+  unit: z.string(),
+  /** Cantidad trazada, en la unidad de venta. */
+  qty: z.string(),
+  salesPen: z.string(),
+  costPen: z.string(),
+  profitPen: z.string(),
+  /** Costo ÷ cantidad; null con cantidad 0. */
+  costPerUnitPen: z.string().nullable(),
+  /** Cuántas líneas de comprobante suman en la fila. */
+  lineCount: z.number().int(),
+});
+export type SalesProductRowDto = z.infer<typeof salesProductRowSchema>;
+
+export const salesProductUntraceableSchema = z.object({
+  reason: z.enum(SALES_PRODUCT_UNTRACEABLE_REASONS),
+  documentId: z.string().uuid(),
+  documentNumber: z.string().nullable(),
+  issueDate: z.string(),
+  orderCode: z.string().nullable(),
+  sku: z.string(),
+  unit: z.string(),
+  qty: z.string(),
+  salesPen: z.string(),
+});
+export type SalesProductUntraceableDto = z.infer<typeof salesProductUntraceableSchema>;
+
+export const salesByProductSchema = z.object({
+  rows: z.array(salesProductRowSchema),
+  total: z.object({ salesPen: z.string(), costPen: z.string(), profitPen: z.string() }),
+  untraceable: z.array(salesProductUntraceableSchema),
+});
+export type SalesByProductDto = z.infer<typeof salesByProductSchema>;
+
 export const salesByMaterialSchema = z.object({
   from: z.string(),
   to: z.string(),
@@ -219,5 +285,11 @@ export const salesByMaterialSchema = z.object({
    * de negocio (D-398) ni entra a ninguna pestaña; se declara con un aviso.
    */
   noLineSalesPen: z.string(),
+  /**
+   * cc24 (D-417): en Coberturas (UPVC) y Reventa, las filas por producto; `null` en las pestañas
+   * por material. En esas pestañas `rows`, `subtotals` y `untraceable` van vacíos y
+   * `untraceableSalesPen` es la venta no trazable de los productos.
+   */
+  products: salesByProductSchema.nullable(),
 });
 export type SalesByMaterialDto = z.infer<typeof salesByMaterialSchema>;

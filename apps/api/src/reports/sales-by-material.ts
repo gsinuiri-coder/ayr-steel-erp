@@ -600,5 +600,6 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
       unclassifiedSalesPen: toFixedString(unclassifiedSales, 'MONEY'),
     },
     noLineSalesPen: toFixedString(toDecimal(noLineSalesPen), 'MONEY'),
+    products: null,
   };
 }

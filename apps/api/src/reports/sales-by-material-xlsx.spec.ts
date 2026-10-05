@@ -85,6 +85,7 @@ const REPORT: SalesByMaterialDto = {
     unclassifiedSalesPen: '0.0000',
   },
   noLineSalesPen: '0.0000',
+  products: null,
 };
 
 function sheet(buffer: Buffer, name: string): unknown[][] {

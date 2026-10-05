@@ -10,11 +10,14 @@ import {
   PROFIT_SOURCES_NOTICE,
   Role,
   SALES_BY_MATERIAL_LINES,
+  SALES_BY_PRODUCT_LINES,
   SALES_MATERIAL_KIND_LABELS,
+  SALES_PRODUCT_UNTRACEABLE_LABELS,
   SALES_MATERIAL_UNTRACEABLE_LABELS,
   businessToday,
   type SalesByMaterialDto,
   type SalesByMaterialLine,
+  type SalesByProductDto,
   type SalesMaterialFiguresDto,
   type SalesMaterialKind,
   type SalesMaterialRowDto,
@@ -71,12 +74,17 @@ const LINE_TABS: LineTabsConfig = {
 const KINDS_BY_LINE: Record<SalesByMaterialLine, readonly SalesMaterialKind[]> = {
   [BusinessLine.METALLIC_ROOFING]: ['COBERTURA', 'ACCESORIO', 'BOBINA', 'PLANCHA'],
   [BusinessLine.DRYWALL]: ['PERFIL', 'BOBINA'],
+  // D-417: por producto, sin tipo, espesor ni color.
+  [BusinessLine.ROOFING]: [],
+  [BusinessLine.TRADING]: [],
 };
 
 /** Lo que el cuadre deja fuera de las filas, según la línea (D-354, D-414). */
 const UNCLASSIFIED_LABEL: Record<SalesByMaterialLine, string> = {
   [BusinessLine.METALLIC_ROOFING]: 'Productos de la línea sin subtipo',
   [BusinessLine.DRYWALL]: 'Productos comprados de Drywall (sin bobina)',
+  [BusinessLine.ROOFING]: '',
+  [BusinessLine.TRADING]: '',
 };
 
 /**
@@ -94,6 +102,8 @@ export function VentasMaterialView() {
   const line = tab as SalesByMaterialLine;
   const lineLabel = BUSINESS_LINE_LABELS[line];
   const kinds = KINDS_BY_LINE[line];
+  // D-417: Coberturas (UPVC) y Reventa van por producto, sin bobina.
+  const byProduct = SALES_BY_PRODUCT_LINES.includes(line);
   const [url, setUrl] = useUrlState({
     range: '',
     from: '',
@@ -217,33 +227,37 @@ export function VentasMaterialView() {
             }}
           />
         </label>
-        <FilterSelect
-          label="Tipo"
-          value={url.tipo}
-          onChange={(v) => {
-            setUrl({ tipo: v });
-          }}
-          options={kinds.map((k) => ({
-            value: k,
-            label: SALES_MATERIAL_KIND_LABELS[k],
-          }))}
-        />
-        <FilterSelect
-          label="Espesor"
-          value={url.espesor}
-          onChange={(v) => {
-            setUrl({ espesor: v });
-          }}
-          options={options.thicknesses.map((t) => ({ value: t, label: `${t} mm` }))}
-        />
-        <FilterSelect
-          label="Color"
-          value={url.color}
-          onChange={(v) => {
-            setUrl({ color: v });
-          }}
-          options={options.colors.map((c) => ({ value: c, label: c }))}
-        />
+        {!byProduct && (
+          <>
+            <FilterSelect
+              label="Tipo"
+              value={url.tipo}
+              onChange={(v) => {
+                setUrl({ tipo: v });
+              }}
+              options={kinds.map((k) => ({
+                value: k,
+                label: SALES_MATERIAL_KIND_LABELS[k],
+              }))}
+            />
+            <FilterSelect
+              label="Espesor"
+              value={url.espesor}
+              onChange={(v) => {
+                setUrl({ espesor: v });
+              }}
+              options={options.thicknesses.map((t) => ({ value: t, label: `${t} mm` }))}
+            />
+            <FilterSelect
+              label="Color"
+              value={url.color}
+              onChange={(v) => {
+                setUrl({ color: v });
+              }}
+              options={options.colors.map((c) => ({ value: c, label: c }))}
+            />
+          </>
+        )}
       </div>
       {!validRange && (
         <p className="text-xs text-destructive">La fecha «Desde» es posterior a «Hasta».</p>
@@ -261,7 +275,7 @@ export function VentasMaterialView() {
         </p>
       )}
 
-      {data && (
+      {data?.products === null && (
         <>
           <div className="overflow-x-auto rounded-md border">
             <Table data-testid="ventas-material">
@@ -364,41 +378,14 @@ export function VentasMaterialView() {
               </div>
             </section>
           )}
-
-          <p className="text-xs text-muted-foreground" data-testid="cuadre-ventas-margen">
-            {/* Lo que se muestra es el cuadre por comprobante, sin filtros: la venta de todas las
-                líneas de la línea de negocio facturadas en el rango. «Ventas y margen» la suma en
-                la pestaña de la línea, contando los pedidos que deja fuera de sus totales (no
-                comparables o no rastreables), y las bobinas enteras las cuenta dentro de Reventa
-                (D-247, D-413): la leyenda lo dice para no prometer una cifra que allá no aparece
-                tal cual. */}
-            Cuadre con Ventas y margen (sin filtros): venta de {lineLabel} facturada en el rango{' '}
-            {formatMoney(data.reconciliation.lineSalesPen)} (allá, en la pestaña de la línea, más
-            los pedidos que deja fuera de sus totales); bobinas enteras de {lineLabel}{' '}
-            {formatMoney(data.reconciliation.coilSalesPen)} (allá, dentro de Reventa).
-            {data.reconciliation.unclassifiedSalesPen !== '0.0000' &&
-              ` ${UNCLASSIFIED_LABEL[line]}, fuera de las filas: ${formatMoney(data.reconciliation.unclassifiedSalesPen)}.`}
-          </p>
-          {/* D-407: lo que no tiene línea de negocio no se reparte entre las pestañas. */}
-          {data.noLineSalesPen !== '0.0000' && (
-            <p
-              role="status"
-              className="text-xs text-muted-foreground"
-              data-testid="aviso-sin-linea"
-            >
-              En el rango hay {formatMoney(data.noLineSalesPen)} de venta sin línea de negocio
-              (líneas de comprobante sin producto). No entra en ninguna pestaña:{' '}
-              <Link
-                className={LINK_CLASSNAME}
-                href={`/reportes/ventas-margen?from=${dates.from}&to=${dates.to}`}
-              >
-                ver en Ventas y margen
-              </Link>
-              .
-            </p>
-          )}
         </>
       )}
+
+      {data?.products && (
+        <ProductTables products={data.products} untraceableSalesPen={data.untraceableSalesPen} />
+      )}
+
+      {data && <ReconciliationNotes data={data} line={line} from={dates.from} to={dates.to} />}
 
       <MaterialBreakdownDialog
         row={selected}
@@ -407,6 +394,167 @@ export function VentasMaterialView() {
         }}
       />
     </RoleGate>
+  );
+}
+
+/**
+ * El cuadre con «Ventas y margen» y el aviso de lo que no tiene línea (D-354, D-407, D-413).
+ *
+ * Lo que se muestra es el cuadre por comprobante, sin filtros: la venta de todas las líneas de
+ * la línea de negocio facturadas en el rango. «Ventas y margen» la suma en la pestaña de la
+ * línea, contando los pedidos que deja fuera de sus totales (no comparables o no rastreables), y
+ * las bobinas enteras las cuenta dentro de Reventa (D-247): la leyenda lo dice para no prometer
+ * una cifra que allá no aparece tal cual.
+ */
+function ReconciliationNotes({
+  data,
+  line,
+  from,
+  to,
+}: {
+  data: SalesByMaterialDto;
+  line: SalesByMaterialLine;
+  from: string;
+  to: string;
+}) {
+  const lineLabel = BUSINESS_LINE_LABELS[line];
+  const { lineSalesPen, coilSalesPen, unclassifiedSalesPen } = data.reconciliation;
+  return (
+    <>
+      <p className="text-xs text-muted-foreground" data-testid="cuadre-ventas-margen">
+        Cuadre con Ventas y margen (sin filtros): venta de {lineLabel} facturada en el rango{' '}
+        {formatMoney(lineSalesPen)} (allá, en la pestaña de la línea, más los pedidos que deja fuera
+        de sus totales)
+        {line === BusinessLine.TRADING
+          ? // D-413: la bobina entera vive en la pestaña de la línea de su bobina.
+            `; de ella, ${formatMoney(coilSalesPen)} son bobinas enteras de Coberturas Aluzinc o Drywall, que se muestran en esas pestañas.`
+          : line === BusinessLine.ROOFING
+            ? '.'
+            : `; bobinas enteras de ${lineLabel} ${formatMoney(coilSalesPen)} (allá, dentro de Reventa).`}
+        {unclassifiedSalesPen !== '0.0000' &&
+          ` ${UNCLASSIFIED_LABEL[line]}, fuera de las filas: ${formatMoney(unclassifiedSalesPen)}.`}
+      </p>
+      {/* D-407: lo que no tiene línea de negocio no se reparte entre las pestañas. */}
+      {data.noLineSalesPen !== '0.0000' && (
+        <p role="status" className="text-xs text-muted-foreground" data-testid="aviso-sin-linea">
+          En el rango hay {formatMoney(data.noLineSalesPen)} de venta sin línea de negocio (líneas
+          de comprobante sin producto). No entra en ninguna pestaña:{' '}
+          <Link className={LINK_CLASSNAME} href={`/reportes/ventas-margen?from=${from}&to=${to}`}>
+            ver en Ventas y margen
+          </Link>
+          .
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * D-417 — Coberturas (UPVC) y Reventa: una fila por producto, con el costo de kardex de los
+ * despachos que declaran el comprobante (el mismo dato que «Ventas y margen»). Lo que no se puede
+ * atribuir así va aparte, con su motivo.
+ */
+function ProductTables({
+  products,
+  untraceableSalesPen,
+}: {
+  products: SalesByProductDto;
+  untraceableSalesPen: string;
+}) {
+  return (
+    <>
+      <div className="overflow-x-auto rounded-md border">
+        <Table data-testid="ventas-producto">
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <TableHead>SKU</TableHead>
+              <TableHead>Producto</TableHead>
+              <TableHead className="text-right">Cantidad</TableHead>
+              <TableHead className="text-right">Venta</TableHead>
+              <TableHead className="text-right">Costo</TableHead>
+              <TableHead className="text-right">Utilidad</TableHead>
+              <TableHead className="text-right" title="Costo ÷ cantidad vendida">
+                Costo prom./unidad
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {products.rows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={7} className="text-muted-foreground">
+                  No hay ventas con costo trazable en ese rango.
+                </TableCell>
+              </TableRow>
+            )}
+            {products.rows.map((r) => (
+              <TableRow key={r.sku} data-testid="fila-producto">
+                <TableCell className="font-mono">{r.sku}</TableCell>
+                <TableCell>{r.name}</TableCell>
+                <TableCell className="text-right">{formatQty(r.qty, r.unit)}</TableCell>
+                <TableCell className="text-right">{formatMoney(r.salesPen)}</TableCell>
+                <TableCell className="text-right">{formatMoney(r.costPen)}</TableCell>
+                <TableCell className="text-right">{formatMoney(r.profitPen)}</TableCell>
+                <TableCell className="text-right">{perUnit(r.costPerUnitPen, r.unit)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+          {products.rows.length > 0 && (
+            <TableFooter>
+              <TableRow>
+                <TableCell colSpan={3} className="font-semibold">
+                  Total
+                </TableCell>
+                <TableCell className="text-right">{formatMoney(products.total.salesPen)}</TableCell>
+                <TableCell className="text-right">{formatMoney(products.total.costPen)}</TableCell>
+                <TableCell className="text-right">
+                  {formatMoney(products.total.profitPen)}
+                </TableCell>
+                <TableCell />
+              </TableRow>
+            </TableFooter>
+          )}
+        </Table>
+      </div>
+
+      {products.untraceable.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold">No trazable</h2>
+          <p className="text-xs text-muted-foreground">
+            Ventas del rango cuyo costo no sale de un despacho que declare el comprobante. No se
+            estiman: quedan fuera de las filas de arriba (venta: {formatMoney(untraceableSalesPen)}
+            ).
+          </p>
+          <div className="overflow-x-auto rounded-md border">
+            <Table data-testid="ventas-producto-no-trazable">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Comprobante</TableHead>
+                  <TableHead>Emisión</TableHead>
+                  <TableHead>Pedido</TableHead>
+                  <TableHead>SKU</TableHead>
+                  <TableHead>Motivo</TableHead>
+                  <TableHead className="text-right">Cantidad</TableHead>
+                  <TableHead className="text-right">Venta</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {products.untraceable.map((u, i) => (
+                  <TableRow key={`${u.documentId}-${u.sku}-${u.reason}-${String(i)}`}>
+                    <TableCell className="font-mono">{u.documentNumber ?? '—'}</TableCell>
+                    <TableCell>{formatDate(u.issueDate)}</TableCell>
+                    <TableCell className="font-mono">{u.orderCode ?? '—'}</TableCell>
+                    <TableCell className="font-mono">{u.sku}</TableCell>
+                    <TableCell>{SALES_PRODUCT_UNTRACEABLE_LABELS[u.reason]}</TableCell>
+                    <TableCell className="text-right">{formatQty(u.qty, u.unit)}</TableCell>
+                    <TableCell className="text-right">{formatMoney(u.salesPen)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+      )}
+    </>
   );
 }
 

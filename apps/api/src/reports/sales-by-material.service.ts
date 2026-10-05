@@ -5,7 +5,9 @@ import {
   FINISH_KIND_LABELS,
   FinishKind,
   LIVE_DOCUMENT_STATUSES,
+  SALES_BY_PRODUCT_LINES,
   toDateOnly,
+  toFixedString,
   type SalesByMaterialLine,
   type SalesByMaterialDto,
   type SalesByMaterialQuery,
@@ -15,10 +17,41 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   assembleSalesByMaterial,
   colorLabelOf,
+  emptyAcc,
+  figures,
   type CoilUsage,
   type InvoiceLine,
   type OrderLineFacts,
 } from './sales-by-material';
+import {
+  assembleSalesByProduct,
+  declaredKey,
+  type DeclaredDispatch,
+  type ProductInvoiceLine,
+} from './sales-by-product';
+
+interface ProductLineRow {
+  document_id: string;
+  number: string | null;
+  doc_type: string;
+  issue_date: Date;
+  order_seq: number | null;
+  product_id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  qty: Prisma.Decimal;
+  subtotal_pen: Prisma.Decimal;
+  shown_elsewhere: boolean;
+}
+
+interface DeclaredRow {
+  invoice_id: string;
+  product_id: string;
+  qty: Prisma.Decimal;
+  cost_pen: Prisma.Decimal;
+  untraceable: boolean;
+}
 
 /** Los mismos estados «ya es una venta» que usa «Ventas y margen» (`LIVE_STATUSES` allá). */
 const LIVE = (): Prisma.Sql => Prisma.join([...LIVE_DOCUMENT_STATUSES]);
@@ -189,6 +222,9 @@ export class SalesByMaterialService {
   async report(query: SalesByMaterialQuery): Promise<SalesByMaterialDto> {
     // D-407: sin pestaña, Coberturas Aluzinc (la de siempre).
     const businessLine = query.businessLine ?? BusinessLine.METALLIC_ROOFING;
+    if (SALES_BY_PRODUCT_LINES.includes(businessLine)) {
+      return this.productReport(query, businessLine);
+    }
     const [rows, noLine] = await Promise.all([
       this.invoiceLines(query, businessLine),
       this.noLineSales(query),
@@ -280,6 +316,129 @@ export class SalesByMaterialService {
         )
       ORDER BY (fd."id" <> ${documentId}::uuid) ASC, fd."issue_date" ASC, fd."number" ASC,
         fdi."line_number" ASC
+    `;
+  }
+
+  /**
+   * cc24 (D-417): Coberturas (UPVC) y Reventa, por producto. Tres consultas fijas (dos si el
+   * rango no trae líneas): las líneas, lo despachado contra cada comprobante y la venta sin
+   * línea. Los filtros de tipo, espesor y color no aplican a estas pestañas.
+   */
+  private async productReport(
+    query: SalesByMaterialQuery,
+    businessLine: SalesByMaterialLine,
+  ): Promise<SalesByMaterialDto> {
+    const [lines, noLine] = await Promise.all([
+      this.productLines(query, businessLine),
+      this.noLineSales(query),
+    ]);
+    const documentIds = [...new Set(lines.map((l) => l.document_id))];
+    const declared = documentIds.length === 0 ? [] : await this.declaredDispatches(documentIds);
+
+    const declaredMap = new Map<string, DeclaredDispatch>(
+      declared.map((d) => [
+        declaredKey(d.invoice_id, d.product_id),
+        { qty: d.qty.toString(), costPen: d.cost_pen.toString(), untraceable: d.untraceable },
+      ]),
+    );
+    const assembly = assembleSalesByProduct(lines.map(toProductLine), declaredMap);
+    return {
+      from: query.from,
+      to: query.to,
+      businessLine,
+      rows: [],
+      subtotals: [],
+      total: figures(emptyAcc()),
+      untraceable: [],
+      untraceableSalesPen: toFixedString(assembly.untraceableSales, 'MONEY'),
+      reconciliation: {
+        lineSalesPen: toFixedString(assembly.lineSales, 'MONEY'),
+        coilSalesPen: toFixedString(assembly.shownElsewhereSales, 'MONEY'),
+        unclassifiedSalesPen: '0.0000',
+      },
+      noLineSalesPen: toFixedString(noLine[0]?.sales_pen?.toString() ?? '0', 'MONEY'),
+      products: assembly.products,
+    };
+  }
+
+  /**
+   * Las líneas del rango de los productos de la línea. En Reventa, una bobina vendida entera
+   * cuya bobina es de Coberturas Aluzinc o de Drywall se marca: vive en la pestaña de esa línea
+   * (D-413) y acá solo cuenta en el cuadre.
+   */
+  private productLines(
+    query: SalesByMaterialQuery,
+    line: SalesByMaterialLine,
+  ): Promise<ProductLineRow[]> {
+    const live = LIVE();
+    return this.prisma.$queryRaw<ProductLineRow[]>`
+      SELECT
+        fd."id" AS "document_id",
+        fd."number",
+        fd."doc_type"::text AS "doc_type",
+        fd."issue_date",
+        so."seq" AS "order_seq",
+        p."id" AS "product_id",
+        p."sku",
+        p."name",
+        p."unit",
+        CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."qty" ELSE fdi."qty" END AS "qty",
+        CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."subtotal_pen" ELSE fdi."subtotal_pen" END
+          AS "subtotal_pen",
+        COALESCE(
+          UPPER(p."sku") LIKE 'BOB%' AND blc."code"::text IN ('metallic-roofing', 'drywall'),
+          false
+        ) AS "shown_elsewhere"
+      FROM "fiscal_document_items" fdi
+      JOIN "products" p ON p."id" = fdi."product_id"
+      ${LINE_JOINS}
+      WHERE fd."archived_at" IS NULL
+        AND fd."doc_type" <> 'GUIA_REMISION_REMITENTE'
+        AND fd."status"::text IN (${live})
+        AND fd."issue_date" >= ${toDateOnly(query.from)}::date
+        AND fd."issue_date" <= ${toDateOnly(query.to)}::date
+        AND blp."code"::text = ${line}
+      ORDER BY fd."issue_date" ASC, fd."number" ASC, fdi."line_number" ASC
+    `;
+  }
+
+  /**
+   * Lo que los despachos que **declaran** cada comprobante (`Dispatch.invoiceId`) sacaron por
+   * producto: la cantidad de los despachos vigentes y el costo de kardex neto de reversas (la
+   * reversa es un movimiento nuevo; el ítem lo tiene el original). `untraceable`: algún ítem
+   * vigente de un producto con inventario salió sin movimiento (D-285).
+   */
+  private declaredDispatches(documentIds: string[]): Promise<DeclaredRow[]> {
+    return this.prisma.$queryRaw<DeclaredRow[]>`
+      WITH qty AS (
+        SELECT d."invoice_id", di."product_id",
+          SUM(di."qty") AS "qty",
+          BOOL_OR(di."movement_id" IS NULL AND bl."inventory_strategy"::text <> 'NOOP')
+            AS "untraceable"
+        FROM "dispatch_items" di
+        JOIN "dispatches" d ON d."id" = di."dispatch_id"
+        JOIN "products" p ON p."id" = di."product_id"
+        JOIN "business_lines" bl ON bl."id" = p."business_line_id"
+        WHERE d."invoice_id" = ANY(${documentIds}::uuid[]) AND d."status" = 'ISSUED'
+        GROUP BY d."invoice_id", di."product_id"
+      ),
+      cost AS (
+        SELECT d."invoice_id", di."product_id",
+          SUM(CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END) AS "cost_pen"
+        FROM "inventory_movements" m
+        JOIN "dispatch_items" di ON di."movement_id" = COALESCE(m."reversal_of_id", m."id")
+        JOIN "dispatches" d ON d."id" = di."dispatch_id"
+        WHERE m."ref_type" = 'SALE' AND d."invoice_id" = ANY(${documentIds}::uuid[])
+        GROUP BY d."invoice_id", di."product_id"
+      )
+      SELECT
+        COALESCE(q."invoice_id", c."invoice_id") AS "invoice_id",
+        COALESCE(q."product_id", c."product_id") AS "product_id",
+        COALESCE(q."qty", 0) AS "qty",
+        COALESCE(c."cost_pen", 0) AS "cost_pen",
+        COALESCE(q."untraceable", false) AS "untraceable"
+      FROM qty q
+      FULL JOIN cost c ON c."invoice_id" = q."invoice_id" AND c."product_id" = q."product_id"
     `;
   }
 
@@ -544,5 +703,22 @@ export function toInvoiceLine(r: LineRow): InvoiceLine {
         ? FINISH_KIND_LABELS[FinishKind.GALVANIZADO]
         : colorLabelOf(r.p_color, r.p_finish_kind as FinishKind | null),
     customerName: r.customer_name,
+  };
+}
+
+function toProductLine(r: ProductLineRow): ProductInvoiceLine {
+  return {
+    documentId: r.document_id,
+    documentNumber: r.number,
+    docType: r.doc_type,
+    issueDate: r.issue_date.toISOString().slice(0, 10),
+    orderSeq: r.order_seq,
+    productId: r.product_id,
+    sku: r.sku,
+    name: r.name,
+    unit: r.unit,
+    qty: r.qty.toString(),
+    salesPen: r.subtotal_pen.toString(),
+    shownElsewhere: r.shown_elsewhere,
   };
 }

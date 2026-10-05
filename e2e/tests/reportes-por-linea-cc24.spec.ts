@@ -50,6 +50,8 @@ test.describe('Reportes por línea (cc24)', () => {
     await expect(page.getByTestId('pestanas-linea').getByRole('tab')).toHaveText([
       'Coberturas Aluzinc',
       'Drywall',
+      'Coberturas (UPVC)',
+      'Reventa',
     ]);
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(1);
@@ -63,12 +65,20 @@ test.describe('Reportes por línea (cc24)', () => {
     await page.reload();
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
 
+    // D-417: por producto, sin filtros de tipo, espesor ni color.
+    await tab(page, 'Reventa').click();
+    await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}&to=${to}&linea=trading`);
+    await expect(page.getByTestId('ventas-producto')).toBeVisible();
+    await expect(page.getByText('Espesor', { exact: true })).toHaveCount(0);
+    await page.goBack();
+    await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
+
     await page.goBack();
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
     await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}&to=${to}`);
 
-    // D-394: UPVC no es una pestaña de este reporte (todavía) y «todas» no existe acá.
-    for (const bad of ['roofing', 'todas', 'metallic-roofing']) {
+    // D-394: Servicios no tiene este reporte, «todas» no existe acá y la de defecto no se escribe.
+    for (const bad of ['services', 'todas', 'metallic-roofing']) {
       await page.goto(`/reportes/ventas-material?from=${FROM}&linea=${bad}`);
       await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}`);
       await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
@@ -100,11 +110,20 @@ test.describe('Reportes por línea (cc24)', () => {
       ]).toFixed(4);
       expect(material.reconciliation.lineSalesPen).toBe(marginLine);
       // Y la venta de la línea es la de sus filas, su no trazable y lo que no entra a las filas.
-      const parts = sum([
-        ...material.rows.filter((r) => r.kind !== 'BOBINA').map((r) => r.salesPen),
-        ...material.untraceable.filter((u) => u.kind !== 'BOBINA').map((u) => u.salesPen),
-        material.reconciliation.unclassifiedSalesPen,
-      ]);
+      const products = material.products;
+      const parts =
+        products === null
+          ? sum([
+              ...material.rows.filter((r) => r.kind !== 'BOBINA').map((r) => r.salesPen),
+              ...material.untraceable.filter((u) => u.kind !== 'BOBINA').map((u) => u.salesPen),
+              material.reconciliation.unclassifiedSalesPen,
+            ])
+          : // D-417; en Reventa, más las bobinas enteras que viven en otra pestaña (D-413).
+            sum([
+              ...products.rows.map((r) => r.salesPen),
+              ...products.untraceable.map((u) => u.salesPen),
+              material.reconciliation.coilSalesPen,
+            ]);
       expect(parts.toFixed(4)).toBe(material.reconciliation.lineSalesPen);
     }
   });

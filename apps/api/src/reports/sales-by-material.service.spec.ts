@@ -41,6 +41,9 @@ interface Seeds {
   lines: LineSeed[];
   /** D-407: la venta del rango sin producto. */
   noLine?: string | null;
+  /** cc24 (D-417): filas crudas de las pestañas por producto. */
+  productLines?: Record<string, unknown>[];
+  declared?: Record<string, unknown>[];
   invoiced?: Record<string, string>;
   facts?: Record<string, { produced: string; orders?: number; dispatched?: string }>;
   usage?: {
@@ -113,6 +116,13 @@ async function build(seeds: Seeds): Promise<{ service: SalesByMaterialService; c
   const queryRaw = jest.fn((strings: TemplateStringsArray) => {
     const sql = strings.join(' ');
     calls.push(sql);
+    // cc24 (D-417): las dos lecturas de las pestañas por producto.
+    if (sql.includes('"shown_elsewhere"')) {
+      return Promise.resolve(seeds.productLines ?? []);
+    }
+    if (sql.includes('WITH qty AS')) {
+      return Promise.resolve(seeds.declared ?? []);
+    }
     if (sql.includes('WITH ops AS')) {
       return Promise.resolve(
         (seeds.usage ?? []).map((u) => ({
@@ -616,12 +626,89 @@ describe('SalesByMaterialService — por línea (cc24)', () => {
   });
 
   it('una línea fuera de la matriz no pasa la validación', () => {
-    expect(salesByMaterialQuerySchema.safeParse({ ...SEPT, businessLine: 'roofing' }).success).toBe(
-      false,
-    );
+    expect(
+      salesByMaterialQuerySchema.safeParse({ ...SEPT, businessLine: 'services' }).success,
+    ).toBe(false);
     expect(salesByMaterialQuerySchema.safeParse({ ...SEPT, businessLine: 'acero' }).success).toBe(
       false,
     );
     expect(salesByMaterialQuerySchema.safeParse(DRY).success).toBe(true);
+  });
+});
+
+/** cc24 (D-417): Coberturas (UPVC) y Reventa van por producto, con tres consultas fijas. */
+describe('SalesByMaterialService — por producto (cc24, D-417)', () => {
+  const DOC = '00000000-0000-0000-0000-000000000001';
+  const productLine = (over: Record<string, unknown>): Record<string, unknown> => ({
+    document_id: DOC,
+    number: 'F001-1',
+    doc_type: 'FACTURA',
+    issue_date: new Date('2026-09-10T00:00:00.000Z'),
+    order_seq: 7,
+    product_id: 'p-1',
+    sku: 'UPVC-01',
+    name: 'Teja UPVC',
+    unit: 'NIU',
+    qty: d('10'),
+    subtotal_pen: d('500.0000'),
+    shown_elsewhere: false,
+    ...over,
+  });
+
+  it('UPVC: fila por producto con el costo de kardex del despacho declarado', async () => {
+    const { service, calls } = await build({
+      lines: [],
+      productLines: [productLine({})],
+      declared: [
+        {
+          invoice_id: DOC,
+          product_id: 'p-1',
+          qty: d('10'),
+          cost_pen: d('320.0000'),
+          untraceable: false,
+        },
+      ],
+    });
+    const report = await service.report({ ...SEPT, businessLine: 'roofing' });
+    expect(report.rows).toEqual([]);
+    expect(report.products?.rows).toEqual([
+      {
+        sku: 'UPVC-01',
+        name: 'Teja UPVC',
+        unit: 'NIU',
+        qty: '10.000',
+        salesPen: '500.0000',
+        costPen: '320.0000',
+        profitPen: '180.0000',
+        costPerUnitPen: '32.0000',
+        lineCount: 1,
+      },
+    ]);
+    expect(report.reconciliation.lineSalesPen).toBe('500.0000');
+    // Las líneas, la venta sin línea y lo despachado: tres, fijas.
+    expect(calls).toHaveLength(3);
+  });
+
+  it('Reventa: la bobina entera de otra pestaña solo cuenta en el cuadre (D-413)', async () => {
+    const { service } = await build({
+      lines: [],
+      productLines: [
+        productLine({ sku: 'BOBALZ030', shown_elsewhere: true, subtotal_pen: d('4000.0000') }),
+      ],
+    });
+    const report = await service.report({ ...SEPT, businessLine: 'trading' });
+    expect(report.products?.rows).toEqual([]);
+    expect(report.products?.untraceable).toEqual([]);
+    expect(report.reconciliation).toMatchObject({
+      lineSalesPen: '4000.0000',
+      coilSalesPen: '4000.0000',
+    });
+  });
+
+  it('sin líneas no gasta la consulta de despachos', async () => {
+    const { service, calls } = await build({ lines: [] });
+    const report = await service.report({ ...SEPT, businessLine: 'trading' });
+    expect(calls).toHaveLength(2);
+    expect(report.products?.total.salesPen).toBe('0.0000');
   });
 });
