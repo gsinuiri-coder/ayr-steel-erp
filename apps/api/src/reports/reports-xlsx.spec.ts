@@ -148,6 +148,7 @@ const margin: SalesMarginDto = {
   ],
   totals: {
     salesPen: '1000.0000',
+    noCostSalesPen: '0.0000',
     costPen: '600.0000',
     marginPen: '400.0000',
     marginPct: '40.00',
@@ -247,9 +248,39 @@ describe('reports-xlsx', () => {
       const sheet = sheetOf(buffer, 'Totales');
 
       expect(cell(sheet, 'A3')?.v).toBe('Total del rango');
-      expect(cell(sheet, 'A5')?.v).toBe('Pedidos con costo parcial');
-      expect(cell(sheet, 'B6')?.v).toBe(1);
-      expect(cell(sheet, 'B7')?.v).toBe(400);
+      expect(cell(sheet, 'A4')?.v).toBe('Servicios: sin costo registrado, fuera del margen');
+      expect(cell(sheet, 'A6')?.v).toBe('Pedidos con costo parcial');
+      expect(cell(sheet, 'B7')?.v).toBe(1);
+      expect(cell(sheet, 'B8')?.v).toBe(400);
+    });
+
+    it('D-409: Servicios va sin costo ni margen y su venta aparte del margen del total', () => {
+      const { buffer } = salesMarginXlsx({
+        ...margin,
+        totalsByLine: [
+          ...margin.totalsByLine,
+          {
+            businessLine: 'services',
+            salesPen: '100.0000',
+            costPen: '0.0000',
+            marginPen: '100.0000',
+            marginPct: '100.00',
+          },
+        ],
+        totals: {
+          ...margin.totals,
+          salesPen: '1100.0000',
+          noCostSalesPen: '100.0000',
+        },
+      });
+      const sheet = sheetOf(buffer, 'Totales');
+
+      expect(cell(sheet, 'A3')?.v).toBe('Servicios');
+      expect(cell(sheet, 'B3')?.v).toBe(100);
+      expect(cell(sheet, 'C3')).toBeUndefined();
+      expect(cell(sheet, 'D3')).toBeUndefined();
+      expect(cell(sheet, 'A5')?.v).toBe('Servicios: sin costo registrado, fuera del margen');
+      expect(cell(sheet, 'B5')?.v).toBe(100);
     });
   });
 });

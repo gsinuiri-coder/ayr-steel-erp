@@ -145,11 +145,23 @@ export function VentasMargenView() {
         </StatStrip>
       )}
       {report.data && !noCost && (
-        <StatStrip className="sm:grid-cols-2 lg:grid-cols-4">
+        <StatStrip
+          className={
+            line === undefined ? 'sm:grid-cols-2 lg:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'
+          }
+        >
           <Stat label="Venta sin IGV">{formatMoney(report.data.totals.salesPen)}</Stat>
+          {/* D-409: en «Todas», la venta de Servicios suma a la venta y queda fuera del margen. */}
+          {line === undefined && (
+            <Stat label={`Servicios · ${NO_COST_LABEL.toLowerCase()}`}>
+              {formatMoney(report.data.totals.noCostSalesPen)}
+            </Stat>
+          )}
           <Stat label="Costo de venta">{formatMoney(report.data.totals.costPen)}</Stat>
-          <Stat label="Margen">{formatMoney(report.data.totals.marginPen)}</Stat>
-          <Stat label="Margen %">
+          <Stat label={line === undefined ? 'Margen (sin Servicios)' : 'Margen'}>
+            {formatMoney(report.data.totals.marginPen)}
+          </Stat>
+          <Stat label={line === undefined ? 'Margen % (sin Servicios)' : 'Margen %'}>
             {report.data.totals.marginPct === null ? '—' : `${report.data.totals.marginPct} %`}
           </Stat>
         </StatStrip>

@@ -359,11 +359,19 @@ export const salesMarginSchema = z.object({
   orders: z.array(salesMarginOrderSchema),
   totalsByLine: z.array(salesMarginLineTotalSchema),
   totals: z.object({
+    /** Toda la venta de los totales, Servicios incluida (D-409). */
     salesPen: z.string(),
+    /**
+     * D-409: la parte de `salesPen` de las líneas sin costo registrado (Servicios, D-392). Se
+     * muestra aparte y no entra al margen: `marginPen` y `marginPct` se calculan sobre
+     * `salesPen − noCostSalesPen`. En la pestaña de Servicios es toda su venta.
+     */
+    noCostSalesPen: z.string(),
     costPen: z.string(),
     marginPen: z.string(),
     /**
-     * Margen **sobre venta** (§7), o `null` cuando la venta no es positiva.
+     * Margen **sobre venta** (§7), sin la venta de Servicios (D-409), o `null` cuando esa
+     * venta no es positiva.
      *
      * Con base cero no hay porcentaje, y con base negativa —un rango cuya única actividad en
      * ese grupo es la nota de crédito que anula una venta anterior— la fórmula devuelve

@@ -567,6 +567,19 @@ export class SalesMarginService {
         marginPct: marginPct(v.sales, v.cost),
       }));
 
+    // D-409: el margen se calcula sin la venta de Servicios, que no tiene costo registrado
+    // (D-392) y con costo 0 inflaba el margen. Sigue sumando a la venta. En «Todas» es la de su
+    // fila de «Totales por línea» (con la de los pedidos excluidos, D-412); en la pestaña de
+    // Servicios, toda la venta; en las demás pestañas, nada. El costo no cambia: Servicios no
+    // tiene kardex (`NOOP`).
+    const noCostSales =
+      viewLine === undefined
+        ? NO_COST_REPORT_LINES.reduce((acc, l) => acc.plus(lineTotals.get(l)?.sales ?? ZERO), ZERO)
+        : noCostView
+          ? totalSales
+          : ZERO;
+    const marginBase = totalSales.minus(noCostSales);
+
     return {
       from: query.from,
       to: query.to,
@@ -574,9 +587,10 @@ export class SalesMarginService {
       totalsByLine,
       totals: {
         salesPen: toFixedString(totalSales, 'MONEY'),
+        noCostSalesPen: toFixedString(noCostSales, 'MONEY'),
         costPen: toFixedString(totalCost, 'MONEY'),
-        marginPen: toFixedString(totalSales.minus(totalCost), 'MONEY'),
-        marginPct: marginPct(totalSales, totalCost),
+        marginPen: toFixedString(marginBase.minus(totalCost), 'MONEY'),
+        marginPct: marginPct(marginBase, totalCost),
         partialOrderCount,
         excludedOrderCount,
         excludedSalesPen: toFixedString(excludedSales, 'MONEY'),
