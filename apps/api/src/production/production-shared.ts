@@ -63,7 +63,6 @@ export async function lockOrder(
   });
 }
 
-/** Corta si la orden ya es terminal. `action` completa "no se puede <action>". */
 /**
  * D-388: la acción de auditoría del reporte de coberturas autorizado fuera de la tolerancia del
  * 1 %. La escribe el reporte y la lee el detalle de la orden para su etiqueta: un solo nombre.
@@ -79,6 +78,7 @@ export const toleranceOverrideAuditSchema = z.object({
   differencePct: z.string(),
 });
 
+/** Corta si la orden ya es terminal. `action` completa "no se puede <action>". */
 export function assertLive(order: { status: ProductionOrderStatus }, action: string): void {
   if (
     order.status === ProductionOrderStatus.CLOSED ||
