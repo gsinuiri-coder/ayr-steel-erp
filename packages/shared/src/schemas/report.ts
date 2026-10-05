@@ -231,6 +231,8 @@ export const inventoryValuationSchema = z.object({
   totalsByLine: z.array(inventoryValuationLineTotalSchema),
   totals: z.object({
     coilValuePen: z.string(),
+    /** cc23: kilos de las bobinas con saldo (los mismos grupos que `coilGroups`). */
+    coilQtyKg: z.string(),
     productValuePen: z.string(),
     totalValuePen: z.string(),
   }),

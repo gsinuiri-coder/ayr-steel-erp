@@ -1,6 +1,12 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
-import { Decimal, toDecimal } from '@ayr/shared';
+import {
+  Decimal,
+  INVENTORY_VALUATION_LINES,
+  inventoryValuationQuerySchema,
+  sum as decimalSum,
+  toDecimal,
+} from '@ayr/shared';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -408,6 +414,7 @@ describe('InventoryValuationService', () => {
     ]);
     expect(report.totals).toEqual({
       coilValuePen: '1400.0000',
+      coilQtyKg: '300.000',
       productValuePen: '20.0000',
       totalValuePen: '1420.0000',
     });
@@ -464,5 +471,110 @@ describe('InventoryValuationService', () => {
     expect(report.products).toEqual([]);
     expect(report.totalsByLine).toEqual([]);
     expect(report.totals.totalValuePen).toBe('0.0000');
+  });
+});
+
+/**
+ * cc23 (D-391): inventario valorizado por línea. Cada pestaña filtra las mismas dos lecturas, y
+ * la suma de las pestañas es exactamente «Todas».
+ */
+describe('InventoryValuationService — por línea (cc23)', () => {
+  const coils: CoilSeed[] = [
+    {
+      id: 'c1',
+      code: 'BOB-1',
+      line: 'drywall',
+      thickness: '0.50',
+      color: null,
+      qty: '1200.500',
+      avgCost: '4.2345',
+    },
+    {
+      id: 'c2',
+      code: 'BOB-2',
+      line: 'metallic-roofing',
+      thickness: '0.45',
+      color: 'Azul',
+      qty: '333.333',
+      avgCost: '5.1237',
+    },
+  ];
+  const products: ProductSeed[] = [
+    { id: 'p1', line: 'drywall', sku: 'SKU-1', qty: '10.000', avgCost: '2.3333' },
+    { id: 'p2', line: 'metallic-roofing', sku: 'ACC-1', qty: '7.000', avgCost: '11.1111' },
+    { id: 'p3', line: 'roofing', sku: 'UPVC-1', qty: '25.000', avgCost: '33.3333' },
+    { id: 'p4', line: 'trading', sku: 'REV-1', qty: '3.000', avgCost: '99.9999' },
+  ];
+  const sum = (values: string[], scale = 4): string => decimalSum(values).toFixed(scale);
+
+  it('las pestañas suman exactamente «Todas» con números de 4 decimales', async () => {
+    const round = (v: string) => v.replace(/\d{4}$/, '0000').replace(/\.0000$/, '.5000');
+    const exact = {
+      coils: coils.map((c) => ({ ...c, avgCost: round(c.avgCost) })),
+      products: products.map((p) => ({ ...p, avgCost: round(p.avgCost) })),
+    };
+    const { service } = await buildService(exact);
+    const all = await service.valuation();
+    const tabs = await Promise.all(
+      INVENTORY_VALUATION_LINES.map((businessLine) => service.valuation({ businessLine })),
+    );
+    for (const key of ['coilValuePen', 'productValuePen', 'totalValuePen'] as const) {
+      expect(sum(tabs.map((t) => t.totals[key]))).toBe(all.totals[key]);
+    }
+  });
+
+  it('con valores de 7 decimales, lo mostrado se aparta a lo sumo 0,0001 por línea', async () => {
+    // Cantidad (3) × costo (4) da 7 decimales. «Todas» redondea una vez la suma exacta (la
+    // conciliación con el kardex de arriba) y cada pestaña redondea la suya: la diferencia es
+    // la misma que ya había entre «Totales por línea» y «Total general», nunca más que
+    // 0,0001 por línea, y por debajo del céntimo que muestra la pantalla.
+    const { service } = await buildService({ coils, products });
+    const all = await service.valuation();
+    const tabs = await Promise.all(
+      INVENTORY_VALUATION_LINES.map((businessLine) => service.valuation({ businessLine })),
+    );
+    const tolerance = toDecimal('0.0001').times(INVENTORY_VALUATION_LINES.length);
+    for (const key of ['coilValuePen', 'productValuePen', 'totalValuePen'] as const) {
+      const gap = decimalSum(tabs.map((t) => t.totals[key]))
+        .minus(toDecimal(all.totals[key]))
+        .abs();
+      expect(gap.lte(tolerance)).toBe(true);
+    }
+    expect(
+      sum(
+        tabs.map((t) => t.totals.coilQtyKg),
+        3,
+      ),
+    ).toBe(all.totals.coilQtyKg);
+    expect(all.totals.coilQtyKg).toBe('1533.833');
+    for (const [i, line] of INVENTORY_VALUATION_LINES.entries()) {
+      const row = all.totalsByLine.find((t) => t.businessLine === line);
+      expect(tabs[i]!.totalsByLine).toEqual(row === undefined ? [] : [row]);
+      expect(tabs[i]!.totals.totalValuePen).toBe(row?.totalValuePen ?? '0.0000');
+    }
+  });
+
+  it('la pestaña de una línea trae solo sus bobinas y sus productos', async () => {
+    const { service, calls } = await buildService({ coils, products });
+    const roofing = await service.valuation({ businessLine: 'roofing' });
+    expect(roofing.coilGroups).toEqual([]);
+    expect(roofing.products.map((p) => [p.sku, p.qty, p.unit])).toEqual([
+      ['UPVC-1', '25.000', 'NIU'],
+    ]);
+    expect(roofing.totals.coilQtyKg).toBe('0.000');
+    const aluzinc = await service.valuation({ businessLine: 'metallic-roofing' });
+    expect(aluzinc.coilGroups.map((g) => g.businessLine)).toEqual(['metallic-roofing']);
+    expect(aluzinc.products.map((p) => p.sku)).toEqual(['ACC-1']);
+    expect(aluzinc.totals.coilQtyKg).toBe('333.333');
+    // El filtro es en memoria: dos consultas por reporte, igual que «Todas».
+    expect(calls).toHaveLength(4);
+  });
+
+  it('Servicios no tiene inventario valorizado: la línea no pasa la validación', () => {
+    expect(inventoryValuationQuerySchema.safeParse({ businessLine: 'services' }).success).toBe(
+      false,
+    );
+    expect(inventoryValuationQuerySchema.safeParse({ businessLine: 'trading' }).success).toBe(true);
+    expect(inventoryValuationQuerySchema.safeParse({}).success).toBe(true);
   });
 });

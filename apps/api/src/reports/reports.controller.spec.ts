@@ -50,7 +50,12 @@ const VALUATION = {
   coilGroups: [],
   products: [],
   totalsByLine: [],
-  totals: { coilValuePen: '0.00', productValuePen: '0.00', totalValuePen: '0.00' },
+  totals: {
+    coilValuePen: '0.00',
+    coilQtyKg: '0.000',
+    productValuePen: '0.00',
+    totalValuePen: '0.00',
+  },
 };
 const MARGIN = {
   from: '2026-08-01',
@@ -231,7 +236,7 @@ describe('ReportsController', () => {
 
   it('las rutas JSON devuelven el DTO del servicio tal cual', async () => {
     const { controller, salesMargin } = build();
-    await expect(controller.inventoryValuationReport()).resolves.toBe(VALUATION);
+    await expect(controller.inventoryValuationReport({})).resolves.toBe(VALUATION);
     const query = { from: '2026-08-01', to: '2026-08-31' };
     await expect(controller.salesMarginReport(query)).resolves.toBe(MARGIN);
     expect(salesMargin.salesMargin).toHaveBeenCalledWith(query);

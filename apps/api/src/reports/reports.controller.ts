@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import {
   businessToday,
   coilMonthReportQuerySchema,
+  inventoryValuationQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
   salesByMaterialQuerySchema,
@@ -14,6 +15,7 @@ import {
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
   type InventoryValuationDto,
+  type InventoryValuationQuery,
   type KardexPepsQuery,
   type KardexPepsReportDto,
   type KardexSheetQuery,
@@ -105,8 +107,11 @@ export class ReportsController {
    */
   @Roles(Role.ADMINISTRADOR)
   @Get('inventory-valuation')
-  inventoryValuationReport(): Promise<InventoryValuationDto> {
-    return this.inventoryValuation.valuation();
+  inventoryValuationReport(
+    // cc23: la pestaña de la línea (D-391), validada contra la matriz; fuera de ella, 400.
+    @Query(new ZodValidationPipe(inventoryValuationQuerySchema)) query: InventoryValuationQuery,
+  ): Promise<InventoryValuationDto> {
+    return this.inventoryValuation.valuation(query);
   }
 
   /**

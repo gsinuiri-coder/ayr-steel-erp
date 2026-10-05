@@ -12,6 +12,7 @@ import {
   type InventoryValuationFinishDto,
   type InventoryValuationLineTotalDto,
   type InventoryValuationProductDto,
+  type InventoryValuationQuery,
 } from '@ayr/shared';
 import { fromDbLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
@@ -85,11 +86,19 @@ interface MutableFinish {
 export class InventoryValuationService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async valuation(): Promise<InventoryValuationDto> {
+  /**
+   * cc23 (D-391): con `businessLine`, el reporte de esa línea. Se filtran las mismas dos
+   * lecturas en memoria —el presupuesto de consultas no cambia— y todo lo demás se arma igual,
+   * así que la pestaña de una línea es exactamente su fila de «Totales por línea» en «Todas».
+   */
+  async valuation(query: InventoryValuationQuery = {}): Promise<InventoryValuationDto> {
+    const inView = (row: { business_line_code: string }): boolean =>
+      query.businessLine === undefined || row.business_line_code === query.businessLine;
+
     // `qty <> 0`: un saldo en cero no es inventario y solo ensuciaría los grupos. Los
     // negativos —que no deberían existir— se dejan entrar a propósito: si alguna vez
     // aparece uno, este reporte es el lugar donde se ve, no otro donde se esconde.
-    const coilRows = await this.prisma.$queryRaw<CoilBalanceRow[]>`
+    const allCoilRows = await this.prisma.$queryRaw<CoilBalanceRow[]>`
       SELECT
         b."item_id",
         b."qty",
@@ -115,7 +124,9 @@ export class InventoryValuationService {
       ORDER BY bl."code" ASC, c."thickness_mm" ASC, col."name" ASC NULLS FIRST, c."code" ASC
     `;
 
-    const productRows = await this.prisma.$queryRaw<ProductBalanceRow[]>`
+    const coilRows = allCoilRows.filter(inView);
+
+    const allProductRows = await this.prisma.$queryRaw<ProductBalanceRow[]>`
       SELECT
         b."item_id",
         b."qty",
@@ -130,6 +141,7 @@ export class InventoryValuationService {
       WHERE b."item_type" = 'PRODUCT' AND b."qty" <> 0
       ORDER BY bl."code" ASC, p."sku" ASC
     `;
+    const productRows = allProductRows.filter(inView);
 
     const groups = new Map<string, MutableCoilGroup>();
     for (const r of coilRows) {
@@ -260,6 +272,8 @@ export class InventoryValuationService {
       );
     }
 
+    // cc23: los kilos en bobinas, para la pestaña de una línea con bobinas (D-391).
+    const coilKg = [...groups.values()].reduce((acc, g) => acc.plus(g.qty), new Decimal(0));
     let coilTotal = new Decimal(0);
     let productTotal = new Decimal(0);
     const totalsByLine: InventoryValuationLineTotalDto[] = [...byLine.entries()]
@@ -282,6 +296,7 @@ export class InventoryValuationService {
       totalsByLine,
       totals: {
         coilValuePen: toFixedString(coilTotal, 'MONEY'),
+        coilQtyKg: coilKg.toFixed(3),
         productValuePen: toFixedString(productTotal, 'MONEY'),
         totalValuePen: toFixedString(coilTotal.plus(productTotal), 'MONEY'),
       },

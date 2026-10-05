@@ -85,6 +85,7 @@ const valuation: InventoryValuationDto = {
   ],
   totals: {
     coilValuePen: '4000.0000',
+    coilQtyKg: '1000.000',
     productValuePen: '244.0958',
     totalValuePen: '4244.0958',
   },
