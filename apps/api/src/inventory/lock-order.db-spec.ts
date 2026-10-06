@@ -6,6 +6,8 @@ import {
   businessToday,
   cancelPurchaseSchema,
   commitReceivedPurchaseEditSchema,
+  cancelCuttingOrderSchema,
+  createCuttingOrderSchema,
   createCustomerSchema,
   createDispatchSchema,
   createFinishSchema,
@@ -15,6 +17,7 @@ import {
   createSalesOrderSchema,
   createSupplierSchema,
   mountRoofingCoilSchema,
+  receiveCuttingOrderCoilSchema,
   reportRoofingPiecesSchema,
   reverseMovementSchema,
   setCoilStatusSchema,
@@ -27,6 +30,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import { CoilOperationsService } from '../coils/coil-operations.service';
 import { isLockConflict } from '../common/lock-conflict.filter';
 import { CustomersService } from '../customers/customers.service';
+import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { DispatchesService } from '../invoicing/dispatches.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -715,5 +719,118 @@ describe('D-386 (M3b) — un deadlock real de Postgres', () => {
     const failed = results.flatMap((r) => (r.status === 'rejected' ? [r.reason as unknown] : []));
     expect(failed).toHaveLength(1);
     expect(isLockConflict(failed[0])).toBe(true);
+  });
+});
+
+/**
+ * cc28 (P2-1 y P3-6 de cc18): anular una orden de corte × recibir su única bobina pendiente.
+ *
+ * Antes, recibir tomaba la fila y después la orden (al recalcular su estado), y anular, la orden y
+ * después la fila: los dos se esperaban en cruz y Postgres abortaba uno (40P01). Además anular no
+ * releía la fila bajo su lock. Ahora los dos toman la orden primero y anular relee: gana uno, el
+ * otro sale con un rechazo de dominio, y la fila termina como dice el que ganó.
+ */
+describe('cc28 — corte tercerizado: anular × recibir (contra la base)', () => {
+  let cutting: CuttingService;
+  let cuttingSupplierId = '';
+  let drywallFinishId = '';
+
+  beforeAll(async () => {
+    cutting = moduleRef.get(CuttingService);
+    cuttingSupplierId = (
+      await suppliers.create(
+        admin,
+        createSupplierSchema.parse({
+          code: letters(6),
+          docType: 'RUC',
+          docNumber: `20${digits(9)}`,
+          name: 'Proveedor de corte cc28',
+          creditDays: 0,
+          providesCuttingService: true,
+        }),
+      )
+    ).id;
+    drywallFinishId = (
+      await finishes.create(
+        admin,
+        createFinishSchema.parse({
+          code: `G${letters(5)}`,
+          name: 'Galvanizado cc28',
+          densityFactor: '7.85',
+          kind: 'GALVANIZADO',
+          businessLine: 'drywall',
+        }),
+      )
+    ).id;
+  });
+
+  /** Una bobina de drywall comprada, recibida y enviada a corte: la orden y su bobina. */
+  async function sentToCutting(): Promise<{ orderId: string; coilId: string }> {
+    const purchase = await purchases.create(
+      admin,
+      createPurchaseSchema.parse({
+        supplierId,
+        docType: 'FACTURA',
+        series: 'F001',
+        number: digits(8),
+        issueDate: businessToday(),
+        currency: 'PEN',
+        paymentTerms: 'CONTADO',
+        businessLine: 'drywall',
+        type: 'COIL',
+        items: [
+          {
+            description: 'Bobina cc28',
+            qty: '1000',
+            unit: 'KGM',
+            unitPrice: '4',
+            finishId: drywallFinishId,
+            widthMm: '1000',
+            thicknessMm: '0.45',
+            coilStatus: 'OPEN',
+          },
+        ],
+      }),
+    );
+    await purchases.receive(admin, purchase.id);
+    const coil = await prisma.coil.findFirstOrThrow({ where: { purchaseId: purchase.id } });
+    const order = await cutting.send(
+      admin,
+      createCuttingOrderSchema.parse({
+        supplierId: cuttingSupplierId,
+        coils: [{ coilId: coil.id, widthPlanMm: [{ widthMm: '250.00', stripsCount: 4 }] }],
+      }),
+    );
+    return { orderId: order.id, coilId: coil.id };
+  }
+
+  it('gana una, la otra sale con un rechazo de dominio, sin deadlock ni fila pisada', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const { orderId, coilId } = await sentToCutting();
+      const ops = [
+        () =>
+          cutting.receive(
+            admin,
+            orderId,
+            coilId,
+            receiveCuttingOrderCoilSchema.parse({
+              receivedWidthsMm: [{ widthMm: '250.00', stripsCount: 4 }],
+              receivedWeightKg: '1000',
+            }),
+          ),
+        () => cutting.cancel(admin, orderId, cancelCuttingOrderSchema.parse({ reason: 'cc28' })),
+      ];
+      // Alterna quién sale primero: cada operación tiene que ganar alguna vez.
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+      const row = await prisma.cuttingOrderCoil.findFirstOrThrow({
+        where: { cuttingOrderId: orderId },
+      });
+      const strips = await prisma.coil.count({ where: { parentCoilId: coilId } });
+      // La fila dice lo que pasó de verdad: recibida con sus flejes, o anulada sin ninguno.
+      expect(['RECEIVED', 'CANCELLED']).toContain(row.status);
+      expect(strips).toBe(row.status === 'RECEIVED' ? 4 : 0);
+    }
+    expectClean(tally, 'corte: anular × recibir');
   });
 });

@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma, ProductionOrderKind, ProductionOrderStatus, Role } from '@prisma/client';
 import type { RequestUser } from '../auth/auth.types';
 import { CoilOperationsService } from '../coils/coil-operations.service';
@@ -276,7 +276,8 @@ describe('D-386 — contrato de orden: drywall y corte', () => {
     });
   });
 
-  it('anular una orden de corte: la orden, sus filas pendientes y después sus bobinas', async () => {
+  /** Una orden con dos filas pendientes y una recibida; `relocked` es lo que se lee bajo el lock. */
+  const cancelFixture = (relocked: string[]) => {
     const { calls, lockInOrder, queryRaw } = recorder();
     const tx = {
       $queryRaw: queryRaw(() => []),
@@ -291,6 +292,9 @@ describe('D-386 — contrato de orden: drywall y corte', () => {
           ],
         }),
       },
+      cuttingOrderCoil: {
+        findMany: jest.fn().mockResolvedValue(relocked.map((status) => ({ status }))),
+      },
     };
     const svc = Object.create(CuttingService.prototype) as CuttingService;
     Object.assign(svc, {
@@ -298,11 +302,56 @@ describe('D-386 — contrato de orden: drywall y corte', () => {
       inventory: { lockInOrder },
       operationDate: { resolve: () => '2026-10-04' },
     });
+    return { svc, tx, calls, lockInOrder };
+  };
+
+  it('anular una orden de corte: la orden, sus filas pendientes y después sus bobinas', async () => {
+    const { svc, tx, calls, lockInOrder } = cancelFixture(['SENT', 'SENT']);
     await expect(svc.cancel(ADMIN, 'co', { reason: 'cc18' })).rejects.toBe(STOP);
     expect(calls[0]).toContain('"cutting_orders"');
     expect(calls[1]).toContain('"cutting_order_coils"');
     expect(tx.$queryRaw.mock.calls[1]?.[1]).toEqual(['row-2', 'row-3']);
     expect(lockInOrder.mock.calls[0]?.[1]).toEqual({ coilIds: ['c2', 'c3'] });
+  });
+
+  it('cc28 (P2-1 de cc18): una fila que dejó de estar SENT bajo el lock aborta con 409, sin tomar bobinas', async () => {
+    const { svc, lockInOrder } = cancelFixture(['SENT', 'RECEIVED']);
+    await expect(svc.cancel(ADMIN, 'co', { reason: 'cc18' })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(lockInOrder).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['recibir', 'RECEIVED' as const],
+    ['revertir la recepción', 'SENT' as const],
+  ])('cc28 (P2-1 de cc18): %s toma la orden antes que su fila', async (_name, staleStatus) => {
+    const { calls, lockInOrder, queryRaw } = recorder();
+    const tx = {
+      $queryRaw: queryRaw(() => []),
+      cuttingOrderCoil: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'row-1' }),
+        // Un estado que ya no admite la operación: corta con 400 justo después de las tomas.
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'row-1', status: staleStatus }),
+      },
+    };
+    const svc = Object.create(CuttingService.prototype) as CuttingService;
+    Object.assign(svc, {
+      prisma: { $transaction: (fn: (t: object) => Promise<unknown>) => fn(tx) },
+      inventory: { lockInOrder },
+      operationDate: { resolve: () => '2026-10-04' },
+    });
+    const run =
+      staleStatus === 'RECEIVED'
+        ? svc.receive(ADMIN, 'co', 'c1', {
+            receivedWidthsMm: [{ widthMm: '100.00', stripsCount: 1 }],
+            receivedWeightKg: '10.000',
+            kerfLossMm: '0.00',
+          })
+        : svc.reverse(ADMIN, 'co', 'c1', { reason: 'cc28' });
+    await expect(run).rejects.toBeInstanceOf(BadRequestException);
+    expect(calls[0]).toContain('"cutting_orders"');
+    expect(calls[1]).toContain('"cutting_order_coils"');
   });
 });
 

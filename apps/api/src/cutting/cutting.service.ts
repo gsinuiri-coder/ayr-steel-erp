@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   BusinessLineCode,
   CoilKind,
@@ -233,6 +239,10 @@ export class CuttingService {
         const row = await tx.cuttingOrderCoil.findFirst({ where: { cuttingOrderId, coilId } });
         if (!row) throw new NotFoundException('La bobina no pertenece a esa orden de corte');
 
+        // cc28 (P2-1 de cc18, D-386): la orden antes que su fila, como `cancel`. Con la fila
+        // primero, una recepción y una anulación de la misma orden se esperaban en cruz y
+        // Postgres abortaba una por deadlock (40P01 → 409).
+        await lockCuttingOrder(tx, cuttingOrderId);
         await tx.$queryRaw`
           SELECT "id" FROM "cutting_order_coils" WHERE "id" = ${row.id}::uuid FOR UPDATE
         `;
@@ -412,6 +422,10 @@ export class CuttingService {
         const row = await tx.cuttingOrderCoil.findFirst({ where: { cuttingOrderId, coilId } });
         if (!row) throw new NotFoundException('La bobina no pertenece a esa orden de corte');
 
+        // cc28 (P2-1 de cc18, D-386): la orden antes que su fila, como `cancel`. Con la fila
+        // primero, una recepción y una anulación de la misma orden se esperaban en cruz y
+        // Postgres abortaba una por deadlock (40P01 → 409).
+        await lockCuttingOrder(tx, cuttingOrderId);
         await tx.$queryRaw`
           SELECT "id" FROM "cutting_order_coils" WHERE "id" = ${row.id}::uuid FOR UPDATE
         `;
@@ -595,9 +609,7 @@ export class CuttingService {
     // escribir, pero la validación corre igual para que el contrato no mienta.
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`
-        SELECT "id" FROM "cutting_orders" WHERE "id" = ${cuttingOrderId}::uuid FOR UPDATE
-      `;
+      await lockCuttingOrder(tx, cuttingOrderId);
       const order = await tx.cuttingOrder.findUnique({
         where: { id: cuttingOrderId },
         include: { coils: true },
@@ -624,6 +636,18 @@ export class CuttingService {
         SELECT "id" FROM "cutting_order_coils"
         WHERE "id" = ANY(${pending.map((r) => r.id)}::uuid[]) ORDER BY "id" FOR UPDATE
       `;
+      // cc28 (P2-1 de cc18): el estado se relee **bajo** el bloqueo de las filas. La lista de
+      // pendientes salió de una lectura anterior; si una fila dejó de estar SENT entre medio, se
+      // aborta en vez de anularla encima.
+      const locked = await tx.cuttingOrderCoil.findMany({
+        where: { id: { in: pending.map((r) => r.id) } },
+        select: { status: true },
+      });
+      if (locked.some((r) => r.status !== CuttingOrderCoilStatus.SENT)) {
+        throw new ConflictException(
+          'La orden cambió mientras se anulaba (otra bobina se recibió o se anuló): vuelve a cargarla e inténtalo de nuevo',
+        );
+      }
       await this.inventory.lockInOrder(tx, { coilIds: pending.map((r) => r.coilId) });
       for (const row of pending) {
         await tx.cuttingOrderCoil.update({
@@ -895,4 +919,18 @@ export class CuttingService {
     const status = deriveCuttingOrderStatus(rows.map((r) => r.status));
     await tx.cuttingOrder.update({ where: { id: cuttingOrderId }, data: { status } });
   }
+}
+
+/**
+ * cc28 (D-386): el bloqueo de la orden de corte (documento). Lo toman `receive`, `reverse` y
+ * `cancel` antes que sus filas, así dos operaciones sobre la misma orden se encolan en vez de
+ * esperarse en cruz.
+ */
+async function lockCuttingOrder(
+  tx: Prisma.TransactionClient,
+  cuttingOrderId: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT "id" FROM "cutting_orders" WHERE "id" = ${cuttingOrderId}::uuid FOR UPDATE
+  `;
 }
