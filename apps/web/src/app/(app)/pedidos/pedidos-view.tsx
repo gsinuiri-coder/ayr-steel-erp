@@ -10,6 +10,8 @@ import {
   type SalesOrderQuery,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { listXlsxHref } from '@/lib/list-export';
+import { HeaderActions } from '@/components/header-actions';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { OrderDocumentLinks } from '@/components/sales/order-documents';
@@ -128,9 +130,23 @@ export function PedidosView() {
             Nacen de confirmar una cotización, o directo en las líneas que no la exigen (D-065).
           </p>
         </div>
-        <Button asChild variant="outline">
-          <Link href="/pedidos/nuevo">Nuevo pedido directo</Link>
-        </Button>
+        <div className="flex gap-2">
+          {/* cc26 M2: el Excel lleva los filtros y el orden de la lista (todas las páginas). El
+              orden por estado es solo de la página y no viaja: el archivo va en el del servidor. */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/sales/orders', params),
+              },
+            ]}
+          />
+          <Button asChild variant="outline">
+            <Link href="/pedidos/nuevo">Nuevo pedido directo</Link>
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

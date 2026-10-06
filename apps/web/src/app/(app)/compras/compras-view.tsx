@@ -17,6 +17,8 @@ import {
 } from '@ayr/shared';
 import { PURCHASE_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
+import { listXlsxHref } from '@/lib/list-export';
+import { HeaderActions } from '@/components/header-actions';
 import {
   URL_PAGINATION_DEFAULTS,
   useUrlPagination,
@@ -124,6 +126,18 @@ export function ComprasView() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {/* cc26 M2: el Excel lleva los filtros y el orden de la lista (todas las páginas). Los
+              importes solo van en el del ADMINISTRADOR: son costo de compra (D-438). */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/purchases', params),
+              },
+            ]}
+          />
           {/* D-351: la carga en tanda desde planilla, junto al alta de una. */}
           <Button variant="outline" asChild>
             <Link href="/compras/importar">Importar compras</Link>

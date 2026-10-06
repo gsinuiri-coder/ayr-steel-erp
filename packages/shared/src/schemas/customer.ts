@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DOC_TYPES } from '../enums';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
+import { listExportQuerySchema } from './list-export';
 
 /** Cadena vacía tras `trim()` se guarda como `null`, no como `''`. */
 function emptyToNull(v: string | undefined): string | null {
@@ -51,6 +52,10 @@ export const customerQuerySchema = paginationQuerySchema.extend({
   search: z.string().trim().max(80).optional(),
 });
 export type CustomerQuery = z.infer<typeof customerQuerySchema>;
+
+/** cc26: el Excel de la lista, con sus mismos filtros y orden y sin paginar. */
+export const customerExportQuerySchema = listExportQuerySchema(customerQuerySchema);
+export type CustomerExportQuery = z.infer<typeof customerExportQuerySchema>;
 
 export const partyNameSchema = z
   .string()

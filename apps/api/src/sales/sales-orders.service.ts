@@ -58,7 +58,6 @@ import {
   salesOrderCode,
   toDecimal,
   toFixedString,
-  toSkipTake,
   Unit,
   type BusinessLine,
   type CoilPoolDto,
@@ -73,6 +72,7 @@ import {
   type SalesOrderDto,
   type OrderCancelPreviewDto,
   type SalesOrderListItemDto,
+  type SalesOrderExportQuery,
   type SalesOrderQuery,
   type ProductStockDto,
   type QuotationStockShortageDto,
@@ -160,6 +160,7 @@ import {
 } from './reservation-restore';
 import { liveDocumentsByOrder, orderDocuments } from './order-documents';
 import { salesOrderOrderBy } from '../common/list-orderings';
+import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { searchSeqOf } from '../common/search-seq';
 
 import { buildPlantOrderPdf } from './plant-order-pdf';
@@ -3234,6 +3235,28 @@ export class SalesOrdersService {
     actor: RequestUser,
     query: SalesOrderQuery,
   ): Promise<PaginatedResult<SalesOrderListItemDto>> {
+    const { items, total } = await this.findWindow(actor, query, pageWindow(query));
+    return paginate(items, total, query);
+  }
+
+  /**
+   * cc26 (D-provisional): el Excel de la lista. Las mismas filas que `findAll` con la misma
+   * query, todas y en el mismo orden: es el mismo método con la ventana completa. Pasado el tope
+   * (`LIST_XLSX_MAX_ROWS`), 400.
+   */
+  async exportAll(
+    actor: RequestUser,
+    query: SalesOrderExportQuery,
+  ): Promise<SalesOrderListItemDto[]> {
+    return (await this.findWindow(actor, query, exportWindow())).items;
+  }
+
+  /** El cuerpo de la lista y de su Excel: filtro, alcance y orden, sobre una ventana de filas. */
+  private async findWindow(
+    actor: RequestUser,
+    query: SalesOrderExportQuery,
+    window: ListWindow,
+  ): Promise<{ items: SalesOrderListItemDto[]; total: number }> {
     // El código del pedido (`PED-000123`) es `salesOrderCode(seq)`, no una columna: buscar
     // "PED-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o quien
     // pega el código de un pedido para encontrarlo (el uso más común del buscador) se
@@ -3269,9 +3292,8 @@ export class SalesOrdersService {
           }
         : {}),
     };
-    const { skip, take } = toSkipTake(query);
-    const [total, rows] = await Promise.all([
-      this.prisma.salesOrder.count({ where }),
+    const { skip, take } = window;
+    const findPage = () =>
       this.prisma.salesOrder.findMany({
         where,
         // Igual que la lista de cotizaciones: totales, no detalle. Las reservas activas se
@@ -3297,8 +3319,17 @@ export class SalesOrdersService {
         orderBy: salesOrderOrderBy(query),
         skip,
         take,
-      }),
-    ]);
+      });
+    let total: number;
+    let rows: Awaited<ReturnType<typeof findPage>>;
+    if (window.maxTotal === undefined) {
+      [total, rows] = await Promise.all([this.prisma.salesOrder.count({ where }), findPage()]);
+    } else {
+      // cc26: la exportación cuenta primero y corta antes de cargar filas si pasa el tope.
+      total = await this.prisma.salesOrder.count({ where });
+      assertExportable(total, window);
+      rows = await findPage();
+    }
     const [actors, documentsByOrder] = await Promise.all([
       this.resolveActorNames(
         rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
@@ -3375,7 +3406,7 @@ export class SalesOrdersService {
         documents: documentsByOrder.get(r.id) ?? [],
       };
     });
-    return paginate(items, total, query);
+    return { items, total };
   }
 
   async findOne(id: string, actor?: RequestUser): Promise<SalesOrderDto> {

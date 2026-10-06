@@ -11,6 +11,8 @@ import {
   salesByMaterialQuerySchema,
   salesMarginQuerySchema,
   Role,
+  type AdminDashboardDto,
+  type PlantDashboardDto,
   type DocumentProfitabilityDto,
   type SalesByMaterialDto,
   type SalesByMaterialQuery,
@@ -32,6 +34,9 @@ import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
+import { sendXlsx } from '../common/list-export';
+import { AdminDashboardService } from './admin-dashboard.service';
+import { PlantDashboardService } from './plant-dashboard.service';
 import { coilMonthXlsx } from './coil-month-xlsx';
 import { CoilWasteService } from './coil-waste.service';
 import { DocumentProfitabilityService } from './document-profitability.service';
@@ -68,6 +73,8 @@ export class ReportsController {
     private readonly documentProfitability: DocumentProfitabilityService,
     private readonly receivablesAging: ReceivablesAgingService,
     private readonly coilWaste: CoilWasteService,
+    private readonly adminDashboard: AdminDashboardService,
+    private readonly plantDashboard: PlantDashboardService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -221,6 +228,30 @@ export class ReportsController {
   }
 
   /**
+   * cc26 (D-440, M4). El Panel del administrador: los totales de ventas y margen, CxC,
+   * inventario valorizado y merma, leídos con las mismas funciones que esos reportes y para los
+   * rangos que sus enlaces llevan. Solo ADMINISTRADOR, como cada uno de ellos.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('admin-dashboard')
+  adminDashboardReport(): Promise<AdminDashboardDto> {
+    return this.adminDashboard.dashboard();
+  }
+
+  /**
+   * cc26 (D-440, M5). El Panel del supervisor de planta: la cola y las bobinas montadas de
+   * `/planta`, lo consumido en producción hoy y en la semana y las bobinas por terminarse. Los
+   * roles son los de esas lecturas (`/production`, `/coils`: administrador y planta). Del reporte
+   * de merma, que es solo del administrador, toma únicamente los kilos consumidos, que planta ya
+   * ve en su kardex (D-449): ni costos, ni teórico, ni merma.
+   */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('plant-dashboard')
+  plantDashboardReport(@CurrentUser() actor: RequestUser): Promise<PlantDashboardDto> {
+    return this.plantDashboard.dashboard(actor);
+  }
+
+  /**
    * C06. Rentabilidad de un comprobante, línea por línea. Solo ADMINISTRADOR: lleva costos (un
    * VENDEDOR recibe 403, D-244). Nunca va en el PDF ni en lo que se envía a SUNAT: es otra ruta.
    */
@@ -272,15 +303,6 @@ export class ReportsController {
     const report = await this.kardexPeps.report(query);
     sendXlsx(res, kardexPepsXlsx(report));
   }
-}
-
-function sendXlsx(res: Response, file: { buffer: Buffer; filename: string }): void {
-  res.setHeader(
-    'Content-Type',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  );
-  res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
-  res.send(file.buffer);
 }
 
 function canSeeCosts(actor: RequestUser): boolean {

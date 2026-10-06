@@ -11,7 +11,7 @@ import {
   Decimal,
   payableBalance,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
-  paginateInMemory,
+  paginate,
   toDateOnly,
   toDecimal,
   toFixedString,
@@ -24,6 +24,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { claimIdempotencyKey } from '../common/idempotency';
+import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -241,8 +242,30 @@ export class ReceivablesService {
    * el detalle empiecen a decir números distintos.
    */
   async receivables(query: PaginationQuery): Promise<PaginatedResult<ReceivableSummaryDto>> {
+    const { items, total } = await this.findWindow(pageWindow(query));
+    return paginate(items, total, query);
+  }
+
+  /**
+   * cc26 M2 (D-provisional): el Excel de «Por cliente» en /cobranzas. Las mismas filas que
+   * `receivables`, todas y en el mismo orden (saldo de mayor a menor): es el mismo método con
+   * la ventana completa. Su fila de total coincide con `totals()`, que suma el mismo resumen.
+   * Pasado el tope (`LIST_XLSX_MAX_ROWS`), 400.
+   */
+  async exportReceivables(): Promise<ReceivableSummaryDto[]> {
+    return (await this.findWindow(exportWindow())).items;
+  }
+
+  /** El cuerpo de la tabla y de su Excel: el resumen por cliente, sobre una ventana de filas. */
+  private async findWindow(
+    window: ListWindow,
+  ): Promise<{ items: ReceivableSummaryDto[]; total: number }> {
     const sorted = await this.loadCustomerSummaries();
-    return paginateInMemory(sorted, query);
+    assertExportable(sorted.length, window);
+    return {
+      items: sorted.slice(window.skip, window.skip + window.take),
+      total: sorted.length,
+    };
   }
 
   /**

@@ -13,6 +13,9 @@ import {
   type ReceivableTotalsDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { listXlsxHref } from '@/lib/list-export';
+import { useSession } from '@/lib/session';
+import { HeaderActions } from '@/components/header-actions';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useUrlState } from '@/lib/use-url-state';
 import { PaginationBar } from '@/components/pagination-bar';
@@ -56,6 +59,8 @@ const PENDING_SERVER_KEYS = {
 const NO_SORT = { key: null, dir: 'asc' } as const;
 
 export function CobranzasView() {
+  const { user } = useSession();
+  const isAdmin = user.role === Role.ADMINISTRADOR;
   // D-289: la página y el tamaño de cada tabla viven en la URL (`rPage`/`rSize`, `pPage`/`pSize`).
   const [url, setUrl] = useUrlState({
     rPage: '1',
@@ -115,6 +120,16 @@ export function CobranzasView() {
   });
 
   const serverSort = pSort.key === null ? null : PENDING_SERVER_KEYS[pSort.key];
+  // cc26 M2: los parámetros de la tabla, de los que salen la consulta y su Excel (sin página).
+  const pendingParams = new URLSearchParams({
+    pendingOnly: 'true',
+    page: String(pendingPage.page),
+    pageSize: String(pendingPage.pageSize),
+  });
+  if (serverSort) {
+    pendingParams.set('sort', serverSort);
+    pendingParams.set('dir', pSort.dir);
+  }
   const pending = useQuery({
     queryKey: [
       'fiscal-documents',
@@ -126,9 +141,7 @@ export function CobranzasView() {
     ],
     queryFn: () =>
       api<PaginatedResult<FiscalDocumentListItemDto>>(
-        `/invoicing/documents?pendingOnly=true&page=${pendingPage.page}&pageSize=${pendingPage.pageSize}${
-          serverSort ? `&sort=${serverSort}&dir=${pSort.dir}` : ''
-        }`,
+        `/invoicing/documents?${pendingParams.toString()}`,
       ),
   });
   // El servidor ya entregó ordenadas las columnas propias; acá solo lo derivado.
@@ -173,7 +186,22 @@ export function CobranzasView() {
       </StatStrip>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">Por cliente</h2>
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-sm font-medium">Por cliente</h2>
+          {/* cc26 M2: todas las filas de la tabla y el total de las tarjetas. Solo ADMINISTRADOR,
+              el mismo permiso de la tabla (MR-1 de menu-por-rol.md sigue como propuesta). */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Excel por cliente',
+                show: isAdmin,
+                download: '/api/invoicing/receivables/xlsx',
+              },
+            ]}
+          />
+        </div>
         {receivables.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (
@@ -289,7 +317,21 @@ export function CobranzasView() {
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-sm font-medium">Comprobantes con saldo</h2>
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-sm font-medium">Comprobantes con saldo</h2>
+          {/* cc26 M2: el Excel de comprobantes (M1) con el filtro y el orden de esta tabla; el
+              vendedor recibe solo los suyos, como en la tabla. */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Excel de pendientes',
+                download: listXlsxHref('/invoicing/documents', pendingParams),
+              },
+            ]}
+          />
+        </div>
         {pending.isPending ? (
           <Skeleton className="h-40 w-full" />
         ) : (

@@ -27,14 +27,12 @@ import {
   DERIVED_FILTER_FETCH_CAP,
   LANDED_COST_SERVICE_KINDS,
   paginate,
-  paginateInMemory,
   Role,
   SERVICE_KIND_LABELS,
   STOCK_PURCHASE_TYPES,
   toDateOnly,
   toDecimal,
   toFixedString,
-  toSkipTake,
   Unit,
   type BackdatableInput,
   type CancelPurchaseInput,
@@ -44,6 +42,7 @@ import {
   type PaginatedResult,
   type PurchaseDto,
   type PurchaseListItemDto,
+  type PurchaseExportQuery,
   type PurchaseQuery,
   type ReversePaymentInput,
   type SupplierPaymentDto,
@@ -86,6 +85,13 @@ import {
   toPurchaseCurrency,
 } from './purchase-math';
 import { purchaseOrderBy } from '../common/list-orderings';
+import {
+  assertDerivedUniverseComplete,
+  assertExportable,
+  exportWindow,
+  pageWindow,
+  type ListWindow,
+} from '../common/list-export';
 
 /** Compras a proveedor (D-030): registro → recepción → cuenta por pagar → pagos. */
 @Injectable()
@@ -1395,6 +1401,24 @@ export class PurchasesService {
   }
 
   async findAll(query: PurchaseQuery): Promise<PaginatedResult<PurchaseListItemDto>> {
+    const { items, total } = await this.findWindow(query, pageWindow(query));
+    return paginate(items, total, query);
+  }
+
+  /**
+   * cc26 M2 (D-provisional): el Excel de la lista. Las mismas filas que `findAll` con la misma
+   * query, todas y en el mismo orden: es el mismo método con la ventana completa. Pasado el tope
+   * (`LIST_XLSX_MAX_ROWS`), 400.
+   */
+  async exportAll(query: PurchaseExportQuery): Promise<PurchaseListItemDto[]> {
+    return (await this.findWindow(query, exportWindow())).items;
+  }
+
+  /** El cuerpo de la lista y de su Excel: filtro y orden, sobre una ventana de filas. */
+  private async findWindow(
+    query: PurchaseExportQuery,
+    window: ListWindow,
+  ): Promise<{ items: PurchaseListItemDto[]; total: number }> {
     const where: Prisma.PurchaseWhereInput = {
       businessLine: query.businessLine ? { code: toPrismaLineCode(query.businessLine) } : undefined,
       type: query.type,
@@ -1426,17 +1450,21 @@ export class PurchasesService {
     // D-323: la columna elegida ordena la lista entera; la fecha de emisión desempata.
     const orderBy = purchaseOrderBy(query);
 
+    const { skip, take } = window;
     if (!query.onlyWithBalance) {
-      const { skip, take } = toSkipTake(query);
-      const [total, purchases] = await Promise.all([
-        this.prisma.purchase.count({ where }),
-        this.prisma.purchase.findMany({ where, include: PURCHASE_RELATIONS, orderBy, skip, take }),
-      ]);
-      return paginate(
-        purchases.map((p) => toListDto(p)),
-        total,
-        query,
-      );
+      const findPage = () =>
+        this.prisma.purchase.findMany({ where, include: PURCHASE_RELATIONS, orderBy, skip, take });
+      let total: number;
+      let purchases: Awaited<ReturnType<typeof findPage>>;
+      if (window.maxTotal === undefined) {
+        [total, purchases] = await Promise.all([this.prisma.purchase.count({ where }), findPage()]);
+      } else {
+        // cc26: la exportación cuenta primero y corta antes de cargar filas si pasa el tope.
+        total = await this.prisma.purchase.count({ where });
+        assertExportable(total, window);
+        purchases = await findPage();
+      }
+      return { items: purchases.map((p) => toListDto(p)), total };
     }
 
     // `onlyWithBalance` es un filtro derivado (D-039): el saldo no es una columna, así que
@@ -1452,7 +1480,10 @@ export class PurchasesService {
     const withBalance = purchases
       .map((p) => toListDto(p))
       .filter((p) => toDecimal(p.balance).gt(0));
-    return paginateInMemory(withBalance, query);
+    // cc26: en la exportación, el tope se mide sobre las filas con saldo, antes de cortar.
+    assertDerivedUniverseComplete(purchases.length, window);
+    assertExportable(withBalance.length, window);
+    return { items: withBalance.slice(skip, skip + take), total: withBalance.length };
   }
 
   async findOne(id: string): Promise<PurchaseDto> {

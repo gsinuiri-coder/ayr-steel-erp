@@ -36,6 +36,8 @@ import {
   type CompleteReservationInput,
   type OrderWithShortfallDto,
   createSalesOrderSchema,
+  businessToday,
+  quotationExportQuerySchema,
   quotationQuerySchema,
   releaseReservationSchema,
   restoreReservationSchema,
@@ -48,6 +50,7 @@ import {
   type TemporaryReservationListItemDto,
   type UpdateSalesSettingsInput,
   Role,
+  salesOrderExportQuerySchema,
   salesOrderQuerySchema,
   sellableCoilQuerySchema,
   stockPanelQuerySchema,
@@ -67,6 +70,7 @@ import {
   type QuotationItemCoilCandidatesDto,
   type SetQuotationItemCoilInput,
   type QuotationListItemDto,
+  type QuotationExportQuery,
   type QuotationQuery,
   type QuotationStockShortageDto,
   type ReleaseReservationInput,
@@ -75,6 +79,7 @@ import {
   type ReservationQuery,
   type SalesOrderDto,
   type SalesOrderListItemDto,
+  type SalesOrderExportQuery,
   type SalesOrderQuery,
   type SellableCoilDto,
   type UnavailableSellableCoilDto,
@@ -87,7 +92,10 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { sendXlsx } from '../common/list-export';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { quotationsXlsx } from './quotations-xlsx';
+import { salesOrdersXlsx } from './sales-orders-xlsx';
 import { QuotationsService } from './quotations.service';
 import { SalesOrderEditsService } from './sales-order-edits.service';
 import { SalesOrdersService } from './sales-orders.service';
@@ -122,6 +130,21 @@ export class SalesController {
     @Query(new ZodValidationPipe(quotationQuerySchema)) query: QuotationQuery,
   ): Promise<PaginatedResult<QuotationListItemDto>> {
     return this.quotations.findAll(actor, query);
+  }
+
+  /**
+   * cc26 (D-provisional): el Excel de la lista, con los filtros, el orden y el alcance de la
+   * pantalla, sin paginar y hasta `LIST_XLSX_MAX_ROWS` (más, 400). Mismos roles que la lista.
+   * Va **antes** de `quotations/:id`: si no, `ParseUUIDPipe` rechaza «xlsx» como id.
+   */
+  @Get('quotations/xlsx')
+  async findQuotationsXlsx(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(quotationExportQuerySchema)) query: QuotationExportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const rows = await this.quotations.exportAll(actor, query);
+    sendXlsx(res, quotationsXlsx(rows, actor.role, businessToday()));
   }
 
   /**
@@ -348,6 +371,21 @@ export class SalesController {
     @Query(new ZodValidationPipe(salesOrderQuerySchema)) query: SalesOrderQuery,
   ): Promise<PaginatedResult<SalesOrderListItemDto>> {
     return this.orders.findAll(actor, query);
+  }
+
+  /**
+   * cc26 M2 (D-provisional): el Excel de la lista de pedidos, con los filtros, el orden y el
+   * alcance de la pantalla, sin paginar y hasta `LIST_XLSX_MAX_ROWS` (más, 400). Mismos roles que
+   * la lista. Va **antes** de `orders/:id`: si no, `ParseUUIDPipe` rechaza «xlsx» como id.
+   */
+  @Get('orders/xlsx')
+  async findOrdersXlsx(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(salesOrderExportQuerySchema)) query: SalesOrderExportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const rows = await this.orders.exportAll(actor, query);
+    sendXlsx(res, salesOrdersXlsx(rows, actor.role, businessToday()));
   }
 
   /**

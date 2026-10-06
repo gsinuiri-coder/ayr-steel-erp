@@ -10,9 +10,9 @@ import {
   paginate,
   rankSearchMatches,
   Role,
-  toSkipTake,
   type CreateCustomerInput,
   type CustomerDto,
+  type CustomerExportQuery,
   type CustomerQuery,
   type PaginatedResult,
   type UpdateCustomerInput,
@@ -21,6 +21,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { customerOrderBy } from '../common/list-orderings';
+import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 
 /**
  * Cuántas filas trae SQL antes de rankear en JS (RF-S3/M1). Más que
@@ -50,6 +51,24 @@ export class CustomersService {
   ) {}
 
   async findAll(query: CustomerQuery): Promise<PaginatedResult<CustomerDto>> {
+    const { items, total } = await this.findWindow(query, pageWindow(query));
+    return paginate(items, total, query);
+  }
+
+  /**
+   * cc26 M2 (D-provisional): el Excel de la lista. Las mismas filas que `findAll` con la misma
+   * query, todas y en el mismo orden: es el mismo método con la ventana completa. Pasado el tope
+   * (`LIST_XLSX_MAX_ROWS`), 400. Sin alcance por vendedor: la lista tampoco lo tiene.
+   */
+  async exportAll(query: CustomerExportQuery): Promise<CustomerDto[]> {
+    return (await this.findWindow(query, exportWindow())).items;
+  }
+
+  /** El cuerpo de la lista y de su Excel: filtro y orden, sobre una ventana de filas. */
+  private async findWindow(
+    query: CustomerExportQuery,
+    window: ListWindow,
+  ): Promise<{ items: CustomerDto[]; total: number }> {
     const where: Prisma.CustomerWhereInput = query.search
       ? {
           OR: [
@@ -58,18 +77,26 @@ export class CustomersService {
           ],
         }
       : {};
-    const { skip, take } = toSkipTake(query);
-    const [total, customers] = await Promise.all([
-      this.prisma.customer.count({ where }),
+    const { skip, take } = window;
+    const findPage = () =>
       this.prisma.customer.findMany({
         where,
         // D-323: la columna elegida ordena la lista entera; activos primero y por nombre desempatan.
         orderBy: customerOrderBy(query),
         skip,
         take,
-      }),
-    ]);
-    return paginate(customers.map(toDto), total, query);
+      });
+    let total: number;
+    let customers: Customer[];
+    if (window.maxTotal === undefined) {
+      [total, customers] = await Promise.all([this.prisma.customer.count({ where }), findPage()]);
+    } else {
+      // cc26: la exportación cuenta primero y corta antes de cargar filas si pasa el tope.
+      total = await this.prisma.customer.count({ where });
+      assertExportable(total, window);
+      customers = await findPage();
+    }
+    return { items: customers.map(toDto), total };
   }
 
   /**

@@ -1,5 +1,9 @@
 import { FiscalDocType, Role, type FiscalDocumentStatus, type Prisma } from '@prisma/client';
-import { NEGATIVE_TERMINAL_STATUSES, statusCondition, type FiscalDocumentQuery } from '@ayr/shared';
+import {
+  NEGATIVE_TERMINAL_STATUSES,
+  statusCondition,
+  type FiscalDocumentExportQuery,
+} from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 
 /**
@@ -12,7 +16,7 @@ import type { RequestUser } from '../auth/auth.types';
  * vendedores. Cada uno va en su propio `OR` dentro de `AND`.
  */
 export function fiscalDocumentListWhere(
-  query: FiscalDocumentQuery,
+  query: FiscalDocumentExportQuery,
   actor: RequestUser | undefined,
   liveStatuses: readonly FiscalDocumentStatus[],
 ): Prisma.FiscalDocumentWhereInput {
