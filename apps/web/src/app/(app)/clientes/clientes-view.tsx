@@ -11,6 +11,8 @@ import {
   type CustomerQuery,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
+import { listXlsxHref } from '@/lib/list-export';
+import { HeaderActions } from '@/components/header-actions';
 import { useSession } from '@/lib/session';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -112,6 +114,17 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
           <p className="text-xs text-muted-foreground">Alta, edición y baja de clientes (RF-80).</p>
         </div>
         <div className="flex gap-2">
+          {/* cc26 M2: el Excel lleva la búsqueda y el orden de la lista (todas las páginas). */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/customers', params),
+              },
+            ]}
+          />
           {isAdmin && (
             <Button
               onClick={() => {

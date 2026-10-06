@@ -1572,6 +1572,10 @@ export const salesOrderQuerySchema = paginationQuerySchema.extend({
 });
 export type SalesOrderQuery = z.infer<typeof salesOrderQuerySchema>;
 
+/** cc26: el Excel de la lista, con sus mismos filtros y orden y sin paginar. */
+export const salesOrderExportQuerySchema = listExportQuerySchema(salesOrderQuerySchema);
+export type SalesOrderExportQuery = z.infer<typeof salesOrderExportQuerySchema>;
+
 // --------------------------------------------------------------------------
 // Panel de stock en vivo (D-136)
 // --------------------------------------------------------------------------

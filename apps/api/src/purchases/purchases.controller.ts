@@ -10,16 +10,20 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import {
   backdatableSchema,
   cancelPurchaseSchema,
   createPurchaseSchema,
   createSupplierPaymentSchema,
+  businessToday,
+  purchaseExportQuerySchema,
   purchaseQuerySchema,
   reversePaymentSchema,
   Role,
@@ -33,6 +37,7 @@ import {
   type PaginatedResult,
   type PurchaseDto,
   type PurchaseListItemDto,
+  type PurchaseExportQuery,
   type PurchaseQuery,
   type ReversePaymentInput,
   type SupplierStatementDto,
@@ -47,7 +52,9 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { sendXlsx } from '../common/list-export';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { purchasesXlsx } from './purchases-xlsx';
 import { PurchasesService } from './purchases.service';
 import { ReceivedPurchaseEditService } from './purchase-received-edit.service';
 
@@ -98,6 +105,22 @@ export class PurchasesController {
     @Query(new ZodValidationPipe(purchaseQuerySchema)) query: PurchaseQuery,
   ): Promise<PaginatedResult<PurchaseListItemDto>> {
     return this.purchases.findAll(query);
+  }
+
+  /**
+   * cc26 M2 (D-provisional): el Excel de la lista de compras, con los filtros y el orden de la
+   * pantalla, sin paginar y hasta `LIST_XLSX_MAX_ROWS` (más, 400). Mismos roles que la lista;
+   * los importes solo van al ADMINISTRADOR (`purchases-xlsx.ts`). Va **antes** de `:id`: si
+   * no, `ParseUUIDPipe` rechaza «xlsx» como id.
+   */
+  @Get('xlsx')
+  async findAllXlsx(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(purchaseExportQuerySchema)) query: PurchaseExportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const rows = await this.purchases.exportAll(query);
+    sendXlsx(res, purchasesXlsx(rows, actor.role, businessToday()));
   }
 
   @Get('suppliers/:supplierId/statement')

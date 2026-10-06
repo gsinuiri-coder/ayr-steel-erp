@@ -8,10 +8,14 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import {
   createCustomerSchema,
+  businessToday,
+  customerExportQuerySchema,
   customerQuerySchema,
   docNumberLengths,
   DocType,
@@ -20,6 +24,7 @@ import {
   updateCustomerSchema,
   type CreateCustomerInput,
   type CustomerDto,
+  type CustomerExportQuery,
   type CustomerQuery,
   type DocumentLookupDto,
   type PaginatedResult,
@@ -29,7 +34,9 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { sendXlsx } from '../common/list-export';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { customersXlsx } from './customers-xlsx';
 import { CustomersService } from './customers.service';
 import { DocumentLookupService } from './document-lookup.service';
 
@@ -51,6 +58,22 @@ export class CustomersController {
     @Query(new ZodValidationPipe(customerQuerySchema)) query: CustomerQuery,
   ): Promise<PaginatedResult<CustomerDto>> {
     return this.customers.findAll(query);
+  }
+
+  /**
+   * cc26 M2 (D-provisional): el Excel de la lista de clientes, con la búsqueda y el orden de la
+   * pantalla, sin paginar y hasta `LIST_XLSX_MAX_ROWS` (más, 400). Mismos roles que la lista
+   * (D-439: no se cambia ningún permiso) y su mismo alcance: la lista no filtra por vendedor.
+   * Va **antes** de `:id`: si no, `ParseUUIDPipe` rechaza «xlsx» como id.
+   */
+  @Get('xlsx')
+  async findAllXlsx(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(customerExportQuerySchema)) query: CustomerExportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const rows = await this.customers.exportAll(query);
+    sendXlsx(res, customersXlsx(rows, actor.role, businessToday()));
   }
 
   /**

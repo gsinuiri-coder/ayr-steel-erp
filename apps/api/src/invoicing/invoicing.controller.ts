@@ -72,6 +72,7 @@ import { fiscalDocumentsXlsx } from './fiscal-documents-xlsx';
 import { FiscalImportService } from './fiscal-import.service';
 import { MoveDocumentToOrderService } from './move-to-order.service';
 import { InvoicingService } from './invoicing.service';
+import { receivablesXlsx } from './receivables-xlsx';
 import { ReceivablesService } from './receivables.service';
 
 /**
@@ -402,6 +403,22 @@ export class InvoicingController {
   @Roles(Role.ADMINISTRADOR)
   receivablesTotals(): Promise<ReceivableTotalsDto> {
     return this.receivablesService.totals();
+  }
+
+  /**
+   * cc26 M2 (D-provisional): el Excel de «Por cliente» en /cobranzas: todas las filas de la
+   * tabla en el orden del servidor, con la fila de total que coincide con `receivables/summary`.
+   * Mismo permiso que su GET (solo ADMINISTRADOR; el vendedor recibe 403 igual que en la tabla,
+   * MR-1 de docs/manual/menu-por-rol.md queda como propuesta). La tabla no tiene filtros.
+   */
+  @Get('receivables/xlsx')
+  @Roles(Role.ADMINISTRADOR)
+  async findReceivablesXlsx(
+    @CurrentUser() actor: RequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const rows = await this.receivablesService.exportReceivables();
+    sendXlsx(res, receivablesXlsx(rows, actor.role, businessToday()));
   }
 
   /**

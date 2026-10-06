@@ -3,6 +3,7 @@ import { decimalStringSchema } from '../decimal';
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
+import { listExportQuerySchema } from './list-export';
 import { statusListSchema } from './status-filter';
 import {
   BUSINESS_LINES,
@@ -370,6 +371,10 @@ export const purchaseQuerySchema = paginationQuerySchema.extend({
   search: z.string().trim().max(80).optional(),
 });
 export type PurchaseQuery = z.infer<typeof purchaseQuerySchema>;
+
+/** cc26: el Excel de la lista, con sus mismos filtros y orden y sin paginar. */
+export const purchaseExportQuerySchema = listExportQuerySchema(purchaseQuerySchema);
+export type PurchaseExportQuery = z.infer<typeof purchaseExportQuerySchema>;
 
 /**
  * Preview de una factura de proveedor leída de su XML UBL 2.1 (RF-11). No crea nada:
