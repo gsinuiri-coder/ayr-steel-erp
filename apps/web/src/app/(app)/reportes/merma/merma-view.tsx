@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
   BUSINESS_LINE_LABELS,
+  BusinessLine,
   COIL_REPORT_LINES,
   COIL_STATUS_LABELS,
   MISSING_THEORETICAL_LABELS,
@@ -63,6 +64,8 @@ export function MermaView() {
   });
   const data = report.data;
   const missingCount = data ? data.totals.coilCount - data.totals.comparableCoilCount : 0;
+  // En Drywall, lo que sale al cerrar la OP es la merma de proceso (D-057), no un despunte.
+  const trimLabel = line === BusinessLine.DRYWALL ? 'Merma de proceso' : 'Despunte';
 
   const toggle = (coilId: string) => {
     setOpen((prev) => {
@@ -79,9 +82,15 @@ export function MermaView() {
         <div>
           <h1 className="text-lg font-semibold">Merma por bobina</h1>
           <p className="text-xs text-muted-foreground">
-            {BUSINESS_LINE_LABELS[line]}. Bobinas con producción en el rango, con los movimientos de
-            kardex del rango. Merma = (consumido − teórico) + despunte + ajuste de cierre; el
-            porcentaje es sobre el teórico, contra el {data?.standardPct ?? '1.00'} % estándar.
+            {BUSINESS_LINE_LABELS[line]}. Bobinas con producción, {trimLabel.toLowerCase()} o ajuste
+            de cierre en el rango, con los movimientos de kardex del rango. Merma = (consumido −
+            teórico) + {trimLabel.toLowerCase()} + ajuste de cierre.
+          </p>
+          {/* D-434: el teórico ya lleva el 1 % normal (D-165); el porcentaje es lo que lo pasa. */}
+          <p className="text-xs text-muted-foreground" data-testid="aviso-estandar">
+            El teórico ya incluye el 1 % de merma estándar, así que la merma y el porcentaje son lo
+            que queda por encima del estándar. Hasta el {data?.standardPct ?? '1.00'} % es normal
+            (la tolerancia de producción); más que eso se marca en rojo.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -130,13 +139,13 @@ export function MermaView() {
           <Stat label="Bobinas">{data.totals.coilCount}</Stat>
           <Stat label="Consumido en producción">{formatQty(data.totals.consumedKg, 'kg')}</Stat>
           <Stat label="Teórico">{formatQty(data.totals.theoreticalKg, 'kg')}</Stat>
-          <Stat label="Despunte">{formatQty(data.totals.trimKg, 'kg')}</Stat>
-          <Stat label="Merma">{formatQty(data.totals.wasteKg, 'kg')}</Stat>
-          <Stat label="Merma %">
+          <Stat label={trimLabel}>{formatQty(data.totals.trimKg, 'kg')}</Stat>
+          <Stat label="Merma sobre el estándar">{formatQty(data.totals.wasteKg, 'kg')}</Stat>
+          <Stat label="% sobre el estándar">
             {data.totals.wastePct === null ? (
               '—'
             ) : (
-              <PctBadge pct={data.totals.wastePct} std={data.standardPct} />
+              <PctBadge pct={data.totals.wastePct} over={data.totals.overStandard} />
             )}
           </Stat>
         </StatStrip>
@@ -148,15 +157,6 @@ export function MermaView() {
             ? '1 bobina tiene una producción sin teórico atribuible: no tiene merma calculada y queda fuera del teórico, la merma y el porcentaje de arriba.'
             : `${missingCount} bobinas tienen producciones sin teórico atribuible: no tienen merma calculada y quedan fuera del teórico, la merma y el porcentaje de arriba.`}{' '}
           Ábrelas para ver el motivo.
-        </p>
-      )}
-      {data && data.soldWhole.count > 0 && (
-        <p role="status" className="text-xs text-muted-foreground" data-testid="aviso-vendidas">
-          {data.soldWhole.count === 1 ? 'Una bobina' : `${data.soldWhole.count} bobinas`} con
-          producción en el rango se{' '}
-          {data.soldWhole.count === 1 ? 'vendió entera' : 'vendieron enteras'} y no entra
-          {data.soldWhole.count === 1 ? '' : 'n'} al reporte ({data.soldWhole.codes.join(', ')};
-          consumo de producción {formatQty(data.soldWhole.consumedKg, 'kg')}).
         </p>
       )}
 
@@ -177,10 +177,10 @@ export function MermaView() {
                 <TableHead className="text-right">Consumido</TableHead>
                 <TableHead className="text-right">Teórico</TableHead>
                 <TableHead className="text-right">Diferencia</TableHead>
-                <TableHead className="text-right">Despunte</TableHead>
+                <TableHead className="text-right">{trimLabel}</TableHead>
                 <TableHead className="text-right">Ajuste de cierre</TableHead>
-                <TableHead className="text-right">Merma</TableHead>
-                <TableHead className="text-right">%</TableHead>
+                <TableHead className="text-right">Merma s/ estándar</TableHead>
+                <TableHead className="text-right">% s/ estándar</TableHead>
                 <TableHead
                   className="text-right"
                   title="Merma manual (RF-17): informativa, fuera de la merma"
@@ -193,7 +193,8 @@ export function MermaView() {
               {data.rows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={COLUMNS} className="text-muted-foreground">
-                    No hay bobinas de esta línea con producción en ese rango.
+                    No hay bobinas de esta línea con producción, {trimLabel.toLowerCase()} o ajuste
+                    de cierre en ese rango.
                   </TableCell>
                 </TableRow>
               )}
@@ -201,7 +202,6 @@ export function MermaView() {
                 <CoilRows
                   key={row.coilId}
                   row={row}
-                  std={data.standardPct}
                   open={open.has(row.coilId)}
                   onToggle={() => {
                     toggle(row.coilId);
@@ -217,7 +217,8 @@ export function MermaView() {
                     {missingCount > 0 && (
                       <span className="block text-xs font-normal text-muted-foreground">
                         Teórico, diferencia y merma: {data.totals.comparableCoilCount} de{' '}
-                        {data.totals.coilCount} bobinas
+                        {data.totals.coilCount} bobinas, que consumieron{' '}
+                        {formatQty(data.totals.comparableConsumedKg, 'kg')}
                       </span>
                     )}
                   </TableCell>
@@ -243,7 +244,7 @@ export function MermaView() {
                     {data.totals.wastePct === null ? (
                       '—'
                     ) : (
-                      <PctBadge pct={data.totals.wastePct} std={data.standardPct} />
+                      <PctBadge pct={data.totals.wastePct} over={data.totals.overStandard} />
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -262,12 +263,10 @@ export function MermaView() {
 /** La fila de la bobina y, abierta, sus producciones del rango. */
 function CoilRows({
   row,
-  std,
   open,
   onToggle,
 }: {
   row: CoilWasteRowDto;
-  std: string;
   open: boolean;
   onToggle: () => void;
 }) {
@@ -320,7 +319,7 @@ function CoilRows({
         <TableCell className="text-right">{formatQty(row.closeAdjustmentKg, 'kg')}</TableCell>
         <TableCell className="text-right font-medium">{kgOrDash(row.wasteKg)}</TableCell>
         <TableCell className="text-right">
-          {row.wastePct === null ? '—' : <PctBadge pct={row.wastePct} std={std} />}
+          {row.wastePct === null ? '—' : <PctBadge pct={row.wastePct} over={row.overStandard} />}
         </TableCell>
         <TableCell className="text-right text-muted-foreground">
           {formatQty(row.manualScrapKg, 'kg')}
@@ -383,9 +382,8 @@ function CoilRows({
   );
 }
 
-/** El porcentaje, en rojo si pasa el estándar. */
-function PctBadge({ pct, std }: { pct: string; std: string }) {
-  const over = Number(pct) > Number(std);
+/** D-434: el porcentaje, en rojo solo si pasa la tolerancia del 1 % sobre el estándar. */
+function PctBadge({ pct, over }: { pct: string; over: boolean }) {
   return over ? <Badge variant="destructive">{pct} %</Badge> : <span>{pct} %</span>;
 }
 

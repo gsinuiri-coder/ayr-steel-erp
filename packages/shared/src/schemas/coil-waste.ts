@@ -4,11 +4,12 @@ import { operationDateSchema } from './operation';
 import { COIL_REPORT_LINES } from './report-lines';
 
 /* ------------------------------------------------------------------------------------- *
- * cc25 — Merma por bobina (D-424, D-425, D-429..D-431, D-433).
+ * cc25 — Merma por bobina (D-424, D-425, D-429..D-431, D-433..D-436).
  *
  * Por bobina, con las pestañas Coberturas Aluzinc y Drywall (sin «Todas», D-424). Entran las
- * bobinas con producción en el rango (D-425), y sus cifras son las de los movimientos de kardex
- * del rango (D-429):
+ * bobinas con producción, despunte de OP o ajuste de cierre en el rango (D-425, D-435), aunque
+ * después se revendan (D-436), y sus cifras son las de los movimientos de kardex del rango
+ * (D-429):
  *
  * - consumido: las salidas `PRODUCTION` de la bobina (lo que sacaron los reportes de planta);
  * - teórico: el kilo teórico de esos reportes (D-047), atribuido a la bobina (D-433);
@@ -16,14 +17,20 @@ import { COIL_REPORT_LINES } from './report-lines';
  * - despunte: las salidas `SCRAP` del cierre de una OP (D-057, D-089);
  * - ajuste de cierre: el `CLOSE_ADJUSTMENT` de la bobina (D-164), salida positiva y entrada
  *   negativa;
- * - merma = diferencia + despunte + ajuste, y porcentaje = merma ÷ teórico (D-430);
+ * - merma = diferencia + despunte + ajuste, y porcentaje = merma ÷ teórico (D-430). El teórico
+ *   ya incluye el 1 % de merma normal (D-165), así que es la merma **por encima del estándar**,
+ *   y se marca cuando pasa la tolerancia del 1 % (D-434);
  * - otra merma (manual, RF-17): informativa, fuera de la merma (D-431).
  *
  * Nada se estima: si una producción no tiene teórico atribuible, la bobina lo declara y su
  * merma queda sin calcular (D-425).
  * ------------------------------------------------------------------------------------- */
 
-/** El estándar contra el que se compara el porcentaje: la merma de `standardDensityFactor`. */
+/**
+ * D-434: la tolerancia sobre el estándar. El 1 % normal ya está en el teórico (D-165); por encima
+ * del estándar se acepta hasta otro 1 %, la misma tolerancia que producción acepta sin casilla
+ * (D-388/D-389), y lo que la pasa se marca.
+ */
 export const STANDARD_WASTE_PCT = '1.00';
 
 /** Las pestañas del reporte: las de bobinas (D-424). */
@@ -95,9 +102,12 @@ export const coilWasteRowSchema = z.object({
   trimKg: z.string(),
   closeAdjustmentKg: z.string(),
   wasteKg: z.string().nullable(),
-  /** Porcentaje con dos decimales; `null` sin teórico o con teórico cero. */
+  /**
+   * D-434: merma **por encima del estándar** sobre el teórico, con dos decimales (puede ser
+   * negativa); `null` sin teórico o con teórico cero.
+   */
   wastePct: z.string().nullable(),
-  /** El porcentaje pasa el 1 % estándar. */
+  /** D-434: pasa la tolerancia del 1 % (la de D-388/D-389); hasta el 1 % es normal. */
   overStandard: z.boolean(),
   /** D-431: merma manual (RF-17), informativa. */
   manualScrapKg: z.string(),
@@ -130,15 +140,8 @@ export const coilWasteSchema = z.object({
     differenceKg: z.string(),
     wasteKg: z.string(),
     wastePct: z.string().nullable(),
-  }),
-  /**
-   * D-424: las bobinas con producción en el rango que se vendieron enteras no entran. Se
-   * declaran para que el consumo de producción del rango siga cuadrando con el kardex.
-   */
-  soldWhole: z.object({
-    count: z.number().int(),
-    consumedKg: z.string(),
-    codes: z.array(z.string()),
+    /** D-434: el porcentaje del total pasa la tolerancia del 1 %. */
+    overStandard: z.boolean(),
   }),
 });
 export type CoilWasteDto = z.infer<typeof coilWasteSchema>;

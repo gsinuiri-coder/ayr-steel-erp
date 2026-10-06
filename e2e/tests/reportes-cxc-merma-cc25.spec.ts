@@ -38,10 +38,10 @@ function tab(page: Page, name: string) {
   return page.getByTestId('pestanas-linea').getByRole('tab', { name, exact: true });
 }
 
-/** Todos los movimientos de kardex de una bobina en el rango, página por página. */
+/** Los movimientos de kardex de bobinas en el rango (de una bobina o de una línea), por páginas. */
 async function coilMovements(
   api: APIRequestContext,
-  coilId: string,
+  filter: string,
   from: string,
   to: string,
 ): Promise<InventoryMovementDto[]> {
@@ -49,12 +49,22 @@ async function coilMovements(
   for (let page = 1; page <= 50; page += 1) {
     const res = await getJson<PaginatedResult<InventoryMovementDto>>(
       api,
-      `/api/inventory/movements?itemType=COIL&itemId=${coilId}&from=${from}&to=${to}&page=${page}&pageSize=200`,
+      `/api/inventory/movements?itemType=COIL&${filter}&from=${from}&to=${to}&page=${page}&pageSize=200`,
     );
     out.push(...res.items);
     if (out.length >= res.total || res.items.length === 0) break;
   }
   return out;
+}
+
+/** El consumo de producción vivo: salidas `PRODUCTION` ni anuladas ni anulación de otra. */
+function liveProductionKg(movements: InventoryMovementDto[]): string {
+  const production = movements.filter(
+    (m) => m.refType === 'PRODUCTION' && m.reversalOfId === null && m.reversedById === null,
+  );
+  return sum(
+    production.map((m) => (m.type === 'IN' ? toDecimal(m.qty).negated() : toDecimal(m.qty))),
+  ).toFixed(3);
 }
 
 const FROM = '2026-01-01';
@@ -120,16 +130,14 @@ test.describe('Reportes de CxC y merma (cc25)', () => {
         `/api/reports/coil-waste?from=${FROM}&to=${to}&businessLine=${line}`,
       );
       expect(report.businessLine).toBe(line);
-      // Las primeras bobinas alcanzan para fijar la regla sin recorrer el kardex entero.
+      // Toda la línea: el consumo del reporte es el de producción del kardex del rango, sin que
+      // falte ni sobre una bobina (D-436: la reventa ya no saca ninguna).
+      const lineKardex = await coilMovements(api, `businessLine=${line}`, FROM, to);
+      expect(report.totals.consumedKg).toBe(liveProductionKg(lineKardex));
+      // Y bobina por bobina, las primeras, contra su propio kardex.
       for (const row of report.rows.slice(0, 8)) {
-        const movements = await coilMovements(api, row.coilId, FROM, to);
-        const production = movements.filter(
-          (m) => m.refType === 'PRODUCTION' && m.reversalOfId === null && m.reversedById === null,
-        );
-        const consumed = sum(
-          production.map((m) => (m.type === 'IN' ? toDecimal(m.qty).negated() : toDecimal(m.qty))),
-        );
-        expect(row.consumedKg, row.code).toBe(consumed.toFixed(3));
+        const movements = await coilMovements(api, `itemId=${row.coilId}`, FROM, to);
+        expect(row.consumedKg, row.code).toBe(liveProductionKg(movements));
       }
       expect(sum(report.rows.map((r) => r.consumedKg)).toFixed(3)).toBe(report.totals.consumedKg);
     }

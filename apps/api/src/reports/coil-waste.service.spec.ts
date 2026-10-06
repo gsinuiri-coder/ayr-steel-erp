@@ -257,8 +257,8 @@ describe('CoilWasteService', () => {
     expect(productions.find((p) => p.reportId === REPORT(2))?.outOfTolerance).toBeNull();
   });
 
-  it('la bobina vendida entera no entra y se declara con su consumo (D-424)', async () => {
-    const { service } = setup({
+  it('una bobina revendida después de producir sigue en el reporte; la venta ni se consulta (D-436)', async () => {
+    const { service, inventoryMovement } = setup({
       movements: [
         { itemId: COIL(1), type: 'OUT', qty: '100.000', refType: 'PRODUCTION', refId: REPORT(1) },
         { itemId: COIL(2), type: 'OUT', qty: '30.000', refType: 'PRODUCTION', refId: REPORT(2) },
@@ -270,29 +270,70 @@ describe('CoilWasteService', () => {
       sold: [COIL(2)],
     });
     const report = await service.report(RANGE);
-    expect(report.rows.map((r) => r.coilId)).toEqual([COIL(1)]);
-    expect(report.soldWhole).toEqual({ count: 1, consumedKg: '30.000', codes: ['BOB-002'] });
-    // Con lo declarado, el consumo del rango sigue cuadrando con el kardex.
-    expect(new Decimal(report.totals.consumedKg).plus(report.soldWhole.consumedKg).toFixed(3)).toBe(
-      '130.000',
-    );
+    expect(report.rows.map((r) => r.coilId)).toEqual([COIL(1), COIL(2)]);
+    expect(report.totals.consumedKg).toBe('130.000');
+    expect(inventoryMovement.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it('una bobina con solo merma manual o ajuste en el rango no entra (D-425, D-431)', async () => {
-    const { service, calls } = setup({
+  it('entra por despunte o ajuste de cierre sin producción en el rango (D-435)', async () => {
+    const { service } = setup({
       movements: [
-        { itemId: COIL(1), type: 'OUT', qty: '7.000', refType: 'SCRAP', refId: COIL(1) },
-        { itemId: COIL(1), type: 'OUT', qty: '3.000', refType: 'CLOSE_ADJUSTMENT', refId: COIL(1) },
+        // La OP se cerró este mes; sus reportes fueron el anterior.
+        { itemId: COIL(1), type: 'OUT', qty: '12.000', refType: 'SCRAP', refId: ORDER(1) },
+        // La bobina se cerró este mes.
+        { itemId: COIL(2), type: 'OUT', qty: '4.000', refType: 'CLOSE_ADJUSTMENT', refId: COIL(2) },
       ],
+    });
+    const report = await service.report(RANGE);
+    expect(
+      report.rows.map((r) => [
+        r.consumedKg,
+        r.theoreticalKg,
+        r.trimKg,
+        r.closeAdjustmentKg,
+        r.wasteKg,
+        r.wastePct,
+      ]),
+    ).toEqual([
+      ['0.000', '0.000', '12.000', '0.000', '12.000', null],
+      ['0.000', '0.000', '0.000', '4.000', '4.000', null],
+    ]);
+    expect(report.rows.every((r) => r.productions.length === 0)).toBe(true);
+    // Dos meses seguidos suman exacto: la merma de este mes queda en este mes.
+    expect(report.totals).toMatchObject({ wasteKg: '16.000', wastePct: null, overStandard: false });
+  });
+
+  it('el rojo empieza pasado el 1 % sobre el estándar, y un valor negativo va tal cual (D-434)', async () => {
+    const { service } = setup({
+      movements: [
+        { itemId: COIL(1), type: 'OUT', qty: '1000.000', refType: 'PRODUCTION', refId: REPORT(1) },
+        { itemId: COIL(1), type: 'OUT', qty: '10.000', refType: 'SCRAP', refId: ORDER(1) },
+        { itemId: COIL(2), type: 'OUT', qty: '980.000', refType: 'PRODUCTION', refId: REPORT(2) },
+      ],
+      reports: [
+        { id: REPORT(1), theoreticalKg: '1000.000', order: 1 },
+        { id: REPORT(2), theoreticalKg: '1000.000', order: 2 },
+      ],
+    });
+    const report = await service.report(RANGE);
+    expect(report.rows.map((r) => [r.wastePct, r.overStandard])).toEqual([
+      ['1.00', false],
+      ['-2.00', false],
+    ]);
+  });
+
+  it('una bobina con solo merma manual en el rango no entra (D-431)', async () => {
+    const { service, calls } = setup({
+      movements: [{ itemId: COIL(1), type: 'OUT', qty: '7.000', refType: 'SCRAP', refId: COIL(1) }],
     });
     const report = await service.report(RANGE);
     expect(report.rows).toEqual([]);
     expect(report.totals.wastePct).toBeNull();
-    // Sin producción en el rango, una sola consulta.
+    // Sin bobinas en el rango, una sola consulta.
     expect(calls()).toBe(1);
   });
 
-  it('consultas fijas: seis como máximo, sin una por bobina ni por reporte', async () => {
+  it('consultas fijas: cuatro como máximo, sin una por bobina ni por reporte', async () => {
     const movements: Mv[] = [];
     const reports = [];
     for (let i = 1; i <= 40; i += 1) {
@@ -315,7 +356,7 @@ describe('CoilWasteService', () => {
     const { service, calls } = setup({ movements, reports });
     const report = await service.report(RANGE);
     expect(report.rows).toHaveLength(40);
-    expect(calls()).toBeLessThanOrEqual(6);
+    expect(calls()).toBeLessThanOrEqual(4);
   });
 
   it('lee solo movimientos vivos, del rango y de la línea de la pestaña', async () => {

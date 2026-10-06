@@ -23,12 +23,12 @@ import {
 } from './coil-waste';
 
 /**
- * cc25 (D-424, D-425, D-429..D-431, D-433). Merma por bobina. Solo lectura y solo administrador
- * (D-426, en el controlador): no escribe kardex ni cambia cómo se calcula el costo.
+ * cc25 (D-424, D-425, D-429..D-431, D-433..D-436). Merma por bobina. Solo lectura y solo
+ * administrador (D-426, en el controlador): no escribe kardex ni cambia cómo se calcula el costo.
  *
  * **Consultas fijas**, sin importar cuántas bobinas o reportes haya: los movimientos del rango
- * (una), las bobinas, los reportes, las órdenes, las autorizaciones de tolerancia y las ventas
- * enteras (una cada una, y ninguna si no hay producción en el rango). Seis como máximo.
+ * (una), las bobinas, los reportes y las autorizaciones de tolerancia (una cada una, y ninguna
+ * si no hay bobinas en el rango). Cuatro como máximo. D-436: no se mira la venta de la bobina.
  */
 @Injectable()
 export class CoilWasteService {
@@ -69,7 +69,15 @@ export class CoilWasteService {
     }));
 
     const production = movements.filter((m) => m.refType === 'PRODUCTION');
-    const coilIds = [...new Set(production.map((m) => m.itemId))];
+    // D-435: la bobina entra por producción, despunte o ajuste de cierre; no por la merma manual
+    // sola (D-431, `SCRAP` con `refId` = la bobina).
+    const coilIds = [
+      ...new Set(
+        movements
+          .filter((m) => !(m.refType === 'SCRAP' && m.refId === m.itemId))
+          .map((m) => m.itemId),
+      ),
+    ];
     if (coilIds.length === 0) {
       return assembleCoilWaste({
         ...base,
@@ -77,14 +85,13 @@ export class CoilWasteService {
         coils: new Map(),
         reports: new Map(),
         overrides: new Map(),
-        soldCoilIds: new Set(),
       });
     }
     const reportIds = [
       ...new Set(production.map((m) => m.refId).filter((id): id is string => isUuid(id))),
     ];
 
-    const [coilRows, reportRows, soldRows] = await Promise.all([
+    const [coilRows, reportRows] = await Promise.all([
       this.prisma.coil.findMany({
         where: { id: { in: coilIds } },
         select: {
@@ -109,18 +116,6 @@ export class CoilWasteService {
               productionOrder: { select: { seq: true } },
             },
           }),
-      // D-424: la bobina vendida entera no entra, cualquiera sea la fecha de la venta.
-      this.prisma.inventoryMovement.findMany({
-        where: {
-          itemType: 'COIL',
-          itemId: { in: coilIds },
-          refType: 'SALE',
-          type: 'OUT',
-          reversalOfId: null,
-          reversals: { none: {} },
-        },
-        select: { itemId: true },
-      }),
     ]);
 
     const orderIds = [...new Set(reportRows.map((r) => r.productionOrderId))];
@@ -178,7 +173,6 @@ export class CoilWasteService {
       coils,
       reports,
       overrides,
-      soldCoilIds: new Set(soldRows.map((r) => r.itemId)),
     });
   }
 }

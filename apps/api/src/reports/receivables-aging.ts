@@ -33,7 +33,7 @@ export function assembleReceivablesAging(input: {
   // desaparecer a los demás de la lista.
   const sellerIds = new Set(collectible.map((c) => documentOwnerId(c.document)));
   const sellers = [...sellerIds]
-    .map((id) => ({ id, name: sellerNames.get(id) ?? 'Usuario sin nombre' }))
+    .map((id) => ({ id, name: sellerNameOf(sellerNames, id) }))
     .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 
   const byCustomer = new Map<string, ReceivableCustomerAcc>();
@@ -70,7 +70,7 @@ export function assembleReceivablesAging(input: {
       salesOrderId: order?.id ?? null,
       salesOrderCode: order ? salesOrderCode(order.seq) : null,
       sellerId: ownerId,
-      sellerName: sellerNames.get(ownerId) ?? null,
+      sellerName: sellerNameOf(sellerNames, ownerId),
     };
 
     const acc = byCustomer.get(doc.customerId) ?? {
@@ -150,4 +150,9 @@ function bucketStrings(b: Record<AgingBucket, Decimal>): AgingBucketAmounts {
 /** Una columna `@db.Date` llega como medianoche UTC: su parte de fecha es el día guardado. */
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** El mismo nombre en el filtro y en el detalle, aunque el usuario no aparezca. */
+function sellerNameOf(names: ReadonlyMap<string, string>, id: string): string {
+  return names.get(id) ?? 'Usuario sin nombre';
 }

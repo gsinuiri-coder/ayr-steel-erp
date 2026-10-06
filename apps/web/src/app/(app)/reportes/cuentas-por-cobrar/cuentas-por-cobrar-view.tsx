@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
   AGING_BUCKETS,
@@ -58,12 +58,24 @@ export function CuentasPorCobrarView() {
 
   const report = useQuery({
     queryKey: ['report', 'receivables-aging', sellerId || 'todos'],
+    // Al cambiar de vendedor, el selector y las cifras siguen a la vista hasta que llega el nuevo.
+    placeholderData: keepPreviousData,
     queryFn: () =>
       api<ReceivablesAgingDto>(
         `/reports/receivables-aging${sellerId ? `?sellerId=${sellerId}` : ''}`,
       ),
   });
   const data = report.data;
+  // Un vendedor que ya no tiene saldo no está entre las opciones: se vuelve a «todos» para que el
+  // selector no quede en blanco.
+  const unknownSeller =
+    sellerId !== '' &&
+    data !== undefined &&
+    !report.isPlaceholderData &&
+    !data.sellers.some((s) => s.id === sellerId);
+  useEffect(() => {
+    if (unknownSeller) setUrl({ vendedor: '' });
+  }, [unknownSeller, setUrl]);
 
   const toggle = (customerId: string) => {
     setOpen((prev) => {
@@ -81,8 +93,8 @@ export function CuentasPorCobrarView() {
           <h1 className="text-lg font-semibold">Cuentas por cobrar</h1>
           <p className="text-xs text-muted-foreground">
             Saldo a hoy{data ? ` (${formatDate(data.asOf)})` : ''} de los comprobantes con deuda,
-            por cliente y por antigüedad desde el vencimiento. El contado vence el día de su
-            emisión. Importes en soles, con IGV: el mismo saldo que en Cobranzas.
+            por cliente y por antigüedad desde el vencimiento. El contado vence el día de su emisión
+            (Cobranzas no lo cuenta como vencido; el saldo es el mismo). Importes en soles, con IGV.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">

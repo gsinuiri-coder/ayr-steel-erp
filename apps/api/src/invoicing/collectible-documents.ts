@@ -48,8 +48,9 @@ export interface CollectibleDocument {
 type Reader = Pick<Prisma.TransactionClient, 'fiscalDocument'>;
 
 /**
- * Una sola consulta para todos los comprobantes con saldo. Los que tienen un resto de fracciones
- * de céntimo (D-377) no son deuda y no se devuelven.
+ * Una sola lectura para todos los comprobantes con saldo: Prisma la resuelve en un número fijo de
+ * consultas (una por relación incluida), sin importar cuántos comprobantes haya. Los que tienen un
+ * resto de fracciones de céntimo (D-377) no son deuda y no se devuelven.
  */
 export async function loadCollectibleDocuments(prisma: Reader): Promise<CollectibleDocument[]> {
   const documents = await prisma.fiscalDocument.findMany({

@@ -59,15 +59,12 @@ export function assembleCoilWaste(input: {
   coils: ReadonlyMap<string, WasteCoil>;
   reports: ReadonlyMap<string, WasteReport>;
   overrides: ReadonlyMap<string, WasteToleranceOverride>;
-  /** Bobinas con una venta entera viva (D-424): no entran. */
-  soldCoilIds: ReadonlySet<string>;
 }): CoilWasteDto {
-  const { movements, coils, reports, overrides, soldCoilIds } = input;
+  const { movements, coils, reports, overrides } = input;
 
-  // D-425: entra la bobina con producción en el rango.
-  const productionCoilIds = new Set(
-    movements.filter((m) => m.refType === 'PRODUCTION').map((m) => m.itemId),
-  );
+  // D-425 y D-435: entra la bobina con producción, despunte de OP o ajuste de cierre en el rango.
+  // La merma manual sola no la hace entrar (D-431), y una reventa posterior no la saca (D-436).
+  const inScopeCoilIds = new Set(movements.filter((m) => !isManualScrap(m)).map((m) => m.itemId));
 
   // Lo que cada reporte sacó en total, de todas sus bobinas: es lo que decide si su teórico se
   // puede atribuir bobina por bobina sin repartir (D-433).
@@ -80,7 +77,6 @@ export function assembleCoilWaste(input: {
     outByReport.set(m.refId, acc);
   }
 
-  const sold = { count: 0, consumed: new Decimal(0), codes: [] as string[] };
   const rows: CoilWasteRowDto[] = [];
   const totals = {
     consumed: new Decimal(0),
@@ -95,7 +91,7 @@ export function assembleCoilWaste(input: {
   };
 
   const byCoil = groupBy(
-    movements.filter((m) => productionCoilIds.has(m.itemId)),
+    movements.filter((m) => inScopeCoilIds.has(m.itemId)),
     (m) => m.itemId,
   );
 
@@ -103,13 +99,8 @@ export function assembleCoilWaste(input: {
     const coil = coils.get(coilId);
     const production = coilMovements.filter((m) => m.refType === 'PRODUCTION');
     const consumed = sum(production.map(signedOut));
-    if (soldCoilIds.has(coilId) || coil === undefined) {
-      // D-424: la bobina vendida entera no entra; se declara.
-      sold.count += 1;
-      sold.consumed = sold.consumed.plus(consumed);
-      sold.codes.push(coil?.code ?? coilId);
-      continue;
-    }
+    // La bobina siempre existe (FK del movimiento); sin ella no hay fila que armar.
+    if (coil === undefined) continue;
 
     // Despunte del cierre de la OP (refId = la orden) y merma manual de RF-17 (refId = la
     // bobina): las dos son `SCRAP`; lo que las separa es a qué apunta.
@@ -144,7 +135,7 @@ export function assembleCoilWaste(input: {
       closeAdjustmentKg: kg(closeAdjustment),
       wasteKg: waste === null ? null : kg(waste),
       wastePct: pct,
-      overStandard: pct !== null && new Decimal(pct).gt(STANDARD_WASTE_PCT),
+      overStandard: overStandard(pct),
       manualScrapKg: kg(manual),
       productions,
     });
@@ -163,7 +154,7 @@ export function assembleCoilWaste(input: {
   }
 
   rows.sort((a, b) => a.code.localeCompare(b.code));
-  sold.codes.sort((a, b) => a.localeCompare(b));
+  const totalPct = wastePct(totals.waste, totals.comparableCount === 0 ? null : totals.theoretical);
 
   return {
     from: input.from,
@@ -182,9 +173,9 @@ export function assembleCoilWaste(input: {
       theoreticalKg: kg(totals.theoretical),
       differenceKg: kg(totals.difference),
       wasteKg: kg(totals.waste),
-      wastePct: wastePct(totals.waste, totals.comparableCount === 0 ? null : totals.theoretical),
+      wastePct: totalPct,
+      overStandard: overStandard(totalPct),
     },
-    soldWhole: { count: sold.count, consumedKg: kg(sold.consumed), codes: sold.codes },
   };
 }
 
@@ -272,4 +263,14 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, 
     else out.set(k, [item]);
   }
   return out;
+}
+
+/** D-434: pasa la tolerancia del 1 % sobre el estándar. Hasta el 1 % es normal. */
+function overStandard(pct: string | null): boolean {
+  return pct !== null && new Decimal(pct).gt(STANDARD_WASTE_PCT);
+}
+
+/** RF-17: la merma manual apunta a la bobina misma; el despunte, a la OP (D-431). */
+function isManualScrap(m: WasteMovement): boolean {
+  return m.refType === 'SCRAP' && m.refId === m.itemId;
 }
