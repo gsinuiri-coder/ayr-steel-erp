@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -24,9 +24,10 @@ import { isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { useSession } from '@/lib/session';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { RoleGate } from '@/components/role-gate';
-import { FormCell, FormGrid } from '@/components/form';
+import { FormCell, FormGrid, StickyActionBar } from '@/components/form';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -60,6 +61,13 @@ export function NuevoDespachoView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  /**
+   * UX26-02: cada rótulo se enlaza con su control por `htmlFor`/`id`. Sin eso, los campos no
+   * tenían nombre accesible (axe `label`/`button-name`) y un lector de pantalla —o un test—
+   * no podía llegar a ellos por su rótulo.
+   */
+  const uid = useId();
+  const fieldId = (name: string) => `${uid}-${name}`;
 
   const [salesOrderId, setSalesOrderId] = useState<string>(searchParams.get('pedido') ?? NONE);
   const { user } = useSession();
@@ -82,6 +90,12 @@ export function NuevoDespachoView() {
   const [notes, setNotes] = useState('');
   const [qtyByLine, setQtyByLine] = useState<Record<string, string>>({});
   const [weightKgByLine, setWeightKgByLine] = useState<Record<string, string>>({});
+  /**
+   * cc27 (UX26-13, D-455): el usuario escribió algo. El formulario se siembra solo (lo pendiente
+   * del pedido, la partida más usada), así que comparar contra el estado inicial avisaría sin que
+   * nadie haya tocado nada: cuenta lo tipeado, que es lo que se pierde al salir.
+   */
+  const [typed, setTyped] = useState(false);
 
   const orders = useQuery({
     queryKey: ['sales-orders', 'dispatchable'],
@@ -260,6 +274,7 @@ export function NuevoDespachoView() {
     onSuccess: (created) => {
       toast.success(`${created.code} despachado: el stock ya salió del almacén`);
       invalidateInvoicing(queryClient, { orderId: salesOrderId });
+      setTyped(false);
       router.push(`/despachos/${created.id}`);
     },
     onError: (err: unknown) => {
@@ -324,6 +339,8 @@ export function NuevoDespachoView() {
 
   const canSubmit = missing.length === 0 && invalidLines === 0 && !create.isPending;
 
+  useUnsavedChanges(typed && !create.isSuccess);
+
   return (
     <RoleGate allow={DISPATCH_ROLES}>
       <div>
@@ -334,398 +351,443 @@ export function NuevoDespachoView() {
         </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Pedido y fecha</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <FormGrid>
-            <FormCell span={4} label="Pedido">
-              <Select value={salesOrderId} onValueChange={setSalesOrderId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Elige un pedido" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(orders.data ?? [])
-                    .filter((o) => o.status !== 'CANCELLED' && o.status !== 'FULFILLED')
-                    .map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.code} · {o.customerName}
+      {/* D-455: cualquier campo tipeado de aquí abajo cuenta como cambio sin guardar. */}
+      <div
+        className="contents"
+        onInput={() => {
+          setTyped(true);
+        }}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle>Pedido y fecha</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FormGrid>
+              <FormCell span={4} label="Pedido" htmlFor={fieldId('pedido')}>
+                <Select value={salesOrderId} onValueChange={setSalesOrderId}>
+                  <SelectTrigger id={fieldId('pedido')} className="w-full">
+                    <SelectValue placeholder="Elige un pedido" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(orders.data ?? [])
+                      .filter((o) => o.status !== 'CANCELLED' && o.status !== 'FULFILLED')
+                      .map((o) => (
+                        <SelectItem key={o.id} value={o.id}>
+                          {o.code} · {o.customerName}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </FormCell>
+              <FormCell span={4} label="Fecha de traslado" htmlFor={fieldId('fecha')}>
+                <Input
+                  id={fieldId('fecha')}
+                  type="date"
+                  max={businessToday()}
+                  value={dispatchDate}
+                  // D-124: es la fecha de operación del despacho. Solo un administrador la puede
+                  // mover del día; el API rechaza con 403 a cualquier otro rol que lo intente,
+                  // así que la pantalla no ofrece algo que va a fallar.
+                  disabled={user.role !== Role.ADMINISTRADOR}
+                  onChange={(e) => {
+                    setDispatchDate(e.target.value);
+                  }}
+                />
+              </FormCell>
+              <FormCell span={4} label="Bultos" htmlFor={fieldId('bultos')}>
+                <Input
+                  id={fieldId('bultos')}
+                  inputMode="numeric"
+                  value={packageCount}
+                  onChange={(e) => {
+                    setPackageCount(e.target.value);
+                  }}
+                />
+              </FormCell>
+            </FormGrid>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Traslado</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FormGrid>
+              <FormCell span={6} label="Dirección de partida" htmlFor={fieldId('origen')}>
+                <Input
+                  id={fieldId('origen')}
+                  value={originAddress}
+                  list="origenes"
+                  maxLength={240}
+                  onChange={(e) => {
+                    setOriginAddress(e.target.value);
+                    const match = suggestions.data?.origins.find(
+                      (o) => o.address === e.target.value,
+                    );
+                    if (match) setOriginUbigeo(match.ubigeo);
+                  }}
+                />
+                <datalist id="origenes">
+                  {(suggestions.data?.origins ?? []).map((o) => (
+                    <option key={o.address} value={o.address} />
+                  ))}
+                </datalist>
+              </FormCell>
+              <FormCell span={6} label="Ubigeo de partida" htmlFor={fieldId('ubigeo-origen')}>
+                <Input
+                  id={fieldId('ubigeo-origen')}
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="150101"
+                  value={originUbigeo}
+                  onChange={(e) => {
+                    setOriginUbigeo(e.target.value);
+                  }}
+                />
+              </FormCell>
+              <FormCell span={6} label="Dirección de llegada" htmlFor={fieldId('destino')}>
+                <Input
+                  id={fieldId('destino')}
+                  value={destinationAddress}
+                  maxLength={240}
+                  onChange={(e) => {
+                    setDestinationAddress(e.target.value);
+                  }}
+                />
+              </FormCell>
+              <FormCell span={6} label="Ubigeo de llegada" htmlFor={fieldId('ubigeo-destino')}>
+                <Input
+                  id={fieldId('ubigeo-destino')}
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="150131"
+                  value={destinationUbigeo}
+                  onChange={(e) => {
+                    setDestinationUbigeo(e.target.value);
+                  }}
+                />
+              </FormCell>
+              <FormCell span={6} label="Modalidad" htmlFor={fieldId('modalidad')}>
+                <Select
+                  value={transferMode}
+                  onValueChange={(v) => {
+                    setTransferMode(v as TransferMode);
+                  }}
+                >
+                  <SelectTrigger id={fieldId('modalidad')} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TRANSFER_MODES.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {TRANSFER_MODE_LABELS[m]}
                       </SelectItem>
                     ))}
-                </SelectContent>
-              </Select>
-            </FormCell>
-            <FormCell span={4} label="Fecha de traslado">
-              <Input
-                type="date"
-                max={businessToday()}
-                value={dispatchDate}
-                // D-124: es la fecha de operación del despacho. Solo un administrador la puede
-                // mover del día; el API rechaza con 403 a cualquier otro rol que lo intente,
-                // así que la pantalla no ofrece algo que va a fallar.
-                disabled={user.role !== Role.ADMINISTRADOR}
-                onChange={(e) => {
-                  setDispatchDate(e.target.value);
-                }}
-              />
-            </FormCell>
-            <FormCell span={4} label="Bultos">
-              <Input
-                inputMode="numeric"
-                value={packageCount}
-                onChange={(e) => {
-                  setPackageCount(e.target.value);
-                }}
-              />
-            </FormCell>
-          </FormGrid>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Traslado</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <FormGrid>
-            <FormCell span={6} label="Dirección de partida">
-              <Input
-                value={originAddress}
-                list="origenes"
-                maxLength={240}
-                onChange={(e) => {
-                  setOriginAddress(e.target.value);
-                  const match = suggestions.data?.origins.find((o) => o.address === e.target.value);
-                  if (match) setOriginUbigeo(match.ubigeo);
-                }}
-              />
-              <datalist id="origenes">
-                {(suggestions.data?.origins ?? []).map((o) => (
-                  <option key={o.address} value={o.address} />
-                ))}
-              </datalist>
-            </FormCell>
-            <FormCell span={6} label="Ubigeo de partida">
-              <Input
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="150101"
-                value={originUbigeo}
-                onChange={(e) => {
-                  setOriginUbigeo(e.target.value);
-                }}
-              />
-            </FormCell>
-            <FormCell span={6} label="Dirección de llegada">
-              <Input
-                value={destinationAddress}
-                maxLength={240}
-                onChange={(e) => {
-                  setDestinationAddress(e.target.value);
-                }}
-              />
-            </FormCell>
-            <FormCell span={6} label="Ubigeo de llegada">
-              <Input
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="150131"
-                value={destinationUbigeo}
-                onChange={(e) => {
-                  setDestinationUbigeo(e.target.value);
-                }}
-              />
-            </FormCell>
-            <FormCell span={6} label="Modalidad">
-              <Select
-                value={transferMode}
-                onValueChange={(v) => {
-                  setTransferMode(v as TransferMode);
-                }}
+                  </SelectContent>
+                </Select>
+              </FormCell>
+              <FormCell
+                span={6}
+                label="Peso bruto total (kg)"
+                htmlFor={fieldId('peso-total')}
+                size="lg"
+                numeric
+                help={`Propuesto ${suggestedWeight} kg a partir del material reservado; corrígelo con la báscula.`}
+                className={transferMode === 'PICKUP' ? 'hidden' : undefined}
               >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TRANSFER_MODES.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {TRANSFER_MODE_LABELS[m]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormCell>
-            <FormCell
-              span={6}
-              label="Peso bruto total (kg)"
-              size="lg"
-              numeric
-              help={`Propuesto ${suggestedWeight} kg a partir del material reservado; corrígelo con la báscula.`}
-              className={transferMode === 'PICKUP' ? 'hidden' : undefined}
-            >
-              <Input
-                inputMode="decimal"
-                value={totalWeightKg}
-                onChange={(e) => {
-                  setTotalWeightKg(e.target.value);
-                }}
-              />
-            </FormCell>
-          </FormGrid>
-        </CardContent>
-      </Card>
+                <Input
+                  id={fieldId('peso-total')}
+                  inputMode="decimal"
+                  value={totalWeightKg}
+                  onChange={(e) => {
+                    setTotalWeightKg(e.target.value);
+                  }}
+                />
+              </FormCell>
+            </FormGrid>
+          </CardContent>
+        </Card>
 
-      {/* D-078: la modalidad decide qué datos pide la guía. D-103: el recojo no pide ninguno. */}
-      <Card hidden={transferMode === 'PICKUP'}>
-        <CardHeader>
-          <CardTitle>
-            {transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <FormGrid>
-            {transferMode === 'PRIVATE' ? (
-              <>
-                <FormCell span={4} label="Placa">
-                  <Input
-                    value={vehiclePlate}
-                    list="placas"
-                    maxLength={10}
-                    onChange={(e) => {
-                      setVehiclePlate(e.target.value.toUpperCase());
-                    }}
-                  />
-                  <datalist id="placas">
-                    {(suggestions.data?.vehicles ?? []).map((v) => (
-                      <option key={v.plate} value={v.plate} />
-                    ))}
-                  </datalist>
-                </FormCell>
-                {/*
+        {/* D-078: la modalidad decide qué datos pide la guía. D-103: el recojo no pide ninguno. */}
+        <Card hidden={transferMode === 'PICKUP'}>
+          <CardHeader>
+            <CardTitle>
+              {transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FormGrid>
+              {transferMode === 'PRIVATE' ? (
+                <>
+                  <FormCell span={4} label="Placa" htmlFor={fieldId('placa')}>
+                    <Input
+                      id={fieldId('placa')}
+                      value={vehiclePlate}
+                      list="placas"
+                      maxLength={10}
+                      onChange={(e) => {
+                        setVehiclePlate(e.target.value.toUpperCase());
+                      }}
+                    />
+                    <datalist id="placas">
+                      {(suggestions.data?.vehicles ?? []).map((v) => (
+                        <option key={v.plate} value={v.plate} />
+                      ))}
+                    </datalist>
+                  </FormCell>
+                  {/*
                 Nombres y apellidos por separado: SUNAT los pide así y el PSE rechaza la
                 guía sin los apellidos. Partirlos de un campo único se equivoca con un
                 nombre compuesto, y esa adivinanza saldría impresa en la guía.
               */}
-                <FormCell span={4} label="Nombres del conductor">
-                  <Input
-                    value={driverGivenNames}
-                    list="conductores"
-                    maxLength={80}
-                    onChange={(e) => {
-                      setDriverGivenNames(e.target.value);
-                      // Elegir un conductor conocido trae sus apellidos, su documento y su
-                      // licencia: es lo que reemplaza al catálogo diferido (D-078).
-                      const match = suggestions.data?.drivers.find(
-                        (d) => d.givenNames === e.target.value,
-                      );
-                      if (match) {
-                        setDriverFamilyNames(match.familyNames);
-                        setDriverDocType(match.docType);
-                        setDriverDocNumber(match.docNumber);
-                        setDriverLicense(match.license);
-                      }
-                    }}
-                  />
-                  <datalist id="conductores">
-                    {(suggestions.data?.drivers ?? []).map((d) => (
-                      <option key={d.docNumber} value={d.givenNames} />
-                    ))}
-                  </datalist>
-                </FormCell>
-                <FormCell span={4} label="Apellidos del conductor">
-                  <Input
-                    value={driverFamilyNames}
-                    maxLength={80}
-                    onChange={(e) => {
-                      setDriverFamilyNames(e.target.value);
-                    }}
-                  />
-                </FormCell>
-                <FormCell span={4} label="Licencia">
-                  <Input
-                    value={driverLicense}
-                    maxLength={20}
-                    onChange={(e) => {
-                      setDriverLicense(e.target.value.toUpperCase());
-                    }}
-                  />
-                </FormCell>
-                <FormCell span={4} label="Tipo de documento">
-                  <Select
-                    value={driverDocType}
-                    onValueChange={(v) => {
-                      setDriverDocType(v as DocType);
-                    }}
+                  <FormCell
+                    span={4}
+                    label="Nombres del conductor"
+                    htmlFor={fieldId('conductor-nombres')}
                   >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {DOC_TYPES.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {t}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormCell>
-                <FormCell span={4} label="Número de documento">
-                  <Input
-                    value={driverDocNumber}
-                    maxLength={20}
-                    onChange={(e) => {
-                      setDriverDocNumber(e.target.value);
-                    }}
-                  />
-                </FormCell>
-              </>
-            ) : (
-              <>
-                <FormCell span={4} label="RUC del transportista">
-                  <Input
-                    value={carrierDocNumber}
-                    list="transportistas"
-                    maxLength={20}
-                    onChange={(e) => {
-                      setCarrierDocNumber(e.target.value);
-                      const match = suggestions.data?.carriers.find(
-                        (c) => c.docNumber === e.target.value,
-                      );
-                      if (match) setCarrierName(match.name);
-                    }}
-                  />
-                  <datalist id="transportistas">
-                    {(suggestions.data?.carriers ?? []).map((c) => (
-                      <option key={c.docNumber} value={c.docNumber} />
-                    ))}
-                  </datalist>
-                </FormCell>
-                <FormCell span={8} label="Razón social del transportista">
-                  <Input
-                    value={carrierName}
-                    maxLength={160}
-                    onChange={(e) => {
-                      setCarrierName(e.target.value);
-                    }}
-                  />
-                </FormCell>
-              </>
-            )}
-            <FormCell span={12} label="Observaciones">
-              <Input
-                value={notes}
-                maxLength={500}
-                onChange={(e) => {
-                  setNotes(e.target.value);
-                }}
-              />
-            </FormCell>
-          </FormGrid>
-        </CardContent>
-      </Card>
-
-      {invalidLines > 0 && (
-        <Alert variant="destructive">
-          <AlertDescription>
-            {invalidLines === 1 ? 'Una línea tiene' : `${invalidLines} líneas tienen`} una cantidad
-            que no es válida o que pasa lo pendiente de despachar.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {invalidWeightLines > 0 && (
-        <Alert variant="destructive">
-          <AlertDescription>
-            {invalidWeightLines === 1
-              ? 'Una línea no tiene'
-              : `${invalidWeightLines} líneas no tienen`}{' '}
-            un peso válido: la guía de remisión lo necesita por línea.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <section className="space-y-2">
-        <h2 className="text-sm font-medium">Qué sale</h2>
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>Producto</TableHead>
-                <TableHead>Material</TableHead>
-                <TableHead className="text-right">Pedido</TableHead>
-                <TableHead className="text-right">Ya despachado</TableHead>
-                <TableHead className="text-right">Pendiente</TableHead>
-                <TableHead className="w-36 text-right">A despachar</TableHead>
-                <TableHead className="w-36 text-right">Peso (kg)</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {(progress.data?.lines ?? []).map((l) => (
-                <TableRow key={l.salesOrderItemId}>
-                  <TableCell>
-                    <div className="font-medium">{l.productSku}</div>
-                    <div className="text-xs text-muted-foreground">{l.description}</div>
-                  </TableCell>
-                  <TableCell className="text-sm">{l.itemLabel}</TableCell>
-                  <TableCell className="text-right">
-                    {l.qty} {unitSymbol(l.unit)}
-                  </TableCell>
-                  <TableCell className="text-right">{l.dispatchedQty}</TableCell>
-                  <TableCell className="text-right">{l.pendingDispatchQty}</TableCell>
-                  <TableCell>
                     <Input
-                      inputMode="decimal"
-                      className="text-right"
-                      disabled={!toDecimal(l.pendingDispatchQty).gt(0)}
-                      value={qtyByLine[l.salesOrderItemId] ?? ''}
+                      id={fieldId('conductor-nombres')}
+                      value={driverGivenNames}
+                      list="conductores"
+                      maxLength={80}
                       onChange={(e) => {
-                        setQtyByLine((prev) => ({
-                          ...prev,
-                          [l.salesOrderItemId]: e.target.value,
-                        }));
+                        setDriverGivenNames(e.target.value);
+                        // Elegir un conductor conocido trae sus apellidos, su documento y su
+                        // licencia: es lo que reemplaza al catálogo diferido (D-078).
+                        const match = suggestions.data?.drivers.find(
+                          (d) => d.givenNames === e.target.value,
+                        );
+                        if (match) {
+                          setDriverFamilyNames(match.familyNames);
+                          setDriverDocType(match.docType);
+                          setDriverDocNumber(match.docNumber);
+                          setDriverLicense(match.license);
+                        }
                       }}
                     />
-                  </TableCell>
-                  <TableCell>
-                    {/*
+                    <datalist id="conductores">
+                      {(suggestions.data?.drivers ?? []).map((d) => (
+                        <option key={d.docNumber} value={d.givenNames} />
+                      ))}
+                    </datalist>
+                  </FormCell>
+                  <FormCell
+                    span={4}
+                    label="Apellidos del conductor"
+                    htmlFor={fieldId('conductor-apellidos')}
+                  >
+                    <Input
+                      id={fieldId('conductor-apellidos')}
+                      value={driverFamilyNames}
+                      maxLength={80}
+                      onChange={(e) => {
+                        setDriverFamilyNames(e.target.value);
+                      }}
+                    />
+                  </FormCell>
+                  <FormCell span={4} label="Licencia" htmlFor={fieldId('licencia')}>
+                    <Input
+                      id={fieldId('licencia')}
+                      value={driverLicense}
+                      maxLength={20}
+                      onChange={(e) => {
+                        setDriverLicense(e.target.value.toUpperCase());
+                      }}
+                    />
+                  </FormCell>
+                  <FormCell span={4} label="Tipo de documento" htmlFor={fieldId('doc-tipo')}>
+                    <Select
+                      value={driverDocType}
+                      onValueChange={(v) => {
+                        setDriverDocType(v as DocType);
+                      }}
+                    >
+                      <SelectTrigger id={fieldId('doc-tipo')} className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DOC_TYPES.map((t) => (
+                          <SelectItem key={t} value={t}>
+                            {t}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormCell>
+                  <FormCell span={4} label="Número de documento" htmlFor={fieldId('doc-numero')}>
+                    <Input
+                      id={fieldId('doc-numero')}
+                      value={driverDocNumber}
+                      maxLength={20}
+                      onChange={(e) => {
+                        setDriverDocNumber(e.target.value);
+                      }}
+                    />
+                  </FormCell>
+                </>
+              ) : (
+                <>
+                  <FormCell
+                    span={4}
+                    label="RUC del transportista"
+                    htmlFor={fieldId('transportista-ruc')}
+                  >
+                    <Input
+                      id={fieldId('transportista-ruc')}
+                      value={carrierDocNumber}
+                      list="transportistas"
+                      maxLength={20}
+                      onChange={(e) => {
+                        setCarrierDocNumber(e.target.value);
+                        const match = suggestions.data?.carriers.find(
+                          (c) => c.docNumber === e.target.value,
+                        );
+                        if (match) setCarrierName(match.name);
+                      }}
+                    />
+                    <datalist id="transportistas">
+                      {(suggestions.data?.carriers ?? []).map((c) => (
+                        <option key={c.docNumber} value={c.docNumber} />
+                      ))}
+                    </datalist>
+                  </FormCell>
+                  <FormCell
+                    span={8}
+                    label="Razón social del transportista"
+                    htmlFor={fieldId('transportista-nombre')}
+                  >
+                    <Input
+                      id={fieldId('transportista-nombre')}
+                      value={carrierName}
+                      maxLength={160}
+                      onChange={(e) => {
+                        setCarrierName(e.target.value);
+                      }}
+                    />
+                  </FormCell>
+                </>
+              )}
+              <FormCell span={12} label="Observaciones" htmlFor={fieldId('notas')}>
+                <Input
+                  id={fieldId('notas')}
+                  value={notes}
+                  maxLength={500}
+                  onChange={(e) => {
+                    setNotes(e.target.value);
+                  }}
+                />
+              </FormCell>
+            </FormGrid>
+          </CardContent>
+        </Card>
+
+        {invalidLines > 0 && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {invalidLines === 1 ? 'Una línea tiene' : `${invalidLines} líneas tienen`} una
+              cantidad que no es válida o que pasa lo pendiente de despachar.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {invalidWeightLines > 0 && (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {invalidWeightLines === 1
+                ? 'Una línea no tiene'
+                : `${invalidWeightLines} líneas no tienen`}{' '}
+              un peso válido: la guía de remisión lo necesita por línea.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium">Qué sale</h2>
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-background">
+                <TableRow>
+                  <TableHead>Producto</TableHead>
+                  <TableHead>Material</TableHead>
+                  <TableHead className="text-right">Pedido</TableHead>
+                  <TableHead className="text-right">Ya despachado</TableHead>
+                  <TableHead className="text-right">Pendiente</TableHead>
+                  <TableHead className="w-36 text-right">A despachar</TableHead>
+                  <TableHead className="w-36 text-right">Peso (kg)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(progress.data?.lines ?? []).map((l, index) => (
+                  <TableRow key={l.salesOrderItemId}>
+                    <TableCell>
+                      <div className="font-medium">{l.productSku}</div>
+                      <div className="text-xs text-muted-foreground">{l.description}</div>
+                    </TableCell>
+                    <TableCell className="text-sm">{l.itemLabel}</TableCell>
+                    <TableCell className="text-right">
+                      {l.qty} {unitSymbol(l.unit)}
+                    </TableCell>
+                    <TableCell className="text-right">{l.dispatchedQty}</TableCell>
+                    <TableCell className="text-right">{l.pendingDispatchQty}</TableCell>
+                    <TableCell>
+                      {/* UX26-02: la celda no tiene rótulo propio; el nombre dice qué línea es. */}
+                      <Input
+                        aria-label={`Cantidad a despachar de la línea ${index + 1} (${l.productSku})`}
+                        inputMode="decimal"
+                        className="text-right"
+                        disabled={!toDecimal(l.pendingDispatchQty).gt(0)}
+                        value={qtyByLine[l.salesOrderItemId] ?? ''}
+                        onChange={(e) => {
+                          setQtyByLine((prev) => ({
+                            ...prev,
+                            [l.salesOrderItemId]: e.target.value,
+                          }));
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      {/*
                       F8-S1/M3: el peso es de la guía de remisión (SUNAT), no del kardex —
                       se pide por línea siempre que hay algo que despachar, prellenado con
                       el kg teórico cuando el producto lo tiene (D-118) y editable con la
                       báscula. Solo es obligatorio con transporte (validado en `missing`);
                       en recojo el API lo ignora y lo deja en cero (D-103).
                     */}
-                    <Input
-                      inputMode="decimal"
-                      className="text-right"
-                      disabled={!toDecimal(l.pendingDispatchQty).gt(0)}
-                      value={weightKgByLine[l.salesOrderItemId] ?? ''}
-                      onChange={(e) => {
-                        setWeightKgByLine((prev) => ({
-                          ...prev,
-                          [l.salesOrderItemId]: e.target.value,
-                        }));
-                      }}
-                    />
-                  </TableCell>
-                </TableRow>
-              ))}
-              {(progress.data?.lines.length ?? 0) === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
-                    Elige un pedido para ver qué queda por despachar.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </section>
+                      <Input
+                        aria-label={`Peso (kg) de la línea ${index + 1} (${l.productSku})`}
+                        inputMode="decimal"
+                        className="text-right"
+                        disabled={!toDecimal(l.pendingDispatchQty).gt(0)}
+                        value={weightKgByLine[l.salesOrderItemId] ?? ''}
+                        onChange={(e) => {
+                          setWeightKgByLine((prev) => ({
+                            ...prev,
+                            [l.salesOrderItemId]: e.target.value,
+                          }));
+                        }}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {(progress.data?.lines.length ?? 0) === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground">
+                      Elige un pedido para ver qué queda por despachar.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+      </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
-        {blockedText !== null && (
-          <p className="mr-auto text-xs text-muted-foreground">{blockedText}</p>
-        )}
+      {/* cc27 (D-454): «Despachar» y el motivo por el que está apagado quedan a la vista. */}
+      <StickyActionBar
+        hint={blockedText === null ? undefined : <span className="text-xs">{blockedText}</span>}
+      >
         <Button
           variant="outline"
           onClick={() => {
@@ -746,7 +808,7 @@ export function NuevoDespachoView() {
         >
           Despachar
         </Button>
-      </div>
+      </StickyActionBar>
 
       <BackdateConfirmDialog
         open={backdate.open}

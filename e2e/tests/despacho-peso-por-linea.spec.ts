@@ -34,19 +34,11 @@ async function loginAsAdmin(page: Page): Promise<void> {
 }
 
 /**
- * El campo no tiene `htmlFor`/`id` (S11/F2-02, no se toca en esta sesión): la única forma
- * estable de llegar al `<input>` es por el `<label>` hermano que lo antecede en el DOM.
+ * UX26-02: cada rótulo del formulario está enlazado con su control (`htmlFor`/`id`), así que
+ * los campos se buscan por su nombre accesible, igual que los encuentra un lector de pantalla.
  */
-function inputAfterLabel(page: Page, label: string) {
-  return page.locator(
-    `xpath=//label[normalize-space(text())="${label}"]/following-sibling::*[1]//input[1]`,
-  );
-}
-
-function fieldGroup(page: Page, exactLabel: string) {
-  return page.locator('[data-slot="form-cell"]', {
-    has: page.getByText(exactLabel, { exact: true }),
-  });
+function field(page: Page, label: string) {
+  return page.getByLabel(label, { exact: true });
 }
 
 test.describe('F8-S1/M3 — peso por línea en el despacho', () => {
@@ -102,7 +94,7 @@ test.describe('F8-S1/M3 — peso por línea en el despacho', () => {
     await page.goto('/despachos/nuevo');
     await expect(page.getByRole('heading', { name: 'Nuevo despacho', level: 1 })).toBeVisible();
 
-    const pedidoField = fieldGroup(page, 'Pedido').getByRole('combobox');
+    const pedidoField = page.getByRole('combobox', { name: 'Pedido', exact: true });
     await pedidoField.click();
     await page.getByRole('option', { name: `${order.code} · ${customer.name}` }).click();
 
@@ -113,23 +105,23 @@ test.describe('F8-S1/M3 — peso por línea en el despacho', () => {
 
     // Peso teórico propuesto: 6.000 kg/unidad × 5 unidades a despachar = 30.000 kg. Nadie
     // lo escribió — es la propuesta que F8-S1/M3 agrega, y es lo que antes no existía.
-    const weightInput = page
-      .locator('table tbody tr', { hasText: product.sku })
-      .locator('input')
-      .nth(1);
+    const weightInput = page.getByRole('textbox', {
+      name: `Peso (kg) de la línea 1 (${product.sku})`,
+      exact: true,
+    });
     await expect(weightInput).toHaveValue('30.000', { timeout: 20_000 });
 
     // Modalidad por defecto es "Transporte privado": es exactamente el caso que F2-01
     // reprodujo (no se podía despachar ninguna línea que no fuera en kilos).
-    await inputAfterLabel(page, 'Dirección de partida').fill('Av. Almacén 100, Lima');
-    await inputAfterLabel(page, 'Ubigeo de partida').fill('150101');
-    await inputAfterLabel(page, 'Dirección de llegada').fill('Av. Cliente 200, Lima');
-    await inputAfterLabel(page, 'Ubigeo de llegada').fill('150132');
-    await inputAfterLabel(page, 'Placa').fill('ABC-123');
-    await inputAfterLabel(page, 'Nombres del conductor').fill('Juan');
-    await inputAfterLabel(page, 'Apellidos del conductor').fill('Pérez');
-    await inputAfterLabel(page, 'Número de documento').fill('45678912');
-    await inputAfterLabel(page, 'Licencia').fill('Q12345678');
+    await field(page, 'Dirección de partida').fill('Av. Almacén 100, Lima');
+    await field(page, 'Ubigeo de partida').fill('150101');
+    await field(page, 'Dirección de llegada').fill('Av. Cliente 200, Lima');
+    await field(page, 'Ubigeo de llegada').fill('150132');
+    await field(page, 'Placa').fill('ABC-123');
+    await field(page, 'Nombres del conductor').fill('Juan');
+    await field(page, 'Apellidos del conductor').fill('Pérez');
+    await field(page, 'Número de documento').fill('45678912');
+    await field(page, 'Licencia').fill('Q12345678');
 
     const created = page.waitForResponse(
       (r) => r.url().includes('/api/dispatches') && r.request().method() === 'POST',

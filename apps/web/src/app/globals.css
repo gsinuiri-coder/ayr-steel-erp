@@ -193,3 +193,28 @@
     scrollbar-color: color-mix(in oklch, var(--foreground) 22%, transparent) transparent;
   }
 }
+
+/*
+ * cc27 (UX26-10, D-456): sombra en el borde de una tabla que esconde columnas. Las capas
+ * `local` (del color del fondo) viajan con el contenido y tapan la sombra `scroll` cuando ya se
+ * está en ese borde: solo se ve del lado en que quedan columnas por ver.
+ */
+[data-slot='table-container'][data-overflow='true'] {
+  background:
+    linear-gradient(to right, var(--background) 30%, transparent) left center / 2.5rem 100%
+      no-repeat local,
+    linear-gradient(to left, var(--background) 30%, transparent) right center / 2.5rem 100%
+      no-repeat local,
+    radial-gradient(
+        farthest-side at 0 50%,
+        color-mix(in oklab, var(--foreground) 22%, transparent),
+        transparent
+      )
+      left center / 0.875rem 100% no-repeat scroll,
+    radial-gradient(
+        farthest-side at 100% 50%,
+        color-mix(in oklab, var(--foreground) 22%, transparent),
+        transparent
+      )
+      right center / 0.875rem 100% no-repeat scroll;
+}

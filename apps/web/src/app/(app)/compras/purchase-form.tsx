@@ -38,13 +38,14 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField } from '@/components/ui/form';
-import { FormFieldCell } from '@/components/form';
+import { FormFieldCell, StickyActionBar } from '@/components/form';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -314,6 +315,8 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
       });
     },
   });
+  // cc27 (UX26-13, D-455): salir con la compra a medio cargar avisa; guardada, ya no.
+  useUnsavedChanges(form.formState.isDirty && !save.isSuccess);
 
   const isCoil = type === PurchaseType.COIL;
   const isFinishedGood = type === PurchaseType.FINISHED_GOOD;
@@ -966,7 +969,17 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           </CardContent>
         </Card>
 
-        <div className="flex justify-end gap-3">
+        {/* cc27 (D-454): la acción principal queda a la vista en una compra larga. */}
+        <StickyActionBar
+          hint={
+            <>
+              Total:{' '}
+              <span className="font-semibold text-foreground tabular-nums">
+                {formatMoney(totals.total, currency)}
+              </span>
+            </>
+          }
+        >
           <Button
             type="button"
             variant="outline"
@@ -984,7 +997,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           >
             {submitLabel ?? 'Registrar compra'}
           </Button>
-        </div>
+        </StickyActionBar>
       </form>
     </Form>
   );

@@ -77,6 +77,7 @@ import {
 } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -527,6 +528,20 @@ function validityDaysOf(q: QuotationDto): string {
   return String(days >= 1 ? days : DEFAULT_QUOTATION_VALIDITY_DAYS);
 }
 
+/** Huella del borrador para saber si cambió (D-455); la `key` de cada línea no es un dato. */
+function draftFingerprint(draft: {
+  customerId: string;
+  issueDate: string;
+  validityDays: string;
+  notes: string;
+  lines: readonly LineDraft[];
+}): string {
+  return JSON.stringify({
+    ...draft,
+    lines: draft.lines.map(({ key: _key, ...line }) => line),
+  });
+}
+
 export function SalesDocumentForm({
   mode,
   initial,
@@ -574,6 +589,14 @@ export function SalesDocumentForm({
   );
   const [nextKey, setNextKey] = useState(initial ? initial.items.length + 1 : 1);
   const [formError, setFormError] = useState<string | null>(null);
+  /**
+   * cc27 (UX26-13, D-455): el formulario tal como se abrió. Si lo que se ve deja de ser eso, salir
+   * avisa. Se compara el contenido y no un «se tocó algo»: borrar lo que se escribió vuelve a
+   * dejarlo limpio, y los selectores de Radix no disparan eventos `input`.
+   */
+  const [pristine] = useState(() =>
+    draftFingerprint({ customerId, issueDate, validityDays, notes, lines }),
+  );
 
   // RF-S3/M1: el selector de cliente busca en el servidor (`customerSearch` más abajo) y ya
   // no trae el maestro entero. Esto solo hidrata por id lo que **ya** está elegido —al editar
@@ -825,6 +848,10 @@ export function SalesDocumentForm({
       setFormError(err instanceof ApiError ? err.message : 'No se pudo guardar');
     },
   });
+  useUnsavedChanges(
+    !save.isSuccess &&
+      draftFingerprint({ customerId, issueDate, validityDays, notes, lines }) !== pristine,
+  );
 
   /**
    * Valida el borrador y devuelve las líneas listas, o el primer error legible. Replica lo
@@ -1277,7 +1304,16 @@ export function SalesDocumentForm({
         </Alert>
       )}
 
-      <DocumentActions>
+      <DocumentActions
+        hint={
+          <>
+            Precio de venta (con IGV):{' '}
+            <span className="font-semibold text-foreground tabular-nums">
+              {formatMoney(documentTotals.total.toFixed(2))}
+            </span>
+          </>
+        }
+      >
         <Button
           variant="outline"
           onClick={() => {

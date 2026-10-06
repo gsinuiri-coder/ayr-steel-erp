@@ -155,7 +155,8 @@ export function CoilPicker({
         Buscar y montar bobinas ({openOptions.length})
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-4xl">
+        {/* cc27 (UX26-05, D-456): a 1366 la tabla medía 1046 px en 862 y «Montar» quedaba fuera. */}
+        <DialogContent className="sm:max-w-6xl">
           <DialogHeader>
             <DialogTitle>Bobinas para {orderCode}</DialogTitle>
             <DialogDescription>

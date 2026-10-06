@@ -1,13 +1,18 @@
 import { Suspense, type ReactNode } from 'react';
+import { cookies } from 'next/headers';
 import { SessionProvider } from '@/lib/session';
 import { AppSidebar } from '@/components/app-sidebar';
 import { Separator } from '@/components/ui/separator';
+import { SIDEBAR_COOKIE_NAME } from '@/lib/sidebar-state';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 
-export default function AppLayout({ children }: { children: ReactNode }) {
+export default async function AppLayout({ children }: { children: ReactNode }) {
+  // cc27 (UX26-11, D-456): el menú abre como se dejó. El interruptor ya guardaba su estado en
+  // una cookie y nadie la leía: al recargar volvía abierto y le quitaba 208 px a la tabla.
+  const sidebarOpen = (await cookies()).get(SIDEBAR_COOKIE_NAME)?.value !== 'false';
   return (
     <SessionProvider>
-      <SidebarProvider>
+      <SidebarProvider defaultOpen={sidebarOpen}>
         {/* `useSearchParams` del menú (ítem activo por `?tab=`) pide un límite de Suspense. */}
         <Suspense fallback={null}>
           <AppSidebar />
