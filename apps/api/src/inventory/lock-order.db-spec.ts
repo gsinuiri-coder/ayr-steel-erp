@@ -666,6 +666,26 @@ describe('D-386 (A6) — una bobina del agregado frente a despacho y anulación 
       }),
     ],
     [
+      // A-2 de la autorrevisión del corte 2: bajarla deshace el sobrante (reversa + invariante).
+      'bajar con sobrante',
+      (agg) => {
+        let consumptionId = '';
+        return {
+          coilId: coilAt(agg, 0).coilId,
+          prepare: async () => {
+            await spendCoil(coilAt(agg, 0).coilId);
+            const mounted = await mountWithSurplus(agg.productionOrderId, coilAt(agg, 0).coilId);
+            const live = mounted.consumptions.find(
+              (c) => c.coilId === coilAt(agg, 0).coilId && c.releasedAt === null,
+            );
+            if (!live) throw new Error('El montaje con sobrante no dejó la bobina montada');
+            consumptionId = live.id;
+          },
+          run: () => roofing.releaseCoil(admin, agg.productionOrderId, consumptionId),
+        };
+      },
+    ],
+    [
       'cerrar bobina',
       (agg) => ({
         coilId: coilAt(agg, 2).coilId,

@@ -65,7 +65,10 @@ import type { RequestUser } from '../auth/auth.types';
 import { sellerWhere } from '../auth/seller-scope';
 import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from '../coils/coil-auto-terminate';
 import { openFilmIfSealed, resealIfOpenedBy } from '../coils/coil-film';
-import { CoilOperationsService } from '../coils/coil-operations.service';
+import {
+  CoilOperationsService,
+  MOUNT_SURPLUS_ALLOWED_OUTS,
+} from '../coils/coil-operations.service';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
@@ -876,6 +879,19 @@ export class RoofingProductionService {
 
       // D-328: bajar una bobina que el montaje abrió, sin que nada haya salido de ella, la
       // vuelve a sellar. Si se abrió a mano, o ya se usó, o sigue montada en otra orden, no.
+      // A-2 de la autorrevisión del corte 2 (regla 17): la reversa del sobrante (D-466) toca el
+      // saldo de la bobina y la invariante de materia prima, así que la bobina, su agregado y su
+      // saldo se toman juntos, en orden, antes de leer nada.
+      await this.inventory.lockInOrder(tx, {
+        items: [
+          {
+            businessLineId: order.businessLineId,
+            itemType: InventoryItemType.COIL,
+            itemId: consumption.coilId,
+            unit: Unit.KGM,
+          },
+        ],
+      });
       const coil = await this.coils.lockCoil(tx, consumption.coilId);
       const resealed = await resealIfOpenedBy(
         tx,
@@ -3039,7 +3055,29 @@ export class RoofingProductionService {
           );
         };
         const withKilos = closedIds.filter(hasKilos);
-        const empty = closedIds.filter((id) => !hasKilos(id));
+        // P1 de la revisión del corte 2: de las agotadas, solo las que se fueron en planta
+        // (producción, merma o cierre). Una vendida, partida o enviada al corte no está ahí.
+        const zero = closedIds.filter((id) => !hasKilos(id));
+        const elsewhere =
+          zero.length === 0
+            ? new Set<string>()
+            : new Set(
+                (
+                  await this.prisma.inventoryMovement.findMany({
+                    where: {
+                      itemType: 'COIL',
+                      itemId: { in: zero },
+                      type: 'OUT',
+                      refType: { notIn: [...MOUNT_SURPLUS_ALLOWED_OUTS] },
+                      reversalOfId: null,
+                      reversals: { none: {} },
+                    },
+                    select: { itemId: true },
+                    distinct: ['itemId'],
+                  })
+                ).map((m) => m.itemId),
+              );
+        const empty = zero.filter((id) => !elsewhere.has(id));
         // El tope de 100 lo llenan primero las que tienen kilos: cientos de rollos agotados no
         // pueden desplazarlas del corte.
         const [kept, spent] = await Promise.all([

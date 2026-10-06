@@ -97,6 +97,7 @@ export function CoilPicker({
       setFilmStep(null);
       setReopening(null);
       setReopenReason('');
+      setPhysicalKg('');
       setShowClosed(false);
     }
   }, [open]);
@@ -384,7 +385,9 @@ export function CoilPicker({
                                   : `${c.closeAdjustment.kind === 'SHORTAGE' ? '−' : '+'}${formatQty(c.closeAdjustment.qtyKg, 'kg')}`}
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
-                                {formatQty(c.availableKg, 'kg')}
+                                {c.needsPhysicalKg
+                                  ? 'Pide el peso físico'
+                                  : formatQty(c.availableKg, 'kg')}
                               </TableCell>
                               <TableCell className="text-right">
                                 <Button
@@ -501,7 +504,12 @@ function ReopenStep({
         role="alert"
         className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
       >
-        {adjustment === null ? (
+        {coil.needsPhysicalKg ? (
+          <>
+            <span className="font-mono font-medium">{coil.code}</span> está terminada con el kardex
+            en 0.
+          </>
+        ) : adjustment === null ? (
           <>
             <span className="font-mono font-medium">{coil.code}</span> está terminada sin un ajuste
             de cierre pendiente: reabrirla no mueve el kardex.

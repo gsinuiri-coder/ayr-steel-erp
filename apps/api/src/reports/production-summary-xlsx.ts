@@ -19,7 +19,8 @@ export function productionSummaryXlsx(report: ProductionSummaryDto): {
     (a, g) => a + g.orders.reduce((b, o) => b + o.coils.length, 0),
     0,
   );
-  assertExportable(Math.max(orderRows, coilRows), exportWindow());
+  // Las filas de la hoja «Por OP» son las OPs, un subtotal por pedido y el total.
+  assertExportable(Math.max(orderRows + report.groups.length + 1, coilRows), exportWindow());
 
   const costHeader = report.withCosts ? ['Costo salido (S/)', 'Costo despunte (S/)'] : [];
   const costWidths = report.withCosts ? [16, 18] : [];

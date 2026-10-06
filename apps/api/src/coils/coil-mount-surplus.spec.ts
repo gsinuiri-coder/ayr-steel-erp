@@ -109,6 +109,22 @@ describe('declareMountSurplusInTx (D-466)', () => {
     expect(record).toHaveBeenCalledWith(tx, expect.objectContaining({ unitCost: '4.0000' }));
   });
 
+  it('una bobina que salió del almacén por otro camino (venta, partido, corte) no declara sobrante', async () => {
+    const { service, tx, record } = build({ qty: '0.000', avgCost: '4.0000' });
+    tx.inventoryMovement.findFirst.mockResolvedValueOnce({ refType: 'SALE' });
+    await expect(declare(service, tx)).rejects.toThrow(/salió del almacén por venta/);
+    expect(tx.inventoryMovement.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          itemId: COIL,
+          type: 'OUT',
+          refType: { notIn: ['PRODUCTION', 'SCRAP', 'CLOSE_ADJUSTMENT'] },
+        }),
+      }),
+    );
+    expect(record).not.toHaveBeenCalled();
+  });
+
   it('solo planta y el administrador declaran el peso físico', async () => {
     const { service, tx, record } = build({ qty: '0.000', avgCost: '4.0000' });
     await expect(declare(service, tx, 'VENDEDOR')).rejects.toBeInstanceOf(ForbiddenException);

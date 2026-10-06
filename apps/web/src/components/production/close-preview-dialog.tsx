@@ -145,12 +145,14 @@ export function ClosePreviewDialog({
             )}
 
             <ul className="grid gap-1">
-              <li>
-                Vuelve al almacén:{' '}
-                <span className="font-medium" data-testid="vuelve-al-almacen">
-                  {backToStock?.gt(0) ? formatQty(backToStock.toFixed(3), 'kg') : 'nada'}
-                </span>
-              </li>
+              {mountedKg !== undefined && (
+                <li>
+                  Vuelve al almacén:{' '}
+                  <span className="font-medium" data-testid="vuelve-al-almacen">
+                    {backToStock?.gt(0) ? formatQty(backToStock.toFixed(3), 'kg') : 'nada'}
+                  </span>
+                </li>
+              )}
               <li>
                 {scrapLabel}:{' '}
                 <span className="font-medium">

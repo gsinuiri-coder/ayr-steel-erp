@@ -17,6 +17,7 @@ import {
 import {
   CoilFilmSource,
   coilTypeKey,
+  INVENTORY_REF_TYPE_LABELS,
   fromDateOnly,
   Role,
   toDecimal,
@@ -54,6 +55,12 @@ import { CoilsService } from './coils.service';
  * que lo provocó. `null` cuando no hubo nada que liquidar, que es el caso normal de una
  * bobina que se cierra ya en cero.
  */
+/**
+ * cc29 (D-466, P1 de la revisión del corte 2): las salidas con las que una bobina se va **en
+ * planta**. Una terminada en 0 solo por estas puede declarar un sobrante al montarla.
+ */
+export const MOUNT_SURPLUS_ALLOWED_OUTS = ['PRODUCTION', 'SCRAP', 'CLOSE_ADJUSTMENT'] as const;
+
 interface CloseAdjustmentSummary {
   kind: CoilCloseAdjustmentKind;
   movementId: string;
@@ -710,6 +717,25 @@ export class CoilOperationsService {
     if (balanceKg.gt(0)) {
       throw new BadRequestException(
         `${coil.code} tiene ${balanceKg.toFixed(3)} kg en el kardex: el peso físico solo se declara al montar una bobina terminada con el kardex en 0`,
+      );
+    }
+    // P1 de la revisión del corte 2: el cero tiene que venir de planta. Una bobina que salió del
+    // almacén por otro camino —vendida entera, partida, enviada al corte tercerizado o ajustada a
+    // mano— no está en planta: declararle un sobrante crearía kilos de material que ya no existe.
+    const leftOtherwise = await tx.inventoryMovement.findFirst({
+      where: {
+        itemType: 'COIL',
+        itemId: coil.id,
+        type: 'OUT',
+        refType: { notIn: [...MOUNT_SURPLUS_ALLOWED_OUTS] },
+        reversalOfId: null,
+        reversals: { none: {} },
+      },
+      select: { refType: true },
+    });
+    if (leftOtherwise) {
+      throw new BadRequestException(
+        `${coil.code} salió del almacén por ${INVENTORY_REF_TYPE_LABELS[leftOtherwise.refType].toLowerCase()}: solo se declara el sobrante de una bobina que se consumió en planta`,
       );
     }
     const declaredKg = toDecimal(input.physicalKg);

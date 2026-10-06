@@ -27,6 +27,32 @@ D-463. Registradas D-463..D-466 (decisiones del dueño). Alcance: M1 drywall con
   - A-4, A-5 (si se quita «Fleje más pesado» por D-467, las auditorías ya grabadas pierden la
     etiqueta), A-7 (sin texto en `audit-labels.ts` para las dos acciones de la casilla), A-8;
     SM-4 (el rechazo del API dice «largo y bobina» también en drywall), SM-5, SM-6, SM-7.
+- **Corte 1 desplegado (16:00–16:10 de Lima):** API `ayr-steel-erp-api-00095-q6m`
+  (`git-sha=fc28720c`), `main` `8ce80ac8` (PR #118), `smoke:prod` verde en los dos dominios.
+- **Corte 2 (M2 y M3; D-468, D-469; rama `cc29-corte2`):** M2 reporte de producción por OP y pedido;
+  M3 reproducción del hueco (confirmada: el sobrante declarado al terminarla se revertía al montarla)
+  y arreglo, más el aviso de cierre. Revisiones: autorrevisión 0 P0, 2 P1, 4 P2, 6 P3; segundo modelo
+  0 P0, 1 P1, 3 P2, 4 P3 (`docs/revision/cc29-corte2-*.md`). Corregidos: el P1 de las dos (A-1/SM-1:
+  una bobina vendida, partida, enviada al corte o ajustada a mano ya no declara sobrante ni se ofrece
+  para hacerlo; solo la que se fue por producción, merma o cierre), el P1 A-2 (bajar con sobrante
+  toma bobina, agregado y saldo en orden; par «bajar con sobrante» en `lock-order.db-spec`), A-4,
+  A-7, A-8, A-11/SM-6 y SM-3.
+- **Registro de riesgo (toca kardex):** `CoilOperationsService.declareMountSurplusInTx` y
+  `reverseMountSurplusInTx`, el filtro `refId = bobina` de `reverseCloseAdjustment`, y
+  `RoofingProductionService.mountCoil`/`releaseCoil` (sobrante al montar y su reversa).
+- **Pendientes del corte 2, con su id:**
+  - A-3 (P2): anular la OP con la bobina montada no deshace el sobrante (sí lo hace bajarla): la
+    bobina queda abierta con los kilos declarados, que son material real.
+  - A-5 / SM-5 (P2/P3): bajar la bobina falla con el error del kardex si parte del sobrante ya salió
+    (por ejemplo, una merma manual del resto).
+  - A-6 (P2): el reporte de producción, como la merma de cc25 (D-291), lee solo movimientos vivos: un
+    reporte revertido en un mes posterior desaparece del mes anterior.
+  - SM-2 (P2): la merma por bobina muestra el sobrante del montaje como ajuste de cierre negativo (el
+    brief pide verlo ahí); un rango que solo cubra el montaje puede dar merma negativa.
+  - SM-4 (P2): los unitarios de M3 usan dobles; el flujo real lo cubren el E2E
+    `sobrante-bobina-cc29` y los pares de `lock-order.db-spec`.
+  - A-9, A-10, A-12, SM-7, SM-8 (P3). El aviso «¿sigue en el almacén?» del cierre con despunte alto
+    no tiene E2E propio (el de cc27 cubre «vuelve al almacén» y que no aparezca).
 
 ## 2026-10-06 — Ventanas cc28: sesión de limpieza (D-459..D-462, PR #115 y #116, sin migración)
 
