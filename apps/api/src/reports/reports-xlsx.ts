@@ -5,6 +5,7 @@ import {
   COIL_STATUS_LABELS,
   coilGroupLabel,
   FISCAL_DOC_TYPE_LABELS,
+  toDecimal,
   type InventoryValuationDto,
   type SalesMarginDto,
 } from '@ayr/shared';
@@ -235,6 +236,18 @@ export function salesMarginXlsx(report: SalesMarginDto): { buffer: Buffer; filen
           ? [label, num(t.salesPen), null, null, null]
           : [label, num(t.salesPen), num(t.costPen), num(t.marginPen), num(t.marginPct)];
       }),
+      // cc28 (D-461): la misma fila que la pantalla, para que la columna sume el total.
+      ...(toDecimal(report.totals.roundingPen).isZero()
+        ? []
+        : [
+            [
+              'Redondeo al céntimo de los comprobantes',
+              num(report.totals.roundingPen),
+              null,
+              null,
+              null,
+            ],
+          ]),
       [
         'Total del rango (margen sin Servicios ni líneas sin producto)',
         num(report.totals.salesPen),

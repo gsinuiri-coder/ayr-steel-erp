@@ -9,6 +9,7 @@ import {
   Role,
   SALES_MARGIN_LINES,
   businessToday,
+  toDecimal,
   type MarginCostStatus,
   type SalesMarginDto,
   type SalesMarginOrderDto,
@@ -275,6 +276,18 @@ export function VentasMargenView() {
                         )}
                       </TableRow>
                     ))}
+                    {/* cc28 (D-461): lo que separa sumar comprobantes de sumar sus líneas. */}
+                    {!toDecimal(report.data.totals.roundingPen).isZero() && (
+                      <TableRow>
+                        <TableCell>Redondeo al céntimo de los comprobantes</TableCell>
+                        <TableCell className="text-right">
+                          {formatMoney(report.data.totals.roundingPen, 'PEN', 4)}
+                        </TableCell>
+                        <TableCell colSpan={3} className="text-right text-muted-foreground">
+                          Comprobantes con líneas de más de dos decimales (precio con IGV)
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </div>

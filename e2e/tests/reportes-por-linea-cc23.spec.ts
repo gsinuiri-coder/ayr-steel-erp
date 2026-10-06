@@ -9,6 +9,9 @@ import {
   type SalesMarginDto,
 } from '@ayr/shared';
 import { adminApi, adminCredentials, getJson } from '../helpers/api';
+import { fiscalEmissionAllowed } from '../helpers/invoicing';
+import { closeSessionQuietly, openCashSession, posSell, setupPosStock } from '../helpers/pos';
+import { purgeSalesTrail } from '../helpers/sales';
 
 /**
  * cc23 (D-390..D-396) — reportes por línea de negocio con la pestaña en la URL.
@@ -112,6 +115,23 @@ test.describe('Reportes por línea (cc23)', () => {
     const api = await adminApi(baseURL!);
     const range = `from=${FROM}&to=${businessToday()}`;
 
+    // cc28 (D-461): un comprobante cuyo subtotal se redondea al céntimo (3 × S/ 12.35 con IGV:
+    // la línea guarda 31.3983 y el comprobante 31.40). Con él, las pestañas solas ya no suman
+    // «Todas»: la fila de redondeo cierra la cuenta. Se vende en el mostrador (emite boleta).
+    const orderIds: string[] = [];
+    if (fiscalEmissionAllowed()) {
+      const stock = await setupPosStock(api, { qty: '10', listPricePen: '10.0000' });
+      const session = await openCashSession(api, '0.00');
+      try {
+        const sale = await posSell(api, {
+          items: [{ productId: stock.product.id, qty: '3.000', unitPriceWithIgvPen: '12.3500' }],
+        });
+        orderIds.push(sale.salesOrderId);
+      } finally {
+        await closeSessionQuietly(api, session.id);
+      }
+    }
+
     const bad = await api.get(`/api/reports/sales-margin?${range}&businessLine=acero`);
     expect(bad.status()).toBe(400);
     const noInventory = await api.get('/api/reports/inventory-valuation?businessLine=services');
@@ -124,9 +144,14 @@ test.describe('Reportes por línea (cc23)', () => {
       ),
     );
     const noLine = all.totalsByLine.find((t) => t.businessLine === null)?.salesPen ?? '0';
-    expect(sum([...tabs.map((t) => t.totals.salesPen), noLine]).toFixed(4)).toBe(
-      all.totals.salesPen,
-    );
+    expect(
+      sum([...tabs.map((t) => t.totals.salesPen), noLine, all.totals.roundingPen]).toFixed(4),
+    ).toBe(all.totals.salesPen);
+    if (orderIds.length > 0) {
+      // El comprobante redondeado está en el rango: su diferencia aparece en la fila.
+      expect(toDecimal(all.totals.roundingPen).isZero()).toBe(false);
+    }
+    await purgeSalesTrail(api, { orderIds });
     expect(sum(tabs.map((t) => t.totals.costPen)).toFixed(4)).toBe(all.totals.costPen);
 
     const inventory = await getJson<InventoryValuationDto>(api, '/api/reports/inventory-valuation');

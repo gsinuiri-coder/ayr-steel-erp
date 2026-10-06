@@ -390,6 +390,14 @@ export const salesMarginSchema = z.object({
     /** D-285: pedidos despachados sin salida de kardex, fuera del margen, y su venta. */
     untraceableOrderCount: z.number().int(),
     untraceableSalesPen: z.string(),
+    /**
+     * cc28 (D-461): en «Todas», la venta de los comprobantes menos la suma de sus líneas. Una línea
+     * cargada con precio con IGV (D-255) guarda su valor con cuatro decimales y el comprobante lo
+     * redondea al céntimo (D-377): las pestañas suman líneas y «Todas» suma comprobantes, y se
+     * separaban en diezmilésimos. Con esta fila, `Σ pestañas + «Sin línea» + roundingPen` es
+     * exactamente `salesPen`. En la pestaña de una línea es `0`. No toca ningún dato guardado.
+     */
+    roundingPen: z.string(),
   }),
 });
 export type SalesMarginDto = z.infer<typeof salesMarginSchema>;
