@@ -164,7 +164,11 @@ test.describe('Reportes por línea (cc23)', () => {
       }
       expect(sum(tabs.map((t) => t.totals.costPen)).toFixed(4)).toBe(all.totals.costPen);
     } finally {
-      for (const id of saleIds) await voidPosSale(api, id, 'E2E cc28: limpieza del redondeo');
+      // De buen esfuerzo: sin PSE (local) el comprobante queda en SEND_ERROR y el API no deja
+      // anular la venta; con PSE (CI) se anula. La aserción no depende de esto.
+      for (const id of saleIds) {
+        await voidPosSale(api, id, 'E2E cc28: limpieza del redondeo').catch(() => undefined);
+      }
       await purgeSalesTrail(api, { orderIds });
     }
 
