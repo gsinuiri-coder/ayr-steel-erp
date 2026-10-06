@@ -18,6 +18,7 @@ import {
   Percent,
   ReceiptText,
   Recycle,
+  Factory,
   Scissors,
   ScrollText,
   Settings,
@@ -257,6 +258,13 @@ export const NAV: NavGroup[] = [
         href: '/reportes/merma',
         icon: Recycle,
         roles: [Role.ADMINISTRADOR],
+      },
+      {
+        // cc29 (M2, D-464): por OP y por pedido. Planta lo ve sin costos.
+        title: 'Reporte de producción',
+        href: '/reportes/produccion',
+        icon: Factory,
+        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
     ],
   },

@@ -48,6 +48,7 @@ describe('mapa del menú (D-326)', () => {
         'Inventario valorizado',
         'Reporte mensual de bobinas',
         'Merma por bobina',
+        'Reporte de producción',
       ],
       Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
     });
@@ -59,9 +60,9 @@ describe('mapa del menú (D-326)', () => {
     expect(titles(Role.VENDEDOR).Comercial).toContain('Cotizaciones');
   });
 
-  it('planta ve almacén, compras, producción y el reporte mensual, y solo esos reportes', () => {
+  it('planta ve almacén, compras, producción, el reporte mensual y el de producción, y solo esos reportes', () => {
     const planta = titles(Role.SUPERVISOR_PLANTA);
-    expect(planta.Reportes).toEqual(['Reporte mensual de bobinas']);
+    expect(planta.Reportes).toEqual(['Reporte mensual de bobinas', 'Reporte de producción']);
     expect(planta.Planta).toEqual(['Producción', 'Órdenes de producción']);
     expect(planta['Administración']).toBeUndefined();
     expect(planta.Comercial).toEqual(['Despachos']);

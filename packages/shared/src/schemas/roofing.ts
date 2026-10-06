@@ -635,8 +635,24 @@ export const mountRoofingCoilSchema = z
      */
     reopenCoilIds: z.array(z.string().uuid()).max(MAX_ORDER_STRIPS_TO_MOUNT).optional(),
     reopenReason: reasonSchema.optional(),
+    /**
+     * cc29 (D-466): el peso físico de una bobina terminada con el kardex en 0 que se reabre para
+     * montarla. La diferencia entra como sobrante (D-164). Solo con una bobina suelta que se
+     * reabre; solo lo declaran el supervisor de planta y el administrador (lo valida el API).
+     */
+    physicalKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
   })
   .superRefine((v, ctx) => {
+    if (
+      v.physicalKg !== undefined &&
+      (v.coilId === undefined || !(v.reopenCoilIds ?? []).includes(v.coilId))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['physicalKg'],
+        message: 'El peso físico se declara montando una sola bobina terminada que se reabre',
+      });
+    }
     const listed = new Set(v.coilIds ?? (v.coilId === undefined ? [] : [v.coilId]));
     if (v.reopenCoilIds !== undefined && v.reopenCoilIds.length > 0) {
       if (v.reopenReason === undefined) {
@@ -1102,6 +1118,11 @@ export const roofingCoilOptionSchema = z.object({
     .nullable(),
   /** En una cerrada, el saldo que va a quedar **después** de reabrirla. */
   availableKg: z.string(),
+  /**
+   * cc29 (D-466): una terminada que, reabierta, queda con el kardex en 0. Se monta declarando su
+   * peso físico (el sobrante entra al kardex); solo planta y el administrador.
+   */
+  needsPhysicalKg: z.boolean(),
   /** Metros que salen de ese saldo con la geometría de esta bobina: lo que planta necesita ver. */
   estimatedMeters: z.string(),
 });

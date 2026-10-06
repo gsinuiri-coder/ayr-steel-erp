@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import {
   piecesTheoreticalKg,
   TOLERANCE_OVERRIDE_REQUIRED,
+  sum,
   toDecimal,
   type MountedKgExcess,
   type PlantClosePreviewDto,
@@ -410,7 +411,7 @@ export function AccessoryReportCard({
         open={asking}
         onOpenChange={setAsking}
         title="Cerrar con despunte alto"
-        description="La diferencia entre lo que se declara consumido y los metros reportados sale del inventario como despunte y su costo se reparte entre el producto bueno. Explica por qué."
+        description="La diferencia entre lo que se declara consumido y los metros reportados sale del inventario como despunte y su costo se reparte entre el producto bueno. ¿Sigue en el almacén para otra OP? Si el material está entero, vuelve y declara menos kilos consumidos: lo que no se consume vuelve al almacén. Si de verdad salió como despunte, explica por qué."
         confirmLabel="Cerrar la orden"
         pending={send.isPending}
         onConfirm={(reason: string) => {
@@ -423,6 +424,9 @@ export function AccessoryReportCard({
       />
       <ClosePreviewDialog
         preview={closePreview?.preview ?? null}
+        mountedKg={sum(order.coils.map((c) => toDecimal(c.consumedKg).plus(c.remainingKg))).toFixed(
+          3,
+        )}
         title={`Reportar y cerrar ${order.code}`}
         confirmLabel="Reportar y cerrar"
         pending={send.isPending}

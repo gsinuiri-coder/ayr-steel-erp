@@ -46,6 +46,7 @@ menú solo ordena lo que cada uno usa.
 | Reportes       | Inventario valorizado      | `/reportes/inventario-valorizado` | Sí   | —    | —     | Lleva costos en cada fila (RF-S4a).                                                                                    |
 | Reportes       | Reporte mensual de bobinas | `/reportes/bobinas`               | Sí   | Sí   | —     | El corte mensual de planta (D-124); los costos se enmascaran para quien no es administrador ni planta.                 |
 | Reportes       | Merma por bobina           | `/reportes/merma`                 | Sí   | —    | —     | Solo administrador (D-426).                                                                                            |
+| Reportes       | Reporte de producción      | `/reportes/produccion`            | Sí   | Sí   | —     | Por OP y por pedido (D-464); el supervisor lo ve sin costos (cc29).                                                    |
 | Administración | Usuarios                   | `/usuarios`                       | Sí   | —    | —     | Administrar usuarios y roles.                                                                                          |
 | Administración | Márgenes y tipo de cambio  | `/configuracion/margenes`         | Sí   | —    | —     | Fijar márgenes y tipo de cambio es del administrador; la lectura de la API es más abierta (la usan los formularios).   |
 | Administración | Auditoría                  | `/auditoria`                      | Sí   | —    | —     | El visor de auditoría (RF-95, D-218).                                                                                  |
@@ -53,7 +54,7 @@ menú solo ordena lo que cada uno usa.
 
 <!-- matriz:fin -->
 
-En números: el administrador ve 32 entradas; el supervisor de planta, 16; el vendedor, 13.
+En números: el administrador ve 33 entradas; el supervisor de planta, 17; el vendedor, 13.
 
 ## Cómo se comprobó
 

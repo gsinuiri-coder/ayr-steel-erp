@@ -9,6 +9,7 @@ import {
   commitReceivedPurchaseEditSchema,
   cancelCuttingOrderSchema,
   createCuttingOrderSchema,
+  createCoilScrapSchema,
   createCustomerSchema,
   createDispatchSchema,
   createFinishSchema,
@@ -330,7 +331,9 @@ async function roofingAggregate(coils: number): Promise<{
   productionOrderId: string;
 }> {
   thicknessStep += 1;
-  const thicknessMm = (0.3 + thicknessStep * 0.05).toFixed(2);
+  // cc29: paso de 0,03 mm (más que la tolerancia de ±0,02 de D-086, así los agregados no se
+  // mezclan). Con 0,05 los ~240 agregados de la corrida pasaban de 9,99 mm, el tope del SKU.
+  const thicknessMm = (0.3 + thicknessStep * 0.03).toFixed(2);
   const product = await catalog.create(
     admin,
     createProductSchema.parse({
@@ -383,6 +386,37 @@ function coilAt(
 
 function mount(orderId: string, coilId: string) {
   return roofing.mountCoil(admin, orderId, mountRoofingCoilSchema.parse({ coilIds: [coilId] }));
+}
+
+/**
+ * cc29 (M3, D-466): la bobina queda terminada con el kardex en 0 (merma de todo su saldo, que la
+ * termina sola, D-360) y después se monta declarando su peso físico: reabrir + sobrante nuevo.
+ */
+async function spendCoil(coilId: string) {
+  const balance = await prisma.inventoryBalance.findUniqueOrThrow({
+    where: { itemType_itemId: { itemType: 'COIL', itemId: coilId } },
+  });
+  await coilOps.registerScrap(
+    admin,
+    coilId,
+    createCoilScrapSchema.parse({
+      qtyKg: balance.qty.toFixed(3),
+      reason: 'Prueba de concurrencia: se consume entera (cc29)',
+    }),
+  );
+}
+
+function mountWithSurplus(orderId: string, coilId: string) {
+  return roofing.mountCoil(
+    admin,
+    orderId,
+    mountRoofingCoilSchema.parse({
+      coilId,
+      reopenCoilIds: [coilId],
+      reopenReason: 'Prueba de concurrencia: quedaba material (cc29)',
+      physicalKg: '100.000',
+    }),
+  );
 }
 
 function report(orderId: string) {
@@ -623,6 +657,35 @@ describe('D-386 (A6) — una bobina del agregado frente a despacho y anulación 
         prepare: () => mount(agg.productionOrderId, coilAt(agg, 0).coilId),
         run: () => report(agg.productionOrderId),
       }),
+    ],
+    [
+      // cc29 (D-466): el camino nuevo que mueve inventario: reabrir y dar de alta el sobrante.
+      'montar con sobrante',
+      (agg) => ({
+        coilId: coilAt(agg, 0).coilId,
+        prepare: () => spendCoil(coilAt(agg, 0).coilId),
+        run: () => mountWithSurplus(agg.productionOrderId, coilAt(agg, 0).coilId),
+      }),
+    ],
+    [
+      // A-2 de la autorrevisión del corte 2: bajarla deshace el sobrante (reversa + invariante).
+      'bajar con sobrante',
+      (agg) => {
+        let consumptionId = '';
+        return {
+          coilId: coilAt(agg, 0).coilId,
+          prepare: async () => {
+            await spendCoil(coilAt(agg, 0).coilId);
+            const mounted = await mountWithSurplus(agg.productionOrderId, coilAt(agg, 0).coilId);
+            const live = mounted.consumptions.find(
+              (c) => c.coilId === coilAt(agg, 0).coilId && c.releasedAt === null,
+            );
+            if (!live) throw new Error('El montaje con sobrante no dejó la bobina montada');
+            consumptionId = live.id;
+          },
+          run: () => roofing.releaseCoil(admin, agg.productionOrderId, consumptionId),
+        };
+      },
     ],
     [
       'cerrar bobina',

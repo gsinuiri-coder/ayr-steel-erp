@@ -216,6 +216,10 @@ test.describe('cc27 / UX26-03 — confirmar «Ejecutar y cerrar»', () => {
     expect(Number(consumed)).toBeGreaterThan(0);
     await expect(cells.nth(4)).toHaveText('Vuelve al almacén');
     await expect(dialog).toContainText('Bobinas que quedan terminadas: ninguna');
+    // cc29 (M3): cuánto vuelve al almacén, el saldo que le queda a la bobina; sin despunte alto,
+    // sin la pregunta de si sigue en el almacén.
+    expect(kgOf(await dialog.getByTestId('vuelve-al-almacen').innerText())).toBe(after);
+    await expect(dialog.getByTestId('aviso-sigue-en-almacen')).toHaveCount(0);
 
     await back.click();
     await expect(dialog).toBeHidden();

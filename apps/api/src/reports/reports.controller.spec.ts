@@ -12,6 +12,7 @@ import type { AdminDashboardService } from './admin-dashboard.service';
 import type { PlantDashboardService } from './plant-dashboard.service';
 import type { SellerDashboardService } from './seller-dashboard.service';
 import type { CoilWasteService } from './coil-waste.service';
+import type { ProductionSummaryService } from './production-summary.service';
 import type { ReceivablesAgingService } from './receivables-aging.service';
 import type { ReportsService } from './reports.service';
 import type { SalesByMaterialService } from './sales-by-material.service';
@@ -165,6 +166,7 @@ function build() {
   const documentProfitability = { profitability: jest.fn().mockResolvedValue({ applies: true }) };
   const receivablesAging = { report: jest.fn().mockResolvedValue({ customers: [] }) };
   const coilWaste = { report: jest.fn().mockResolvedValue({ rows: [] }) };
+  const productionSummary = { report: jest.fn().mockResolvedValue({ groups: [] }) };
   const adminDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const plantDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const sellerDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
@@ -178,6 +180,7 @@ function build() {
     documentProfitability as unknown as DocumentProfitabilityService,
     receivablesAging as unknown as ReceivablesAgingService,
     coilWaste as unknown as CoilWasteService,
+    productionSummary as unknown as ProductionSummaryService,
     adminDashboard as unknown as AdminDashboardService,
     plantDashboard as unknown as PlantDashboardService,
     sellerDashboard as unknown as SellerDashboardService,
@@ -193,6 +196,7 @@ function build() {
     documentProfitability,
     receivablesAging,
     coilWaste,
+    productionSummary,
   };
 }
 
@@ -220,6 +224,15 @@ describe('ReportsController', () => {
     expect(rolesOf('receivablesAgingXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     // cc25 (D-426): merma, solo ADMINISTRADOR.
     expect(rolesOf('coilWasteReport')).toEqual([Role.ADMINISTRADOR]);
+    // cc29 (M2): producción, administrador y planta; los costos los decide el rol (abajo).
+    expect(rolesOf('productionSummaryReport')).toEqual([
+      Role.ADMINISTRADOR,
+      Role.SUPERVISOR_PLANTA,
+    ]);
+    expect(rolesOf('productionSummaryXlsxFile')).toEqual([
+      Role.ADMINISTRADOR,
+      Role.SUPERVISOR_PLANTA,
+    ]);
     // cc26 (D-440): el Panel del administrador lleva costos y márgenes.
     expect(rolesOf('adminDashboardReport')).toEqual([Role.ADMINISTRADOR]);
     // cc26 (D-440): el de planta, con los roles de las lecturas de planta.
@@ -229,6 +242,14 @@ describe('ReportsController', () => {
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsPdfFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
+  });
+
+  it('cc29: el reporte de producción lleva costos solo para el administrador', async () => {
+    const { controller, productionSummary } = build();
+    const query = { from: '2026-10-01', to: '2026-10-06' } as never;
+    await controller.productionSummaryReport(query, actor(Role.ADMINISTRADOR));
+    await controller.productionSummaryReport(query, actor(Role.SUPERVISOR_PLANTA));
+    expect(productionSummary.report.mock.calls.map((c: unknown[]) => c[1])).toEqual([true, false]);
   });
 
   it('/reports/coils muestra costos a ADMINISTRADOR y a planta, y a nadie más', async () => {
