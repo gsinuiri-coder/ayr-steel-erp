@@ -2,9 +2,30 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-06 — cc28: sesión de limpieza (en curso, rama `cc28-limpieza`)
+## 2026-10-06 — Ventanas cc28: sesión de limpieza (D-459..D-462, PR #115 y #116, sin migración)
 
-Sesión desatendida; rige el brief de cc28 (dos cortes, hoy sin ventana). Estado al arrancar:
+Sesión desatendida, dos cortes desplegados el mismo día sin ventana (brief de cc28). Detalle en
+`docs/handoff/ventana-cc28.md`.
+
+- **Corte 1 (11:36–11:42 de Lima):** M1 corte tercerizado (P2-1 de cc18), M2 lo de cc27 (D-459,
+  vista previa, mostrador estricto), M3 AGENTS.md (regla 17, D-445, D-460), M4 demo. API
+  `ayr-steel-erp-api-00093-x8h` (`git-sha=3f126295`), `main` `fc1c8347`, smoke 8/8.
+- **Corte 2 (13:00–13:08 de Lima):** M5 redondeo en ventas y margen (D-461), descargas por fetch
+  (D-446), Panel (D-444); M6 buscador (D-462); M7 P2 de cc20 y cc21; M8 P3 de cc27 y cc19. API
+  `ayr-steel-erp-api-00094-b96` (`git-sha=abc080a7`), `main` `85607351`, smoke 8/8.
+- **Registro de riesgo (toca kardex):** `cutting.service.ts` (orden de bloqueos y relectura en
+  anular), `close-preview.ts` (bloqueo de la orden antes de leer; tope por acción).
+- **Pendientes nuevos o que siguen, con su id:**
+  - P2-2 de cc16 (el diálogo de mover comprobantes repite `plan()` por candidato, tamaño M);
+  - P2-2 y P2-3 de cc25 (E2E de merma sin producción; medir cobranzas en producción con admin
+    efímero);
+  - A-3 de cc28 corte 2 (aviso de la otra bobina en la casilla del borrador), A-4..A-7 de cc28 corte
+    1, A-5, A-6, A-10..A-12 de cc28 corte 2, SM-3/SM-4/SM-8/SM-9 del corte 1 y SM-4..SM-7 del corte 2;
+  - P3-4 de cc21 (`as const`): probado y revertido, obliga a castear donde se usa.
+  - Resueltos antes y verificados en cc28: cc14 #6 y #8.
+- **Neon:** no se creó ni se borró ninguna rama.
+
+Estado al arrancar:
 `main` = `9f16f1f9`, API `ayr-steel-erp-api-00092-kzx` (`git-sha=f336478e`), próxima D libre
 D-459 (registrada: ratificaciones del dueño). Las dos últimas CI de `main` salieron canceladas por
 el push seguido de #113 y #114; se relanzó la de `9f16f1f9`.

@@ -6,7 +6,8 @@
   app ese día; brief de cc28).
 - **Corte 1 (PR #115):** M1 a M4. API `ayr-steel-erp-api-00093-x8h` (`git-sha=3f126295`), `main`
   `fc1c8347`, `smoke:prod` 8/8 en los dos dominios.
-- **Corte 2 (PR #116):** M5, M6 y lo que alcanzó de M7 y M8. Estado final: (se completa).
+- **Corte 2 (PR #116):** M5, M6 y lo que alcanzó de M7 y M8. API `ayr-steel-erp-api-00094-b96`
+  (`git-sha=abc080a7`), `main` `85607351`, `smoke:prod` 8/8 en los dos dominios.
 - Decisiones: D-459 (ratificaciones del dueño), D-460..D-462 provisionales.
 
 ## Corte 1 — M1 a M4
@@ -58,7 +59,20 @@
 - **M8, P3 de tamaño S:** A-9 y SM-4 de cc27 (aviso de cambios sin guardar), P3-7 de cc19
   (nombre). P3-4 de cc21 (`as const`) se probó y se revirtió: obliga a castear donde se usa.
 
-(Revisiones, tests y ventana del corte 2: se completa.)
+- **Revisiones del corte 2:** autorrevisión 0 P0, 1 P1, 3 P2, 8 P3; segundo modelo 0 P0, 0 P1,
+  2 P2, 5 P3. Corregidos: el P1 (A-1: la fila de redondeo había quedado en la tabla de «Facturación
+  parcial»; ahora va en «Totales por línea»), los P2 A-2/SM-1 (la venta del E2E de cc23 se anula en
+  un `finally`, de buen esfuerzo porque sin PSE no se puede), A-4/SM-2 (la descarga refresca la
+  sesión ante un 401) y, en parte, A-3 (la tarjeta del accesorio muestra el aviso de la otra
+  bobina; en la casilla del borrador, no). Detalle en `docs/revision/cc28-corte2-*.md`.
+- **Tests:** unitarios de API y web en verde (web 119); E2E locales con build de producción 37
+  passed, y tras las correcciones 23 passed y 2 rojos de infraestructura (PSE apagado en local:
+  `reportes-costeo-rf-s4a` M2, como desde cc24, y la anulación de la venta de cc23, ya de buen
+  esfuerzo; rerun de cc23 3/3). CI del PR en verde (run 37503575801).
+- **Ventana (13:00–13:08 de Lima):** vuelta atrás anotada `00093-x8h` / `fc1c8347`; API
+  `00094-b96` con `git-sha=abc080a7` al 100 % y `/health` ok; merge del #116: `main` =
+  `85607351`, sin diff de runtime; Vercel en `success`; `smoke:prod` 8/8 en los dos dominios.
+- Salidas: `local-data/cc28/` del checkout principal (deploys y smokes de los dos cortes).
 
 ## Decisiones
 
@@ -72,4 +86,14 @@
 
 ## Para el dueño
 
-(Se completa.)
+1. **Revisar en producción** el guion de `docs/uat/cc28.md`; lo visible: la fila de redondeo en
+   ventas y margen, el aviso de un Excel rechazado, «Facturado del mes» en el Panel, el buscador por
+   comprobante y la conversión del vendedor sin pedidos anulados.
+2. **Decisiones provisionales:** D-460 (lo que sigue pidiendo OK por nombre; endurecer
+   `.claude/settings.json` para que el push a `main` quede de verdad denegado es decisión suya:
+   hoy lo permite con `AYR_OWNER_PUSH=1`), D-461 y D-462.
+3. **Quedó fuera** (en PROGRESO con su id): grupo C, límites de cc15a, A-5 de cc27, UX26-*, P2-2 de
+   cc16 (rendimiento del diálogo de mover comprobantes), P2-2 y P2-3 de cc25 (E2E de merma sin
+   producción; medir cobranzas en producción) y los P3 no hechos.
+4. **Ramas:** `cc28-limpieza`, `cc28-corte2` y `docs/cierre-cc28` borradas con `gh api`; también
+   las viejas de cc26 (`cc26-panel-excel-ux`, `docs/cierre-cc26`) por su OK por nombre.
