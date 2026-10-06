@@ -83,7 +83,7 @@ test.describe('cc27 / UX26-01 — precio del mostrador con IGV', () => {
       await card.click();
 
       // 3. Carrito: precio unitario con IGV, importe de línea con IGV y el pie al céntimo.
-      await expect(page.getByLabel('Precio unitario (con IGV)')).toHaveValue('11.8118');
+      await expect(page.getByLabel('Precio unitario (con IGV)')).toHaveValue('11.81');
       await page.getByLabel(/^Cantidad/).fill('3');
       await expect(page.getByTestId(`pos-line-total-${stock.product.sku}`)).toHaveText('S/ 35.44');
       await expect(page.getByTestId('pos-subtotal')).toHaveText('S/ 30.03');

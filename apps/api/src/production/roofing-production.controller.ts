@@ -245,13 +245,6 @@ export class RoofingProductionController {
     return this.roofing.report(actor, id, body);
   }
 
-  /**
-   * Reportar los últimos largos y cerrar la orden en **una sola transacción** (D-159).
-   *
-   * Es lo que hace el botón "Guardar y cerrar" del espacio de producción: sin él, cerrar era
-   * un segundo viaje que podía fallar con el reporte ya escrito, y la bobina quedaba montada
-   * en una orden a medio cerrar mientras su hermana del mismo pedido la esperaba.
-   */
   /** cc27 (D-453): lo que «Reportar y cerrar» haría, sin hacerlo. No escribe nada. */
   @Post(':id/report-and-close/preview')
   previewReportAndClose(
@@ -262,6 +255,13 @@ export class RoofingProductionController {
     return this.roofing.previewReportAndClose(actor, id, body);
   }
 
+  /**
+   * Reportar los últimos largos y cerrar la orden en **una sola transacción** (D-159).
+   *
+   * Es lo que hace el botón "Guardar y cerrar" del espacio de producción: sin él, cerrar era
+   * un segundo viaje que podía fallar con el reporte ya escrito, y la bobina quedaba montada
+   * en una orden a medio cerrar mientras su hermana del mismo pedido la esperaba.
+   */
   @Post(':id/report-and-close')
   reportAndClose(
     @CurrentUser() actor: RequestUser,

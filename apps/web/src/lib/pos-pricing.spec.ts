@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { listPriceWithIgv, posCartTotals, posLineAmounts, posLinePayload } from './pos-pricing';
+import {
+  listPriceWithIgv,
+  posCartTotals,
+  posLineAmounts,
+  posLinePayload,
+  seededPriceWithIgv,
+} from './pos-pricing';
 
 /** cc27 (UX26-01, D-452): el mostrador muestra con IGV y guarda sin IGV, al céntimo del comprobante. */
 describe('precios del mostrador', () => {
@@ -12,6 +18,18 @@ describe('precios del mostrador', () => {
     expect(
       posLinePayload({ qty: '1', priceWithIgvPen: '59.0000', listValuePen: '50.0000' }),
     ).toEqual({ unitPricePen: '50.0000' });
+  });
+
+  it('el campo se siembra al céntimo, y ese número sigue siendo el de lista (A-8)', () => {
+    expect(seededPriceWithIgv('10.0100')).toBe('11.81');
+    expect(seededPriceWithIgv('50.0000')).toBe('59.00');
+    // Retipear el número de la ficha no cambia el total: viaja por el valor de lista.
+    expect(posLinePayload({ qty: '3', priceWithIgvPen: '11.81', listValuePen: '10.0100' })).toEqual(
+      { unitPricePen: '10.0100' },
+    );
+    expect(
+      posLinePayload({ qty: '3', priceWithIgvPen: '11.8118', listValuePen: '10.0100' }),
+    ).toEqual({ unitPricePen: '10.0100' });
   });
 
   it('un precio tipeado viaja como precio con IGV (D-255)', () => {

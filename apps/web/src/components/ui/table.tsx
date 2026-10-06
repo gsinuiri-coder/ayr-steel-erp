@@ -40,12 +40,13 @@ function Table({ className, ...props }: React.ComponentProps<'table'>) {
       data-slot="table-container"
       data-overflow={overflow ? 'true' : undefined}
       className="relative w-full overflow-x-auto"
-      // Un nombre fijo y no el de la tabla: la tabla ya lo anuncia, y repetirlo en la región
-      // haría que un getByRole('region', { name }) de una sección encontrara dos.
+      // Un grupo y no una región: una región es un punto de referencia y varias con el mismo
+      // nombre se repiten en la lista de landmarks (axe `landmark-unique`, segundo modelo SM-3).
+      // Nombre fijo: la tabla ya anuncia el suyo.
       {...(overflow
         ? {
             tabIndex: 0,
-            role: 'region',
+            role: 'group',
             'aria-label': 'Desplazamiento horizontal: hay más columnas',
           }
         : {})}

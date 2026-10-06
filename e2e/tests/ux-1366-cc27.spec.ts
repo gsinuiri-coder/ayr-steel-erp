@@ -89,6 +89,29 @@ test.describe('cc27 — cambios sin guardar (UX26-13)', () => {
     expect(asked).toBe(false);
   });
 
+  test('escribir y borrar deja el formulario limpio: «atrás» sale con una sola pulsación (A-1)', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page);
+    await page.goto('/pedidos');
+    await expect(page.getByRole('heading', { name: 'Pedidos', level: 1 })).toBeVisible({
+      timeout: 60_000,
+    });
+    await page.goto('/cotizaciones/nueva');
+    const notes = page.getByLabel('Observaciones');
+    await expect(notes).toBeVisible({ timeout: 60_000 });
+    let asked = false;
+    page.on('dialog', (dialog) => {
+      asked = true;
+      void dialog.dismiss();
+    });
+    await notes.fill('algo');
+    await notes.fill('');
+    await page.goBack();
+    await expect(page).toHaveURL(/\/pedidos$/, { timeout: 30_000 });
+    expect(asked).toBe(false);
+  });
+
   test('con cambios: el enlace, atrás y recargar preguntan; quedarse conserva lo escrito', async ({
     page,
   }) => {

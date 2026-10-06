@@ -26,6 +26,26 @@ export function listPriceWithIgv(listValuePen: string): string {
   return toFixedString(money(salePriceFromValue(listValuePen)), 'MONEY');
 }
 
+/**
+ * El precio con IGV con el que se siembra el campo del carrito: el de la ficha, **al céntimo**
+ * (11.81, no 11.8118). Sembrar los cuatro decimales hacía que el cajero que retipeaba el número
+ * de la ficha cambiara el total en un céntimo (autorrevisión A-8).
+ */
+export function seededPriceWithIgv(listValuePen: string): string {
+  return toDecimal(listPriceWithIgv(listValuePen))
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    .toFixed(2);
+}
+
+/** El precio tipeado es el de lista: el de la ficha al céntimo o el del catálogo con sus decimales. */
+function isListPrice(price: string, listValuePen: string): boolean {
+  const typed = toDecimal(price);
+  return (
+    typed.equals(toDecimal(seededPriceWithIgv(listValuePen))) ||
+    typed.equals(toDecimal(listPriceWithIgv(listValuePen)))
+  );
+}
+
 export interface PosCartLinePrice {
   /** Cantidad tipeada, en la unidad de venta del producto. */
   qty: string;
@@ -47,7 +67,7 @@ export type PosLinePayload = { unitPricePen: string } | { unitPriceWithIgvPen: s
 export function posLinePayload(line: PosCartLinePrice): PosLinePayload | null {
   const price = line.priceWithIgvPen.trim();
   if (!isPositiveDecimal(price)) return null;
-  if (line.listValuePen !== null && price === listPriceWithIgv(line.listValuePen)) {
+  if (line.listValuePen !== null && isListPrice(price, line.listValuePen)) {
     return { unitPricePen: toFixedString(line.listValuePen, 'MONEY') };
   }
   const unitPriceWithIgvPen = toFixedString(price, 'MONEY');

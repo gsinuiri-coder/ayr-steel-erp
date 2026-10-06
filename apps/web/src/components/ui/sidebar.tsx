@@ -69,6 +69,18 @@ function SidebarProvider({
   // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
+
+  // cc27 (UX26-11, D-456): el menú abre como se dejó. El interruptor ya guardaba su estado en
+  // la cookie y nadie la leía: al recargar volvía abierto y le quitaba 208 px a la tabla. Se lee
+  // en el cliente, antes de pintar: leerla en el layout del servidor (`cookies()`) volvía
+  // dinámicas las 45 rutas que hoy se generan estáticas (autorrevisión A-3).
+  React.useLayoutEffect(() => {
+    const saved = document.cookie
+      .split('; ')
+      .find((c) => c.startsWith(`${SIDEBAR_COOKIE_NAME}=`))
+      ?.split('=')[1];
+    if (saved === 'false') _setOpen(false);
+  }, []);
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
       const openState = typeof value === 'function' ? value(open) : value;

@@ -21,7 +21,13 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidatePos } from '@/lib/pos-queries';
-import { listPriceWithIgv, posCartTotals, posLineAmounts, posLinePayload } from '@/lib/pos-pricing';
+import {
+  listPriceWithIgv,
+  posCartTotals,
+  posLineAmounts,
+  posLinePayload,
+  seededPriceWithIgv,
+} from '@/lib/pos-pricing';
 import { useDebounced } from '@/lib/use-debounced';
 import { useSession } from '@/lib/session';
 import { RoleGate } from '@/components/role-gate';
@@ -184,7 +190,7 @@ export function PosView() {
           product,
           qty: '1.000',
           priceWithIgvPen:
-            product.listPricePen === null ? '' : listPriceWithIgv(product.listPricePen),
+            product.listPricePen === null ? '' : seededPriceWithIgv(product.listPricePen),
         },
       ];
     });
