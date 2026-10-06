@@ -6,6 +6,7 @@ import {
   inventoryValuationQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
+  receivablesAgingQuerySchema,
   salesByMaterialQuerySchema,
   salesMarginQuerySchema,
   Role,
@@ -19,6 +20,8 @@ import {
   type KardexPepsQuery,
   type KardexPepsReportDto,
   type KardexSheetQuery,
+  type ReceivablesAgingDto,
+  type ReceivablesAgingQuery,
   type SalesMarginDto,
   type SalesMarginQuery,
 } from '@ayr/shared';
@@ -35,6 +38,7 @@ import { KardexPepsService } from './kardex-peps.service';
 import { kardexSheetXlsx } from './kardex-sheet-xlsx';
 import { KardexSheetService } from './kardex-sheet.service';
 import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
+import { ReceivablesAgingService } from './receivables-aging.service';
 import { ReportsService } from './reports.service';
 import { salesByMaterialXlsx } from './sales-by-material-xlsx';
 import { SalesByMaterialService } from './sales-by-material.service';
@@ -57,6 +61,7 @@ export class ReportsController {
     private readonly kardexPeps: KardexPepsService,
     private readonly kardexSheet: KardexSheetService,
     private readonly documentProfitability: DocumentProfitabilityService,
+    private readonly receivablesAging: ReceivablesAgingService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -173,6 +178,18 @@ export class ReportsController {
     // Coberturas Aluzinc, la vista que ya lo tenía, aunque llegue otra línea.
     const { businessLine: _line, ...aluzinc } = query;
     sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(aluzinc)));
+  }
+
+  /**
+   * cc25 (D-421..D-423). Cuentas por cobrar por antigüedad, por cliente. Solo ADMINISTRADOR
+   * (D-426): un vendedor ve sus cobranzas en /cobranzas, no la cartera de todos.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('receivables-aging')
+  receivablesAgingReport(
+    @Query(new ZodValidationPipe(receivablesAgingQuerySchema)) query: ReceivablesAgingQuery,
+  ): Promise<ReceivablesAgingDto> {
+    return this.receivablesAging.report(query);
   }
 
   /**

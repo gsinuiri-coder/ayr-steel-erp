@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Coins,
   FileText,
+  HandCoins,
   Hammer,
   History,
   Home,
@@ -226,6 +227,13 @@ export const NAV: NavGroup[] = [
         title: 'Ventas por material',
         href: '/reportes/ventas-material',
         icon: ChartColumn,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
+        // cc25 (D-426): la cartera de todos los vendedores; solo el administrador.
+        title: 'Cuentas por cobrar',
+        href: '/reportes/cuentas-por-cobrar',
+        icon: HandCoins,
         roles: [Role.ADMINISTRADOR],
       },
       {

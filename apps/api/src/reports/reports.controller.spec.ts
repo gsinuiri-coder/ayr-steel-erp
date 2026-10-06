@@ -8,6 +8,7 @@ import type { KardexPepsService } from './kardex-peps.service';
 import type { DocumentProfitabilityService } from './document-profitability.service';
 import type { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
+import type { ReceivablesAgingService } from './receivables-aging.service';
 import type { ReportsService } from './reports.service';
 import type { SalesByMaterialService } from './sales-by-material.service';
 import type { SalesMarginService } from './sales-margin.service';
@@ -157,6 +158,7 @@ function build() {
   const kardexPeps = { report: jest.fn().mockResolvedValue(PEPS) };
   const kardexSheet = { sheet: jest.fn() };
   const documentProfitability = { profitability: jest.fn().mockResolvedValue({ applies: true }) };
+  const receivablesAging = { report: jest.fn().mockResolvedValue({ customers: [] }) };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
@@ -165,6 +167,7 @@ function build() {
     kardexPeps as unknown as KardexPepsService,
     kardexSheet as unknown as KardexSheetService,
     documentProfitability as unknown as DocumentProfitabilityService,
+    receivablesAging as unknown as ReceivablesAgingService,
   );
   return {
     controller,
@@ -175,6 +178,7 @@ function build() {
     kardexPeps,
     kardexSheet,
     documentProfitability,
+    receivablesAging,
   };
 }
 
@@ -197,6 +201,8 @@ describe('ReportsController', () => {
     expect(rolesOf('kardexSheetXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     // C06: la rentabilidad de un comprobante lleva costos: un VENDEDOR recibe 403.
     expect(rolesOf('documentProfitabilityReport')).toEqual([Role.ADMINISTRADOR]);
+    // cc25 (D-426): cuentas por cobrar, solo ADMINISTRADOR.
+    expect(rolesOf('receivablesAgingReport')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsPdfFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
