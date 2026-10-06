@@ -13,6 +13,7 @@ import {
   type ReceivablesAgingDto,
 } from '@ayr/shared';
 import { Stat, StatStrip } from '@/components/stat-strip';
+import { HeaderActions } from '@/components/header-actions';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { useUrlState } from '@/lib/use-url-state';
@@ -106,6 +107,17 @@ export function CuentasPorCobrarView() {
               </SelectContent>
             </Select>
           </label>
+          {/* cc25 (M3): descarga directa contra el API (patrón D-149), con el mismo vendedor. */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: `/api/reports/receivables-aging/xlsx${sellerId ? `?sellerId=${sellerId}` : ''}`,
+              },
+            ]}
+          />
         </div>
       </div>
 

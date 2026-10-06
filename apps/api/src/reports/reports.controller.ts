@@ -42,6 +42,7 @@ import { KardexPepsService } from './kardex-peps.service';
 import { kardexSheetXlsx } from './kardex-sheet-xlsx';
 import { KardexSheetService } from './kardex-sheet.service';
 import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
+import { receivablesAgingXlsx } from './receivables-aging-xlsx';
 import { ReceivablesAgingService } from './receivables-aging.service';
 import { ReportsService } from './reports.service';
 import { salesByMaterialXlsx } from './sales-by-material-xlsx';
@@ -195,6 +196,16 @@ export class ReportsController {
     @Query(new ZodValidationPipe(receivablesAgingQuerySchema)) query: ReceivablesAgingQuery,
   ): Promise<ReceivablesAgingDto> {
     return this.receivablesAging.report(query);
+  }
+
+  /** cc25 (D-426, M3). El xlsx sale del mismo DTO que la pantalla, con el mismo vendedor. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('receivables-aging/xlsx')
+  async receivablesAgingXlsxFile(
+    @Query(new ZodValidationPipe(receivablesAgingQuerySchema)) query: ReceivablesAgingQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, receivablesAgingXlsx(await this.receivablesAging.report(query)));
   }
 
   /**

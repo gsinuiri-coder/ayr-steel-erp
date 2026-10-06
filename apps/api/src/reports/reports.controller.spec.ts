@@ -207,6 +207,7 @@ describe('ReportsController', () => {
     expect(rolesOf('documentProfitabilityReport')).toEqual([Role.ADMINISTRADOR]);
     // cc25 (D-426): cuentas por cobrar, solo ADMINISTRADOR.
     expect(rolesOf('receivablesAgingReport')).toEqual([Role.ADMINISTRADOR]);
+    expect(rolesOf('receivablesAgingXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     // cc25 (D-426): merma, solo ADMINISTRADOR.
     expect(rolesOf('coilWasteReport')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
