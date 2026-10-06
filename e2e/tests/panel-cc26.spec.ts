@@ -1,4 +1,4 @@
-import { expect, request, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   AGING_BUCKETS,
   COIL_REPORT_LINES,
@@ -13,6 +13,7 @@ import {
   type SalesMarginDto,
 } from '@ayr/shared';
 import { adminApi, adminCredentials, createUser, getJson } from '../helpers/api';
+import { apiAs } from '../helpers/production';
 
 /**
  * cc26 (D-440, M4) — el Panel del administrador.
@@ -95,11 +96,9 @@ test.describe('Panel del administrador (cc26)', () => {
     const api = await adminApi(baseURL!);
     for (const role of ['VENDEDOR', 'SUPERVISOR_PLANTA'] as const) {
       const user = await createUser(api, role);
-      const other = await request.newContext({ baseURL });
-      const login = await other.post('/api/auth/login', {
-        data: { email: user.email, password: user.password },
-      });
-      expect(login.ok()).toBeTruthy();
+      const other = await apiAs(baseURL!, user);
+      // Con la contraseña ya cambiada: el 403 es del rol, no de RF-01.
+      expect((await other.get('/api/auth/me')).ok()).toBeTruthy();
       expect((await other.get('/api/reports/admin-dashboard')).status()).toBe(403);
       await other.dispose();
     }
@@ -133,11 +132,7 @@ test.describe('Panel del supervisor de planta (cc26)', () => {
   }) => {
     const admin = await adminApi(baseURL!);
     const supervisor = await createUser(admin, 'SUPERVISOR_PLANTA');
-    const plant = await request.newContext({ baseURL });
-    const login = await plant.post('/api/auth/login', {
-      data: { email: supervisor.email, password: supervisor.password },
-    });
-    expect(login.ok()).toBeTruthy();
+    const plant = await apiAs(baseURL!, supervisor);
 
     const panel = await getJson<PlantDashboardDto>(plant, '/api/reports/plant-dashboard');
     const queue = await getJson<ProductionQueueEntryDto[]>(plant, '/api/production/roofing/queue');
@@ -157,10 +152,7 @@ test.describe('Panel del supervisor de planta (cc26)', () => {
     await plant.dispose();
 
     const seller = await createUser(admin, 'VENDEDOR');
-    const sellerApi = await request.newContext({ baseURL });
-    await sellerApi.post('/api/auth/login', {
-      data: { email: seller.email, password: seller.password },
-    });
+    const sellerApi = await apiAs(baseURL!, seller);
     expect((await sellerApi.get('/api/reports/plant-dashboard')).status()).toBe(403);
     await sellerApi.dispose();
   });

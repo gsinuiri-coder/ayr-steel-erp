@@ -50,3 +50,11 @@ export function coilWasteHref(range: DashboardRange, line: BusinessLine): string
   if (line !== BusinessLine.METALLIC_ROOFING) qs.set('linea', line);
   return `/reportes/merma?${qs.toString()}`;
 }
+
+/** Rótulo del eje de montos: en miles desde S/ 1 000; debajo, el número entero («0 mil» repetido no dice nada). */
+export function axisMoney(value: number): string {
+  if (Math.abs(value) < 1000) return String(Math.round(value));
+  // Un decimal si hace falta: el eje parte en tramos como 1 500, que no es «2 mil».
+  const thousands = Math.round(value / 100) / 10;
+  return `${String(thousands).replace('.', ',')} mil`;
+}

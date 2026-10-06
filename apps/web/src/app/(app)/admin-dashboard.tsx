@@ -14,7 +14,13 @@ import {
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { formatDate, formatMoney } from '@/lib/format';
-import { coilWasteHref, fillDays, salesMarginHref, variationPct } from '@/lib/admin-dashboard';
+import {
+  axisMoney,
+  coilWasteHref,
+  fillDays,
+  salesMarginHref,
+  variationPct,
+} from '@/lib/admin-dashboard';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -131,13 +137,11 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
             {money0(d.previousSalesPen)} del 1 al {Number(d.previous.to.slice(8))} del mes anterior
           </span>
         </LinkStat>
-        <LinkStat
-          href={salesMarginHref(d.current)}
-          label="Margen (sin Servicios ni líneas sin producto)"
-        >
+        <LinkStat href={salesMarginHref(d.current)} label="Margen del mes">
           <span className="text-base font-semibold">{money0(d.sales.marginPen)}</span>
           <span className="block text-xs font-normal text-muted-foreground">
-            {d.sales.marginPct === null ? '—' : `${d.sales.marginPct} %`}
+            {d.sales.marginPct === null ? '—' : `${d.sales.marginPct} %`} · sin Servicios ni líneas
+            sin producto
             {outside.length > 0 && ` · fuera del margen: ${outside.join(', ')}`}
           </span>
         </LinkStat>
@@ -151,7 +155,8 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
                 : 'text-muted-foreground',
             )}
           >
-            Vencido {money0(d.receivables.overduePen)} · {d.receivables.customerCount} clientes
+            Vencido {money0(d.receivables.overduePen)} · {d.receivables.customerCount}{' '}
+            {d.receivables.customerCount === 1 ? 'cliente' : 'clientes'}
           </span>
         </LinkStat>
         <LinkStat href="/reportes/inventario-valorizado" label="Inventario valorizado">
@@ -165,7 +170,7 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
           href={
             toleranceLine ? coilWasteHref(d.current, toleranceLine.businessLine) : '/reportes/merma'
           }
-          label="Producciones «Fuera de tolerancia»"
+          label="Fuera de tolerancia (mes)"
         >
           <span
             className={cn(
@@ -206,7 +211,7 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
                   axisLine={false}
                   width={64}
                   fontSize={11}
-                  tickFormatter={(v: number) => `${Math.round(v / 1000)} mil`}
+                  tickFormatter={axisMoney}
                 />
                 <ChartTooltip
                   cursor={{ fill: 'var(--muted)' }}
@@ -311,14 +316,14 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
                 tickLine={false}
                 axisLine={false}
                 fontSize={11}
-                tickFormatter={(v: number) => `${Math.round(v / 1000)} mil`}
+                tickFormatter={axisMoney}
               />
               <YAxis
                 type="category"
                 dataKey="label"
                 tickLine={false}
                 axisLine={false}
-                width={110}
+                width={124}
                 fontSize={12}
               />
               <ChartTooltip

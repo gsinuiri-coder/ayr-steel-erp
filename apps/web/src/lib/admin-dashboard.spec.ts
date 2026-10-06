@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { BusinessLine } from '@ayr/shared';
-import { coilWasteHref, fillDays, salesMarginHref, variationPct } from './admin-dashboard';
+import {
+  axisMoney,
+  coilWasteHref,
+  fillDays,
+  salesMarginHref,
+  variationPct,
+} from './admin-dashboard';
 
 /** cc26 (D-440, D-443). Lo único que la web hace con las cifras del Panel. */
 describe('Panel del administrador', () => {
@@ -40,5 +46,14 @@ describe('Panel del administrador', () => {
     expect(coilWasteHref(range, BusinessLine.DRYWALL)).toBe(
       '/reportes/merma?from=2026-10-01&to=2026-10-06&linea=drywall',
     );
+  });
+
+  it('el eje de montos va en miles desde S/ 1 000', () => {
+    expect(axisMoney(0)).toBe('0');
+    expect(axisMoney(850)).toBe('850');
+    expect(axisMoney(12_499)).toBe('12,5 mil');
+    expect(axisMoney(1500)).toBe('1,5 mil');
+    expect(axisMoney(6000)).toBe('6 mil');
+    expect(axisMoney(-2500)).toBe('-2,5 mil');
   });
 });

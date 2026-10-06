@@ -1,5 +1,6 @@
-import { expect, request, test, type APIRequestContext } from '@playwright/test';
+import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, adminCredentials, createUser } from '../helpers/api';
+import { apiAs } from '../helpers/production';
 
 /**
  * cc26 (D-438, D-446, D-451) — el Excel de las listas.
@@ -15,13 +16,6 @@ const isProduction = !!process.env.E2E_BASE_URL;
 test.skip(isProduction, 'Suite local y CI: nunca contra producción (D-126).');
 
 const XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-
-async function loginAs(baseURL: string, email: string, password: string) {
-  const api = await request.newContext({ baseURL });
-  const res = await api.post('/api/auth/login', { data: { email, password } });
-  expect(res.ok()).toBeTruthy();
-  return api;
-}
 
 async function expectXlsx(api: APIRequestContext, path: string, filename: string) {
   const res = await api.get(path);
@@ -44,7 +38,7 @@ test.describe('Excel de las listas (cc26)', () => {
     await expectXlsx(admin, '/api/sales/quotations/xlsx?page=3&pageSize=1', 'cotizaciones-');
 
     const sellerUser = await createUser(admin, 'VENDEDOR');
-    const seller = await loginAs(baseURL!, sellerUser.email, sellerUser.password);
+    const seller = await apiAs(baseURL!, sellerUser);
     await expectXlsx(seller, '/api/invoicing/documents/xlsx', 'comprobantes-');
     await expectXlsx(seller, '/api/sales/quotations/xlsx', 'cotizaciones-');
     await expectXlsx(seller, '/api/sales/orders/xlsx', '.xlsx');
@@ -54,7 +48,7 @@ test.describe('Excel de las listas (cc26)', () => {
     await seller.dispose();
 
     const plantUser = await createUser(admin, 'SUPERVISOR_PLANTA');
-    const plant = await loginAs(baseURL!, plantUser.email, plantUser.password);
+    const plant = await apiAs(baseURL!, plantUser);
     await expectXlsx(plant, '/api/purchases/xlsx', '.xlsx');
     expect((await plant.get('/api/invoicing/documents/xlsx')).status()).toBe(403);
     expect((await plant.get('/api/sales/quotations/xlsx')).status()).toBe(403);
