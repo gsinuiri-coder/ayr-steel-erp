@@ -75,4 +75,39 @@ test.describe('Excel de las listas (cc26)', () => {
       await expect(page.locator(`a[href^="${api}"]`).first()).toBeAttached({ timeout: 30_000 });
     }
   });
+
+  test('cc28 (D-446): el clic descarga el archivo y un 400 del tope sale en un aviso', async ({
+    page,
+  }) => {
+    const { email, password } = adminCredentials();
+    await page.goto('/login');
+    await page.getByLabel('Correo electrónico').fill(email);
+    await page.getByLabel('Contraseña', { exact: true }).fill(password);
+    await page.getByRole('button', { name: 'Ingresar' }).click();
+    await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
+
+    // Un 2xx se descarga con el nombre que manda el API.
+    await page.goto('/clientes');
+    const link = page.locator('a[href^="/api/customers/xlsx"]').first();
+    await expect(link).toBeVisible({ timeout: 30_000 });
+    const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
+    expect(download.suggestedFilename()).toMatch(/\.xlsx$/);
+
+    // El 400 del tope (más de 5000 filas) no se abre como JSON: sale en un aviso, y la página
+    // sigue donde estaba. Se simula la respuesta: armar 5000 comprobantes no aporta nada.
+    const message = 'La exportación tiene 6200 filas y el tope es 5000: acota los filtros.';
+    await page.route('**/api/invoicing/documents/xlsx**', (route) =>
+      route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ statusCode: 400, message }),
+      }),
+    );
+    await page.goto('/comprobantes');
+    const xlsx = page.locator('a[href^="/api/invoicing/documents/xlsx"]').first();
+    await expect(xlsx).toBeVisible({ timeout: 30_000 });
+    await xlsx.click();
+    await expect(page.getByText(message)).toBeVisible();
+    await expect(page).toHaveURL(/\/comprobantes/);
+  });
 });
