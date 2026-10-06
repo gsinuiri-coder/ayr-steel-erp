@@ -2,6 +2,23 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-06 — cc27: UX de la inspección de cc26 (en curso, rama `cc27-ux`)
+
+Sesión desatendida: rigen D-445 y el brief de cc27 (modo autónomo, ambigüedad → D-nnn
+provisional, UAT aprobado por defecto, directo a producción, ventana 20:00–07:00 de Lima).
+
+- **Estado al arrancar** (07:03 de Lima):
+  - API en producción: `ayr-steel-erp-api-00091-k2m`, `git-sha=f86d74a6`, al 100 %
+    (`latestRevision: true`); `main` = `aa36d935` (solo docs sobre `8c2f0094`); CI de `main` verde.
+  - Ramas remotas abiertas: `cc26-panel-excel-ux` y `docs/cierre-cc26` (las borra el dueño).
+  - Próxima D libre: **D-452**.
+  - P1001 del primer deploy de cc26: **diagnosticado** como corte pasajero de la conexión a Neon
+    al arrancar (mismas versiones de secretos en `00089-8mf` y `00090-s8l`; ver
+    `docs/handoff/ventana-cc26.md`, «Reintento»). Queda la revisión fallida `00090-s8l` sin tráfico.
+- **Alcance:** M1 (UX26-01, precio del mostrador), M2 (UX26-03, confirmar «Ejecutar y cerrar»),
+  M3 (UX26-02/16, 05/09/10, 06/07, 13 y test a 1366×768), M4 sacrificable (Panel del vendedor,
+  D-450).
+
 ## 2026-10-06 — Ventana cc26 (D-438..D-451 desplegadas, PR #111, sin migración)
 
 Sesión desatendida (D-442). Detalle, revisiones, UAT y lista para el dueño en
