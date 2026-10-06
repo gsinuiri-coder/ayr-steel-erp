@@ -17,6 +17,7 @@ import {
   Palette,
   Percent,
   ReceiptText,
+  Recycle,
   Scissors,
   ScrollText,
   Settings,
@@ -249,6 +250,13 @@ export const NAV: NavGroup[] = [
         href: '/reportes/bobinas',
         icon: CalendarRange,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        // cc25 (D-424, D-426): merma por bobina; solo el administrador.
+        title: 'Merma por bobina',
+        href: '/reportes/merma',
+        icon: Recycle,
+        roles: [Role.ADMINISTRADOR],
       },
     ],
   },

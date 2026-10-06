@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { InventoryModule } from '../inventory/inventory.module';
+import { CoilWasteService } from './coil-waste.service';
 import { DocumentProfitabilityService } from './document-profitability.service';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { KardexPepsService } from './kardex-peps.service';
@@ -22,6 +23,7 @@ import { SalesMarginService } from './sales-margin.service';
     KardexSheetService,
     DocumentProfitabilityService,
     ReceivablesAgingService,
+    CoilWasteService,
   ],
 })
 export class ReportsModule {}

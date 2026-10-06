@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import {
   businessToday,
   coilMonthReportQuerySchema,
+  coilWasteQuerySchema,
   inventoryValuationQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
@@ -15,6 +16,8 @@ import {
   type SalesByMaterialQuery,
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
+  type CoilWasteDto,
+  type CoilWasteQuery,
   type InventoryValuationDto,
   type InventoryValuationQuery,
   type KardexPepsQuery,
@@ -30,6 +33,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
 import { coilMonthXlsx } from './coil-month-xlsx';
+import { CoilWasteService } from './coil-waste.service';
 import { DocumentProfitabilityService } from './document-profitability.service';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { kardexPepsToDto } from './kardex-peps-dto';
@@ -62,6 +66,7 @@ export class ReportsController {
     private readonly kardexSheet: KardexSheetService,
     private readonly documentProfitability: DocumentProfitabilityService,
     private readonly receivablesAging: ReceivablesAgingService,
+    private readonly coilWaste: CoilWasteService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -190,6 +195,18 @@ export class ReportsController {
     @Query(new ZodValidationPipe(receivablesAgingQuerySchema)) query: ReceivablesAgingQuery,
   ): Promise<ReceivablesAgingDto> {
     return this.receivablesAging.report(query);
+  }
+
+  /**
+   * cc25 (D-424, D-425). Merma por bobina en un rango. Solo ADMINISTRADOR (D-426), y sin Excel.
+   * `businessLine` es la pestaña (Coberturas Aluzinc o Drywall); otra línea es 400.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('coil-waste')
+  coilWasteReport(
+    @Query(new ZodValidationPipe(coilWasteQuerySchema)) query: CoilWasteQuery,
+  ): Promise<CoilWasteDto> {
+    return this.coilWaste.report(query);
   }
 
   /**

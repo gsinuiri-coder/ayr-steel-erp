@@ -47,6 +47,7 @@ describe('mapa del menú (D-326)', () => {
         'Cuentas por cobrar',
         'Inventario valorizado',
         'Reporte mensual de bobinas',
+        'Merma por bobina',
       ],
       Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
     });
