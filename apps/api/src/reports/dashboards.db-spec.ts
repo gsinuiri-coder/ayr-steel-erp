@@ -40,8 +40,13 @@ jest.setTimeout(5 * 60_000);
 
 /** Techo del Panel del administrador: la suma de sus reportes hoy, con holgura para crecer. */
 const ADMIN_CEILING = 60;
-/** Techo del de planta con una sola página de bobinas. */
-const PLANT_CEILING = 40;
+/**
+ * Techos del de planta: lo fijo (cola, órdenes vivas y cuatro lecturas de merma) y cada página
+ * de 200 bobinas abiertas, que el Panel recorre hasta su total (en la CI, los otros `db-spec`
+ * dejan más de 200).
+ */
+const PLANT_FIXED_CEILING = 45;
+const PLANT_PAGE_CEILING = 12;
 
 class CountingPrisma extends PrismaService {
   count = 0;
@@ -118,22 +123,35 @@ it('el Panel de planta cuesta lo mismo que sus lecturas, sin consultas propias',
     (await measure(() =>
       moduleRef.get(ProductionService).findAll({ status: ['DRAFT', 'IN_PROGRESS'] }),
     )) +
-    (await measure(() =>
-      moduleRef.get(CoilsService).findAll({
-        status: ['OPEN'],
-        kind: 'COIL',
-        availability: 'available',
-        page: 1,
-        pageSize: 200,
-      }),
-    ));
+    0;
   for (const range of [{ from: today, to: today }, week]) {
     for (const businessLine of COIL_REPORT_LINES) {
       reads += await measure(() => waste.report({ ...range, businessLine }));
     }
   }
 
+  // Las bobinas, por las mismas páginas que recorre el Panel.
+  const coils = moduleRef.get(CoilsService);
+  let coilReads = 0;
+  let pages = 0;
+  for (let page = 1, seen = 0; ; page += 1) {
+    let res: Awaited<ReturnType<CoilsService['findAll']>> | undefined;
+    coilReads += await measure(async () => {
+      res = await coils.findAll({
+        status: ['OPEN'],
+        kind: 'COIL',
+        availability: 'available',
+        page,
+        pageSize: 200,
+      });
+    });
+    pages += 1;
+    seen += res?.items.length ?? 0;
+    if (seen >= (res?.total ?? 0) || (res?.items.length ?? 0) === 0) break;
+  }
+
   const panel = await measure(() => moduleRef.get(PlantDashboardService).dashboard(actor, today));
-  expect(panel).toBe(reads);
-  expect(panel).toBeLessThanOrEqual(PLANT_CEILING);
+  expect(panel).toBe(reads + coilReads);
+  expect(reads).toBeLessThanOrEqual(PLANT_FIXED_CEILING);
+  expect(coilReads).toBeLessThanOrEqual(PLANT_PAGE_CEILING * pages);
 });
