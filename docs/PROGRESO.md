@@ -2,7 +2,7 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-06 — cc26 (D-438..D-451, PR #111 abierto, sin migración): ventana revertida en el paso 3
+## 2026-10-06 — Ventana cc26 (D-438..D-451 desplegadas, PR #111, sin migración)
 
 Sesión desatendida (D-442). Detalle, revisiones, UAT y lista para el dueño en
 `docs/handoff/ventana-cc26.md`.
@@ -26,13 +26,20 @@ Sesión desatendida (D-442). Detalle, revisiones, UAT y lista para el dueño en
   - E2E nuevos: `panel-cc26` y `excel-listas-cc26`;
   - UAT propio con build de producción, aprobado;
   - CI 37433458004 sobre `f92684ab`, en verde.
-- **Ventana (03:38–03:45 Lima; 08:38–08:45 UTC), revertida:**
+- **Reintento (04:32–04:46 Lima), desplegado:**
+  - el diagnóstico de secretos mostró las mismas versiones en las dos revisiones (`DATABASE_URL`
+    v7 del 26/09, `DIRECT_URL` v6): el P1001 del primer intento fue un corte pasajero;
+  - API `ayr-steel-erp-api-00091-k2m`, `git-sha=f86d74a6`, al 100 %, `/health` con `db: ok`;
+  - merge del #111: `main` = `8c2f0094`, sin diff de runtime; Vercel en `success`;
+  - `smoke:prod` 8/8 en los dos dominios;
+  - recorrido de solo lectura: cada cifra del Panel = su reporte (CxC S/ 915 506,18, inventario
+    S/ 738 840,34) y los siete Excel en 200.
+- **Primer intento (03:38–03:45 Lima; 08:38–08:45 UTC), revertido:**
   - el deploy de la API falló: la revisión `00090-s8l` no llegó a la base de Neon al arrancar
     (P1001) y no recibió tráfico;
   - no hubo merge;
   - la API sigue en `00089-8mf` (`39dfe852`) al 100 %, `main` en `b83772a0`;
   - `smoke:prod` en verde en los dos dominios después de la vuelta atrás.
-  - Pendiente del dueño: confirmar la conexión que usa `deploy-api` y repetir la ventana.
 - **D-445 (del dueño):** nada pide confirmación. La copia de `.claude/settings.json` al PR la
   bloqueó el clasificador; la commiteó el dueño en el PR #111 (`30c7b755`). El texto para
   AGENTS.md está en el handoff.

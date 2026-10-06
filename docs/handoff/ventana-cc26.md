@@ -7,7 +7,7 @@
 - **Sesión desatendida** (D-442): rige D-411, el UAT del dueño va aprobado por defecto y la ventana
   pudo correr a cualquier hora del martes 6.
 - **Hitos:** M1, M2, M3, M4, M5 y M-UX hechos; **M6 sacrificado** (D-450).
-- **Estado final:** **ventana revertida en el paso 3** (el deploy de la API falló: la revisión nueva no llegó a la base al arrancar). Producción sigue en cc25: API `ayr-steel-erp-api-00089-8mf` (`git-sha=39dfe852`) al 100 %, `main` en `b83772a0`, `smoke:prod` en verde en los dos dominios después de la vuelta atrás. El PR #111 queda abierto y listo.
+- **Estado final: desplegada en el reintento, sin vuelta atrás.** El primer intento (03:38–03:45 de Lima) se revirtió en el paso 3 por un corte pasajero de la conexión a Neon al arrancar. El reintento (04:32–04:46 de Lima) dejó la API `ayr-steel-erp-api-00091-k2m` (`git-sha=f86d74a6`) al 100 % y `main` = `8c2f0094`, con `smoke:prod` 8/8 en los dos dominios.
 
 ## Hitos
 
@@ -130,6 +130,8 @@ En `docs/ARQUITECTURA.md` §0.2.
 
 ## Ventana
 
+### Primer intento: revertido en el paso 3
+
 Se intentó el martes 6 de octubre, entre las 03:38 y las 03:45 de Lima (08:38–08:45 UTC), con D-411 y D-442. **Falló
 en el paso 3 (deploy de la API), y se aplicó la vuelta atrás sin arreglos en caliente.**
 
@@ -179,12 +181,65 @@ en el paso 3 (deploy de la API), y se aplicó la vuelta atrás sin arreglos en c
 Salidas: `local-data/cc26/` del checkout principal (deploy, intento de `update-traffic` y los dos
 smokes).
 
+### Reintento (martes 6, 04:32–04:46 de Lima): **desplegada, sin vuelta atrás**
+
+Se hizo con D-411, D-442 y D-445, en el checkout principal y en la rama del PR, sin worktree.
+
+1. **CI del PR en verde** (run 37440024851 sobre `f86d74a6`): lint, unitarios, `test:db`, E2E
+   completo en el runner, smoke de Neon `ci` y Sonar.
+   - Antes hubo un rojo: el `.claude/settings.json` que commiteó el dueño (`30c7b755`) no pasaba
+     `format:check` porque le faltaba el salto de línea final.
+   - `f86d74a6` le dio el formato de Prettier sin cambiar su contenido (el JSON es idéntico).
+2. **Diagnóstico de secretos** (solo metadatos, sin leer valores; salida en
+   `local-data/cc26/diagnostico-secretos.txt`):
+   - `00089-8mf` y `00090-s8l` tienen las mismas 14 variables, los mismos literales y las mismas
+     versiones de secretos: `DATABASE_URL:7`, `DIRECT_URL:6`, `JWT_SECRET:6`, y la 5 de
+     `APIS_NET_PE_TOKEN` y de los `R2_*`.
+   - Versiones vigentes: `DATABASE_URL` v7, creada el 26/09/2026 a las 09:52 de Lima (las v1–v5
+     están deshabilitadas, la v6 es del 10/09); `DIRECT_URL` v6, del 10/09/2026 a las 15:19.
+   - Ninguna versión es posterior a 00089. **Conclusión: el P1001 del primer intento fue un corte
+     pasajero de la conexión a Neon al arrancar.**
+3. **Vuelta atrás anotada:** API `ayr-steel-erp-api-00089-8mf` (`git-sha=39dfe852`) al 100 % y
+   `main` en `b83772a0`. **Migraciones: 0.**
+4. **API:** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+   desde el checkout limpio en `f86d74a6`.
+   - Arrancó la revisión **`ayr-steel-erp-api-00091-k2m`**, con `git-sha=f86d74a6`.
+   - El tráfico seguía fijado en `00089-8mf` por el `update-traffic` del primer intento: aunque
+     respondió con error, había fijado la revisión.
+   - Se pasó con `gcloud run services update-traffic … --to-latest`: `00091-k2m` quedó al 100 %.
+   - `/health` dio `{"status":"ok","db":"ok"}` por `v2.mareliac.pe`.
+5. **Merge del #111:** `main` = **`8c2f0094`**.
+   - `git diff --quiet f86d74a6 origin/main -- apps packages …` dio exit 0: sin diff de runtime.
+   - Vercel en `success` para `8c2f0094`.
+6. **`smoke:prod`:** 8/8 en `ayr-steel-erp-web.vercel.app` y 8/8 en `v2.mareliac.pe`, desde el
+   checkout en `f86d74a6`.
+7. **Recorrido de solo lectura en producción** (admin de `.env.setup`: login, solo GET y logout;
+   salida en `local-data/cc26/recorrido-prod.txt`):
+   - **Panel del administrador** (0,9 s). Cada cifra es igual a la de su reporte para el mismo
+     rango:
+     - ventas del 1 al 6 de octubre: S/ 905,87 sin IGV; mismo tramo de septiembre: S/ 127 118,64;
+     - margen S/ 181,62 (20,05 %);
+     - CxC S/ 915 506,18, con S/ 716 260,12 vencido y 44 clientes; los tramos son idénticos;
+     - inventario valorizado S/ 738 840,34;
+     - 6 producciones «Fuera de tolerancia» en Coberturas Aluzinc y 0 en Drywall;
+     - lo facturado por día es igual a ventas más excluidas más no rastreables.
+   - **Panel de planta** (0,8 s): cola 0 (= `/production/roofing/queue`), 2 bobinas montadas,
+     464 kg consumidos hoy y 77 191 kg en la semana (Coberturas Aluzinc), y 2 bobinas por
+     terminarse.
+   - **Los siete Excel** respondieron 200, como xlsx, en menos de 1,4 s: comprobantes (63),
+     pendientes (63: hoy todos los comprobantes vivos tienen saldo, lo mismo que dice la lista),
+     cotizaciones (147), pedidos (68), compras (24), clientes (91) y cobranzas por cliente (44).
+8. **Vuelta atrás:** no hizo falta. Si el dueño la necesita, son las dos juntas:
+   `cmd /c gcloud run services update-traffic ayr-steel-erp-api --region us-central1 --project ayr-steel-erp --to-revisions ayr-steel-erp-api-00089-8mf=100`,
+   y un commit de revert del merge `8c2f0094` en `main`.
+
+**Queda en Cloud Run:** la revisión fallida `00090-s8l`, sin tráfico. El tráfico sigue a la última
+revisión (`latestRevision: true`) y la etiqueta `git-sha` del servicio es la correcta
+(`f86d74a6`).
+
 ## Para el dueño
 
-0. **Antes que nada:** confirmar la conexión a la base de producción que usa `deploy-api` y repetir
-   la ventana (ver «Ventana»). Hoy en producción no cambió nada de cc26.
-1. **Qué revisar en producción cuando se despliegue** (`https://v2.mareliac.pe`, como
-   administrador):
+1. **Qué revisar en producción** (`https://v2.mareliac.pe`, como administrador):
    - El Panel: «El mes en cifras» y los tres gráficos; abrir cada cifra y comprobar que el reporte
      muestra lo mismo para el mismo rango.
    - «Descargar Excel» en comprobantes, cotizaciones, pedidos, compras y clientes, y los dos de
@@ -204,7 +259,7 @@ smokes).
       del comprobante desborda y el menú no recuerda su colapso.
    5. **UX26-06/07/13:** cotizar y despachar dejan «Guardar» bajo el pliegue, y salir del
       formulario descarta todo sin aviso.
-4. **Ramas remotas:** no hay que borrar ninguna todavía. `cc26-panel-excel-ux` es la del PR #111, abierto, y lleva también este cierre.
+4. **Ramas remotas para borrar:** `cc26-panel-excel-ux` y `docs/cierre-cc26`. El agente no puede: `git push --delete` está prohibido.
 5. **`.claude/settings.json`:** ya está en el PR #111 (`30c7b755`, commit del dueño). Falta el
    texto de D-445 para AGENTS.md (arriba), que commitea el dueño.
 
