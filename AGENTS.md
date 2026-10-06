@@ -95,24 +95,22 @@ Reglas de convivencia, sin excepción:
 
 1. **Nada queda bloqueado por regla salvo dos excepciones irreversibles: `gh repo sync` y borrar
    una rama protegida siguen prohibidos sin excepción** (D-251) — no tienen reversa y el dueño
-   los puede correr a mano si hace falta. Para toda otra **acción sensible** —push, merge a
-   `main`, deploy (Cloud Run/Vercel), cualquier comando contra Neon `production`, borrados, y
-   escrituras de datos en `production`— el agente **propone el comando exacto y se detiene a
-   esperar el OK explícito del dueño en la sesión**, vía las reglas `ask` de
-   `.claude/settings.json` (D-251). Con el OK, el agente mismo la ejecuta — no hace falta que el
-   dueño la tipee, aunque puede seguir prefiriéndolo caso por caso. Push a `main` sigue exigiendo
-   además `AYR_OWNER_PUSH=1`: el hook de `.githooks/pre-push` es una red de seguridad aparte del
-   `ask`, no un reemplazo — un hook de git no puede "preguntar" en medio de un `push`, solo
-   permitirlo o bloquearlo en el acto.
+   los puede correr a mano si hace falta. El régimen de OK por acción de D-251 (las reglas `ask`
+   de `.claude/settings.json`) y después el de D-411 quedaron reemplazados por D-445 (párrafo
+   siguiente): hoy la lista `ask` está vacía y lo irreversible vive en `deny`. El hook de
+   `.githooks/pre-push` sigue como red de seguridad aparte: bloquea cualquier push a `main` sin
+   `AYR_OWNER_PUSH=1`, y el agente no lo usa: todo entra por PR.
 
    **D-445 (2026-10-06, vigente hasta que el dueño diga lo contrario) reemplaza a D-411: ninguna
-   acción pide confirmación.** Todo va directo a producción con el UAT del dueño aprobado por
+   acción pide confirmación, salvo las tres de D-460.** Todo va directo a producción con el UAT del dueño aprobado por
    defecto, salvo que el dueño pida demo de forma explícita. El merge a `main` (por PR, con
    `gh pr merge`), `pnpm deploy:api`, `pnpm smoke:prod`, la vuelta atrás con
    `gcloud run services update-traffic` y los demás comandos que antes estaban en `ask` corren
-   sin OK por acción. **El push directo a `main` está denegado: todo entra por PR** (también el
-   cierre de docs). Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`,
-   `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, borrar ramas de Neon,
+   sin OK por acción, **salvo tres que siguen pidiendo el OK del dueño por nombre** (D-460):
+   una migración contra producción, una escritura masiva con `--execute --confirm-production`
+   (regla 5) y borrar una rama de Neon (además en `deny`). **El agente no empuja directo a
+   `main`: todo entra por PR** (también el cierre de docs), por decisión del dueño (cc28).
+   Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, borrar ramas de Neon,
    `e2e:prod`, `prod-reset-go-live` y leer `.env*`. Una rama remota ya mergeada se borra con
    `gh api -X DELETE …/git/refs/heads/<rama>`, nunca con `git push --delete`. Siguen en pie las
    reglas duras que no son de confirmación: la ventana corre entre las 20:00 y las 07:00 de Lima,
@@ -184,7 +182,8 @@ Reglas de convivencia, sin excepción:
     `docs/ARQUITECTURA.md` §5 salvo acción externa.
 17. **Orden único de bloqueos de fila (D-386).** Toda transacción que toca inventario toma sus
     filas en el orden documentos → reservas → bobinas → saldos y, dentro de cada nivel, por id
-    ascendente (`docs/ARQUITECTURA.md` §3.3.1). Las bobinas y los saldos se bloquean solo por la
+    ascendente (`docs/ARQUITECTURA.md` §3.3.1); un documento se bloquea antes que sus filas hijas
+    (la orden de corte antes que sus bobinas, cc28). Las bobinas y los saldos se bloquean solo por la
     puerta única: `lockCoilRows` (`apps/api/src/inventory/row-locks.ts`) e
     `InventoryService.lockBalance`. Una operación de varios ítems toma su conjunto completo al
     inicio con `InventoryService.lockInOrder`, antes de cualquier lectura que decida algo. El
@@ -222,10 +221,10 @@ Reglas de convivencia, sin excepción:
   `NEON_API_KEY` por entorno; el `neonctl` 4.x no tiene `roles reset-password`) y actualizar
   `.env.setup`, Secret Manager y GitHub Actions. Mientras no se rote, producción está comprometida y el incidente se registra en
   `docs/PROGRESO.md` con fecha y hora exactas.
-- `migrate deploy`, `migrate diff`, `db:prod` y cualquier comando con credenciales de BD de
-  producción son acción sensible (D-251): el agente propone el comando exacto y espera el OK
-  explícito del dueño por cada uno vía el `ask` de `.claude/settings.json` — una autorización de
-  ventana no permite encadenarlos — y con el OK, el agente lo ejecuta él mismo.
+- Una migración contra producción (`migrate deploy` de un cambio de schema) **detiene la sesión y
+  se pregunta al dueño** (D-445), y en una sesión desatendida no se hace. `migrate diff`,
+  `db:prod` y los demás comandos con credenciales de BD de producción corren sin OK por acción
+  (D-445), siempre por las puertas de `scripts/lib.mjs` y sin imprimir credenciales.
 
 ### 3.2 Git, deploy y sincronización de artefactos
 
@@ -241,8 +240,7 @@ Reglas de convivencia, sin excepción:
 package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 significa
   desalineación de runtime y obliga a parar.
 - `pnpm setup:agentes` configura `core.hooksPath=.githooks`. `.githooks/pre-push` permite ramas
-  de trabajo y bloquea cualquier push cuyo destino sea `main` salvo con `AYR_OWNER_PUSH=1`. Desde
-  D-445 el agente no empuja a `main`: los permisos de la sesión lo deniegan, y todo entra por PR
+  de trabajo y bloquea cualquier push cuyo destino sea `main` salvo con `AYR_OWNER_PUSH=1`. Desde D-445 el agente no empuja a `main`: todo entra por PR, por decisión del dueño
   (con el resumen de D-232 ya presentado al dueño). `AYR_OWNER_PUSH=1` queda para el dueño.
 
 ### 3.3 Datos reales, Neon y operaciones destructivas
@@ -423,7 +421,7 @@ exacto en cada ventana.
 | `.agents/skills/<skill>/SKILL.md` | Codex CLI y Antigravity | Procedimientos ejecutables                      |
 | `.agents/rules/00-ayr.md`         | Antigravity IDE         | Puntero a `AGENTS.md`, sin duplicar contenido   |
 | `.githooks/pre-push`              | git (todos)             | Bloqueo de pushes a `main` sin OK del dueño     |
-| `.claude/settings.json`           | Claude Code             | `ask` técnico sobre acciones sensibles (D-251)  |
+| `.claude/settings.json`           | Claude Code             | `deny` de lo irreversible; `ask` vacío (D-445)  |
 | `docs/agentes/README.md`          | Personas y agentes      | Instalación, invocación y perfiles sugeridos    |
 
 Perfiles sugeridos en `~/.codex/config.toml`: uno de grind (effort medio), uno de

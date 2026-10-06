@@ -70,7 +70,7 @@ import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
-import { previewPlantClose } from './close-preview';
+import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
@@ -1887,8 +1887,11 @@ export class RoofingProductionService {
     input: CloseRoofingOrderInput,
   ): Promise<PlantClosePreviewDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    return previewPlantClose(this.prisma, orderId, (tx, warnings) =>
-      this.closeInTx(tx, actor, orderId, input, operationDate, warnings),
+    return previewPlantClose(
+      this.prisma,
+      orderId,
+      (tx, warnings) => this.closeInTx(tx, actor, orderId, input, operationDate, warnings),
+      CLOSE_PREVIEW_TIMEOUT_MS,
     );
   }
 
@@ -1902,21 +1905,26 @@ export class RoofingProductionService {
     input: ReportAndCloseRoofingInput,
   ): Promise<PlantClosePreviewDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    return previewPlantClose(this.prisma, orderId, async (tx, warnings) => {
-      warnings.push(...(await this.reportInTx(tx, actor, orderId, input, operationDate)));
-      await this.closeInTx(
-        tx,
-        actor,
-        orderId,
-        {
-          consumedKg: input.closeConsumedKg,
-          reason: input.closeReason,
-          confirmBackdate: input.confirmBackdate,
-        },
-        operationDate,
-        warnings,
-      );
-    });
+    return previewPlantClose(
+      this.prisma,
+      orderId,
+      async (tx, warnings) => {
+        warnings.push(...(await this.reportInTx(tx, actor, orderId, input, operationDate)));
+        await this.closeInTx(
+          tx,
+          actor,
+          orderId,
+          {
+            consumedKg: input.closeConsumedKg,
+            reason: input.closeReason,
+            confirmBackdate: input.confirmBackdate,
+          },
+          operationDate,
+          warnings,
+        );
+      },
+      CLOSE_PREVIEW_TIMEOUT_MS,
+    );
   }
 
   /**

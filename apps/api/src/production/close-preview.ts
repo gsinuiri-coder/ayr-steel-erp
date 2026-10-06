@@ -27,8 +27,15 @@ import { lockOrder } from './production-shared';
  * ninguna pantalla ni documento.
  */
 
-/** cc28 (SM-8 de cc27): tope de la transacción de la vista previa. */
-export const PREVIEW_TIMEOUT_MS = 20_000;
+/**
+ * cc28: el tope de la transacción de la vista previa es **el de su acción real** (120 s el
+ * borrador, 60 s los cierres). SM-8 de cc27 proponía 20 s para soltar antes los candados, pero con
+ * eso un borrador grande que el cierre real sí ejecuta fallaba en la vista previa con un 500
+ * (segundo modelo de cc28, SM-1). Los candados que retiene son los mismos y por el mismo tiempo
+ * que retendría el cierre real.
+ */
+export const COMMIT_PREVIEW_TIMEOUT_MS = 120_000;
+export const CLOSE_PREVIEW_TIMEOUT_MS = 60_000;
 
 class PreviewRollback extends Error {
   constructor(readonly preview: PlantClosePreviewDto) {
@@ -79,6 +86,7 @@ export async function previewPlantClose(
   prisma: PrismaService,
   orderId: string,
   run: (tx: Prisma.TransactionClient, warnings: RawMaterialShortfall[]) => Promise<void>,
+  timeoutMs: number,
 ): Promise<PlantClosePreviewDto> {
   try {
     await prisma.$transaction(
@@ -153,9 +161,7 @@ export async function previewPlantClose(
           warnings: [...new Set(warnings.map((w) => w.message))],
         });
       },
-      // cc28 (SM-8 de cc27): la vista previa retiene los mismos candados que el cierre real, así
-      // que no puede durar lo que dura un borrador de 50 filas: a los 20 s se corta.
-      { timeout: PREVIEW_TIMEOUT_MS, maxWait: 15_000 },
+      { timeout: timeoutMs, maxWait: 15_000 },
     );
   } catch (err) {
     if (err instanceof PreviewRollback) return err.preview;

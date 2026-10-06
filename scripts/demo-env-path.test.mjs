@@ -21,6 +21,9 @@ test('desde un worktree lee el del checkout principal y nunca genera', () => {
   assert.equal(plan.inWorktree, true);
   assert.equal(plan.canGenerate, false);
   assert.match(plan.howToFix, /pnpm env:demo/);
+  // SM-6 (cc28): la ayuda de env:demo no recorta nada; dice dónde y cómo generarlo.
+  assert.match(plan.generateHint, new RegExp(main.replace(/\\/g, '\\\\')));
+  assert.match(plan.generateHint, /AYR_ENV_DEMO/);
 });
 
 test('AYR_ENV_DEMO manda sobre la ruta por defecto', () => {
@@ -28,6 +31,11 @@ test('AYR_ENV_DEMO manda sobre la ruta por defecto', () => {
   const plan = demoEnvPlan({ root: worktree, mainRoot: main, env: { AYR_ENV_DEMO: other } });
   assert.equal(plan.path, other);
   assert.equal(plan.canGenerate, false);
+});
+
+test('un AYR_ENV_DEMO relativo se lee desde el checkout principal (A-10)', () => {
+  const plan = demoEnvPlan({ root: worktree, mainRoot: main, env: { AYR_ENV_DEMO: 'demo.env' } });
+  assert.equal(plan.path, resolve(main, 'demo.env'));
 });
 
 test('ni con AYR_ENV_DEMO se genera un .env.demo dentro de un worktree', () => {

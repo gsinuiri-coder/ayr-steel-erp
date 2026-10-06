@@ -6,6 +6,7 @@
 // posterior resembraba el admin de demo con ella (cc14). Ahora todos leen el del checkout
 // principal y nadie genera uno dentro de un worktree.
 import { spawnSync } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { dirname, relative, resolve, isAbsolute } from 'node:path';
 
 /**
@@ -17,8 +18,32 @@ export function mainCheckoutRoot(root) {
     cwd: root,
     encoding: 'utf8',
   });
-  if (r.status !== 0 || !r.stdout.trim()) return resolve(root);
-  return resolve(dirname(r.stdout.trim()));
+  if (r.status === 0 && r.stdout.trim()) return resolve(dirname(r.stdout.trim()));
+  // Sin git no se sabe dónde está el checkout principal. No se falla abierto (segundo modelo
+  // cc28, SM-7): un worktree tiene un **archivo** `.git`; en ese caso se devuelve una raíz que no
+  // es `root`, así `demoEnvPlan` lo trata como worktree y no genera nada.
+  try {
+    if (statSync(resolve(root, '.git')).isFile())
+      return resolve(root, '..', '<checkout principal desconocido>');
+  } catch {
+    // Sin `.git`: no es un repo; se usa `root`.
+  }
+  return resolve(root);
+}
+
+/** Igualdad de rutas: en Windows la letra de unidad y las mayúsculas no cuentan (SM-7). */
+function samePath(a, b) {
+  const [x, y] = [resolve(a), resolve(b)];
+  return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+}
+
+/** Qué hacer cuando falta el .env.demo, o cuando se intenta generarlo desde un worktree. */
+function generateHint(mainRoot) {
+  return (
+    `El .env.demo se genera una sola vez, desde el checkout principal (${mainRoot}), con ` +
+    '`pnpm env:demo`; desde un worktree se usa ese mismo archivo (o el que indique AYR_ENV_DEMO), ' +
+    'nunca uno nuevo.'
+  );
 }
 
 /** `child` está dentro de `parent` (o es él). */
@@ -37,16 +62,17 @@ function isInside(child, parent) {
  *   el worktree.
  */
 export function demoEnvPlan({ root, mainRoot, env = {} }) {
-  const inWorktree = resolve(root) !== resolve(mainRoot);
-  const path = env.AYR_ENV_DEMO ? resolve(env.AYR_ENV_DEMO) : resolve(mainRoot, '.env.demo');
+  const inWorktree = !samePath(root, mainRoot);
+  // Un AYR_ENV_DEMO relativo se lee desde el checkout principal, no desde donde se corre (A-10).
+  const path = env.AYR_ENV_DEMO
+    ? resolve(mainRoot, env.AYR_ENV_DEMO)
+    : resolve(mainRoot, '.env.demo');
   const insideWorktree = inWorktree && isInside(path, root);
   return {
     path,
     inWorktree,
     canGenerate: !inWorktree && !insideWorktree,
-    howToFix:
-      `Falta ${path}. El .env.demo se genera una sola vez, desde el checkout principal ` +
-      `(${mainRoot}), con \`pnpm env:demo\`; desde un worktree se usa ese mismo archivo ` +
-      '(o el que indique AYR_ENV_DEMO), nunca uno nuevo.',
+    howToFix: `Falta ${path}. ${generateHint(mainRoot)}`,
+    generateHint: generateHint(mainRoot),
   };
 }

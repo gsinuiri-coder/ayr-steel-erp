@@ -17,9 +17,7 @@ import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
 // demo con una contraseña que nadie tenía.
 const plan = demoEnvPlan({ root: ROOT, mainRoot: mainCheckoutRoot(ROOT), env: process.env });
 if (!plan.canGenerate) {
-  console.error(
-    `pnpm env:demo no corre desde un worktree. ${plan.howToFix.replace(/^Falta [^.]+\.\s*/, '')}`,
-  );
+  console.error(`pnpm env:demo no corre desde un worktree. ${plan.generateHint}`);
   process.exit(1);
 }
 const target = plan.path;

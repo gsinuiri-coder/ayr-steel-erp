@@ -90,19 +90,24 @@ describe('previewPlantClose (D-453)', () => {
     };
     const { prisma, result } = fakePrisma(state);
 
-    const preview = await previewPlantClose(prisma, ORDER, () => {
-      // La «acción»: saca kilos de las dos bobinas, termina la B, suelta despunte y agrega un
-      // reporte fuera de tolerancia.
-      state.balances.set(COIL_A, '600.500');
-      state.balances.set(COIL_B, '0.000');
-      state.status.set(COIL_B, CoilStatus.CLOSED);
-      state.scrapKg = '12.250';
-      state.reports.push({
-        id: 'r1',
-        rawMaterialWarning: 'Fuera de tolerancia, confirmado con la casilla: Otro.',
-      });
-      return Promise.resolve();
-    });
+    const preview = await previewPlantClose(
+      prisma,
+      ORDER,
+      () => {
+        // La «acción»: saca kilos de las dos bobinas, termina la B, suelta despunte y agrega un
+        // reporte fuera de tolerancia.
+        state.balances.set(COIL_A, '600.500');
+        state.balances.set(COIL_B, '0.000');
+        state.status.set(COIL_B, CoilStatus.CLOSED);
+        state.scrapKg = '12.250';
+        state.reports.push({
+          id: 'r1',
+          rawMaterialWarning: 'Fuera de tolerancia, confirmado con la casilla: Otro.',
+        });
+        return Promise.resolve();
+      },
+      60_000,
+    );
 
     expect(result.committed).toBe(false);
     expect(preview).toEqual({
@@ -141,8 +146,12 @@ describe('previewPlantClose (D-453)', () => {
     };
     const { prisma, result } = fakePrisma(state);
     await expect(
-      previewPlantClose(prisma, ORDER, () =>
-        Promise.reject(new BadRequestException('explica el motivo para cerrar con esa merma')),
+      previewPlantClose(
+        prisma,
+        ORDER,
+        () =>
+          Promise.reject(new BadRequestException('explica el motivo para cerrar con esa merma')),
+        60_000,
       ),
     ).rejects.toThrow('explica el motivo');
     expect(result.committed).toBe(false);

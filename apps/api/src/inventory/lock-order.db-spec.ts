@@ -36,7 +36,7 @@ import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { DispatchesService } from '../invoicing/dispatches.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { PREVIEW_TIMEOUT_MS } from '../production/close-preview';
+import { COMMIT_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
 import { RoofingDraftsService } from '../production/roofing-drafts.service';
 import { RoofingProductionService } from '../production/roofing-production.service';
 import { ReceivedPurchaseEditService } from '../purchases/purchase-received-edit.service';
@@ -927,7 +927,7 @@ describe('cc28 — la vista previa de un cierre no deja nada ni retiene bloqueos
     ]);
     // El cierre real nunca pierde por la vista previa: ni por bloqueo ni por timeout.
     expect(commit.status).toBe('fulfilled');
-    expect(Date.now() - started).toBeLessThan(PREVIEW_TIMEOUT_MS);
+    expect(Date.now() - started).toBeLessThan(COMMIT_PREVIEW_TIMEOUT_MS);
     // La vista previa, o vio la orden abierta (y se deshizo), o llegó tarde y la encontró cerrada.
     if (preview.status === 'rejected') {
       expect(preview.reason).toBeInstanceOf(HttpException);
