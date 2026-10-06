@@ -2,7 +2,7 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-06 — cc27: UX de la inspección de cc26 (en curso, rama `cc27-ux`)
+## 2026-10-06 — Ventana cc27 (D-452..D-458 desplegadas, PR #113, sin migración)
 
 Sesión desatendida: rigen D-445 y el brief de cc27 (modo autónomo, ambigüedad → D-nnn
 provisional, UAT aprobado por defecto, directo a producción, ventana 20:00–07:00 de Lima).
@@ -21,6 +21,10 @@ provisional, UAT aprobado por defecto, directo a producción, ventana 20:00–07
 - **Hecho, M1 a M4 (nada sacrificado), D-452..D-457 provisionales; D-458 del dueño** (la ventana
   del 06/10 corre apenas esté lista). Detalle, barrido de precios y revisiones en
   `docs/handoff/ventana-cc27.md`.
+- **Ventana (09:26–09:34 de Lima, D-458):** API `ayr-steel-erp-api-00092-kzx` (`git-sha=f336478e`)
+  al 100 % y `/health` ok; merge del #113: `main` = `daab3a3a`, sin diff de runtime; Vercel en
+  `success`; `smoke:prod` 8/8 en los dos dominios. Vuelta atrás anotada: `00091-k2m` y `aa36d935`;
+  no hizo falta. Neon: no se creó ni se borró ninguna rama. Salidas en `local-data/cc27/`.
 - **Diagnóstico de UX26-01:** solo presentación; el importe cobrado y el del comprobante ya
   coincidían. Sin documentos afectados.
 - **Revisiones:** autorrevisión 0 P0, 1 P1, 3 P2, 10 P3; segundo modelo 0 P0, 0 P1, 3 P2, 5 P3. El
