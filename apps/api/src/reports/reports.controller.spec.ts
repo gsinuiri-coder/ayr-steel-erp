@@ -8,6 +8,7 @@ import type { KardexPepsService } from './kardex-peps.service';
 import type { DocumentProfitabilityService } from './document-profitability.service';
 import type { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
+import type { AdminDashboardService } from './admin-dashboard.service';
 import type { CoilWasteService } from './coil-waste.service';
 import type { ReceivablesAgingService } from './receivables-aging.service';
 import type { ReportsService } from './reports.service';
@@ -161,6 +162,7 @@ function build() {
   const documentProfitability = { profitability: jest.fn().mockResolvedValue({ applies: true }) };
   const receivablesAging = { report: jest.fn().mockResolvedValue({ customers: [] }) };
   const coilWaste = { report: jest.fn().mockResolvedValue({ rows: [] }) };
+  const adminDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
@@ -171,6 +173,7 @@ function build() {
     documentProfitability as unknown as DocumentProfitabilityService,
     receivablesAging as unknown as ReceivablesAgingService,
     coilWaste as unknown as CoilWasteService,
+    adminDashboard as unknown as AdminDashboardService,
   );
   return {
     controller,
@@ -210,6 +213,8 @@ describe('ReportsController', () => {
     expect(rolesOf('receivablesAgingXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     // cc25 (D-426): merma, solo ADMINISTRADOR.
     expect(rolesOf('coilWasteReport')).toEqual([Role.ADMINISTRADOR]);
+    // cc26 (D-440): el Panel del administrador lleva costos y márgenes.
+    expect(rolesOf('adminDashboardReport')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsPdfFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
