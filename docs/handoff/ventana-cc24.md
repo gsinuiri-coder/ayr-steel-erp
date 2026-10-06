@@ -5,10 +5,16 @@
 - **PR #107**, rama `cc24-reportes-linea`, abierta desde `main` `cf9cc32`.
 - **Sin migración.** Toca la API y la web.
 - **Los cinco hitos están hechos:** M0 a M4. No se sacrificó ninguno.
-- **Estado al escribir esto:**
-  - el PR está listo para la ventana: CI en curso, revisiones sin P0 ni P1 y UAT propio hecho;
-  - **sin desplegar**;
-  - falta el UAT del dueño en demo, y antes el refresco de demo con su OK.
+- **Estado final: desplegado, sin vuelta atrás** (ventana del 2026-10-05, 20:01–20:11 Lima).
+  - API `ayr-steel-erp-api-00088-kn4`, con `git-sha=72ab61a2`, al 100 %.
+  - `main` = `dbd3421b`, el merge del PR #107.
+  - Detalle en «Ventana ejecutada», al final.
+- **Después del primer cierre** (ver «Pendiente antes de la ventana», ya cumplido):
+  - D-419: el margen de «Todas» también sin «Sin línea»;
+  - D-416, confirmada;
+  - permisos 4a y 4b;
+  - AGENTS.md §3.2, §5 y §10 alineados con D-411;
+  - demo refrescada y UAT del dueño aprobado.
 
 ## Hitos (M0 a M4)
 
@@ -61,8 +67,11 @@ Todas están en `docs/ARQUITECTURA.md` §0.2.
   - D-415: fila de Drywall por espesor, con «Galvanizado».
   - D-417: UPVC y Reventa por producto, con costo de kardex.
   - D-418: bobinas abre en Aluzinc y el Excel sigue la pestaña.
-- **Provisional, a confirmar por el dueño:** D-416, el Excel de ventas por material solo en
-  Aluzinc, por el criterio de D-399.
+- **D-416, confirmada por el dueño:** el Excel de ventas por material solo en Aluzinc, por el
+  criterio de D-399.
+- **D-419, del dueño:** el margen de «Todas» también excluye «Sin línea» (líneas sin producto).
+  - En demo, recién copiada de producción, no hay líneas vivas sin producto (0 de 74), así que no
+    había nada con costo que mostrar.
 
 ## Revisiones
 
@@ -77,17 +86,18 @@ riesgos y no una aprobación): 0 P0, 0 P1, 3 P2, 4 P3.
   - P3: con despacho parcial, trazado + no trazable suman exacto.
   - P3: el reporte de bobinas rotula «Total de <línea>».
 - **Anotados:**
-  - **P2-3, para el dueño (D-230):** «Margen (sin Servicios)» sigue incluyendo, con costo 0, los
-    servicios escritos a mano que caen en «Sin línea (servicios y ajustes)». D-409 nombra
-    Servicios y D-398 deja «Sin línea» aparte.
+  - **P2-3, resuelto con D-419** (`ffa69983`): «Margen (sin Servicios)» seguía incluyendo, con
+    costo 0, los servicios escritos a mano que caen en «Sin línea».
   - P3: el aviso «sin línea» de ventas por material cuenta toda la venta sin producto del rango;
     la fila «Sin línea» de ventas y margen excluye los pedidos fuera de los totales.
 
 **Segundo modelo** (Sonnet, contexto limpio; `docs/revision/cc24-segundo-modelo.md`): 0 P0, 0 P1,
 3 P2, 5 P3.
 
-- **P2-1..P2-3, todos de permisos, para el dueño.** El agente no toca `.claude/settings.json` ni
-  las reglas de permisos de AGENTS.md: los decide el dueño.
+- **P2-1..P2-3, todos de permisos, resueltos por decisión del dueño:**
+  - P2-1 y P2-3: `51508525`;
+  - P2-2: `72ab61a2`, con el texto que el agente propuso, aplicado y commiteado con la
+    autorización explícita del dueño.
   - P2-1: la versión permisiva de `.claude/settings.json` quita del `ask` `rm -rf *`,
     `git branch -D *`, `deploy:web` y el `git push *` genérico, que D-411 no nombra.
   - P2-2: AGENTS.md (§3.2, §5 y §10) sigue pidiendo OK para merge y push a main (D-232),
@@ -118,14 +128,22 @@ riesgos y no una aprobación): 0 P0, 0 P1, 3 P2, 4 P3.
   - Las ventas del recorrido manual quedan en 0 porque los specs purgan las suyas. Los números
     con ventas reales van en el UAT del dueño en demo.
 
-## Pendiente antes de la ventana
+## Antes de la ventana (cumplido)
 
-1. **CI verde** del PR #107 sobre el último commit.
-2. **Refresco de demo desde producción** (D-227): salidas externas apagadas y limpieza de los
-   datos de prueba de cc20 y cc21. Necesita OK del dueño. No se crean ramas Neon nuevas (hay 9
-   de 10).
-3. **UAT del dueño en demo.**
-4. **Resumen de D-232 al dueño:** commits, CI, qué se despliega, riesgo y vuelta atrás.
+1. **CI verde** del PR #107 sobre `72ab61a2`, run 37346239914: lint, unitarios, E2E completo en el
+   runner, smoke de Neon `ci` y Sonar.
+2. **Demo refrescada desde producción** (D-227), con el OK del dueño. Quedaron limpios los datos
+   de prueba de cc20 y cc21.
+   - El primer `db:reset-dev --branch demo` falló en `neonctl branches reset`. La rama no tenía
+     hijas ni estaba protegida.
+   - Un reintento único, con un diagnóstico que tapa credenciales, funcionó.
+   - De inmediato se corrió `--rotate-only`: la contraseña quedó rotada y verificada.
+   - Después, `env:demo` y `db:demo`. No se crearon ramas Neon.
+3. **UAT del dueño en demo: aprobado.**
+   - Demo se levantó desde el checkout principal puesto en el commit de cc24, para usar su
+     `.env.demo` sin copiarlo.
+   - Al terminar se apagó y el checkout volvió a `main`.
+4. **Resumen de D-232 presentado al dueño.**
 
 ## Ventana (D-411: entre las 20:00 y las 07:00 de Lima)
 
@@ -153,6 +171,59 @@ riesgos y no una aprobación): 0 P0, 0 P1, 3 P2, 4 P3.
   - faltaría `noCostSalesPen`.
   - Por eso el orden es API primero y después merge, como siempre.
 
+## Ventana ejecutada (2026-10-05, 20:01–20:11 Lima) — **desplegada**
+
+Se hizo con D-411: sin OK por acción, dentro del horario.
+
+1. **Vuelta atrás anotada:** API `ayr-steel-erp-api-00087-pcg` (`git-sha=cbed5aa`) al 100 %, y
+   `main` en `cf9cc32`.
+2. **Migraciones:** 0 en el PR (sin archivos nuevos en `prisma/migrations`).
+3. **API:** se desplegó `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+   desde el worktree, limpio en `72ab61a2`.
+   - Revisión **`ayr-steel-erp-api-00088-kn4`**, con `git-sha=72ab61a2`, al 100 %.
+   - `/health` 200, directo y por `v2.mareliac.pe`.
+4. **Merge del #107:** `main` = **`dbd3421b`**.
+   - `git diff --quiet 72ab61a2 origin/main -- apps packages …` dio exit 0: sin diff de runtime.
+   - Vercel en `success` para `dbd3421b`.
+5. **Verificación:**
+   - `smoke:prod` 8/8 en `ayr-steel-erp-web.vercel.app` y 8/8 en `v2.mareliac.pe`;
+   - recorrido de solo lectura de cada reporte con cada pestaña contra la API de producción
+     (solo GET, más el login del admin de `.env.setup` y su logout), todo en verde.
+   - **Septiembre:**
+     - «Todas» tiene venta S/ 275 058,68, costo S/ 221 733,44 y margen S/ 53 325,24
+       (19,39 %);
+     - todo es Coberturas Aluzinc y no hay venta sin costo registrado, así que el margen de
+       «Todas» no cambia respecto de antes;
+     - las pestañas suman «Todas» en venta, costo y margen;
+     - ventas por material coincide con ventas y margen en las cuatro líneas (Aluzinc, 6 filas
+       y 0 no trazables).
+   - **Octubre (1 al 5):** sin comprobantes.
+   - **Bobinas de octubre:** Aluzinc + Drywall = las dos líneas.
+6. **Vuelta atrás:** no hizo falta. Si el dueño la necesita, son las dos juntas:
+   `cmd /c gcloud run services update-traffic ayr-steel-erp-api --region us-central1 --project ayr-steel-erp --to-revisions ayr-steel-erp-api-00087-pcg=100`,
+   y un commit de revert del merge `dbd3421b` en `main`.
+
+Las salidas del deploy, de los dos smokes y del recorrido quedaron en `local-data/cc24/` del
+checkout principal, que no está en git.
+
+## Para el dueño: qué revisar en producción
+
+Entrar como administrador en `https://v2.mareliac.pe`.
+
+1. **Ventas y margen, septiembre:** `https://v2.mareliac.pe/reportes/ventas-margen?from=2026-09-01&to=2026-09-30`.
+   - En «Todas», la franja tiene que mostrar «Sin costo registrado (Servicios y líneas sin
+     producto)» en S/ 0,00 y el margen igual al de ayer.
+   - Recorrer las pestañas.
+2. **Ventas por material:** `https://v2.mareliac.pe/reportes/ventas-material?from=2026-09-01&to=2026-09-30`.
+   - Aluzinc tiene que verse como antes, con el Excel.
+   - Drywall, Coberturas (UPVC) y Reventa, con su cuadre. En septiembre están en cero.
+3. **Bobinas:** `https://v2.mareliac.pe/reportes/bobinas`.
+   - Aluzinc es la de por defecto, y Drywall en su pestaña.
+   - Descargar el PDF y el Excel de cada pestaña: tienen que nombrar la línea.
+4. **Pendiente del repo:** borrar la rama remota `cc24-reportes-linea`. El agente no puede: la
+   prohibición de `git push --delete` de `.claude/settings.json` (pedido del dueño) se lo impide.
+
 ## Neon
 
-Esta sesión no creó ni borró ramas.
+Esta sesión no creó ni borró ramas. Siguen 9 ramas. La rama `demo` se reseteó desde
+`production`, con su contraseña rotada.
