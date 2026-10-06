@@ -13,6 +13,8 @@ import {
 
 type QuotationSortKey = NonNullable<QuotationQuery['sort']>;
 import { api } from '@/lib/api';
+import { listXlsxHref } from '@/lib/list-export';
+import { HeaderActions } from '@/components/header-actions';
 import { formatDate, formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { useSession } from '@/lib/session';
@@ -95,6 +97,17 @@ export function CotizacionesView() {
           </p>
         </div>
         <div className="flex gap-2">
+          {/* cc26: el Excel lleva los filtros y el orden de la lista (todas las páginas). */}
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/sales/quotations', params),
+              },
+            ]}
+          />
           {/* D-152: la carga histórica entra por acá y termina en cotizaciones en borrador. */}
           {isAdmin && (
             <Button variant="outline" asChild>

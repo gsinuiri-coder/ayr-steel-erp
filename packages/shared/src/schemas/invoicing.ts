@@ -22,6 +22,7 @@ import { reasonSchema } from './coil';
 import { idempotencyFields, idempotencyKeySchema } from './idempotency';
 import { backdatableFields, operationDateSchema } from './operation';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
+import { listExportQuerySchema } from './list-export';
 import { statusListSchema } from './status-filter';
 import { businessToday } from '../business-date';
 
@@ -895,6 +896,10 @@ export const fiscalDocumentQuerySchema = paginationQuerySchema.extend({
   search: z.string().trim().max(80).optional(),
 });
 export type FiscalDocumentQuery = z.infer<typeof fiscalDocumentQuerySchema>;
+
+/** cc26: el Excel de la lista, con sus mismos filtros y orden y sin paginar. */
+export const fiscalDocumentExportQuerySchema = listExportQuerySchema(fiscalDocumentQuerySchema);
+export type FiscalDocumentExportQuery = z.infer<typeof fiscalDocumentExportQuerySchema>;
 
 // --------------------------------------------------------------------------
 // Despacho (RF-77..RF-79, D-074, D-078)

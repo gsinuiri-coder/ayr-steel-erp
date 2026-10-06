@@ -32,7 +32,6 @@ import {
   derivedUnitValue,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginate,
-  paginateInMemory,
   STANDING_DOCUMENT_STATUSES,
   RETRYABLE_DOCUMENT_STATUSES,
   Role,
@@ -43,7 +42,6 @@ import {
   theoreticalKgPerSellingUnit,
   toDecimal,
   toFixedString,
-  toSkipTake,
   VOID_WINDOW_DAYS,
   voidPathFor,
   dispatchCode as toDispatchCode,
@@ -53,6 +51,7 @@ import {
   type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
+  type FiscalDocumentExportQuery,
   type FiscalDocumentQuery,
   type PaginatedResult,
   type CreateFiscalSeriesInput,
@@ -92,6 +91,7 @@ import {
   type ProviderResult,
 } from './ports/electronic-invoicing.port';
 import { fiscalDocumentOrderBy } from '../common/list-orderings';
+import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -3077,15 +3077,36 @@ export class InvoicingService {
     query: FiscalDocumentQuery,
     actor?: RequestUser,
   ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
+    const { items, total } = await this.findWindow(query, actor, pageWindow(query));
+    return paginate(items, total, query);
+  }
+
+  /**
+   * cc26 (D-provisional): el Excel de la lista. Las mismas filas que `findAll` con la misma
+   * query, todas y en el mismo orden: es el mismo método con la ventana completa. Pasado el tope
+   * (`LIST_XLSX_MAX_ROWS`), 400.
+   */
+  async exportAll(
+    query: FiscalDocumentExportQuery,
+    actor?: RequestUser,
+  ): Promise<FiscalDocumentListItemDto[]> {
+    return (await this.findWindow(query, actor, exportWindow())).items;
+  }
+
+  /** El cuerpo de la lista y de su Excel: filtro, alcance y orden, sobre una ventana de filas. */
+  private async findWindow(
+    query: FiscalDocumentExportQuery,
+    actor: RequestUser | undefined,
+    window: ListWindow,
+  ): Promise<{ items: FiscalDocumentListItemDto[]; total: number }> {
     const where = fiscalDocumentListWhere(query, actor, LIVE_DOCUMENT_STATUSES);
     // D-323: la columna elegida ordena la lista entera (también con `pendingOnly`, antes del tope);
     // la fecha de emisión desempata. Solo columnas propias: el saldo es derivado.
     const orderBy = fiscalDocumentOrderBy(query);
 
     if (!query.pendingOnly) {
-      const { skip, take } = toSkipTake(query);
-      const [total, rows] = await Promise.all([
-        this.prisma.fiscalDocument.count({ where }),
+      const { skip, take } = window;
+      const findPage = () =>
         this.prisma.fiscalDocument.findMany({
           where,
           include: documentInclude,
@@ -3094,9 +3115,21 @@ export class InvoicingService {
           orderBy,
           skip,
           take,
-        }),
-      ]);
-      return paginate(await this.withDispatchLinks(await this.toListDtos(rows)), total, query);
+        });
+      let total: number;
+      let rows: Awaited<ReturnType<typeof findPage>>;
+      if (window.maxTotal === undefined) {
+        [total, rows] = await Promise.all([
+          this.prisma.fiscalDocument.count({ where }),
+          findPage(),
+        ]);
+      } else {
+        // cc26: la exportación cuenta primero y corta antes de cargar filas si pasa el tope.
+        total = await this.prisma.fiscalDocument.count({ where });
+        assertExportable(total, window);
+        rows = await findPage();
+      }
+      return { items: await this.withDispatchLinks(await this.toListDtos(rows)), total };
     }
 
     // `pendingOnly` es un filtro derivado (D-075): el saldo no es una columna, así que no
@@ -3113,9 +3146,10 @@ export class InvoicingService {
     const pending = (await this.toListDtos(rows)).filter((d) =>
       hasCollectibleBalance(d.balancePen),
     );
+    assertExportable(pending.length, window);
     // Los despachos, recién sobre la página ya cortada: no sobre todo el universo del tope.
-    const page = paginateInMemory(pending, query);
-    return { ...page, items: await this.withDispatchLinks(page.items) };
+    const page = pending.slice(window.skip, window.skip + window.take);
+    return { items: await this.withDispatchLinks(page), total: pending.length };
   }
 
   /**

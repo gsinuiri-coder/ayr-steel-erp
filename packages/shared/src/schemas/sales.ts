@@ -30,6 +30,7 @@ import {
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
+import { listExportQuerySchema } from './list-export';
 import { NO_FLOOR_REASONS } from './product';
 import { statusListSchema } from './status-filter';
 import { piecesMeters, roofingPiecesSchema, roofingPieceSchema } from './roofing';
@@ -806,6 +807,10 @@ export const quotationQuerySchema = paginationQuerySchema.extend({
   search: z.string().trim().max(80).optional(),
 });
 export type QuotationQuery = z.infer<typeof quotationQuerySchema>;
+
+/** cc26: el Excel de la lista, con sus mismos filtros y orden y sin paginar. */
+export const quotationExportQuerySchema = listExportQuerySchema(quotationQuerySchema);
+export type QuotationExportQuery = z.infer<typeof quotationExportQuerySchema>;
 
 // --------------------------------------------------------------------------
 // RF-62 — confirmación y pedido

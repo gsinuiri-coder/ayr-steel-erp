@@ -42,7 +42,6 @@ import {
   salesOrderCode,
   toDecimal,
   toFixedString,
-  toSkipTake,
   Unit,
   type CreateQuotationInput,
   type CreateQuotationInternalInput,
@@ -52,6 +51,7 @@ import {
   type QuotationItemCoilCandidatesDto,
   type QuotationListItemDto,
   type SetQuotationItemCoilInput,
+  type QuotationExportQuery,
   type QuotationQuery,
   type SalesItemInput,
   type UpdateQuotationInput,
@@ -84,6 +84,7 @@ import {
 import { paperPoolOfLine } from './paper-coil-assignment';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
 import { orderByInvoiceNumber, quotationOrderBy } from '../common/list-orderings';
+import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { searchSeqOf } from '../common/search-seq';
 
 function toDateOnly(value: string): Date {
@@ -1348,6 +1349,28 @@ export class QuotationsService {
     actor: RequestUser,
     query: QuotationQuery,
   ): Promise<PaginatedResult<QuotationListItemDto>> {
+    const { items, total } = await this.findWindow(actor, query, pageWindow(query));
+    return paginate(items, total, query);
+  }
+
+  /**
+   * cc26 (D-provisional): el Excel de la lista. Las mismas filas que `findAll` con la misma
+   * query, todas y en el mismo orden: es el mismo método con la ventana completa. Pasado el tope
+   * (`LIST_XLSX_MAX_ROWS`), 400.
+   */
+  async exportAll(
+    actor: RequestUser,
+    query: QuotationExportQuery,
+  ): Promise<QuotationListItemDto[]> {
+    return (await this.findWindow(actor, query, exportWindow())).items;
+  }
+
+  /** El cuerpo de la lista y de su Excel: filtro, alcance y orden, sobre una ventana de filas. */
+  private async findWindow(
+    actor: RequestUser,
+    query: QuotationExportQuery,
+    window: ListWindow,
+  ): Promise<{ items: QuotationListItemDto[]; total: number }> {
     // El código de la cotización (`COT-000123`) es `quotationCode(seq)`, no una columna:
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del
@@ -1380,24 +1403,31 @@ export class QuotationsService {
           }
         : {}),
     };
-    const { skip, take } = toSkipTake(query);
+    const { skip, take } = window;
     // La lista muestra totales, no líneas: traer `items` con su producto para 500
     // cotizaciones era arrastrar miles de filas por pantallazo y descartarlas.
     const include = { ...quotationInclude, items: false, _count: { select: { items: true } } };
-    const [total, rows] =
-      query.sort === 'invoice'
-        ? await this.findPageByImportedInvoice(where, include, query, skip, take)
-        : await Promise.all([
-            this.prisma.quotation.count({ where }),
-            this.prisma.quotation.findMany({
-              where,
-              include,
-              // D-323: la columna elegida ordena la lista entera; el número desempata.
-              orderBy: quotationOrderBy(query),
-              skip,
-              take,
-            }),
-          ]);
+    const findPage = () =>
+      this.prisma.quotation.findMany({
+        where,
+        include,
+        // D-323: la columna elegida ordena la lista entera; el número desempata.
+        orderBy: quotationOrderBy(query),
+        skip,
+        take,
+      });
+    let total: number;
+    let rows: Awaited<ReturnType<typeof findPage>>;
+    if (query.sort === 'invoice') {
+      [total, rows] = await this.findPageByImportedInvoice(where, include, query, window);
+    } else if (window.maxTotal === undefined) {
+      [total, rows] = await Promise.all([this.prisma.quotation.count({ where }), findPage()]);
+    } else {
+      // cc26: la exportación cuenta primero y corta antes de cargar filas si pasa el tope.
+      total = await this.prisma.quotation.count({ where });
+      assertExportable(total, window);
+      rows = await findPage();
+    }
     const actors = await this.resolveActorNames(
       rows.flatMap((r) => [r.createdById, r.sellerId].filter(Boolean) as string[]),
     );
@@ -1410,7 +1440,7 @@ export class QuotationsService {
       } = this.toDto({ ...r, items: [] }, new Map(), actors);
       return { ...rest, itemCount: r._count.items };
     });
-    return paginate(items, total, query);
+    return { items, total };
   }
 
   /**
@@ -1476,9 +1506,8 @@ export class QuotationsService {
   private async findPageByImportedInvoice<I extends Prisma.QuotationInclude>(
     where: Prisma.QuotationWhereInput,
     include: I,
-    query: QuotationQuery,
-    skip: number,
-    take: number,
+    query: QuotationExportQuery,
+    window: ListWindow,
   ): Promise<[number, Prisma.QuotationGetPayload<{ include: I }>[]]> {
     const rows = await this.prisma.quotation.findMany({
       where,
@@ -1500,8 +1529,10 @@ export class QuotationsService {
         quotationInvoiceState(importedInvoiceNumber(r.notes), invoiceDocumentsOf(r.salesOrders[0])),
       ),
     }));
+    // cc26: el tope de la exportación se mide sobre las claves, antes de cargar la página.
+    assertExportable(keys.length, window);
     const pageIds = orderByInvoiceNumber(keys, query.dir)
-      .slice(skip, skip + take)
+      .slice(window.skip, window.skip + window.take)
       .map((k) => k.id);
     const page = await this.prisma.quotation.findMany({ where: { id: { in: pageIds } }, include });
     const byId = new Map(page.map((row) => [row.id, row]));

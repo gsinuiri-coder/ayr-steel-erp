@@ -21,6 +21,8 @@ import {
   discardDraftSchema,
   registerManualSchema,
   updateManualIssueDateSchema,
+  businessToday,
+  fiscalDocumentExportQuerySchema,
   fiscalDocumentQuerySchema,
   paginationQuerySchema,
   reverseCustomerPaymentSchema,
@@ -40,6 +42,7 @@ import {
   type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
+  type FiscalDocumentExportQuery,
   type FiscalDocumentQuery,
   type FiscalSeriesDto,
   type InvoicingSettingsDto,
@@ -63,7 +66,9 @@ import {
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { sendXlsx } from '../common/list-export';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { fiscalDocumentsXlsx } from './fiscal-documents-xlsx';
 import { FiscalImportService } from './fiscal-import.service';
 import { MoveDocumentToOrderService } from './move-to-order.service';
 import { InvoicingService } from './invoicing.service';
@@ -188,6 +193,21 @@ export class InvoicingController {
     @Query(new ZodValidationPipe(fiscalDocumentQuerySchema)) query: FiscalDocumentQuery,
   ): Promise<PaginatedResult<FiscalDocumentListItemDto>> {
     return this.invoicing.findAll(query, actor);
+  }
+
+  /**
+   * cc26 (D-provisional): el Excel de la lista, con los filtros, el orden y el alcance de la
+   * pantalla, sin paginar y hasta `LIST_XLSX_MAX_ROWS` (más, 400). Mismos roles que la lista.
+   * Va **antes** de `documents/:id`: si no, `ParseUUIDPipe` rechaza «xlsx» como id.
+   */
+  @Get('documents/xlsx')
+  async findAllXlsx(
+    @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(fiscalDocumentExportQuerySchema)) query: FiscalDocumentExportQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const rows = await this.invoicing.exportAll(query, actor);
+    sendXlsx(res, fiscalDocumentsXlsx(rows, actor.role, businessToday()));
   }
 
   @Get('documents/:id')
