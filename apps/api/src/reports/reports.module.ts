@@ -10,6 +10,7 @@ import { KardexPepsService } from './kardex-peps.service';
 import { KardexSheetService } from './kardex-sheet.service';
 import { ReceivablesAgingService } from './receivables-aging.service';
 import { PlantDashboardService } from './plant-dashboard.service';
+import { ProductionSummaryService } from './production-summary.service';
 import { SellerDashboardService } from './seller-dashboard.service';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
@@ -29,6 +30,7 @@ import { SalesMarginService } from './sales-margin.service';
     DocumentProfitabilityService,
     ReceivablesAgingService,
     CoilWasteService,
+    ProductionSummaryService,
     AdminDashboardService,
     PlantDashboardService,
     SellerDashboardService,

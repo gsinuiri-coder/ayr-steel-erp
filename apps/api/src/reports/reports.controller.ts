@@ -4,6 +4,9 @@ import {
   businessToday,
   coilMonthReportQuerySchema,
   coilWasteQuerySchema,
+  productionSummaryQuerySchema,
+  type ProductionSummaryDto,
+  type ProductionSummaryQuery,
   inventoryValuationQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
@@ -38,6 +41,8 @@ import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
 import { sendXlsx } from '../common/list-export';
 import { AdminDashboardService } from './admin-dashboard.service';
 import { PlantDashboardService } from './plant-dashboard.service';
+import { productionSummaryXlsx } from './production-summary-xlsx';
+import { ProductionSummaryService } from './production-summary.service';
 import { SellerDashboardService } from './seller-dashboard.service';
 import { coilMonthXlsx } from './coil-month-xlsx';
 import { CoilWasteService } from './coil-waste.service';
@@ -75,6 +80,7 @@ export class ReportsController {
     private readonly documentProfitability: DocumentProfitabilityService,
     private readonly receivablesAging: ReceivablesAgingService,
     private readonly coilWaste: CoilWasteService,
+    private readonly productionSummary: ProductionSummaryService,
     private readonly adminDashboard: AdminDashboardService,
     private readonly plantDashboard: PlantDashboardService,
     private readonly sellerDashboard: SellerDashboardService,
@@ -228,6 +234,36 @@ export class ReportsController {
     @Query(new ZodValidationPipe(coilWasteQuerySchema)) query: CoilWasteQuery,
   ): Promise<CoilWasteDto> {
     return this.coilWaste.report(query);
+  }
+
+  /**
+   * cc29 (M2, D-464, D-468). Reporte de producción por OP en un rango, por pestaña (Coberturas
+   * Aluzinc o Drywall). Administrador y supervisor de planta; los costos, solo el administrador
+   * (el supervisor recibe el mismo reporte sin ellos).
+   */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('production-summary')
+  productionSummaryReport(
+    @Query(new ZodValidationPipe(productionSummaryQuerySchema)) query: ProductionSummaryQuery,
+    @CurrentUser() actor: RequestUser,
+  ): Promise<ProductionSummaryDto> {
+    return this.productionSummary.report(query, actor.role === Role.ADMINISTRADOR);
+  }
+
+  /** cc29 (M2). El xlsx sale del mismo DTO que la pantalla, con el mismo alcance de costos. */
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Get('production-summary/xlsx')
+  async productionSummaryXlsxFile(
+    @Query(new ZodValidationPipe(productionSummaryQuerySchema)) query: ProductionSummaryQuery,
+    @CurrentUser() actor: RequestUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(
+      res,
+      productionSummaryXlsx(
+        await this.productionSummary.report(query, actor.role === Role.ADMINISTRADOR),
+      ),
+    );
   }
 
   /**

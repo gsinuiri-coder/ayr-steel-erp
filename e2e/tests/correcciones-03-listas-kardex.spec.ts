@@ -105,6 +105,7 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
         'Inventario valorizado',
         'Reporte mensual de bobinas',
         'Merma por bobina',
+        'Reporte de producción',
       ],
       Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
     };
