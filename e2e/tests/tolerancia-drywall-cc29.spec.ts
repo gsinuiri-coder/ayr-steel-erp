@@ -84,7 +84,9 @@ test('drywall: pasado el 1 %, el supervisor confirma con la casilla y el motivo;
     await warning
       .getByLabel(`Confirmar las piezas reportadas de ${order.code} fuera de tolerancia`)
       .check();
-    const reason = warning.getByLabel(`Motivo de las piezas reportadas de ${order.code}`);
+    const reason = warning.getByLabel(`Motivo de las piezas reportadas de ${order.code}`, {
+      exact: true,
+    });
     // Los cuatro motivos del dueño.
     await expect(reason.locator('option')).toHaveText([
       'Elige el motivo…',

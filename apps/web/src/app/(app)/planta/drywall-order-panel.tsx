@@ -160,8 +160,12 @@ export function DrywallOrderPanel({
       setOverride(EMPTY_OVERRIDE);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las piezas'),
+    onError: (err) => {
+      // A-1 de cc29: si el API pidió la casilla, la pantalla tenía cifras viejas (otro reporte
+      // consumió flejes, o cambió el peso por pieza): se recargan para que ofrezca la casilla.
+      if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) invalidate();
+      toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las piezas');
+    },
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
     await report.mutateAsync({
@@ -371,7 +375,12 @@ export function DrywallOrderPanel({
                   reasons={DRYWALL_TOLERANCE_OVERRIDE_REASONS}
                   reasonLabels={DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS}
                   drained="los flejes quedan en 0"
+                  severeHint="revisa las piezas y los flejes montados"
                 />
+                <p>
+                  Si el fleje montado no alcanzó, no confirmes: consume otro fleje antes de
+                  reportar.
+                </p>
               </div>
             )}
           </CardContent>

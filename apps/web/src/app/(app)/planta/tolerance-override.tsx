@@ -85,6 +85,7 @@ export function ToleranceOverrideRow({
   reasons = TOLERANCE_OVERRIDE_REASONS_OVER,
   reasonLabels = TOLERANCE_OVERRIDE_REASON_LABELS,
   drained = 'la bobina queda en 0',
+  severeHint = 'revisa cantidad, largo y bobina',
 }: {
   /** El encabezado del aviso: «Fila 2 de OP-000034 (BOB…)» o «Reporte de OP-000034». */
   title: string;
@@ -99,13 +100,15 @@ export function ToleranceOverrideRow({
   reasonLabels?: Readonly<Partial<Record<string, string>>>;
   /** Lo que queda en 0 al confirmar: «la bobina queda en 0», o «los flejes quedan en 0». */
   drained?: string;
+  /** Qué revisar pasado el 5 %: en drywall no hay largo ni bobina. */
+  severeHint?: string;
 }) {
   const id = `tolerancia-${label.replace(/\W+/g, '-')}`;
   return (
     <div className="grid gap-2" data-severe={excess.severe ? 'true' : 'false'}>
       {excess.severe && (
         <p className="font-semibold">
-          Diferencia mayor al {excess.maxPct} %: revisa cantidad, largo y bobina antes de confirmar.
+          Diferencia mayor al {excess.maxPct} %: {severeHint} antes de confirmar.
         </p>
       )}
       <p>

@@ -252,12 +252,14 @@ describe('ProductionService.report — drywall con la casilla de D-389 (D-465)',
     expect(after.severe).toBe(true);
   });
 
-  it('una casilla dentro del 1 % no deja rastro', async () => {
-    const { service, audit } = build();
+  it('una casilla dentro del 1 % no deja rastro (se topa en lo montado, sin auditoría de casilla)', async () => {
+    const { service, audit, inventory } = build();
+    // 505 piezas = 1 010 kg contra 1 000 kg: 0,99 %, dentro de la tolerancia.
     await service.report(ADMIN, 'o-1', {
-      pieces: 400,
+      pieces: 505,
       toleranceOverride: { reason: 'LIGHTER_STRIP' },
     });
+    expect(outs(inventory)).toEqual(['600.000', '400.000']);
     expect(auditActions(audit)).toEqual(['production.report']);
   });
 });

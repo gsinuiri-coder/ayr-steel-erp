@@ -133,7 +133,11 @@ const INVENTORY: InventoryValuationDto = {
   },
 };
 
-function waste(businessLine: CoilWasteDto['businessLine'], flags: (null | 'x')[][]): CoilWasteDto {
+/** `'x'`: producción marcada sin reporte; otro texto: marcada, con ese id de reporte (D-465). */
+function waste(
+  businessLine: CoilWasteDto['businessLine'],
+  flags: (null | string)[][],
+): CoilWasteDto {
   return {
     from: '2026-10-01',
     to: '2026-10-06',
@@ -157,7 +161,7 @@ function waste(businessLine: CoilWasteDto['businessLine'], flags: (null | 'x')[]
       overStandard: false,
       manualScrapKg: '0.000',
       productions: productions.map((f) => ({
-        reportId: null,
+        reportId: f === null || f === 'x' ? null : f,
         productionOrderId: null,
         productionOrderCode: null,
         operationDate: '2026-10-02',
@@ -173,7 +177,8 @@ function waste(businessLine: CoilWasteDto['businessLine'], flags: (null | 'x')[]
 
 const WASTE = [
   waste(BusinessLine.METALLIC_ROOFING, [['x', null, 'x'], [null], ['x']]),
-  waste(BusinessLine.DRYWALL, []),
+  // Un reporte de drywall que salió de dos flejes aparece en la fila de cada uno: cuenta una vez.
+  waste(BusinessLine.DRYWALL, [['r-1'], ['r-1', 'r-2']]),
 ];
 
 const RANGES = dashboardMonthRanges('2026-10-06');
@@ -266,7 +271,7 @@ describe('assembleAdminDashboard (D-440)', () => {
   it('«Fuera de tolerancia»: las producciones y las bobinas que el reporte de merma marca, por pestaña', () => {
     expect(assemble().outOfTolerance).toEqual([
       { businessLine: BusinessLine.METALLIC_ROOFING, productionCount: 3, coilCount: 2 },
-      { businessLine: BusinessLine.DRYWALL, productionCount: 0, coilCount: 0 },
+      { businessLine: BusinessLine.DRYWALL, productionCount: 2, coilCount: 2 },
     ]);
   });
 });
