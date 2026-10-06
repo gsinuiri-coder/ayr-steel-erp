@@ -25,27 +25,28 @@
     comprobante, con precio de lista y con precio tipeado).
   - **Barrido de pantallas con precio de venta:**
 
-| Pantalla | Qué muestra | Con o sin IGV | Rótulo | Cambio en cc27 |
-| --- | --- | --- | --- | --- |
-| Catálogo (`/catalogo`) | precio de lista | con IGV | «Precio de lista (con IGV)» | — |
-| Catálogo, historial de precios | antes / después | con IGV | «Antes (con IGV)», «Después (con IGV)» | rotulado |
-| Catálogo, alta/edición de producto | valor de lista | sin IGV | «Valor de lista (S/, sin IGV)» | antes «Precio de lista…» (D-162) |
-| Catálogo, aviso del piso; Panel «lista bajo piso» | mínimo | con IGV | «mínimo … con IGV» | rotulado |
-| Cotización y pedido (formulario) | precio unitario | con IGV | «Precio (con IGV)» | — |
-| Cotización y pedido (formulario) | valor por plancha | sin IGV | «valor … por plancha (sin IGV)» | rotulado |
-| Cotización y pedido (formulario) | por metro (convertir) | con IGV | «… por metro con IGV» | rotulado |
-| Cotización y pedido (formulario) | mínimo | con IGV | «Mínimo con IGV» | rotulado |
-| Cotización y pedido (formulario) | totales | sin / con IGV | «Valor de venta», «IGV (18%)», «Precio de venta»; barra fija «Precio de venta (con IGV)» | barra nueva (D-454) |
-| Cotización (detalle) | subtotal / total | sin / con IGV | «Subtotal (sin IGV)», «Total (con IGV)» | rotulado |
-| Pedido (detalle) | subtotal / IGV / total | sin / — / con IGV | «Subtotal (sin IGV)», «IGV», «Total (con IGV)» | rotulado |
-| Pedido, cambiar precio | vista previa | sin / con IGV | «valor de venta … total con IGV … valor unitario» | rotulado |
-| Mostrador (`/pos`) | ficha, unitario, importe, pie | con IGV (pie: sin IGV, IGV, total) | ver M1 | **corregido (UX26-01)** |
-| Comprobante (detalle) | total y pie | sin / con IGV | «Subtotal (sin IGV)», «Total (con IGV)» | rotulado |
-| Comprobante nuevo | valor unitario, totales | sin IGV / con IGV | «Valor unitario (sin IGV)», «Precio de venta» | — |
+| Pantalla                                          | Qué muestra                   | Con o sin IGV                      | Rótulo                                                                                   | Cambio en cc27                   |
+| ------------------------------------------------- | ----------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------- |
+| Catálogo (`/catalogo`)                            | precio de lista               | con IGV                            | «Precio de lista (con IGV)»                                                              | —                                |
+| Catálogo, historial de precios                    | antes / después               | con IGV                            | «Antes (con IGV)», «Después (con IGV)»                                                   | rotulado                         |
+| Catálogo, alta/edición de producto                | valor de lista                | sin IGV                            | «Valor de lista (S/, sin IGV)»                                                           | antes «Precio de lista…» (D-162) |
+| Catálogo, aviso del piso; Panel «lista bajo piso» | mínimo                        | con IGV                            | «mínimo … con IGV»                                                                       | rotulado                         |
+| Cotización y pedido (formulario)                  | precio unitario               | con IGV                            | «Precio (con IGV)»                                                                       | —                                |
+| Cotización y pedido (formulario)                  | valor por plancha             | sin IGV                            | «valor … por plancha (sin IGV)»                                                          | rotulado                         |
+| Cotización y pedido (formulario)                  | por metro (convertir)         | con IGV                            | «… por metro con IGV»                                                                    | rotulado                         |
+| Cotización y pedido (formulario)                  | mínimo                        | con IGV                            | «Mínimo con IGV»                                                                         | rotulado                         |
+| Cotización y pedido (formulario)                  | totales                       | sin / con IGV                      | «Valor de venta», «IGV (18%)», «Precio de venta»; barra fija «Precio de venta (con IGV)» | barra nueva (D-454)              |
+| Cotización (detalle)                              | subtotal / total              | sin / con IGV                      | «Subtotal (sin IGV)», «Total (con IGV)»                                                  | rotulado                         |
+| Pedido (detalle)                                  | subtotal / IGV / total        | sin / — / con IGV                  | «Subtotal (sin IGV)», «IGV», «Total (con IGV)»                                           | rotulado                         |
+| Pedido, cambiar precio                            | vista previa                  | sin / con IGV                      | «valor de venta … total con IGV … valor unitario»                                        | rotulado                         |
+| Mostrador (`/pos`)                                | ficha, unitario, importe, pie | con IGV (pie: sin IGV, IGV, total) | ver M1                                                                                   | **corregido (UX26-01)**          |
+| Comprobante (detalle)                             | total y pie                   | sin / con IGV                      | «Subtotal (sin IGV)», «Total (con IGV)»                                                  | rotulado                         |
+| Comprobante nuevo                                 | valor unitario, totales       | sin IGV / con IGV                  | «Valor unitario (sin IGV)», «Precio de venta»                                            | —                                |
 
     Quedan sin tocar (rotulan bien o no se contradicen): las columnas «Valor de venta», «Valor
     unitario» y «Valor cotizado» (D-162: «valor» es sin IGV), «Gravada» del diálogo de reactivar y
     las listas con «Total».
+
 - **M2 — confirmar antes de cerrar (UX26-03, D-453)** (`75929297`).
   - **Acciones con el patrón:** «Ejecutar y cerrar» (borrador de coberturas), «Reportar y cerrar»
     (accesorio), «Cerrar … sin reportar más» (coberturas y accesorio) y el cierre de drywall. No
