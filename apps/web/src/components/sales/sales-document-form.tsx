@@ -536,9 +536,14 @@ function draftFingerprint(draft: {
   notes: string;
   lines: readonly LineDraft[];
 }): string {
+  const blank = JSON.stringify({ ...emptyLine(0), key: undefined });
   return JSON.stringify({
     ...draft,
-    lines: draft.lines.map(({ key: _key, ...line }) => line),
+    // cc28 (A-9 de cc27): una línea vacía —la que trae el formulario o la que agrega «Agregar
+    // línea»— no es un cambio sin guardar: no hay nada en ella que se pierda.
+    lines: draft.lines
+      .map(({ key: _key, ...line }) => line)
+      .filter((line) => JSON.stringify({ ...line, key: undefined }) !== blank),
   });
 }
 

@@ -1419,7 +1419,7 @@ export class QuotationsService {
     let total: number;
     let rows: Awaited<ReturnType<typeof findPage>>;
     if (query.sort === 'invoice') {
-      [total, rows] = await this.findPageByImportedInvoice(where, include, query, window);
+      [total, rows] = await this.findPageByInvoiceNumber(where, include, query, window);
     } else if (window.maxTotal === undefined) {
       [total, rows] = await Promise.all([this.prisma.quotation.count({ where }), findPage()]);
     } else {
@@ -1505,7 +1505,7 @@ export class QuotationsService {
    * id, número, observaciones y comprobantes vigentes de **todas** las filas del filtro, se
    * ordenan con `orderByInvoiceNumber` y se pide la página por id. Solo con esta clave.
    */
-  private async findPageByImportedInvoice<I extends Prisma.QuotationInclude>(
+  private async findPageByInvoiceNumber<I extends Prisma.QuotationInclude>(
     where: Prisma.QuotationWhereInput,
     include: I,
     query: QuotationExportQuery,
