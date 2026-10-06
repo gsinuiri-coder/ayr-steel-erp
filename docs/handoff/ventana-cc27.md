@@ -8,7 +8,10 @@
 - **Sesión desatendida:** rigen D-445 y el brief de cc27 (ambigüedad → D-nnn provisional, UAT
   aprobado por defecto, directo a producción, ventana 20:00–07:00 de Lima).
 - **Hitos:** M1, M2, M3 y M4 hechos; nada sacrificado.
-- **Estado final:** (se completa en la ventana).
+- **Estado final: desplegada, sin vuelta atrás.** Ventana del martes 6 entre las 09:26 y las 09:34
+  de Lima, por D-458 (el dueño pidió desplegar apenas estuviera lista). API
+  `ayr-steel-erp-api-00092-kzx` (`git-sha=f336478e`) al 100 %, `main` = `daab3a3a`, `smoke:prod`
+  8/8 en los dos dominios.
 
 ## Hitos
 
@@ -109,7 +112,16 @@
   - M4: 11 passed, con el Panel de cc26, el menú de D-326 y los Excel;
   - tras las correcciones: 22 passed.
 - **UAT:** aprobado por defecto (brief). Guion para el dueño en `docs/uat/cc27.md`.
-- **CI del PR:** (se completa).
+- **CI del PR:** run 37474665215 sobre `f336478e`, en verde (lint, unitarios, Sonar, E2E completo
+  en el runner y smoke de Neon `ci`). Antes hubo dos corridas con rojos propios, corregidos:
+  - 37470030503 (541 passed, 2 failed): `fase2a` encontraba dos veces «S/ 36,580.00» porque la
+    barra fija de la compra repetía el total (`87374011`: la barra ya no lleva totales); y
+    `reportes-por-linea-cc23` sumaba las pestañas 0.0017 por debajo de «Todas» por el comprobante
+    de prueba del mostrador con precio tipeado (`86545a56`: el E2E usa un precio de céntimos
+    exactos; la diferencia del reporte es previa y queda en PROGRESO);
+  - 37474257731: Prettier del handoff (`f336478e`).
+- **Rojo local de infraestructura:** `fase2a` RF-11 (carga de XML) no encontró «Leído del XML» en
+  local; en la CI pasa y el diff no toca esa pantalla ni su API.
 
 ## Resumen de D-232 (antes de la ventana)
 
@@ -128,8 +140,37 @@
 
 ## Ventana
 
-(Se completa.)
+Martes 6 de octubre, 09:26–09:34 de Lima, por D-458 (sin esperar a las 20:00). Rigen D-411/D-445.
+
+1. **CI del PR en verde** (run 37474665215 sobre `f336478e`).
+2. **Vuelta atrás anotada:** API `ayr-steel-erp-api-00091-k2m` (`git-sha=f86d74a6`) al 100 % y
+   `main` en `aa36d935`. **Migraciones: 0.**
+3. **API:** `pnpm deploy:api --web-origin https://v2.mareliac.pe,https://ayr-steel-erp-web.vercel.app`
+   desde el worktree limpio en `f336478e`, con `AYR_ENV_SETUP` apuntando al checkout principal. Sin
+   P1001. Revisión **`ayr-steel-erp-api-00092-kzx`**, `git-sha=f336478e`, al 100 %
+   (`latestRevision: true`); `/health` = `{"status":"ok","db":"ok"}` por `v2.mareliac.pe`;
+   `/api/reports/seller-dashboard` responde 401 sin sesión (la ruta existe).
+4. **Merge del #113:** `main` = **`daab3a3a`**. `git diff --quiet f336478e origin/main -- apps
+packages …` dio exit 0: sin diff de runtime. Vercel en `success` para `daab3a3a`.
+5. **`smoke:prod`:** 8/8 en `ayr-steel-erp-web.vercel.app` y 8/8 en `v2.mareliac.pe`, desde el
+   worktree en `f336478e`.
+6. **Vuelta atrás:** no hizo falta. Si el dueño la necesita, son las dos juntas:
+   `cmd /c gcloud run services update-traffic ayr-steel-erp-api --region us-central1 --project ayr-steel-erp --to-revisions ayr-steel-erp-api-00091-k2m=100`
+   y un commit de revert del merge `daab3a3a` en `main`. Ojo: ese `update-traffic` deja el tráfico
+   fijado; el deploy siguiente necesita `--to-latest` (cc26).
+
+Salidas: `local-data/cc27/` del checkout principal (deploy y los dos smokes).
 
 ## Para el dueño
 
-(Se completa.)
+1. **Qué revisar en producción** (`https://v2.mareliac.pe`): el guion de `docs/uat/cc27.md`. Lo
+   principal: el mismo SKU con el mismo precio en catálogo y mostrador; «Ejecutar y cerrar» abre el
+   resumen y «Volver» no cambia nada; salir de una cotización a medio escribir avisa; el Panel de un
+   vendedor.
+2. **Decisiones provisionales por confirmar:** D-452..D-457 (ver §0.2). Para decidir aparte:
+   colapsar el menú por defecto a ≤ 1440 (D-456) y si un pedido anulado cuenta como conversión
+   (D-457).
+3. **Reporte de ventas por línea:** con precios cargados con IGV (cotizaciones, y ahora el
+   mostrador), la pestaña puede quedar unos diezmilésimos por debajo de «Todas»; previo a cc27, en
+   PROGRESO.
+4. **Ramas remotas para borrar:** `cc26-panel-excel-ux` y `docs/cierre-cc26` (de cc26).
