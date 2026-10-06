@@ -7,7 +7,8 @@
 - **Corte 1 (PR #118):** M1, drywall con la casilla de D-389. API `ayr-steel-erp-api-00095-q6m`
   (`git-sha=fc28720c`), `main` `8ce80ac8`, `smoke:prod` verde en los dos dominios.
 - **Corte 2 (PR #119):** M2 reporte de producción y M3 sobrante de bobina terminada, completos.
-  Estado final: (se completa).
+  API `ayr-steel-erp-api-00096-zt9` (`git-sha=bb9cf2dc`), `main` `47f6e733`, `smoke:prod` 8/8 en
+  los dos dominios.
 - Decisiones: D-463..D-466 (del dueño), D-467..D-469 provisionales.
 
 ## Corte 1 — M1
@@ -44,6 +45,15 @@
   al almacén» y, pasado el 10 % de lo montado, «¿Sigue en el almacén para otra OP?».
 - Revisiones: autorrevisión 0 P0, 2 P1; segundo modelo 0 P0, 1 P1. Corregidos los P1 (bobina vendida
   o partida; orden de bloqueos al bajar) y P2/P3 triviales. El resto, en PROGRESO.
+- **Tests:** unitarios de API y web en verde; E2E locales con build de producción 30 passed y, tras
+  las correcciones, 6 passed; `lock-order.db-spec` completo 22/22 local. La CI del PR #119 falló una
+  vez en `lock-order.db-spec` (infraestructura del test: la fixture del agregado generaba espesores
+  únicos de 0,05 mm y con los pares nuevos pasaba de 9,99 mm, el tope del SKU); con paso de 0,03 mm
+  (más que la tolerancia de ±0,02) quedó verde (run 37542759411).
+- **Ventana (18:13–18:25 de Lima):** vuelta atrás anotada `00095-q6m` / `8ce80ac8`; API
+  `00096-zt9` con `git-sha=bb9cf2dc` al 100 % y `/health` ok; merge del #119: `main` = `47f6e733`,
+  sin diff de runtime; Vercel en `success`; `smoke:prod` 8/8 en los dos dominios.
+- Salidas: `local-data/cc29/` del checkout principal (deploys, smokes, logs de E2E y de CI).
 
 ## Decisiones
 
@@ -54,4 +64,11 @@
 
 ## Para el dueño
 
-(Se completa.)
+1. **Revisar en producción** el guion de `docs/uat/cc29.md` (dos secciones, una por corte).
+2. **Decisiones provisionales:** D-467 (drywall ofrece «Fleje más pesado»), D-468 (criterio del
+   reporte de producción: kardex del rango, despunte en el rango de su fecha) y D-469 (costo del
+   sobrante = el de D-164, no 0; `refId` al montaje; reversa al bajar; aviso solo en coberturas).
+3. **Quedó fuera** (en PROGRESO con su id): A-2/SM-2 del corte 1 (la casilla no se compara con el
+   exceso del momento, también en coberturas), A-3, A-5, A-6, SM-2 y SM-4 del corte 2, y los P3.
+4. **Ramas:** `cc29-produccion` y `cc29-corte2` borradas con `gh api`; `docs/cierre-cc29` se borra al
+   mergear este PR. Neon: no se creó ni se borró ninguna rama.

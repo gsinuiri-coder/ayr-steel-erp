@@ -2,7 +2,15 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-06 — cc29: producción (en curso, rama `cc29-produccion`)
+## 2026-10-06 — Ventanas cc29: producción (D-463..D-469, PR #118 y #119, sin migración)
+
+Dos cortes desplegados el mismo día sin ventana. Detalle en `docs/handoff/ventana-cc29.md`.
+
+- **Corte 2 desplegado (18:13–18:25 de Lima):** API `ayr-steel-erp-api-00096-zt9`
+  (`git-sha=bb9cf2dc`), `main` `47f6e733` (PR #119), `smoke:prod` 8/8 en los dos dominios.
+- **Neon:** no se creó ni se borró ninguna rama.
+
+Registro de la sesión:
 
 Sesión desatendida; brief de cc29 (dos cortes, hoy sin ventana). Estado al arrancar: `main` =
 `ecb4886a` (CI en verde), API `ayr-steel-erp-api-00094-b96` (`git-sha=abc080a7`), próxima D libre
