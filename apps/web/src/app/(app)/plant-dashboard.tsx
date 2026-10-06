@@ -31,7 +31,9 @@ export function PlantDashboard() {
     queryKey: ['report', 'plant-dashboard'],
     queryFn: () => api<PlantDashboardDto>('/reports/plant-dashboard'),
     enabled: isPlant,
-    refetchInterval: 60_000,
+    // Cuesta cuatro lecturas de merma y la lista de bobinas: se refresca al volver, no cada minuto
+    // (autorrevisión cc26, A-3).
+    staleTime: 5 * 60_000,
   });
 
   if (!isPlant) return null;

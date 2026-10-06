@@ -127,11 +127,8 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
         <LinkStat href={salesMarginHref(d.current)} label="Ventas del mes sin IGV">
           <span className="text-base font-semibold">{money0(d.sales.salesPen)}</span>
           <span className="block text-xs font-normal text-muted-foreground">
-            {variation === null
-              ? 'Sin ventas'
-              : `${Number(variation) >= 0 ? '+' : ''}${variation} %`}{' '}
-            vs. {money0(d.previousSalesPen)} del 1 al {Number(d.previous.to.slice(8))} del mes
-            anterior
+            {variation === null ? 'Sin ventas en el mismo tramo' : `${variation} %`} vs.{' '}
+            {money0(d.previousSalesPen)} del 1 al {Number(d.previous.to.slice(8))} del mes anterior
           </span>
         </LinkStat>
         <LinkStat

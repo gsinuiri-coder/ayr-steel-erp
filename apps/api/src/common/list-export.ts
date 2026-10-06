@@ -1,6 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import type { Response } from 'express';
-import { LIST_XLSX_MAX_ROWS, listExportTooLargeMessage, toSkipTake } from '@ayr/shared';
+import {
+  DERIVED_FILTER_FETCH_CAP,
+  LIST_XLSX_MAX_ROWS,
+  listExportTooLargeMessage,
+  toSkipTake,
+} from '@ayr/shared';
 
 /**
  * cc26 (D-provisional): la ventana de filas que pide un listado paginado.
@@ -37,9 +42,21 @@ export function assertExportable(total: number, window: ListWindow): void {
 }
 
 /**
- * Envía un xlsx como descarga. Es el mismo `sendXlsx` privado de `reports.controller.ts`; el de
- * reportes queda donde está hasta que se unifiquen.
+ * cc26 (segundo modelo, P2 R1). Un filtro derivado (`pendingOnly`, `onlyWithBalance`) se aplica
+ * en memoria sobre un universo que la consulta ya cortó en `DERIVED_FILTER_FETCH_CAP`. Si ese
+ * universo llegó al corte, puede haber filas que cumplen el filtro y quedaron fuera: la lista lo
+ * arrastra desde antes, pero la exportación no puede entregar un archivo incompleto (D-446), así
+ * que responde 400. La lista paginada no cambia.
  */
+export function assertDerivedUniverseComplete(fetched: number, window: ListWindow): void {
+  if (window.maxTotal !== undefined && fetched >= DERIVED_FILTER_FETCH_CAP) {
+    throw new BadRequestException(
+      `La exportación con este filtro parte de más de ${String(DERIVED_FILTER_FETCH_CAP)} filas y podría quedar incompleta: acota los filtros.`,
+    );
+  }
+}
+
+/** Envía un xlsx como descarga (listas y reportes). */
 export function sendXlsx(res: Response, file: { buffer: Buffer; filename: string }): void {
   res.setHeader(
     'Content-Type',

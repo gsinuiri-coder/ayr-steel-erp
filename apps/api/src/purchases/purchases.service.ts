@@ -85,7 +85,13 @@ import {
   toPurchaseCurrency,
 } from './purchase-math';
 import { purchaseOrderBy } from '../common/list-orderings';
-import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
+import {
+  assertDerivedUniverseComplete,
+  assertExportable,
+  exportWindow,
+  pageWindow,
+  type ListWindow,
+} from '../common/list-export';
 
 /** Compras a proveedor (D-030): registro → recepción → cuenta por pagar → pagos. */
 @Injectable()
@@ -1475,6 +1481,7 @@ export class PurchasesService {
       .map((p) => toListDto(p))
       .filter((p) => toDecimal(p.balance).gt(0));
     // cc26: en la exportación, el tope se mide sobre las filas con saldo, antes de cortar.
+    assertDerivedUniverseComplete(purchases.length, window);
     assertExportable(withBalance.length, window);
     return { items: withBalance.slice(skip, skip + take), total: withBalance.length };
   }

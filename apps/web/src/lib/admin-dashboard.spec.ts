@@ -18,9 +18,11 @@ describe('Panel del administrador', () => {
   });
 
   it('la variación contra el mismo tramo del mes anterior; sin base, no hay porcentaje', () => {
-    expect(variationPct('1100.0000', '1000.0000')).toBe('10.0');
+    expect(variationPct('1100.0000', '1000.0000')).toBe('+10.0');
     expect(variationPct('900.0000', '1000.0000')).toBe('-10.0');
     expect(variationPct('900.0000', '0.0000')).toBeNull();
+    // Una caída que redondea a cero no se muestra «+-0.0» (autorrevisión cc26, A-5).
+    expect(variationPct('999.9999', '1000.0000')).toBe('0.0');
   });
 
   it('cada enlace lleva el rango de la cifra y la pestaña de la línea', () => {

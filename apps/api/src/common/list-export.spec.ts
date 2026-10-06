@@ -1,11 +1,16 @@
 import { BadRequestException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PATH_METADATA } from '@nestjs/common/constants';
-import { LIST_XLSX_MAX_ROWS, Role } from '@ayr/shared';
+import { DERIVED_FILTER_FETCH_CAP, LIST_XLSX_MAX_ROWS, Role } from '@ayr/shared';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { InvoicingController } from '../invoicing/invoicing.controller';
 import { SalesController } from '../sales/sales.controller';
-import { assertExportable, exportWindow, pageWindow } from './list-export';
+import {
+  assertDerivedUniverseComplete,
+  assertExportable,
+  exportWindow,
+  pageWindow,
+} from './list-export';
 
 /**
  * cc26 (D-provisional): las rutas de Excel de las listas. Mismos roles que la lista (heredados del
@@ -110,5 +115,22 @@ describe('los controladores entregan el archivo con el rol del usuario', () => {
       'Content-Disposition',
       expect.stringMatching(/^attachment; filename="cotizaciones-\d{4}-\d{2}-\d{2}\.xlsx"$/),
     );
+  });
+});
+
+describe('filtro derivado sobre un universo cortado (segundo modelo cc26, P2 R1)', () => {
+  it('la exportación da 400 si el universo llegó al corte; la lista no cambia', () => {
+    expect(() => {
+      assertDerivedUniverseComplete(DERIVED_FILTER_FETCH_CAP, exportWindow());
+    }).toThrow(BadRequestException);
+    expect(() => {
+      assertDerivedUniverseComplete(DERIVED_FILTER_FETCH_CAP - 1, exportWindow());
+    }).not.toThrow();
+    expect(() => {
+      assertDerivedUniverseComplete(
+        DERIVED_FILTER_FETCH_CAP,
+        pageWindow({ page: 1, pageSize: 50 }),
+      );
+    }).not.toThrow();
   });
 });

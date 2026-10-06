@@ -25,11 +25,16 @@ export function fillDays(
   return days;
 }
 
-/** Variación del mes en curso contra el mismo tramo del anterior (D-443), en %; sin base, nulo. */
+/**
+ * Variación del mes en curso contra el mismo tramo del anterior (D-443), en %, con su signo y un
+ * decimal («+10.0», «-3.2», «0.0»: lo que redondea a cero no lleva signo). Sin base, nulo.
+ */
 export function variationPct(current: string, previous: string): string | null {
   const base = toDecimal(previous);
   if (base.lte(0)) return null;
-  return toDecimal(current).minus(base).div(base).times(100).toFixed(1);
+  const pct = toDecimal(current).minus(base).div(base).times(100).toDecimalPlaces(1);
+  if (pct.isZero()) return '0.0';
+  return `${pct.gt(0) ? '+' : ''}${pct.toFixed(1)}`;
 }
 
 /** El reporte de ventas y margen para un rango (y una pestaña), los parámetros de D-395/D-401. */

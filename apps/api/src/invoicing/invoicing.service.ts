@@ -91,7 +91,13 @@ import {
   type ProviderResult,
 } from './ports/electronic-invoicing.port';
 import { fiscalDocumentOrderBy } from '../common/list-orderings';
-import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
+import {
+  assertDerivedUniverseComplete,
+  assertExportable,
+  exportWindow,
+  pageWindow,
+  type ListWindow,
+} from '../common/list-export';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -3146,6 +3152,7 @@ export class InvoicingService {
     const pending = (await this.toListDtos(rows)).filter((d) =>
       hasCollectibleBalance(d.balancePen),
     );
+    assertDerivedUniverseComplete(rows.length, window);
     assertExportable(pending.length, window);
     // Los despachos, recién sobre la página ya cortada: no sobre todo el universo del tope.
     const page = pending.slice(window.skip, window.skip + window.take);
