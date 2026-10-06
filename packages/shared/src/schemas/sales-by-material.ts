@@ -277,12 +277,6 @@ export const salesByMaterialSchema = z.object({
    */
   reconciliation: z.object({
     lineSalesPen: z.string(),
-    /**
-     * Alias de `lineSalesPen` con el nombre anterior a cc24, solo para que la web vieja no se
-     * rompa entre el deploy de la API y el merge (convivencia de versiones). Retirarlo en la
-     * pieza siguiente.
-     */
-    roofingSalesPen: z.string().optional(),
     coilSalesPen: z.string(),
     unclassifiedSalesPen: z.string(),
   }),
