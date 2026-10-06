@@ -116,16 +116,19 @@ const FIGURES = {
 const BY_MATERIAL: SalesByMaterialDto = {
   from: '2026-09-01',
   to: '2026-09-30',
+  businessLine: 'metallic-roofing',
   rows: [],
   subtotals: [],
   total: FIGURES,
   untraceable: [],
   untraceableSalesPen: '0.0000',
   reconciliation: {
-    roofingSalesPen: '0.0000',
+    lineSalesPen: '0.0000',
     coilSalesPen: '0.0000',
     unclassifiedSalesPen: '0.0000',
   },
+  noLineSalesPen: '0.0000',
+  products: null,
 };
 
 const EMPTY_SECTION = {
@@ -135,6 +138,7 @@ const EMPTY_SECTION = {
 
 const COIL_MONTH: CoilMonthReportDto = {
   month: '2026-08',
+  businessLine: null,
   from: '2026-08-01',
   to: '2026-08-31',
   sealed: EMPTY_SECTION,

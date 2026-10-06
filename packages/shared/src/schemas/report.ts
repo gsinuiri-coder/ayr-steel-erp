@@ -86,6 +86,8 @@ export type CoilMonthReportSectionDto = z.infer<typeof coilMonthReportSectionSch
  */
 export const coilMonthReportSchema = z.object({
   month: monthSchema,
+  /** cc24 (D-408): la línea filtrada (la pestaña); `null` sin filtro, las dos líneas. */
+  businessLine: z.enum(BUSINESS_LINES).nullable(),
   /** Primer y último día del mes, `YYYY-MM-DD`, para rotular el corte sin recalcularlo. */
   from: z.string(),
   to: z.string(),
@@ -328,7 +330,11 @@ export const salesMarginOrderSchema = z.object({
   /** Margen sobre venta en puntos porcentuales (§7). Null si el costo no es comparable. */
   marginPct: z.string().nullable(),
   costStatus: z.enum(MARGIN_COST_STATUSES),
-  /** Falso en `NO_COMPARABLE`: la fila se ve pero no suma. */
+  /**
+   * Falso en `NO_COMPARABLE` y `NO_RASTREABLE`: la fila se ve pero no suma. D-412: en la
+   * pestaña de una línea sin costo registrado (Servicios) siempre es verdadero, porque esa
+   * venta no depende del costo de las otras líneas del pedido.
+   */
   inTotals: z.boolean(),
   documents: z.array(salesMarginDocumentSchema),
 });
@@ -355,11 +361,20 @@ export const salesMarginSchema = z.object({
   orders: z.array(salesMarginOrderSchema),
   totalsByLine: z.array(salesMarginLineTotalSchema),
   totals: z.object({
+    /** Toda la venta de los totales, Servicios incluida (D-409). */
     salesPen: z.string(),
+    /**
+     * D-409 y D-419: la parte de `salesPen` sin costo registrado: Servicios (D-392) y, en «Todas»,
+     * la venta «Sin línea» (líneas sin producto, D-398). Se muestra aparte y no entra al margen:
+     * `marginPen` y `marginPct` se calculan sobre `salesPen − noCostSalesPen`. En la pestaña de
+     * Servicios es toda su venta.
+     */
+    noCostSalesPen: z.string(),
     costPen: z.string(),
     marginPen: z.string(),
     /**
-     * Margen **sobre venta** (§7), o `null` cuando la venta no es positiva.
+     * Margen **sobre venta** (§7), sin la venta de Servicios (D-409), o `null` cuando esa
+     * venta no es positiva.
      *
      * Con base cero no hay porcentaje, y con base negativa —un rango cuya única actividad en
      * ese grupo es la nota de crédito que anula una venta anterior— la fórmula devuelve

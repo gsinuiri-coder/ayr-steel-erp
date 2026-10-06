@@ -61,9 +61,13 @@ export function VentasMargenView() {
   });
 
   const cols: Columns = { cost: !noCost, opMaterial: line === undefined };
-  const excluded = report.data?.orders.filter((o) => o.costStatus === 'NO_COMPARABLE') ?? [];
+  // D-412: en Servicios, la venta suma aunque el pedido tenga un costo no comparable o no
+  // rastreable por otra línea (`inTotals`); esas secciones son solo de lo que quedó fuera.
+  const excluded =
+    report.data?.orders.filter((o) => !o.inTotals && o.costStatus === 'NO_COMPARABLE') ?? [];
   // D-285: despachados sin salida de kardex; su costo no se puede rastrear.
-  const untraceable = report.data?.orders.filter((o) => o.costStatus === 'NO_RASTREABLE') ?? [];
+  const untraceable =
+    report.data?.orders.filter((o) => !o.inTotals && o.costStatus === 'NO_RASTREABLE') ?? [];
   const included = report.data?.orders.filter((o) => o.inTotals) ?? [];
 
   return (
@@ -141,11 +145,30 @@ export function VentasMargenView() {
         </StatStrip>
       )}
       {report.data && !noCost && (
-        <StatStrip className="sm:grid-cols-2 lg:grid-cols-4">
+        <StatStrip
+          className={
+            line === undefined ? 'sm:grid-cols-2 lg:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'
+          }
+        >
           <Stat label="Venta sin IGV">{formatMoney(report.data.totals.salesPen)}</Stat>
+          {/* D-409/D-419: en «Todas», la venta sin costo registrado (Servicios y líneas sin producto)
+              suma a la venta y queda fuera del margen. */}
+          {line === undefined && (
+            <Stat label="Sin costo registrado (Servicios y líneas sin producto)">
+              {formatMoney(report.data.totals.noCostSalesPen)}
+            </Stat>
+          )}
           <Stat label="Costo de venta">{formatMoney(report.data.totals.costPen)}</Stat>
-          <Stat label="Margen">{formatMoney(report.data.totals.marginPen)}</Stat>
-          <Stat label="Margen %">
+          <Stat
+            label={line === undefined ? 'Margen (sin Servicios ni líneas sin producto)' : 'Margen'}
+          >
+            {formatMoney(report.data.totals.marginPen)}
+          </Stat>
+          <Stat
+            label={
+              line === undefined ? 'Margen % (sin Servicios ni líneas sin producto)' : 'Margen %'
+            }
+          >
             {report.data.totals.marginPct === null ? '—' : `${report.data.totals.marginPct} %`}
           </Stat>
         </StatStrip>
@@ -223,6 +246,7 @@ export function VentasMargenView() {
                 declaran su despacho. Su costo cubre más venta que la que se ve acá, así que se
                 muestra la venta y se deja el costo vacío: quedan fuera de los totales de arriba
                 (venta excluida: {formatMoney(report.data.totals.excludedSalesPen)}).
+                {line === undefined && SERVICES_STILL_COUNT}
               </p>
               <div className="overflow-x-auto rounded-md border">
                 <Table>
@@ -264,6 +288,7 @@ export function VentasMargenView() {
                 Estos pedidos se despacharon sin su salida de inventario, así que no se sabe su
                 costo. Quedan fuera de los totales de arriba (venta excluida:{' '}
                 {formatMoney(report.data.totals.untraceableSalesPen)}).
+                {line === undefined && SERVICES_STILL_COUNT}
               </p>
               <div className="overflow-x-auto rounded-md border">
                 <Table>
@@ -319,9 +344,9 @@ export function VentasMargenView() {
                             : BUSINESS_LINE_LABELS[t.businessLine]}
                         </TableCell>
                         <TableCell className="text-right">{formatMoney(t.salesPen)}</TableCell>
-                        {t.businessLine !== null &&
+                        {t.businessLine === null ||
                         NO_COST_REPORT_LINES.includes(t.businessLine) ? (
-                          // D-392: la venta de Servicios suma igual; su costo no está registrado.
+                          // D-392/D-419: Servicios y «Sin línea» suman igual; su costo no está registrado.
                           <TableCell colSpan={3} className="text-right text-muted-foreground">
                             {NO_COST_LABEL}
                           </TableCell>
@@ -447,6 +472,10 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** D-392: lo que se declara en lugar del costo y el margen de Servicios. */
 const NO_COST_LABEL = 'Sin costo registrado';
+
+/** D-412: por qué la venta de la fila puede ser mayor que la venta excluida. */
+const SERVICES_STILL_COUNT =
+  ' Si alguno de estos pedidos tiene venta de Servicios, esa venta no depende del costo y sí suma arriba.';
 
 /** Primer día del mes de negocio en curso, que es el rango por defecto más útil. */
 function firstOfMonth(): string {

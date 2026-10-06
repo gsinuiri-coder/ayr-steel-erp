@@ -93,7 +93,7 @@ export function salesByMaterialXlsx(report: SalesByMaterialDto): {
   // El cuadre por comprobante, sin filtros (ver la leyenda de la pantalla).
   main.rows.push([
     'Venta de Coberturas Aluzinc facturada en el rango (S/)',
-    num(report.reconciliation.roofingSalesPen),
+    num(report.reconciliation.lineSalesPen),
   ]);
   main.rows.push([
     'Venta de bobinas enteras de Coberturas Aluzinc (S/)',

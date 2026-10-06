@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import {
   BUSINESS_LINE_LABELS,
+  NO_COST_REPORT_LINES,
   COIL_STATUS_LABELS,
   coilGroupLabel,
   FISCAL_DOC_TYPE_LABELS,
@@ -223,21 +224,30 @@ export function salesMarginXlsx(report: SalesMarginDto): { buffer: Buffer; filen
     header: ['Línea', 'Venta sin IGV (S/)', 'Costo (S/)', 'Margen (S/)', 'Margen %'],
     widths: [30, 18, 14, 14, 10],
     rows: [
-      ...report.totalsByLine.map((t) => [
-        t.businessLine === null
-          ? 'Sin línea (servicios y ajustes)'
-          : BUSINESS_LINE_LABELS[t.businessLine],
-        num(t.salesPen),
-        num(t.costPen),
-        num(t.marginPen),
-        num(t.marginPct),
-      ]),
+      ...report.totalsByLine.map((t) => {
+        const label =
+          t.businessLine === null
+            ? 'Sin línea (servicios y ajustes)'
+            : BUSINESS_LINE_LABELS[t.businessLine];
+        // D-392/D-409/D-419: Servicios y «Sin línea» no tienen costo registrado y quedan fuera del margen; su fila
+        // no muestra un costo 0 con margen del 100 %, igual que en la pantalla.
+        return t.businessLine === null || NO_COST_REPORT_LINES.includes(t.businessLine)
+          ? [label, num(t.salesPen), null, null, null]
+          : [label, num(t.salesPen), num(t.costPen), num(t.marginPen), num(t.marginPct)];
+      }),
       [
-        'Total del rango',
+        'Total del rango (margen sin Servicios ni líneas sin producto)',
         num(report.totals.salesPen),
         num(report.totals.costPen),
         num(report.totals.marginPen),
         num(report.totals.marginPct),
+      ],
+      [
+        'Sin costo registrado (Servicios y líneas sin producto), fuera del margen',
+        num(report.totals.noCostSalesPen),
+        null,
+        null,
+        null,
       ],
       [],
       ['Pedidos con costo parcial', report.totals.partialOrderCount, null, null, null],

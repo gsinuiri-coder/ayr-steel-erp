@@ -12,6 +12,7 @@ function report(withCosts: boolean): CoilMonthReportDto {
   };
   return {
     month: '2026-09',
+    businessLine: null,
     from: '2026-09-01',
     to: '2026-09-30',
     sealed: { rows: [], totals: { ...totals, openingKg: '0.000', closingKg: '0.000' } },

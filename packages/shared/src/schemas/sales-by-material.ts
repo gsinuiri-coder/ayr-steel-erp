@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { operationDateSchema } from './operation';
+import { SALES_BY_MATERIAL_LINES } from './report-lines';
 
 /**
  * D-354 — «Ventas por material» de Coberturas Aluzinc (correcciones 05, punto 5).
@@ -11,7 +12,13 @@ import { operationDateSchema } from './operation';
  * cerrarla, D-089), prorrateados por lo facturado neto ÷ lo producido de la línea. Lo que no se
  * puede trazar va aparte, con su motivo, y nunca se estima (criterio de D-243).
  */
-export const SALES_MATERIAL_KINDS = ['COBERTURA', 'ACCESORIO', 'BOBINA', 'PLANCHA'] as const;
+export const SALES_MATERIAL_KINDS = [
+  'COBERTURA',
+  'ACCESORIO',
+  'BOBINA',
+  'PLANCHA',
+  'PERFIL',
+] as const;
 export type SalesMaterialKind = (typeof SALES_MATERIAL_KINDS)[number];
 
 export const SALES_MATERIAL_KIND_LABELS: Record<SalesMaterialKind, string> = {
@@ -19,6 +26,8 @@ export const SALES_MATERIAL_KIND_LABELS: Record<SalesMaterialKind, string> = {
   ACCESORIO: 'Accesorios',
   BOBINA: 'Bobinas (venta entera)',
   PLANCHA: 'Planchas',
+  // cc24 (D-414): los perfiles de Drywall que se fabrican desde fleje.
+  PERFIL: 'Perfiles',
 };
 
 /**
@@ -58,6 +67,8 @@ export const salesByMaterialQuerySchema = z
   .object({
     from: operationDateSchema,
     to: operationDateSchema,
+    /** cc24 (D-406, D-407): la pestaña; sin ella, Coberturas Aluzinc. */
+    businessLine: z.enum(SALES_BY_MATERIAL_LINES).optional(),
     kind: z.enum(SALES_MATERIAL_KINDS).optional(),
     /** Espesor del producto vendido, en mm (`0.30`). */
     thicknessMm: thicknessFilterSchema.optional(),
@@ -176,9 +187,77 @@ export const salesMaterialUntraceableSchema = z.object({
 });
 export type SalesMaterialUntraceableDto = z.infer<typeof salesMaterialUntraceableSchema>;
 
+/**
+ * cc24 (D-417): por qué la venta de un producto sin bobina (Coberturas UPVC, Reventa) no tiene
+ * costo trazable.
+ *
+ * - `SIN_DESPACHO_DECLARADO`: ningún despacho declara el comprobante (D-205/D-213), así que no se
+ *   sabe qué salida de kardex le corresponde.
+ * - `DESPACHO_PARCIAL`: se despachó, contra ese comprobante, menos de lo facturado; la parte
+ *   despachada sí se traza.
+ * - `NOTA_CREDITO`: la nota de crédito resta venta; el costo vuelve, si vuelve, con la reversa
+ *   del despacho del comprobante que afecta.
+ * - `SIN_SALIDA_KARDEX`: el despacho declarado tiene ítems sin salida de kardex (D-285): con
+ *   costo 0 el margen sería del 100 %.
+ */
+export const SALES_PRODUCT_UNTRACEABLE_REASONS = [
+  'SIN_DESPACHO_DECLARADO',
+  'DESPACHO_PARCIAL',
+  'NOTA_CREDITO',
+  'SIN_SALIDA_KARDEX',
+] as const;
+export type SalesProductUntraceableReason = (typeof SALES_PRODUCT_UNTRACEABLE_REASONS)[number];
+
+export const SALES_PRODUCT_UNTRACEABLE_LABELS: Record<SalesProductUntraceableReason, string> = {
+  SIN_DESPACHO_DECLARADO: 'Ningún despacho declara el comprobante',
+  DESPACHO_PARCIAL: 'Despacho parcial: la parte no despachada',
+  NOTA_CREDITO: 'Nota de crédito (resta venta)',
+  SIN_SALIDA_KARDEX: 'Despachado sin salida de kardex',
+};
+
+/** cc24 (D-417): una fila por producto, con el costo de kardex de lo despachado. */
+export const salesProductRowSchema = z.object({
+  sku: z.string(),
+  name: z.string(),
+  /** Unidad de venta (`MTR`, `NIU`, `KGM`…). */
+  unit: z.string(),
+  /** Cantidad trazada, en la unidad de venta. */
+  qty: z.string(),
+  salesPen: z.string(),
+  costPen: z.string(),
+  profitPen: z.string(),
+  /** Costo ÷ cantidad; null con cantidad 0. */
+  costPerUnitPen: z.string().nullable(),
+  /** Cuántas líneas de comprobante suman en la fila. */
+  lineCount: z.number().int(),
+});
+export type SalesProductRowDto = z.infer<typeof salesProductRowSchema>;
+
+export const salesProductUntraceableSchema = z.object({
+  reason: z.enum(SALES_PRODUCT_UNTRACEABLE_REASONS),
+  documentId: z.string().uuid(),
+  documentNumber: z.string().nullable(),
+  issueDate: z.string(),
+  orderCode: z.string().nullable(),
+  sku: z.string(),
+  unit: z.string(),
+  qty: z.string(),
+  salesPen: z.string(),
+});
+export type SalesProductUntraceableDto = z.infer<typeof salesProductUntraceableSchema>;
+
+export const salesByProductSchema = z.object({
+  rows: z.array(salesProductRowSchema),
+  total: z.object({ salesPen: z.string(), costPen: z.string(), profitPen: z.string() }),
+  untraceable: z.array(salesProductUntraceableSchema),
+});
+export type SalesByProductDto = z.infer<typeof salesByProductSchema>;
+
 export const salesByMaterialSchema = z.object({
   from: z.string(),
   to: z.string(),
+  /** cc24: la línea del reporte (la pestaña). */
+  businessLine: z.enum(SALES_BY_MATERIAL_LINES),
   rows: z.array(salesMaterialRowSchema),
   subtotals: z.array(salesMaterialSubtotalSchema),
   /** Total de las filas trazables. */
@@ -186,19 +265,37 @@ export const salesByMaterialSchema = z.object({
   untraceable: z.array(salesMaterialUntraceableSchema),
   untraceableSalesPen: z.string(),
   /**
-   * Cuadre con «Ventas y margen», sin filtros de tipo/espesor/color: la venta de las líneas de
-   * Coberturas Aluzinc (coberturas, accesorios y planchas, trazable + no trazable) y la de las
-   * bobinas enteras de Coberturas Aluzinc, que allá caen en la línea `trading` (D-247). Una
-   * venta de bobina entera cuya línea de pedido no apunta a una bobina no se puede atribuir a
-   * una línea de negocio y no entra.
+   * Cuadre con «Ventas y margen», sin filtros de tipo/espesor/color, en dos partes (D-354,
+   * D-413): la venta de los productos de la línea (trazable + no trazable + sin subtipo), que es
+   * la de la línea en «Ventas y margen», y la de las bobinas enteras de la línea, que allá caen
+   * en `trading` (D-247). Una venta de bobina entera cuya línea de pedido no apunta a una bobina
+   * no se puede atribuir a una línea de negocio y no entra.
    *
-   * `unclassifiedSalesPen`: venta de productos de la línea sin subtipo de cobertura (el CHECK
-   * del catálogo admite `roofing_kind` nulo). Cuenta en el cuadre y no en las filas.
+   * `unclassifiedSalesPen`: venta de productos de la línea que no entran a las filas: en
+   * Coberturas Aluzinc, sin subtipo de cobertura (el CHECK del catálogo admite `roofing_kind`
+   * nulo); en Drywall, los comprados (D-414). Cuenta en el cuadre y no en las filas.
    */
   reconciliation: z.object({
-    roofingSalesPen: z.string(),
+    lineSalesPen: z.string(),
+    /**
+     * Alias de `lineSalesPen` con el nombre anterior a cc24, solo para que la web vieja no se
+     * rompa entre el deploy de la API y el merge (convivencia de versiones). Retirarlo en la
+     * pieza siguiente.
+     */
+    roofingSalesPen: z.string().optional(),
     coilSalesPen: z.string(),
     unclassifiedSalesPen: z.string(),
   }),
+  /**
+   * D-407: venta del rango en líneas de comprobante sin producto (texto libre). No tiene línea
+   * de negocio (D-398) ni entra a ninguna pestaña; se declara con un aviso.
+   */
+  noLineSalesPen: z.string(),
+  /**
+   * cc24 (D-417): en Coberturas (UPVC) y Reventa, las filas por producto; `null` en las pestañas
+   * por material. En esas pestañas `rows`, `subtotals` y `untraceable` van vacíos y
+   * `untraceableSalesPen` es la venta no trazable de los productos.
+   */
+  products: salesByProductSchema.nullable(),
 });
 export type SalesByMaterialDto = z.infer<typeof salesByMaterialSchema>;

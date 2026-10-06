@@ -66,6 +66,9 @@ export function coilMonthXlsx(report: CoilMonthReportDto): { buffer: Buffer; fil
     header: ['Concepto', 'Cantidad', 'Kg'],
     widths: [52, 10, 16],
     rows: [
+      ...(report.businessLine === null
+        ? []
+        : [[`Línea: ${BUSINESS_LINE_LABELS[report.businessLine]}`, null, null], []]),
       ['Saldo inicio de mes', null, num(report.flow.openingKg)],
       ['Altas del mes', null, num(report.flow.entriesKg)],
       ['Salidas del mes', null, num(report.flow.exitsKg)],
@@ -93,6 +96,7 @@ export function coilMonthXlsx(report: CoilMonthReportDto): { buffer: Buffer; fil
       section('Abiertas', CoilFilmState.OPENED, report.opened),
       summary,
     ]),
-    filename: `reporte-bobinas-${report.month}.xlsx`,
+    // cc24 (D-408, D-418): el Excel sigue la pestaña; la línea va en el nombre y en el resumen.
+    filename: `reporte-bobinas-${report.month}${report.businessLine === null ? '' : `-${report.businessLine}`}.xlsx`,
   };
 }

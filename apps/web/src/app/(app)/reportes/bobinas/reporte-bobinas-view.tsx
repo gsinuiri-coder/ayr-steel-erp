@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
+  COIL_REPORT_LINES,
   businessMonth,
   coilStateLabel,
   Role,
@@ -16,6 +16,9 @@ import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
 import { formatDate, formatMoney, formatQty } from '@/lib/format';
 import { HeaderActions } from '@/components/header-actions';
+import { LineTabs } from '@/components/line-tabs';
+import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -49,15 +52,30 @@ import { useSort } from '@/lib/use-sort';
  *
  * D-355: las tablas listan solo las bobinas **vigentes** al último día del mes. Las terminadas o
  * agotadas y las anuladas con saldo al inicio se resumen en una línea debajo; una anulada en el
- * mismo mes de su alta no figura. El total general sigue siendo el de todas, y el cuadre (inicio
+ * mismo mes de su alta no figura. El total de la pestaña (cc24, D-408) sigue siendo el de todas, y el cuadre (inicio
  * + altas − salidas = cierre) va debajo.
  */
+/**
+ * cc24 (D-408, D-418): Coberturas Aluzinc y Drywall, sin «Todas» (D-393), Aluzinc por defecto.
+ * El mes sobrevive al cambio de pestaña.
+ */
+const LINE_TABS: LineTabsConfig = { lines: COIL_REPORT_LINES, includeAll: false, keep: ['mes'] };
+
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
 export function ReporteBobinasView() {
-  const [month, setMonth] = useState(businessMonth());
+  // cc24 (D-408, D-418): la pestaña de línea y el mes van en la URL, para que refrescar y
+  // retroceder vuelvan al mismo estado (criterio de D-401); el mes en curso no se escribe.
+  const [url, setUrl] = useUrlState({ mes: businessMonth() });
+  const month = MONTH.test(url.mes) ? url.mes : businessMonth();
+  const { tab, select } = useLineTab(LINE_TABS);
+  // Sin «Todas», la pestaña siempre es una línea con bobinas.
+  const line = tab as (typeof COIL_REPORT_LINES)[number];
+  const qs = `month=${month}&businessLine=${line}`;
 
   const report = useQuery({
-    queryKey: ['report', 'coils', month],
-    queryFn: () => api<CoilMonthReportDto>(`/reports/coils?month=${month}`),
+    queryKey: ['report', 'coils', month, line],
+    queryFn: () => api<CoilMonthReportDto>(`/reports/coils?${qs}`),
   });
 
   return (
@@ -80,32 +98,40 @@ export function ReporteBobinasView() {
               max={businessMonth()}
               value={month}
               onChange={(e) => {
-                if (e.target.value) setMonth(e.target.value);
+                if (e.target.value) setUrl({ mes: e.target.value });
               }}
             />
           </div>
-          {/* D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve. */}
+          {/* D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve.
+              D-408/D-418: el PDF y el Excel siguen la pestaña. */}
           <HeaderActions
             primary={['xlsx']}
             actions={[
               {
                 key: 'xlsx',
                 label: 'Descargar Excel',
-                download: `/api/reports/coils/xlsx?month=${month}`,
+                download: `/api/reports/coils/xlsx?${qs}`,
               },
               {
                 key: 'pdf',
                 label: 'Descargar PDF',
-                download: `/api/reports/coils/pdf?month=${month}`,
+                download: `/api/reports/coils/pdf?${qs}`,
               },
             ]}
           />
         </div>
       </div>
 
+      <LineTabs
+        lines={LINE_TABS.lines}
+        includeAll={LINE_TABS.includeAll}
+        value={tab}
+        onChange={select}
+      />
+
       {report.data && (
         <StatStrip
-          aria-label="Total general"
+          aria-label={`Total de ${BUSINESS_LINE_LABELS[line]}`}
           className={
             report.data.totals.closingValuePen === null
               ? 'sm:grid-cols-3 lg:grid-cols-3'

@@ -23,6 +23,7 @@ function report(withCosts: boolean): CoilMonthReportDto {
   const v = (s: string) => (withCosts ? s : null);
   return {
     month: '2026-09',
+    businessLine: null,
     from: '2026-09-01',
     to: '2026-09-30',
     sealed: {
@@ -82,5 +83,11 @@ describe('coilMonthXlsx (D-355)', () => {
     const sealed = sheet(coilMonthXlsx(report(false)).buffer, 'Selladas');
     expect(sealed[0]).not.toContain('Costo/kg (S/)');
     expect(sealed[0]).not.toContain('Valor fin de mes (S/)');
+  });
+
+  it('cc24 (D-408, D-418): con una línea, el Excel la nombra en el archivo y en el resumen', () => {
+    const { buffer, filename } = coilMonthXlsx({ ...report(true), businessLine: 'drywall' });
+    expect(filename).toBe('reporte-bobinas-2026-09-drywall.xlsx');
+    expect(sheet(buffer, 'Resumen')[1]?.[0]).toBe('Línea: Drywall');
   });
 });

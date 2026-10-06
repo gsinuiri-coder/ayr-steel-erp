@@ -14,6 +14,7 @@ import {
   type SalesMaterialRowDto,
   type SalesMaterialUntraceableDto,
   type SalesMaterialUntraceableReason,
+  type SalesByMaterialLine,
   SALES_MATERIAL_KINDS,
 } from '@ayr/shared';
 
@@ -45,8 +46,13 @@ export interface InvoiceLine {
   qty: string;
   /** Sin IGV, con signo. */
   salesPen: string;
-  /** Largo del SKU de una plancha, en mm. */
+  /** Largo del SKU de una plancha o un perfil, en mm. */
   lengthMm: string | null;
+  /**
+   * cc24 (D-414): kilos por pieza del perfil de Drywall (`products.piece_weight_kg`, D-139). Es
+   * su peso teórico, porque Drywall no rola metros. `null` en lo demás.
+   */
+  pieceWeightKg: string | null;
   /** Geometría del producto; en una bobina entera, la de la bobina. */
   geometry: Geometry;
   thicknessMm: string;
@@ -109,9 +115,13 @@ export function coilTheoreticalKg(
 
 export interface AssembleInput {
   query: SalesByMaterialQuery;
+  /** cc24: la pestaña ya resuelta (sin ella, Coberturas Aluzinc). */
+  businessLine: SalesByMaterialLine;
   lines: InvoiceLine[];
   facts: Map<string, OrderLineFacts>;
   usage: CoilUsage[];
+  /** D-407: venta del rango sin producto (sin línea de negocio), con signo. */
+  noLineSalesPen: string;
 }
 
 const ZERO = new Decimal(0);
@@ -342,6 +352,14 @@ export function traceLine(
 
   // Parte de la base que le toca a esta línea del comprobante.
   const share = toDecimal(line.qty).times(fraction).div(baseQty);
+  // cc24 (D-414): el perfil de Drywall no rola metros (el reporte no lleva `meters_m` ni
+  // largos), así que sus metros y su teórico se reparten entre las bobinas por sus kilos, como
+  // en la bobina entera. El teórico es piezas × kilos por pieza del catálogo (D-139).
+  const usageKg = lineUsage.reduce((acc, u) => acc.plus(toDecimal(u.kg)), ZERO);
+  const perfilTheoreticalKg =
+    line.kind === 'PERFIL' && line.pieceWeightKg !== null
+      ? toDecimal(line.qty).times(fraction).times(toDecimal(line.pieceWeightKg))
+      : ZERO;
   const acc: Accumulator = {
     meters: meters.times(fraction),
     theoreticalKg: ZERO,
@@ -357,11 +375,19 @@ export function traceLine(
     // D-369: el teórico es el de las bobinas, no el del SKU. En una bobina entera son sus
     // propios kilos (su ML se sacó de ellos); en lo producido, los metros que se rolaron de
     // cada una con su geometría y la densidad cruda.
+    const kgShare = usageKg.isZero() ? ZERO : toDecimal(u.kg).div(usageKg);
     const coilMeters =
       line.kind === 'BOBINA'
         ? meters.times(fraction).times(toDecimal(u.kg)).div(baseQty)
-        : toDecimal(u.meters).times(share);
-    const theoreticalKg = line.kind === 'BOBINA' ? kg : coilTheoreticalKg(coilMeters, u);
+        : line.kind === 'PERFIL'
+          ? meters.times(fraction).times(kgShare)
+          : toDecimal(u.meters).times(share);
+    const theoreticalKg =
+      line.kind === 'BOBINA'
+        ? kg
+        : line.kind === 'PERFIL'
+          ? perfilTheoreticalKg.times(kgShare)
+          : coilTheoreticalKg(coilMeters, u);
     acc.realKg = acc.realKg.plus(kg);
     acc.cost = acc.cost.plus(cost);
     acc.theoreticalKg = acc.theoreticalKg.plus(theoreticalKg);
@@ -394,18 +420,18 @@ export function usageByOrderLine(usage: CoilUsage[]): Map<string, CoilUsage[]> {
 }
 
 export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDto {
-  const { query, lines, facts, usage } = input;
+  const { query, businessLine, lines, facts, usage, noLineSalesPen } = input;
 
   const usageByLine = usageByOrderLine(usage);
 
   // El cuadre se calcula antes de filtrar: responde a «Ventas y margen», que no filtra.
-  let roofingSales = ZERO;
+  let lineSales = ZERO;
   let coilSales = ZERO;
   let unclassifiedSales = ZERO;
   for (const line of lines) {
     const sales = toDecimal(line.salesPen);
     if (line.kind === 'BOBINA') coilSales = coilSales.plus(sales);
-    else roofingSales = roofingSales.plus(sales);
+    else lineSales = lineSales.plus(sales);
     if (line.kind === null) unclassifiedSales = unclassifiedSales.plus(sales);
   }
 
@@ -555,6 +581,7 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
   return {
     from: query.from,
     to: query.to,
+    businessLine,
     rows: rowDtos,
     subtotals: SALES_MATERIAL_KINDS.filter((k) => subtotalAcc.has(k)).map((kind) => ({
       kind,
@@ -568,9 +595,13 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
     ),
     untraceableSalesPen: toFixedString(untraceableSales, 'MONEY'),
     reconciliation: {
-      roofingSalesPen: toFixedString(roofingSales, 'MONEY'),
+      lineSalesPen: toFixedString(lineSales, 'MONEY'),
+      // Convivencia con la web anterior a cc24 (ver el esquema).
+      roofingSalesPen: toFixedString(lineSales, 'MONEY'),
       coilSalesPen: toFixedString(coilSales, 'MONEY'),
       unclassifiedSalesPen: toFixedString(unclassifiedSales, 'MONEY'),
     },
+    noLineSalesPen: toFixedString(toDecimal(noLineSalesPen), 'MONEY'),
+    products: null,
   };
 }

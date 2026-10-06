@@ -121,7 +121,7 @@ describe('resolveLineTab', () => {
   it('sin parámetro es la pestaña por defecto: «Todas» si la hay, si no la primera línea', () => {
     expect(resolveLineTab(null, SALES)).toEqual({ tab: ALL_LINES_TAB, valid: true });
     expect(resolveLineTab(null, { lines: COIL_REPORT_LINES, includeAll: false })).toEqual({
-      tab: BusinessLine.DRYWALL,
+      tab: BusinessLine.METALLIC_ROOFING,
       valid: true,
     });
   });

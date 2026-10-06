@@ -2,6 +2,45 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-05 — cc24: reportes por línea que cc23 dejó fuera (PR #107, sin migración, sin desplegar)
+
+Detalle, revisiones y convivencia de versiones en `docs/handoff/ventana-cc24.md`.
+
+- **Hecho, M0 a M4 (nada sacrificado):**
+  - M0: los P2 y P3 triviales de cc23 (D-410), con D-412: Servicios no depende del costo del
+    pedido.
+  - M1: D-409, el margen de «Todas» sin Servicios (`noCostSalesPen`).
+  - M2: ventas por material de Coberturas Aluzinc y Drywall con `?linea=`, sin «Todas» (D-406,
+    D-407, D-413..D-416).
+  - M3: Coberturas (UPVC) y Reventa por producto, con costo de kardex de los despachos declarados
+    (D-417).
+  - M4: bobinas con pestañas, Aluzinc por defecto; PDF y Excel siguen la pestaña (D-408, D-418).
+- **Decisiones:**
+  - D-398..D-405, ratificadas;
+  - D-406..D-415, D-417 y D-418, del dueño;
+  - D-416, provisional (el Excel de ventas por material solo en Aluzinc);
+  - D-411: cambio de la regla de permisos, en AGENTS.md §3, regla 1.
+- **Tests:**
+  - API `src/reports`: 164;
+  - web: 96;
+  - E2E nuevo `reportes-por-linea-cc24` (4).
+- **UAT local** con build de producción (`docs/uat/cc24.md`):
+  - 25 passed y 1 rojo de infraestructura: `rf-s4a` M2, por el PSE apagado;
+  - recorrido de cada pestaña.
+- **Revisiones:**
+  - autorrevisión: 0 P0, 0 P1, 3 P2, 4 P3;
+  - segundo modelo: 0 P0, 0 P1, 3 P2, 5 P3;
+  - los corregibles están en `86ea3d98`;
+  - quedan para el dueño los tres P2 de permisos del segundo modelo y el P2-3 de la
+    autorrevisión: «Sin línea» en el margen de «Todas».
+- **Pendiente:** CI verde, refresco de demo con OK del dueño, UAT del dueño en demo, resumen de
+  D-232 y ventana.
+- **Registro de riesgo (toca datos de reportes, no kardex):**
+  - `sales-by-material.service.ts`: `productLines` y `declaredDispatches`;
+  - `sales-by-product.ts`;
+  - `sales-margin.service.ts`: D-409 y D-412.
+- **Neon:** no se creó ni se borró ninguna rama.
+
 ## 2026-10-05 — Ventana cc23 (D-390..D-396 desplegadas, PR #105, sin migración)
 
 Ventana desatendida con OK previo del dueño (D-397). Detalle y lista de revisión para el dueño en
