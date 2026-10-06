@@ -103,6 +103,7 @@ import {
   appliedToleranceOverride,
   assertToleranceReasonApplies,
   mountedKgRejection,
+  otherMountedCoilsHint,
   TOLERANCE_OVERRIDE_AUDIT_ACTION,
   toleranceOverrideAuditAfter,
   type LockedOrder,
@@ -1155,7 +1156,25 @@ export class RoofingProductionService {
       // D-389: el accesorio (reporte por metros) también entra con la casilla, como las planchas.
       overrideBands: { authorized: override !== undefined },
     });
-    if (!mounted.ok) throw mountedKgRejection(mounted);
+    if (!mounted.ok) {
+      // cc28 (P2-2 de cc20): si otra bobina montada tiene saldo, el rechazo lo nombra.
+      const hint =
+        mounted.code === undefined
+          ? null
+          : otherMountedCoilsHint(
+              row.coil.code,
+              rows.map((r) => ({
+                code: r.coil.code,
+                remainingKg: Decimal.max(
+                  toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
+                  new Decimal(0),
+                ),
+              })),
+            );
+      throw mountedKgRejection(
+        hint === null ? mounted : { ...mounted, message: `${mounted.message} ${hint}` },
+      );
+    }
     if (mounted.note !== null) deviation.unshift(mounted.note);
     const applied = appliedToleranceOverride(mounted, override);
     if (applied !== null) {
