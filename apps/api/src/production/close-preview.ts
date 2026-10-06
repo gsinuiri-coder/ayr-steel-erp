@@ -8,6 +8,7 @@ import {
 } from '@ayr/shared';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { RawMaterialShortfall } from '../sales/raw-material';
+import { lockOrder } from './production-shared';
 
 /**
  * cc27 (UX26-03, D-453): **la vista previa de un cierre de planta es el cierre mismo, deshecho.**
@@ -25,6 +26,9 @@ import type { RawMaterialShortfall } from '../sales/raw-material';
  * y de la auditoría, el `seq` interno de los reportes): quedan huecos que no se muestran en
  * ninguna pantalla ni documento.
  */
+
+/** cc28 (SM-8 de cc27): tope de la transacción de la vista previa. */
+export const PREVIEW_TIMEOUT_MS = 20_000;
 
 class PreviewRollback extends Error {
   constructor(readonly preview: PlantClosePreviewDto) {
@@ -79,6 +83,10 @@ export async function previewPlantClose(
   try {
     await prisma.$transaction(
       async (tx) => {
+        // cc28 (A-6 de cc27): la orden se bloquea **antes** de leer el «antes», como lo hace la
+        // acción. Sin esto, un movimiento que entraba entre la lectura y el bloqueo de la acción
+        // aparecía en el resumen como consumo de este cierre.
+        await lockOrder(tx, orderId);
         const order = await tx.productionOrder.findUniqueOrThrow({
           where: { id: orderId },
           select: { seq: true },
@@ -145,7 +153,9 @@ export async function previewPlantClose(
           warnings: [...new Set(warnings.map((w) => w.message))],
         });
       },
-      { timeout: 120_000, maxWait: 15_000 },
+      // cc28 (SM-8 de cc27): la vista previa retiene los mismos candados que el cierre real, así
+      // que no puede durar lo que dura un borrador de 50 filas: a los 20 s se corta.
+      { timeout: PREVIEW_TIMEOUT_MS, maxWait: 15_000 },
     );
   } catch (err) {
     if (err instanceof PreviewRollback) return err.preview;

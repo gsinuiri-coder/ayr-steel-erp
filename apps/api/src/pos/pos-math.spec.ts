@@ -169,14 +169,25 @@ describe('createPosSaleSchema (D-098, D-099)', () => {
     ]);
   });
 
-  it('no tiene forma de pedir material a medida: los campos no existen (D-098)', () => {
-    const parsed = createPosSaleSchema.parse({
+  it('no tiene forma de pedir material a medida: un campo que no existe es un 400 (D-098, cc28)', () => {
+    // cc28 (A-2 de cc27): el ítem es estricto. Antes Zod descartaba en silencio lo que no
+    // declaraba; ahora lo rechaza, así que tampoco hay bobina que pedir por la puerta de atrás.
+    const result = createPosSaleSchema.safeParse({
       ...base,
       items: [{ ...base.items[0], reserveFromCoilId: '22222222-2222-4222-8222-222222222222' }],
     });
-    // Zod descarta lo que el esquema no declara: la línea llega al API sin bobina, así que
-    // `resolveSalesLines` la resuelve contra el propio producto y nunca contra un insumo.
-    expect(parsed.items[0]).not.toHaveProperty('reserveFromCoilId');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.code).toBe('unrecognized_keys');
+    }
+  });
+
+  it('un campo de precio desconocido no cae al precio de lista: 400 (A-2 de cc27)', () => {
+    const result = createPosSaleSchema.safeParse({
+      ...base,
+      items: [{ ...base.items[0], unitPriceWithTaxPen: '59.00' }],
+    });
+    expect(result.success).toBe(false);
   });
 
   it('acepta el precio con IGV tipeado en caja, pero no junto al valor sin IGV (D-452)', () => {

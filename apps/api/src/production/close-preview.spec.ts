@@ -25,6 +25,8 @@ interface FakeState {
 function fakePrisma(state: FakeState) {
   const result = { committed: false };
   const tx = {
+    // cc28 (A-6): la vista previa bloquea la orden antes de leer el «antes».
+    $queryRaw: jest.fn(() => Promise.resolve([{ id: ORDER }])),
     productionOrder: {
       findUniqueOrThrow: jest.fn(({ select }: { select: Record<string, true> }) =>
         Promise.resolve(select.seq ? { seq: 7 } : { scrapKg: state.scrapKg }),

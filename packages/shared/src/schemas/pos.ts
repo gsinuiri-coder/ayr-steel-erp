@@ -205,6 +205,10 @@ export const posSaleItemInputSchema = z
      */
     unitPriceWithIgvPen: positiveMoneySchema.optional(),
   })
+  // cc28 (A-2 de cc27): un campo que el API no conoce es un 400, nunca un precio de lista
+  // silencioso. Un web más nuevo que el API mandaba `unitPriceWithIgvPen` a un API que lo
+  // descartaba, y la línea se vendía al precio de lista.
+  .strict()
   .refine((item) => item.unitPricePen === undefined || item.unitPriceWithIgvPen === undefined, {
     path: ['unitPriceWithIgvPen'],
     message: 'Manda el precio con IGV o el valor sin IGV, no los dos',
