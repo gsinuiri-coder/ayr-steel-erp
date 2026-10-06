@@ -331,7 +331,9 @@ async function roofingAggregate(coils: number): Promise<{
   productionOrderId: string;
 }> {
   thicknessStep += 1;
-  const thicknessMm = (0.3 + thicknessStep * 0.05).toFixed(2);
+  // cc29: paso de 0,03 mm (más que la tolerancia de ±0,02 de D-086, así los agregados no se
+  // mezclan). Con 0,05 los ~240 agregados de la corrida pasaban de 9,99 mm, el tope del SKU.
+  const thicknessMm = (0.3 + thicknessStep * 0.03).toFixed(2);
   const product = await catalog.create(
     admin,
     createProductSchema.parse({
