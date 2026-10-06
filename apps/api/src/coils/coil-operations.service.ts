@@ -675,6 +675,150 @@ export class CoilOperationsService {
   }
 
   /**
+   * cc29 (M3, D-466) — el sobrante físico de una bobina terminada con el kardex en 0, declarado al
+   * montarla desde planta (después de `reopenInTx`).
+   *
+   * El kardex dio el rollo por consumido y planta encuentra material: la diferencia entra como un
+   * ingreso de sobrante **nuevo**, con el mismo tipo de movimiento que el sobrante de un cierre
+   * (`CLOSE_ADJUSTMENT` de entrada, D-164), su costo (el promedio vigente o, sin él, el del
+   * documento de compra, `planCoilCloseAdjustment`), el mismo motivo escrito y la misma cota física
+   * (no más de lo que la bobina pesó al entrar).
+   *
+   * Apunta al **montaje** (`refId` = el consumo de la orden), no a la bobina: así no es el ajuste de
+   * un cierre y la reapertura no lo revierte (`reverseCloseAdjustment` solo deshace los que apuntan
+   * a la bobina). Su reversa es bajar la bobina sin haberla usado (`reverseMountSurplusInTx`).
+   *
+   * Solo el supervisor de planta y el administrador declaran el peso físico. Quien llama ya tomó la
+   * bobina y su saldo (D-386).
+   */
+  async declareMountSurplusInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    coil: Coil,
+    input: { physicalKg: string; reason: string; consumptionId: string; orderCode: string },
+    operationDate: string,
+  ): Promise<CloseAdjustmentSummary> {
+    if (actor.role !== Role.ADMINISTRADOR && actor.role !== Role.SUPERVISOR_PLANTA) {
+      throw new ForbiddenException(
+        'Solo el supervisor de planta o un administrador declaran el peso físico de una bobina',
+      );
+    }
+    const balance = await tx.inventoryBalance.findUnique({
+      where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
+    });
+    const balanceKg = toDecimal(balance?.qty.toString() ?? '0');
+    if (balanceKg.gt(0)) {
+      throw new BadRequestException(
+        `${coil.code} tiene ${balanceKg.toFixed(3)} kg en el kardex: el peso físico solo se declara al montar una bobina terminada con el kardex en 0`,
+      );
+    }
+    const declaredKg = toDecimal(input.physicalKg);
+    const intakeKg = toDecimal(coil.weightKg.toString());
+    if (declaredKg.gt(intakeKg)) {
+      throw new BadRequestException(
+        `Declaras ${declaredKg.toFixed(3)} kg y la bobina entró con ${intakeKg.toFixed(3)} kg: ` +
+          'un rollo no puede tener más material del que ingresó. Revisá el número.',
+      );
+    }
+    const plan = planCoilCloseAdjustment({
+      balanceKg,
+      physicalKg: input.physicalKg,
+      avgCostPen: balance?.avgCost.toString() ?? '0',
+      documentUnitCostPen: toDecimal(coil.unitCostPerKg.toString()).times(
+        toDecimal(coil.exchangeRate.toString()),
+      ),
+    });
+    if (plan?.kind !== 'SURPLUS') {
+      throw new BadRequestException('El peso físico de la bobina tiene que ser mayor que cero');
+    }
+    const movement = await this.inventory.record(tx, {
+      businessLineId: coil.businessLineId,
+      itemType: 'COIL',
+      itemId: coil.id,
+      type: 'IN',
+      qty: toFixedString(plan.qtyKg, 'KG'),
+      unit: Unit.KGM,
+      unitCost: toFixedString(plan.unitCostPen, 'MONEY'),
+      refType: 'CLOSE_ADJUSTMENT',
+      refId: input.consumptionId,
+      notes: `Sobrante al montar en ${input.orderCode}: ${input.reason}`,
+      actorId: actor.id,
+      operationDate,
+    });
+    if (!movement) {
+      throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
+    }
+    const summary: CloseAdjustmentSummary = {
+      kind: 'SURPLUS',
+      movementId: movement.id.toString(),
+      qtyKg: movement.qty.toFixed(3),
+      totalCostPen: movement.totalCost.toFixed(4),
+      declaredPhysicalKg: declaredKg.toFixed(3),
+    };
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'coils.mount-surplus',
+      entity: 'coils',
+      entityId: coil.id,
+      after: {
+        reason: input.reason,
+        operationDate,
+        consumptionId: input.consumptionId,
+        productionOrderCode: input.orderCode,
+        adjustment: { ...summary },
+      },
+    });
+    return summary;
+  }
+
+  /**
+   * cc29 (M3, D-466) — la reversa del sobrante de un montaje: bajar la bobina sin haberla usado
+   * deshace también el sobrante que ese montaje declaró, con su movimiento inverso. Sin sobrante
+   * (el caso normal), no hace nada.
+   */
+  async reverseMountSurplusInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    coilId: string,
+    consumptionId: string,
+    operationDate: string,
+  ): Promise<CloseAdjustmentSummary | null> {
+    const surplus = await tx.inventoryMovement.findFirst({
+      where: {
+        itemType: 'COIL',
+        itemId: coilId,
+        refType: 'CLOSE_ADJUSTMENT',
+        refId: consumptionId,
+        reversalOfId: null,
+        reversals: { none: {} },
+      },
+    });
+    if (!surplus) return null;
+    const reversal = await this.inventory.reverse(
+      tx,
+      surplus.id,
+      actor.id,
+      'Se bajó la bobina sin usarla: se deshace el sobrante declarado al montarla (D-466)',
+      operationDate,
+    );
+    const summary: CloseAdjustmentSummary = {
+      kind: 'SURPLUS',
+      movementId: reversal.id.toString(),
+      qtyKg: reversal.qty.toFixed(3),
+      totalCostPen: reversal.totalCost.toFixed(4),
+      reversalOfId: surplus.id.toString(),
+    };
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'coils.mount-surplus-reverse',
+      entity: 'coils',
+      entityId: coilId,
+      after: { consumptionId, operationDate, adjustment: { ...summary } },
+    });
+    return summary;
+  }
+
+  /**
    * D-164 — la liquidación del remanente al cerrar (RF-19).
    *
    * Cerrar una bobina declara que el rollo dejó de estar disponible. Hasta D-164 eso no movía
@@ -843,8 +987,12 @@ export class CoilOperationsService {
     // e intentaría revertirlo otra vez, chocando con "ese movimiento ya fue anulado". No puede
     // pasar hoy (reabrir una bobina abierta ya rebota antes), pero el chequeo es una línea y
     // el que lo garantiza es un estado, no una invariante del kardex.
+    // cc29 (D-466): solo el ajuste de un **cierre**, que apunta a la bobina. El sobrante declarado
+    // al montar apunta al montaje y la reapertura no lo toca.
     const adjustment =
-      last?.refType === 'CLOSE_ADJUSTMENT' && last.reversals.length === 0 ? last : undefined;
+      last?.refType === 'CLOSE_ADJUSTMENT' && last.refId === coilId && last.reversals.length === 0
+        ? last
+        : undefined;
     if (!adjustment) return null;
 
     if (!input.reason) {

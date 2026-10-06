@@ -707,10 +707,28 @@ export class RoofingProductionService {
           const balance = await tx.inventoryBalance.findUnique({
             where: { itemType_itemId: { itemType: 'COIL', itemId: coil.id } },
           });
-          const availableKg = toDecimal(balance?.qty.toString() ?? '0');
-          if (availableKg.lte(0)) {
-            throw new BadRequestException(`${coil.code} no tiene kilos disponibles en el kardex`);
+          let availableKg = toDecimal(balance?.qty.toString() ?? '0');
+          // cc29 (D-466): una terminada con el kardex en 0 (ya reabierta) entra con el peso físico
+          // que planta declara, como sobrante nuevo; sin ese peso no hay nada que montar.
+          const physicalKg = reopening ? input.physicalKg : undefined;
+          if (input.physicalKg !== undefined && !reopening) {
+            throw new BadRequestException(
+              `${coil.code} no está terminada: el peso físico solo se declara al reabrir una bobina terminada con el kardex en 0`,
+            );
           }
+          if (physicalKg !== undefined && availableKg.gt(0)) {
+            throw new BadRequestException(
+              `${coil.code} tiene ${availableKg.toFixed(3)} kg en el kardex al reabrirla: el peso físico solo se declara con el kardex en 0`,
+            );
+          }
+          if (availableKg.lte(0) && physicalKg === undefined) {
+            throw new BadRequestException(
+              reopening
+                ? `${coil.code} está terminada con el kardex en 0: para montarla, declara su peso físico (el sobrante entra al kardex, D-466)`
+                : `${coil.code} no tiene kilos disponibles en el kardex`,
+            );
+          }
+          if (physicalKg !== undefined) availableKg = toDecimal(physicalKg);
           const assignedKg = input.qtyKg ? toDecimal(input.qtyKg) : availableKg;
           if (assignedKg.gt(availableKg)) {
             throw new BadRequestException(
@@ -726,6 +744,22 @@ export class RoofingProductionService {
               createdById: actor.id,
             },
           });
+          // cc29 (D-466): el sobrante entra apuntando a este montaje, después de reabrir: la
+          // reapertura ya pasó y no lo revierte; bajar la bobina sin usarla sí.
+          if (physicalKg !== undefined) {
+            await this.coilOperations.declareMountSurplusInTx(
+              tx,
+              actor,
+              coil,
+              {
+                physicalKg,
+                reason: input.reopenReason ?? '',
+                consumptionId: consumption.id,
+                orderCode: productionOrderCode(order.seq),
+              },
+              reopenDate,
+            );
+          }
           await tx.productionOrder.update({
             where: { id: orderId },
             data: { status: ProductionOrderStatus.IN_PROGRESS },
@@ -854,12 +888,27 @@ export class RoofingProductionService {
         { operationDate: this.operationDate.resolve(actor, undefined), actorId: actor.id },
       );
 
+      // cc29 (D-466): la reversa del sobrante que este montaje declaró, si declaró uno. Antes de
+      // la red de D-360: sin él, la bobina vuelve a 0 y se termina sola, como estaba.
+      const surplus = await this.coilOperations.reverseMountSurplusInTx(
+        tx,
+        actor,
+        consumption.coilId,
+        consumption.id,
+        this.operationDate.resolve(actor, undefined),
+      );
+
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'production.roofing.release',
         entity: 'production_orders',
         entityId: orderId,
-        after: { consumptionId, coilCode: consumption.coil.code, filmResealed: resealed },
+        after: {
+          consumptionId,
+          coilCode: consumption.coil.code,
+          filmResealed: resealed,
+          surplusReversed: surplus === null ? null : { ...surplus },
+        },
       });
       // D-360: si al bajarla está en exactamente 0, se termina (red de seguridad: bajar exige consumo 0).
       await autoTerminateEmptyCoils(tx, this.audit, {
@@ -2930,7 +2979,14 @@ export class RoofingProductionService {
     let closedCoils: typeof openCoils = [];
     const lastByCoil = new Map<
       string,
-      { refType: string; type: string; qty: Prisma.Decimal; reversed: boolean }
+      {
+        refType: string;
+        type: string;
+        qty: Prisma.Decimal;
+        reversed: boolean;
+        /** cc29 (D-466): el ajuste es de un cierre (apunta a la bobina), no el sobrante de un montaje. */
+        closure: boolean;
+      }
     >();
     if (includeClosed) {
       const closedIds = (
@@ -2948,10 +3004,12 @@ export class RoofingProductionService {
               type: string;
               qty: Prisma.Decimal;
               reversed: boolean;
+              closure: boolean;
             }[]
           >`
             SELECT DISTINCT ON (m."item_id") m."item_id", m."ref_type"::text AS "ref_type",
                    m."type"::text AS "type", m."qty",
+                   (m."ref_id" = m."item_id"::text) AS "closure",
                    EXISTS (SELECT 1 FROM "inventory_movements" r WHERE r."reversal_of_id" = m."id") AS "reversed"
             FROM "inventory_movements" m
             WHERE m."item_type" = 'COIL' AND m."item_id" = ANY(${closedIds}::uuid[])
@@ -2968,21 +3026,41 @@ export class RoofingProductionService {
             type: row.type,
             qty: row.qty,
             reversed: row.reversed,
+            closure: row.closure,
           });
         }
         const withStock = new Set(closedBalances.map((b) => b.itemId));
-        const candidates = closedIds.filter((id) => {
+        // cc29 (D-466): también las terminadas con el kardex en 0, que se montan declarando su
+        // peso físico. Primero las que tienen kilos (o un ajuste que reabrir devuelve).
+        const hasKilos = (id: string) => {
           const m = lastByCoil.get(id);
-          return withStock.has(id) || (m?.refType === 'CLOSE_ADJUSTMENT' && !m.reversed);
-        });
-        if (candidates.length > 0) {
-          closedCoils = await this.prisma.coil.findMany({
-            where: { id: { in: candidates } },
-            select: coilSelect,
-            orderBy: { updatedAt: 'desc' },
-            take: 100,
-          });
-        }
+          return (
+            withStock.has(id) || (m?.refType === 'CLOSE_ADJUSTMENT' && m.closure && !m.reversed)
+          );
+        };
+        const withKilos = closedIds.filter(hasKilos);
+        const empty = closedIds.filter((id) => !hasKilos(id));
+        // El tope de 100 lo llenan primero las que tienen kilos: cientos de rollos agotados no
+        // pueden desplazarlas del corte.
+        const [kept, spent] = await Promise.all([
+          withKilos.length === 0
+            ? Promise.resolve([])
+            : this.prisma.coil.findMany({
+                where: { id: { in: withKilos } },
+                select: coilSelect,
+                orderBy: { updatedAt: 'desc' },
+                take: 100,
+              }),
+          empty.length === 0
+            ? Promise.resolve([])
+            : this.prisma.coil.findMany({
+                where: { id: { in: empty } },
+                select: coilSelect,
+                orderBy: { updatedAt: 'desc' },
+                take: 100,
+              }),
+        ]);
+        closedCoils = [...kept, ...spent].slice(0, 100);
       }
     }
 
@@ -3009,7 +3087,7 @@ export class RoofingProductionService {
     // anulado (D-164, `reverseCloseAdjustment`): la misma pregunta, contestada igual.
     const adjustmentById = new Map(
       [...lastByCoil]
-        .filter(([, m]) => m.refType === 'CLOSE_ADJUSTMENT' && !m.reversed)
+        .filter(([, m]) => m.refType === 'CLOSE_ADJUSTMENT' && m.closure && !m.reversed)
         .map(([itemId, m]) => [
           itemId,
           {
@@ -3037,10 +3115,15 @@ export class RoofingProductionService {
       [...reservations].filter(([, qty]) => qty.gt(0)).map(([itemId]) => itemId),
     );
 
+    // cc29 (D-466): una terminada que reabierta queda en 0 también se ofrece, para declarar su peso.
+    const needsPhysical = (c: { id: string; status: CoilStatus }) =>
+      c.status === CoilStatus.CLOSED && (qtyById.get(c.id) ?? new Decimal(0)).lte(0);
     const mountable = coils
       .filter(
         (c) =>
-          !taken.has(c.id) && !promised.has(c.id) && (qtyById.get(c.id) ?? new Decimal(0)).gt(0),
+          !taken.has(c.id) &&
+          !promised.has(c.id) &&
+          ((qtyById.get(c.id) ?? new Decimal(0)).gt(0) || needsPhysical(c)),
       )
       .map((c) => ({
         ...c,
@@ -3078,8 +3161,12 @@ export class RoofingProductionService {
             ? null
             : { kind: adjustment.kind, qtyKg: adjustment.qty.toFixed(3) };
         })(),
-        availableKg: availableKg.toFixed(3),
-        estimatedMeters: toFixedString(metersFromKg(geometry, availableKg.toFixed(3)), 'KG'),
+        availableKg: Decimal.max(availableKg, 0).toFixed(3),
+        needsPhysicalKg: c.status === 'CLOSED' && availableKg.lte(0),
+        estimatedMeters: toFixedString(
+          metersFromKg(geometry, Decimal.max(availableKg, 0).toFixed(3)),
+          'KG',
+        ),
       };
     });
   }

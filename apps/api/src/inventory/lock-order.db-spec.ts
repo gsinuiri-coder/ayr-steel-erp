@@ -9,6 +9,7 @@ import {
   commitReceivedPurchaseEditSchema,
   cancelCuttingOrderSchema,
   createCuttingOrderSchema,
+  createCoilScrapSchema,
   createCustomerSchema,
   createDispatchSchema,
   createFinishSchema,
@@ -385,6 +386,37 @@ function mount(orderId: string, coilId: string) {
   return roofing.mountCoil(admin, orderId, mountRoofingCoilSchema.parse({ coilIds: [coilId] }));
 }
 
+/**
+ * cc29 (M3, D-466): la bobina queda terminada con el kardex en 0 (merma de todo su saldo, que la
+ * termina sola, D-360) y después se monta declarando su peso físico: reabrir + sobrante nuevo.
+ */
+async function spendCoil(coilId: string) {
+  const balance = await prisma.inventoryBalance.findUniqueOrThrow({
+    where: { itemType_itemId: { itemType: 'COIL', itemId: coilId } },
+  });
+  await coilOps.registerScrap(
+    admin,
+    coilId,
+    createCoilScrapSchema.parse({
+      qtyKg: balance.qty.toFixed(3),
+      reason: 'Prueba de concurrencia: se consume entera (cc29)',
+    }),
+  );
+}
+
+function mountWithSurplus(orderId: string, coilId: string) {
+  return roofing.mountCoil(
+    admin,
+    orderId,
+    mountRoofingCoilSchema.parse({
+      coilId,
+      reopenCoilIds: [coilId],
+      reopenReason: 'Prueba de concurrencia: quedaba material (cc29)',
+      physicalKg: '100.000',
+    }),
+  );
+}
+
 function report(orderId: string) {
   return roofing.report(
     admin,
@@ -622,6 +654,15 @@ describe('D-386 (A6) — una bobina del agregado frente a despacho y anulación 
         coilId: coilAt(agg, 0).coilId,
         prepare: () => mount(agg.productionOrderId, coilAt(agg, 0).coilId),
         run: () => report(agg.productionOrderId),
+      }),
+    ],
+    [
+      // cc29 (D-466): el camino nuevo que mueve inventario: reabrir y dar de alta el sobrante.
+      'montar con sobrante',
+      (agg) => ({
+        coilId: coilAt(agg, 0).coilId,
+        prepare: () => spendCoil(coilAt(agg, 0).coilId),
+        run: () => mountWithSurplus(agg.productionOrderId, coilAt(agg, 0).coilId),
       }),
     ],
     [

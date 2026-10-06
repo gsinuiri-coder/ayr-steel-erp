@@ -228,13 +228,15 @@ export function RoofingOrderPanel({
       reopen,
     }: {
       coilIds: string[];
-      reopen?: { coilIds: string[]; reason: string };
+      reopen?: { coilIds: string[]; reason: string; physicalKg?: string };
     }) =>
       api<ProductionOrderDto>(`/production/roofing/${order.orderId}/coils`, {
         method: 'POST',
         body: {
           ...(coilIds.length === 1 ? { coilId: coilIds[0] } : { coilIds }),
           ...(reopen ? { reopenCoilIds: reopen.coilIds, reopenReason: reopen.reason } : {}),
+          // cc29 (D-466): el peso físico de una terminada con el kardex en 0.
+          ...(reopen?.physicalKg ? { physicalKg: reopen.physicalKg } : {}),
         },
       }),
     onSuccess: (updated, { coilIds, reopen }) => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Decimal,
   MAX_ORDER_STRIPS,
   ROOFING_THICKNESS_TOLERANCE_MM,
   type RoofingCoilOptionDto,
@@ -67,7 +68,10 @@ export function CoilPicker({
   pending: boolean;
   disabled?: boolean | undefined;
   /** D-193: `reopen` viaja solo cuando planta confirmó reabrir una bobina cerrada. */
-  onMount: (coilIds: string[], reopen?: { coilIds: string[]; reason: string }) => void;
+  onMount: (
+    coilIds: string[],
+    reopen?: { coilIds: string[]; reason: string; physicalKg?: string },
+  ) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
@@ -75,6 +79,8 @@ export function CoilPicker({
   /** D-193: la cerrada que se está por reabrir (paso de confirmación), y su motivo. */
   const [reopening, setReopening] = useState<RoofingCoilOptionDto | null>(null);
   const [reopenReason, setReopenReason] = useState('');
+  /** cc29 (D-466): el peso físico de una terminada con el kardex en 0. */
+  const [physicalKg, setPhysicalKg] = useState('');
   const [showClosed, setShowClosed] = useState(false);
   /** D-328: el paso de confirmación de abrir el film de las bobinas selladas que se van a montar. */
   const [filmStep, setFilmStep] = useState<{
@@ -206,16 +212,20 @@ export function CoilPicker({
             <ReopenStep
               coil={reopening}
               reason={reopenReason}
+              physicalKg={physicalKg}
               pending={pending}
               onReason={setReopenReason}
+              onPhysicalKg={setPhysicalKg}
               onBack={() => {
                 setReopening(null);
                 setReopenReason('');
+                setPhysicalKg('');
               }}
               onConfirm={() => {
                 onMount([reopening.coilId], {
                   coilIds: [reopening.coilId],
                   reason: reopenReason.trim(),
+                  ...(reopening.needsPhysicalKg ? { physicalKg: physicalKg.trim() } : {}),
                 });
                 setOpen(false);
               }}
@@ -462,19 +472,29 @@ function FinishCell({ coil }: { coil: RoofingCoilOptionDto }) {
 function ReopenStep({
   coil,
   reason,
+  physicalKg,
   pending,
   onReason,
+  onPhysicalKg,
   onBack,
   onConfirm,
 }: {
   coil: RoofingCoilOptionDto;
   reason: string;
+  physicalKg: string;
   pending: boolean;
   onReason: (value: string) => void;
+  onPhysicalKg: (value: string) => void;
   onBack: () => void;
   onConfirm: () => void;
 }) {
   const adjustment = coil.closeAdjustment;
+  // cc29 (D-466): la terminada en 0 pide su peso físico; hasta el peso con que entró.
+  const physicalOk =
+    !coil.needsPhysicalKg ||
+    (/^\d+(\.\d{1,3})?$/.test(physicalKg.trim()) &&
+      new Decimal(physicalKg.trim()).gt(0) &&
+      new Decimal(physicalKg.trim()).lte(coil.weightKg));
   return (
     <div className="grid gap-3">
       <div
@@ -496,12 +516,38 @@ function ReopenStep({
             se calcula un ajuste nuevo con el saldo real.
           </>
         )}{' '}
-        Queda montada en esta orden con {formatQty(coil.availableKg, 'kg')}.
+        {coil.needsPhysicalKg ? (
+          <>
+            {' '}
+            El kardex la da por consumida: pesa el rollo y declara cuánto queda. Esos kilos entran
+            al kardex como sobrante (con el costo del sobrante de un cierre) y la orden los monta.
+            Si bajas la bobina sin usarla, el sobrante se deshace.
+          </>
+        ) : (
+          <>Queda montada en esta orden con {formatQty(coil.availableKg, 'kg')}.</>
+        )}
       </div>
       <FilmOpenNotice
         coils={[{ code: coil.code, status: 'OPEN', film: coil.film }]}
         className="rounded-lg bg-tone-warning p-3 text-sm text-tone-warning-foreground"
       />
+      {coil.needsPhysicalKg && (
+        <div className="grid gap-1.5">
+          <Label htmlFor={`peso-fisico-${coil.coilId}`}>Peso físico del rollo (kg)</Label>
+          <Input
+            id={`peso-fisico-${coil.coilId}`}
+            aria-label={`Peso físico de ${coil.code}`}
+            inputMode="decimal"
+            value={physicalKg}
+            onChange={(e) => {
+              onPhysicalKg(e.target.value);
+            }}
+          />
+          <p className="text-xs text-muted-foreground">
+            Hasta {formatQty(coil.weightKg, 'kg')}, el peso con que entró.
+          </p>
+        </div>
+      )}
       <div className="grid gap-1.5">
         <Label htmlFor={`reabrir-${coil.coilId}`}>Motivo de la reapertura</Label>
         <Input
@@ -519,7 +565,7 @@ function ReopenStep({
         </Button>
         <Button
           aria-label={`Confirmar: reabrir y montar ${coil.code}`}
-          disabled={reason.trim().length < 3 || pending}
+          disabled={reason.trim().length < 3 || !physicalOk || pending}
           onClick={onConfirm}
         >
           Reabrir y montar

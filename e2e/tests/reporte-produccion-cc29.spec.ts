@@ -9,7 +9,7 @@ import {
   type ProductionSummaryDto,
 } from '@ayr/shared';
 import { adminApi, createUser, getJson, postJson } from '../helpers/api';
-import { loginAndSetPassword } from '../helpers/ui';
+import { loginAndSetPassword, openSidebarGroup } from '../helpers/ui';
 import {
   apiAs,
   deactivateTrail,
@@ -149,6 +149,7 @@ test('reporte de producción: una OP de drywall con su reporte y su cierre, y lo
     // En pantalla, como supervisor: el menú, las pestañas en la URL y la fila de la OP.
     const viewer = await createUser(api, 'SUPERVISOR_PLANTA');
     await loginAndSetPassword(page, viewer, 'ClaveSupervisorE2E-2026');
+    await openSidebarGroup(page, 'Reportes');
     await expect(page.getByRole('link', { name: 'Reporte de producción' })).toBeVisible({
       timeout: 60_000,
     });
