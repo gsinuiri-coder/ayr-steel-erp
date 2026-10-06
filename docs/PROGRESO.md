@@ -2,6 +2,13 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-06 — cc29: producción (en curso, rama `cc29-produccion`)
+
+Sesión desatendida; brief de cc29 (dos cortes, hoy sin ventana). Estado al arrancar: `main` =
+`ecb4886a` (CI en verde), API `ayr-steel-erp-api-00094-b96` (`git-sha=abc080a7`), próxima D libre
+D-463. Registradas D-463..D-466 (decisiones del dueño). Alcance: M1 drywall con la casilla
+(corte 1); M2 reporte de producción y M3 sobrante de bobina terminada (corte 2).
+
 ## 2026-10-06 — Ventanas cc28: sesión de limpieza (D-459..D-462, PR #115 y #116, sin migración)
 
 Sesión desatendida, dos cortes desplegados el mismo día sin ventana (brief de cc28). Detalle en
