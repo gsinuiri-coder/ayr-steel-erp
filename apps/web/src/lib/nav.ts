@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Coins,
   FileText,
+  HandCoins,
   Hammer,
   History,
   Home,
@@ -16,6 +17,7 @@ import {
   Palette,
   Percent,
   ReceiptText,
+  Recycle,
   Scissors,
   ScrollText,
   Settings,
@@ -229,6 +231,13 @@ export const NAV: NavGroup[] = [
         roles: [Role.ADMINISTRADOR],
       },
       {
+        // cc25 (D-426): la cartera de todos los vendedores; solo el administrador.
+        title: 'Cuentas por cobrar',
+        href: '/reportes/cuentas-por-cobrar',
+        icon: HandCoins,
+        roles: [Role.ADMINISTRADOR],
+      },
+      {
         // RF-S4a/M1: llevan costos en cada fila y son solo del administrador.
         title: 'Inventario valorizado',
         href: '/reportes/inventario-valorizado',
@@ -241,6 +250,13 @@ export const NAV: NavGroup[] = [
         href: '/reportes/bobinas',
         icon: CalendarRange,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+      },
+      {
+        // cc25 (D-424, D-426): merma por bobina; solo el administrador.
+        title: 'Merma por bobina',
+        href: '/reportes/merma',
+        icon: Recycle,
+        roles: [Role.ADMINISTRADOR],
       },
     ],
   },

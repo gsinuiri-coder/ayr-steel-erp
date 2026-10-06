@@ -9,8 +9,6 @@ import { FiscalDocType, FiscalDocumentStatus, Prisma } from '@prisma/client';
 import {
   businessToday,
   Decimal,
-  documentBalance,
-  hasCollectibleBalance,
   payableBalance,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginateInMemory,
@@ -28,6 +26,11 @@ import type { RequestUser } from '../auth/auth.types';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  documentBalanceOf,
+  documentOwnerId,
+  loadCollectibleDocuments,
+} from './collectible-documents';
 
 /**
  * Cobranza y cuentas por cobrar (RF-86..RF-88; D-075).
@@ -117,11 +120,7 @@ export class ReceivablesService {
     if (!document) throw new NotFoundException('Comprobante no encontrado');
 
     // RF-S3c: el vendedor solo cobra sus propios comprobantes.
-    const ownerId =
-      document.salesOrder?.sellerId ??
-      document.dispatch?.salesOrder?.sellerId ??
-      document.createdById;
-    assertSellerAccess(actor, ownerId, 'Comprobante');
+    assertSellerAccess(actor, documentOwnerId(document), 'Comprobante');
 
     if (document.docType === FiscalDocType.NOTA_CREDITO) {
       throw new BadRequestException(
@@ -146,7 +145,7 @@ export class ReceivablesService {
       );
     }
 
-    const balance = this.balanceOf(document);
+    const balance = documentBalanceOf(document);
     const amount = toDecimal(input.amountPen);
     // D-169: el saldo se compara **en céntimos**, que es la escala en la que se cobra. Ver
     // `payableBalance`. D-169 arregla la causa de que un total importado tenga cola de
@@ -262,32 +261,14 @@ export class ReceivablesService {
   }
 
   private async loadCustomerSummaries(): Promise<ReceivableSummaryDto[]> {
-    const documents = await this.prisma.fiscalDocument.findMany({
-      where: {
-        status: { in: LIVE_STATUSES },
-        docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
-        // RF-72: sin esto, reimportar un comprobante duplicaba la deuda del cliente — la
-        // versión archivada sigue aceptada y volvía a sumar su total.
-        archivedAt: null,
-      },
-      include: {
-        customer: { select: { id: true, name: true, docNumber: true } },
-        payments: { select: { amountPen: true, reversedAt: true } },
-        creditNotes: {
-          // RF-72: una versión archivada dejó de ser el documento; no acredita nada.
-          where: { status: { in: LIVE_STATUSES }, archivedAt: null },
-          select: { totalPen: true },
-        },
-      },
-    });
+    // cc25 (D-421): la misma lectura que el reporte de cuentas por cobrar. Ya descarta el resto
+    // de fracciones de céntimo (D-377) y excluye las versiones archivadas (RF-72).
+    const collectible = await loadCollectibleDocuments(this.prisma);
 
     const today = businessToday();
     const byCustomer = new Map<string, ReceivableSummaryDto>();
 
-    for (const doc of documents) {
-      const balance = toDecimal(this.balanceOf(doc).toFixed(4));
-      // D-377 (arreglo A): un resto de fracciones de céntimo no es deuda.
-      if (!hasCollectibleBalance(balance)) continue;
+    for (const { document: doc, balance } of collectible) {
       const dueDate = doc.dueDate ? doc.dueDate.toISOString().slice(0, 10) : null;
       const overdue = dueDate !== null && dueDate < today;
 
@@ -317,30 +298,6 @@ export class ReceivablesService {
     // arma entera en memoria; paginar y totalizar son cosa de quien llama.
     return [...byCustomer.values()].sort((a, b) =>
       toDecimal(b.balancePen).cmp(toDecimal(a.balancePen)),
-    );
-  }
-
-  /** El saldo de un comprobante, con la misma regla compartida que usa el DTO (D-075). */
-  private balanceOf(document: {
-    status: FiscalDocumentStatus;
-    totalPen: Prisma.Decimal;
-    payments: { amountPen: Prisma.Decimal; reversedAt: Date | null }[];
-    creditNotes: { totalPen: Prisma.Decimal }[];
-  }): Decimal {
-    const paid = document.payments
-      .filter((p) => p.reversedAt === null)
-      .reduce((acc, p) => acc.plus(toDecimal(p.amountPen.toString())), new Decimal(0));
-    const credited = document.creditNotes.reduce(
-      (acc, n) => acc.plus(toDecimal(n.totalPen.toString())),
-      new Decimal(0),
-    );
-    return toDecimal(
-      documentBalance({
-        status: document.status,
-        totalPen: document.totalPen.toString(),
-        paidPen: paid,
-        creditedPen: credited,
-      }),
     );
   }
 }

@@ -44,8 +44,10 @@ describe('mapa del menú (D-326)', () => {
       Reportes: [
         'Ventas y margen',
         'Ventas por material',
+        'Cuentas por cobrar',
         'Inventario valorizado',
         'Reporte mensual de bobinas',
+        'Merma por bobina',
       ],
       Administración: ['Usuarios', 'Márgenes y tipo de cambio', 'Auditoría', 'Configuración'],
     });

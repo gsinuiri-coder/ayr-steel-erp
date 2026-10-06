@@ -3,9 +3,11 @@ import type { Response } from 'express';
 import {
   businessToday,
   coilMonthReportQuerySchema,
+  coilWasteQuerySchema,
   inventoryValuationQuerySchema,
   kardexPepsQuerySchema,
   kardexSheetQuerySchema,
+  receivablesAgingQuerySchema,
   salesByMaterialQuerySchema,
   salesMarginQuerySchema,
   Role,
@@ -14,11 +16,15 @@ import {
   type SalesByMaterialQuery,
   type CoilMonthReportDto,
   type CoilMonthReportQuery,
+  type CoilWasteDto,
+  type CoilWasteQuery,
   type InventoryValuationDto,
   type InventoryValuationQuery,
   type KardexPepsQuery,
   type KardexPepsReportDto,
   type KardexSheetQuery,
+  type ReceivablesAgingDto,
+  type ReceivablesAgingQuery,
   type SalesMarginDto,
   type SalesMarginQuery,
 } from '@ayr/shared';
@@ -27,6 +33,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
 import { coilMonthXlsx } from './coil-month-xlsx';
+import { CoilWasteService } from './coil-waste.service';
 import { DocumentProfitabilityService } from './document-profitability.service';
 import { InventoryValuationService } from './inventory-valuation.service';
 import { kardexPepsToDto } from './kardex-peps-dto';
@@ -35,6 +42,8 @@ import { KardexPepsService } from './kardex-peps.service';
 import { kardexSheetXlsx } from './kardex-sheet-xlsx';
 import { KardexSheetService } from './kardex-sheet.service';
 import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
+import { receivablesAgingXlsx } from './receivables-aging-xlsx';
+import { ReceivablesAgingService } from './receivables-aging.service';
 import { ReportsService } from './reports.service';
 import { salesByMaterialXlsx } from './sales-by-material-xlsx';
 import { SalesByMaterialService } from './sales-by-material.service';
@@ -57,6 +66,8 @@ export class ReportsController {
     private readonly kardexPeps: KardexPepsService,
     private readonly kardexSheet: KardexSheetService,
     private readonly documentProfitability: DocumentProfitabilityService,
+    private readonly receivablesAging: ReceivablesAgingService,
+    private readonly coilWaste: CoilWasteService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -173,6 +184,40 @@ export class ReportsController {
     // Coberturas Aluzinc, la vista que ya lo tenía, aunque llegue otra línea.
     const { businessLine: _line, ...aluzinc } = query;
     sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(aluzinc)));
+  }
+
+  /**
+   * cc25 (D-421..D-423). Cuentas por cobrar por antigüedad, por cliente. Solo ADMINISTRADOR
+   * (D-426): un vendedor ve sus cobranzas en /cobranzas, no la cartera de todos.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('receivables-aging')
+  receivablesAgingReport(
+    @Query(new ZodValidationPipe(receivablesAgingQuerySchema)) query: ReceivablesAgingQuery,
+  ): Promise<ReceivablesAgingDto> {
+    return this.receivablesAging.report(query);
+  }
+
+  /** cc25 (D-426, M3). El xlsx sale del mismo DTO que la pantalla, con el mismo vendedor. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('receivables-aging/xlsx')
+  async receivablesAgingXlsxFile(
+    @Query(new ZodValidationPipe(receivablesAgingQuerySchema)) query: ReceivablesAgingQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, receivablesAgingXlsx(await this.receivablesAging.report(query)));
+  }
+
+  /**
+   * cc25 (D-424, D-425). Merma por bobina en un rango. Solo ADMINISTRADOR (D-426), y sin Excel.
+   * `businessLine` es la pestaña (Coberturas Aluzinc o Drywall); otra línea es 400.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('coil-waste')
+  coilWasteReport(
+    @Query(new ZodValidationPipe(coilWasteQuerySchema)) query: CoilWasteQuery,
+  ): Promise<CoilWasteDto> {
+    return this.coilWaste.report(query);
   }
 
   /**

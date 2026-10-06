@@ -353,7 +353,6 @@ export class SalesByMaterialService {
       untraceableSalesPen: toFixedString(assembly.untraceableSales, 'MONEY'),
       reconciliation: {
         lineSalesPen: toFixedString(assembly.lineSales, 'MONEY'),
-        roofingSalesPen: toFixedString(assembly.lineSales, 'MONEY'),
         coilSalesPen: toFixedString(assembly.shownElsewhereSales, 'MONEY'),
         unclassifiedSalesPen: '0.0000',
       },
