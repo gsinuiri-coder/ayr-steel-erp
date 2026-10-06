@@ -262,3 +262,20 @@ export async function loginAndSetPassword(
   await page.getByRole('button', { name: 'Guardar contraseña' }).click();
   await expect(page).toHaveURL(/\/$/);
 }
+
+/**
+ * cc27 (UX26-03, D-453): las acciones de planta que cierran una orden en un clic («Ejecutar y
+ * cerrar», «Reportar y cerrar», «Cerrar … sin reportar más», cerrar drywall) abren primero el
+ * resumen que calcula el API. Esto espera ese diálogo y lo confirma con su botón.
+ */
+export async function confirmPlantClose(page: Page, confirmLabel: string): Promise<Locator> {
+  const dialog = page
+    .getByRole('dialog')
+    .filter({ has: page.getByRole('table', { name: 'Consumo por bobina' }) });
+  await expect(dialog).toBeVisible({ timeout: 60_000 });
+  // «Volver» tiene el foco: un Enter de más no ejecuta nada.
+  await expect(dialog.getByRole('button', { name: 'Volver', exact: true })).toBeFocused();
+  await dialog.getByRole('button', { name: confirmLabel, exact: true }).click();
+  await expect(dialog).toBeHidden({ timeout: 60_000 });
+  return dialog;
+}

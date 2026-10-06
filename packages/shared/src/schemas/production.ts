@@ -849,3 +849,34 @@ export const productionStripOptionSchema = z.object({
   estimatedPieces: z.number().int(),
 });
 export type ProductionStripOptionDto = z.infer<typeof productionStripOptionSchema>;
+
+/**
+ * cc27 (UX26-03, D-453): lo que una acción de planta que **cierra una orden** va a hacer, antes de
+ * hacerlo. Lo calcula el API corriendo la acción real en una transacción que se deshace, así que
+ * cada cifra es la que el kardex va a registrar; el web solo la muestra.
+ */
+export const plantClosePreviewCoilSchema = z.object({
+  coilId: z.string().uuid(),
+  coilCode: z.string(),
+  /** Kilos que la acción saca del kardex de la bobina: saldo antes − saldo después. */
+  consumedKg: z.string(),
+  balanceBeforeKg: z.string(),
+  balanceAfterKg: z.string(),
+  /** La bobina queda terminada al cerrar (saldo en cero, D-360). */
+  terminated: z.boolean(),
+});
+export type PlantClosePreviewCoilDto = z.infer<typeof plantClosePreviewCoilSchema>;
+
+export const plantClosePreviewSchema = z.object({
+  orderId: z.string().uuid(),
+  orderCode: z.string(),
+  /** Bobinas o flejes montados en la orden, con lo que la acción les saca. */
+  coils: z.array(plantClosePreviewCoilSchema),
+  /** Despunte (coberturas, D-089) o merma de proceso (drywall, D-057) del cierre, en kg. */
+  scrapKg: z.string(),
+  /** Filas fuera de tolerancia confirmadas con la casilla (D-389), con su texto. */
+  outOfTolerance: z.array(z.string()),
+  /** Avisos del agregado de materia prima (D-154). No bloquean. */
+  warnings: z.array(z.string()),
+});
+export type PlantClosePreviewDto = z.infer<typeof plantClosePreviewSchema>;

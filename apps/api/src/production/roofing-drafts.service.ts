@@ -13,6 +13,7 @@ import {
   toFixedString,
   type CommitRoofingDraftsInput,
   type PieceLike,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type RoofingReportDraftDto,
   type RoofingReportDraftInput,
@@ -23,6 +24,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RawMaterialShortfall } from '../sales/raw-material';
+import { previewPlantClose } from './close-preview';
 import { assertKind, lockOrder } from './production-shared';
 import { ProductionService } from './production.service';
 import {
@@ -227,87 +229,119 @@ export class RoofingDraftsService {
         );
         if (!claim.claimed) return;
 
-        const state = await this.loadState(tx, orderId);
-        const drafts = await this.drafts(tx, orderId);
-        if (drafts.length === 0 && input.close !== true) {
-          throw new BadRequestException(
-            'El borrador de la orden está vacío: agrega lo que salió antes de ejecutarlo',
-          );
-        }
-        this.assertRoomForReports(state.liveReports, drafts.length);
-        this.validate(state, drafts.map(toRowLike), 'all');
-
-        // D-388/D-389: la casilla viaja por fila al ejecutar. Una fila que la
-        // necesita y no la trae se rechaza adentro de `reportInTx` con su código y su número de
-        // fila; una casilla de más (la fila ya entra en el 1 %) no deja rastro.
-        const overrides = new Map(
-          (input.toleranceOverrides ?? []).map(({ draftId, ...override }) => [draftId, override]),
-        );
-
-        for (const [index, draft] of drafts.entries()) {
-          const toleranceOverride = overrides.get(draft.id);
-          try {
-            warnings.push(
-              ...(await this.roofing.reportInTx(
-                tx,
-                actor,
-                orderId,
-                {
-                  coilId: draft.coilId,
-                  pieces: draft.pieces.map((p) => ({
-                    lengthMm: p.lengthMm.toFixed(2),
-                    qty: p.qty,
-                  })),
-                  ...(draft.consumedKg === null ? {} : { consumedKg: draft.consumedKg.toFixed(3) }),
-                  ...(draft.notes === null ? {} : { notes: draft.notes }),
-                  ...(toleranceOverride === undefined ? {} : { toleranceOverride }),
-                  confirmBackdate: input.confirmBackdate,
-                },
-                operationDate,
-              )),
-            );
-          } catch (err) {
-            throw withRowNumber(err, index + 1);
-          }
-        }
-
-        await tx.productionReportDraft.deleteMany({ where: { productionOrderId: orderId } });
-
-        if (input.close === true) {
-          await this.roofing.closeInTx(
-            tx,
-            actor,
-            orderId,
-            {
-              consumedKg: input.closeConsumedKg,
-              reason: input.closeReason,
-              confirmBackdate: input.confirmBackdate,
-            },
-            operationDate,
-            warnings,
-          );
-        }
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'production.roofing.drafts-commit',
-          entity: 'production_orders',
-          entityId: orderId,
-          after: {
-            code: productionOrderCode(state.orderSeq),
-            rows: drafts.length,
-            meters: drafts
-              .reduce((acc, d) => acc.plus(piecesMeters(d.pieces.map(toPieceLike))), toDecimal('0'))
-              .toFixed(3),
-            closed: input.close === true,
-            operationDate,
-          },
-        });
+        await this.commitInTx(tx, actor, orderId, input, operationDate, warnings);
       },
       { timeout: 120_000, maxWait: 15_000 },
     );
 
     return this.roofing.withWarnings(await this.production.findOne(orderId), warnings);
+  }
+
+  /**
+   * cc27 (UX26-03, D-453): lo que `commit` haría con este mismo cuerpo, sin hacerlo. Corre
+   * `commitInTx` en una transacción que se deshace (`previewPlantClose`); la clave de
+   * idempotencia no se reclama, así que la ejecución real que sigue la usa normalmente.
+   */
+  async previewCommit(
+    actor: RequestUser,
+    orderId: string,
+    input: CommitRoofingDraftsInput,
+  ): Promise<PlantClosePreviewDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
+    return previewPlantClose(this.prisma, orderId, (tx, warnings) =>
+      this.commitInTx(tx, actor, orderId, input, operationDate, warnings),
+    );
+  }
+
+  /**
+   * El cuerpo de `commit` sin la clave de idempotencia, **dentro de la transacción del
+   * llamador** (patrón `*InTx`, D-099). cc27 (D-453): la vista previa de «Ejecutar y cerrar» lo
+   * corre en una transacción que se deshace, así que el resumen sale de este mismo código.
+   */
+  async commitInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    input: CommitRoofingDraftsInput,
+    operationDate: string,
+    warnings: RawMaterialShortfall[],
+  ): Promise<void> {
+    const state = await this.loadState(tx, orderId);
+    const drafts = await this.drafts(tx, orderId);
+    if (drafts.length === 0 && input.close !== true) {
+      throw new BadRequestException(
+        'El borrador de la orden está vacío: agrega lo que salió antes de ejecutarlo',
+      );
+    }
+    this.assertRoomForReports(state.liveReports, drafts.length);
+    this.validate(state, drafts.map(toRowLike), 'all');
+
+    // D-388/D-389: la casilla viaja por fila al ejecutar. Una fila que la
+    // necesita y no la trae se rechaza adentro de `reportInTx` con su código y su número de
+    // fila; una casilla de más (la fila ya entra en el 1 %) no deja rastro.
+    const overrides = new Map(
+      (input.toleranceOverrides ?? []).map(({ draftId, ...override }) => [draftId, override]),
+    );
+
+    for (const [index, draft] of drafts.entries()) {
+      const toleranceOverride = overrides.get(draft.id);
+      try {
+        warnings.push(
+          ...(await this.roofing.reportInTx(
+            tx,
+            actor,
+            orderId,
+            {
+              coilId: draft.coilId,
+              pieces: draft.pieces.map((p) => ({
+                lengthMm: p.lengthMm.toFixed(2),
+                qty: p.qty,
+              })),
+              ...(draft.consumedKg === null ? {} : { consumedKg: draft.consumedKg.toFixed(3) }),
+              ...(draft.notes === null ? {} : { notes: draft.notes }),
+              ...(toleranceOverride === undefined ? {} : { toleranceOverride }),
+              confirmBackdate: input.confirmBackdate,
+            },
+            operationDate,
+          )),
+        );
+      } catch (err) {
+        throw withRowNumber(err, index + 1);
+      }
+    }
+
+    await tx.productionReportDraft.deleteMany({ where: { productionOrderId: orderId } });
+
+    if (input.close === true) {
+      await this.roofing.closeInTx(
+        tx,
+        actor,
+        orderId,
+        {
+          consumedKg: input.closeConsumedKg,
+          reason: input.closeReason,
+          confirmBackdate: input.confirmBackdate,
+        },
+        operationDate,
+        warnings,
+      );
+    }
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'production.roofing.drafts-commit',
+      entity: 'production_orders',
+      entityId: orderId,
+      after: {
+        code: productionOrderCode(state.orderSeq),
+        rows: drafts.length,
+        meters: drafts
+          .reduce((acc, d) => acc.plus(piecesMeters(d.pieces.map(toPieceLike))), toDecimal('0'))
+          .toFixed(3),
+        closed: input.close === true,
+        operationDate,
+      },
+    });
   }
 
   // -------------------------------------------------------------------------

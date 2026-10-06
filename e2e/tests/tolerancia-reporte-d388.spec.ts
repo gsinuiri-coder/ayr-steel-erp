@@ -3,6 +3,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import { adminApi, createUser, getJson, postJson, type CreatedUser } from '../helpers/api';
 import { apiAs, createCuttingSupplier, ROLE_PASSWORD, today } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
+import { confirmPlantClose } from '../helpers/ui';
 import {
   buyRoofingCoil,
   createColor,
@@ -390,6 +391,12 @@ test.describe('D-388/D-389 — fuera de tolerancia con la casilla', () => {
       .fill('Rollo con espesor real menor');
     await expect(execute).toBeEnabled();
     await execute.click();
+    // cc27 (D-453): el resumen avisa de la fila fuera de tolerancia y de la bobina que termina.
+    await expect(page.getByRole('dialog')).toContainText('Fuera de tolerancia', {
+      timeout: 60_000,
+    });
+    await expect(page.getByRole('dialog')).toContainText('Terminada');
+    await confirmPlantClose(page, 'Ejecutar y cerrar');
     await expect(page.getByText(`${order.code}: borrador ejecutado y orden cerrada`)).toBeVisible({
       timeout: 60_000,
     });

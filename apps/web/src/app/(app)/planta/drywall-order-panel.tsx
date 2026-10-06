@@ -11,6 +11,7 @@ import {
   mountedKgForReport,
   PRODUCTION_ORDER_STATUS_LABELS,
   theoreticalKg,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type ProductionStripOptionDto,
 } from '@ayr/shared';
@@ -24,6 +25,7 @@ import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
+import { ClosePreviewDialog } from '@/components/production/close-preview-dialog';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -59,6 +61,11 @@ export function DrywallOrderPanel({
   const queryClient = useQueryClient();
   const [pieces, setPieces] = useState('');
   const [closing, setClosing] = useState(false);
+  /** cc27 (UX26-03, D-453): el resumen del cierre que espera confirmación, con lo que se mandó. */
+  const [closePreview, setClosePreview] = useState<{
+    preview: PlantClosePreviewDto;
+    args: Partial<ReverseArgs>;
+  } | null>(null);
   // D-124: día de negocio del reporte de piezas y del cierre. Planta no lo ve —el campo es
   // solo para ADMINISTRADOR—; existe para que la carga histórica pueda fechar la corrida.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
@@ -145,6 +152,20 @@ export function DrywallOrderPanel({
       );
       setClosing(false);
       invalidate();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden'),
+  });
+  /** D-453: lo que el cierre va a hacer, calculado por el API sin escribir nada. */
+  const previewClose = useMutation({
+    mutationFn: ({ reason, operationDate: date }: Partial<ReverseArgs>) =>
+      api<PlantClosePreviewDto>(`/production/${orderId}/close/preview`, {
+        method: 'POST',
+        body: { reason: reason ?? undefined, operationDate: date },
+      }),
+    onSuccess: (preview, args) => {
+      setClosing(false);
+      setClosePreview({ preview, args });
     },
     onError: (err) =>
       toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden'),
@@ -407,16 +428,16 @@ export function DrywallOrderPanel({
 
       {o.status === 'IN_PROGRESS' && o.piecesReported > 0 && (
         <Button
-          disabled={close.isPending}
+          disabled={close.isPending || previewClose.isPending}
           onClick={() => {
             // Con mucha merma, cerrar es una baja de inventario y el API pide motivo
             // (D-057): se lo pedimos acá en vez de gastar un 400.
             if (needsReason) setClosing(true);
-            else close.mutate({ reason: undefined, operationDate: undefined });
+            else previewClose.mutate({ reason: undefined, operationDate: undefined });
           }}
         >
-          {close.isPending
-            ? 'Cerrando…'
+          {close.isPending || previewClose.isPending
+            ? 'Calculando…'
             : `Cerrar ${o.code} (${formatQty(pendingKg.toFixed(3), 'kg')} irán a merma)`}
         </Button>
       )}
@@ -427,10 +448,29 @@ export function DrywallOrderPanel({
         title="Cerrar con merma de proceso"
         description={`Quedan ${formatQty(pendingKg.toFixed(3), 'kg')} sin convertir en piezas sobre ${formatQty(assignedKg.toFixed(3), 'kg')} montados: esa diferencia sale del inventario como merma y su costo se reparte entre las piezas buenas. Explica por qué.`}
         confirmLabel="Cerrar la orden"
-        pending={close.isPending}
+        pending={close.isPending || previewClose.isPending}
         withOperationDate
         onConfirm={(reason, date) => {
-          close.mutate({ reason, operationDate: date });
+          previewClose.mutate({ reason, operationDate: date });
+        }}
+      />
+
+      <ClosePreviewDialog
+        preview={closePreview?.preview ?? null}
+        title={`Cerrar ${o.code}`}
+        confirmLabel="Cerrar la orden"
+        scrapLabel="Merma de proceso del cierre"
+        pending={close.isPending}
+        onCancel={() => {
+          setClosePreview(null);
+        }}
+        onConfirm={() => {
+          if (closePreview === null) return;
+          close.mutate(closePreview.args, {
+            onSettled: () => {
+              setClosePreview(null);
+            },
+          });
         }}
       />
 

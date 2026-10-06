@@ -34,6 +34,7 @@ import {
   type CreateRoofingOrderInput,
   type CreateRoofingOrdersFromSalesOrderInput,
   type MountRoofingCoilInput,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type ReportAndCloseRoofingInput,
   type ReportRoofingPiecesInput,
@@ -144,6 +145,19 @@ export class RoofingProductionController {
     return this.drafts.add(actor, id, body);
   }
 
+  /**
+   * cc27 (UX26-03, D-453): lo que «Ejecutar y cerrar» haría, sin hacerlo. Mismo cuerpo que
+   * `commit`; corre la acción en una transacción que se deshace. Es una lectura: no escribe nada.
+   */
+  @Post(':id/drafts/commit/preview')
+  previewCommitDrafts(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(commitRoofingDraftsSchema)) body: CommitRoofingDraftsInput,
+  ): Promise<PlantClosePreviewDto> {
+    return this.drafts.previewCommit(actor, id, body);
+  }
+
   /** Ejecutar el borrador entero en una transacción (todo o nada). Va antes de `:draftId`. */
   @Post(':id/drafts/commit')
   commitDrafts(
@@ -238,6 +252,16 @@ export class RoofingProductionController {
    * un segundo viaje que podía fallar con el reporte ya escrito, y la bobina quedaba montada
    * en una orden a medio cerrar mientras su hermana del mismo pedido la esperaba.
    */
+  /** cc27 (D-453): lo que «Reportar y cerrar» haría, sin hacerlo. No escribe nada. */
+  @Post(':id/report-and-close/preview')
+  previewReportAndClose(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(reportAndCloseRoofingSchema)) body: ReportAndCloseRoofingInput,
+  ): Promise<PlantClosePreviewDto> {
+    return this.roofing.previewReportAndClose(actor, id, body);
+  }
+
   @Post(':id/report-and-close')
   reportAndClose(
     @CurrentUser() actor: RequestUser,
@@ -256,6 +280,16 @@ export class RoofingProductionController {
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
     return this.roofing.reverseReport(actor, id, reportId, body);
+  }
+
+  /** cc27 (D-453): lo que «Cerrar sin reportar más» haría, sin hacerlo. No escribe nada. */
+  @Post(':id/close/preview')
+  previewClose(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(closeRoofingOrderSchema)) body: CloseRoofingOrderInput,
+  ): Promise<PlantClosePreviewDto> {
+    return this.roofing.previewClose(actor, id, body);
   }
 
   /** Cerrar: kilos consumidos declarados y merma por despunte (D-089). */

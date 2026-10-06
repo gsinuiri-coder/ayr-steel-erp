@@ -8,6 +8,7 @@ import {
   TOLERANCE_OVERRIDE_REQUIRED,
   toDecimal,
   type MountedKgExcess,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type RoofingBatchOrderDto,
 } from '@ayr/shared';
@@ -17,6 +18,7 @@ import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { InfoPopover } from '@/components/info-popover';
+import { ClosePreviewDialog } from '@/components/production/close-preview-dialog';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -73,6 +75,18 @@ export function AccessoryReportCard({
   const reasonToSend = useRef<string | null>(null);
   const [closeMode, setCloseMode] = useState(false);
   /**
+   * cc27: el modo del envío va también por `ref`. El botón lo fija y dispara el envío en el mismo
+   * manejador, y con solo el estado el primer «Reportar y cerrar» leía el valor anterior (y
+   * reportaba sin cerrar).
+   */
+  const closeModeRef = useRef(false);
+  /** cc27 (UX26-03, D-453): el resumen de «Reportar y cerrar» que espera confirmación. */
+  const [closePreview, setClosePreview] = useState<{
+    preview: PlantClosePreviewDto;
+    reason: string | null;
+    confirmBackdate: boolean;
+  } | null>(null);
+  /**
    * D-389: el rechazo por tolerancia, con sus cifras y la huella de lo que se mandó (bobina,
    * metros y kilos). El aviso y la casilla valen solo mientras esa huella siga siendo la de la
    * pantalla: cambiar la bobina, los metros o los kilos es otro exceso que nadie vio.
@@ -116,35 +130,55 @@ export function AccessoryReportCard({
   const total = validMeters ? reported.plus(typedMeters) : reported;
   const overOrdered = validMeters && ordered.gt(0) && total.gt(ordered);
 
+  /** El cuerpo del reporte, el mismo para la vista previa del cierre (D-453) y el envío. */
+  const reportBody = ({
+    close,
+    reason,
+    confirmBackdate,
+  }: {
+    close: boolean;
+    reason: string | null;
+    confirmBackdate: boolean;
+  }) => {
+    const body = {
+      meters: typedMeters?.toFixed(3),
+      ...(typedPieces !== null ? { piecesCount: typedPieces } : {}),
+      ...(coil ? { coilId: coil.coilId } : {}),
+      ...(consumedKg.trim() ? { consumedKg: toDecimal(consumedKg.trim()).toFixed(3) } : {}),
+      ...(close && closeKg.trim() ? { closeConsumedKg: toDecimal(closeKg.trim()).toFixed(3) } : {}),
+      ...(close && reason ? { closeReason: reason } : {}),
+      // D-389: la casilla y el motivo, solo cuando el API pidió la casilla.
+      ...(toleranceOverride === null ? {} : { toleranceOverride }),
+      operationDate,
+      confirmBackdate: confirmBackdate || undefined,
+    };
+    return { ...body, idempotencyKey: key.current(JSON.stringify(body)) };
+  };
+  /** Los rechazos del reporte, los mismos si llegan en la vista previa del cierre. */
+  const onSendError = (err: unknown, close: boolean) => {
+    // D-389: el reporte pasó la tolerancia del 1 %: se muestra el aviso con la casilla y se
+    // reenvía con ella. Va **antes** que el motivo del despunte: su mensaje también habla de
+    // «motivo», y confundirlos abría el diálogo del despunte en bucle (revisión de cc20).
+    if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
+      const excess = err.details?.excess;
+      setRejected(excess === undefined ? null : { excess, fingerprint });
+      reasonToSend.current = null;
+      if (err.details?.excess === undefined) toast.error(err.message);
+      return;
+    }
+    // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
+    if (close && err instanceof ApiError && /motivo/i.test(err.message)) {
+      setAsking(true);
+      return;
+    }
+    toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar el reporte');
+  };
   const send = useMutation({
-    mutationFn: ({
-      close,
-      reason,
-      confirmBackdate,
-    }: {
-      close: boolean;
-      reason: string | null;
-      confirmBackdate: boolean;
-    }) => {
-      const body = {
-        meters: typedMeters?.toFixed(3),
-        ...(typedPieces !== null ? { piecesCount: typedPieces } : {}),
-        ...(coil ? { coilId: coil.coilId } : {}),
-        ...(consumedKg.trim() ? { consumedKg: toDecimal(consumedKg.trim()).toFixed(3) } : {}),
-        ...(close && closeKg.trim()
-          ? { closeConsumedKg: toDecimal(closeKg.trim()).toFixed(3) }
-          : {}),
-        ...(close && reason ? { closeReason: reason } : {}),
-        // D-389: la casilla y el motivo, solo cuando el API pidió la casilla.
-        ...(toleranceOverride === null ? {} : { toleranceOverride }),
-        operationDate,
-        confirmBackdate: confirmBackdate || undefined,
-      };
-      return api<ProductionOrderDto>(
-        `/production/roofing/${order.orderId}/${close ? 'report-and-close' : 'report'}`,
-        { method: 'POST', body: { ...body, idempotencyKey: key.current(JSON.stringify(body)) } },
-      );
-    },
+    mutationFn: (variables: { close: boolean; reason: string | null; confirmBackdate: boolean }) =>
+      api<ProductionOrderDto>(
+        `/production/roofing/${order.orderId}/${variables.close ? 'report-and-close' : 'report'}`,
+        { method: 'POST', body: reportBody(variables) },
+      ),
     onSettled: (_data, error) => {
       key.settle(error ?? undefined);
     },
@@ -162,36 +196,40 @@ export function AccessoryReportCard({
       onDone(updated, variables.close);
     },
     onError: (err, variables) => {
-      // D-389: el reporte pasó la tolerancia del 1 %: se muestra el aviso con la casilla y se
-      // reenvía con ella. Va **antes** que el motivo del despunte: su mensaje también habla de
-      // «motivo», y confundirlos abría el diálogo del despunte en bucle (revisión de cc20).
-      if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
-        const excess = err.details?.excess;
-        setRejected(excess === undefined ? null : { excess, fingerprint });
-        reasonToSend.current = null;
-        if (err.details?.excess === undefined) toast.error(err.message);
-        return;
-      }
-      // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
-      if (variables.close && err instanceof ApiError && /motivo/i.test(err.message)) {
-        setAsking(true);
-        return;
-      }
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar el reporte');
+      onSendError(err, variables.close);
+    },
+  });
+  /** D-453: lo que «Reportar y cerrar» va a hacer, calculado por el API sin escribir nada. */
+  const previewSend = useMutation({
+    mutationFn: (variables: { reason: string | null; confirmBackdate: boolean }) =>
+      api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/report-and-close/preview`, {
+        method: 'POST',
+        body: reportBody({ close: true, ...variables }),
+      }),
+    onError: (err) => {
+      onSendError(err, true);
     },
   });
 
+  /** Con cierre, primero la vista previa (D-453): el envío lo dispara el diálogo de confirmación. */
   const submit = useBackdateConfirm(async (confirmBackdate) => {
-    await send.mutateAsync({ close: closeMode, reason: reasonToSend.current, confirmBackdate });
+    const reason = reasonToSend.current;
+    if (closeModeRef.current) {
+      const preview = await previewSend.mutateAsync({ reason, confirmBackdate });
+      setClosePreview({ preview, reason, confirmBackdate });
+      return;
+    }
+    await send.mutateAsync({ close: false, reason, confirmBackdate });
   });
 
   const start = (close: boolean) => {
+    closeModeRef.current = close;
     setCloseMode(close);
     reasonToSend.current = null;
     void submit.attempt();
   };
 
-  const busy = disabled || send.isPending || closing;
+  const busy = disabled || send.isPending || previewSend.isPending || closing;
   /** D-389: con el aviso a la vista, se reenvía solo con la casilla y el motivo completos. */
   const toleranceBlocked = tolerance !== null && toleranceOverride === null;
   const canSend =
@@ -342,8 +380,8 @@ export function AccessoryReportCard({
               <Button
                 aria-label={`Reportar y cerrar ${order.code}`}
                 disabled={!canSend || busy || toleranceBlocked}
-                pending={send.isPending && closeMode}
-                pendingText="Cerrando…"
+                pending={(send.isPending || previewSend.isPending) && closeMode}
+                pendingText="Calculando…"
                 onClick={() => {
                   start(true);
                 }}
@@ -377,8 +415,34 @@ export function AccessoryReportCard({
         onConfirm={(reason: string) => {
           setAsking(false);
           reasonToSend.current = reason;
+          closeModeRef.current = true;
           setCloseMode(true);
           void submit.attempt();
+        }}
+      />
+      <ClosePreviewDialog
+        preview={closePreview?.preview ?? null}
+        title={`Reportar y cerrar ${order.code}`}
+        confirmLabel="Reportar y cerrar"
+        pending={send.isPending}
+        onCancel={() => {
+          reasonToSend.current = null;
+          setClosePreview(null);
+        }}
+        onConfirm={() => {
+          if (closePreview === null) return;
+          send.mutate(
+            {
+              close: true,
+              reason: closePreview.reason,
+              confirmBackdate: closePreview.confirmBackdate,
+            },
+            {
+              onSettled: () => {
+                setClosePreview(null);
+              },
+            },
+          );
         }}
       />
       <BackdateConfirmDialog
@@ -387,7 +451,7 @@ export function AccessoryReportCard({
           if (!open) submit.close();
         }}
         detail={submit.detail ?? ''}
-        pending={send.isPending}
+        pending={send.isPending || previewSend.isPending}
         onConfirm={() => {
           void submit.confirm();
         }}
