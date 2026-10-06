@@ -970,16 +970,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
         </Card>
 
         {/* cc27 (D-454): la acción principal queda a la vista en una compra larga. */}
-        <StickyActionBar
-          hint={
-            <>
-              Total:{' '}
-              <span className="font-semibold text-foreground tabular-nums">
-                {formatMoney(totals.total, currency)}
-              </span>
-            </>
-          }
-        >
+        <StickyActionBar>
           <Button
             type="button"
             variant="outline"

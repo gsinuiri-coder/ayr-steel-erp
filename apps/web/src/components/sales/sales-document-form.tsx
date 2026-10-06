@@ -1304,16 +1304,7 @@ export function SalesDocumentForm({
         </Alert>
       )}
 
-      <DocumentActions
-        hint={
-          <>
-            Precio de venta (con IGV):{' '}
-            <span className="font-semibold text-foreground tabular-nums">
-              {formatMoney(documentTotals.total.toFixed(2))}
-            </span>
-          </>
-        }
-      >
+      <DocumentActions>
         <Button
           variant="outline"
           onClick={() => {
