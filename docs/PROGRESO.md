@@ -2,6 +2,13 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-06 — cc28: sesión de limpieza (en curso, rama `cc28-limpieza`)
+
+Sesión desatendida; rige el brief de cc28 (dos cortes, hoy sin ventana). Estado al arrancar:
+`main` = `9f16f1f9`, API `ayr-steel-erp-api-00092-kzx` (`git-sha=f336478e`), próxima D libre
+D-459 (registrada: ratificaciones del dueño). Las dos últimas CI de `main` salieron canceladas por
+el push seguido de #113 y #114; se relanzó la de `9f16f1f9`.
+
 ## 2026-10-06 — Ventana cc27 (D-452..D-458 desplegadas, PR #113, sin migración)
 
 Sesión desatendida: rigen D-445 y el brief de cc27 (modo autónomo, ambigüedad → D-nnn
