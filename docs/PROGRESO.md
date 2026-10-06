@@ -26,7 +26,7 @@ Sesión desatendida (D-442). Detalle, revisiones, UAT y lista para el dueño en
   - E2E nuevos: `panel-cc26` y `excel-listas-cc26`;
   - UAT propio con build de producción, aprobado;
   - CI 37433458004 sobre `f92684ab`, en verde.
-- **Ventana (08:38–08:45 Lima), revertida:**
+- **Ventana (03:38–03:45 Lima; 08:38–08:45 UTC), revertida:**
   - el deploy de la API falló: la revisión `00090-s8l` no llegó a la base de Neon al arrancar
     (P1001) y no recibió tráfico;
   - no hubo merge;
@@ -34,7 +34,7 @@ Sesión desatendida (D-442). Detalle, revisiones, UAT y lista para el dueño en
   - `smoke:prod` en verde en los dos dominios después de la vuelta atrás.
   - Pendiente del dueño: confirmar la conexión que usa `deploy-api` y repetir la ventana.
 - **D-445 (del dueño):** nada pide confirmación. La copia de `.claude/settings.json` al PR la
-  bloqueó el clasificador; el archivo sigue modificado en el checkout principal, y el texto para
+  bloqueó el clasificador; la commiteó el dueño en el PR #111 (`30c7b755`). El texto para
   AGENTS.md está en el handoff.
 - **Registro de riesgo (solo lectura, sin kardex):**
   - las seis listas pasan ahora por `findWindow` (`invoicing.service.ts`,

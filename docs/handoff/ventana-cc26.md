@@ -57,8 +57,8 @@ En `docs/ARQUITECTURA.md` §0.2.
 
 - El dueño cambió `.claude/settings.json` en el checkout principal (la lista `ask` queda vacía;
   `deny` se conserva y se amplía). **Copiarlo al worktree para el PR lo bloqueó el clasificador
-  del modo automático («Self-Modification»)**: no se reintentó por otra vía. El archivo sigue
-  modificado y sin commitear en el checkout principal; no va en el PR #111.
+  del modo automático («Self-Modification»)**: no se reintentó por otra vía. **El dueño lo
+  commiteó él mismo en la rama del PR (`30c7b755`): el archivo va en el PR #111.**
 - **Texto propuesto para AGENTS.md** (lo commitea el dueño), para reemplazar el segundo párrafo
   de la regla 1 de §3 («D-411 (2026-10-05…»):
 
@@ -130,7 +130,7 @@ En `docs/ARQUITECTURA.md` §0.2.
 
 ## Ventana
 
-Se intentó el martes 6 de octubre, entre las 08:38 y las 08:45 de Lima, con D-411 y D-442. **Falló
+Se intentó el martes 6 de octubre, entre las 03:38 y las 03:45 de Lima (08:38–08:45 UTC), con D-411 y D-442. **Falló
 en el paso 3 (deploy de la API), y se aplicó la vuelta atrás sin arreglos en caliente.**
 
 1. **Vuelta atrás anotada:** la API `ayr-steel-erp-api-00089-8mf` (`git-sha=39dfe852`) servía al
@@ -205,12 +205,13 @@ smokes).
    5. **UX26-06/07/13:** cotizar y despachar dejan «Guardar» bajo el pliegue, y salir del
       formulario descarta todo sin aviso.
 4. **Ramas remotas:** no hay que borrar ninguna todavía. `cc26-panel-excel-ux` es la del PR #111, abierto, y lleva también este cierre.
-5. **`.claude/settings.json`:** commitearlo desde el checkout principal, junto con el texto de
-   D-445 para AGENTS.md (arriba).
+5. **`.claude/settings.json`:** ya está en el PR #111 (`30c7b755`, commit del dueño). Falta el
+   texto de D-445 para AGENTS.md (arriba), que commitea el dueño.
 
 ## Bloqueos
 
-- Copiar `.claude/settings.json` al worktree: bloqueado por el clasificador («Self-Modification»).
+- Copiar `.claude/settings.json` al worktree: bloqueado por el clasificador («Self-Modification»);
+  lo commiteó el dueño en el PR (`30c7b755`).
 - Renumerar en bloque las decisiones provisionales con `sed`: bloqueado por el clasificador por
   continuar lo anterior. Se mantuvieron D-443/D-444 y la regla del dueño quedó en D-445.
 
