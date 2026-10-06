@@ -95,27 +95,30 @@ Reglas de convivencia, sin excepción:
 
 1. **Nada queda bloqueado por regla salvo dos excepciones irreversibles: `gh repo sync` y borrar
    una rama protegida siguen prohibidos sin excepción** (D-251) — no tienen reversa y el dueño
-   los puede correr a mano si hace falta. Para toda otra **acción sensible** —push, merge a
-   `main`, deploy (Cloud Run/Vercel), cualquier comando contra Neon `production`, borrados, y
-   escrituras de datos en `production`— el agente **propone el comando exacto y se detiene a
-   esperar el OK explícito del dueño en la sesión**, vía las reglas `ask` de
-   `.claude/settings.json` (D-251). Con el OK, el agente mismo la ejecuta — no hace falta que el
-   dueño la tipee, aunque puede seguir prefiriéndolo caso por caso. Push a `main` sigue exigiendo
-   además `AYR_OWNER_PUSH=1`: el hook de `.githooks/pre-push` es una red de seguridad aparte del
-   `ask`, no un reemplazo — un hook de git no puede "preguntar" en medio de un `push`, solo
-   permitirlo o bloquearlo en el acto.
+   los puede correr a mano si hace falta. El régimen de OK por acción de D-251 (las reglas `ask`
+   de `.claude/settings.json`) y después el de D-411 quedaron reemplazados por D-445 (párrafo
+   siguiente): hoy la lista `ask` está vacía y lo irreversible vive en `deny`. El hook de
+   `.githooks/pre-push` sigue como red de seguridad aparte: bloquea cualquier push a `main` sin
+   `AYR_OWNER_PUSH=1`, y el agente no lo usa: todo entra por PR.
 
-   **D-411 (2026-10-05, vigente hasta que el dueño diga lo contrario) reemplaza el OK por acción
-   para cinco acciones:** merge a `main`, push a `main` (con `AYR_OWNER_PUSH=1`),
-   `pnpm deploy:api`, `pnpm smoke:prod` y la vuelta atrás de la API con
-   `gcloud run services update-traffic` corren sin OK del dueño. Siguen en pie: la ventana solo
-   corre entre las 20:00 y las 07:00 de Lima, comprobado con la hora real; fuera de ese horario
-   el PR queda listo y se espera. Una migración detiene la sesión y se pregunta. `neonctl`,
-   `db:prod`, `prod:*` y `gcloud run deploy` siguen pidiendo confirmación, y un push con
-   `--force`, `--delete` o `-f` sigue prohibido. D-230 sigue vigente. El UAT del dueño en demo va
-   antes de la ventana. Si falla el deploy, el merge o el smoke, la vuelta atrás es automática:
-   la API a la revisión anterior y el revert del merge, otro smoke y el registro escrito, sin
-   arreglos en caliente.
+   **D-445 (2026-10-06, vigente hasta que el dueño diga lo contrario) reemplaza a D-411: ninguna
+   acción pide confirmación, salvo las tres de D-460.** Todo va directo a producción con el UAT del dueño aprobado por
+   defecto, salvo que el dueño pida demo de forma explícita. El merge a `main` (por PR, con
+   `gh pr merge`), `pnpm deploy:api`, `pnpm smoke:prod`, la vuelta atrás con
+   `gcloud run services update-traffic` y los demás comandos que antes estaban en `ask` corren
+   sin OK por acción, **salvo tres que siguen pidiendo el OK del dueño por nombre** (D-460):
+   una migración contra producción, una escritura masiva con `--execute --confirm-production`
+   (regla 5) y borrar una rama de Neon (además en `deny`). **El agente no empuja directo a
+   `main`: todo entra por PR** (también el cierre de docs), por decisión del dueño (cc28).
+   Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, borrar ramas de Neon,
+   `e2e:prod`, `prod-reset-go-live` y leer `.env*`. Una rama remota ya mergeada se borra con
+   `gh api -X DELETE …/git/refs/heads/<rama>`, nunca con `git push --delete`. Siguen en pie las
+   reglas duras que no son de confirmación: la ventana corre entre las 20:00 y las 07:00 de Lima,
+   comprobado con la hora real, salvo los días en que el dueño avise que el cliente no usa la app
+   (como D-437 y D-458); sin SQL directo contra producción; una migración detiene la sesión y se
+   pregunta (y en una sesión desatendida no se hace); credenciales nunca en argv; y si falla el
+   deploy, el merge o el smoke, la vuelta atrás es automática (API a la revisión anterior y revert
+   del merge), otro smoke y el registro escrito, sin arreglos en caliente.
 
 2. **Credenciales nunca en argv ni impresas.** Los comandos que podrían imprimirlas (p. ej.
    `neonctl`) van en modo silencioso y con `--output json`. Las cadenas de conexión viajan por
@@ -177,6 +180,17 @@ Reglas de convivencia, sin excepción:
     requiere decisión antes de implementar; la recomendación y la decisión se registran como
     `D-nnn`. Esto sustituye la regla anterior de aplicar por cuenta propia la recomendación de
     `docs/ARQUITECTURA.md` §5 salvo acción externa.
+17. **Orden único de bloqueos de fila (D-386).** Toda transacción que toca inventario toma sus
+    filas en el orden documentos → reservas → bobinas → saldos y, dentro de cada nivel, por id
+    ascendente (`docs/ARQUITECTURA.md` §3.3.1); un documento se bloquea antes que sus filas hijas
+    (la orden de corte antes que sus bobinas, cc28). Las bobinas y los saldos se bloquean solo por la
+    puerta única: `lockCoilRows` (`apps/api/src/inventory/row-locks.ts`) e
+    `InventoryService.lockBalance`. Una operación de varios ítems toma su conjunto completo al
+    inicio con `InventoryService.lockInOrder`, antes de cualquier lectura que decida algo. El
+    centinela `row-locks.sentinel.spec.ts` falla si aparece un `FOR UPDATE` sobre `coils` o
+    `inventory_balances` fuera de la puerta. Los pares concurrentes viven en
+    `lock-order.db-spec.ts`. Un camino nuevo que mueva inventario suma su par ahí. **Salvo los
+    cruces del grupo C anotados en PROGRESO, que se cierran en su sesión.**
 
 ### 3.1 Credenciales y secretos
 
@@ -184,6 +198,10 @@ Reglas de convivencia, sin excepción:
   o docs, ni apuntar un comando de diagnóstico (`rg`, `grep`, `ls`, `find`, `head`, `tail`, `wc`)
   a `.env*` o a rutas/globs que puedan expandirse a ellos. Los scripts lo leen con
   `scripts/lib.mjs#readEnvFile`.
+- `.env.demo` (secretos **propios** de demo, D-125) vive solo en el checkout principal. Desde un
+  worktree, `dev:demo` y `db:demo` leen ese mismo archivo (o el que indique `AYR_ENV_DEMO`) y
+  `env:demo` se niega a generar uno nuevo (`scripts/demo-env-path.mjs`, cc28): un `.env.demo`
+  nacido en un worktree dejaba al admin de demo con una contraseña que se perdía con el worktree.
 - Una credencial jamás viaja por `argv`; siempre por el entorno del proceso hijo. Nada de
   `--url <cadena>`, `--password` o `--token`: los argumentos son visibles en el proceso y se
   imprimen con frecuencia cuando un comando falla.
@@ -203,10 +221,10 @@ Reglas de convivencia, sin excepción:
   `NEON_API_KEY` por entorno; el `neonctl` 4.x no tiene `roles reset-password`) y actualizar
   `.env.setup`, Secret Manager y GitHub Actions. Mientras no se rote, producción está comprometida y el incidente se registra en
   `docs/PROGRESO.md` con fecha y hora exactas.
-- `migrate deploy`, `migrate diff`, `db:prod` y cualquier comando con credenciales de BD de
-  producción son acción sensible (D-251): el agente propone el comando exacto y espera el OK
-  explícito del dueño por cada uno vía el `ask` de `.claude/settings.json` — una autorización de
-  ventana no permite encadenarlos — y con el OK, el agente lo ejecuta él mismo.
+- Una migración contra producción (`migrate deploy` de un cambio de schema) **detiene la sesión y
+  se pregunta al dueño** (D-445), y en una sesión desatendida no se hace. `migrate diff`,
+  `db:prod` y los demás comandos con credenciales de BD de producción corren sin OK por acción
+  (D-445), siempre por las puertas de `scripts/lib.mjs` y sin imprimir credenciales.
 
 ### 3.2 Git, deploy y sincronización de artefactos
 
@@ -222,9 +240,8 @@ Reglas de convivencia, sin excepción:
 package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 significa
   desalineación de runtime y obliga a parar.
 - `pnpm setup:agentes` configura `core.hooksPath=.githooks`. `.githooks/pre-push` permite ramas
-  de trabajo y bloquea cualquier push cuyo destino sea `main` salvo con `AYR_OWNER_PUSH=1`, que
-  desde D-411 el agente usa sin OK por acción dentro de la ventana (20:00–07:00 de Lima) y con
-  el resumen de D-232 ya presentado al dueño.
+  de trabajo y bloquea cualquier push cuyo destino sea `main` salvo con `AYR_OWNER_PUSH=1`. Desde D-445 el agente no empuja a `main`: todo entra por PR, por decisión del dueño
+  (con el resumen de D-232 ya presentado al dueño). `AYR_OWNER_PUSH=1` queda para el dueño.
 
 ### 3.3 Datos reales, Neon y operaciones destructivas
 
@@ -344,8 +361,9 @@ Para un spec Playwright suelto usar
 suite completa. `--grep` sí funciona por ser una opción.
 
 Después del push de la rama de trabajo, verificar la CI de GitHub Actions antes de declarar la
-sesión cerrada. Un merge o push a `main` sigue el punto de control de D-232: el resumen al dueño
-va siempre; desde D-411 la ejecución dentro de la ventana no necesita un OK por acción.
+sesión cerrada. Un merge a `main` (siempre por PR, D-445) sigue el punto de control de D-232: el
+resumen al dueño va siempre; desde D-411/D-445 la ejecución dentro de la ventana no necesita un OK
+por acción.
 
 ---
 
@@ -403,7 +421,7 @@ exacto en cada ventana.
 | `.agents/skills/<skill>/SKILL.md` | Codex CLI y Antigravity | Procedimientos ejecutables                      |
 | `.agents/rules/00-ayr.md`         | Antigravity IDE         | Puntero a `AGENTS.md`, sin duplicar contenido   |
 | `.githooks/pre-push`              | git (todos)             | Bloqueo de pushes a `main` sin OK del dueño     |
-| `.claude/settings.json`           | Claude Code             | `ask` técnico sobre acciones sensibles (D-251)  |
+| `.claude/settings.json`           | Claude Code             | `deny` de lo irreversible; `ask` vacío (D-445)  |
 | `docs/agentes/README.md`          | Personas y agentes      | Instalación, invocación y perfiles sugeridos    |
 
 Perfiles sugeridos en `~/.codex/config.toml`: uno de grind (effort medio), uno de
@@ -413,8 +431,9 @@ diseño/diagnóstico (effort alto) y uno de solo lectura para revisión.
 
 ## 10. Qué NO hacer, resumido
 
-- No empujar ni mergear a `main` sin el resumen de D-232 ni fuera de la ventana de D-411
-  (20:00–07:00 de Lima); no usar `gh repo sync` ni borrar ramas protegidas.
+- No empujar directo a `main` (todo por PR, D-445); no mergear sin el resumen de D-232 ni fuera de
+  la ventana (20:00–07:00 de Lima, salvo aviso del dueño); no usar `gh repo sync` ni borrar ramas
+  protegidas.
 - No tocar 4000/4001.
 - No correr SQL contra prod ni imprimir credenciales.
 - No inventar alcance ni "aprovechar y de paso arreglar" fuera del milestone.

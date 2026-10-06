@@ -60,7 +60,7 @@ export function SellerSalesCard() {
           <p className="text-xs text-muted-foreground">
             {d.quotationsIssued === 0
               ? `Sin cotizaciones emitidas ${range}.`
-              : `${String(d.quotationsConverted)} de ${String(d.quotationsIssued)} cotizaciones emitidas ${range} tienen pedido.`}{' '}
+              : `${String(d.quotationsConverted)} de ${String(d.quotationsIssued)} cotizaciones emitidas ${range} tienen un pedido vigente (no anulado).`}{' '}
             <Link href="/cotizaciones" className={LINK_CLASSNAME}>
               Ver tus cotizaciones
             </Link>

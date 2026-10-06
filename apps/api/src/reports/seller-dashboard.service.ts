@@ -6,6 +6,7 @@ import {
   FiscalDocType,
   LIVE_DOCUMENT_STATUSES,
   QuotationStatus,
+  SalesOrderStatus,
   toDateOnly,
   type SellerDashboardDto,
 } from '@ayr/shared';
@@ -17,7 +18,7 @@ import { assembleSellerDashboard } from './seller-dashboard';
 
 /**
  * cc27 (M4, D-457, propuesta de D-450). El Panel del vendedor: sus ventas del mes y su conversión
- * de cotización a pedido. **El alcance es el del servidor**, el mismo de sus listas: los
+ * de cotización a pedido (con algún pedido no anulado, D-459). **El alcance es el del servidor**, el mismo de sus listas: los
  * comprobantes con `fiscalDocumentListWhere` (los que emitió o los de sus pedidos) y las
  * cotizaciones con `quotationSellerWhere`. Tres consultas, sin costos ni márgenes.
  */
@@ -65,7 +66,8 @@ export class SellerDashboardService {
           ...quotationSellerWhere(actor),
           status: { not: QuotationStatus.DRAFT },
           issueDate,
-          salesOrders: { some: {} },
+          // D-459 (decisión del dueño): un pedido anulado no cuenta como conversión.
+          salesOrders: { some: { status: { not: SalesOrderStatus.CANCELLED } } },
         },
       }),
     ]);

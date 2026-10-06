@@ -17,10 +17,18 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { demoEnvPlan, mainCheckoutRoot } from './demo-env-path.mjs';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
 
-const demoEnvPath = resolve(ROOT, '.env.demo');
+// cc28: el .env.demo del checkout principal (o AYR_ENV_DEMO), también desde un worktree; un
+// worktree nunca genera uno propio (demo-env-path.mjs).
+const plan = demoEnvPlan({ root: ROOT, mainRoot: mainCheckoutRoot(ROOT), env: process.env });
+const demoEnvPath = plan.path;
 if (!existsSync(demoEnvPath)) {
+  if (!plan.canGenerate) {
+    console.error(plan.howToFix);
+    process.exit(1);
+  }
   const res = spawnSync(process.execPath, [resolve(ROOT, 'scripts/env-demo.mjs')], {
     cwd: ROOT,
     stdio: 'inherit',

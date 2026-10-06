@@ -213,7 +213,7 @@ export const sellerDashboardSchema = z.object({
   documentCount: z.number().int(),
   /** Sus cotizaciones emitidas en el mes (todas menos los borradores). */
   quotationsIssued: z.number().int(),
-  /** De esas, las que tienen pedido. */
+  /** De esas, las que tienen algún pedido no anulado (D-459). */
   quotationsConverted: z.number().int(),
   /** `convertidas ÷ emitidas × 100`, con un decimal; `null` sin cotizaciones en el mes. */
   conversionPct: z.string().nullable(),

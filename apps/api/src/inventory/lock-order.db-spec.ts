@@ -5,7 +5,10 @@ import { Prisma, Role } from '@prisma/client';
 import {
   businessToday,
   cancelPurchaseSchema,
+  commitRoofingDraftsSchema,
   commitReceivedPurchaseEditSchema,
+  cancelCuttingOrderSchema,
+  createCuttingOrderSchema,
   createCustomerSchema,
   createDispatchSchema,
   createFinishSchema,
@@ -15,8 +18,10 @@ import {
   createSalesOrderSchema,
   createSupplierSchema,
   mountRoofingCoilSchema,
+  receiveCuttingOrderCoilSchema,
   reportRoofingPiecesSchema,
   reverseMovementSchema,
+  roofingReportDraftInputSchema,
   setCoilStatusSchema,
   type SalesOrderDto,
 } from '@ayr/shared';
@@ -27,9 +32,12 @@ import { CatalogService } from '../catalog/catalog.service';
 import { CoilOperationsService } from '../coils/coil-operations.service';
 import { isLockConflict } from '../common/lock-conflict.filter';
 import { CustomersService } from '../customers/customers.service';
+import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { DispatchesService } from '../invoicing/dispatches.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { COMMIT_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
+import { RoofingDraftsService } from '../production/roofing-drafts.service';
 import { RoofingProductionService } from '../production/roofing-production.service';
 import { ReceivedPurchaseEditService } from '../purchases/purchase-received-edit.service';
 import { PurchasesService } from '../purchases/purchases.service';
@@ -715,5 +723,225 @@ describe('D-386 (M3b) — un deadlock real de Postgres', () => {
     const failed = results.flatMap((r) => (r.status === 'rejected' ? [r.reason as unknown] : []));
     expect(failed).toHaveLength(1);
     expect(isLockConflict(failed[0])).toBe(true);
+  });
+});
+
+/**
+ * cc28 (P2-1 y P3-6 de cc18): anular una orden de corte × recibir su única bobina pendiente.
+ *
+ * Antes, recibir tomaba la fila y después la orden (al recalcular su estado), y anular, la orden y
+ * después la fila: los dos se esperaban en cruz y Postgres abortaba uno (40P01). Además anular no
+ * releía la fila bajo su lock. Ahora los dos toman la orden primero y anular relee: gana uno, el
+ * otro sale con un rechazo de dominio, y la fila termina como dice el que ganó.
+ */
+describe('cc28 — corte tercerizado: anular × recibir (contra la base)', () => {
+  let cutting: CuttingService;
+  let cuttingSupplierId = '';
+  let drywallFinishId = '';
+
+  beforeAll(async () => {
+    cutting = moduleRef.get(CuttingService);
+    cuttingSupplierId = (
+      await suppliers.create(
+        admin,
+        createSupplierSchema.parse({
+          code: letters(6),
+          docType: 'RUC',
+          docNumber: `20${digits(9)}`,
+          name: 'Proveedor de corte cc28',
+          creditDays: 0,
+          providesCuttingService: true,
+        }),
+      )
+    ).id;
+    drywallFinishId = (
+      await finishes.create(
+        admin,
+        createFinishSchema.parse({
+          code: `G${letters(5)}`,
+          name: 'Galvanizado cc28',
+          densityFactor: '7.85',
+          kind: 'GALVANIZADO',
+          businessLine: 'drywall',
+        }),
+      )
+    ).id;
+  });
+
+  /** Una bobina de drywall comprada, recibida y enviada a corte: la orden y su bobina. */
+  async function sentToCutting(): Promise<{ orderId: string; coilId: string }> {
+    const purchase = await purchases.create(
+      admin,
+      createPurchaseSchema.parse({
+        supplierId,
+        docType: 'FACTURA',
+        series: 'F001',
+        number: digits(8),
+        issueDate: businessToday(),
+        currency: 'PEN',
+        paymentTerms: 'CONTADO',
+        businessLine: 'drywall',
+        type: 'COIL',
+        items: [
+          {
+            description: 'Bobina cc28',
+            qty: '1000',
+            unit: 'KGM',
+            unitPrice: '4',
+            finishId: drywallFinishId,
+            widthMm: '1000',
+            thicknessMm: '0.45',
+            coilStatus: 'OPEN',
+          },
+        ],
+      }),
+    );
+    await purchases.receive(admin, purchase.id);
+    const coil = await prisma.coil.findFirstOrThrow({ where: { purchaseId: purchase.id } });
+    const order = await cutting.send(
+      admin,
+      createCuttingOrderSchema.parse({
+        supplierId: cuttingSupplierId,
+        coils: [{ coilId: coil.id, widthPlanMm: [{ widthMm: '250.00', stripsCount: 4 }] }],
+      }),
+    );
+    return { orderId: order.id, coilId: coil.id };
+  }
+
+  it('gana una, la otra sale con un rechazo de dominio, sin deadlock ni fila pisada', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const { orderId, coilId } = await sentToCutting();
+      const ops = [
+        () =>
+          cutting.receive(
+            admin,
+            orderId,
+            coilId,
+            receiveCuttingOrderCoilSchema.parse({
+              receivedWidthsMm: [{ widthMm: '250.00', stripsCount: 4 }],
+              receivedWeightKg: '1000',
+            }),
+          ),
+        () => cutting.cancel(admin, orderId, cancelCuttingOrderSchema.parse({ reason: 'cc28' })),
+      ];
+      // Alterna quién sale primero: cada operación tiene que ganar alguna vez.
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+      const row = await prisma.cuttingOrderCoil.findFirstOrThrow({
+        where: { cuttingOrderId: orderId },
+      });
+      const strips = await prisma.coil.count({ where: { parentCoilId: coilId } });
+      // La fila dice lo que pasó de verdad: recibida con sus flejes, o anulada sin ninguno.
+      expect(['RECEIVED', 'CANCELLED']).toContain(row.status);
+      expect(strips).toBe(row.status === 'RECEIVED' ? 4 : 0);
+    }
+    expectClean(tally, 'corte: anular × recibir');
+  });
+});
+
+/**
+ * cc28 (D-453; A-6, A-7 y SM-8 de cc27): la vista previa de «Ejecutar y cerrar» **no deja nada** y
+ * **no retiene** los candados más allá de lo que dura.
+ *
+ * - Después de una vista previa no hay filas nuevas en kardex, auditoría, reportes, borradores ni
+ *   claves de idempotencia; los correlativos de las series fiscales no se mueven; no se encola
+ *   ningún job (si la tabla de pg-boss existe). Los contadores internos `autoincrement` sí pueden
+ *   avanzar (D-453): no son correlativos de ningún documento.
+ * - Un cierre real lanzado a la vez que una vista previa entra en cuanto esta termina y cierra.
+ */
+describe('cc28 — la vista previa de un cierre no deja nada ni retiene bloqueos (contra la base)', () => {
+  let drafts: RoofingDraftsService;
+
+  beforeAll(() => {
+    drafts = moduleRef.get(RoofingDraftsService);
+  });
+
+  /** Una OP de coberturas con su bobina montada y una fila en el borrador. */
+  async function orderWithDraft(): Promise<string> {
+    const agg = await roofingAggregate(1);
+    await mount(agg.productionOrderId, coilAt(agg, 0).coilId);
+    await drafts.add(
+      admin,
+      agg.productionOrderId,
+      roofingReportDraftInputSchema.parse({ pieces: [{ lengthMm: '3000.00', qty: 2 }] }),
+    );
+    return agg.productionOrderId;
+  }
+
+  async function footprint(orderId: string) {
+    const [movements, audit, reports, draftRows, keys, series, jobsTable] = await Promise.all([
+      prisma.inventoryMovement.count(),
+      prisma.auditLog.count(),
+      prisma.productionReport.count(),
+      prisma.productionReportDraft.count({ where: { productionOrderId: orderId } }),
+      prisma.idempotencyKey.count(),
+      prisma.fiscalSeries.findMany({
+        select: { series: true, correlative: true },
+        orderBy: { series: 'asc' },
+      }),
+      prisma.$queryRaw<{ t: string | null }[]>`SELECT to_regclass('pgboss.job')::text AS "t"`,
+    ]);
+    const jobs =
+      jobsTable[0]?.t === null || jobsTable[0]?.t === undefined
+        ? null
+        : Number(
+            (await prisma.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS "n" FROM pgboss.job`)[0]
+              ?.n ?? 0,
+          );
+    const order = await prisma.productionOrder.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { status: true },
+    });
+    return { movements, audit, reports, draftRows, keys, series, jobs, status: order.status };
+  }
+
+  it('después de la vista previa todo queda como estaba', async () => {
+    const orderId = await orderWithDraft();
+    const before = await footprint(orderId);
+    const preview = await drafts.previewCommit(
+      admin,
+      orderId,
+      commitRoofingDraftsSchema.parse({ close: true, idempotencyKey: randomUUID() }),
+    );
+    expect(preview.coils).toHaveLength(1);
+    expect(Number(preview.coils[0]?.consumedKg ?? '0')).toBeGreaterThan(0);
+    expect(await footprint(orderId)).toEqual(before);
+    expect(before.status).toBe('IN_PROGRESS');
+    expect(before.draftRows).toBe(1);
+  });
+
+  it('un cierre real a la vez que una vista previa entra en cuanto esta termina', async () => {
+    const orderId = await orderWithDraft();
+    const started = Date.now();
+    const [preview, commit] = await Promise.allSettled([
+      drafts.previewCommit(
+        admin,
+        orderId,
+        commitRoofingDraftsSchema.parse({ close: true, idempotencyKey: randomUUID() }),
+      ),
+      drafts.commit(
+        admin,
+        orderId,
+        commitRoofingDraftsSchema.parse({ close: true, idempotencyKey: randomUUID() }),
+      ),
+    ]);
+    // El cierre real nunca pierde por la vista previa: ni por bloqueo ni por timeout.
+    expect(commit.status).toBe('fulfilled');
+    expect(Date.now() - started).toBeLessThan(COMMIT_PREVIEW_TIMEOUT_MS);
+    // La vista previa, o vio la orden abierta (y se deshizo), o llegó tarde y la encontró cerrada.
+    if (preview.status === 'rejected') {
+      expect(preview.reason).toBeInstanceOf(HttpException);
+      expect(isLockConflict(preview.reason)).toBe(false);
+    }
+    const closed = await prisma.productionOrder.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { status: true },
+    });
+    expect(closed.status).toBe('CLOSED');
+    expect(
+      await prisma.productionReport.count({
+        where: { productionOrderId: orderId, status: 'ACTIVE' },
+      }),
+    ).toBe(1);
   });
 });

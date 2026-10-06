@@ -24,7 +24,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RawMaterialShortfall } from '../sales/raw-material';
-import { previewPlantClose } from './close-preview';
+import { COMMIT_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import { assertKind, lockOrder } from './production-shared';
 import { ProductionService } from './production.service';
 import {
@@ -248,8 +248,11 @@ export class RoofingDraftsService {
     input: CommitRoofingDraftsInput,
   ): Promise<PlantClosePreviewDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    return previewPlantClose(this.prisma, orderId, (tx, warnings) =>
-      this.commitInTx(tx, actor, orderId, input, operationDate, warnings),
+    return previewPlantClose(
+      this.prisma,
+      orderId,
+      (tx, warnings) => this.commitInTx(tx, actor, orderId, input, operationDate, warnings),
+      COMMIT_PREVIEW_TIMEOUT_MS,
     );
   }
 

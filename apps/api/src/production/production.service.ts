@@ -42,7 +42,7 @@ import {
   type ReverseMovementInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
-import { previewPlantClose } from './close-preview';
+import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import type { RequestUser } from '../auth/auth.types';
 import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from '../coils/coil-auto-terminate';
 import { CoilsService } from '../coils/coils.service';
@@ -992,8 +992,11 @@ export class ProductionService {
     input: CloseProductionOrderInput,
   ): Promise<PlantClosePreviewDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    return previewPlantClose(this.prisma, orderId, (tx) =>
-      this.closeInTx(tx, actor, orderId, input, operationDate),
+    return previewPlantClose(
+      this.prisma,
+      orderId,
+      (tx) => this.closeInTx(tx, actor, orderId, input, operationDate),
+      CLOSE_PREVIEW_TIMEOUT_MS,
     );
   }
 
