@@ -2,6 +2,48 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-06 — Ventana cc25 (D-420..D-437 desplegadas, PR #109, sin migración)
+
+Ventana entre las 00:46 y las 00:55 de Lima, con D-411 y D-437 (el martes 6, a cualquier hora).
+Detalle, revisiones y lista para el dueño en `docs/handoff/ventana-cc25.md`.
+
+- **Hecho, M0 a M3 (nada sacrificado):**
+  - M0: retira el alias `roofingSalesPen`. cc24 no dejó P2 abiertos.
+  - M1: cuentas por cobrar por cliente, con tramos por vencimiento, detalle por comprobante y
+    filtro por vendedor (D-421..D-423, D-427, D-428, D-432). Lee el saldo con la misma función
+    que cobranzas (`loadCollectibleDocuments`).
+  - M2: merma por bobina con pestañas Coberturas Aluzinc y Drywall (D-424, D-425,
+    D-429..D-431, D-433..D-436).
+  - M3: Excel de cuentas por cobrar.
+- **Decisiones:**
+  - D-420..D-426, del brief;
+  - D-427..D-437, del dueño o de aplicación. Entre ellas: D-434, el % es «sobre el estándar»
+    porque el teórico ya incluye el 1 %; D-435, la bobina entra también por despunte o cierre;
+    D-436, la reventa no saca la bobina.
+- **Revisiones:**
+  - autorrevisión: 0 P0, 1 P1, 3 P2, 9 P3;
+  - segundo modelo: 0 P0, 1 P1, 3 P2, 6 P3;
+  - los dos P1 los resolvieron D-434 y D-435;
+  - quedan P2 y P3 anotados en el handoff.
+- **Tests:**
+  - unitarios: API 2615 y web 15 archivos;
+  - E2E nuevo `reportes-cxc-merma-cc25` (4);
+  - UAT propio con build de producción: 40 passed, después 32 passed, sin rojos;
+  - UAT del dueño en demo, aprobado.
+- **Ventana:**
+  - API `ayr-steel-erp-api-00089-8mf`, con `git-sha=39dfe852`, al 100 %, y `/health` 200;
+  - merge del #109: `main` = `168b1438`, sin diff de runtime;
+  - Vercel en `success`;
+  - `smoke:prod` 8/8 en los dos dominios;
+  - recorrido de solo lectura en producción: CxC = cobranzas (S/ 914 365,2510, 43 clientes), y
+    el consumo de merma = el kardex de producción de septiembre y de octubre.
+- **Vuelta atrás:** no hizo falta.
+- **Registro de riesgo (toca la lectura de cobranzas, no kardex):**
+  - `invoicing/collectible-documents.ts`: cobranzas y CxC leen los saldos ahí;
+  - `reports/coil-waste.ts`: lectura del kardex de producción.
+- **Neon:** no se creó ni se borró ninguna rama.
+- **Salidas:** en `local-data/cc25/` del checkout principal.
+
 ## 2026-10-05 — Ventana cc24 (D-406..D-419 desplegadas, PR #107, sin migración)
 
 Ventana entre las 20:01 y las 20:11 de Lima, con D-411 (sin OK por acción). Detalle y lista de
