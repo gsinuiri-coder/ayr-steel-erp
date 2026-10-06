@@ -16,6 +16,7 @@ import {
   TOLERANCE_OVERRIDE_REQUIRED,
   roofingConsumptionDeviation,
   mountedKgForReport,
+  sum,
   toDecimal,
   Unit,
   type PlantClosePreviewDto,
@@ -1116,7 +1117,7 @@ export function RoofingOrderPanel({
         description={`Las planchas representan ${formatQty(
           resolved.closeBounds.consumedFloorKg.toFixed(3),
           'kg',
-        )} y se declara un consumo mayor: la diferencia —más del ${String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} %— sale del inventario como despunte y su costo se reparte entre el producto bueno. Explica por qué.`}
+        )} y se declara un consumo mayor: la diferencia —más del ${String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} %— sale del inventario como despunte y su costo se reparte entre el producto bueno. ¿Sigue en el almacén para otra OP? Si el material está entero, vuelve y declara menos kilos consumidos: lo que no se consume vuelve al almacén. Si de verdad salió como despunte, explica por qué.`}
         confirmLabel="Cerrar la orden"
         pending={busy}
         onConfirm={(reason: string) => {
@@ -1129,6 +1130,9 @@ export function RoofingOrderPanel({
 
       <ClosePreviewDialog
         preview={closePreview?.preview ?? null}
+        mountedKg={sum(liveCoils.map((c) => toDecimal(c.consumedKg).plus(c.remainingKg))).toFixed(
+          3,
+        )}
         title={
           closePreview?.kind === 'close-only'
             ? `Cerrar ${order.code} sin reportar más`

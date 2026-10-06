@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { toDecimal, type PlantClosePreviewDto } from '@ayr/shared';
+import {
+  MAX_SCRAP_RATIO_WITHOUT_REASON,
+  sum,
+  toDecimal,
+  type PlantClosePreviewDto,
+} from '@ayr/shared';
 import { formatQty } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -35,6 +40,7 @@ export function ClosePreviewDialog({
   confirmLabel,
   pending,
   scrapLabel = 'Despunte del cierre',
+  mountedKg,
   onConfirm,
   onCancel,
 }: {
@@ -45,6 +51,12 @@ export function ClosePreviewDialog({
   pending: boolean;
   /** «Despunte» en coberturas (D-089), «Merma de proceso» en drywall (D-057). */
   scrapLabel?: string;
+  /**
+   * cc29 (M3, D-469): los kilos montados en la orden (coberturas). Con ellos, si el despunte pasa
+   * del 10 % de lo montado, el diálogo pregunta si el material sigue en el almacén para otra OP.
+   * Drywall no lo pasa: el fleje entra entero a la perfiladora.
+   */
+  mountedKg?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -57,6 +69,13 @@ export function ClosePreviewDialog({
 
   const terminated = preview?.coils.filter((c) => c.terminated) ?? [];
   const scrap = preview === null ? null : toDecimal(preview.scrapKg);
+  // cc29 (M3): lo que vuelve al almacén es el saldo que les queda a las bobinas que no se terminan.
+  const backToStock = preview === null ? null : sum(preview.coils.map((c) => c.balanceAfterKg));
+  const highScrap =
+    scrap !== null &&
+    mountedKg !== undefined &&
+    toDecimal(mountedKg).gt(0) &&
+    scrap.gt(toDecimal(mountedKg).times(MAX_SCRAP_RATIO_WITHOUT_REASON));
 
   return (
     <Dialog
@@ -111,7 +130,27 @@ export function ClosePreviewDialog({
               </TableBody>
             </Table>
 
+            {highScrap && (
+              <div
+                role="alert"
+                data-testid="aviso-sigue-en-almacen"
+                className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5"
+              >
+                <span className="font-medium">¿Sigue en el almacén para otra OP?</span> El{' '}
+                {scrapLabel.toLowerCase()} pasa del {String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} %
+                de lo montado ({formatQty(mountedKg ?? '0.000', 'kg')}). Si el material está entero,
+                vuelve y declara menos kilos consumidos: lo que no se consume vuelve al almacén en
+                vez de salir como {scrapLabel.toLowerCase()}.
+              </div>
+            )}
+
             <ul className="grid gap-1">
+              <li>
+                Vuelve al almacén:{' '}
+                <span className="font-medium" data-testid="vuelve-al-almacen">
+                  {backToStock?.gt(0) ? formatQty(backToStock.toFixed(3), 'kg') : 'nada'}
+                </span>
+              </li>
               <li>
                 {scrapLabel}:{' '}
                 <span className="font-medium">
