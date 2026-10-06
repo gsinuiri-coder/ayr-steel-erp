@@ -82,12 +82,18 @@ export function assembleAdminDashboard(input: {
     },
     outOfTolerance: input.waste.map((w) => {
       const flagged = w.rows.filter((r) => r.productions.some((p) => p.outOfTolerance !== null));
+      // D-465 (SM-1 de cc29): un reporte de drywall sale de varios flejes y aparece en la fila de
+      // cada uno; se cuenta una vez por reporte.
+      const reports = new Set(
+        flagged.flatMap((r) =>
+          r.productions
+            .filter((p) => p.outOfTolerance !== null)
+            .map((p, i) => p.reportId ?? `${r.coilId}:${String(i)}`),
+        ),
+      );
       return {
         businessLine: w.businessLine,
-        productionCount: flagged.reduce(
-          (acc, r) => acc + r.productions.filter((p) => p.outOfTolerance !== null).length,
-          0,
-        ),
+        productionCount: reports.size,
         coilCount: flagged.length,
       };
     }),

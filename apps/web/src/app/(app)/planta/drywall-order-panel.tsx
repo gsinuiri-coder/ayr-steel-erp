@@ -1,16 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   Decimal,
+  DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS,
+  DRYWALL_TOLERANCE_OVERRIDE_REASONS,
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   mountedKgForReport,
   PRODUCTION_ORDER_STATUS_LABELS,
   theoreticalKg,
+  TOLERANCE_OVERRIDE_REQUIRED,
+  type DrywallToleranceOverrideInput,
+  type MountedKgExcess,
   type PlantClosePreviewDto,
   type ProductionOrderDto,
   type ProductionStripOptionDto,
@@ -33,6 +38,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  drywallOverrideInput,
+  EMPTY_OVERRIDE,
+  ToleranceOverrideRow,
+  type ToleranceOverrideState,
+} from './tolerance-override';
 
 /**
  * La captura de una corrida de **perfiles de drywall** dentro del espacio de producción
@@ -69,6 +80,10 @@ export function DrywallOrderPanel({
   // D-124: día de negocio del reporte de piezas y del cierre. Planta no lo ve —el campo es
   // solo para ADMINISTRADOR—; existe para que la carga histórica pueda fechar la corrida.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
+  /** D-465: la casilla de D-389 cuando lo reportado pasa lo montado en más del 1 %. */
+  const [override, setOverride] = useState<ToleranceOverrideState>(EMPTY_OVERRIDE);
+  /** D-465: la casilla lista para el API, calculada en el render (abajo) con el exceso de ahora. */
+  const toleranceToSend = useRef<DrywallToleranceOverrideInput | null>(null);
 
   const order = useQuery({
     queryKey: ['production-order', orderId],
@@ -115,29 +130,49 @@ export function DrywallOrderPanel({
 
   const submitKey = useIdempotencyKey();
   const report = useMutation({
-    mutationFn: ({ count, confirmBackdate }: { count: number; confirmBackdate: boolean }) =>
-      api<ProductionOrderDto>(`/production/${orderId}/report`, {
+    mutationFn: ({
+      count,
+      confirmBackdate,
+      toleranceOverride,
+    }: {
+      count: number;
+      confirmBackdate: boolean;
+      toleranceOverride: DrywallToleranceOverrideInput | null;
+    }) => {
+      const body = {
+        pieces: count,
+        operationDate,
+        confirmBackdate: confirmBackdate || undefined,
+        // D-465: la casilla y el motivo, solo cuando lo reportado pasa la tolerancia.
+        ...(toleranceOverride === null ? {} : { toleranceOverride }),
+      };
+      return api<ProductionOrderDto>(`/production/${orderId}/report`, {
         method: 'POST',
-        body: {
-          pieces: count,
-          operationDate,
-          confirmBackdate: confirmBackdate || undefined,
-          idempotencyKey: submitKey.current(),
-        },
-      }),
+        body: { ...body, idempotencyKey: submitKey.current(JSON.stringify(body)) },
+      });
+    },
     onSettled: (_data, error) => {
       submitKey.settle(error ?? undefined);
     },
     onSuccess: (o) => {
       toast.success(`Reportadas las piezas: ${o.piecesReported} en total`);
       setPieces('');
+      setOverride(EMPTY_OVERRIDE);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las piezas'),
+    onError: (err) => {
+      // A-1 de cc29: si el API pidió la casilla, la pantalla tenía cifras viejas (otro reporte
+      // consumió flejes, o cambió el peso por pieza): se recargan para que ofrezca la casilla.
+      if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) invalidate();
+      toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las piezas');
+    },
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await report.mutateAsync({ count: Number(pieces.trim()), confirmBackdate });
+    await report.mutateAsync({
+      count: Number(pieces.trim()),
+      confirmBackdate,
+      toleranceOverride: toleranceToSend.current,
+    });
   });
 
   const close = useMutation({
@@ -199,7 +234,8 @@ export function DrywallOrderPanel({
   const trimmed = pieces.trim();
   const piecesValid = /^\d+$/.test(trimmed) && Number(trimmed) > 0;
   // D-246: la misma regla que el API. Dentro de la tolerancia, el último reporte del fleje
-  // se topa en lo montado y avisa; fuera de ella no alcanza.
+  // se topa en lo montado y avisa. D-465: pasado el 1 % entra con la casilla de D-389, que se
+  // ofrece acá mismo (drywall tiene todas las cifras en pantalla, sin ir al API).
   const capacity =
     piecesValid && kgPerPiece.gt(0)
       ? mountedKgForReport({
@@ -207,9 +243,19 @@ export function DrywallOrderPanel({
           theoreticalKg: theoreticalKg(Number(trimmed), kgPerPiece),
           availableKg: pendingKg,
           declaredKg: null,
+          overrideBands: { authorized: false },
         })
       : null;
-  const overCapacity = piecesValid && !capacity?.ok;
+  const toleranceExcess: MountedKgExcess | null =
+    capacity?.ok === false && capacity.code === TOLERANCE_OVERRIDE_REQUIRED
+      ? (capacity.excess ?? null)
+      : null;
+  // Sin código: no queda nada montado sin rolar; ahí sí hay que montar otro fleje.
+  const overCapacity = piecesValid && capacity?.ok === false && toleranceExcess === null;
+  const toleranceOverride =
+    toleranceExcess === null ? null : drywallOverrideInput(override, toleranceExcess);
+  toleranceToSend.current = toleranceOverride;
+  const toleranceBlocked = toleranceExcess !== null && toleranceOverride === null;
   const yieldNote = capacity?.ok === true ? capacity.note : null;
   const isLive = o.status === 'DRAFT' || o.status === 'IN_PROGRESS';
 
@@ -289,7 +335,7 @@ export function DrywallOrderPanel({
             </div>
             <div className="grid gap-2">
               <Button
-                disabled={!piecesValid || overCapacity || report.isPending}
+                disabled={!piecesValid || overCapacity || toleranceBlocked || report.isPending}
                 onClick={() => {
                   void backdate.attempt();
                 }}
@@ -314,6 +360,29 @@ export function DrywallOrderPanel({
                 </span>
               )}
             </p>
+            {toleranceExcess !== null && (
+              <div
+                className="grid gap-3 rounded-lg border border-tone-warning-foreground/40 bg-tone-warning p-3 text-sm text-tone-warning-foreground sm:col-span-2"
+                data-testid="tolerance-override"
+              >
+                <ToleranceOverrideRow
+                  title={`Reporte de ${o.code}`}
+                  label={`las piezas reportadas de ${o.code}`}
+                  excess={toleranceExcess}
+                  value={override}
+                  onChange={setOverride}
+                  disabled={report.isPending}
+                  reasons={DRYWALL_TOLERANCE_OVERRIDE_REASONS}
+                  reasonLabels={DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS}
+                  drained="los flejes quedan en 0"
+                  severeHint="revisa las piezas y los flejes montados"
+                />
+                <p>
+                  Si el fleje montado no alcanzó, no confirmes: consume otro fleje antes de
+                  reportar.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

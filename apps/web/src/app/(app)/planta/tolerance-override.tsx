@@ -1,9 +1,12 @@
 'use client';
 
 import {
+  drywallToleranceOverrideSchema,
   TOLERANCE_OVERRIDE_REASON_LABELS,
   TOLERANCE_OVERRIDE_REASONS_OVER,
   toleranceOverrideSchema,
+  type DrywallToleranceOverrideInput,
+  type DrywallToleranceOverrideReason,
   type MountedKgExcess,
   type RoofingReportDraftDto,
   type ToleranceOverrideInput,
@@ -16,7 +19,8 @@ import { formatQty } from '@/lib/format';
 /** D-388/D-389: lo que se marcó para una fila fuera de tolerancia (la casilla y el motivo). */
 export interface ToleranceOverrideState {
   checked: boolean;
-  reason: ToleranceOverrideReason | '';
+  /** D-465: en drywall, sus motivos propios. */
+  reason: ToleranceOverrideReason | DrywallToleranceOverrideReason | '';
   detail: string;
   /**
    * D-389: el exceso (kg) para el que se marcó. Si la fila cambia de exceso —se corrige o se quita
@@ -45,6 +49,19 @@ export function overrideInput(
   return parsed.success ? parsed.data : null;
 }
 
+/** D-465: lo mismo que `overrideInput`, con los motivos de drywall. */
+export function drywallOverrideInput(
+  state: ToleranceOverrideState,
+  excess: MountedKgExcess,
+): DrywallToleranceOverrideInput | null {
+  if (!state.checked || state.reason === '' || state.forExcessKg !== excess.excessKg) return null;
+  const parsed = drywallToleranceOverrideSchema.safeParse({
+    reason: state.reason,
+    ...(state.detail.trim() === '' ? {} : { detail: state.detail.trim() }),
+  });
+  return parsed.success ? parsed.data : null;
+}
+
 /** Las filas del borrador que pasan la tolerancia y necesitan la casilla para ejecutarse. */
 export function rowsOutOfTolerance(
   drafts: readonly RoofingReportDraftDto[],
@@ -55,7 +72,8 @@ export function rowsOutOfTolerance(
 /**
  * D-389: el aviso de una fila que pasa la tolerancia del 1 % —con el texto fuerte pasado el 5 %—
  * y la casilla con el motivo. La marca **cualquiera que pueda reportar**: desde D-389 no hace
- * falta un administrador. Los motivos son los que aplican a un exceso hacia arriba.
+ * falta un administrador. Los motivos son los que aplican a un exceso hacia arriba; drywall pasa
+ * los suyos (D-465) y dice que lo que queda en 0 son los flejes.
  */
 export function ToleranceOverrideRow({
   title,
@@ -64,6 +82,10 @@ export function ToleranceOverrideRow({
   value,
   onChange,
   disabled,
+  reasons = TOLERANCE_OVERRIDE_REASONS_OVER,
+  reasonLabels = TOLERANCE_OVERRIDE_REASON_LABELS,
+  drained = 'la bobina queda en 0',
+  severeHint = 'revisa cantidad, largo y bobina',
 }: {
   /** El encabezado del aviso: «Fila 2 de OP-000034 (BOB…)» o «Reporte de OP-000034». */
   title: string;
@@ -73,13 +95,20 @@ export function ToleranceOverrideRow({
   value: ToleranceOverrideState;
   onChange: (next: ToleranceOverrideState) => void;
   disabled: boolean;
+  /** D-465: los motivos que se ofrecen (por defecto, los de coberturas hacia arriba). */
+  reasons?: readonly Exclude<ToleranceOverrideState['reason'], ''>[];
+  reasonLabels?: Readonly<Partial<Record<string, string>>>;
+  /** Lo que queda en 0 al confirmar: «la bobina queda en 0», o «los flejes quedan en 0». */
+  drained?: string;
+  /** Qué revisar pasado el 5 %: en drywall no hay largo ni bobina. */
+  severeHint?: string;
 }) {
   const id = `tolerancia-${label.replace(/\W+/g, '-')}`;
   return (
     <div className="grid gap-2" data-severe={excess.severe ? 'true' : 'false'}>
       {excess.severe && (
         <p className="font-semibold">
-          Diferencia mayor al {excess.maxPct} %: revisa cantidad, largo y bobina antes de confirmar.
+          Diferencia mayor al {excess.maxPct} %: {severeHint} antes de confirmar.
         </p>
       )}
       <p>
@@ -87,7 +116,7 @@ export function ToleranceOverrideRow({
         {formatQty(excess.theoreticalKg, 'kg')} y quedan {formatQty(excess.availableKg, 'kg')}{' '}
         montados. Diferencia {formatQty(excess.excessKg, 'kg')} ({excess.excessPct} % del teórico):
         pasa el {excess.tolerancePct} %. Para confirmar, marca la casilla y elige el motivo; se
-        descuentan los {formatQty(excess.availableKg, 'kg')} montados y la bobina queda en 0.
+        descuentan los {formatQty(excess.availableKg, 'kg')} montados y {drained}.
       </p>
       <div className="grid gap-2 sm:grid-cols-[auto_minmax(0,16rem)_minmax(0,1fr)] sm:items-center">
         <label className="flex items-center gap-2 font-medium" htmlFor={`${id}-check`}>
@@ -110,15 +139,15 @@ export function ToleranceOverrideRow({
           onChange={(e) => {
             onChange({
               ...value,
-              reason: e.target.value as ToleranceOverrideReason | '',
+              reason: e.target.value as ToleranceOverrideState['reason'],
               forExcessKg: excess.excessKg,
             });
           }}
         >
           <option value="">Elige el motivo…</option>
-          {TOLERANCE_OVERRIDE_REASONS_OVER.map((r) => (
+          {reasons.map((r) => (
             <option key={r} value={r}>
-              {TOLERANCE_OVERRIDE_REASON_LABELS[r]}
+              {reasonLabels[r]}
             </option>
           ))}
         </select>

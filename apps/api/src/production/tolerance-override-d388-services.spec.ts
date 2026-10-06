@@ -4,6 +4,7 @@ import { TOLERANCE_OVERRIDE_REQUIRED } from '@ayr/shared';
 import {
   appliedToleranceOverride,
   assertToleranceReasonApplies,
+  DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
   mountedKgRejection,
   TOLERANCE_OVERRIDE_AUDIT_ACTION,
   toleranceOverrideAuditAfter,
@@ -247,6 +248,7 @@ describe('ProductionService — la etiqueta del detalle, leída de la auditoría
   it('cada reporte autorizado con su motivo en palabras; lo ilegible se ignora', async () => {
     const findMany = jest.fn().mockResolvedValue([
       {
+        action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
         after: {
           reportId: 'r-1',
           reason: 'OTHER',
@@ -255,7 +257,32 @@ describe('ProductionService — la etiqueta del detalle, leída de la auditoría
           differencePct: '1.62',
         },
       },
-      { after: { reportId: 'r-2', reason: 'NO-ES-UN-MOTIVO' } },
+      {
+        action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
+        after: { reportId: 'r-2', reason: 'NO-ES-UN-MOTIVO' },
+      },
+      // D-465: la de drywall, con su acción y sus motivos.
+      {
+        action: DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+        after: {
+          reportId: 'r-3',
+          reason: 'STALE_PIECE_WEIGHT',
+          detail: null,
+          differenceKg: '12.400',
+          differencePct: '2.49',
+        },
+      },
+      // Un motivo de coberturas con la acción de drywall no se lee.
+      {
+        action: DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+        after: {
+          reportId: 'r-4',
+          reason: 'LIGHTER_COIL',
+          detail: null,
+          differenceKg: '1.000',
+          differencePct: '2.00',
+        },
+      },
     ]);
     const svc = Object.create(ProductionService.prototype) as ProductionService;
     Object.assign(svc, { prisma: { auditLog: { findMany } } });
@@ -268,9 +295,9 @@ describe('ProductionService — la etiqueta del detalle, leída de la auditoría
       where: {
         entity: 'production_orders',
         entityId: 'op-1',
-        action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
+        action: { in: [TOLERANCE_OVERRIDE_AUDIT_ACTION, DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION] },
       },
-      select: { after: true },
+      select: { action: true, after: true },
     });
     expect(byReport.get('r-1')).toEqual({
       reason: 'OTHER',
@@ -280,6 +307,14 @@ describe('ProductionService — la etiqueta del detalle, leída de la auditoría
       excessPct: '1.62',
     });
     expect(byReport.has('r-2')).toBe(false);
+    expect(byReport.get('r-3')).toEqual({
+      reason: 'STALE_PIECE_WEIGHT',
+      detail: null,
+      label: 'Peso por pieza del SKU desactualizado',
+      excessKg: '12.400',
+      excessPct: '2.49',
+    });
+    expect(byReport.has('r-4')).toBe(false);
   });
 
   it('sin reportes no consulta', async () => {

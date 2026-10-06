@@ -18,7 +18,7 @@ import { reasonSchema } from './coil';
 import { idempotencyFields } from './idempotency';
 import { statusListSchema } from './status-filter';
 import { backdatableFields } from './operation';
-import { roofingPieceSchema, TOLERANCE_OVERRIDE_REASONS } from './roofing';
+import { roofingPieceSchema, type ToleranceOverrideReason } from './roofing';
 
 /**
  * Producción de drywall (RF-32..35, RF-39; D-055..D-060).
@@ -377,12 +377,73 @@ export const consumeStripSchema = z.object({
 });
 export type ConsumeStripInput = z.infer<typeof consumeStripSchema>;
 
+/**
+ * D-465 — por qué se confirma un reporte de drywall fuera de la tolerancia del 1 %. Son los motivos
+ * que listó el dueño; a diferencia de coberturas (D-389), drywall no filtra por la dirección del
+ * exceso (D-467): «Fleje más pesado» se ofrece y se acepta.
+ */
+export const DRYWALL_TOLERANCE_OVERRIDE_REASONS = [
+  'LIGHTER_STRIP',
+  'HEAVIER_STRIP',
+  'STALE_PIECE_WEIGHT',
+  'OTHER',
+] as const;
+export type DrywallToleranceOverrideReason = (typeof DRYWALL_TOLERANCE_OVERRIDE_REASONS)[number];
+export const DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS: Record<
+  DrywallToleranceOverrideReason,
+  string
+> = {
+  LIGHTER_STRIP: 'Fleje más liviano que el nominal',
+  HEAVIER_STRIP: 'Fleje más pesado que el nominal',
+  STALE_PIECE_WEIGHT: 'Peso por pieza del SKU desactualizado',
+  OTHER: 'Otro',
+};
+
+/** D-465: la casilla de drywall con su motivo. Como en coberturas, «Otro» exige el detalle. */
+export const drywallToleranceOverrideSchema = z
+  .object({
+    reason: z.enum(DRYWALL_TOLERANCE_OVERRIDE_REASONS),
+    detail: z.string().trim().max(200).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.reason === 'OTHER' && (v.detail ?? '') === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['detail'],
+        message: 'Con «Otro», explica el motivo',
+      });
+    }
+  });
+export type DrywallToleranceOverrideInput = z.infer<typeof drywallToleranceOverrideSchema>;
+
+/** D-465: el motivo en palabras, con su detalle si lo trae. */
+export function drywallToleranceOverrideLabel(input: DrywallToleranceOverrideInput): string {
+  const label = DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS[input.reason];
+  if (input.reason === 'OTHER') return input.detail ?? label;
+  return input.detail ? `${label}: ${input.detail}` : label;
+}
+
+/** D-465: los motivos de las dos líneas, para leer un reporte sin saber de cuál es. */
+export const ANY_TOLERANCE_OVERRIDE_REASONS = [
+  'LIGHTER_COIL',
+  'HEAVIER_COIL',
+  'LIGHTER_STRIP',
+  'HEAVIER_STRIP',
+  'STALE_PIECE_WEIGHT',
+  'OTHER',
+] as const satisfies readonly (ToleranceOverrideReason | DrywallToleranceOverrideReason)[];
+
 /** Reporte parcial de piezas buenas (D-058). */
 export const reportPiecesSchema = z.object({
   ...backdatableFields,
   ...idempotencyFields,
   pieces: piecesSchema,
   notes: z.string().trim().max(240).optional(),
+  /**
+   * D-465: la casilla de D-389 en drywall. Solo cuenta si el reporte pasa la tolerancia del 1 %;
+   * dentro de ella no deja rastro.
+   */
+  toleranceOverride: drywallToleranceOverrideSchema.optional(),
 });
 export type ReportPiecesInput = z.infer<typeof reportPiecesSchema>;
 
@@ -491,8 +552,8 @@ export type MountedKgResult =
  * Fuera de eso sí falta material montado y el reporte se rechaza. Vive acá porque la pantalla
  * de planta, el borrador y el reporte del API tienen que dar exactamente el mismo veredicto.
  *
- * **D-388/D-389 — la casilla, solo en coberturas** (quien pasa `overrideBands`; drywall no lo
- * pasa y conserva el rechazo de siempre). Con la misma base —el exceso sobre el teórico—:
+ * **D-388/D-389 — la casilla** (quien pasa `overrideBands`: coberturas y, desde D-465, drywall).
+ * Con la misma base —el exceso sobre el teórico—:
  *
  * - hasta `THEORETICAL_KG_TOLERANCE_RATIO` (1 %): como siempre, sin casilla;
  * - más de 1 %, **sin tope** (D-389): se acepta con `overrideBands.authorized`; sin ella,
@@ -510,8 +571,8 @@ export function mountedKgForReport(input: {
   /** Kilos que planta declara para este reporte, o `null` si no declaró. */
   declaredKg: DecimalInput | null;
   /**
-   * D-388/D-389: el reporte de coberturas usa la casilla; `authorized` es la casilla (la marca
-   * quien reporta). Sin este campo (drywall), el 1 % sigue siendo un rechazo sin más.
+   * D-388/D-389: el reporte usa la casilla; `authorized` es la casilla (la marca quien reporta).
+   * Sin este campo, el 1 % es un rechazo sin más.
    */
   overrideBands?: { authorized: boolean };
 }): MountedKgResult {
@@ -712,12 +773,13 @@ export const productionReportSchema = z.object({
   revertedAt: z.string().nullable(),
   /**
    * D-388: el reporte entró fuera de la tolerancia del 1 % con la casilla de un administrador.
-   * Se lee de su entrada de auditoría (`production.roofing.report-tolerance-override`): no hay
-   * columna. `label` es el motivo en palabras; `null` si el reporte entró dentro de tolerancia.
+   * Se lee de su entrada de auditoría (`production.roofing.report-tolerance-override`, o la de
+   * drywall desde D-465): no hay columna. `label` es el motivo en palabras; `null` si el reporte
+   * entró dentro de tolerancia.
    */
   toleranceOverride: z
     .object({
-      reason: z.enum(TOLERANCE_OVERRIDE_REASONS),
+      reason: z.enum(ANY_TOLERANCE_OVERRIDE_REASONS),
       detail: z.string().nullable(),
       label: z.string(),
       excessKg: z.string(),

@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { BusinessLine, Decimal } from '@ayr/shared';
 import type { PrismaService } from '../prisma/prisma.service';
-import { TOLERANCE_OVERRIDE_AUDIT_ACTION } from '../production/production-shared';
+import {
+  DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+  TOLERANCE_OVERRIDE_AUDIT_ACTION,
+} from '../production/production-shared';
 import { CoilWasteService } from './coil-waste.service';
 
 /**
@@ -33,6 +36,8 @@ function setup(input: {
   reports?: { id: string; theoreticalKg: string; order: number; date?: string }[];
   sold?: string[];
   overrides?: {
+    /** D-465: la acción de auditoría; por defecto, la de coberturas. */
+    action?: string;
     reportId: string;
     order: number;
     reason: string;
@@ -85,6 +90,7 @@ function setup(input: {
   const auditLog = {
     findMany: jest.fn().mockResolvedValue(
       (input.overrides ?? []).map((o) => ({
+        action: o.action ?? TOLERANCE_OVERRIDE_AUDIT_ACTION,
         after: {
           reportId: o.reportId,
           reason: o.reason,
@@ -257,6 +263,30 @@ describe('CoilWasteService', () => {
     expect(productions.find((p) => p.reportId === REPORT(2))?.outOfTolerance).toBeNull();
   });
 
+  it('D-465: la casilla de drywall, con su acción propia, también lleva «Fuera de tolerancia»', async () => {
+    const { service } = setup({
+      movements: [
+        { itemId: COIL(1), type: 'OUT', qty: '980.000', refType: 'PRODUCTION', refId: REPORT(1) },
+      ],
+      reports: [{ id: REPORT(1), theoreticalKg: '1010.000', order: 1 }],
+      overrides: [
+        {
+          action: DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+          reportId: REPORT(1),
+          order: 1,
+          reason: 'STALE_PIECE_WEIGHT',
+          detail: null,
+          pct: '3.07',
+        },
+      ],
+    });
+    const report = await service.report(RANGE);
+    expect(report.rows[0]?.productions[0]?.outOfTolerance).toEqual({
+      label: 'Peso por pieza del SKU desactualizado',
+      excessPct: '3.07',
+    });
+  });
+
   it('una bobina revendida después de producir sigue en el reporte; la venta ni se consulta (D-436)', async () => {
     const { service, inventoryMovement } = setup({
       movements: [
@@ -378,9 +408,12 @@ describe('CoilWasteService', () => {
       businessLine: { code: 'DRYWALL' },
     });
     const [[audit]] = auditLog.findMany.mock.calls as unknown as [
-      [{ where: { action: string; entityId: { in: string[] } } }],
+      [{ where: { action: { in: string[] }; entityId: { in: string[] } } }],
     ];
-    expect(audit.where.action).toBe(TOLERANCE_OVERRIDE_AUDIT_ACTION);
+    expect(audit.where.action.in).toEqual([
+      TOLERANCE_OVERRIDE_AUDIT_ACTION,
+      DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+    ]);
     expect(audit.where.entityId.in).toEqual([ORDER(1)]);
   });
 });

@@ -2,6 +2,32 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-06 — cc29: producción (en curso, rama `cc29-produccion`)
+
+Sesión desatendida; brief de cc29 (dos cortes, hoy sin ventana). Estado al arrancar: `main` =
+`ecb4886a` (CI en verde), API `ayr-steel-erp-api-00094-b96` (`git-sha=abc080a7`), próxima D libre
+D-463. Registradas D-463..D-466 (decisiones del dueño). Alcance: M1 drywall con la casilla
+(corte 1); M2 reporte de producción y M3 sobrante de bobina terminada (corte 2).
+
+- **Corte 1 (M1, D-465, D-467):** drywall con la casilla de D-389. Revisiones: autorrevisión 0 P0,
+  0 P1, 3 P2, 5 P3; segundo modelo 0 P0, 0 P1, 2 P2, 5 P3 (`docs/revision/cc29-corte1-*.md`).
+  Corregidos SM-1 (el Panel contaba dos veces un reporte repartido en varios flejes), A-1 (la
+  pantalla se recarga ante `TOLERANCE_OVERRIDE_REQUIRED`), A-3 (el aviso vuelve a decir «consume
+  otro fleje» y el texto fuerte es de drywall) y A-6 (el test de la casilla dentro del 1 % usa la
+  franja 0–1 %). E2E locales con build de producción: 35 passed y 1 rojo del spec nuevo (selector
+  ambiguo, corregido; rerun 1/1).
+- **Registro de riesgo (toca kardex):** `ProductionService.report` (drywall; la casilla topa la
+  salida en lo montado).
+- **Pendientes del corte 1, con su id:**
+  - A-2 / SM-2 de cc29 (P2): el API acepta la casilla sin comparar el exceso que se confirmó con el
+    del momento; si otro reporte consume flejes entre la pantalla y el envío, un 2 % confirmado
+    puede entrar como un exceso mayor. Coberturas tiene la misma forma (D-389). Riesgo aceptado
+    provisional: arreglarlo es mandar el exceso confirmado y rechazar si no coincide, en las dos
+    líneas a la vez.
+  - A-4, A-5 (si se quita «Fleje más pesado» por D-467, las auditorías ya grabadas pierden la
+    etiqueta), A-7 (sin texto en `audit-labels.ts` para las dos acciones de la casilla), A-8;
+    SM-4 (el rechazo del API dice «largo y bobina» también en drywall), SM-5, SM-6, SM-7.
+
 ## 2026-10-06 — Ventanas cc28: sesión de limpieza (D-459..D-462, PR #115 y #116, sin migración)
 
 Sesión desatendida, dos cortes desplegados el mismo día sin ventana (brief de cc28). Detalle en

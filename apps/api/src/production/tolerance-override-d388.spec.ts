@@ -122,7 +122,9 @@ describe('sale menos de lo montado: la regla no cambia (decisión del dueño)', 
   );
 });
 
-describe('drywall (sin franjas): igual que antes de D-388', () => {
+// D-465: desde cc29 drywall también pasa `overrideBands` (drywall-tolerance-override.spec.ts);
+// lo que queda acá es la función sin franjas, para quien no las pase.
+describe('sin franjas: igual que antes de D-388', () => {
   it('pasado el 1 % se rechaza con el mensaje de siempre, sin código ni casilla', () => {
     const r = mountedKgForReport({
       label: 'OP-000001',

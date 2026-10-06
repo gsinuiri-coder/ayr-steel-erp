@@ -26,7 +26,7 @@ import {
   toDateOnly,
   toDecimal,
   toFixedString,
-  toleranceOverrideLabel,
+  drywallToleranceOverrideLabel,
   Unit,
   type CancelProductionOrderInput,
   type CloseProductionOrderInput,
@@ -63,8 +63,11 @@ import {
   recomputeStatus as recomputeOrderStatus,
   resolveActorNames as resolveNames,
   restoreReservationIfIdle as restoreIdleReservation,
-  TOLERANCE_OVERRIDE_AUDIT_ACTION,
-  toleranceOverrideAuditSchema,
+  DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+  drywallToleranceOverrideAuditAfter,
+  mountedKgRejection,
+  TOLERANCE_OVERRIDE_AUDIT_ACTIONS,
+  readToleranceOverrideAudit,
 } from './production-shared';
 import {
   allocateStripKg,
@@ -637,15 +640,28 @@ export class ProductionService {
         }));
         // D-246: la misma causa que coberturas. Si el teórico pasa lo montado dentro de la
         // tolerancia, el acero ya salió: se topa en lo montado en vez de bloquear.
+        // D-465: pasado el 1 %, la casilla de D-389, igual que coberturas: avisa y no bloquea, y lo
+        // que sale del kardex se topa en lo montado (la suma de los flejes de la orden).
+        const override = input.toleranceOverride;
         const mounted = mountedKgForReport({
           label: productionOrderCode(order.seq),
           theoreticalKg: neededKg,
           availableKg: allocationRows.reduce((acc, r) => acc.plus(r.remainingKg), new Decimal(0)),
           declaredKg: null,
+          overrideBands: { authorized: override !== undefined },
         });
-        // Fuera de la tolerancia, el rechazo de siempre: drywall no declara kilos, así que el
-        // mensaje de coberturas («declara los kg consumidos») no le sirve a planta.
-        const allocations = allocateStripKg(allocationRows, mounted.ok ? mounted.kg : neededKg);
+        if (!mounted.ok) {
+          // Lo que planta sabía hacer sigue valiendo: si de verdad faltó acero, se monta otro fleje.
+          throw mountedKgRejection({
+            ...mounted,
+            message: `${mounted.message} Si el fleje montado no alcanzó, consume otro fleje antes de reportar.`,
+          });
+        }
+        const overridden =
+          mounted.overridden && mounted.excess !== null && override !== undefined
+            ? { override, excess: mounted.excess }
+            : null;
+        const allocations = allocateStripKg(allocationRows, mounted.kg);
 
         // D-054/D-066: la reserva se marca CONSUMIDA **antes** de mover el kardex. Si fuera
         // al revés, la invariante `disponible ≥ reservado` bloquearía justo la salida que
@@ -764,9 +780,38 @@ export class ProductionService {
             materialCostPen: toFixedString(materialCostPen, 'MONEY'),
             unitCostPen: toFixedString(unitCostPen, 'MONEY'),
             // D-246: el tope en lo montado queda anotado en el reporte, igual que en coberturas.
-            rawMaterialWarning: mounted.ok ? mounted.note : null,
+            // D-465: con la casilla, también el motivo.
+            rawMaterialWarning:
+              [
+                overridden === null
+                  ? null
+                  : `Fuera de tolerancia, confirmado con la casilla: ${drywallToleranceOverrideLabel(overridden.override)}.`,
+                mounted.note,
+              ]
+                .filter((n): n is string => n !== null)
+                .join(' ') || null,
           },
         });
+
+        // D-465: la autorización tiene su propia entrada en el historial de la orden, con el
+        // reporte adentro: la leen el detalle de la orden, el reporte de merma y el Panel.
+        if (overridden !== null) {
+          await this.audit.write(tx, {
+            actorId: actor.id,
+            action: DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+            entity: 'production_orders',
+            entityId: orderId,
+            after: drywallToleranceOverrideAuditAfter({
+              reportId: report.id,
+              orderId,
+              orderSeq: order.seq,
+              strips: allocations,
+              realKg: toFixedString(mounted.kg, 'KG'),
+              override: overridden.override,
+              excess: overridden.excess,
+            }),
+          });
+        }
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -779,7 +824,7 @@ export class ProductionService {
             confirmedBackdate: input.confirmBackdate === true,
             pieces: input.pieces,
             theoreticalKg: toFixedString(neededKg, 'KG'),
-            outKg: toFixedString(mounted.ok ? mounted.kg : neededKg, 'KG'),
+            outKg: toFixedString(mounted.kg, 'KG'),
             materialCostPen: toFixedString(materialCostPen, 'MONEY'),
             strips: allocations.map((a) => `${a.coilCode}: ${a.kg.toFixed(3)} kg`),
           },
@@ -1653,21 +1698,20 @@ export class ProductionService {
       where: {
         entity: 'production_orders',
         entityId: orderId,
-        action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
+        action: { in: TOLERANCE_OVERRIDE_AUDIT_ACTIONS },
       },
-      select: { after: true },
+      select: { action: true, after: true },
     });
     const byReport = new Map<string, NonNullable<ProductionReportDto['toleranceOverride']>>();
     for (const row of rows) {
-      const parsed = toleranceOverrideAuditSchema.safeParse(row.after);
-      if (!parsed.success) continue;
-      const { reportId, reason, detail, differenceKg, differencePct } = parsed.data;
-      byReport.set(reportId, {
-        reason,
-        detail,
-        label: toleranceOverrideLabel({ reason, ...(detail === null ? {} : { detail }) }),
-        excessKg: differenceKg,
-        excessPct: differencePct,
+      const parsed = readToleranceOverrideAudit(row);
+      if (parsed === null) continue;
+      byReport.set(parsed.reportId, {
+        reason: parsed.reason,
+        detail: parsed.detail,
+        label: parsed.label,
+        excessKg: parsed.differenceKg,
+        excessPct: parsed.differencePct,
       });
     }
     return byReport;
