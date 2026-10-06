@@ -240,7 +240,7 @@ export function EditLinePriceDialog({
             <p className="text-xs text-muted-foreground tabular-nums">
               {formatQty(lastItem.qty, unitSymbol(lastItem.unit))} · valor de venta{' '}
               {formatMoney(preview.subtotal.toFixed(4))} · IGV {formatMoney(preview.igv.toFixed(4))}{' '}
-              · total {formatMoney(preview.total.toFixed(4))} · unitario{' '}
+              · total con IGV {formatMoney(preview.total.toFixed(4))} · valor unitario{' '}
               {formatMoney(preview.unitValue.toFixed(10), 'PEN', 4)}
             </p>
           )}

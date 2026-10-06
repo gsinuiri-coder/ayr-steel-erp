@@ -986,7 +986,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             '—'
           )}
         </Stat>
-        <Stat label="Total" className="font-semibold">
+        <Stat label="Total (con IGV)" className="font-semibold">
           {formatMoney(d.totalPen)}
         </Stat>
         <Stat label="Saldo" className="font-semibold">
@@ -1066,9 +1066,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </TableBody>
         </Table>
         <div className="flex justify-end gap-6 px-2.5 text-sm">
-          <span>Subtotal {formatMoney(d.subtotalPen)}</span>
+          <span>Subtotal (sin IGV) {formatMoney(d.subtotalPen)}</span>
           <span>IGV {formatMoney(d.igvPen)}</span>
-          <span className="font-semibold">Total {formatMoney(d.totalPen)}</span>
+          <span className="font-semibold">Total (con IGV) {formatMoney(d.totalPen)}</span>
         </div>
       </Section>
 

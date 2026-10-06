@@ -442,7 +442,7 @@ export function ProductDialog({
                   render={({ field }) => (
                     <FormFieldCell
                       span={6}
-                      label="Precio de lista (S/, sin IGV)"
+                      label="Valor de lista (S/, sin IGV)"
                       size="lg"
                       numeric
                       help="Se sugiere al cotizar (D-068). El vendedor lo puede editar en la línea; queda registrado el precio de lista junto al cotizado."

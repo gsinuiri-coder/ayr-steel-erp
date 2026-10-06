@@ -1724,7 +1724,7 @@ function LineRow({
           )}
           {perMeter && unitValuePen !== null && (
             <span className="mt-0.5 block text-right text-xs text-muted-foreground tabular-nums">
-              {formatMoney(unitValuePen, 'PEN', 4)} por plancha
+              valor {formatMoney(unitValuePen, 'PEN', 4)} por plancha (sin IGV)
             </span>
           )}
           {fixedLength && !brokenLength && fixedLengthMm !== null && !byAmount && (
@@ -1922,7 +1922,7 @@ function PricingUnitSwitch({
       aria-label={`Cotizar por metro la línea ${lineIndex + 1}`}
     >
       <span>
-        {formatMoney(perMeterPrice, 'PEN', 4)} por metro (equivalente a{' '}
+        {formatMoney(perMeterPrice, 'PEN', 4)} por metro con IGV (equivalente a{' '}
         {formatMoney(l.pricePen.trim(), 'PEN', 4)} por plancha)
       </span>
       <span>
@@ -2025,7 +2025,7 @@ function PriceFloorHint({
     <span
       className={`mt-1 block text-right text-xs tabular-nums ${below ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
     >
-      Mínimo: {formatMoney(minPricePen, 'PEN', 2)}
+      Mínimo con IGV: {formatMoney(minPricePen, 'PEN', 2)}
       {fixedLength ? ' /m' : l.kind === 'BOBINA' ? ' /kg' : ''}
       {below ? ' — por debajo' : ''}
     </span>

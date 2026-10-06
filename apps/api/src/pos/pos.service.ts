@@ -252,6 +252,8 @@ export class PosService {
               productId: i.productId,
               qty: i.qty,
               unitPricePen: i.unitPricePen,
+              // cc27 (D-452): el precio con IGV tipeado en caja, como en la cotización (D-255).
+              unitPriceWithIgvPen: i.unitPriceWithIgvPen,
             })),
           },
           { counterSale: true },

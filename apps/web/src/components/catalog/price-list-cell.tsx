@@ -67,7 +67,7 @@ export function PriceListCell({
         toDecimal(priceWithIgv(updated)).lt(toDecimal(floor.minPricePen))
       ) {
         toast.warning(
-          `Queda por debajo del piso (mínimo ${formatMoney(floor.minPricePen)} por ${floor.priceUnitLabel}). No bloquea, pero una cotización nueva sí lo va a exigir.`,
+          `Queda por debajo del piso (mínimo ${formatMoney(floor.minPricePen)} con IGV por ${floor.priceUnitLabel}). No bloquea, pero una cotización nueva sí lo va a exigir.`,
         );
       }
       setEditing(false);

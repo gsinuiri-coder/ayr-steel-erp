@@ -178,4 +178,21 @@ describe('createPosSaleSchema (D-098, D-099)', () => {
     // `resolveSalesLines` la resuelve contra el propio producto y nunca contra un insumo.
     expect(parsed.items[0]).not.toHaveProperty('reserveFromCoilId');
   });
+
+  it('acepta el precio con IGV tipeado en caja, pero no junto al valor sin IGV (D-452)', () => {
+    const item = base.items[0];
+    const withIgv = createPosSaleSchema.parse({
+      ...base,
+      items: [{ ...item, unitPriceWithIgvPen: '59.00' }],
+    });
+    expect(withIgv.items[0]?.unitPriceWithIgvPen).toBe('59.0000');
+    const both = createPosSaleSchema.safeParse({
+      ...base,
+      items: [{ ...item, unitPricePen: '50.00', unitPriceWithIgvPen: '59.00' }],
+    });
+    expect(both.success).toBe(false);
+    if (!both.success) {
+      expect(both.error.issues[0]?.message).toContain('no los dos');
+    }
+  });
 });

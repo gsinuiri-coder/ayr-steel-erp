@@ -71,8 +71,8 @@ export function PriceFloorSummaryCard() {
               <span className="text-xs text-muted-foreground">{r.name}</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {formatMoney(r.listPricePen)} de lista, mínimo {formatMoney(r.minPricePen)} por{' '}
-              {r.priceUnitLabel}
+              {formatMoney(r.listPricePen)} de lista, mínimo {formatMoney(r.minPricePen)} (con IGV)
+              por {r.priceUnitLabel}
             </p>
           </Link>
         ))}

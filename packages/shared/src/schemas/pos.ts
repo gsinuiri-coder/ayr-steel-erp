@@ -192,12 +192,23 @@ export type CloseCashSessionInput = z.infer<typeof closeCashSessionSchema>;
  * entonces la diferencia con el mostrador la sostiene `pieces` y el subtipo del producto,
  * que es donde D-131 dejó dicho que tiene que estar.
  */
-export const posSaleItemInputSchema = z.object({
-  productId: z.string({ required_error: 'El producto es obligatorio' }).uuid(),
-  qty: qtySchema,
-  /** Override de precio del vendedor (D-068). Sin él manda el precio de lista. */
-  unitPricePen: positiveMoneySchema.optional(),
-});
+export const posSaleItemInputSchema = z
+  .object({
+    productId: z.string({ required_error: 'El producto es obligatorio' }).uuid(),
+    qty: qtySchema,
+    /** Override de precio del vendedor (D-068), sin IGV. Sin él manda el precio de lista. */
+    unitPricePen: positiveMoneySchema.optional(),
+    /**
+     * cc27 (D-452): el precio **con IGV** que el cajero tipeó, como en la cotización (D-162,
+     * D-255). El total de la línea es `redondeo(cantidad × precio)` y el valor sin IGV se
+     * deriva; lo guardado sigue sin IGV. Se manda uno de los dos precios, nunca ambos.
+     */
+    unitPriceWithIgvPen: positiveMoneySchema.optional(),
+  })
+  .refine((item) => item.unitPricePen === undefined || item.unitPriceWithIgvPen === undefined, {
+    path: ['unitPriceWithIgvPen'],
+    message: 'Manda el precio con IGV o el valor sin IGV, no los dos',
+  });
 export type PosSaleItemInput = z.infer<typeof posSaleItemInputSchema>;
 
 /**

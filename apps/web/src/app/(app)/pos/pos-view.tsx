@@ -10,8 +10,6 @@ import {
   PAYMENT_METHOD_LABELS,
   POS_PAYMENT_METHODS,
   Role,
-  roundDocumentTotals,
-  salesLineTotals,
   toDecimal,
   toFixedString,
   type CustomerDto,
@@ -21,8 +19,9 @@ import {
   type PosSaleListItemDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatMoney, formatQty, unitSymbol } from '@/lib/format';
+import { formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidatePos } from '@/lib/pos-queries';
+import { listPriceWithIgv, posCartTotals, posLineAmounts, posLinePayload } from '@/lib/pos-pricing';
 import { useDebounced } from '@/lib/use-debounced';
 import { useSession } from '@/lib/session';
 import { RoleGate } from '@/components/role-gate';
@@ -48,7 +47,16 @@ const POS_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 interface CartLine {
   product: PosProductDto;
   qty: string;
-  unitPricePen: string;
+  /** Precio unitario **con IGV** (D-452): el que se muestra y se tipea, como en el catálogo. */
+  priceWithIgvPen: string;
+}
+
+function linePrice(line: CartLine) {
+  return {
+    qty: line.qty,
+    priceWithIgvPen: line.priceWithIgvPen,
+    listValuePen: line.product.listPricePen,
+  };
 }
 
 /**
@@ -102,16 +110,10 @@ export function PosView() {
   // después de tres toques.
   const cartLine = cart[0]?.product.businessLine ?? null;
 
-  const totals = useMemo(() => {
-    const lines = cart.map((line) =>
-      salesLineTotals({ qty: line.qty || '0', unitPricePen: line.unitPricePen || '0' }),
-    );
-    // D-377 (R2): el comprobante del mostrador se cobra por su total al céntimo.
-    return roundDocumentTotals(
-      lines.reduce((acc, t) => acc.plus(t.subtotal), new Decimal(0)),
-      lines.reduce((acc, t) => acc.plus(t.igv), new Decimal(0)),
-    );
-  }, [cart]);
+  // D-452: los importes de cada línea como los guarda el API (`lineAmounts`) y el pie al
+  // céntimo como el comprobante (D-377), así que «Cobrar S/ X» es el total del comprobante.
+  const lineAmounts = useMemo(() => cart.map((line) => posLineAmounts(linePrice(line))), [cart]);
+  const totals = useMemo(() => posCartTotals(lineAmounts), [lineAmounts]);
 
   const overGenericCap =
     customer === null && totals.total.gt(toDecimal(GENERIC_CUSTOMER_MAX_TOTAL_PEN));
@@ -139,7 +141,7 @@ export function PosView() {
           items: cart.map((l) => ({
             productId: l.product.productId,
             qty: l.qty,
-            unitPricePen: l.unitPricePen,
+            ...posLinePayload(linePrice(l)),
           })),
         },
       }),
@@ -178,7 +180,12 @@ export function PosView() {
       }
       return [
         ...current,
-        { product, qty: '1.000', unitPricePen: product.listPricePen ?? '0.0000' },
+        {
+          product,
+          qty: '1.000',
+          priceWithIgvPen:
+            product.listPricePen === null ? '' : listPriceWithIgv(product.listPricePen),
+        },
       ];
     });
   }
@@ -189,11 +196,10 @@ export function PosView() {
     );
   }
 
-  const missingPrice = cart.some((l) => !new Decimal(l.unitPricePen || '0').gt(0));
+  const missingPrice = cart.some((l) => posLinePayload(linePrice(l)) === null);
   const badQty = cart.some(
     (l) =>
-      !new Decimal(l.qty || '0').gt(0) ||
-      new Decimal(l.qty || '0').gt(new Decimal(l.product.availableQty)),
+      !isPositiveDecimal(l.qty) || toDecimal(l.qty.trim()).gt(new Decimal(l.product.availableQty)),
   );
   const canSell = cart.length > 0 && method !== null && !missingPrice && !badQty && !sell.isPending;
 
@@ -291,8 +297,16 @@ export function PosView() {
                       >
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="font-medium">{p.sku}</span>
+                          {/* D-452 (UX26-01): con IGV, el mismo número que el catálogo. */}
                           <span className="text-sm">
-                            {p.listPricePen === null ? 'sin precio' : formatMoney(p.listPricePen)}
+                            {p.listPricePen === null ? (
+                              'sin precio'
+                            ) : (
+                              <>
+                                {formatMoney(listPriceWithIgv(p.listPricePen))}{' '}
+                                <span className="text-xs text-muted-foreground">con IGV</span>
+                              </>
+                            )}
                           </span>
                         </div>
                         <div className="text-sm text-muted-foreground">{p.name}</div>
@@ -357,10 +371,11 @@ export function PosView() {
                 </p>
               ) : (
                 <ul className="grid gap-3">
-                  {cart.map((line) => {
-                    const over = new Decimal(line.qty || '0').gt(
-                      new Decimal(line.product.availableQty),
-                    );
+                  {cart.map((line, i) => {
+                    const over =
+                      isPositiveDecimal(line.qty) &&
+                      toDecimal(line.qty.trim()).gt(new Decimal(line.product.availableQty));
+                    const amounts = lineAmounts[i] ?? null;
                     return (
                       <li key={line.product.productId} className="grid gap-1.5">
                         <div className="flex items-baseline justify-between gap-2">
@@ -394,17 +409,27 @@ export function PosView() {
                           </div>
                           <div className="grid gap-1">
                             <Label className="text-xs" htmlFor={`price-${line.product.productId}`}>
-                              Valor unitario (sin IGV)
+                              Precio unitario (con IGV)
                             </Label>
                             <Input
                               id={`price-${line.product.productId}`}
                               inputMode="decimal"
-                              value={line.unitPricePen}
+                              value={line.priceWithIgvPen}
                               onChange={(e) => {
-                                setLine(line.product.productId, { unitPricePen: e.target.value });
+                                setLine(line.product.productId, {
+                                  priceWithIgvPen: e.target.value,
+                                });
                               }}
                             />
                           </div>
+                        </div>
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span>Importe (con IGV)</span>
+                          <span data-testid={`pos-line-total-${line.product.sku}`}>
+                            {amounts === null
+                              ? '—'
+                              : formatMoney(toFixedString(amounts.total, 'MONEY'))}
+                          </span>
                         </div>
                         {over && (
                           <p className="text-xs text-destructive">
@@ -419,16 +444,22 @@ export function PosView() {
 
               <div className="grid gap-1 border-t pt-3 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Subtotal</span>
-                  <span>{formatMoney(toFixedString(totals.subtotal, 'MONEY'))}</span>
+                  <span className="text-muted-foreground">Subtotal (sin IGV)</span>
+                  <span data-testid="pos-subtotal">
+                    {formatMoney(toFixedString(totals.subtotal, 'MONEY'))}
+                  </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">IGV</span>
-                  <span>{formatMoney(toFixedString(totals.igv, 'MONEY'))}</span>
+                  <span className="text-muted-foreground">IGV (18 %)</span>
+                  <span data-testid="pos-igv">
+                    {formatMoney(toFixedString(totals.igv, 'MONEY'))}
+                  </span>
                 </div>
                 <div className="flex justify-between text-base font-semibold">
                   <span>Total</span>
-                  <span>{formatMoney(toFixedString(totals.total, 'MONEY'))}</span>
+                  <span data-testid="pos-total">
+                    {formatMoney(toFixedString(totals.total, 'MONEY'))}
+                  </span>
                 </div>
               </div>
 
