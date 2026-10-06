@@ -2,6 +2,48 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-06 — cc26 (D-438..D-451, PR #111 abierto, sin migración): ventana revertida en el paso 3
+
+Sesión desatendida (D-442). Detalle, revisiones, UAT y lista para el dueño en
+`docs/handoff/ventana-cc26.md`.
+
+- **Hecho (M1 a M5 y M-UX; M6 sacrificado, D-450):**
+  - M1 y M2: Excel en comprobantes, cotizaciones, pedidos, compras, clientes y cobranzas. Usan
+    el mismo `findWindow` que la lista; tope de 5000 filas con 400; importes de compras solo
+    para el administrador (D-446, D-451).
+  - M3: `docs/manual/menu-por-rol.md` y su test (D-439). MR-1..MR-9 quedan como propuestas, sin
+    cambiar permisos.
+  - M4: Panel del administrador (`GET /reports/admin-dashboard`, D-440, D-443, D-444).
+  - M5: Panel del supervisor de planta (`GET /reports/plant-dashboard`, D-447..D-449).
+  - M-UX: `docs/analisis/cc26-inspeccion-ux.md`, con 34 hallazgos (3 P1, 19 P2 y 12 P3).
+- **Revisiones:**
+  - autorrevisión: 0 P0, 0 P1, 1 P2, 15 P3;
+  - segundo modelo: 0 P0, 0 P1, 2 P2, 11 P3;
+  - los P2 están corregidos: el Excel con filtro derivado ya no sale recortado, y el presupuesto
+    de consultas de los Paneles se mide en SQL (`dashboards.db-spec.ts`).
+- **Tests:**
+  - unitarios: API 2721 y web 18 archivos; `test:db` 33/33;
+  - E2E nuevos: `panel-cc26` y `excel-listas-cc26`;
+  - UAT propio con build de producción, aprobado;
+  - CI 37433458004 sobre `f92684ab`, en verde.
+- **Ventana (08:38–08:45 Lima), revertida:**
+  - el deploy de la API falló: la revisión `00090-s8l` no llegó a la base de Neon al arrancar
+    (P1001) y no recibió tráfico;
+  - no hubo merge;
+  - la API sigue en `00089-8mf` (`39dfe852`) al 100 %, `main` en `b83772a0`;
+  - `smoke:prod` en verde en los dos dominios después de la vuelta atrás.
+  - Pendiente del dueño: confirmar la conexión que usa `deploy-api` y repetir la ventana.
+- **D-445 (del dueño):** nada pide confirmación. La copia de `.claude/settings.json` al PR la
+  bloqueó el clasificador; el archivo sigue modificado en el checkout principal, y el texto para
+  AGENTS.md está en el handoff.
+- **Registro de riesgo (solo lectura, sin kardex):**
+  - las seis listas pasan ahora por `findWindow` (`invoicing.service.ts`,
+    `quotations.service.ts`, `sales-orders.service.ts`, `purchases.service.ts`,
+    `customers.service.ts`, `receivables.service.ts`);
+  - `reports/admin-dashboard.ts` y `reports/plant-dashboard.ts`.
+- **Neon:** no se creó ni se borró ninguna rama.
+- **Salidas:** en `local-data/cc26/` y `local-data/cc26-ux/` del checkout principal.
+
 ## 2026-10-06 — Ventana cc25 (D-420..D-437 desplegadas, PR #109, sin migración)
 
 Ventana entre las 00:46 y las 00:55 de Lima, con D-411 y D-437 (el martes 6, a cualquier hora).
