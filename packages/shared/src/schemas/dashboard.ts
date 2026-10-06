@@ -194,3 +194,28 @@ export const plantDashboardSchema = z.object({
   ),
 });
 export type PlantDashboardDto = z.infer<typeof plantDashboardSchema>;
+
+/* ------------------------------------------------------------------------------------- *
+ * cc27 (M4, D-457). El Panel del vendedor: **solo lo suyo**, con el alcance por vendedor del
+ * servidor, y sin costos, márgenes ni valorización.
+ * ------------------------------------------------------------------------------------- */
+
+export const sellerDashboardSchema = z.object({
+  /** Del 1 del mes a hoy (Lima), como el Panel del administrador (D-443). */
+  month: rangeSchema,
+  /**
+   * Sus ventas del mes: el valor de venta **sin IGV** de sus comprobantes vivos (emitidos, con
+   * error de envío, aceptados o en baja pendiente) por fecha de emisión; las notas de crédito
+   * restan. «Suyos» es el alcance de su lista de comprobantes.
+   */
+  salesPen: z.string(),
+  /** Comprobantes que suman (las notas de crédito incluidas). */
+  documentCount: z.number().int(),
+  /** Sus cotizaciones emitidas en el mes (todas menos los borradores). */
+  quotationsIssued: z.number().int(),
+  /** De esas, las que tienen pedido. */
+  quotationsConverted: z.number().int(),
+  /** `convertidas ÷ emitidas × 100`, con un decimal; `null` sin cotizaciones en el mes. */
+  conversionPct: z.string().nullable(),
+});
+export type SellerDashboardDto = z.infer<typeof sellerDashboardSchema>;
