@@ -298,13 +298,15 @@ test.describe('Fase 4 — bordes de producción (RF-32..35, D-055..D-060)', () =
         coilId: stripA.id,
       });
 
-      // 1 300 piezas × 2 kg = 2 600 kg contra 2 400 kg asignados.
+      // 1 300 piezas × 2 kg = 2 600 kg contra 2 400 kg asignados. D-465: pasado el 1 %, el
+      // rechazo es el de la casilla de D-389 (sin casilla no entra), y sigue diciendo que se puede
+      // montar otro fleje.
       const short = await postExpectingError(api, `/api/production/${opId}/report`, {
         pieces: 1300,
       });
       expect(short.status).toBe(400);
       expect(short.message).toContain('2600.000 kg');
-      expect(short.message).toContain('2400.000 kg asignados');
+      expect(short.message).toContain('2400.000 kg montados');
       expect(short.message).toContain('consume otro fleje');
 
       // El rechazo es completo: ni salió material ni entraron piezas.

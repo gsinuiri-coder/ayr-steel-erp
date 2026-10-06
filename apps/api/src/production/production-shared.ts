@@ -7,11 +7,17 @@ import {
   type PrismaClient,
 } from '@prisma/client';
 import {
+  DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS,
+  DRYWALL_TOLERANCE_OVERRIDE_REASONS,
+  drywallToleranceOverrideLabel,
   productionOrderCode,
   TOLERANCE_OVERRIDE_REASON_LABELS,
   TOLERANCE_OVERRIDE_REASONS,
   TOLERANCE_OVERRIDE_REASONS_OVER,
+  toleranceOverrideLabel,
+  type ANY_TOLERANCE_OVERRIDE_REASONS,
   type Decimal,
+  type DrywallToleranceOverrideInput,
   type MountedKgExcess,
   type ToleranceOverrideInput,
 } from '@ayr/shared';
@@ -85,6 +91,82 @@ export const toleranceOverrideAuditSchema = z.object({
   differenceKg: z.string(),
   differencePct: z.string(),
 });
+
+/** D-465: la acción propia del reporte de drywall autorizado fuera de la tolerancia del 1 %. */
+export const DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION =
+  'production.drywall.report-tolerance-override';
+
+/** D-465: las dos acciones que leen la etiqueta «Fuera de tolerancia» (detalle, merma y Panel). */
+export const TOLERANCE_OVERRIDE_AUDIT_ACTIONS = [
+  TOLERANCE_OVERRIDE_AUDIT_ACTION,
+  DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION,
+];
+
+const drywallToleranceOverrideAuditSchema = toleranceOverrideAuditSchema.extend({
+  reason: z.enum(DRYWALL_TOLERANCE_OVERRIDE_REASONS),
+});
+
+/**
+ * D-465: una entrada de auditoría de casilla, de cualquiera de las dos líneas, con su motivo en
+ * palabras; `null` si no es una de ellas o no se lee.
+ */
+export function readToleranceOverrideAudit(row: { action: string; after: unknown }): {
+  reportId: string;
+  reason: (typeof ANY_TOLERANCE_OVERRIDE_REASONS)[number];
+  detail: string | null;
+  label: string;
+  differenceKg: string;
+  differencePct: string;
+} | null {
+  if (row.action === DRYWALL_TOLERANCE_OVERRIDE_AUDIT_ACTION) {
+    const parsed = drywallToleranceOverrideAuditSchema.safeParse(row.after);
+    if (!parsed.success) return null;
+    const { reason, detail } = parsed.data;
+    return {
+      ...parsed.data,
+      label: drywallToleranceOverrideLabel({ reason, ...(detail === null ? {} : { detail }) }),
+    };
+  }
+  if (row.action !== TOLERANCE_OVERRIDE_AUDIT_ACTION) return null;
+  const parsed = toleranceOverrideAuditSchema.safeParse(row.after);
+  if (!parsed.success) return null;
+  const { reason, detail } = parsed.data;
+  return {
+    ...parsed.data,
+    label: toleranceOverrideLabel({ reason, ...(detail === null ? {} : { detail }) }),
+  };
+}
+
+/** D-465: el `after` de la auditoría propia del reporte de drywall autorizado fuera de tolerancia. */
+export function drywallToleranceOverrideAuditAfter(input: {
+  reportId: string;
+  orderId: string;
+  orderSeq: number;
+  strips: readonly { coilId: string; coilCode: string; kg: Decimal }[];
+  realKg: string;
+  override: DrywallToleranceOverrideInput;
+  excess: MountedKgExcess;
+}): Prisma.InputJsonObject {
+  const { override, excess } = input;
+  return {
+    reportId: input.reportId,
+    productionOrderId: input.orderId,
+    productionOrderCode: productionOrderCode(input.orderSeq),
+    strips: input.strips.map((s) => ({
+      coilId: s.coilId,
+      coilCode: s.coilCode,
+      kg: s.kg.toFixed(3),
+    })),
+    theoreticalKg: excess.theoreticalKg,
+    realKg: input.realKg,
+    differenceKg: excess.excessKg,
+    differencePct: excess.excessPct,
+    severe: excess.severe,
+    reason: override.reason,
+    reasonLabel: DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS[override.reason],
+    detail: override.detail === undefined || override.detail === '' ? null : override.detail,
+  };
+}
 
 /**
  * D-388: el rechazo de `mountedKgForReport`. Con código (la franja 1–5 % sin casilla, o más del

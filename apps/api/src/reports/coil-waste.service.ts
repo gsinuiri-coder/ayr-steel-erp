@@ -4,15 +4,14 @@ import {
   fromDateOnly,
   toDateOnly,
   toDecimal,
-  toleranceOverrideLabel,
   type CoilWasteDto,
   type CoilWasteQuery,
 } from '@ayr/shared';
 import { toPrismaLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  TOLERANCE_OVERRIDE_AUDIT_ACTION,
-  toleranceOverrideAuditSchema,
+  readToleranceOverrideAudit,
+  TOLERANCE_OVERRIDE_AUDIT_ACTIONS,
 } from '../production/production-shared';
 import {
   assembleCoilWaste,
@@ -126,9 +125,9 @@ export class CoilWasteService {
             where: {
               entity: 'production_orders',
               entityId: { in: orderIds },
-              action: TOLERANCE_OVERRIDE_AUDIT_ACTION,
+              action: { in: TOLERANCE_OVERRIDE_AUDIT_ACTIONS },
             },
-            select: { after: true },
+            select: { action: true, after: true },
           });
 
     const coils = new Map<string, WasteCoil>(
@@ -155,16 +154,13 @@ export class CoilWasteService {
         },
       ]),
     );
-    // D-388/D-389: la casilla vive en la auditoría de la orden, no en una columna.
+    // D-388/D-389: la casilla vive en la auditoría de la orden, no en una columna. D-465: también
+    // la de drywall, con su acción propia.
     const overrides = new Map<string, WasteToleranceOverride>();
     for (const row of auditRows) {
-      const parsed = toleranceOverrideAuditSchema.safeParse(row.after);
-      if (!parsed.success) continue;
-      const { reportId, reason, detail, differencePct } = parsed.data;
-      overrides.set(reportId, {
-        label: toleranceOverrideLabel({ reason, ...(detail === null ? {} : { detail }) }),
-        excessPct: differencePct,
-      });
+      const parsed = readToleranceOverrideAudit(row);
+      if (parsed === null) continue;
+      overrides.set(parsed.reportId, { label: parsed.label, excessPct: parsed.differencePct });
     }
 
     return assembleCoilWaste({
