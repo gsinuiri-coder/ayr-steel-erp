@@ -29,6 +29,9 @@ describe('importedInvoiceNumber — la lectura de la marca', () => {
     ['Factura externa: ffa1-1419', 'ffa1-1419'],
     ['Factura externa: FFA1-1350\nEntregar en obra', 'FFA1-1350'],
     ['Factura externa:  FFA1-1419  ', 'FFA1-1419'],
+    // cc28 (P2-2 de cc19, D-462): los espacios alrededor del guion no cambian el número.
+    ['Factura externa: FFA1 - 1419', 'FFA1-1419'],
+    ['Factura externa: BBV1 -347', 'BBV1-347'],
   ])('calza: %j → %s', (notes, expected) => {
     expect(importedInvoiceNumber(notes)).toBe(expected);
   });
@@ -64,11 +67,12 @@ describe('normalizeInvoiceNumber y compareImportedInvoiceNumbers — la comparac
     ['ffa1-1419', 'FFA1-1419'],
     [' BBV1-0347 ', 'BBV1-347'],
     ['F001-00000000', 'F001-0'],
+    ['FFA1 - 1419', 'FFA1-1419'],
   ])('%s → %s', (value, expected) => {
     expect(normalizeInvoiceNumber(value)).toBe(expected);
   });
 
-  it.each([['1419'], ['FFA1 - 1419'], ['FFA1-1419 FFA1-1420'], ['']])('%j no se normaliza', (v) => {
+  it.each([['1419'], ['FFA1-1419 FFA1-1420'], ['']])('%j no se normaliza', (v) => {
     expect(normalizeInvoiceNumber(v)).toBeNull();
   });
 
@@ -306,7 +310,7 @@ describe('QuotationsService.findAll — columna, buscador y orden (D-387)', () =
     // Con serie, Postgres acota por el prefijo; la comparación normalizada decide en memoria.
     expect(searchArgs?.where.AND).toEqual([
       { notes: { startsWith: 'Factura externa: ' } },
-      { notes: { startsWith: 'Factura externa: FFA1-', mode: 'insensitive' } },
+      { notes: { startsWith: 'Factura externa: FFA1', mode: 'insensitive' } },
     ]);
     const docArgs = documents.mock.calls[0] as unknown as [
       { where: { number: unknown; status: unknown; docType: unknown; archivedAt: unknown } },

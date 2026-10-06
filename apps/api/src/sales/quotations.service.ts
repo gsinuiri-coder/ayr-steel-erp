@@ -1375,7 +1375,7 @@ export class QuotationsService {
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del
     // buscador) se quedaba sin resultados (Fase 7d, hallazgo de revisión).
-    const searchSeq = searchSeqOf(query.search);
+    const searchSeq = searchSeqOf(query.search, 'COT');
     const invoiceIds = query.search ? await this.idsByInvoiceNumber(query.search) : [];
     const where: Prisma.QuotationWhereInput = {
       ...quotationSellerWhere(actor),
@@ -1465,8 +1465,10 @@ export class QuotationsService {
             series === undefined
               ? { notes: { contains: needle, mode: 'insensitive' } }
               : {
+                  // cc28 (D-462): sin el guion: la marca puede traer espacios antes de él
+                  // (`FFA1 - 1419`); la comparación exacta la hace `invoiceNumberContains`.
                   notes: {
-                    startsWith: `${EXTERNAL_INVOICE_NOTES_PREFIX}${series}-`,
+                    startsWith: `${EXTERNAL_INVOICE_NOTES_PREFIX}${series}`,
                     mode: 'insensitive',
                   },
                 },
