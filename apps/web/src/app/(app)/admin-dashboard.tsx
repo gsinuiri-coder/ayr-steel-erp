@@ -206,7 +206,9 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
           <CardHeader>
             <CardTitle className="text-sm">
               <Link className="hover:underline" href={salesMarginHref(d.current)}>
-                Facturado por día (sin IGV), incluye ventas sin costo comparable
+                Facturado por día (sin IGV)
+                {billed !== toFixedString(toDecimal(d.sales.salesPen), 'MONEY') &&
+                  ', incluye ventas sin costo comparable'}
               </Link>
             </CardTitle>
             <CardDescription className="text-xs">

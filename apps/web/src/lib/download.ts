@@ -1,4 +1,4 @@
-import { ApiError } from '@/lib/api';
+import { ApiError, tryRefresh } from '@/lib/api';
 
 /**
  * cc28 (D-446, P3 de cc26): las descargas del API (Excel, PDF) pasan por `fetch`.
@@ -35,9 +35,27 @@ export async function downloadErrorMessage(res: Response): Promise<string> {
     : `No se pudo descargar el archivo (error ${String(res.status)})`;
 }
 
-/** Descarga `href` (una ruta `/api/...`) y la guarda; lanza `ApiError` si el API la rechaza. */
+/** Los enlaces que se están descargando: un doble clic no arranca dos exportaciones (SM-3). */
+const inFlight = new Set<string>();
+
+/**
+ * Descarga `href` (una ruta `/api/...`) y la guarda; lanza `ApiError` si el API la rechaza. Con
+ * un 401 refresca la sesión una vez y reintenta, como `api()` (segundo modelo cc28, SM-2).
+ */
 export async function downloadFile(href: string): Promise<void> {
-  const res = await fetch(href, { credentials: 'include' });
+  if (inFlight.has(href)) return;
+  inFlight.add(href);
+  try {
+    await fetchAndSave(href);
+  } finally {
+    inFlight.delete(href);
+  }
+}
+
+async function fetchAndSave(href: string): Promise<void> {
+  const get = () => fetch(href, { credentials: 'include', cache: 'no-store' });
+  let res = await get();
+  if (res.status === 401 && (await tryRefresh())) res = await get();
   if (!res.ok) throw new ApiError(res.status, await downloadErrorMessage(res));
   const blob = await res.blob();
   const name =

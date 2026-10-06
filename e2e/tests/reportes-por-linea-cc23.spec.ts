@@ -10,7 +10,13 @@ import {
 } from '@ayr/shared';
 import { adminApi, adminCredentials, getJson } from '../helpers/api';
 import { fiscalEmissionAllowed } from '../helpers/invoicing';
-import { closeSessionQuietly, openCashSession, posSell, setupPosStock } from '../helpers/pos';
+import {
+  closeSessionQuietly,
+  openCashSession,
+  posSell,
+  setupPosStock,
+  voidPosSale,
+} from '../helpers/pos';
 import { purgeSalesTrail } from '../helpers/sales';
 
 /**
@@ -119,6 +125,7 @@ test.describe('Reportes por línea (cc23)', () => {
     // la línea guarda 31.3983 y el comprobante 31.40). Con él, las pestañas solas ya no suman
     // «Todas»: la fila de redondeo cierra la cuenta. Se vende en el mostrador (emite boleta).
     const orderIds: string[] = [];
+    const saleIds: string[] = [];
     if (fiscalEmissionAllowed()) {
       const stock = await setupPosStock(api, { qty: '10', listPricePen: '10.0000' });
       const session = await openCashSession(api, '0.00');
@@ -127,32 +134,39 @@ test.describe('Reportes por línea (cc23)', () => {
           items: [{ productId: stock.product.id, qty: '3.000', unitPriceWithIgvPen: '12.3500' }],
         });
         orderIds.push(sale.salesOrderId);
+        saleIds.push(sale.id);
       } finally {
         await closeSessionQuietly(api, session.id);
       }
     }
 
-    const bad = await api.get(`/api/reports/sales-margin?${range}&businessLine=acero`);
-    expect(bad.status()).toBe(400);
-    const noInventory = await api.get('/api/reports/inventory-valuation?businessLine=services');
-    expect(noInventory.status()).toBe(400);
+    // Segundo modelo cc28 (SM-1): la venta se anula en un `finally`, pase lo que pase con las
+    // aserciones, para que el comprobante no quede vivo y ensucie los totales de otros specs.
+    try {
+      const bad = await api.get(`/api/reports/sales-margin?${range}&businessLine=acero`);
+      expect(bad.status()).toBe(400);
+      const noInventory = await api.get('/api/reports/inventory-valuation?businessLine=services');
+      expect(noInventory.status()).toBe(400);
 
-    const all = await getJson<SalesMarginDto>(api, `/api/reports/sales-margin?${range}`);
-    const tabs = await Promise.all(
-      SALES_MARGIN_LINES.map((line) =>
-        getJson<SalesMarginDto>(api, `/api/reports/sales-margin?${range}&businessLine=${line}`),
-      ),
-    );
-    const noLine = all.totalsByLine.find((t) => t.businessLine === null)?.salesPen ?? '0';
-    expect(
-      sum([...tabs.map((t) => t.totals.salesPen), noLine, all.totals.roundingPen]).toFixed(4),
-    ).toBe(all.totals.salesPen);
-    if (orderIds.length > 0) {
-      // El comprobante redondeado está en el rango: su diferencia aparece en la fila.
-      expect(toDecimal(all.totals.roundingPen).isZero()).toBe(false);
+      const all = await getJson<SalesMarginDto>(api, `/api/reports/sales-margin?${range}`);
+      const tabs = await Promise.all(
+        SALES_MARGIN_LINES.map((line) =>
+          getJson<SalesMarginDto>(api, `/api/reports/sales-margin?${range}&businessLine=${line}`),
+        ),
+      );
+      const noLine = all.totalsByLine.find((t) => t.businessLine === null)?.salesPen ?? '0';
+      expect(
+        sum([...tabs.map((t) => t.totals.salesPen), noLine, all.totals.roundingPen]).toFixed(4),
+      ).toBe(all.totals.salesPen);
+      if (orderIds.length > 0) {
+        // El comprobante redondeado está en el rango: su diferencia aparece en la fila.
+        expect(toDecimal(all.totals.roundingPen).isZero()).toBe(false);
+      }
+      expect(sum(tabs.map((t) => t.totals.costPen)).toFixed(4)).toBe(all.totals.costPen);
+    } finally {
+      for (const id of saleIds) await voidPosSale(api, id, 'E2E cc28: limpieza del redondeo');
+      await purgeSalesTrail(api, { orderIds });
     }
-    await purgeSalesTrail(api, { orderIds });
-    expect(sum(tabs.map((t) => t.totals.costPen)).toFixed(4)).toBe(all.totals.costPen);
 
     const inventory = await getJson<InventoryValuationDto>(api, '/api/reports/inventory-valuation');
     const byLine = await Promise.all(

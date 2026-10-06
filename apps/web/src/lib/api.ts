@@ -35,7 +35,7 @@ interface ErrorBody {
 
 let refreshInFlight: Promise<boolean> | null = null;
 
-async function tryRefresh(): Promise<boolean> {
+export async function tryRefresh(): Promise<boolean> {
   refreshInFlight ??= fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' })
     .then((r) => r.ok)
     .catch(() => false)
