@@ -124,23 +124,25 @@ test.describe('cc27 / UX26-01 — precio del mostrador con IGV', () => {
       await expect(card).toContainText('S/ 59.00 con IGV');
       await card.click();
 
-      // 3 × S/ 12.35 con IGV = S/ 37.05; el valor sin IGV se deriva (D-255): 31.40 + 5.65.
+      // 3 × S/ 11.80 con IGV = S/ 35.40; el valor sin IGV se deriva (D-255): 30.00 + 5.40. Un precio que
+      // da céntimos exactos: con uno que no (12.35 → 31.3983 en la línea y 31.40 en el comprobante) el
+      // reporte de ventas por línea se separa de «Todas» en diezmilésimos (ver PROGRESO, cc27).
       await page.getByLabel(/^Cantidad/).fill('3');
-      await page.getByLabel('Precio unitario (con IGV)').fill('12.35');
-      await expect(page.getByTestId('pos-total')).toHaveText('S/ 37.05');
-      await expect(page.getByTestId('pos-subtotal')).toHaveText('S/ 31.40');
-      await expect(page.getByTestId('pos-igv')).toHaveText('S/ 5.65');
+      await page.getByLabel('Precio unitario (con IGV)').fill('11.80');
+      await expect(page.getByTestId('pos-total')).toHaveText('S/ 35.40');
+      await expect(page.getByTestId('pos-subtotal')).toHaveText('S/ 30.00');
+      await expect(page.getByTestId('pos-igv')).toHaveText('S/ 5.40');
 
       await page.getByRole('button', { name: 'Efectivo', exact: true }).click();
-      await page.getByRole('button', { name: 'Cobrar S/ 37.05' }).click();
-      await expect(page.getByRole('dialog')).toContainText('por S/ 37.05', { timeout: 30_000 });
+      await page.getByRole('button', { name: 'Cobrar S/ 35.40' }).click();
+      await expect(page.getByRole('dialog')).toContainText('por S/ 35.40', { timeout: 30_000 });
 
       const [sale] = await cashSessionSales(api, session.id);
       orderIds.push(sale!.salesOrderId);
       const document = await getDocument(api, sale!.fiscalDocumentId);
-      expect(document.totalPen).toBe('37.0500');
-      expect(document.subtotalPen).toBe('31.4000');
-      expect(document.igvPen).toBe('5.6500');
+      expect(document.totalPen).toBe('35.4000');
+      expect(document.subtotalPen).toBe('30.0000');
+      expect(document.igvPen).toBe('5.4000');
     } finally {
       await closeSessionQuietly(api, session?.id);
       await purgeSalesTrail(api, { orderIds });
