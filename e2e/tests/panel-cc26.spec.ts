@@ -7,6 +7,8 @@ import {
   type AdminDashboardDto,
   type CoilWasteDto,
   type InventoryValuationDto,
+  type PlantDashboardDto,
+  type ProductionQueueEntryDto,
   type ReceivablesAgingDto,
   type SalesMarginDto,
 } from '@ayr/shared';
@@ -122,5 +124,44 @@ test.describe('Panel del administrador (cc26)', () => {
     ).not.toHaveCount(0);
     await expect(section.locator('a[href="/reportes/cuentas-por-cobrar"]')).not.toHaveCount(0);
     await expect(section.locator('a[href="/reportes/inventario-valorizado"]')).not.toHaveCount(0);
+  });
+});
+
+test.describe('Panel del supervisor de planta (cc26)', () => {
+  test('la cola y el consumo son los de sus lecturas; el vendedor no lo recibe', async ({
+    baseURL,
+  }) => {
+    const admin = await adminApi(baseURL!);
+    const supervisor = await createUser(admin, 'SUPERVISOR_PLANTA');
+    const plant = await request.newContext({ baseURL });
+    const login = await plant.post('/api/auth/login', {
+      data: { email: supervisor.email, password: supervisor.password },
+    });
+    expect(login.ok()).toBeTruthy();
+
+    const panel = await getJson<PlantDashboardDto>(plant, '/api/reports/plant-dashboard');
+    const queue = await getJson<ProductionQueueEntryDto[]>(plant, '/api/production/roofing/queue');
+    expect(panel.queue.count).toBe(queue.length);
+    expect(panel.queue.next.map((q) => q.orderId)).toEqual(
+      queue.slice(0, panel.queue.next.length).map((q) => q.orderId),
+    );
+    for (const line of panel.production) {
+      const week = await getJson<CoilWasteDto>(
+        admin,
+        `/api/reports/coil-waste?from=${panel.week.from}&to=${panel.week.to}&businessLine=${line.businessLine}`,
+      );
+      expect(line.weekKg).toBe(week.totals.consumedKg);
+    }
+    // Sin costos: el DTO no lleva ningún campo de costo ni de margen.
+    expect(JSON.stringify(panel)).not.toMatch(/"\w*(cost|Cost|margin|Margin|Pen)\w*":/);
+    await plant.dispose();
+
+    const seller = await createUser(admin, 'VENDEDOR');
+    const sellerApi = await request.newContext({ baseURL });
+    await sellerApi.post('/api/auth/login', {
+      data: { email: seller.email, password: seller.password },
+    });
+    expect((await sellerApi.get('/api/reports/plant-dashboard')).status()).toBe(403);
+    await sellerApi.dispose();
   });
 });

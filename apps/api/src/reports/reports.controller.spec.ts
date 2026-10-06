@@ -9,6 +9,7 @@ import type { DocumentProfitabilityService } from './document-profitability.serv
 import type { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
 import type { AdminDashboardService } from './admin-dashboard.service';
+import type { PlantDashboardService } from './plant-dashboard.service';
 import type { CoilWasteService } from './coil-waste.service';
 import type { ReceivablesAgingService } from './receivables-aging.service';
 import type { ReportsService } from './reports.service';
@@ -163,6 +164,7 @@ function build() {
   const receivablesAging = { report: jest.fn().mockResolvedValue({ customers: [] }) };
   const coilWaste = { report: jest.fn().mockResolvedValue({ rows: [] }) };
   const adminDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
+  const plantDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
@@ -174,6 +176,7 @@ function build() {
     receivablesAging as unknown as ReceivablesAgingService,
     coilWaste as unknown as CoilWasteService,
     adminDashboard as unknown as AdminDashboardService,
+    plantDashboard as unknown as PlantDashboardService,
   );
   return {
     controller,
@@ -215,6 +218,8 @@ describe('ReportsController', () => {
     expect(rolesOf('coilWasteReport')).toEqual([Role.ADMINISTRADOR]);
     // cc26 (D-440): el Panel del administrador lleva costos y márgenes.
     expect(rolesOf('adminDashboardReport')).toEqual([Role.ADMINISTRADOR]);
+    // cc26 (D-440): el de planta, con los roles de las lecturas de planta.
+    expect(rolesOf('plantDashboardReport')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsPdfFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);

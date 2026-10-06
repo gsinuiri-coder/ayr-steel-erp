@@ -115,3 +115,82 @@ export const adminDashboardSchema = z.object({
   ),
 });
 export type AdminDashboardDto = z.infer<typeof adminDashboardSchema>;
+
+/* ------------------------------------------------------------------------------------- *
+ * cc26 (D-440, M5). El Panel del supervisor de planta.
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * cc26 (D-447 provisional). La semana de planta va del lunes a hoy (Lima). El domingo es el
+ * último día de su semana, no el primero de la siguiente.
+ */
+export function plantWeekRange(today: string): DashboardRange {
+  const weekday = new Date(`${today}T00:00:00.000Z`).getUTCDay(); // 0 = domingo
+  const sinceMonday = (weekday + 6) % 7;
+  const monday = new Date(`${today}T00:00:00.000Z`);
+  monday.setUTCDate(monday.getUTCDate() - sinceMonday);
+  return { from: monday.toISOString().slice(0, 10), to: today };
+}
+
+/** cc26 (D-448 provisional). Una bobina abierta «por terminarse» tiene hasta este % de su peso. */
+export const LOW_COIL_THRESHOLD_PCT = '10';
+
+export const plantDashboardSchema = z.object({
+  asOf: z.string(),
+  week: rangeSchema,
+  /** `GET /production/roofing/queue`, la cola de `/planta`, tal cual: su conteo y las primeras. */
+  queue: z.object({
+    count: z.number().int(),
+    overdueCount: z.number().int(),
+    priorityCount: z.number().int(),
+    next: z.array(
+      z.object({
+        orderId: z.string().uuid(),
+        code: z.string(),
+        customerName: z.string().nullable(),
+        productName: z.string(),
+        planMeters: z.string(),
+        promisedDeliveryDate: z.string().nullable(),
+        overdue: z.boolean(),
+        priority: z.boolean(),
+      }),
+    ),
+  }),
+  /**
+   * Las bobinas montadas ahora (D-190): las de las órdenes vivas de `GET /production` en
+   * borrador o en curso, con la orden que las tiene.
+   */
+  mounted: z.array(
+    z.object({
+      coilCode: z.string(),
+      orders: z.array(z.object({ orderId: z.string().uuid(), code: z.string() })),
+    }),
+  ),
+  /**
+   * Lo consumido en producción hoy y en la semana, por pestaña: `totals` de
+   * `GET /reports/coil-waste` para cada rango (salidas de producción vivas del kardex, D-429).
+   */
+  production: z.array(
+    z.object({
+      businessLine: z.enum(COIL_REPORT_LINES),
+      todayKg: z.string(),
+      todayCoilCount: z.number().int(),
+      weekKg: z.string(),
+      weekCoilCount: z.number().int(),
+    }),
+  ),
+  /** Bobinas abiertas de `GET /coils` con saldo y a lo sumo `LOW_COIL_THRESHOLD_PCT` de su peso. */
+  lowCoils: z.array(
+    z.object({
+      id: z.string().uuid(),
+      code: z.string(),
+      businessLine: z.enum(BUSINESS_LINES),
+      colorName: z.string().nullable(),
+      availableKg: z.string(),
+      weightKg: z.string(),
+      remainingPct: z.string(),
+      mounted: z.boolean(),
+    }),
+  ),
+});
+export type PlantDashboardDto = z.infer<typeof plantDashboardSchema>;
