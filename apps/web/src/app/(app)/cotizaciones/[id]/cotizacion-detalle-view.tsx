@@ -345,7 +345,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         <Stat label="Válida hasta">
           {q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil)}
         </Stat>
-        <Stat label="Subtotal">{formatMoney(q.subtotalPen)}</Stat>
+        <Stat label="Subtotal (sin IGV)">{formatMoney(q.subtotalPen)}</Stat>
         {/* El total es el número que se busca de un vistazo: es el único de los cuatro que
             va en semibold. */}
         <Stat label="Total (con IGV)" className="font-semibold">

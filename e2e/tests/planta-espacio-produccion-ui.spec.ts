@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
-import { confirmFilmOpen, openQueuedOrder } from '../helpers/ui';
+import { confirmFilmOpen, confirmPlantClose, openQueuedOrder } from '../helpers/ui';
 import { balanceOf, today, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -429,6 +429,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await expect(panelB.getByLabel('Planchas del largo 1')).toHaveValue('');
 
       await closeB.click();
+      await confirmPlantClose(page, 'Cerrar la orden');
 
       // Cerrada, la orden sale de la lista de abiertas: queda la pestaña de la que sigue viva.
       await expect(tabs.getByRole('tab')).toHaveCount(1);
@@ -547,6 +548,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
 
       await panel.getByRole('button', { name: `Agregar al borrador de ${op.code}` }).click();
       await panel.getByRole('button', { name: `Ejecutar el borrador y cerrar ${op.code}` }).click();
+      await confirmPlantClose(page, 'Ejecutar y cerrar');
       await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible();
 
       // El kardex sale por los largos de verdad: 37.8 m de producto y 151.2 kg de bobina.
@@ -790,6 +792,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await expect(panelA.getByText('Con esta fila el borrador cubre el plan')).toBeVisible();
       await panelA.getByRole('button', { name: `Agregar al borrador de ${codeA}` }).click();
       await panelA.getByRole('button', { name: `Ejecutar el borrador y cerrar ${codeA}` }).click();
+      await confirmPlantClose(page, 'Ejecutar y cerrar');
 
       // La orden cerrada sale de la lista y la hermana queda sola y seleccionada.
       await expect(tabs.getByRole('tab')).toHaveCount(1);
@@ -814,6 +817,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       ).toBeVisible();
       await panelB.getByRole('button', { name: `Agregar al borrador de ${codeB}` }).click();
       await panelB.getByRole('button', { name: `Ejecutar el borrador y cerrar ${codeB}` }).click();
+      await confirmPlantClose(page, 'Ejecutar y cerrar');
 
       // Sin órdenes abiertas, el pedido lo dice en vez de dejar el panel en blanco.
       await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible();

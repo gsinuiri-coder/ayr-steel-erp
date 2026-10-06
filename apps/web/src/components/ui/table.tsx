@@ -4,9 +4,53 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
+/**
+ * cc27 (UX26-10/33, D-456): una tabla más ancha que su contenedor scrollea **dentro** de él (la
+ * página no, D-179), pero a 1366 px las columnas que quedaban fuera no se anunciaban: sin barra
+ * a la vista, parecía que no había más. Con desborde, el contenedor muestra una sombra en el
+ * borde que esconde columnas (`globals.css`) y entra en el orden del teclado como región con
+ * nombre, para poder desplazarlo con las flechas (axe `scrollable-region-focusable`).
+ */
+function useHorizontalOverflow(ref: React.RefObject<HTMLDivElement | null>): boolean {
+  const [overflow, setOverflow] = React.useState(false);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      setOverflow(el.scrollWidth - el.clientWidth > 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    const table = el.firstElementChild;
+    if (table) observer.observe(table);
+    return () => {
+      observer.disconnect();
+    };
+  }, [ref]);
+  return overflow;
+}
+
 function Table({ className, ...props }: React.ComponentProps<'table'>) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const overflow = useHorizontalOverflow(containerRef);
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div
+      ref={containerRef}
+      data-slot="table-container"
+      data-overflow={overflow ? 'true' : undefined}
+      className="relative w-full overflow-x-auto"
+      // Un grupo y no una región: una región es un punto de referencia y varias con el mismo
+      // nombre se repiten en la lista de landmarks (axe `landmark-unique`, segundo modelo SM-3).
+      // Nombre fijo: la tabla ya anuncia el suyo.
+      {...(overflow
+        ? {
+            tabIndex: 0,
+            role: 'group',
+            'aria-label': 'Desplazamiento horizontal: hay más columnas',
+          }
+        : {})}
+    >
       <table
         data-slot="table"
         className={cn('w-full caption-bottom text-[13px] tabular-nums', className)}

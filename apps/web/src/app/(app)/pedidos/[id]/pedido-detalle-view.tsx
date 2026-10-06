@@ -586,9 +586,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
 
       <StatStrip>
         <Stat label="Fecha">{formatDate(o.issueDate)}</Stat>
-        <Stat label="Subtotal">{formatMoney(o.subtotalPen)}</Stat>
+        <Stat label="Subtotal (sin IGV)">{formatMoney(o.subtotalPen)}</Stat>
         <Stat label="IGV">{formatMoney(o.igvPen)}</Stat>
-        <Stat label="Total" className="font-semibold">
+        <Stat label="Total (con IGV)" className="font-semibold">
           {formatMoney(o.totalPen)}
         </Stat>
       </StatStrip>

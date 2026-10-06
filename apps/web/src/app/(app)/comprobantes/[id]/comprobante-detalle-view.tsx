@@ -986,7 +986,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             '—'
           )}
         </Stat>
-        <Stat label="Total" className="font-semibold">
+        <Stat label="Total (con IGV)" className="font-semibold">
           {formatMoney(d.totalPen)}
         </Stat>
         <Stat label="Saldo" className="font-semibold">
@@ -1066,9 +1066,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </TableBody>
         </Table>
         <div className="flex justify-end gap-6 px-2.5 text-sm">
-          <span>Subtotal {formatMoney(d.subtotalPen)}</span>
+          <span>Subtotal (sin IGV) {formatMoney(d.subtotalPen)}</span>
           <span>IGV {formatMoney(d.igvPen)}</span>
-          <span className="font-semibold">Total {formatMoney(d.totalPen)}</span>
+          <span className="font-semibold">Total (con IGV) {formatMoney(d.totalPen)}</span>
         </div>
       </Section>
 
@@ -1493,8 +1493,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label>Fecha</Label>
+              {/* UX26-02: cada rótulo enlazado con su control (`htmlFor`/`id`). */}
+              <Label htmlFor="pay-date">Fecha</Label>
               <Input
+                id="pay-date"
                 type="date"
                 max={businessToday()}
                 value={payDate}
@@ -1508,8 +1510,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               />
             </div>
             <div className="space-y-1">
-              <Label>Monto</Label>
+              <Label htmlFor="pay-amount">Monto</Label>
               <Input
+                id="pay-amount"
                 inputMode="decimal"
                 value={payAmount}
                 onChange={(e) => {
@@ -1521,14 +1524,14 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               )}
             </div>
             <div className="space-y-1">
-              <Label>Medio de pago</Label>
+              <Label htmlFor="pay-method">Medio de pago</Label>
               <Select
                 value={payMethod}
                 onValueChange={(v) => {
                   setPayMethod(v as PaymentMethod);
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="pay-method" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1541,8 +1544,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Referencia</Label>
+              <Label htmlFor="pay-reference">Referencia</Label>
               <Input
+                id="pay-reference"
                 value={payReference}
                 maxLength={120}
                 placeholder="N.º de operación"

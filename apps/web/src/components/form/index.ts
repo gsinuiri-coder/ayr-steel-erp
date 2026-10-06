@@ -7,3 +7,4 @@ export {
   type CellSpan,
   type ControlSize,
 } from './form-layout';
+export { StickyActionBar } from './sticky-action-bar';

@@ -10,6 +10,7 @@ import {
   setupRoofingScenario,
 } from '../helpers/roofing';
 import { createCustomer } from '../helpers/sales';
+import { confirmPlantClose } from '../helpers/ui';
 
 /**
  * D-389 — el accesorio también entra con la casilla al pasar la tolerancia del 1 %.
@@ -161,6 +162,11 @@ test.describe('D-389 — accesorio fuera de tolerancia', () => {
         .selectOption('LIGHTER_COIL');
       await expect(reportAndClose).toBeEnabled();
       await reportAndClose.click();
+      // cc27 (D-453): el resumen avisa de la fila fuera de tolerancia antes de cerrar.
+      await expect(page.getByRole('dialog')).toContainText('Fuera de tolerancia', {
+        timeout: 60_000,
+      });
+      await confirmPlantClose(page, 'Reportar y cerrar');
       await expect(page.getByText(`${op.code}: reporte guardado y orden cerrada`)).toBeVisible({
         timeout: 60_000,
       });

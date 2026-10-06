@@ -10,6 +10,7 @@ import { KardexPepsService } from './kardex-peps.service';
 import { KardexSheetService } from './kardex-sheet.service';
 import { ReceivablesAgingService } from './receivables-aging.service';
 import { PlantDashboardService } from './plant-dashboard.service';
+import { SellerDashboardService } from './seller-dashboard.service';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 import { SalesByMaterialService } from './sales-by-material.service';
@@ -30,6 +31,7 @@ import { SalesMarginService } from './sales-margin.service';
     CoilWasteService,
     AdminDashboardService,
     PlantDashboardService,
+    SellerDashboardService,
   ],
 })
 export class ReportsModule {}

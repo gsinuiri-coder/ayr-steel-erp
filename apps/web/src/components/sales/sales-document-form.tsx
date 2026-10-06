@@ -77,6 +77,7 @@ import {
 } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -527,6 +528,20 @@ function validityDaysOf(q: QuotationDto): string {
   return String(days >= 1 ? days : DEFAULT_QUOTATION_VALIDITY_DAYS);
 }
 
+/** Huella del borrador para saber si cambió (D-455); la `key` de cada línea no es un dato. */
+function draftFingerprint(draft: {
+  customerId: string;
+  issueDate: string;
+  validityDays: string;
+  notes: string;
+  lines: readonly LineDraft[];
+}): string {
+  return JSON.stringify({
+    ...draft,
+    lines: draft.lines.map(({ key: _key, ...line }) => line),
+  });
+}
+
 export function SalesDocumentForm({
   mode,
   initial,
@@ -574,6 +589,14 @@ export function SalesDocumentForm({
   );
   const [nextKey, setNextKey] = useState(initial ? initial.items.length + 1 : 1);
   const [formError, setFormError] = useState<string | null>(null);
+  /**
+   * cc27 (UX26-13, D-455): el formulario tal como se abrió. Si lo que se ve deja de ser eso, salir
+   * avisa. Se compara el contenido y no un «se tocó algo»: borrar lo que se escribió vuelve a
+   * dejarlo limpio, y los selectores de Radix no disparan eventos `input`.
+   */
+  const [pristine] = useState(() =>
+    draftFingerprint({ customerId, issueDate, validityDays, notes, lines }),
+  );
 
   // RF-S3/M1: el selector de cliente busca en el servidor (`customerSearch` más abajo) y ya
   // no trae el maestro entero. Esto solo hidrata por id lo que **ya** está elegido —al editar
@@ -825,6 +848,10 @@ export function SalesDocumentForm({
       setFormError(err instanceof ApiError ? err.message : 'No se pudo guardar');
     },
   });
+  useUnsavedChanges(
+    !save.isSuccess &&
+      draftFingerprint({ customerId, issueDate, validityDays, notes, lines }) !== pristine,
+  );
 
   /**
    * Valida el borrador y devuelve las líneas listas, o el primer error legible. Replica lo
@@ -1724,7 +1751,7 @@ function LineRow({
           )}
           {perMeter && unitValuePen !== null && (
             <span className="mt-0.5 block text-right text-xs text-muted-foreground tabular-nums">
-              {formatMoney(unitValuePen, 'PEN', 4)} por plancha
+              valor {formatMoney(unitValuePen, 'PEN', 4)} por plancha (sin IGV)
             </span>
           )}
           {fixedLength && !brokenLength && fixedLengthMm !== null && !byAmount && (
@@ -1922,7 +1949,7 @@ function PricingUnitSwitch({
       aria-label={`Cotizar por metro la línea ${lineIndex + 1}`}
     >
       <span>
-        {formatMoney(perMeterPrice, 'PEN', 4)} por metro (equivalente a{' '}
+        {formatMoney(perMeterPrice, 'PEN', 4)} por metro con IGV (equivalente a{' '}
         {formatMoney(l.pricePen.trim(), 'PEN', 4)} por plancha)
       </span>
       <span>
@@ -2025,7 +2052,7 @@ function PriceFloorHint({
     <span
       className={`mt-1 block text-right text-xs tabular-nums ${below ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
     >
-      Mínimo: {formatMoney(minPricePen, 'PEN', 2)}
+      Mínimo con IGV: {formatMoney(minPricePen, 'PEN', 2)}
       {fixedLength ? ' /m' : l.kind === 'BOBINA' ? ' /kg' : ''}
       {below ? ' — por debajo' : ''}
     </span>

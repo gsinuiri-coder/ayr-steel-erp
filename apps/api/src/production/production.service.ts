@@ -32,6 +32,7 @@ import {
   type CloseProductionOrderInput,
   type ConsumeStripInput,
   type CreateProductionOrderInput,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type ProductionOrderListItemDto,
   type ProductionOrderQuery,
@@ -41,6 +42,7 @@ import {
   type ReverseMovementInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
+import { previewPlantClose } from './close-preview';
 import type { RequestUser } from '../auth/auth.types';
 import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from '../coils/coil-auto-terminate';
 import { CoilsService } from '../coils/coils.service';
@@ -975,211 +977,236 @@ export class ProductionService {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
-        const order = await this.lockOrder(tx, orderId);
-        if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
-          throw new BadRequestException(
-            order.status === ProductionOrderStatus.DRAFT
-              ? 'La orden no tiene material ni piezas: anúlala en vez de cerrarla'
-              : `La orden ya está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}`,
-          );
-        }
-
-        const reports = await tx.productionReport.findMany({
-          where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
-        });
-        if (reports.length === 0) {
-          throw new BadRequestException(
-            'La orden no tiene piezas reportadas: anúlala para liberar los flejes en vez de cerrarla',
-          );
-        }
-
-        const rows = await tx.productionOrderConsumption.findMany({
-          where: { productionOrderId: orderId, releasedAt: null },
-          include: { coil: { select: { code: true } } },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        // La merma que va a salir se conoce antes de emitirla: si es una fracción grande
-        // del material asignado, el cierre deja de ser "lo que sobró de la corrida" y pasa
-        // a ser una baja de inventario, que como cualquier merma exige motivo (RF-17,
-        // D-040) para quedar auditable (RF-95).
-        const assignedKg = rows.reduce(
-          (acc, r) => acc.plus(toDecimal(r.assignedKg.toString())),
-          new Decimal(0),
-        );
-        const plannedScrapKg = rows.reduce(
-          (acc, r) =>
-            acc.plus(
-              Decimal.max(
-                toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
-                new Decimal(0),
-              ),
-            ),
-          new Decimal(0),
-        );
-        const scrapRatio = assignedKg.lte(0) ? new Decimal(0) : plannedScrapKg.div(assignedKg);
-        if (!input.reason && scrapRatio.gt(MAX_SCRAP_RATIO_WITHOUT_REASON)) {
-          throw new BadRequestException(
-            `El cierre deja ${plannedScrapKg.toFixed(3)} kg de merma sobre ${assignedKg.toFixed(3)} kg asignados (${scrapRatio.times(100).toFixed(1)} %): explica el motivo para cerrar con esa merma`,
-          );
-        }
-
-        let scrapKg = new Decimal(0);
-        let scrapCostPen = new Decimal(0);
-        const scrapped: string[] = [];
-        // Un solo instante para el cierre y para la liberación de sus flejes: es lo que
-        // le permite a `reopen` distinguir los flejes que soltó el cierre de los que el
-        // operario había liberado a mano antes, que no deben volver a la orden.
-        const closedAt = new Date();
-        // D-386: los flejes que sueltan merma (con sus agregados), después sus saldos y el del
-        // producto que recibe el ajuste del cierre, todo antes de la primera salida. También los
-        // flejes consumidos enteros: el cierre los termina (D-360) y antes se tomaban recién en ese
-        // `updateMany`, con saldos en mano (segundo modelo, P2-4).
-        await this.inventory.lockInOrder(tx, {
-          coilIds: rows.map((r) => r.coilId),
-          items: [
-            ...rows
-              .filter((r) =>
-                toDecimal(r.assignedKg.toString()).gt(toDecimal(r.consumedKg.toString())),
-              )
-              .map((r) => ({
-                businessLineId: order.businessLineId,
-                itemType: InventoryItemType.COIL,
-                itemId: r.coilId,
-                unit: Unit.KGM,
-              })),
-            {
-              businessLineId: order.businessLineId,
-              itemType: InventoryItemType.PRODUCT,
-              itemId: order.productId,
-              unit: Unit.NIU,
-            },
-          ],
-        });
-        for (const row of rows) {
-          const remaining = toDecimal(row.assignedKg.toString()).minus(
-            toDecimal(row.consumedKg.toString()),
-          );
-          if (remaining.gt(0)) {
-            await this.coils.lockCoil(tx, row.coilId);
-            const out = await this.inventory.record(tx, {
-              businessLineId: order.businessLineId,
-              itemType: 'COIL',
-              itemId: row.coilId,
-              type: 'OUT',
-              qty: toFixedString(remaining, 'KG'),
-              unit: Unit.KGM,
-              refType: 'SCRAP',
-              refId: orderId,
-              notes: input.reason
-                ? `Merma de proceso al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
-                : `Merma de proceso al cerrar ${productionOrderCode(order.seq)}`,
-              actorId: actor.id,
-              operationDate,
-              confirmBackdate: input.confirmBackdate,
-            });
-            if (!out) {
-              throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
-            }
-            scrapKg = scrapKg.plus(remaining);
-            scrapCostPen = scrapCostPen.plus(toDecimal(out.totalCost.toString()));
-            scrapped.push(`${row.coil.code}: ${remaining.toFixed(3)} kg`);
-          }
-          await tx.productionOrderConsumption.update({
-            where: { id: row.id },
-            data: { consumedKg: row.assignedKg, releasedAt: closedAt },
-          });
-        }
-
-        const pieces = reports.reduce((acc, r) => acc + r.pieces, 0);
-        const reportsCostPen = reports.reduce(
-          (acc, r) => acc.plus(toDecimal(r.materialCostPen.toString())),
-          new Decimal(0),
-        );
-        const cost = productionCost({
-          reportsCostPen,
-          scrapCostPen,
-          pieces,
-        });
-
-        const adjustPen = closeAdjustmentPen(
-          cost.totalCostPen,
-          reports.map((r) => ({ pieces: r.pieces, unitCostPen: r.unitCostPen.toFixed(4) })),
-        );
-        let adjusted: InventoryMovement | null = null;
-        if (!adjustPen.isZero()) {
-          adjusted = await this.inventory.adjustCost(tx, {
-            businessLineId: order.businessLineId,
-            itemType: 'PRODUCT',
-            itemId: order.productId,
-            unit: Unit.NIU,
-            amountPen: toFixedString(adjustPen, 'MONEY'),
-            refType: 'PRODUCTION',
-            refId: orderId,
-            notes: `Cierre de ${productionOrderCode(order.seq)}: merma de proceso ${scrapKg.toFixed(3)} kg imputada a ${pieces} piezas`,
-            actorId: actor.id,
-            operationDate,
-          });
-        }
-
-        // D-360: los flejes que el cierre soltó y quedaron en exactamente 0 se terminan solos
-        // (el reporte y la merma de proceso no los terminan: estaban montados). Reabrir la
-        // orden los reabre.
-        await autoTerminateEmptyCoils(tx, this.audit, {
-          actorId: actor.id,
-          coilIds: rows.map((r) => r.coilId),
-          cause: {
-            kind: 'PRODUCTION_ORDER_CLOSE',
-            refId: orderId,
-            label: `cierre de ${productionOrderCode(order.seq)}`,
-          },
-          operationDate,
-        });
-
-        await tx.productionOrder.update({
-          where: { id: orderId },
-          data: {
-            status: ProductionOrderStatus.CLOSED,
-            scrapKg: toFixedString(scrapKg, 'KG'),
-            materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
-            overheadCostPen: toFixedString(cost.overheadCostPen, 'MONEY'),
-            totalCostPen: toFixedString(cost.totalCostPen, 'MONEY'),
-            unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-            notes: input.notes ?? order.notes,
-            closedById: actor.id,
-            closedAt,
-            closedOperationDate: toDateOnly(operationDate),
-          },
-        });
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'production.close',
-          entity: 'production_orders',
-          entityId: orderId,
-          before: { status: order.status },
-          after: {
-            status: ProductionOrderStatus.CLOSED,
-            operationDate,
-            pieces,
-            scrapKg: toFixedString(scrapKg, 'KG'),
-            // El ratio queda en la auditoría para poder alertar sobre corridas con merma
-            // anómala sin tener que recalcularlo desde el kardex (RF-95).
-            scrapRatioPct: scrapRatio.times(100).toFixed(2),
-            scrapReason: input.reason ?? null,
-            scrapped,
-            materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
-            unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-            // `null` cuando el producto ya no tenía saldo: el costo no tiene dónde
-            // imputarse y reescribir el pasado no es opción (mismo criterio que D-043).
-            costAdjusted: adjusted !== null,
-          },
-        });
+        await this.closeInTx(tx, actor, orderId, input, operationDate);
       },
       { timeout: 60_000 },
     );
 
     return this.findOne(orderId);
+  }
+
+  /** cc27 (UX26-03, D-453): lo que `close` haría, sin hacerlo (`previewPlantClose`). */
+  async previewClose(
+    actor: RequestUser,
+    orderId: string,
+    input: CloseProductionOrderInput,
+  ): Promise<PlantClosePreviewDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
+    return previewPlantClose(this.prisma, orderId, (tx) =>
+      this.closeInTx(tx, actor, orderId, input, operationDate),
+    );
+  }
+
+  /**
+   * El cuerpo de `close`, **dentro de la transacción del llamador** (patrón `*InTx`, D-099).
+   * cc27 (D-453): la vista previa del cierre lo corre en una transacción que se deshace, así que
+   * el resumen que ve planta sale de este mismo código y no de una cuenta aparte.
+   */
+  async closeInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    input: CloseProductionOrderInput,
+    operationDate: string,
+  ): Promise<void> {
+    const order = await this.lockOrder(tx, orderId);
+    if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
+      throw new BadRequestException(
+        order.status === ProductionOrderStatus.DRAFT
+          ? 'La orden no tiene material ni piezas: anúlala en vez de cerrarla'
+          : `La orden ya está ${order.status === ProductionOrderStatus.CLOSED ? 'cerrada' : 'anulada'}`,
+      );
+    }
+
+    const reports = await tx.productionReport.findMany({
+      where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+    });
+    if (reports.length === 0) {
+      throw new BadRequestException(
+        'La orden no tiene piezas reportadas: anúlala para liberar los flejes en vez de cerrarla',
+      );
+    }
+
+    const rows = await tx.productionOrderConsumption.findMany({
+      where: { productionOrderId: orderId, releasedAt: null },
+      include: { coil: { select: { code: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // La merma que va a salir se conoce antes de emitirla: si es una fracción grande
+    // del material asignado, el cierre deja de ser "lo que sobró de la corrida" y pasa
+    // a ser una baja de inventario, que como cualquier merma exige motivo (RF-17,
+    // D-040) para quedar auditable (RF-95).
+    const assignedKg = rows.reduce(
+      (acc, r) => acc.plus(toDecimal(r.assignedKg.toString())),
+      new Decimal(0),
+    );
+    const plannedScrapKg = rows.reduce(
+      (acc, r) =>
+        acc.plus(
+          Decimal.max(
+            toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
+            new Decimal(0),
+          ),
+        ),
+      new Decimal(0),
+    );
+    const scrapRatio = assignedKg.lte(0) ? new Decimal(0) : plannedScrapKg.div(assignedKg);
+    if (!input.reason && scrapRatio.gt(MAX_SCRAP_RATIO_WITHOUT_REASON)) {
+      throw new BadRequestException(
+        `El cierre deja ${plannedScrapKg.toFixed(3)} kg de merma sobre ${assignedKg.toFixed(3)} kg asignados (${scrapRatio.times(100).toFixed(1)} %): explica el motivo para cerrar con esa merma`,
+      );
+    }
+
+    let scrapKg = new Decimal(0);
+    let scrapCostPen = new Decimal(0);
+    const scrapped: string[] = [];
+    // Un solo instante para el cierre y para la liberación de sus flejes: es lo que
+    // le permite a `reopen` distinguir los flejes que soltó el cierre de los que el
+    // operario había liberado a mano antes, que no deben volver a la orden.
+    const closedAt = new Date();
+    // D-386: los flejes que sueltan merma (con sus agregados), después sus saldos y el del
+    // producto que recibe el ajuste del cierre, todo antes de la primera salida. También los
+    // flejes consumidos enteros: el cierre los termina (D-360) y antes se tomaban recién en ese
+    // `updateMany`, con saldos en mano (segundo modelo, P2-4).
+    await this.inventory.lockInOrder(tx, {
+      coilIds: rows.map((r) => r.coilId),
+      items: [
+        ...rows
+          .filter((r) => toDecimal(r.assignedKg.toString()).gt(toDecimal(r.consumedKg.toString())))
+          .map((r) => ({
+            businessLineId: order.businessLineId,
+            itemType: InventoryItemType.COIL,
+            itemId: r.coilId,
+            unit: Unit.KGM,
+          })),
+        {
+          businessLineId: order.businessLineId,
+          itemType: InventoryItemType.PRODUCT,
+          itemId: order.productId,
+          unit: Unit.NIU,
+        },
+      ],
+    });
+    for (const row of rows) {
+      const remaining = toDecimal(row.assignedKg.toString()).minus(
+        toDecimal(row.consumedKg.toString()),
+      );
+      if (remaining.gt(0)) {
+        await this.coils.lockCoil(tx, row.coilId);
+        const out = await this.inventory.record(tx, {
+          businessLineId: order.businessLineId,
+          itemType: 'COIL',
+          itemId: row.coilId,
+          type: 'OUT',
+          qty: toFixedString(remaining, 'KG'),
+          unit: Unit.KGM,
+          refType: 'SCRAP',
+          refId: orderId,
+          notes: input.reason
+            ? `Merma de proceso al cerrar ${productionOrderCode(order.seq)}: ${input.reason}`
+            : `Merma de proceso al cerrar ${productionOrderCode(order.seq)}`,
+          actorId: actor.id,
+          operationDate,
+          confirmBackdate: input.confirmBackdate,
+        });
+        if (!out) {
+          throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
+        }
+        scrapKg = scrapKg.plus(remaining);
+        scrapCostPen = scrapCostPen.plus(toDecimal(out.totalCost.toString()));
+        scrapped.push(`${row.coil.code}: ${remaining.toFixed(3)} kg`);
+      }
+      await tx.productionOrderConsumption.update({
+        where: { id: row.id },
+        data: { consumedKg: row.assignedKg, releasedAt: closedAt },
+      });
+    }
+
+    const pieces = reports.reduce((acc, r) => acc + r.pieces, 0);
+    const reportsCostPen = reports.reduce(
+      (acc, r) => acc.plus(toDecimal(r.materialCostPen.toString())),
+      new Decimal(0),
+    );
+    const cost = productionCost({
+      reportsCostPen,
+      scrapCostPen,
+      pieces,
+    });
+
+    const adjustPen = closeAdjustmentPen(
+      cost.totalCostPen,
+      reports.map((r) => ({ pieces: r.pieces, unitCostPen: r.unitCostPen.toFixed(4) })),
+    );
+    let adjusted: InventoryMovement | null = null;
+    if (!adjustPen.isZero()) {
+      adjusted = await this.inventory.adjustCost(tx, {
+        businessLineId: order.businessLineId,
+        itemType: 'PRODUCT',
+        itemId: order.productId,
+        unit: Unit.NIU,
+        amountPen: toFixedString(adjustPen, 'MONEY'),
+        refType: 'PRODUCTION',
+        refId: orderId,
+        notes: `Cierre de ${productionOrderCode(order.seq)}: merma de proceso ${scrapKg.toFixed(3)} kg imputada a ${pieces} piezas`,
+        actorId: actor.id,
+        operationDate,
+      });
+    }
+
+    // D-360: los flejes que el cierre soltó y quedaron en exactamente 0 se terminan solos
+    // (el reporte y la merma de proceso no los terminan: estaban montados). Reabrir la
+    // orden los reabre.
+    await autoTerminateEmptyCoils(tx, this.audit, {
+      actorId: actor.id,
+      coilIds: rows.map((r) => r.coilId),
+      cause: {
+        kind: 'PRODUCTION_ORDER_CLOSE',
+        refId: orderId,
+        label: `cierre de ${productionOrderCode(order.seq)}`,
+      },
+      operationDate,
+    });
+
+    await tx.productionOrder.update({
+      where: { id: orderId },
+      data: {
+        status: ProductionOrderStatus.CLOSED,
+        scrapKg: toFixedString(scrapKg, 'KG'),
+        materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
+        overheadCostPen: toFixedString(cost.overheadCostPen, 'MONEY'),
+        totalCostPen: toFixedString(cost.totalCostPen, 'MONEY'),
+        unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
+        notes: input.notes ?? order.notes,
+        closedById: actor.id,
+        closedAt,
+        closedOperationDate: toDateOnly(operationDate),
+      },
+    });
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'production.close',
+      entity: 'production_orders',
+      entityId: orderId,
+      before: { status: order.status },
+      after: {
+        status: ProductionOrderStatus.CLOSED,
+        operationDate,
+        pieces,
+        scrapKg: toFixedString(scrapKg, 'KG'),
+        // El ratio queda en la auditoría para poder alertar sobre corridas con merma
+        // anómala sin tener que recalcularlo desde el kardex (RF-95).
+        scrapRatioPct: scrapRatio.times(100).toFixed(2),
+        scrapReason: input.reason ?? null,
+        scrapped,
+        materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
+        unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
+        // `null` cuando el producto ya no tenía saldo: el costo no tiene dónde
+        // imputarse y reescribir el pasado no es opción (mismo criterio que D-043).
+        costAdjusted: adjusted !== null,
+      },
+    });
   }
 
   // -------------------------------------------------------------------------

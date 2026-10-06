@@ -151,7 +151,7 @@ test.describe('D-377 — totales al céntimo de la cotización al cobro', () => 
       await page.goto(`/comprobantes/${invoice.id}`);
       await page.getByRole('button', { name: 'Registrar cobro', exact: true }).click();
       const dialog = page.getByRole('dialog');
-      await expect(dialog.locator('input[inputmode="decimal"]')).toHaveValue('35.44');
+      await expect(dialog.getByLabel('Monto', { exact: true })).toHaveValue('35.44');
       await dialog.getByRole('button', { name: 'Registrar cobro', exact: true }).click();
       await expect(page.getByText('Cobro registrado')).toBeVisible();
 

@@ -18,6 +18,7 @@ import {
   mountedKgForReport,
   toDecimal,
   Unit,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type RawMaterialWarningDto,
   type RoofingBatchCoilDto,
@@ -36,6 +37,7 @@ import { useSession } from '@/lib/session';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { OrderPriorityControl } from '@/components/production-queue';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { ClosePreviewDialog } from '@/components/production/close-preview-dialog';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
 import { LengthEditor } from '@/components/production/length-editor';
@@ -186,6 +188,16 @@ export function RoofingOrderPanel({
   const lastCloseMode = useRef<boolean | null>(null);
   /** Cuál de los dos cierres está esperando el motivo: el diálogo es uno solo. */
   const reasonFor = useRef<'commit' | 'close-only'>('commit');
+  /**
+   * cc27 (UX26-03, D-453): el resumen del cierre que espera confirmación. Lo calcula el API
+   * (`…/preview`); «Ejecutar y cerrar» y «Cerrar sin reportar más» no mueven nada hasta que
+   * planta confirma en el diálogo.
+   */
+  const [closePreview, setClosePreview] = useState<
+    | { kind: 'commit'; preview: PlantClosePreviewDto; confirmBackdate: boolean }
+    | { kind: 'close-only'; preview: PlantClosePreviewDto; reason: string | null }
+    | null
+  >(null);
 
   const invalidate = () => {
     invalidateProduction(queryClient, order.orderId);
@@ -353,31 +365,52 @@ export function RoofingOrderPanel({
   });
 
   const submitKey = useIdempotencyKey();
+  /** El cuerpo de «Ejecutar», el mismo para la vista previa del cierre (D-453) y la ejecución. */
+  const commitBody = ({
+    close,
+    reason,
+    confirmBackdate,
+  }: {
+    close: boolean;
+    reason: string | null;
+    confirmBackdate: boolean;
+  }) => ({
+    ...(close ? { close: true } : {}),
+    ...(close && reason ? { closeReason: reason } : {}),
+    // D-089: el consumo real de toda la corrida, que es de donde sale el despunte.
+    ...(close && draft.closeKg.trim()
+      ? { closeConsumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) }
+      : {}),
+    // D-388: la casilla del administrador, por fila; la API la exige y la valida.
+    ...(overridesPayload.length > 0 ? { toleranceOverrides: overridesPayload } : {}),
+    operationDate,
+    confirmBackdate: confirmBackdate || undefined,
+    idempotencyKey: submitKey.current(),
+  });
+  /** Los rechazos de «Ejecutar», los mismos si llegan en la vista previa del cierre. */
+  const onCommitError = (err: unknown) => {
+    // D-388: la fila pasó la tolerancia entre que se leyó el borrador y se ejecutó (o falta la
+    // casilla). Su mensaje habla de «motivo», así que va antes que el del despunte: se avisa y
+    // se relee el borrador para que aparezca la casilla.
+    if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
+      reasonToSend.current = null;
+      toast.error(err.message);
+      invalidate();
+      return;
+    }
+    // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
+    if (err instanceof ApiError && /motivo/i.test(err.message) && closeMode.current) {
+      setAskingReason(true);
+      return;
+    }
+    reasonToSend.current = null;
+    toast.error(err instanceof ApiError ? err.message : 'No se pudo ejecutar el borrador');
+  };
   const commit = useMutation({
-    mutationFn: ({
-      close,
-      reason,
-      confirmBackdate,
-    }: {
-      close: boolean;
-      reason: string | null;
-      confirmBackdate: boolean;
-    }) =>
+    mutationFn: (variables: { close: boolean; reason: string | null; confirmBackdate: boolean }) =>
       api<ProductionOrderDto>(`/production/roofing/${order.orderId}/drafts/commit`, {
         method: 'POST',
-        body: {
-          ...(close ? { close: true } : {}),
-          ...(close && reason ? { closeReason: reason } : {}),
-          // D-089: el consumo real de toda la corrida, que es de donde sale el despunte.
-          ...(close && draft.closeKg.trim()
-            ? { closeConsumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) }
-            : {}),
-          // D-388: la casilla del administrador, por fila; la API la exige y la valida.
-          ...(overridesPayload.length > 0 ? { toleranceOverrides: overridesPayload } : {}),
-          operationDate,
-          confirmBackdate: confirmBackdate || undefined,
-          idempotencyKey: submitKey.current(),
-        },
+        body: commitBody(variables),
       }),
     onSettled: (_data, error) => {
       submitKey.settle(error ?? undefined);
@@ -394,38 +427,30 @@ export function RoofingOrderPanel({
       reasonToSend.current = null;
       invalidate();
     },
-    onError: (err) => {
-      // D-388: la fila pasó la tolerancia entre que se leyó el borrador y se ejecutó (o falta la
-      // casilla). Su mensaje habla de «motivo», así que va antes que el del despunte: se avisa y
-      // se relee el borrador para que aparezca la casilla.
-      if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
-        reasonToSend.current = null;
-        toast.error(err.message);
-        invalidate();
-        return;
-      }
-      // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
-      if (err instanceof ApiError && /motivo/i.test(err.message) && closeMode.current) {
-        setAskingReason(true);
-        return;
-      }
-      reasonToSend.current = null;
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo ejecutar el borrador');
-    },
+    onError: onCommitError,
+  });
+  /** D-453: lo que «Ejecutar y cerrar» va a hacer, calculado por el API sin escribir nada. */
+  const previewCommit = useMutation({
+    mutationFn: (variables: { reason: string | null; confirmBackdate: boolean }) =>
+      api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/drafts/commit/preview`, {
+        method: 'POST',
+        body: commitBody({ close: true, ...variables }),
+      }),
+    onError: onCommitError,
   });
 
+  /** El cuerpo del cierre suelto, el mismo para su vista previa (D-453). */
+  const closeOnlyBody = (reason: string | null) => ({
+    ...(reason ? { reason } : {}),
+    ...(draft.closeKg.trim() ? { consumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) } : {}),
+    operationDate,
+  });
   /** El cierre suelto: sin borrador pendiente, no queda nada que reportar. */
   const closeOnly = useMutation({
     mutationFn: (reason: string | null) =>
       api<ProductionOrderDto>(`/production/roofing/${order.orderId}/close`, {
         method: 'POST',
-        body: {
-          ...(reason ? { reason } : {}),
-          ...(draft.closeKg.trim()
-            ? { consumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) }
-            : {}),
-          operationDate,
-        },
+        body: closeOnlyBody(reason),
       }),
     onSuccess: (updated) => {
       toast.success(
@@ -443,10 +468,41 @@ export function RoofingOrderPanel({
     },
   });
 
-  /** Ejecutar, con o sin cierre, envuelto en el diálogo de retro-fecha (D-124). */
+  /** D-453: lo que «Cerrar sin reportar más» va a hacer, calculado por el API sin escribir nada. */
+  const previewCloseOnly = useMutation({
+    mutationFn: (reason: string | null) =>
+      api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/close/preview`, {
+        method: 'POST',
+        body: closeOnlyBody(reason),
+      }),
+    onSuccess: (preview, reason) => {
+      setClosePreview({ kind: 'close-only', preview, reason });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && /motivo/i.test(err.message)) {
+        setAskingReason(true);
+        return;
+      }
+      reasonToSend.current = null;
+      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden');
+    },
+  });
+
+  /**
+   * Ejecutar, con o sin cierre, envuelto en el diálogo de retro-fecha (D-124). Con cierre, primero
+   * la vista previa (D-453): la ejecución la dispara el diálogo de confirmación.
+   */
   const submit = useBackdateConfirm(async (confirmBackdate) => {
+    if (closeMode.current) {
+      const preview = await previewCommit.mutateAsync({
+        reason: reasonToSend.current,
+        confirmBackdate,
+      });
+      setClosePreview({ kind: 'commit', preview, confirmBackdate });
+      return;
+    }
     await commit.mutateAsync({
-      close: closeMode.current,
+      close: false,
       reason: reasonToSend.current,
       confirmBackdate,
     });
@@ -482,6 +538,8 @@ export function RoofingOrderPanel({
   const busy =
     commit.isPending ||
     closeOnly.isPending ||
+    previewCommit.isPending ||
+    previewCloseOnly.isPending ||
     saveDraft.isPending ||
     removeDraft.isPending ||
     savePlan.isPending ||
@@ -710,7 +768,7 @@ export function RoofingOrderPanel({
           closing={closeOnly.isPending}
           onCloseOnly={() => {
             reasonFor.current = 'close-only';
-            closeOnly.mutate(reasonToSend.current);
+            previewCloseOnly.mutate(reasonToSend.current);
           }}
           onDone={(updated) => {
             onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
@@ -1009,7 +1067,9 @@ export function RoofingOrderPanel({
                       start(true);
                     }}
                   >
-                    {commit.isPending && pendingClose ? 'Cerrando…' : 'Ejecutar y cerrar'}
+                    {(commit.isPending || previewCommit.isPending) && pendingClose
+                      ? 'Calculando…'
+                      : 'Ejecutar y cerrar'}
                   </Button>
                 </>
               )}
@@ -1020,11 +1080,11 @@ export function RoofingOrderPanel({
                   disabled={busy || resolved.closeBounds.closeKgError !== null}
                   onClick={() => {
                     reasonFor.current = 'close-only';
-                    closeOnly.mutate(reasonToSend.current);
+                    previewCloseOnly.mutate(reasonToSend.current);
                   }}
                 >
-                  {closeOnly.isPending
-                    ? 'Cerrando…'
+                  {closeOnly.isPending || previewCloseOnly.isPending
+                    ? 'Calculando…'
                     : `Cerrar ${order.code} sin reportar más${planCovered ? '' : ' (la bobina se acabó)'}`}
                 </Button>
               )}
@@ -1060,8 +1120,43 @@ export function RoofingOrderPanel({
         onConfirm={(reason: string) => {
           reasonToSend.current = reason;
           setAskingReason(false);
-          if (reasonFor.current === 'close-only') closeOnly.mutate(reason);
+          if (reasonFor.current === 'close-only') previewCloseOnly.mutate(reason);
           else start(true);
+        }}
+      />
+
+      <ClosePreviewDialog
+        preview={closePreview?.preview ?? null}
+        title={
+          closePreview?.kind === 'close-only'
+            ? `Cerrar ${order.code} sin reportar más`
+            : `Ejecutar el borrador y cerrar ${order.code}`
+        }
+        confirmLabel={closePreview?.kind === 'close-only' ? 'Cerrar la orden' : 'Ejecutar y cerrar'}
+        pending={commit.isPending || closeOnly.isPending}
+        onCancel={() => {
+          reasonToSend.current = null;
+          setClosePreview(null);
+        }}
+        onConfirm={() => {
+          if (closePreview === null) return;
+          const done = {
+            onSettled: () => {
+              setClosePreview(null);
+            },
+          };
+          if (closePreview.kind === 'close-only') {
+            closeOnly.mutate(closePreview.reason, done);
+          } else {
+            commit.mutate(
+              {
+                close: true,
+                reason: reasonToSend.current,
+                confirmBackdate: closePreview.confirmBackdate,
+              },
+              done,
+            );
+          }
         }}
       />
 
@@ -1074,7 +1169,7 @@ export function RoofingOrderPanel({
           }
         }}
         detail={submit.detail ?? ''}
-        pending={commit.isPending}
+        pending={commit.isPending || previewCommit.isPending}
         onConfirm={() => {
           void submit.confirm();
         }}

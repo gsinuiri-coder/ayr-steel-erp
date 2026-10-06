@@ -81,4 +81,13 @@ describe('docs/manual/menu-por-rol.md (D-439)', () => {
       'el administrador ve 32 entradas; el supervisor de planta, 16; el vendedor, 13.',
     );
   });
+
+  it('cc27 (D-457): el vendedor llega a su Panel, y el documento dice que ahí ve su mes', () => {
+    const panel = docMatrix().find((r) => r.href === '/');
+    expect(panel?.roles).toContain(Role.VENDEDOR);
+    expect(navForRole(Role.VENDEDOR).flatMap((g) => g.items.map((i) => i.href))).toContain('/');
+    expect(readFileSync(DOC, 'utf8')).toContain(
+      'El vendedor ve además su mes, solo lo suyo (D-457).',
+    );
+  });
 });

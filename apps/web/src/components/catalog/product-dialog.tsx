@@ -29,6 +29,7 @@ import { api, ApiError } from '@/lib/api';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { isPositiveDecimal } from '@/lib/format';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -188,6 +189,9 @@ export function ProductDialog({
       roofingKind: product?.roofingKind ?? (usesRoofingFields(businessLineCode) ? 'A_MEDIDA' : ''),
     },
   });
+  // cc27 (UX26-13, D-455): el alta o la edición de un SKU es un formulario largo; con cambios,
+  // refrescar, cerrar la pestaña o ir atrás avisa. Cerrar el diálogo sigue siendo descartar.
+  useUnsavedChanges(open && form.formState.isDirty);
 
   // D-343: el SKU de un accesorio **se forma** con su espesor y su color (`ACCES030ROJO`) y no se
   // tipea: en el alta se calcula con los mismos tokens que usa el API para validarlo, y el campo
@@ -442,7 +446,7 @@ export function ProductDialog({
                   render={({ field }) => (
                     <FormFieldCell
                       span={6}
-                      label="Precio de lista (S/, sin IGV)"
+                      label="Valor de lista (S/, sin IGV)"
                       size="lg"
                       numeric
                       help="Se sugiere al cotizar (D-068). El vendedor lo puede editar en la línea; queda registrado el precio de lista junto al cotizado."

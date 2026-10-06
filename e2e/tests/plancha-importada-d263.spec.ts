@@ -270,7 +270,7 @@ test.describe('D-263 — la plancha importada por plancha', () => {
       // La de 6 m: el aviso muestra antes y después, y cancelar no cambia nada.
       await page.getByRole('button', { name: 'Cotizar por metro la línea 1' }).click();
       const preview = page.getByRole('group', { name: 'Cotizar por metro la línea 1' });
-      await expect(preview).toContainText('por metro (equivalente a');
+      await expect(preview).toContainText('por metro con IGV (equivalente a');
       await expect(preview).toContainText('500.0000');
       await expect(preview).toContainText('499.9980');
       await preview.getByRole('button', { name: 'Cancelar' }).click();

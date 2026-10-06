@@ -65,7 +65,7 @@ test.describe('M5 — editar un accesorio sin cambiar espesor, color ni subtipo'
 
     // Solo el nombre y el precio: ni el espesor, ni el acabado, ni el subtipo se tocan.
     await dialog.getByLabel('Nombre').fill('Accesorio E2E M5 (editado)');
-    await dialog.getByLabel('Precio de lista (S/, sin IGV)').fill('35');
+    await dialog.getByLabel('Valor de lista (S/, sin IGV)').fill('35');
     await dialog.getByRole('button', { name: 'Guardar cambios' }).click();
     await expect(dialog).toBeHidden();
     await expect(row).toContainText('Accesorio E2E M5 (editado)');

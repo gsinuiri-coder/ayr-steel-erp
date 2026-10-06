@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/format';
-import { FormGrid } from '@/components/form';
+import { FormGrid, StickyActionBar } from '@/components/form';
 
 /**
  * D-284: el esqueleto común de los formularios de documento (cotización, pedido directo,
@@ -117,7 +117,10 @@ export function DocumentLinesFooter({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-start justify-between gap-4">{children}</div>;
 }
 
-/** El pie del formulario: Cancelar y la acción principal, abajo a la derecha. */
-export function DocumentActions({ children }: { children: ReactNode }) {
-  return <div className="flex justify-end gap-2 border-t pt-3">{children}</div>;
+/**
+ * El pie del formulario: Cancelar y la acción principal, abajo a la derecha. cc27 (D-454): fijo
+ * al borde inferior mientras el formulario siga a la vista, con `hint` (el total) a la izquierda.
+ */
+export function DocumentActions({ children, hint }: { children: ReactNode; hint?: ReactNode }) {
+  return <StickyActionBar hint={hint}>{children}</StickyActionBar>;
 }

@@ -75,8 +75,8 @@ export function PriceListHistoryDialog({
                 <TableHead>Fecha</TableHead>
                 <TableHead>Usuario</TableHead>
                 <TableHead>Origen</TableHead>
-                <TableHead className="text-right">Antes</TableHead>
-                <TableHead className="text-right">Después</TableHead>
+                <TableHead className="text-right">Antes (con IGV)</TableHead>
+                <TableHead className="text-right">Después (con IGV)</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -12,6 +12,7 @@ import {
   type CloseProductionOrderInput,
   type ConsumeStripInput,
   type CreateProductionOrderInput,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type ProductionOrderListItemDto,
   type ProductionOrderQuery,
@@ -111,6 +112,16 @@ export class ProductionController {
     @Body(new ZodValidationPipe(reverseMovementSchema)) body: ReverseMovementInput,
   ): Promise<ProductionOrderDto> {
     return this.production.reverseReport(actor, id, reportId, body);
+  }
+
+  /** cc27 (UX26-03, D-453): lo que cerrar la orden haría, sin hacerlo. No escribe nada. */
+  @Post(':id/close/preview')
+  previewClose(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(closeProductionOrderSchema)) body: CloseProductionOrderInput,
+  ): Promise<PlantClosePreviewDto> {
+    return this.production.previewClose(actor, id, body);
   }
 
   /** Cerrar la orden: merma de proceso por diferencia y costeo (D-057, D-056). */

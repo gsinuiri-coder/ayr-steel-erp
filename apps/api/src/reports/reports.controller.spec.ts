@@ -10,6 +10,7 @@ import type { KardexSheetService } from './kardex-sheet.service';
 import { ReportsController } from './reports.controller';
 import type { AdminDashboardService } from './admin-dashboard.service';
 import type { PlantDashboardService } from './plant-dashboard.service';
+import type { SellerDashboardService } from './seller-dashboard.service';
 import type { CoilWasteService } from './coil-waste.service';
 import type { ReceivablesAgingService } from './receivables-aging.service';
 import type { ReportsService } from './reports.service';
@@ -165,6 +166,7 @@ function build() {
   const coilWaste = { report: jest.fn().mockResolvedValue({ rows: [] }) };
   const adminDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const plantDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
+  const sellerDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
@@ -177,6 +179,7 @@ function build() {
     coilWaste as unknown as CoilWasteService,
     adminDashboard as unknown as AdminDashboardService,
     plantDashboard as unknown as PlantDashboardService,
+    sellerDashboard as unknown as SellerDashboardService,
   );
   return {
     controller,
@@ -220,6 +223,8 @@ describe('ReportsController', () => {
     expect(rolesOf('adminDashboardReport')).toEqual([Role.ADMINISTRADOR]);
     // cc26 (D-440): el de planta, con los roles de las lecturas de planta.
     expect(rolesOf('plantDashboardReport')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
+    // cc27 (M4, D-457): el Panel del vendedor es solo del vendedor, con su alcance.
+    expect(rolesOf('sellerDashboardReport')).toEqual([Role.VENDEDOR]);
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsPdfFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);

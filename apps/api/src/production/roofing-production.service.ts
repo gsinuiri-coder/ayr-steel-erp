@@ -47,6 +47,7 @@ import {
   type CreateRoofingOrdersFromSalesOrderInput,
   type MountRoofingCoilInput,
   type PieceLike,
+  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type ProductionQueueEntryDto,
   type RawMaterialWarningDto,
@@ -69,6 +70,7 @@ import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
+import { previewPlantClose } from './close-preview';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
@@ -1874,6 +1876,47 @@ export class RoofingProductionService {
     );
 
     return this.withWarnings(await this.production.findOne(orderId), warnings);
+  }
+
+  /**
+   * cc27 (UX26-03, D-453): lo que `close` haría, sin hacerlo (`previewPlantClose`).
+   */
+  async previewClose(
+    actor: RequestUser,
+    orderId: string,
+    input: CloseRoofingOrderInput,
+  ): Promise<PlantClosePreviewDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
+    return previewPlantClose(this.prisma, orderId, (tx, warnings) =>
+      this.closeInTx(tx, actor, orderId, input, operationDate, warnings),
+    );
+  }
+
+  /**
+   * cc27 (UX26-03, D-453): lo que `reportAndClose` haría, sin hacerlo. Las mismas dos mitades,
+   * sin reclamar la clave de idempotencia.
+   */
+  async previewReportAndClose(
+    actor: RequestUser,
+    orderId: string,
+    input: ReportAndCloseRoofingInput,
+  ): Promise<PlantClosePreviewDto> {
+    const operationDate = this.operationDate.resolve(actor, input.operationDate);
+    return previewPlantClose(this.prisma, orderId, async (tx, warnings) => {
+      warnings.push(...(await this.reportInTx(tx, actor, orderId, input, operationDate)));
+      await this.closeInTx(
+        tx,
+        actor,
+        orderId,
+        {
+          consumedKg: input.closeConsumedKg,
+          reason: input.closeReason,
+          confirmBackdate: input.confirmBackdate,
+        },
+        operationDate,
+        warnings,
+      );
+    });
   }
 
   /**

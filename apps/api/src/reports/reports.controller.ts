@@ -13,6 +13,7 @@ import {
   Role,
   type AdminDashboardDto,
   type PlantDashboardDto,
+  type SellerDashboardDto,
   type DocumentProfitabilityDto,
   type SalesByMaterialDto,
   type SalesByMaterialQuery,
@@ -37,6 +38,7 @@ import { buildCoilMonthReportPdf } from '../coils/coil-pdf';
 import { sendXlsx } from '../common/list-export';
 import { AdminDashboardService } from './admin-dashboard.service';
 import { PlantDashboardService } from './plant-dashboard.service';
+import { SellerDashboardService } from './seller-dashboard.service';
 import { coilMonthXlsx } from './coil-month-xlsx';
 import { CoilWasteService } from './coil-waste.service';
 import { DocumentProfitabilityService } from './document-profitability.service';
@@ -75,6 +77,7 @@ export class ReportsController {
     private readonly coilWaste: CoilWasteService,
     private readonly adminDashboard: AdminDashboardService,
     private readonly plantDashboard: PlantDashboardService,
+    private readonly sellerDashboard: SellerDashboardService,
   ) {}
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
@@ -249,6 +252,17 @@ export class ReportsController {
   @Get('plant-dashboard')
   plantDashboardReport(@CurrentUser() actor: RequestUser): Promise<PlantDashboardDto> {
     return this.plantDashboard.dashboard(actor);
+  }
+
+  /**
+   * cc27 (M4, D-457). El Panel del vendedor: sus ventas del mes sin IGV y su conversión de
+   * cotización a pedido. Solo VENDEDOR y **solo lo suyo**: el alcance lo pone el servidor con las
+   * mismas reglas que sus listas de comprobantes y cotizaciones. Sin costos ni márgenes.
+   */
+  @Roles(Role.VENDEDOR)
+  @Get('seller-dashboard')
+  sellerDashboardReport(@CurrentUser() actor: RequestUser): Promise<SellerDashboardDto> {
+    return this.sellerDashboard.dashboard(actor);
   }
 
   /**
