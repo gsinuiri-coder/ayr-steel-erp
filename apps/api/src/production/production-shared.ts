@@ -11,6 +11,7 @@ import {
   TOLERANCE_OVERRIDE_REASON_LABELS,
   TOLERANCE_OVERRIDE_REASONS,
   TOLERANCE_OVERRIDE_REASONS_OVER,
+  type Decimal,
   type MountedKgExcess,
   type ToleranceOverrideInput,
 } from '@ayr/shared';
@@ -106,6 +107,22 @@ export function mountedKgRejection(result: {
           excess: result.excess,
         },
   );
+}
+
+/**
+ * cc28 (P2-2 de cc20): cuando una fila pasa la tolerancia y la orden tiene **otra** bobina montada
+ * con saldo, el rechazo lo dice: lo que falta en esta bobina puede haber salido de la otra, y la
+ * casilla («bobina más liviana») dejaría esta en cero con un faltante que está en aquella. Solo es
+ * texto: ni el rechazo ni la casilla cambian. `null` si no hay otra bobina con saldo.
+ */
+export function otherMountedCoilsHint(
+  current: string,
+  mounted: readonly { code: string; remainingKg: Decimal }[],
+): string | null {
+  const others = mounted.filter((m) => m.code !== current && m.remainingKg.gt(0));
+  if (others.length === 0) return null;
+  const list = others.map((m) => `${m.code} (${m.remainingKg.toFixed(3)} kg)`).join(', ');
+  return `La orden tiene otra bobina montada con saldo: ${list}. Si parte de estas planchas salió de ahí, repórtala con esa bobina en vez de confirmar la casilla.`;
 }
 
 /**

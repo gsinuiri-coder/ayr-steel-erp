@@ -606,6 +606,15 @@ export function externalInvoiceOf(notes: string | null): string | null {
 const IMPORTED_INVOICE_NUMBER = /^([A-Z][A-Z0-9]{3})-(\d{1,8})$/i;
 
 /**
+ * cc28 (P2-2 de cc19, D-462): espacios alrededor del guion y en los bordes no cambian el número:
+ * la columna del Excel del importador se llama `SERIE - NÚMERO` y una marca `FFA1 - 1419` quedaba
+ * vacía, sin buscarse ni ordenarse. Se compacta antes de comparar la forma; nada más se adivina.
+ */
+export function compactInvoiceNumber(value: string): string {
+  return value.trim().replace(/\s*-\s*/g, '-');
+}
+
+/**
  * D-387: el número de factura de una cotización importada, para **mostrarlo, buscarlo y
  * ordenar** la lista; `null` si no es importada o si su marca no trae un número con forma de
  * comprobante.
@@ -616,7 +625,8 @@ const IMPORTED_INVOICE_NUMBER = /^([A-Z][A-Z0-9]{3})-(\d{1,8})$/i;
  * Un número que aparezca más abajo en las observaciones no cuenta: solo la marca.
  */
 export function importedInvoiceNumber(notes: string | null): string | null {
-  const key = externalInvoiceOf(notes);
+  const raw = externalInvoiceOf(notes);
+  const key = raw === null ? null : compactInvoiceNumber(raw);
   return key !== null && IMPORTED_INVOICE_NUMBER.test(key) ? key : null;
 }
 
@@ -638,7 +648,7 @@ export function compareImportedInvoiceNumbers(a: string, b: string): number {
  * papel no: compararlos como texto los haría distintos siempre.
  */
 export function normalizeInvoiceNumber(value: string): string | null {
-  const match = IMPORTED_INVOICE_NUMBER.exec(value.trim());
+  const match = IMPORTED_INVOICE_NUMBER.exec(compactInvoiceNumber(value));
   if (match === null) return null;
   const [, series = '', correlative = '0'] = match;
   return `${series.toUpperCase()}-${String(Number(correlative))}`;
@@ -654,7 +664,7 @@ export const INVOICE_SEARCH_MIN_CHARS = 3;
  * `INVOICE_SEARCH_MIN_CHARS`: buscar «0» o «1» coincidiría con todos los comprobantes.
  */
 export function invoiceSearchNeedle(search: string): string | null {
-  const raw = search.trim().toUpperCase();
+  const raw = compactInvoiceNumber(search).toUpperCase();
   const needle = normalizeInvoiceNumber(raw) ?? (/^\d+$/.test(raw) ? raw.replace(/^0+/, '') : raw);
   return needle.length >= INVOICE_SEARCH_MIN_CHARS ? needle : null;
 }

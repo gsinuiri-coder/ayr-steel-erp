@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BusinessLine } from '@ayr/shared';
 import {
   axisMoney,
+  billedPen,
   coilWasteHref,
   fillDays,
   salesMarginHref,
@@ -55,5 +56,18 @@ describe('Panel del administrador', () => {
     expect(axisMoney(1500)).toBe('1,5 mil');
     expect(axisMoney(6000)).toBe('6 mil');
     expect(axisMoney(-2500)).toBe('-2,5 mil');
+  });
+
+  it('cc28 (D-444): lo facturado del mes es la venta del margen más la que el margen deja fuera', () => {
+    expect(
+      billedPen({
+        salesPen: '905.8700',
+        excludedSalesPen: '120.0000',
+        untraceableSalesPen: '10.1300',
+      }),
+    ).toBe('1036.0000');
+    expect(
+      billedPen({ salesPen: '50.0000', excludedSalesPen: '0.0000', untraceableSalesPen: '0.0000' }),
+    ).toBe('50.0000');
   });
 });

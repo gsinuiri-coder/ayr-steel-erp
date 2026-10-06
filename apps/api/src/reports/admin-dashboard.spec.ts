@@ -93,6 +93,7 @@ const SALES_CURRENT: SalesMarginDto = {
     excludedSalesPen: '250.0000',
     untraceableOrderCount: 0,
     untraceableSalesPen: '0.0000',
+    roundingPen: '0.0000',
   },
 };
 
@@ -218,7 +219,9 @@ describe('dashboardMonthRanges (D-443)', () => {
 describe('assembleAdminDashboard (D-440)', () => {
   it('cada cifra de ventas y margen es el campo del reporte, tal cual', () => {
     const d = assemble();
-    expect(d.sales).toEqual(SALES_CURRENT.totals);
+    // cc28 (D-461): el redondeo de comprobantes es del reporte, no del Panel.
+    const { roundingPen: _rounding, ...salesTotals } = SALES_CURRENT.totals;
+    expect(d.sales).toEqual(salesTotals);
     expect(d.previousSalesPen).toBe(SALES_PREVIOUS.totals.salesPen);
     expect(d.salesByLine).toEqual(
       SALES_CURRENT.totalsByLine.map(({ costPen: _c, ...rest }) => rest),

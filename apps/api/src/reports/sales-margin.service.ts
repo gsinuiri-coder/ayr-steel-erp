@@ -596,6 +596,12 @@ export class SalesMarginService {
           ? totalSales
           : ZERO;
     const marginBase = totalSales.minus(noCostSales);
+    // cc28 (D-461): la diferencia entre sumar comprobantes («Todas») y sumar sus líneas (las
+    // pestañas y «Totales por línea»): el redondeo al céntimo de los comprobantes (D-377).
+    const rounding =
+      viewLine === undefined
+        ? totalSales.minus([...lineTotals.values()].reduce((acc, v) => acc.plus(v.sales), ZERO))
+        : ZERO;
 
     return {
       from: query.from,
@@ -613,6 +619,7 @@ export class SalesMarginService {
         excludedSalesPen: toFixedString(excludedSales, 'MONEY'),
         untraceableOrderCount,
         untraceableSalesPen: toFixedString(untraceableSales, 'MONEY'),
+        roundingPen: toFixedString(rounding, 'MONEY'),
       },
     };
   }

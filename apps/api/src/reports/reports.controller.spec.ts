@@ -68,6 +68,7 @@ const MARGIN = {
   orders: [],
   totalsByLine: [],
   totals: {
+    roundingPen: '0.0000',
     salesPen: '0.00',
     costPen: '0.00',
     marginPen: '0.00',

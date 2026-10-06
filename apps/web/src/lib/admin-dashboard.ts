@@ -2,6 +2,7 @@ import {
   addDays,
   BusinessLine,
   toDecimal,
+  toFixedString,
   type AdminDashboardDto,
   type DashboardRange,
 } from '@ayr/shared';
@@ -13,6 +14,7 @@ import {
  */
 
 /** Cada día del rango, con lo facturado o cero. Los importes siguen siendo los del reporte. */
+
 export function fillDays(
   range: DashboardRange,
   byDay: AdminDashboardDto['salesByDay'],
@@ -57,4 +59,19 @@ export function axisMoney(value: number): string {
   // Un decimal si hace falta: el eje parte en tramos como 1 500, que no es «2 mil».
   const thousands = Math.round(value / 100) / 10;
   return `${String(thousands).replace('.', ',')} mil`;
+}
+
+/**
+ * cc28 (D-444): lo facturado del mes, sin IGV: la venta del margen más la que el margen deja fuera
+ * por su costo (no comparable o no rastreable). Es lo que suma el gráfico «Facturado por día».
+ */
+export function billedPen(sales: {
+  salesPen: string;
+  excludedSalesPen: string;
+  untraceableSalesPen: string;
+}): string {
+  return toFixedString(
+    toDecimal(sales.salesPen).plus(sales.excludedSalesPen).plus(sales.untraceableSalesPen),
+    'MONEY',
+  );
 }

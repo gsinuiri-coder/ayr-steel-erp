@@ -163,7 +163,8 @@ export function AccessoryReportCard({
       const excess = err.details?.excess;
       setRejected(excess === undefined ? null : { excess, fingerprint });
       reasonToSend.current = null;
-      if (err.details?.excess === undefined) toast.error(err.message);
+      // cc28 (A-3): el mensaje siempre: puede nombrar otra bobina montada con saldo.
+      toast.error(err.message);
       return;
     }
     // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.

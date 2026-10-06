@@ -157,6 +157,7 @@ const margin: SalesMarginDto = {
     excludedSalesPen: '400.0000',
     untraceableOrderCount: 0,
     untraceableSalesPen: '0.0000',
+    roundingPen: '0.0000',
   },
 };
 

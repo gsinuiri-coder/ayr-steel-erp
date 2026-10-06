@@ -588,6 +588,43 @@ describe('SalesMarginService — por línea (cc23)', () => {
     }
   });
 
+  it('cc28 (D-461): un comprobante redondeado al céntimo cierra la suma con la fila de redondeo', async () => {
+    // 3 × S/ 12.35 con IGV: la línea guarda 31.3983 sin IGV y el comprobante, 31.40 (D-255, D-377).
+    const withRounding: Seeds = {
+      ...seeds,
+      documents: [
+        ...(seeds.documents ?? []),
+        { id: 'd7', orderId: 'o5', orderSeq: 5, subtotal: '31.4000' },
+      ],
+      salesByLine: [
+        ...(seeds.salesByLine ?? []),
+        { documentId: 'd7', line: 'roofing', subtotal: '31.3983' },
+      ],
+      costs: [
+        ...(seeds.costs ?? []),
+        { orderId: 'o5', invoiceId: 'd7', line: 'roofing', cost: '20.0000' },
+      ],
+      pending: [...(seeds.pending ?? []), { orderId: 'o5', pending: false }],
+    };
+    const { service } = await buildService(withRounding);
+    const all = await service.salesMargin(RANGE);
+    const tabs = await Promise.all(
+      LINES.map((businessLine) => service.salesMargin({ ...RANGE, businessLine })),
+    );
+    const noLine = all.totalsByLine.find((t) => t.businessLine === null)?.salesPen ?? '0';
+    expect(all.totals.roundingPen).toBe('0.0017');
+    expect(sum([...tabs.map((t) => t.totals.salesPen), noLine, all.totals.roundingPen])).toBe(
+      all.totals.salesPen,
+    );
+    // En la pestaña de una línea no hay redondeo que mostrar.
+    for (const tab of tabs) expect(tab.totals.roundingPen).toBe('0.0000');
+  });
+
+  it('sin líneas de más de dos decimales, el redondeo es cero', async () => {
+    const { service } = await buildService(seeds);
+    expect((await service.salesMargin(RANGE)).totals.roundingPen).toBe('0.0000');
+  });
+
   it('el total de «Todas» no cambia con cc23', async () => {
     const { service } = await buildService(seeds);
     const all = await service.salesMargin(RANGE);

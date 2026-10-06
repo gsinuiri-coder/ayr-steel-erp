@@ -9,6 +9,8 @@ import {
   AGING_BUCKET_LABELS,
   BUSINESS_LINE_LABELS,
   Role,
+  toDecimal,
+  toFixedString,
   type AdminDashboardDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
@@ -16,6 +18,7 @@ import { useSession } from '@/lib/session';
 import { formatDate, formatMoney } from '@/lib/format';
 import {
   axisMoney,
+  billedPen,
   coilWasteHref,
   fillDays,
   salesMarginHref,
@@ -117,6 +120,7 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
   }));
   const maxLine = Math.max(1, ...d.salesByLine.map((l) => Number(l.salesPen)));
   const rangeLabel = `${formatDate(d.current.from)} – ${formatDate(d.current.to)}`;
+  const billed = billedPen(d.sales);
 
   return (
     <section className="grid gap-3" aria-labelledby="admin-dashboard-title">
@@ -135,6 +139,15 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
           <span className="block text-xs font-normal text-muted-foreground">
             {variation === null ? 'Sin ventas en el mismo tramo' : `${variation} %`} vs.{' '}
             {money0(d.previousSalesPen)} del 1 al {Number(d.previous.to.slice(8))} del mes anterior
+          </span>
+          {/* cc28 (D-444): el gráfico suma lo facturado; aquí se dice cuánto es y por qué difiere. */}
+          <span
+            className="block text-xs font-normal text-muted-foreground"
+            data-testid="billed-month"
+          >
+            Facturado del mes {money0(billed)}
+            {billed !== toFixedString(toDecimal(d.sales.salesPen), 'MONEY') &&
+              ' (incluye ventas sin costo comparable)'}
           </span>
         </LinkStat>
         <LinkStat href={salesMarginHref(d.current)} label="Margen del mes">
@@ -194,6 +207,8 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
             <CardTitle className="text-sm">
               <Link className="hover:underline" href={salesMarginHref(d.current)}>
                 Facturado por día (sin IGV)
+                {billed !== toFixedString(toDecimal(d.sales.salesPen), 'MONEY') &&
+                  ', incluye ventas sin costo comparable'}
               </Link>
             </CardTitle>
             <CardDescription className="text-xs">

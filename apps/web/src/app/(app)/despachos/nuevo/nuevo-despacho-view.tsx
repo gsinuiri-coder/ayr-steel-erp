@@ -91,9 +91,9 @@ export function NuevoDespachoView() {
   const [qtyByLine, setQtyByLine] = useState<Record<string, string>>({});
   const [weightKgByLine, setWeightKgByLine] = useState<Record<string, string>>({});
   /**
-   * cc27 (UX26-13, D-455): el usuario escribió algo. El formulario se siembra solo (lo pendiente
-   * del pedido, la partida más usada), así que comparar contra el estado inicial avisaría sin que
-   * nadie haya tocado nada: cuenta lo tipeado, que es lo que se pierde al salir.
+   * cc27 (UX26-13, D-455): el usuario escribió o eligió algo. El formulario se siembra solo (lo
+   * pendiente del pedido, la partida más usada), así que comparar contra el estado inicial avisaría
+   * sin que nadie haya tocado nada: cuenta lo tipeado y lo elegido en un selector (cc28, SM-4).
    */
   const [typed, setTyped] = useState(false);
 
@@ -365,7 +365,14 @@ export function NuevoDespachoView() {
           <CardContent>
             <FormGrid>
               <FormCell span={4} label="Pedido" htmlFor={fieldId('pedido')}>
-                <Select value={salesOrderId} onValueChange={setSalesOrderId}>
+                <Select
+                  value={salesOrderId}
+                  onValueChange={(v) => {
+                    // cc28 (SM-4 de cc27): elegir en un selector también es un cambio sin guardar.
+                    setTyped(true);
+                    setSalesOrderId(v);
+                  }}
+                >
                   <SelectTrigger id={fieldId('pedido')} className="w-full">
                     <SelectValue placeholder="Elige un pedido" />
                   </SelectTrigger>
@@ -473,6 +480,7 @@ export function NuevoDespachoView() {
                 <Select
                   value={transferMode}
                   onValueChange={(v) => {
+                    setTyped(true);
                     setTransferMode(v as TransferMode);
                   }}
                 >
@@ -601,6 +609,7 @@ export function NuevoDespachoView() {
                     <Select
                       value={driverDocType}
                       onValueChange={(v) => {
+                        setTyped(true);
                         setDriverDocType(v as DocType);
                       }}
                     >

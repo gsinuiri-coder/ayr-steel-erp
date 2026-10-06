@@ -212,7 +212,7 @@ export function cashSessionSales(api: APIRequestContext, id: string): Promise<Po
 }
 
 export interface PosSaleInput {
-  items: { productId: string; qty: string; unitPricePen?: string }[];
+  items: { productId: string; qty: string; unitPricePen?: string; unitPriceWithIgvPen?: string }[];
   method?: string;
   customerId?: string;
   reference?: string;

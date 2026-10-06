@@ -1,7 +1,10 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import Link from 'next/link';
+import { toast } from 'sonner';
+import { ApiError } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 import { Ellipsis } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -119,6 +122,20 @@ export function HeaderActions({
   );
 }
 
+/**
+ * cc28 (D-446): el clic normal en una descarga va por `fetch` (`downloadFile`), así un rechazo
+ * del API —el 400 del tope del Excel, un 403— sale en un aviso con su mensaje en vez de abrirse
+ * como JSON. El enlace sigue siendo un enlace: con una tecla o el botón del medio, el navegador
+ * hace lo suyo.
+ */
+function onDownloadClick(e: MouseEvent<HTMLAnchorElement>, href: string): void {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  downloadFile(href).catch((err: unknown) => {
+    toast.error(err instanceof ApiError ? err.message : 'No se pudo descargar el archivo');
+  });
+}
+
 function PrimaryButton({
   action: a,
   variant = 'default',
@@ -132,7 +149,14 @@ function PrimaryButton({
         {a.href !== undefined ? (
           <Link href={a.href}>{a.label}</Link>
         ) : (
-          <a href={a.download}>{a.label}</a>
+          <a
+            href={a.download}
+            onClick={(e) => {
+              if (a.download !== undefined) onDownloadClick(e, a.download);
+            }}
+          >
+            {a.label}
+          </a>
         )}
       </Button>
     );
@@ -165,7 +189,14 @@ function MenuAction({ action: a }: { action: HeaderAction }) {
   if (a.download !== undefined) {
     return (
       <DropdownMenuItem variant={variant} disabled={a.disabled} asChild>
-        <a href={a.download}>{a.label}</a>
+        <a
+          href={a.download}
+          onClick={(e) => {
+            if (a.download !== undefined) onDownloadClick(e, a.download);
+          }}
+        >
+          {a.label}
+        </a>
       </DropdownMenuItem>
     );
   }

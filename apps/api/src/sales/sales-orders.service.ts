@@ -3261,7 +3261,7 @@ export class SalesOrdersService {
     // "PED-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o quien
     // pega el código de un pedido para encontrarlo (el uso más común del buscador) se
     // quedaba sin resultados (Fase 7d, hallazgo de revisión).
-    const searchSeq = searchSeqOf(query.search);
+    const searchSeq = searchSeqOf(query.search, 'PED');
     const where: Prisma.SalesOrderWhereInput = {
       ...sellerWhere(actor),
       // D-277: `stage` filtra por el estado que se muestra («Listo» incluido); D-289: acepta

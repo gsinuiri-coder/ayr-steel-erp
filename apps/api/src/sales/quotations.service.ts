@@ -1375,7 +1375,7 @@ export class QuotationsService {
     // buscar "COT-000123" o solo "123" tiene que extraer el número y filtrar por `seq`, o
     // quien pega el código de una cotización para encontrarla (el uso más común del
     // buscador) se quedaba sin resultados (Fase 7d, hallazgo de revisión).
-    const searchSeq = searchSeqOf(query.search);
+    const searchSeq = searchSeqOf(query.search, 'COT');
     const invoiceIds = query.search ? await this.idsByInvoiceNumber(query.search) : [];
     const where: Prisma.QuotationWhereInput = {
       ...quotationSellerWhere(actor),
@@ -1419,7 +1419,7 @@ export class QuotationsService {
     let total: number;
     let rows: Awaited<ReturnType<typeof findPage>>;
     if (query.sort === 'invoice') {
-      [total, rows] = await this.findPageByImportedInvoice(where, include, query, window);
+      [total, rows] = await this.findPageByInvoiceNumber(where, include, query, window);
     } else if (window.maxTotal === undefined) {
       [total, rows] = await Promise.all([this.prisma.quotation.count({ where }), findPage()]);
     } else {
@@ -1465,8 +1465,10 @@ export class QuotationsService {
             series === undefined
               ? { notes: { contains: needle, mode: 'insensitive' } }
               : {
+                  // cc28 (D-462): sin el guion: la marca puede traer espacios antes de él
+                  // (`FFA1 - 1419`); la comparación exacta la hace `invoiceNumberContains`.
                   notes: {
-                    startsWith: `${EXTERNAL_INVOICE_NOTES_PREFIX}${series}-`,
+                    startsWith: `${EXTERNAL_INVOICE_NOTES_PREFIX}${series}`,
                     mode: 'insensitive',
                   },
                 },
@@ -1503,7 +1505,7 @@ export class QuotationsService {
    * id, número, observaciones y comprobantes vigentes de **todas** las filas del filtro, se
    * ordenan con `orderByInvoiceNumber` y se pide la página por id. Solo con esta clave.
    */
-  private async findPageByImportedInvoice<I extends Prisma.QuotationInclude>(
+  private async findPageByInvoiceNumber<I extends Prisma.QuotationInclude>(
     where: Prisma.QuotationWhereInput,
     include: I,
     query: QuotationExportQuery,
