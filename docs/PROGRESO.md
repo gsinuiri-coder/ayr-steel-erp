@@ -2,7 +2,36 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-05 — cc24: reportes por línea que cc23 dejó fuera (PR #107, sin migración, sin desplegar)
+## 2026-10-05 — Ventana cc24 (D-406..D-419 desplegadas, PR #107, sin migración)
+
+Ventana entre las 20:01 y las 20:11 de Lima, con D-411 (sin OK por acción). Detalle y lista de
+revisión para el dueño en `docs/handoff/ventana-cc24.md`.
+
+- **Antes de la ventana:**
+  - CI 37346239914 sobre `72ab61a2` en verde;
+  - revisiones sin P0 ni P1;
+  - UAT propio y UAT del dueño en demo, aprobados;
+  - demo refrescada desde production. El primer reset falló de forma transitoria; el reintento
+    funcionó y la contraseña quedó rotada.
+- **Vuelta atrás anotada:** API `00087-pcg` (`git-sha=cbed5aa`) y `main` `cf9cc32`.
+- **API:**
+  - `ayr-steel-erp-api-00088-kn4`, con `git-sha=72ab61a2`, al 100 %;
+  - `/health` 200.
+- **Web:**
+  - merge del #107: `main` = `dbd3421b`, sin diff de runtime contra `72ab61a2`;
+  - Vercel en `success`.
+- **Verificación:**
+  - `smoke:prod` 8/8 en `ayr-steel-erp-web.vercel.app` y en `v2.mareliac.pe`;
+  - recorrido de solo lectura de cada reporte con cada pestaña en producción, todo en verde. Las
+    pestañas suman «Todas»; ventas por material = ventas y margen por línea; bobinas por línea =
+    las dos.
+- **Vuelta atrás:** no hizo falta.
+- **Neon:** no se creó ni se borró ninguna rama (9). `demo` se reseteó desde production.
+- **Pendiente del dueño:** borrar la rama remota `cc24-reportes-linea`. El agente no puede: está
+  prohibido `git push --delete`.
+- **Salidas:** en `local-data/cc24/` del checkout principal.
+
+## 2026-10-05 — cc24: reportes por línea que cc23 dejó fuera (PR #107, sin migración)
 
 Detalle, revisiones y convivencia de versiones en `docs/handoff/ventana-cc24.md`.
 
@@ -18,7 +47,8 @@ Detalle, revisiones y convivencia de versiones en `docs/handoff/ventana-cc24.md`
 - **Decisiones:**
   - D-398..D-405, ratificadas;
   - D-406..D-415, D-417 y D-418, del dueño;
-  - D-416, provisional (el Excel de ventas por material solo en Aluzinc);
+  - D-416, confirmada (el Excel de ventas por material solo en Aluzinc); D-419, del dueño (el
+    margen de «Todas» sin «Sin línea»);
   - D-411: cambio de la regla de permisos, en AGENTS.md §3, regla 1.
 - **Tests:**
   - API `src/reports`: 164;
@@ -31,10 +61,10 @@ Detalle, revisiones y convivencia de versiones en `docs/handoff/ventana-cc24.md`
   - autorrevisión: 0 P0, 0 P1, 3 P2, 4 P3;
   - segundo modelo: 0 P0, 0 P1, 3 P2, 5 P3;
   - los corregibles están en `86ea3d98`;
-  - quedan para el dueño los tres P2 de permisos del segundo modelo y el P2-3 de la
-    autorrevisión: «Sin línea» en el margen de «Todas».
-- **Pendiente:** CI verde, refresco de demo con OK del dueño, UAT del dueño en demo, resumen de
-  D-232 y ventana.
+  - los tres P2 de permisos del segundo modelo, resueltos por el dueño (`51508525`, `72ab61a2`);
+  - el P2-3 de la autorrevisión, resuelto con D-419 (`ffa69983`).
+- **Cumplido antes de la ventana:** CI verde, demo refrescada, UAT del dueño en demo y resumen
+  de D-232.
 - **Registro de riesgo (toca datos de reportes, no kardex):**
   - `sales-by-material.service.ts`: `productLines` y `declaredDispatches`;
   - `sales-by-product.ts`;
