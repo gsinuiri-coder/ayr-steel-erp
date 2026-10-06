@@ -9,9 +9,20 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
+import { demoEnvPlan, mainCheckoutRoot } from './demo-env-path.mjs';
 import { ROOT, neonConnectionString, readEnvFile } from './lib.mjs';
 
-const target = resolve(ROOT, '.env.demo');
+// cc28: se escribe solo desde el checkout principal; desde un worktree se falla con qué hacer
+// (demo-env-path.mjs). Un .env.demo nacido en un worktree se perdía con él y dejaba al admin de
+// demo con una contraseña que nadie tenía.
+const plan = demoEnvPlan({ root: ROOT, mainRoot: mainCheckoutRoot(ROOT), env: process.env });
+if (!plan.canGenerate) {
+  console.error(
+    `pnpm env:demo no corre desde un worktree. ${plan.howToFix.replace(/^Falta [^.]+\.\s*/, '')}`,
+  );
+  process.exit(1);
+}
+const target = plan.path;
 const setup = readEnvFile();
 const pooled = neonConnectionString('demo', { pooled: true });
 const direct = neonConnectionString('demo', { pooled: false });

@@ -199,6 +199,10 @@ Reglas de convivencia, sin excepción:
   o docs, ni apuntar un comando de diagnóstico (`rg`, `grep`, `ls`, `find`, `head`, `tail`, `wc`)
   a `.env*` o a rutas/globs que puedan expandirse a ellos. Los scripts lo leen con
   `scripts/lib.mjs#readEnvFile`.
+- `.env.demo` (secretos **propios** de demo, D-125) vive solo en el checkout principal. Desde un
+  worktree, `dev:demo` y `db:demo` leen ese mismo archivo (o el que indique `AYR_ENV_DEMO`) y
+  `env:demo` se niega a generar uno nuevo (`scripts/demo-env-path.mjs`, cc28): un `.env.demo`
+  nacido en un worktree dejaba al admin de demo con una contraseña que se perdía con el worktree.
 - Una credencial jamás viaja por `argv`; siempre por el entorno del proceso hijo. Nada de
   `--url <cadena>`, `--password` o `--token`: los argumentos son visibles en el proceso y se
   imprimen con frecuencia cuando un comando falla.
