@@ -1,10 +1,11 @@
 'use client';
 
-import type { MouseEvent, ReactNode } from 'react';
+import { useState, type MouseEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import { errorMessage, toast } from '@/lib/notify';
 
 import { downloadFile } from '@/lib/download';
+import { PRINT_FAILED_MESSAGE, printFile, type PrintOptions } from '@/lib/print';
 import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,6 +49,11 @@ export interface HeaderAction {
    * destino es un binario y no una ruta de Next.
    */
   download?: string;
+  /**
+   * cc32: imprime el PDF de esta ruta del API (`/api/...`) sin descargarlo (`printFile`). Es un
+   * botón y no un enlace: no hay a dónde navegar.
+   */
+  print?: string;
   onSelect?: () => void;
   disabled?: boolean;
   pending?: boolean;
@@ -132,11 +138,18 @@ export function HeaderActions({
  * como JSON. El enlace sigue siendo un enlace: con una tecla o el botón del medio, el navegador
  * hace lo suyo.
  */
-function onDownloadClick(e: MouseEvent<HTMLAnchorElement>, href: string): void {
+export function onDownloadClick(e: MouseEvent<HTMLAnchorElement>, href: string): void {
   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
   downloadFile(href).catch((err: unknown) => {
     toast.error(errorMessage(err, 'No se pudo descargar el archivo'));
+  });
+}
+
+/** cc32: imprime por `printFile`; un fallo sale en un aviso en español, nunca como JSON. */
+export function printWithNotice(href: string, options?: PrintOptions): Promise<void> {
+  return printFile(href, options).catch((err: unknown) => {
+    toast.error(errorMessage(err, PRINT_FAILED_MESSAGE));
   });
 }
 
@@ -165,14 +178,33 @@ function PrimaryButton({
       </Button>
     );
   }
+  return <ActionButton action={a} variant={variant} />;
+}
+
+function ActionButton({
+  action: a,
+  variant,
+}: {
+  action: HeaderAction;
+  variant: 'default' | 'outline';
+}) {
+  // cc32: mientras el PDF viaja, el botón dice que está preparando la impresión.
+  const [printing, setPrinting] = useState(false);
   return (
     <Button
       variant={variant}
       disabled={a.disabled}
-      pending={a.pending}
-      pendingText={a.pendingText}
+      pending={a.pending === true || printing}
+      pendingText={printing ? 'Preparando…' : a.pendingText}
       title={a.title}
       onClick={() => {
+        if (a.print !== undefined) {
+          setPrinting(true);
+          void printWithNotice(a.print).finally(() => {
+            setPrinting(false);
+          });
+          return;
+        }
         a.onSelect?.();
       }}
     >
@@ -210,6 +242,10 @@ function MenuAction({ action: a }: { action: HeaderAction }) {
       disabled={a.disabled === true || a.pending === true}
       title={a.title}
       onSelect={() => {
+        if (a.print !== undefined) {
+          void printWithNotice(a.print);
+          return;
+        }
         a.onSelect?.();
       }}
     >

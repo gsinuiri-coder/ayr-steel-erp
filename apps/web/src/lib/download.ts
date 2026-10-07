@@ -33,7 +33,10 @@ const GENERIC_CLIENT_ERRORS =
  * El mensaje de un rechazo del API, con el mismo criterio que `api()`. cc32 (P3 de cc31): sin
  * motivo legible, el aviso dice qué pasó en español y nunca el código («error 500»).
  */
-export async function downloadErrorMessage(res: Response): Promise<string> {
+export async function downloadErrorMessage(
+  res: Response,
+  verb: FileVerb = 'descargar',
+): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { message?: unknown };
   const joined = Array.isArray(body.message) ? body.message.join(' · ') : body.message;
   const text0 = typeof joined === 'string' && joined.trim() !== '' ? joined : undefined;
@@ -45,12 +48,15 @@ export async function downloadErrorMessage(res: Response): Promise<string> {
     if (text !== SERVER_DOWN_MESSAGE) return text;
   }
   if (res.status >= 500)
-    return `No se pudo descargar el archivo: ${SERVER_DOWN_MESSAGE.toLowerCase()}.`;
-  if (res.status === 403) return 'No tienes permiso para descargar este archivo.';
+    return `No se pudo ${verb} el archivo: ${SERVER_DOWN_MESSAGE.toLowerCase()}.`;
+  if (res.status === 403) return `No tienes permiso para ${verb} este archivo.`;
   if (res.status === 404) return 'No se encontró el archivo: puede que ya no exista.';
-  if (res.status === 401) return 'Tu sesión venció. Ingresa de nuevo y vuelve a descargar.';
-  return 'No se pudo descargar el archivo.';
+  if (res.status === 401) return `Tu sesión venció. Ingresa de nuevo y vuelve a ${verb}.`;
+  return `No se pudo ${verb} el archivo.`;
 }
+
+/** Lo que se iba a hacer con el archivo, para el texto del aviso cuando el API lo rechaza. */
+export type FileVerb = 'descargar' | 'imprimir';
 
 /** Los enlaces que se están descargando: un doble clic no arranca dos exportaciones (SM-3). */
 const inFlight = new Set<string>();
@@ -69,7 +75,13 @@ export async function downloadFile(href: string): Promise<void> {
   }
 }
 
-async function fetchAndSave(href: string): Promise<void> {
+/**
+ * Pide `href` al API con la sesión y devuelve la respuesta 2xx; si el API la rechaza lanza
+ * `ApiError` con el mensaje en español. Con un 401 refresca la sesión una vez y reintenta. cc32:
+ * la comparten la descarga y la impresión (`printFile`), así las dos dicen lo mismo ante el
+ * mismo fallo.
+ */
+export async function fetchFile(href: string, verb: FileVerb = 'descargar'): Promise<Response> {
   // Un corte de red sale como «El servidor no respondió», igual que en `api()`.
   const get = () =>
     fetch(href, { credentials: 'include', cache: 'no-store' }).catch((err: unknown) => {
@@ -78,7 +90,12 @@ async function fetchAndSave(href: string): Promise<void> {
     });
   let res = await get();
   if (res.status === 401 && (await tryRefresh())) res = await get();
-  if (!res.ok) throw new ApiError(res.status, await downloadErrorMessage(res));
+  if (!res.ok) throw new ApiError(res.status, await downloadErrorMessage(res, verb));
+  return res;
+}
+
+async function fetchAndSave(href: string): Promise<void> {
+  const res = await fetchFile(href);
   const blob = await res.blob();
   const name =
     filenameFromDisposition(res.headers.get('content-disposition')) ??

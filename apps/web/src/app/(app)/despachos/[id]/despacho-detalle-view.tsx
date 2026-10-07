@@ -10,6 +10,7 @@ import {
   TRANSFER_MODE_LABELS,
   type DispatchDto,
   type FiscalDocumentDto,
+  type FiscalDocumentStatus,
   type InvoicingSettingsDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
@@ -42,6 +43,12 @@ import {
 import { DetailSummary } from '@/components/detail-summary';
 
 const DISPATCH_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA] as const;
+
+/**
+ * cc32: los estados de una guía vigente que SUNAT todavía no aceptó. La guía se ofrece para
+ * imprimir, pero el PDF no existe hasta la aceptación: el botón queda en espera y lo dice.
+ */
+const NOTE_ON_THE_WAY: readonly FiscalDocumentStatus[] = ['DRAFT', 'ISSUED', 'SEND_ERROR'];
 
 /** RF-77..RF-79: detalle del despacho, su guía y su reversa. */
 export function DespachoDetalleView({ id }: { id: string }) {
@@ -131,6 +138,13 @@ export function DespachoDetalleView({ id }: { id: string }) {
   // botón no aparece en vez de ofrecer una operación que el API rechaza.
   const canIssueNote = isLive && d.transferMode !== 'PICKUP' && !noteBlocks;
   const busy = issueNote.isPending || reverse.isPending;
+  // cc32: el PDF de la guía lo guarda el API recién cuando SUNAT la acepta (`storeFiles` solo
+  // corre con `ACCEPTED`, y `file()` responde 404 «se guarda cuando SUNAT lo acepta» mientras
+  // tanto). Una guía todavía en camino se ofrece para imprimir, pero el botón espera y lo dice.
+  const noteStatus = d.dispatchNoteId !== null ? d.dispatchNoteStatus : null;
+  const notePrintable = noteStatus === 'ACCEPTED';
+  const noteOnTheWay = noteStatus !== null && NOTE_ON_THE_WAY.includes(noteStatus);
+  const notePdfHref = `/api/invoicing/documents/${d.dispatchNoteId ?? ''}/pdf`;
 
   return (
     <RoleGate allow={DISPATCH_ROLES}>
@@ -143,19 +157,26 @@ export function DespachoDetalleView({ id }: { id: string }) {
           </div>
         </div>
         {/*
-          F8-S3b/M3: principal + «⋯». Principal: emitir la guía mientras falte; con la guía
-          emitida, verla. Revertir es destructivo y va al menú.
+          F8-S3b/M3: principal + «⋯». cc32: la principal sigue el estado de la guía —sin guía,
+          emitirla; con guía, imprimirla—. Descargar y ver la guía van al menú, y revertir, que
+          es destructivo, al final.
         */}
         {/* cc31: Historial, «Más opciones» y la principal, como en todo detalle. */}
         <div className="flex items-center gap-2">
           <AuditHistoryLink entityType="dispatches" entityId={d.id} />
           <HeaderActions
-            primary={['issue-note', 'view-note']}
+            primary={['issue-note', 'print-note']}
+            primaryFooter={
+              noteOnTheWay ? (
+                <span className="text-xs text-muted-foreground">
+                  Se imprime cuando SUNAT la acepte
+                </span>
+              ) : undefined
+            }
             actions={[
               {
                 key: 'issue-note',
-                label:
-                  d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía de remisión',
+                label: d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía',
                 show: canIssueNote,
                 disabled: busy || pseOff,
                 title: pseOff ? 'Emisión electrónica no habilitada en este entorno' : undefined,
@@ -167,8 +188,22 @@ export function DespachoDetalleView({ id }: { id: string }) {
                 },
               },
               {
+                key: 'print-note',
+                label: 'Imprimir guía',
+                show: notePrintable || noteOnTheWay,
+                disabled: !notePrintable,
+                title: notePrintable ? undefined : 'Se imprime cuando SUNAT la acepte',
+                print: notePdfHref,
+              },
+              {
+                key: 'note-pdf',
+                label: 'Descargar PDF de la guía',
+                show: notePrintable,
+                download: notePdfHref,
+              },
+              {
                 key: 'view-note',
-                label: 'Ver guía',
+                label: 'Ver la guía',
                 show: d.dispatchNoteId !== null,
                 href: `/comprobantes/${d.dispatchNoteId ?? ''}`,
               },

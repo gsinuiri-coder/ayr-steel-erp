@@ -202,6 +202,9 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           <HeaderActions
             primary={['confirm', 'edit', 'pdf']}
             actions={[
+              // cc32: imprimir el mismo PDF sin descargarlo, en «Más opciones»; la principal sigue
+              // siendo la del estado.
+              { key: 'print', label: 'Imprimir', print: `/api/sales/quotations/${q.id}/pdf` },
               { key: 'pdf', label: 'Descargar PDF', download: `/api/sales/quotations/${q.id}/pdf` },
               { key: 'edit', label: 'Editar', show: canEdit, href: `/cotizaciones/${q.id}/editar` },
               {
