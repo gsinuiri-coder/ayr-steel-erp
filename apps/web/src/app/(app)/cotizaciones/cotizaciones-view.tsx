@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Decimal,
   QUOTATION_STATUS_LABELS,
   QUOTATION_STATUSES,
   Role,
@@ -15,7 +16,9 @@ type QuotationSortKey = NonNullable<QuotationQuery['sort']>;
 import { api } from '@/lib/api';
 import { listXlsxHref } from '@/lib/list-export';
 import { HeaderActions } from '@/components/header-actions';
-import { formatDate, formatMoney } from '@/lib/format';
+import { currencyHeader, formatAmount, formatDate } from '@/lib/format';
+import { ListFooterRow } from '@/components/list-footer';
+import { ListStateRows } from '@/components/list-state';
 import { RoleGate } from '@/components/role-gate';
 import { useSession } from '@/lib/session';
 import { QuotationStatusBadge } from '@/components/sales/status-badges';
@@ -28,9 +31,7 @@ import {
 } from '@/lib/use-url-state';
 import { StatusFilter } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   cn,
   customerSearchHref,
@@ -87,37 +88,50 @@ export function CotizacionesView() {
 
   const rows = quotations.data?.items ?? [];
 
+  // cc31: el filtro activo acompaña al título y al pie («4 de 38 cotizaciones anuladas»).
+  let filterLabel = '';
+  if (status === 'CANCELLED') {
+    filterLabel = 'anuladas';
+  } else if (status) {
+    const label = QUOTATION_STATUS_LABELS[status as keyof typeof QUOTATION_STATUS_LABELS];
+    filterLabel = `en «${label}»`;
+  } else if (search) {
+    filterLabel = 'que coinciden con la búsqueda';
+  }
+  const pageTotal = rows.reduce((acc, q) => acc.plus(q.totalPen), new Decimal(0));
+
   return (
     <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Cotizaciones</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold">Cotizaciones</h1>
+            {filterLabel && <span className="text-muted-foreground">{filterLabel}</span>}
+          </div>
           <p className="text-xs text-muted-foreground">
             Cotizar no reserva stock; confirmar crea el pedido y la reserva.
           </p>
         </div>
-        <div className="flex gap-2">
-          {/* cc26: el Excel lleva los filtros y el orden de la lista (todas las páginas). */}
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/sales/quotations', params),
-              },
-            ]}
-          />
-          {/* D-152: la carga histórica entra por acá y termina en cotizaciones en borrador. */}
-          {isAdmin && (
-            <Button variant="outline" asChild>
-              <Link href="/cotizaciones/importar">Importar desde Excel</Link>
-            </Button>
-          )}
-          <Button asChild>
-            <Link href="/cotizaciones/nueva">Nueva cotización</Link>
-          </Button>
-        </div>
+        {/* cc31: un solo botón principal y lo demás en «Más opciones». cc26: el Excel lleva los
+            filtros y el orden de la lista (todas las páginas). D-152: la carga histórica entra
+            por «Importar desde Excel» y termina en cotizaciones en borrador. */}
+        <HeaderActions
+          primary={['new']}
+          actions={[
+            { key: 'new', label: 'Nueva cotización', href: '/cotizaciones/nueva' },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/sales/quotations', params),
+            },
+            {
+              key: 'import',
+              label: 'Importar desde Excel',
+              href: '/cotizaciones/importar',
+              show: isAdmin,
+            },
+          ]}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -143,7 +157,7 @@ export function CotizacionesView() {
       </div>
 
       <div className="rounded-lg border">
-        <Table>
+        <Table list>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <SortableTableHead
@@ -194,7 +208,7 @@ export function CotizacionesView() {
                   toggleSort('total');
                 }}
               >
-                Total
+                {currencyHeader('Total')}
               </SortableTableHead>
               <SortableTableHead
                 active={sort.key === 'status'}
@@ -209,21 +223,6 @@ export function CotizacionesView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {quotations.isPending &&
-              [0, 1, 2].map((i) => (
-                <TableRow key={i}>
-                  <TableCell colSpan={8}>
-                    <Skeleton className="h-5 w-full" />
-                  </TableCell>
-                </TableRow>
-              ))}
-            {quotations.isError && (
-              <TableRow>
-                <TableCell colSpan={8} className="text-destructive">
-                  No se pudieron cargar las cotizaciones.
-                </TableCell>
-              </TableRow>
-            )}
             {rows.map((q) => (
               <TableRow key={q.id}>
                 <TableCell className="font-medium">
@@ -252,7 +251,7 @@ export function CotizacionesView() {
                 <TableCell className="hidden md:table-cell">
                   {q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil)}
                 </TableCell>
-                <TableCell className="text-right">{formatMoney(q.totalPen)}</TableCell>
+                <TableCell className="text-right">{formatAmount(q.totalPen)}</TableCell>
                 <TableCell>
                   {<QuotationStatusBadge status={q.status} isExpired={q.isExpired} />}
                 </TableCell>
@@ -267,16 +266,35 @@ export function CotizacionesView() {
                 </TableCell>
               </TableRow>
             ))}
-            {quotations.isSuccess && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
-                  {search || status
-                    ? 'Ninguna cotización coincide con el filtro.'
-                    : 'No hay cotizaciones todavía.'}
-                </TableCell>
-              </TableRow>
-            )}
+            <ListStateRows
+              query={quotations}
+              colSpan={8}
+              isEmpty={rows.length === 0}
+              filtered={Boolean(search) || Boolean(status)}
+              emptyTitle="Todavía no hay cotizaciones"
+              emptyHint="Crea la primera con «Nueva cotización»."
+              noResultsTitle={
+                search
+                  ? `Ninguna cotización coincide con «${search}»`
+                  : 'Ninguna cotización con este filtro'
+              }
+              onClearFilters={() => {
+                setSearchText('');
+                setUrl({ search: '', status: '' });
+              }}
+              errorTitle="No se pudieron cargar las cotizaciones"
+            />
           </TableBody>
+          {rows.length > 0 && (
+            <ListFooterRow
+              shown={rows.length}
+              total={quotations.data?.total ?? rows.length}
+              noun={filterLabel ? `cotizaciones ${filterLabel}` : 'cotizaciones'}
+              colCount={8}
+              amountColumn={5}
+              amount={formatAmount(pageTotal)}
+            />
+          )}
         </Table>
       </div>
       <PaginationBar

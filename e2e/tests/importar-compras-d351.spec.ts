@@ -8,7 +8,7 @@ import {
   getJson,
   postJson,
 } from '../helpers/api';
-import { loginAndSetPassword } from '../helpers/ui';
+import { headerAction, loginAndSetPassword } from '../helpers/ui';
 import { createColor } from '../helpers/roofing';
 import { createSellableProduct } from '../helpers/sales';
 
@@ -134,7 +134,8 @@ test('D-351 — cuatro tipos → preview → corregir → confirmar → recibir 
   const admin = await createUser(api, 'ADMINISTRADOR');
   await loginAndSetPassword(page, admin, 'ClaveAdminE2E-2026');
   await page.goto('/compras');
-  await page.getByRole('link', { name: 'Importar compras' }).click();
+  // cc31: «Importar compras» vive en «Más opciones»; el botón principal es «Nueva compra».
+  await (await headerAction(page, 'Importar compras')).click();
   await expect(page).toHaveURL(/\/compras\/importar/);
 
   await page

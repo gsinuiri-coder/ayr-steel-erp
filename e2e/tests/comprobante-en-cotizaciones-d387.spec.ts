@@ -267,7 +267,8 @@ test.describe('D-387 — estados de la columna «Comprobante»', () => {
     await loginAsAdmin(page);
     await page.goto(`/cotizaciones?search=${customer.docNumber}`);
     const table = page.locator('main table');
-    await expect(table.getByRole('row')).toHaveCount(1 + 5, { timeout: 60_000 });
+    // cabecera + 5 filas + el pie de la lista (cc31)
+    await expect(table.getByRole('row')).toHaveCount(1 + 5 + 1, { timeout: 60_000 });
     const headers = await table.getByRole('columnheader').allInnerTexts();
     expect(headers.map((h) => h.trim()).slice(0, 2)).toEqual(['Código', 'Comprobante']);
 
@@ -356,7 +357,8 @@ test.describe('D-387 — estados de la columna «Comprobante»', () => {
 
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto(`/cotizaciones?search=${customer.docNumber}`);
-    await expect(table.getByRole('row')).toHaveCount(1 + 5, { timeout: 60_000 });
+    // cabecera + 5 filas + el pie de la lista (cc31)
+    await expect(table.getByRole('row')).toHaveCount(1 + 5 + 1, { timeout: 60_000 });
     await expectNoHorizontalScroll(page);
   });
 

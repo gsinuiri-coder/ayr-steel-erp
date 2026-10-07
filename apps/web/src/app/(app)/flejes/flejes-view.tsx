@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
@@ -12,6 +11,7 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { formatMoneyOrDash, formatQty } from '@/lib/format';
+import { useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
 import {
   Select,
@@ -34,7 +34,12 @@ export function FlejesView() {
   const [sort, toggleSort] = useSort<
     'finish' | 'thickness' | 'width' | 'qty' | 'cost' | 'value' | 'coils'
   >();
-  const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
+  // cc31: la línea vive en la URL (D-289); «Todas las líneas» no se escribe.
+  const [url, setUrl] = useUrlState({ line: ALL });
+  const businessLine = url.line as BusinessLine | typeof ALL;
+  const setBusinessLine = (v: BusinessLine | typeof ALL) => {
+    setUrl({ line: v });
+  };
 
   const queryString = businessLine !== ALL ? `?businessLine=${businessLine}` : '';
   const stock = useQuery({

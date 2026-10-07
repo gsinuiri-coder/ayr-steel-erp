@@ -21,7 +21,10 @@ import { useUrlState } from '@/lib/use-url-state';
 import { PaginationBar } from '@/components/pagination-bar';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { RoleGate } from '@/components/role-gate';
+import { ListStateRows } from '@/components/list-state';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   cn,
@@ -160,9 +163,29 @@ export function CobranzasView() {
         </p>
       </div>
 
+      {/* cc31: si las cifras no cargan se dice, en vez de dejar el esqueleto o un cero. */}
+      {totals.isError && (
+        <Alert variant="destructive">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+            <span>No se pudieron cargar los totales por cobrar: el servidor no respondió.</span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                void totals.refetch();
+              }}
+            >
+              Reintentar
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <StatStrip className="lg:grid-cols-3">
         <Stat label="Por cobrar">
-          {totals.isPending ? (
+          {totals.isError ? (
+            <span className="text-muted-foreground">Sin datos</span>
+          ) : totals.isPending ? (
             <Skeleton className="h-5 w-24" />
           ) : (
             formatMoney(totals.data?.totalBalancePen ?? '0')
@@ -174,14 +197,22 @@ export function CobranzasView() {
           ámbar están reservados para error y aviso, y un cero no es ninguno de los dos.
         */}
         <Stat label="Vencido" className={overdue ? 'text-destructive' : undefined}>
-          {totals.isPending ? (
+          {totals.isError ? (
+            <span className="text-muted-foreground">Sin datos</span>
+          ) : totals.isPending ? (
             <Skeleton className="h-5 w-24" />
           ) : (
             formatMoney(totals.data?.totalOverduePen ?? '0')
           )}
         </Stat>
         <Stat label="Clientes">
-          {totals.isPending ? <Skeleton className="h-5 w-12" /> : (totals.data?.customerCount ?? 0)}
+          {totals.isError ? (
+            <span className="text-muted-foreground">Sin datos</span>
+          ) : totals.isPending ? (
+            <Skeleton className="h-5 w-12" />
+          ) : (
+            (totals.data?.customerCount ?? 0)
+          )}
         </Stat>
       </StatStrip>
 
@@ -293,13 +324,16 @@ export function CobranzasView() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {receivables.isSuccess && receivableRows.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
-                      No hay nada por cobrar.
-                    </TableCell>
-                  </TableRow>
-                )}
+                <ListStateRows
+                  query={receivables}
+                  colSpan={5}
+                  isEmpty={receivableRows.length === 0}
+                  filtered={false}
+                  emptyTitle="No hay nada por cobrar"
+                  emptyHint="Aquí aparece cada cliente con comprobantes que tienen saldo."
+                  noResultsTitle="No hay nada por cobrar"
+                  errorTitle="No se pudo cargar el saldo por cliente"
+                />
               </TableBody>
             </Table>
           </div>
@@ -436,13 +470,15 @@ export function CobranzasView() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {pending.isSuccess && pendingRows.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground">
-                      Ningún comprobante tiene saldo pendiente.
-                    </TableCell>
-                  </TableRow>
-                )}
+                <ListStateRows
+                  query={pending}
+                  colSpan={7}
+                  isEmpty={pendingRows.length === 0}
+                  filtered={false}
+                  emptyTitle="Ningún comprobante tiene saldo pendiente"
+                  noResultsTitle="Ningún comprobante tiene saldo pendiente"
+                  errorTitle="No se pudieron cargar los comprobantes con saldo"
+                />
               </TableBody>
             </Table>
           </div>

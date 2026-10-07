@@ -21,16 +21,29 @@ export function Section({
   className,
   bodyClassName,
   separated = true,
+  count,
+  summary,
+  empty,
 }: {
   title: ReactNode;
   action?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
   className?: string;
   bodyClassName?: string;
   /** La línea que la separa de lo de arriba. `false` para secciones lado a lado (una grilla). */
   separated?: boolean;
+  /** cc31: cuántas filas tiene la sección; se muestra al lado del título (también el 0). */
+  count?: number;
+  /** cc31: un resumen corto de la sección («2 en curso · 1,241.69 kg»). */
+  summary?: ReactNode;
+  /**
+   * cc31: la línea que dice qué falta cuando la sección está vacía (`count === 0`). Con ella la
+   * sección se muestra igual, con su contador en 0, en vez de desaparecer.
+   */
+  empty?: ReactNode;
 }) {
   const headingId = useId();
+  const isEmpty = count === 0 && empty !== undefined;
   return (
     <section
       aria-labelledby={headingId}
@@ -38,13 +51,27 @@ export function Section({
       className={cn('grid content-start gap-1', className)}
     >
       {separated && <Separator className="mb-1" />}
-      <div className="flex min-h-7 items-center justify-between gap-2 rounded-md bg-muted/40 px-2.5 py-1">
+      {/* cc31: banda gris sólida con título, contador, resumen y la acción de la sección. */}
+      <div className="flex min-h-8 items-center gap-2 rounded-md bg-muted px-2.5 py-1">
         <h2 id={headingId} className="flex items-center gap-1.5 text-[13px] font-semibold">
           {title}
         </h2>
-        {action}
+        {count !== undefined && (
+          <span
+            className="rounded-full bg-background px-1.5 text-xs font-medium text-muted-foreground tabular-nums"
+            aria-label={`${String(count)} ${count === 1 ? 'fila' : 'filas'}`}
+          >
+            {count}
+          </span>
+        )}
+        {summary && <span className="truncate text-xs text-muted-foreground">{summary}</span>}
+        {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
       </div>
-      <div className={bodyClassName}>{children}</div>
+      {isEmpty ? (
+        <p className="px-2.5 py-2 text-muted-foreground">{empty}</p>
+      ) : (
+        <div className={bodyClassName}>{children}</div>
+      )}
     </section>
   );
 }

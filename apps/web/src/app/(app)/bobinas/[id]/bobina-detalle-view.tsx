@@ -187,8 +187,12 @@ export function BobinaDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <CrumbLabel label={c.code} />
-          <h1 className="font-mono text-lg font-semibold">{c.code}</h1>
-          <p className="text-xs text-muted-foreground">
+          {/* cc31: código y estado a la izquierda, como en todo detalle. */}
+          <div className="flex items-center gap-3">
+            <h1 className="font-mono text-xl font-semibold">{c.code}</h1>
+            <Badge variant={coilTone(c)}>{coilStateLabel(c)}</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">
             {c.typeKey} · {BUSINESS_LINE_LABELS[c.businessLine]} · {c.supplierName}
             {c.parentCoilId && c.parentCoilCode && (
               <>
@@ -201,9 +205,6 @@ export function BobinaDetalleView({ id }: { id: string }) {
           </p>
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          <Badge variant={coilTone(c)} className="mt-2">
-            {coilStateLabel(c)}
-          </Badge>
           <AuditHistoryLink entityType="coils" entityId={c.id} />
           {/*
             F8-S3b/M3: principal + «⋯». Principal: partir, la operación del día a día sobre una
@@ -410,7 +411,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
         </Table>
       </Section>
 
-      <Section title="Partidos">
+      <Section title="Partidos" count={splits.data?.length}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -543,6 +544,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
       <Section
         title="Kardex de la bobina"
+        count={movements.data?.items.length}
         action={
           <Button variant="outline" size="sm" asChild>
             <Link href={`/kardex?itemType=COIL&item=${id}&range=all`}>Ver kardex completo</Link>

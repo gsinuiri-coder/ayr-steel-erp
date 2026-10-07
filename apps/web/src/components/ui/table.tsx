@@ -31,7 +31,19 @@ function useHorizontalOverflow(ref: React.RefObject<HTMLDivElement | null>): boo
   return overflow;
 }
 
-function Table({ className, ...props }: React.ComponentProps<'table'>) {
+function Table({
+  className,
+  list = false,
+  ...props
+}: React.ComponentProps<'table'> & {
+  /**
+   * cc31: tabla de una pantalla de lista. Filas de 38 px y la cabecera fija de verdad: el
+   * contenedor que hace scroll horizontal (cc27) también era el contenedor del `sticky`, y como no
+   * scrolleaba en vertical la cabecera se iba con la página. Con su propio alto máximo, la tabla
+   * scrollea adentro y la cabecera y el pie quedan a la vista.
+   */
+  list?: boolean;
+}) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const overflow = useHorizontalOverflow(containerRef);
   return (
@@ -39,7 +51,10 @@ function Table({ className, ...props }: React.ComponentProps<'table'>) {
       ref={containerRef}
       data-slot="table-container"
       data-overflow={overflow ? 'true' : undefined}
-      className="relative w-full overflow-x-auto"
+      className={cn(
+        'relative w-full overflow-x-auto',
+        list && 'max-h-[calc(100svh-15rem)] min-h-40 overflow-y-auto',
+      )}
       // Un grupo y no una región: una región es un punto de referencia y varias con el mismo
       // nombre se repiten en la lista de landmarks (axe `landmark-unique`, segundo modelo SM-3).
       // Nombre fijo: la tabla ya anuncia el suyo.
@@ -53,6 +68,7 @@ function Table({ className, ...props }: React.ComponentProps<'table'>) {
     >
       <table
         data-slot="table"
+        data-density={list ? 'list' : undefined}
         className={cn('w-full caption-bottom text-[13px] tabular-nums', className)}
         {...props}
       />

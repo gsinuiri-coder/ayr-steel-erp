@@ -196,6 +196,24 @@
 }
 
 /*
+ * cc31: alto de fila — 38 px en las listas (`<Table data-density="list">`) y 34 px dentro de las
+ * secciones de un detalle. Las tablas de planta no cambian (fuera de la pieza).
+ */
+[data-slot='table'][data-density='list'] > tbody > tr > td {
+  height: 38px;
+}
+[data-slot='section'] [data-slot='table'] > tbody > tr > td {
+  height: 34px;
+}
+/* El pie de una lista (cuántas filas y la suma) queda a la vista, como la cabecera. */
+[data-slot='table'][data-density='list'] > tfoot {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: var(--muted);
+}
+
+/*
  * cc27 (UX26-10, D-456): sombra en el borde de una tabla que esconde columnas. Las capas
  * `local` (del color del fondo) viajan con el contenido y tapan la sombra `scroll` cuando ya se
  * está en ese borde: solo se ve del lado en que quedan columnas por ver.

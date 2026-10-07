@@ -39,6 +39,19 @@ export function formatMoney(value: string, currency: Currency = 'PEN', decimals 
 }
 
 /**
+ * cc31: un importe sin el símbolo, para la columna de una lista cuya cabecera ya dice la moneda
+ * («Total (S/)»): `"1717.2"` → `"1,717.20"`.
+ */
+export function formatAmount(value: string | Decimal, decimals = 2): string {
+  return formatNumber(value, decimals);
+}
+
+/** cc31: la moneda de una cabecera de columna: `"Total (S/)"`. */
+export function currencyHeader(label: string, currency: Currency = 'PEN'): string {
+  return `${label} (${SYMBOL[currency]})`;
+}
+
+/**
  * Igual que `formatMoney` pero tolera `null`: el API oculta los costos a VENDEDOR
  * (§3.4) devolviéndolos vacíos, y la vista muestra un guion en vez de un cero que se
  * leería como un costo real de S/ 0.00.

@@ -197,7 +197,7 @@ export async function headerAction(page: Page, name: string): Promise<Locator> {
   const visible = header
     .getByRole('button', { name, exact: true })
     .or(header.getByRole('link', { name, exact: true }));
-  const more = header.getByRole('button', { name: 'Más acciones', exact: true });
+  const more = header.getByRole('button', { name: 'Más opciones', exact: true });
   await expect(visible.or(more).first()).toBeVisible({ timeout: 30_000 });
   if ((await visible.count()) > 0) return visible.first();
   await more.click();
