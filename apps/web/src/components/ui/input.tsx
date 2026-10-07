@@ -16,7 +16,34 @@ function normalizeOnBlur(input: HTMLInputElement) {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+/**
+ * El blur llega tarde para dos casos: un botón que se habilita según la validez del campo (con
+ * «12,5» seguía apagado al bajar el mouse y el primer clic se perdía) y Enter dentro del campo
+ * (enviaba la coma sin normalizar). Por eso también se normaliza el campo activo al bajar el
+ * puntero en cualquier lado y al pulsar Enter, en captura, antes que nadie. Se instala una vez.
+ */
+let earlyNormalizeInstalled = false;
+function installEarlyNormalize() {
+  if (earlyNormalizeInstalled || typeof document === 'undefined') return;
+  earlyNormalizeInstalled = true;
+  const normalizeActive = () => {
+    const el = document.activeElement;
+    if (el instanceof HTMLInputElement && el.inputMode === 'decimal') normalizeOnBlur(el);
+  };
+  document.addEventListener('pointerdown', normalizeActive, true);
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'Enter') normalizeActive();
+    },
+    true,
+  );
+}
+
 function Input({ className, type, onBlur, ...props }: React.ComponentProps<'input'>) {
+  React.useEffect(() => {
+    if (props.inputMode === 'decimal') installEarlyNormalize();
+  }, [props.inputMode]);
   return (
     <input
       type={type}

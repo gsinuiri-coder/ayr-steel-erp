@@ -48,7 +48,7 @@ export function ReasonDialog({
   confirmLabel = 'Confirmar',
   pending = false,
   withOperationDate = false,
-  placeholder = 'Por qué se anula',
+  placeholder = 'el cliente desistió de la compra',
   constructive = false,
   reasons,
   consequences,
@@ -143,7 +143,7 @@ export function ReasonDialog({
             <Input
               id="reason-input"
               value={detail}
-              maxLength={200}
+              maxLength={240}
               onChange={(e) => {
                 setDetail(e.target.value);
               }}

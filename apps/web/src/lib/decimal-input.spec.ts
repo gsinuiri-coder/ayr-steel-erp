@@ -8,6 +8,13 @@ describe('campo numérico', () => {
     expect(normalizeDecimalInput('0,125')).toBe('0.125');
   });
 
+  it('«1,500» es ambiguo y queda como está: la validación pide el punto', () => {
+    expect(normalizeDecimalInput('1,500')).toBe('1,500');
+    expect(normalizeDecimalInput('5,000')).toBe('5,000');
+    expect(normalizeDecimalInput('12,500')).toBe('12,500');
+    expect(normalizeDecimalInput('1,5000')).toBe('1.5000');
+  });
+
   it('con punto o varias comas, las comas son miles', () => {
     expect(normalizeDecimalInput('4,027.44')).toBe('4027.44');
     expect(normalizeDecimalInput('1,500,000')).toBe('1500000');

@@ -102,11 +102,19 @@ export function CatalogoView() {
     highlightProductId && highlightProductId !== CATALOG_BAJO_PISO_VER_TODOS
       ? products.data?.find((p) => p.id === highlightProductId)?.businessLineId
       : undefined;
+  // La pestaña elegida se muestra al instante: la URL se actualiza un momento después y, mientras
+  // tanto, un clic en «Nuevo producto» abría el de la pestaña anterior.
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => {
+    setPicked(null);
+  }, [url.tab]);
   const activeLineId =
-    url.tab === 'colores'
+    picked ??
+    (url.tab === 'colores'
       ? 'colores'
-      : (lines.data?.find((l) => l.code === url.tab)?.id ?? highlightedLineId ?? firstLine?.id);
+      : (lines.data?.find((l) => l.code === url.tab)?.id ?? highlightedLineId ?? firstLine?.id));
   const selectTab = (value: string) => {
+    setPicked(value);
     if (value === 'colores') {
       setUrl({ tab: 'colores' });
       return;

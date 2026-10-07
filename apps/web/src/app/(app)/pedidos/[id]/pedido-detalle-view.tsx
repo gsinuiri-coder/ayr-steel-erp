@@ -848,7 +848,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
         title={`Completar la reserva de ${o.code}`}
         description="Reserva lo que hoy alcanza del material que faltaba al confirmar. Si todavía no hay material nuevo disponible, no cambia nada. No se crean órdenes nuevas."
         confirmLabel="Completar reserva"
-        placeholder="Qué material llegó"
+        placeholder="llegó la bobina que faltaba"
         constructive
         pending={completeReservation.isPending}
         onConfirm={(reason) => {
@@ -877,7 +877,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
         title={`Restaurar la reserva de ${restoring?.itemLabel ?? ''}`}
         description={`Vuelve a reservar ${restoring ? formatQty(restoring.qty, unitSymbol(restoring.unit)) : ''} para este pedido, que se liberaron a mano. Si el material ya no está disponible, no cambia nada y se indica cuánto falta. No mueve el kardex.`}
         confirmLabel="Restaurar reserva"
-        placeholder="Por qué se restaura"
+        placeholder="se liberó por error"
         constructive
         pending={restore.isPending}
         onConfirm={(reason) => {

@@ -43,11 +43,17 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  keepOpenWhenTyped = true,
   onInput,
   onInteractOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  /**
+   * cc31: `false` en los diálogos donde escribir es buscar (un selector): ahí lo escrito no es un
+   * trabajo que se pierda y el clic afuera tiene que seguir cerrando.
+   */
+  keepOpenWhenTyped?: boolean;
 }) {
   // cc31 (ESPEC §6): con algo escrito, un clic afuera no cierra el diálogo y no se pierde lo
   // escrito. Cerrar sigue a un clic: «Cancelar», la ✕ o Esc. El contenido se monta de nuevo en
@@ -63,7 +69,11 @@ function DialogContent({
           className,
         )}
         onInput={(e) => {
-          typed.current = true;
+          // Solo lo escrito en este diálogo: el evento de React también sube desde portales
+          // anidados (un selector abierto encima), que no son trabajo de este diálogo.
+          if (keepOpenWhenTyped && e.currentTarget.contains(e.target as Node)) {
+            typed.current = true;
+          }
           onInput?.(e);
         }}
         onInteractOutside={(e) => {
