@@ -2,6 +2,66 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-07 — Ventanas cc30: orden de bloqueos entre documentos (D-470..D-479, PR #121 y #122, sin migración)
+
+Dos cortes desplegados en la ventana. Detalle en `docs/handoff/ventana-cc30.md`.
+
+- **Corte 1 (22:10–23:24 de Lima, 6 de octubre):** API `ayr-steel-erp-api-00097-vxv`
+  (`git-sha=9e2e034a`), `main` `f4273691` (PR #121), `smoke:prod` 8/8 en la API y en los dos
+  dominios. El smoke no pudo correr durante una hora: `neonctl connection-string` fallaba de forma
+  intermitente (`reading 'branches'`). Mientras tanto, el tráfico volvió dos veces a `00096-zt9`,
+  sin redeploy.
+- **Corte 2 (00:12–00:19 de Lima, 7 de octubre):** API `ayr-steel-erp-api-00098-drm`
+  (`git-sha=fc5c54f7`), `main` `b60bf311` (PR #122), `smoke:prod` 8/8 en la API y en los dos
+  dominios. El deploy dejó el tráfico fijado en `00097-vxv` por el `update-traffic` del corte 1, y
+  se corrigió con `--to-latest`.
+- **Neon:** no se creó ni se borró ninguna rama.
+
+Registro de la sesión:
+
+Sesión desatendida; brief de cc30. Estado al arrancar: `main` = `40cd80c5`, API
+`ayr-steel-erp-api-00096-zt9` (`git-sha=bb9cf2dc`), próxima D libre D-470.
+
+- **M0, D-476:** el push directo a `main` pasa a `deny` en `.claude/settings.json`.
+- **M1:** matriz `docs/analisis/cc30-matriz-bloqueos.md`. Relevó 106 transacciones y encontró 12
+  cruces (C1–C12). No hay E/S externa con el bloqueo de un pedido retenido.
+- **M2 (corte 1):**
+  - puerta `lockDocuments` (`apps/api/src/inventory/document-locks.ts`), que comparte estado con
+    `lockCoilRows`;
+  - `lockOrder` toma pedido → OP (→ reserva) en los caminos que escriben pedido o reserva (D-477);
+  - cruces a–d y C12 corregidos;
+  - pares en `lock-order.db-spec.ts`: código viejo con 16/20, 4/20, 20/20 y 14/20 deadlocks; con el
+    arreglo, 0.
+- **M3 (corte 2):**
+  - todos los `FOR UPDATE` sobre comprobantes, despachos, cotizaciones, pedidos, OP y reservas
+    pasan por la puerta, con su centinela `document-locks.sentinel.spec.ts`;
+  - cruces C6–C11 y las violaciones de la matriz (V17, F8, F4, F9, purga) corregidos (D-478,
+    D-479);
+  - pares C7, C8 y C9: 19/20 con el código anterior, 0 ahora.
+- **M4:** regla 17 de AGENTS.md sin salvedad, como **texto provisional para la ratificación del
+  dueño**. §3.3.1 y §0.2 de ARQUITECTURA actualizados.
+- **Pruebas:**
+  - `test:db` completo en local: 46/46 (corte 1) y 48/48 más C9 (corte 2), ningún `LOCK`;
+  - los 31 pares de D-386, en verde;
+  - mutación con el orden de clases invertido: fallan los 6 pares del corte 1 y C7.
+  - CI de los dos PR en verde. El job de E2E pasó de 30 a 40 min: el `test:db` con los pares nuevos
+    toma 6,6 min en el runner.
+- **Revisiones** (`docs/revision/cc30-*`):
+  - corte 1: autorrevisión 0/0/3/7, segundo modelo 0/0/4/6;
+  - corte 2: autorrevisión 0/0/2/varios, segundo modelo 0/0/4/6.
+  - P2 corregidos o registrados.
+- **Registro de riesgo (toca kardex o datos), dónde mirar primero:**
+  - `inventory/document-locks.ts`;
+  - `production-shared.ts#lockOrder`;
+  - `SalesOrdersService.cancel` (`cancelLockPlan`) y `releaseReservation`;
+  - `fiscal-import.service.ts#lockAnnulledForReactivation` (borradores al inicio);
+  - `InvoicingService.discardDraft`;
+  - `ReceivedPurchaseEditService.commit` (`FOR NO KEY UPDATE` y relectura de bobinas).
+- **P3 abiertos:** en `docs/handoff/ventana-cc30.md`, sección «P3 abiertos».
+- **Para el dueño:**
+  - ratificar el texto de la regla 17 y las decisiones provisionales D-471, D-477, D-478 y D-479;
+  - borrar a mano la rama remota `docs/cierre-cc30` si no se borra sola al mergear.
+
 ## 2026-10-06 — Ventanas cc29: producción (D-463..D-469, PR #118 y #119, sin migración)
 
 Dos cortes desplegados el mismo día sin ventana. Detalle en `docs/handoff/ventana-cc29.md`.
@@ -727,7 +787,12 @@ Cada paso sensible tuvo el OK del dueño (D-251/D-232). Detalle en `docs/handoff
   - las tomas iniciales de `production.service.ts` y `roofing-production.service.ts`;
   - `PurchasesService.receive` y `cancel`.
 
-## Pendiente — Orden de bloqueos entre documentos (OP, pedido, reserva) (pieza propia, grupo C de cc18)
+## Cerrado en cc30 — Orden de bloqueos entre documentos (OP, pedido, reserva) (grupo C de cc18)
+
+**Cerrado en cc30 (2026-10-07, PR #121 y #122, D-470..D-479).** Los cuatro cruces de abajo, más los
+C6–C12 que encontró la matriz (`docs/analisis/cc30-matriz-bloqueos.md`), están corregidos y tienen
+su par en `lock-order.db-spec.ts` cuando es reproducible. Se conserva el texto original como
+registro.
 
 Decisión del dueño (2026-10-04): pieza propia, fuera de cc18. D-386 fija el orden entre
 inventario (reservas → bobinas → saldos), pero entre documentos quedan cruces. Todos existían
@@ -756,9 +821,11 @@ antes de cc18 y ninguno empeoró. Hoy terminan en un 409 con rollback, sin datos
   recepción concurrente que gana podría quedar marcada como `CANCELLED`. Ya pasaba antes de cc18:
   hay que releer el estado bajo el lock.
 - **P3, re-fechado de despachos** (`invoice-dispatch.service.ts`). Encadena varias tomas en una
-  transacción. Tomar la unión una sola vez.
+  transacción. Tomar la unión una sola vez. **cc30:** los despachos se toman todos por la puerta al
+  inicio; las reservas del segundo despacho siguen pidiéndose después de los saldos del primero
+  (`NOWAIT`, sin contienda porque el pedido serializa).
 - **P3, borrador de comprobante con despacho** (`invoicing.service.ts`). Va pedido → despacho y la
-  reversa va despacho → pedido.
+  reversa va despacho → pedido. **Cerrado en cc30 (C8):** los dos van despacho → pedido.
 - **P3, rendimiento: medir.**
   - `lockCoil` suma de 3 a 6 consultas: los agregados.
   - El despacho duplica `resolveItemBusinessLineId`, `lockBalance` y `findLineReservation`.
