@@ -145,9 +145,6 @@ export function CajaView() {
             transferencia se listan aparte: no ponen billetes en el cajón.
           </p>
         </div>
-        <Button variant="outline" asChild>
-          <Link href="/pos">Volver al mostrador</Link>
-        </Button>
       </div>
 
       {context.isPending ? (

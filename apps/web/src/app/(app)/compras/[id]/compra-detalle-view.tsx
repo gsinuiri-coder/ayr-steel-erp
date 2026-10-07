@@ -25,6 +25,7 @@ import {
   type Currency,
   type PurchaseDto,
 } from '@ayr/shared';
+import { CrumbLabel } from '@/components/breadcrumb';
 import { PURCHASE_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
@@ -246,6 +247,7 @@ export function CompraDetalleView({ id }: { id: string }) {
     <>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
+          <CrumbLabel label={p.documentLabel} />
           <h1 className="text-xl font-semibold">
             {PURCHASE_DOC_TYPE_LABELS[p.docType]} {p.documentLabel}
           </h1>

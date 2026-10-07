@@ -49,7 +49,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const mustChange = me.data?.mustChangePassword === true && pathname !== '/cambiar-contrasena';
 
   useEffect(() => {
-    if (unauthorized) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    // cc31: `expired=1` le dice al ingreso que la sesión se cortó con el usuario adentro, para
+    // avisarle y decirle a qué pantalla vuelve.
+    if (unauthorized) router.replace(`/login?next=${encodeURIComponent(pathname)}&expired=1`);
     else if (mustChange) router.replace('/cambiar-contrasena');
   }, [unauthorized, mustChange, pathname, router]);
 

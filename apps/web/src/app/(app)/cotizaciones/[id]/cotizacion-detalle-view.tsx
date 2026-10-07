@@ -18,6 +18,7 @@ import { api } from '@/lib/api';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { unassignedCoilLines } from '@/lib/unassigned-coil-lines';
+import { CrumbLabel } from '@/components/breadcrumb';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { AuditHistoryLink } from '@/components/audit-history-link';
@@ -180,6 +181,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
+            <CrumbLabel label={q.code} />
             <h1 className="text-xl font-semibold">{q.code}</h1>
             <QuotationStatusBadge status={q.status} isExpired={q.isExpired} />
           </div>

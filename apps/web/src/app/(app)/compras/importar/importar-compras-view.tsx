@@ -285,9 +285,6 @@ export function ImportarComprasView() {
                 Ejemplo
               </a>
             </Button>
-            <Button variant="outline" asChild>
-              <Link href="/compras">Volver a compras</Link>
-            </Button>
           </div>
         </div>
 

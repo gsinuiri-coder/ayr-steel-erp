@@ -2,12 +2,15 @@
 
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from '@/lib/notify';
+import { Check, Circle } from 'lucide-react';
 import { changePasswordSchema, type ChangePasswordInput } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
+import { errorMessage, toast } from '@/lib/notify';
 import { ME_QUERY_KEY, useSession } from '@/lib/session';
+import { AuthCard } from '@/components/auth-card';
+import { PasswordInput } from '@/components/password-input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,15 +22,72 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
 
-export function ChangePasswordForm() {
+/** El mínimo de `passwordSchema` (`@ayr/shared`); se muestra como regla que se marca al escribir. */
+const MIN_LENGTH = 8;
+
+/**
+ * cc31: «Cambiar contraseña» en sus dos formas.
+ *
+ * - **Primer ingreso** (contraseña temporal): pantalla completa sin menú, «Elige tu contraseña»,
+ *   reglas que se marcan al escribir y un enlace para salir e ingresar con otro usuario.
+ * - **Desde el menú de usuario**: la misma tarjeta dentro de la app.
+ */
+export function ChangePasswordScreen() {
+  const { user } = useSession();
+  if (user.mustChangePassword) {
+    return (
+      <AuthCard title="Elige tu contraseña" subtitle={user.email}>
+        <ChangePasswordForm firstLogin />
+      </AuthCard>
+    );
+  }
+  return (
+    <>
+      <div>
+        <h1 className="text-xl font-semibold">Cambiar contraseña</h1>
+        <p className="text-muted-foreground">Elige una contraseña nueva.</p>
+      </div>
+      <Card className="max-w-md">
+        <CardContent className="pt-6">
+          <ChangePasswordForm firstLogin={false} />
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function Rule({ ok, children }: { ok: boolean; children: string }) {
+  return (
+    <li
+      className={
+        ok
+          ? 'flex items-center gap-1.5 text-tone-done-foreground'
+          : 'flex items-center gap-1.5 text-muted-foreground'
+      }
+    >
+      {ok ? (
+        <Check className="size-3.5" aria-hidden />
+      ) : (
+        <Circle className="size-3.5" aria-hidden />
+      )}
+      <span>{children}</span>
+      <span className="sr-only">{ok ? '(cumplida)' : '(pendiente)'}</span>
+    </li>
+  );
+}
+
+function ChangePasswordForm({ firstLogin }: { firstLogin: boolean }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user } = useSession();
+  const { logout, isLoggingOut } = useSession();
   const form = useForm<ChangePasswordInput>({
     resolver: zodResolver(changePasswordSchema),
     defaultValues: { currentPassword: '', newPassword: '', confirmPassword: '' },
+  });
+  const [newPassword, confirmPassword] = useWatch({
+    control: form.control,
+    name: ['newPassword', 'confirmPassword'],
   });
 
   async function onSubmit(values: ChangePasswordInput) {
@@ -37,76 +97,92 @@ export function ChangePasswordForm() {
       toast.success('Contraseña actualizada');
       router.replace('/');
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : 'No se pudo cambiar la contraseña. Intenta de nuevo.';
-      form.setError('root', { message });
+      form.setError('root', {
+        message: errorMessage(err, 'No se pudo cambiar la contraseña. Intenta de nuevo.'),
+      });
     }
   }
 
   return (
-    <Card className="max-w-md">
-      <CardContent className="pt-6">
-        {user.mustChangePassword && (
-          <Alert className="mb-4">
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4" noValidate>
+        {firstLogin && (
+          <Alert variant="warning" role="alert">
             <AlertDescription>
-              Debes cambiar tu contraseña temporal antes de continuar.
+              Entraste con una contraseña temporal. Cámbiala para continuar.
             </AlertDescription>
           </Alert>
         )}
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4" noValidate>
-            {form.formState.errors.root && (
-              <Alert variant="destructive" role="alert">
-                <AlertDescription>{form.formState.errors.root.message}</AlertDescription>
-              </Alert>
-            )}
-            <FormField
-              control={form.control}
-              name="currentPassword"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Contraseña actual</FormLabel>
-                  <FormControl>
-                    <Input type="password" autoComplete="current-password" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="newPassword"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nueva contraseña</FormLabel>
-                  <FormControl>
-                    <Input type="password" autoComplete="new-password" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="confirmPassword"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Confirmar nueva contraseña</FormLabel>
-                  <FormControl>
-                    <Input type="password" autoComplete="new-password" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <Button type="submit" disabled={form.formState.isSubmitting}>
-              {form.formState.isSubmitting ? 'Guardando…' : 'Guardar contraseña'}
-            </Button>
-          </form>
-        </Form>
-      </CardContent>
-    </Card>
+        {form.formState.errors.root && (
+          <Alert variant="destructive" role="alert">
+            <AlertDescription>{form.formState.errors.root.message}</AlertDescription>
+          </Alert>
+        )}
+        <FormField
+          control={form.control}
+          name="currentPassword"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{firstLogin ? 'Contraseña temporal' : 'Contraseña actual'}</FormLabel>
+              <FormControl>
+                <PasswordInput autoComplete="current-password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="newPassword"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Contraseña nueva</FormLabel>
+              <FormControl>
+                <PasswordInput autoComplete="new-password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="confirmPassword"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Repite la contraseña nueva</FormLabel>
+              <FormControl>
+                <PasswordInput autoComplete="new-password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <ul className="grid gap-1 text-xs" aria-label="Requisitos de la contraseña">
+          <Rule
+            ok={newPassword.length >= MIN_LENGTH}
+          >{`Al menos ${String(MIN_LENGTH)} caracteres`}</Rule>
+          <Rule ok={newPassword.length > 0 && newPassword === confirmPassword}>
+            Las dos contraseñas coinciden
+          </Rule>
+        </ul>
+        <Button type="submit" disabled={form.formState.isSubmitting}>
+          {form.formState.isSubmitting
+            ? 'Guardando…'
+            : firstLogin
+              ? 'Guardar y entrar'
+              : 'Guardar contraseña'}
+        </Button>
+        {firstLogin && (
+          <button
+            type="button"
+            className="text-center text-xs text-primary hover:underline"
+            disabled={isLoggingOut}
+            onClick={logout}
+          >
+            Salir e ingresar con otro usuario
+          </button>
+        )}
+      </form>
+    </Form>
   );
 }

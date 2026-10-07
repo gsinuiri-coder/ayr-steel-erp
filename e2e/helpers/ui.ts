@@ -256,10 +256,10 @@ export async function loginAndSetPassword(
   await page.getByRole('button', { name: 'Ingresar' }).click();
 
   await expect(page).toHaveURL(/\/cambiar-contrasena$/);
-  await page.getByLabel('Contraseña actual').fill(user.password);
-  await page.getByLabel('Nueva contraseña', { exact: true }).fill(newPassword);
-  await page.getByLabel('Confirmar nueva contraseña').fill(newPassword);
-  await page.getByRole('button', { name: 'Guardar contraseña' }).click();
+  await page.getByLabel('Contraseña temporal').fill(user.password);
+  await page.getByLabel('Contraseña nueva', { exact: true }).fill(newPassword);
+  await page.getByLabel('Repite la contraseña nueva').fill(newPassword);
+  await page.getByRole('button', { name: 'Guardar y entrar' }).click();
   await expect(page).toHaveURL(/\/$/);
 }
 

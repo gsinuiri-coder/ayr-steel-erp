@@ -21,10 +21,10 @@ test.describe('Usuarios (RF-04)', () => {
 
     // Primer ingreso: cambio de contraseña obligatorio.
     await expect(page).toHaveURL(/\/cambiar-contrasena$/);
-    await page.getByLabel('Contraseña actual').fill(admin.password);
-    await page.getByLabel('Nueva contraseña', { exact: true }).fill(newPassword);
-    await page.getByLabel('Confirmar nueva contraseña').fill(newPassword);
-    await page.getByRole('button', { name: 'Guardar contraseña' }).click();
+    await page.getByLabel('Contraseña temporal').fill(admin.password);
+    await page.getByLabel('Contraseña nueva', { exact: true }).fill(newPassword);
+    await page.getByLabel('Repite la contraseña nueva').fill(newPassword);
+    await page.getByRole('button', { name: 'Guardar y entrar' }).click();
     await expect(page).toHaveURL(/\/$/);
 
     await openSidebarGroup(page, 'Administración');

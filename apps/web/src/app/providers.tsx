@@ -3,10 +3,11 @@
 import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConnectionBanner, useOnline } from '@/components/connection-banner';
+import { EnvironmentProvider } from '@/components/environment';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({ children, isDemo }: { children: ReactNode; isDemo: boolean }) {
   const [client] = useState(
     () =>
       new QueryClient({
@@ -16,7 +17,9 @@ export function Providers({ children }: { children: ReactNode }) {
   const online = useOnline();
   return (
     <QueryClientProvider client={client}>
-      <TooltipProvider>{children}</TooltipProvider>
+      <EnvironmentProvider isDemo={isDemo}>
+        <TooltipProvider>{children}</TooltipProvider>
+      </EnvironmentProvider>
       {/*
         Abajo a la derecha y no arriba: la barra de acciones de toda pantalla de detalle
         vive arriba a la derecha, y el toast la tapaba **y se comía el clic** —

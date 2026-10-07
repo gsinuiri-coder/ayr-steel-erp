@@ -377,9 +377,6 @@ export function ImportarCotizacionesView() {
               nada.
             </p>
           </div>
-          <Button variant="outline" asChild>
-            <Link href="/cotizaciones">Volver a cotizaciones</Link>
-          </Button>
         </div>
 
         <Card>

@@ -17,6 +17,7 @@ import type { ReverseArgs } from '@/lib/reverse-args';
 import { useSession } from '@/lib/session';
 import { formatDate, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
+import { CrumbLabel } from '@/components/breadcrumb';
 import {
   DispatchStatusBadge,
   FiscalDocumentStatusBadge,
@@ -135,6 +136,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
+            <CrumbLabel label={d.code} />
             <h1 className="text-xl font-semibold">{d.code}</h1>
             <DispatchStatusBadge status={d.status} />
           </div>

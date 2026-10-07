@@ -24,6 +24,7 @@ import {
   type InventoryMovementDto,
   type PaginatedResult,
 } from '@ayr/shared';
+import { CrumbLabel } from '@/components/breadcrumb';
 import { COIL_SPLIT_TONE, coilTone } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import {
@@ -185,6 +186,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
+          <CrumbLabel label={c.code} />
           <h1 className="font-mono text-lg font-semibold">{c.code}</h1>
           <p className="text-xs text-muted-foreground">
             {c.typeKey} · {BUSINESS_LINE_LABELS[c.businessLine]} · {c.supplierName}

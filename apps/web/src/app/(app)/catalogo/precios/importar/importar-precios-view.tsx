@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
@@ -179,9 +178,6 @@ export function ImportarPreciosView() {
             <a href="/plantillas/precios-de-lista.csv" download>
               Descargar plantilla
             </a>
-          </Button>
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/catalogo">Volver al catálogo</Link>
           </Button>
         </div>
       </div>
