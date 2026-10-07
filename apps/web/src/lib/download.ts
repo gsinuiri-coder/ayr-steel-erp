@@ -26,6 +26,9 @@ export function filenameFromDisposition(header: string | null): string | null {
   return name ? name.trim() : null;
 }
 
+const GENERIC_CLIENT_ERRORS =
+  /^(Unauthorized|Forbidden|Forbidden resource|Not Found|Bad Request|Cannot (GET|POST|PUT|PATCH|DELETE) .*)$/;
+
 /**
  * El mensaje de un rechazo del API, con el mismo criterio que `api()`. cc32 (P3 de cc31): sin
  * motivo legible, el aviso dice qué pasó en español y nunca el código («error 500»).
@@ -33,7 +36,10 @@ export function filenameFromDisposition(header: string | null): string | null {
 export async function downloadErrorMessage(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { message?: unknown };
   const joined = Array.isArray(body.message) ? body.message.join(' · ') : body.message;
-  const raw = typeof joined === 'string' && joined.trim() !== '' ? joined : undefined;
+  const text0 = typeof joined === 'string' && joined.trim() !== '' ? joined : undefined;
+  // Los rechazos genéricos de NestJS vienen en inglés («Forbidden resource», «Cannot GET …»):
+  // no son un motivo de negocio y se reemplazan por el texto en español de su código.
+  const raw = text0 !== undefined && GENERIC_CLIENT_ERRORS.test(text0) ? undefined : text0;
   if (raw !== undefined || res.status === 429) {
     const text = errorTextFor(res.status, raw);
     if (text !== SERVER_DOWN_MESSAGE) return text;
@@ -42,6 +48,7 @@ export async function downloadErrorMessage(res: Response): Promise<string> {
     return `No se pudo descargar el archivo: ${SERVER_DOWN_MESSAGE.toLowerCase()}.`;
   if (res.status === 403) return 'No tienes permiso para descargar este archivo.';
   if (res.status === 404) return 'No se encontró el archivo: puede que ya no exista.';
+  if (res.status === 401) return 'Tu sesión venció. Ingresa de nuevo y vuelve a descargar.';
   return 'No se pudo descargar el archivo.';
 }
 

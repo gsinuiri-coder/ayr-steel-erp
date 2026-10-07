@@ -125,11 +125,12 @@ export function usePendingSources(): PendingSources & {
     temporaryReservations: null,
     emittedQuotations: quotations.data?.items ?? null,
     productionQueue: queue.data?.length ?? null,
+    // Solo cuando no hay cifra: un sondeo de fondo que falla no tapa la última cifra buena.
     failed: {
-      shortfallOrders: shortfall.isError,
-      belowFloorPrices: floor.isError,
-      readyOrders: ready.isError,
-      emittedQuotations: quotations.isError,
+      shortfallOrders: shortfall.isError && shortfall.data === undefined,
+      belowFloorPrices: floor.isError && floor.data === undefined,
+      readyOrders: ready.isError && ready.data === undefined,
+      emittedQuotations: quotations.isError && quotations.data === undefined,
     },
     retry: () => {
       for (const q of enabled) if (q.isError) void q.refetch();
@@ -170,7 +171,10 @@ export function PendingBell() {
         </div>
         {sources.status === 'error' && (
           <p role="alert" className="border-b px-3 py-2 text-xs text-destructive">
-            No se pudo calcular todo: puede faltar algún pendiente.
+            No se pudo calcular todo: puede faltar algún pendiente.{' '}
+            <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={sources.retry}>
+              Reintentar
+            </Button>
           </p>
         )}
         {rows.length === 0 ? (

@@ -10,16 +10,28 @@ import { LIVE_PENDING_QUERY_KEYS } from '@/lib/pending';
 
 export function Providers({ children, isDemo }: { children: ReactNode; isDemo: boolean }) {
   const [client] = useState(() => {
+    // Varias operaciones seguidas (una ráfaga de ediciones en línea) refrescan la campana una
+    // sola vez: el límite de peticiones del API es compartido por toda la oficina.
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const refreshPending = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        for (const queryKey of LIVE_PENDING_QUERY_KEYS) {
+          // Si ya hay una petición en curso de esa consulta, se reutiliza.
+          void queryClient.invalidateQueries({ queryKey }, { cancelRefetch: false });
+        }
+      }, 1_500);
+    };
     const queryClient: QueryClient = new QueryClient({
       defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
       // cc32: la campana se pone al día con cada operación que termina bien (despachar,
       // emitir, anular…) en vez de esperar al minuto. Solo vuelve a pedir las consultas que
       // están en pantalla.
       mutationCache: new MutationCache({
-        onSuccess: () => {
-          for (const queryKey of LIVE_PENDING_QUERY_KEYS) {
-            void queryClient.invalidateQueries({ queryKey });
-          }
+        onSuccess: (_data, _variables, _context, mutation) => {
+          // Cerrar sesión no mueve pendientes: refrescar ahí solo daría 401.
+          if (mutation.meta?.skipPendingRefresh === true) return;
+          refreshPending();
         },
       }),
     });
