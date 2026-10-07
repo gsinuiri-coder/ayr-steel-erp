@@ -19,6 +19,7 @@ import {
   createCustomerSchema,
   createDispatchSchema,
   createFinishSchema,
+  createInvoiceSchema,
   createProductSchema,
   createPurchaseSchema,
   createQuotationSchema,
@@ -42,6 +43,7 @@ import { CustomersService } from '../customers/customers.service';
 import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { DispatchesService } from '../invoicing/dispatches.service';
+import { InvoicingService } from '../invoicing/invoicing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { COMMIT_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
 import { ProductionService } from '../production/production.service';
@@ -1405,5 +1407,93 @@ describe('cc30 — grupo C: drywall (contra la base)', () => {
       ]);
     }
     expectClean(tally, '(a) revertir reporte de drywall × despacho');
+  });
+});
+
+/**
+ * cc30 (corte 2): cruces nuevos de la matriz (`docs/analisis/cc30-matriz-bloqueos.md`).
+ *
+ * - C7: reasignar el vendedor de una cotización iba cotización → pedidos, y anular el pedido iba
+ *   pedido → … → cotización.
+ * - C8: crear un borrador de comprobante que declara un despacho iba pedido → despacho, y revertir
+ *   ese despacho iba despacho → pedido.
+ */
+describe('cc30 — corte 2: cotización, comprobante y despacho (contra la base)', () => {
+  let invoicing: InvoicingService;
+  let sellerId = '';
+
+  beforeAll(async () => {
+    invoicing = moduleRef.get(InvoicingService);
+    sellerId = (
+      await prisma.user.create({
+        data: {
+          email: `vendedor-cc30-${letters(8).toLowerCase()}@example.test`,
+          name: 'Vendedor cc30',
+          passwordHash: 'x',
+          role: Role.VENDEDOR,
+        },
+      })
+    ).id;
+  });
+
+  /** Un pedido confirmado desde una cotización, sobre un producto con stock. */
+  async function orderFromQuotation() {
+    const product = await tradingProduct();
+    await productPurchase([product]);
+    const quotation = await quotations.create(
+      admin,
+      createQuotationSchema.parse({
+        customerId,
+        issueDate: businessToday(),
+        items: [{ productId: product, qty: '5', unitPricePen: '50' }],
+      }),
+    );
+    const order = await salesOrders.confirm(admin, quotation.id, {});
+    return { quotationId: quotation.id, order };
+  }
+
+  it('C7: reasignar el vendedor de la cotización × anular su pedido', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const f = await orderFromQuotation();
+      const ops = [
+        () => quotations.reassign(admin, f.quotationId, sellerId, 'cc30 reasignar'),
+        () =>
+          salesOrders.cancel(
+            admin,
+            f.order.id,
+            cancelSalesOrderSchema.parse({ reason: 'cc30 anular', acknowledgeFabricated: true }),
+          ),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, 'C7 reasignar × anular pedido');
+  });
+
+  it('C8: borrador de comprobante con el despacho × revertir ese despacho', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const p = await tradingProduct();
+      await productPurchase([p]);
+      const order = await directOrder([{ productId: p, qty: '5' }]);
+      const dispatch = await dispatchAll(order);
+      const ops = [
+        () =>
+          invoicing.create(
+            admin,
+            createInvoiceSchema.parse({
+              docType: 'FACTURA',
+              customerId,
+              salesOrderId: order.id,
+              dispatchId: dispatch.id,
+              issueDate: businessToday(),
+              items: order.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+            }),
+          ),
+        () => reverseDispatch(dispatch.id),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, 'C8 borrador con despacho × revertir despacho');
   });
 });
