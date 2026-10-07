@@ -24,6 +24,7 @@ import { ReportHeader } from '@/components/reports/report-header';
 import { MonthPicker, useReportMonth } from '@/components/reports/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { filterReportRows } from '@/lib/report-table';
 import { allRows, coilMonthTotalsOf } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
@@ -212,18 +213,22 @@ export function ReporteBobinasView() {
             query={query}
             updating={updating}
           />
-          <MonthTable
-            title="Abiertas"
-            film="OPENED"
-            section={data?.opened}
-            emptyText="No había bobinas abiertas al final de ese mes"
-            search={searchText}
-            onClearSearch={() => {
-              setSearchText('');
-            }}
-            query={query}
-            updating={updating}
-          />
+          {/* Si el reporte no cargó, el error y «Reintentar» van una sola vez, en la primera
+              tabla; la segunda no se pinta. */}
+          {!report.isError && (
+            <MonthTable
+              title="Abiertas"
+              film="OPENED"
+              section={data?.opened}
+              emptyText="No había bobinas abiertas al final de ese mes"
+              search={searchText}
+              onClearSearch={() => {
+                setSearchText('');
+              }}
+              query={query}
+              updating={updating}
+            />
+          )}
           {data && (
             <BusyRegion busy={updating}>
               <MonthSummary report={data} />
@@ -289,13 +294,17 @@ function MonthTable({
   // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
   const [sort, toggleSort] = useSort<string>(film === 'SEALED' ? 'sellada' : 'abierta');
   const rows = section?.rows ?? [];
+  const tableColumns = columns(film, section);
+  // El contador sigue a la búsqueda: «2 de 5 bobinas» mientras filtra.
+  const shown = filterReportRows(rows, tableColumns, search).length;
 
   return (
     <section aria-label={`Bobinas ${title.toLowerCase()}`} className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-x-3">
         <h2 className="text-base font-semibold">{title}</h2>
         {section && (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground" data-testid="contador-bobinas">
+            {shown === rows.length ? '' : `${String(shown)} de `}
             {rows.length} {rows.length === 1 ? 'bobina' : 'bobinas'}
           </p>
         )}
@@ -303,7 +312,7 @@ function MonthTable({
       <ReportTable
         testId={film === 'SEALED' ? 'tabla-selladas' : 'tabla-abiertas'}
         rowTestId="fila-bobina"
-        columns={columns(film, section)}
+        columns={tableColumns}
         rows={rows}
         rowKey={(r) => r.id}
         sort={sort}

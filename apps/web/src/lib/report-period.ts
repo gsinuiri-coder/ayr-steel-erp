@@ -153,6 +153,23 @@ export function completePeriod(
   };
 }
 
+/**
+ * cc32 (corte 2): los enlaces guardados de Ventas por material traían `range=month|prev` (mes en
+ * curso o anterior) sin fechas. Sin `from` ni `to`, ese `range` se traduce una vez al atajo del
+ * periodo único; con fechas, o con otro valor, no hay nada que traducir (`null`).
+ */
+export function legacyRangePeriod(
+  range: string,
+  from: string,
+  to: string,
+  today: string,
+): ResolvedPeriod | null {
+  if (from !== '' || to !== '') return null;
+  const preset: PeriodPreset | null =
+    range === 'month' ? 'this-month' : range === 'prev' ? 'last-month' : null;
+  return preset === null ? null : { ...presetPeriod(preset, today), preset };
+}
+
 /* ------------------------------------------------------------------------------------- *
  * cc32 (corte 2): el Reporte mensual de bobinas sigue eligiendo un mes (`?mes=AAAA-MM`). El mes
  * va siempre en la URL, como el periodo de los demás, y sale del mismo periodo recordado: al
