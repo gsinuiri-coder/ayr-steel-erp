@@ -5,8 +5,8 @@ import { toast } from '@/lib/notify';
 import type { HeaderAction } from '@/components/header-actions';
 
 /**
- * Hoja de planta del pedido (D-149): descargarla y —en el teléfono— compartirla. Desde
- * F8-S3b/M3 son dos acciones del menú «⋯» de la cabecera del pedido, no dos botones sueltos.
+ * Hoja de planta del pedido (D-149): imprimirla (cc32), descargarla y —en el teléfono—
+ * compartirla. Desde F8-S3b/M3 son acciones del menú de la cabecera del pedido, no botones sueltos.
  *
  * La descarga es un `<a>` directo contra el API, igual que el PDF de la cotización (D-068):
  * el proxy `/api/*` reenvía el binario y el navegador se encarga del resto.
@@ -57,7 +57,9 @@ export function usePlantSheetActions(orderId: string, code: string): HeaderActio
   }
 
   return [
-    { key: 'plant-sheet', label: 'Hoja de planta (PDF)', download: href },
+    // cc32: imprimir en el lugar de la antigua «Hoja de planta (PDF)»; la descarga sigue al lado.
+    { key: 'plant-sheet', label: 'Imprimir hoja de planta', print: href },
+    { key: 'plant-sheet-pdf', label: 'Descargar hoja de planta', download: href },
     {
       key: 'plant-sheet-share',
       label: 'Compartir hoja de planta',

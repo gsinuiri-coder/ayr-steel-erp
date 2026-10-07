@@ -661,6 +661,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             primary={[manualIsDefault ? 'manual' : 'send', 'correct', 'retry', 'query']}
             companion={isDraft ? (manualIsDefault ? 'send' : 'manual') : undefined}
             actions={[
+              // cc32: imprimir el mismo PDF, sin descargarlo; el primero de «Más opciones».
+              {
+                key: 'print',
+                label: 'Imprimir',
+                show: d.hasPdf,
+                print: `/api/invoicing/documents/${d.id}/pdf`,
+              },
               {
                 key: 'manual',
                 label: 'Registrar manual',

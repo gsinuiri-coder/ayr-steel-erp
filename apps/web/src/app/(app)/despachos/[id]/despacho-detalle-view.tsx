@@ -10,6 +10,7 @@ import {
   TRANSFER_MODE_LABELS,
   type DispatchDto,
   type FiscalDocumentDto,
+  type FiscalDocumentStatus,
   type InvoicingSettingsDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
@@ -42,6 +43,15 @@ import {
 import { DetailSummary } from '@/components/detail-summary';
 
 const DISPATCH_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA] as const;
+
+/**
+ * cc32: los estados de una guía vigente que SUNAT todavía no aceptó. La guía se ofrece para
+ * imprimir, pero el PDF no existe hasta la aceptación: el botón queda en espera y lo dice.
+ */
+const NOTE_ON_THE_WAY: readonly FiscalDocumentStatus[] = ['DRAFT', 'ISSUED', 'SEND_ERROR'];
+
+/** Lo que dice el despacho mientras la guía no está aceptada: no promete más de lo que pasa. */
+const NOTE_WAITING_TEXT = 'La guía se imprime cuando SUNAT la acepte; ábrela para ver su estado.';
 
 /** RF-77..RF-79: detalle del despacho, su guía y su reversa. */
 export function DespachoDetalleView({ id }: { id: string }) {
@@ -131,6 +141,13 @@ export function DespachoDetalleView({ id }: { id: string }) {
   // botón no aparece en vez de ofrecer una operación que el API rechaza.
   const canIssueNote = isLive && d.transferMode !== 'PICKUP' && !noteBlocks;
   const busy = issueNote.isPending || reverse.isPending;
+  // cc32: el PDF de la guía lo guarda el API recién cuando SUNAT la acepta (`storeFiles` solo
+  // corre con `ACCEPTED`, y `file()` responde 404 «se guarda cuando SUNAT lo acepta» mientras
+  // tanto). Con la guía todavía en camino la principal es «Ver la guía» y el texto lo explica.
+  const noteStatus = d.dispatchNoteId !== null ? d.dispatchNoteStatus : null;
+  const notePrintable = noteStatus === 'ACCEPTED';
+  const noteOnTheWay = noteStatus !== null && NOTE_ON_THE_WAY.includes(noteStatus);
+  const notePdfHref = `/api/invoicing/documents/${d.dispatchNoteId ?? ''}/pdf`;
 
   return (
     <RoleGate allow={DISPATCH_ROLES}>
@@ -143,19 +160,28 @@ export function DespachoDetalleView({ id }: { id: string }) {
           </div>
         </div>
         {/*
-          F8-S3b/M3: principal + «⋯». Principal: emitir la guía mientras falte; con la guía
-          emitida, verla. Revertir es destructivo y va al menú.
+          F8-S3b/M3: principal + «⋯». cc32: la principal sigue el estado de la guía —sin guía,
+          emitirla; con guía, imprimirla—. Descargar y ver la guía van al menú, y revertir, que
+          es destructivo, al final.
         */}
         {/* cc31: Historial, «Más opciones» y la principal, como en todo detalle. */}
         <div className="flex items-center gap-2">
           <AuditHistoryLink entityType="dispatches" entityId={d.id} />
           <HeaderActions
-            primary={['issue-note', 'view-note']}
+            // Revisión de cc32: con la guía en camino la principal es verla —como en main—, porque
+            // ahí están las acciones reales (reintentar, consultar al PSE); imprimir espera en el menú.
+            primary={['issue-note', 'print-note', 'view-note']}
+            primaryFooter={
+              noteOnTheWay ? (
+                <span className="max-w-64 text-right text-xs text-muted-foreground">
+                  {NOTE_WAITING_TEXT}
+                </span>
+              ) : undefined
+            }
             actions={[
               {
                 key: 'issue-note',
-                label:
-                  d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía de remisión',
+                label: d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía',
                 show: canIssueNote,
                 disabled: busy || pseOff,
                 title: pseOff ? 'Emisión electrónica no habilitada en este entorno' : undefined,
@@ -167,8 +193,29 @@ export function DespachoDetalleView({ id }: { id: string }) {
                 },
               },
               {
+                key: 'print-note',
+                label: 'Imprimir guía',
+                show: notePrintable,
+                print: notePdfHref,
+              },
+              // La guía en camino: imprimir queda en el menú, deshabilitado; el motivo se lee
+              // bajo «Ver la guía».
+              {
+                key: 'print-note-waiting',
+                label: 'Imprimir guía',
+                show: noteOnTheWay,
+                disabled: true,
+                title: NOTE_WAITING_TEXT,
+              },
+              {
+                key: 'note-pdf',
+                label: 'Descargar PDF de la guía',
+                show: notePrintable,
+                download: notePdfHref,
+              },
+              {
                 key: 'view-note',
-                label: 'Ver guía',
+                label: 'Ver la guía',
                 show: d.dispatchNoteId !== null,
                 href: `/comprobantes/${d.dispatchNoteId ?? ''}`,
               },

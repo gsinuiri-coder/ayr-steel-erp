@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -49,6 +49,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListStateMessage } from '@/components/list-state';
+import { onDownloadClick, printWithNotice } from '@/components/header-actions';
+import { LINK_CLASSNAME } from '@/lib/utils';
 
 const POS_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -597,10 +599,15 @@ export function PosView() {
 }
 
 /**
- * Lo que se ve cuando la venta ya está cerrada: el número del comprobante y su PDF.
+ * Lo que se ve cuando la venta ya está cerrada: el número del comprobante, imprimirlo y su PDF.
  *
  * Si el comprobante quedó pendiente (D-073) lo dice acá y no en un banner general: es el
  * único momento en que alguien está esperando ese papel.
+ *
+ * cc32: «Imprimir comprobante» es la principal y arranca con el foco, así Enter imprime; al
+ * pedir la impresión (y al cerrarla, si el navegador lo avisa) el foco pasa a «Nueva venta», y
+ * otro Enter empieza la venta siguiente. El PDF lo guarda el API recién cuando SUNAT acepta el
+ * comprobante (`storeFiles` solo con `ACCEPTED`): antes, imprimir espera y lo dice.
  */
 function SaleDoneDialog({
   sale,
@@ -609,6 +616,25 @@ function SaleDoneDialog({
   sale: PosSaleListItemDto | null;
   onClose: () => void;
 }) {
+  const printRef = useRef<HTMLButtonElement>(null);
+  const newSaleRef = useRef<HTMLButtonElement>(null);
+  const [printing, setPrinting] = useState(false);
+  const printable = sale?.fiscalDocumentStatus === 'ACCEPTED';
+  const pdfHref = sale === null ? '' : `/api/invoicing/documents/${sale.fiscalDocumentId}/pdf`;
+
+  function focusNewSale(): void {
+    newSaleRef.current?.focus();
+  }
+
+  function print(): void {
+    if (!printable || printing) return;
+    setPrinting(true);
+    void printWithNotice(pdfHref, { onAfterPrint: focusNewSale }).finally(() => {
+      setPrinting(false);
+      focusNewSale();
+    });
+  }
+
   return (
     <Dialog
       open={sale !== null}
@@ -616,7 +642,14 @@ function SaleDoneDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent>
+      <DialogContent
+        // Tres acciones en una fila (enlace, «Nueva venta» e «Imprimir comprobante»).
+        className="sm:max-w-md"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          (printable ? printRef : newSaleRef).current?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Venta {sale?.code} cerrada</DialogTitle>
           <DialogDescription>
@@ -624,19 +657,39 @@ function SaleDoneDialog({
             {sale?.customerName}. La mercadería ya salió del almacén.
           </DialogDescription>
         </DialogHeader>
-        {sale?.fiscalPending && (
-          <p className="text-sm text-muted-foreground">
-            El comprobante tomó su número y está pendiente de envío al PSE: se manda solo en cuanto
-            haya conexión (contingencia). La venta no depende de eso.
+        {/* Revisión de cc32: el motivo de no imprimir, a la vista y atado al botón. */}
+        {sale !== null && !printable && (
+          <p id="pos-print-reason" className="text-sm text-muted-foreground">
+            {sale.fiscalPending
+              ? 'El comprobante tomó su número y está pendiente de envío al PSE: se manda solo en cuanto haya conexión (contingencia). La venta no depende de eso. Se imprime cuando SUNAT lo acepte.'
+              : 'SUNAT todavía no aceptó el comprobante: se imprime cuando lo acepte.'}
           </p>
         )}
-        <DialogFooter>
-          {sale !== null && (
-            <Button variant="outline" asChild>
-              <a href={`/api/invoicing/documents/${sale.fiscalDocumentId}/pdf`}>Descargar PDF</a>
-            </Button>
+        <DialogFooter className="items-center">
+          {printable && (
+            <a
+              href={pdfHref}
+              className={`${LINK_CLASSNAME} text-sm whitespace-nowrap sm:mr-auto`}
+              onClick={(e) => {
+                onDownloadClick(e, pdfHref);
+              }}
+            >
+              Descargar PDF
+            </a>
           )}
-          <Button onClick={onClose}>Nueva venta</Button>
+          <Button ref={newSaleRef} variant="outline" onClick={onClose}>
+            Nueva venta
+          </Button>
+          <Button
+            ref={printRef}
+            disabled={!printable}
+            pending={printing}
+            pendingText="Preparando…"
+            aria-describedby={printable ? undefined : 'pos-print-reason'}
+            onClick={print}
+          >
+            Imprimir comprobante
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
