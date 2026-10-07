@@ -36,7 +36,21 @@ export interface PendingRow {
 /** Cuántos días adelante cuenta «por vencer» para una cotización. */
 export const QUOTATION_EXPIRY_WINDOW_DAYS = 7;
 
-function plural(n: number, one: string, many: string): string {
+/**
+ * cc32 (P3 de cc31): las consultas de la campana que se piden cada minuto. Toda operación que
+ * termina bien las vuelve a pedir (`Providers`), así despachar o emitir se refleja al momento y
+ * no al siguiente ciclo. Las lentas (piso de precios, cotizaciones por vencer) no entran: son
+ * caras y no las mueve un despacho ni una emisión.
+ */
+export const LIVE_PENDING_QUERY_KEYS = [
+  ['invoicing-alerts'],
+  ['pending', 'own-unaccepted-documents'],
+  ['orders-with-shortfall'],
+  ['pending', 'ready-orders'],
+  ['production-queue'],
+] as const;
+
+export function plural(n: number, one: string, many: string): string {
   return `${String(n)} ${n === 1 ? one : many}`;
 }
 

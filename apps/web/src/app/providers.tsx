@@ -1,19 +1,30 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConnectionBanner, useOnline } from '@/components/connection-banner';
 import { EnvironmentProvider } from '@/components/environment';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { LIVE_PENDING_QUERY_KEYS } from '@/lib/pending';
 
 export function Providers({ children, isDemo }: { children: ReactNode; isDemo: boolean }) {
-  const [client] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  const [client] = useState(() => {
+    const queryClient: QueryClient = new QueryClient({
+      defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+      // cc32: la campana se pone al día con cada operación que termina bien (despachar,
+      // emitir, anular…) en vez de esperar al minuto. Solo vuelve a pedir las consultas que
+      // están en pantalla.
+      mutationCache: new MutationCache({
+        onSuccess: () => {
+          for (const queryKey of LIVE_PENDING_QUERY_KEYS) {
+            void queryClient.invalidateQueries({ queryKey });
+          }
+        },
       }),
-  );
+    });
+    return queryClient;
+  });
   const online = useOnline();
   return (
     <QueryClientProvider client={client}>

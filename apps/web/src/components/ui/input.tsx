@@ -64,15 +64,56 @@ function Input({ className, type, onBlur, ...props }: React.ComponentProps<'inpu
 /**
  * cc31: un campo con su unidad adentro («kg», «m», «S/»), a la derecha. La unidad es parte del
  * campo y no un texto suelto al lado: se lee junto a la cifra y no corre la grilla.
+ *
+ * cc32 (P3 de cc31): la unidad también entra en el nombre accesible —un lector de pantalla oía
+ * «Peso» sin «kg»—. Con `aria-label` se le agrega; con una etiqueta `<label for>`, el campo se
+ * nombra con la etiqueta y la unidad (`aria-labelledby`). La unidad visible sigue oculta para el
+ * lector, así no se lee dos veces.
  */
+/** El nombre con la unidad, salvo que ya la diga («Peso (kg) de la línea 1») o no haya unidad. */
+function withUnit(label: string | undefined, unit: string): string | undefined {
+  if (label === undefined || unit === '' || label.includes(`(${unit})`)) return label;
+  return `${label} (${unit})`;
+}
+
 function InputWithUnit({
   unit,
   className,
+  ref,
   ...props
 }: React.ComponentProps<'input'> & { unit: string }) {
+  const unitId = React.useId();
+  const inner = React.useRef<HTMLInputElement | null>(null);
+  const setRef = React.useCallback(
+    (node: HTMLInputElement | null) => {
+      inner.current = node;
+      if (typeof ref === 'function') ref(node);
+      else if (ref) ref.current = node;
+    },
+    [ref],
+  );
+  const named = props['aria-label'] !== undefined || props['aria-labelledby'] !== undefined;
+  React.useEffect(() => {
+    const input = inner.current;
+    if (!input || named) return;
+    const label = input.id
+      ? document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(input.id)}"]`)
+      : input.closest('label');
+    if (!label || unit === '' || label.textContent?.includes(`(${unit})`)) return;
+    if (!label.id) label.id = `${unitId}-label`;
+    input.setAttribute('aria-labelledby', `${label.id} ${unitId}`);
+  }, [named, unitId, unit, props.id]);
   return (
     <div className="relative w-full">
-      <Input className={cn('pr-9', className)} {...props} />
+      <Input
+        ref={setRef}
+        className={cn('pr-9', className)}
+        {...props}
+        aria-label={withUnit(props['aria-label'], unit)}
+      />
+      <span id={unitId} hidden>
+        ({unit})
+      </span>
       <span
         aria-hidden
         className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted-foreground"

@@ -72,8 +72,9 @@ interface Tile {
   href: string;
   /** El conteo pide mirarlo (ámbar) cuando no es cero. */
   attention?: boolean;
-  /** La consulta que da la cifra falló: se muestra «—» y no se ofrece el enlace. */
+  /** La consulta que da la cifra falló: se muestra «—», no se ofrece el enlace y sí «Reintentar». */
   failed?: boolean;
+  retry?: () => void;
   /**
    * El enlace lleva a un aviso del mismo Panel, que solo se pinta cuando hay algo: con 0 no hay a
    * dónde ir y la tarjeta no es un enlace.
@@ -132,6 +133,8 @@ export function PanelToday() {
     {
       key: 'quotations',
       count: expiring,
+      failed: pending.failed.emittedQuotations,
+      retry: pending.retry,
       label: 'Cotizaciones por vencer',
       detail: 'en los próximos 7 días',
       href: '/cotizaciones?status=EMITTED',
@@ -142,6 +145,7 @@ export function PanelToday() {
             key: 'reservations',
             count: seller.data?.expiringReservations ?? null,
             failed: seller.isError,
+            retry: () => void seller.refetch(),
             label: 'Reservas por expirar',
             detail: 'en los próximos 3 días',
             href: '/reservas-temporales',
@@ -151,6 +155,8 @@ export function PanelToday() {
     {
       key: 'ready',
       count: pending.readyOrders,
+      failed: pending.failed.readyOrders,
+      retry: pending.retry,
       label: 'Pedidos listos',
       detail: 'para despachar',
       href: '/pedidos?stage=READY',
@@ -159,6 +165,7 @@ export function PanelToday() {
       key: 'production',
       count: inProduction.data?.total ?? null,
       failed: inProduction.isError,
+      retry: () => void inProduction.refetch(),
       label: 'Pedidos en producción',
       href: '/pedidos?stage=IN_PRODUCTION',
     },
@@ -168,6 +175,7 @@ export function PanelToday() {
             key: 'stock',
             count: stockShortages.data?.length ?? null,
             failed: stockShortages.isError,
+            retry: () => void stockShortages.refetch(),
             label: 'Cotizaciones sin stock',
             detail: 'evaluar compra',
             href: '#cotizaciones-sin-stock',
@@ -177,6 +185,8 @@ export function PanelToday() {
           {
             key: 'shortfall',
             count: pending.shortfallOrders?.length ?? null,
+            failed: pending.failed.shortfallOrders,
+            retry: pending.retry,
             label: 'Pedidos con faltante',
             detail: 'confirmados sin material',
             href: '#pedidos-con-faltante',
@@ -186,6 +196,8 @@ export function PanelToday() {
           {
             key: 'floor',
             count: pending.belowFloorPrices,
+            failed: pending.failed.belowFloorPrices,
+            retry: pending.retry,
             label: 'Precios de lista bajo el piso',
             detail: 'revisar precio',
             href: '#precios-bajo-piso',
@@ -218,7 +230,19 @@ export function PanelToday() {
                 {t.label}
               </span>
               {t.failed ? (
-                <span className="text-xs text-destructive">No se pudo calcular</span>
+                <span className="flex flex-wrap items-center gap-x-1.5 text-xs text-destructive">
+                  No se pudo calcular
+                  {t.retry && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs"
+                      onClick={t.retry}
+                    >
+                      Reintentar
+                    </Button>
+                  )}
+                </span>
               ) : (
                 t.detail && <span className="text-xs text-muted-foreground">{t.detail}</span>
               )}

@@ -15,7 +15,7 @@ import {
   type SalesOrderListItemDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { pendingRows, type PendingSources } from '@/lib/pending';
+import { LIVE_PENDING_QUERY_KEYS, pendingRows, type PendingSources } from '@/lib/pending';
 import { useSession } from '@/lib/session';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -38,6 +38,10 @@ const SLOW_REFRESH_MS = 600_000;
 export function usePendingSources(): PendingSources & {
   own: boolean;
   status: 'loading' | 'error' | 'ok';
+  /** cc32: qué fuente falló, para que el Panel diga «No se pudo calcular» en vez de «…». */
+  failed: Partial<Record<keyof PendingSources, boolean>>;
+  /** Vuelve a pedir las fuentes que fallaron. */
+  retry: () => void;
 } {
   const { user } = useSession();
   const isAdmin = user.role === Role.ADMINISTRADOR;
@@ -49,20 +53,20 @@ export function usePendingSources(): PendingSources & {
 
   // El administrador usa el contador global; el vendedor, la lista filtrada por él.
   const alerts = useQuery({
-    queryKey: ['invoicing-alerts'],
+    queryKey: LIVE_PENDING_QUERY_KEYS[0],
     queryFn: () => api<{ pending: number; stalled: number }>('/invoicing/alerts'),
     enabled: isAdmin,
     ...live,
   });
   const ownDocuments = useQuery({
-    queryKey: ['pending', 'own-unaccepted-documents'],
+    queryKey: LIVE_PENDING_QUERY_KEYS[1],
     queryFn: () =>
       api<PaginatedResult<unknown>>('/invoicing/documents?status=ISSUED,SEND_ERROR&pageSize=1'),
     enabled: isSeller,
     ...live,
   });
   const shortfall = useQuery({
-    queryKey: ['orders-with-shortfall'],
+    queryKey: LIVE_PENDING_QUERY_KEYS[2],
     queryFn: () => api<OrderWithShortfallDto[]>('/sales/orders/with-shortfall'),
     enabled: isAdmin,
     ...live,
@@ -74,7 +78,7 @@ export function usePendingSources(): PendingSources & {
     ...slow,
   });
   const ready = useQuery({
-    queryKey: ['pending', 'ready-orders'],
+    queryKey: LIVE_PENDING_QUERY_KEYS[3],
     queryFn: () =>
       api<PaginatedResult<SalesOrderListItemDto>>('/sales/orders?stage=READY&pageSize=1'),
     enabled: sells,
@@ -93,7 +97,7 @@ export function usePendingSources(): PendingSources & {
     ...slow,
   });
   const queue = useQuery({
-    queryKey: ['production-queue'],
+    queryKey: LIVE_PENDING_QUERY_KEYS[4],
     queryFn: () => api<ProductionQueueEntryDto[]>('/production/roofing/queue'),
     enabled: plants,
     ...live,
@@ -121,6 +125,15 @@ export function usePendingSources(): PendingSources & {
     temporaryReservations: null,
     emittedQuotations: quotations.data?.items ?? null,
     productionQueue: queue.data?.length ?? null,
+    failed: {
+      shortfallOrders: shortfall.isError,
+      belowFloorPrices: floor.isError,
+      readyOrders: ready.isError,
+      emittedQuotations: quotations.isError,
+    },
+    retry: () => {
+      for (const q of enabled) if (q.isError) void q.refetch();
+    },
   };
 }
 

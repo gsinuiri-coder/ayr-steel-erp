@@ -90,8 +90,8 @@ test.describe('cc31 — formulario de nuevo despacho', () => {
 
     // «Qué sale» viene llenado con lo pendiente.
     const qtyInput = page.getByRole('textbox', {
+      // cc32: el nombre termina con la unidad del campo.
       name: `Cantidad a despachar de la línea 1 (${product.sku})`,
-      exact: true,
     });
     await expect(qtyInput).toHaveValue(/^5(\.0+)?$/, { timeout: 20_000 });
 

@@ -125,11 +125,14 @@ export function ReactivateDocumentDialog({
             id="reactivate-reason"
             value={reason}
             maxLength={240}
-            placeholder="Por qué se reactiva"
+            aria-describedby="reactivate-reason-hint"
             onChange={(e) => {
               setReason(e.target.value);
             }}
           />
+          <p id="reactivate-reason-hint" className="text-xs text-muted-foreground">
+            Di por qué se reactiva.
+          </p>
           {trimmed.length > 0 && trimmed.length < 3 && (
             <p className="text-sm text-destructive">Explica el motivo en al menos 3 caracteres.</p>
           )}
