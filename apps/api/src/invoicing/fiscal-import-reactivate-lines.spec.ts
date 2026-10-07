@@ -127,15 +127,30 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
 
   function build(s: Scenario) {
     const audit = { write: jest.fn().mockResolvedValue(undefined) };
-    const queryRaw = jest.fn((strings: TemplateStringsArray) =>
-      Promise.resolve(strings.join('?').includes('"sales_orders"') && s.order ? [s.order] : []),
+    // cc30: `lockDocuments` emite `SELECT "id" … = ANY($ids) … FOR UPDATE` y devuelve las filas
+    // que existían; el mock las da todas por existentes. El pedido se lee después con Prisma.
+    const queryRaw = jest.fn((_strings: TemplateStringsArray, ids?: unknown) =>
+      Promise.resolve(Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []),
     );
+    // Lo que no es la lectura de ids de borradores (`draftIdsOn`, select id): primero notas de
+    // crédito; después, otros comprobantes vivos del pedido.
+    const lists = [s.creditNotes, s.others];
     const models = {
       $queryRaw: queryRaw,
+      salesOrder: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue(
+            s.order
+              ? { status: s.order.status, customerId: s.order.customer_id, seq: s.order.seq }
+              : null,
+          ),
+      },
       fiscalDocument: {
         findUnique: jest.fn().mockResolvedValue(s.document),
-        // Primera llamada: notas de crédito; segunda: otros comprobantes vivos del pedido.
-        findMany: jest.fn().mockResolvedValueOnce(s.creditNotes).mockResolvedValueOnce(s.others),
+        findMany: jest.fn((args: { select?: { id?: boolean } }) =>
+          Promise.resolve(args.select?.id ? [] : (lists.shift() ?? [])),
+        ),
         count: jest.fn().mockResolvedValue(s.drafts),
         updateMany: jest.fn().mockResolvedValue({ count: s.updated }),
       },
@@ -271,9 +286,12 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
         'customerPayment',
         'fiscalDocument',
         'fiscalDocumentItem',
+        // cc30: el pedido (ya bloqueado por la puerta) se lee con Prisma; solo lectura.
+        'salesOrder',
         'salesOrderItem',
       ].sort(),
     );
+    expect(tx.salesOrder.findUnique).toHaveBeenCalledTimes(1);
   });
 
   it('el saldo por cobrar queda igual al total nuevo (sin cobros ni notas de crédito)', async () => {

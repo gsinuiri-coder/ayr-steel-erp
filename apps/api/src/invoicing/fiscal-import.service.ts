@@ -29,6 +29,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { invoicedByOrderItem } from './invoicing-net';
 import { paperTotalDifference, planOrderLines } from './reactivate-order-lines';
+import { lockDocuments } from '../inventory/document-locks';
 
 /**
  * La anulación **interna** de un comprobante que el ERP no emitió electrónicamente
@@ -69,9 +70,7 @@ export class FiscalImportService {
       // El lock va antes de leer, igual que en `addPayment` y en la nota de crédito: sin él,
       // un cobro que entra mientras se decide la anulación queda colgado de un comprobante
       // que dejó de deber, y el guardrail de abajo no lo habría visto.
-      await tx.$queryRaw`
-        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
-      `;
+      await lockDocuments(tx, { fiscalDocuments: [id] });
       const document = await tx.fiscalDocument.findUnique({
         where: { id },
         select: {
@@ -316,14 +315,12 @@ export class FiscalImportService {
       //   commit, y los chequeos de abajo —sentencias nuevas en READ COMMITTED— ya lo ven
       //   aceptado.
       if (document.salesOrderId !== null) {
-        // Con `lock`, el SQL de siempre; sin él, la misma lectura sin `FOR UPDATE`.
-        const [order] = lock
-          ? await tx.$queryRaw<{ status: string }[]>`
-            SELECT "status" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid FOR UPDATE
-          `
-          : await tx.$queryRaw<{ status: string }[]>`
-            SELECT "status" FROM "sales_orders" WHERE "id" = ${document.salesOrderId}::uuid
-          `;
+        // Con `lock`, el pedido ya viene tomado de `lockAnnulledForReactivation` (cc30); sin él,
+        // es una lectura simple.
+        const order = await tx.salesOrder.findUnique({
+          where: { id: document.salesOrderId },
+          select: { status: true },
+        });
         // D-373 (decisión del dueño): el pedido no pudo cambiar mientras el comprobante estuvo
         // anulado. Se lee con el pedido ya bloqueado, así que una edición no puede colarse.
         const orderLabel = document.salesOrder
@@ -343,18 +340,7 @@ export class FiscalImportService {
           orderLabel,
         );
       }
-      if (lock) {
-        await tx.$queryRaw`
-          SELECT d."id" FROM "fiscal_documents" d
-          WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
-            AND EXISTS (
-              SELECT 1 FROM "fiscal_document_items" i
-              WHERE i."document_id" = d."id" AND i."sales_order_item_id" = ANY(${orderItemIds}::uuid[])
-            )
-          ORDER BY d."id"
-          FOR UPDATE
-        `;
-      }
+      if (lock) await lockOrderDrafts(tx, id, [], orderItemIds);
       await assertLinesNotReinvoiced(tx, id, label, document.items, orderItemIds);
       const drafts = await tx.fiscalDocument.count({
         where: {
@@ -625,15 +611,14 @@ export class FiscalImportService {
       customer_id: string;
       seq: number;
     }
-    const [order] = lock
-      ? await tx.$queryRaw<OrderRow[]>`
-          SELECT "status", "customer_id", "seq" FROM "sales_orders"
-          WHERE "id" = ${salesOrderId}::uuid FOR UPDATE
-        `
-      : await tx.$queryRaw<OrderRow[]>`
-          SELECT "status", "customer_id", "seq" FROM "sales_orders"
-          WHERE "id" = ${salesOrderId}::uuid
-        `;
+    // cc30: con `lock`, el pedido ya viene tomado de `lockAnnulledForReactivation`.
+    const found = await tx.salesOrder.findUnique({
+      where: { id: salesOrderId },
+      select: { status: true, customerId: true, seq: true },
+    });
+    const order: OrderRow | undefined = found
+      ? { status: found.status, customer_id: found.customerId, seq: found.seq }
+      : undefined;
     if (!order) throw new NotFoundException('Pedido no encontrado');
     const orderCode = salesOrderCode(order.seq);
     if (order.status === SalesOrderStatus.CANCELLED) {
@@ -674,21 +659,7 @@ export class FiscalImportService {
 
     // Los borradores del pedido, con lock en orden de id: uno que se esté registrando espera a
     // este commit, y los chequeos de abajo ya lo ven aceptado (revisiones cc07).
-    if (lock) {
-      await tx.$queryRaw`
-        SELECT d."id" FROM "fiscal_documents" d
-        WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
-          AND (
-            d."sales_order_id" = ${salesOrderId}::uuid
-            OR EXISTS (
-              SELECT 1 FROM "fiscal_document_items" i
-              WHERE i."document_id" = d."id" AND i."sales_order_item_id" = ANY(${orderLineIds}::uuid[])
-            )
-          )
-        ORDER BY d."id"
-        FOR UPDATE
-      `;
-    }
+    if (lock) await lockOrderDrafts(tx, id, [salesOrderId], orderLineIds);
     const onOrder = {
       id: { not: id },
       archivedAt: null,
@@ -757,6 +728,47 @@ export class FiscalImportService {
  * 5 s por defecto de Prisma no alcanzan con un pedido grande; el mismo margen que `create`.
  */
 export const REACTIVATION_TX_TIMEOUT_MS = 30_000;
+
+/**
+ * cc30: los borradores (factura o boleta en `DRAFT`, salvo `exceptId`) de esos pedidos o que
+ * facturan esas líneas. Solo ids, sin bloqueo.
+ */
+async function draftIdsOn(
+  tx: Prisma.TransactionClient,
+  exceptId: string,
+  orderIds: readonly string[],
+  lineIds: readonly string[],
+): Promise<string[]> {
+  if (orderIds.length === 0 && lineIds.length === 0) return [];
+  const rows = await tx.fiscalDocument.findMany({
+    where: {
+      status: FiscalDocumentStatus.DRAFT,
+      id: { not: exceptId },
+      OR: [
+        { salesOrderId: { in: [...orderIds] } },
+        { items: { some: { salesOrderItemId: { in: [...lineIds] } } } },
+        { items: { some: { salesOrderItem: { salesOrderId: { in: [...orderIds] } } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}
+
+/**
+ * cc30: los borradores de esos pedidos o líneas, bloqueados. Con el pedido ya tomado no nace
+ * ninguno nuevo, así que lo normal es que ya vengan tomados de `lockAnnulledForReactivation`; uno
+ * que nació entre esa lectura y la toma del pedido se pide con `NOWAIT` (la puerta), y si otra
+ * operación lo tiene, sale el 409.
+ */
+export async function lockOrderDrafts(
+  tx: Prisma.TransactionClient,
+  exceptId: string,
+  orderIds: readonly string[],
+  lineIds: readonly string[],
+): Promise<void> {
+  await lockDocuments(tx, { fiscalDocuments: await draftIdsOn(tx, exceptId, orderIds, lineIds) });
+}
 
 /** Lo que deja leído `lockAnnulledForReactivation`: la parte común de las dos reactivaciones. */
 export type AnnulledForReactivation = Awaited<ReturnType<typeof lockAnnulledForReactivation>>;
@@ -932,15 +944,33 @@ export async function lockAnnulledForReactivation(
   tx: Prisma.TransactionClient,
   id: string,
   lock = true,
+  /** D-381: el pedido destino, que se toma junto con el de origen. */
+  otherOrderIds: readonly string[] = [],
 ) {
   // El mismo lock que la anulación: una anulación, una reactivación o un cobro simultáneos
   // sobre esta fila esperan a que esta transacción termine y ven el estado ya cambiado.
   // Sin `lock` (la sección del pedido, cc13) es una lectura simple: solo informa, y el modal y
   // la ejecución vuelven a comprobar todo con sus locks.
+  //
+  // cc30 (D-471): comprobante → pedido, y los borradores son comprobantes. Antes se tomaban el
+  // comprobante, el pedido y recién después los borradores del pedido; con anular el pedido
+  // (borradores → pedido) eso se cruzaba. Ahora todo va al inicio y en una pasada: el
+  // comprobante con los borradores de sus pedidos (por id, juntos) y después los pedidos. Los ids
+  // se leen sin bloqueo; lo que decide se lee abajo, ya bloqueado, y los borradores se vuelven a
+  // buscar con los pedidos tomados (`lockOrderDrafts`).
   if (lock) {
-    await tx.$queryRaw`
-      SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
-    `;
+    const pre = await tx.fiscalDocument.findUnique({
+      where: { id },
+      select: { salesOrderId: true, items: { select: { salesOrderItemId: true } } },
+    });
+    const orderIds = [
+      ...new Set([pre?.salesOrderId, ...otherOrderIds].filter((o): o is string => !!o)),
+    ];
+    const lineIds = (pre?.items ?? []).flatMap((i) =>
+      i.salesOrderItemId ? [i.salesOrderItemId] : [],
+    );
+    const drafts = await draftIdsOn(tx, id, orderIds, lineIds);
+    await lockDocuments(tx, { fiscalDocuments: [id, ...drafts], salesOrders: orderIds });
   }
   const document = await tx.fiscalDocument.findUnique({
     where: { id },
@@ -991,6 +1021,9 @@ export async function lockAnnulledForReactivation(
     },
   });
   if (!document) throw new NotFoundException('Comprobante no encontrado');
+  // cc30: el pedido se leyó sin bloqueo; si cambió en el medio (traer a otro pedido), el actual se
+  // pide ahora por la puerta (con `NOWAIT`, porque llega fuera de orden).
+  if (lock) await lockDocuments(tx, { salesOrders: [document.salesOrderId] });
   const label = document.number ?? 'El comprobante';
 
   if (document.origin === FiscalDocumentOrigin.ISSUED_HERE) {

@@ -30,6 +30,7 @@ import {
   assertCanReactivate,
   availability,
   lockAnnulledForReactivation,
+  lockOrderDrafts,
 } from './fiscal-import.service';
 import { pairRowsToOrder } from './move-to-order-lines';
 import { paperTotalDifference, planOrderLines } from './reactivate-order-lines';
@@ -334,10 +335,13 @@ export class MoveDocumentToOrderService {
    * no se esperan en orden inverso) y los borradores del destino; el mismo orden que D-378.
    */
   private async plan(tx: Prisma.TransactionClient, id: string, targetOrderId: string, lock = true) {
+    // cc30 (D-471): el comprobante con los borradores de los dos pedidos y después los dos pedidos,
+    // todo al inicio y por la puerta (antes: comprobante → pedidos → borradores del destino).
     const { document, label, statusBeforeAnnul, annulledAt } = await lockAnnulledForReactivation(
       tx,
       id,
       lock,
+      [targetOrderId],
     );
 
     if (document.origin !== FiscalDocumentOrigin.MANUAL) {
@@ -378,15 +382,27 @@ export class MoveDocumentToOrderService {
     }
 
     const ids = [sourceOrderId, targetOrderId];
-    const orders = lock
-      ? await tx.$queryRaw<OrderRow[]>`
-          SELECT "id", "status", "customer_id", "seq", "issue_date", "seller_id" FROM "sales_orders"
-          WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE
-        `
-      : await tx.$queryRaw<OrderRow[]>`
-          SELECT "id", "status", "customer_id", "seq", "issue_date", "seller_id" FROM "sales_orders"
-          WHERE "id" = ANY(${ids}::uuid[])
-        `;
+    // cc30: con `lock`, los dos pedidos ya vienen tomados (por id) de `lockAnnulledForReactivation`.
+    const orders: OrderRow[] = (
+      await tx.salesOrder.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          status: true,
+          customerId: true,
+          seq: true,
+          issueDate: true,
+          sellerId: true,
+        },
+      })
+    ).map((o) => ({
+      id: o.id,
+      status: o.status,
+      customer_id: o.customerId,
+      seq: o.seq,
+      issue_date: o.issueDate,
+      seller_id: o.sellerId,
+    }));
     const source = orders.find((o) => o.id === sourceOrderId);
     const target = orders.find((o) => o.id === targetOrderId);
     if (!source || !target) throw new NotFoundException('Pedido no encontrado');
@@ -461,21 +477,7 @@ export class MoveDocumentToOrderService {
     const targetLineIds = targetLines.map((o) => o.id);
 
     // Los borradores del destino, con lock en orden de id (el mismo criterio que D-378).
-    if (lock) {
-      await tx.$queryRaw`
-        SELECT d."id" FROM "fiscal_documents" d
-        WHERE d."status" = 'DRAFT' AND d."id" <> ${id}::uuid
-          AND (
-            d."sales_order_id" = ${targetOrderId}::uuid
-            OR EXISTS (
-              SELECT 1 FROM "fiscal_document_items" i
-              WHERE i."document_id" = d."id" AND i."sales_order_item_id" = ANY(${targetLineIds}::uuid[])
-            )
-          )
-        ORDER BY d."id"
-        FOR UPDATE
-      `;
-    }
+    if (lock) await lockOrderDrafts(tx, id, [targetOrderId], targetLineIds);
     const onTarget = {
       id: { not: id },
       archivedAt: null,

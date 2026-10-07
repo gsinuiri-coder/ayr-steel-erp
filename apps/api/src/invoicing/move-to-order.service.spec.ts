@@ -93,6 +93,8 @@ describe('MoveDocumentToOrderService (D-381)', () => {
     sourceLines: { id: string; lineNumber: number }[];
     others: { number: string | null }[];
     drafts: number;
+    /** cc30: los ids de borradores que devuelve la lectura previa al bloqueo (`draftIdsOn`). */
+    draftIds: string[];
     customer: { isSystem: boolean };
     updated: number;
   }
@@ -163,6 +165,7 @@ describe('MoveDocumentToOrderService (D-381)', () => {
       ],
       others: [],
       drafts: 0,
+      draftIds: [],
       customer: { isSystem: false },
       updated: 1,
     };
@@ -170,15 +173,39 @@ describe('MoveDocumentToOrderService (D-381)', () => {
 
   function build(s: Scenario) {
     const audit = { write: jest.fn().mockResolvedValue(undefined) };
-    const queryRaw = jest.fn((strings: TemplateStringsArray) =>
-      Promise.resolve(strings.join('?').includes('"sales_orders"') ? s.orders : []),
+    // cc30: `lockDocuments` emite `SELECT "id" … = ANY($ids) … FOR UPDATE` y devuelve las filas
+    // que existían; el mock las da todas por existentes. Los pedidos se leen después con Prisma.
+    const queryRaw = jest.fn((_strings: TemplateStringsArray, ids?: unknown) =>
+      Promise.resolve(Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []),
     );
+    // Lo que no es la lectura de ids de borradores (`draftIdsOn`, select id): primero notas de
+    // crédito vivas (lock común); después, otros vivos del destino.
+    const lists = [s.creditNotes, s.others];
     const models = {
       $queryRaw: queryRaw,
+      salesOrder: {
+        findMany: jest.fn((args: { where: { id: { in: string[] } } }) =>
+          Promise.resolve(
+            s.orders
+              .filter((o) => args.where.id.in.includes(o.id))
+              .map((o) => ({
+                id: o.id,
+                status: o.status,
+                customerId: o.customer_id,
+                seq: o.seq,
+                issueDate: o.issue_date,
+                sellerId: o.seller_id,
+              })),
+          ),
+        ),
+      },
       fiscalDocument: {
         findUnique: jest.fn().mockResolvedValue(s.document),
-        // Primera llamada: notas de crédito vivas (lock común); segunda: otros vivos del destino.
-        findMany: jest.fn().mockResolvedValueOnce(s.creditNotes).mockResolvedValueOnce(s.others),
+        findMany: jest.fn((args: { select?: { id?: boolean } }) =>
+          Promise.resolve(
+            args.select?.id ? s.draftIds.map((id) => ({ id })) : (lists.shift() ?? []),
+          ),
+        ),
         // Primera: cualquier nota de crédito; segunda: borradores del destino.
         count: jest.fn().mockResolvedValueOnce(s.anyCreditNotes).mockResolvedValueOnce(s.drafts),
         updateMany: jest.fn().mockResolvedValue({ count: s.updated }),
@@ -381,10 +408,53 @@ describe('MoveDocumentToOrderService (D-381)', () => {
         'dispatch',
         'fiscalDocument',
         'fiscalDocumentItem',
+        // cc30: los dos pedidos (ya bloqueados por la puerta) se leen con Prisma; solo lectura.
+        'salesOrder',
         'salesOrderItem',
         'user',
       ].sort(),
     );
+    expect(Object.keys(tx.salesOrder)).toEqual(['findMany']);
+  });
+
+  it('cc30 (D-471): comprobante + borradores de los dos pedidos → los dos pedidos, todo antes de leer lo que decide', async () => {
+    const s = happy();
+    s.draftIds = ['doc-0001', 'doc-9999'];
+    const { service, tx } = build(s);
+    await service.move(ADMIN, 'doc-1389', INPUT);
+
+    const calls = tx.$queryRaw.mock.calls as unknown[][];
+    const sqlOf = (n: number): string => (calls[n]![0] as TemplateStringsArray).join('?');
+    // Dos sentencias de la puerta; la re-búsqueda de borradores del destino ya los tiene tomados.
+    expect(calls).toHaveLength(2);
+    expect(sqlOf(0)).toMatch(
+      /FROM "fiscal_documents" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" FOR UPDATE$/,
+    );
+    expect(calls[0]![1]).toEqual(['doc-0001', 'doc-1389', 'doc-9999']);
+    expect(sqlOf(1)).toMatch(
+      /FROM "sales_orders" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" FOR UPDATE$/,
+    );
+    expect(calls[1]![1]).toEqual([SOURCE, TARGET]);
+    // Los ids de borradores se buscaron por los dos pedidos y por las líneas del comprobante.
+    expect(tx.fiscalDocument.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: FiscalDocumentStatus.DRAFT,
+          id: { not: 'doc-1389' },
+          OR: expect.arrayContaining([
+            { salesOrderId: { in: [SOURCE, TARGET] } },
+            { items: { some: { salesOrderItemId: { in: ['src-1', 'src-2'] } } } },
+          ]) as unknown,
+        }) as unknown,
+        select: { id: true },
+      }),
+    );
+    // La última toma va antes de la lectura del comprobante que decide, de los pedidos y de la
+    // cuenta de borradores del destino.
+    const lastLock = tx.$queryRaw.mock.invocationCallOrder[1]!;
+    expect(lastLock).toBeLessThan(tx.fiscalDocument.findUnique.mock.invocationCallOrder[1]!);
+    expect(lastLock).toBeLessThan(tx.salesOrder.findMany.mock.invocationCallOrder[0]!);
+    expect(lastLock).toBeLessThan(tx.fiscalDocument.count.mock.invocationCallOrder[1]!);
   });
 
   it('el saldo por cobrar queda igual al total nuevo', async () => {
@@ -666,7 +736,14 @@ describe('MoveDocumentToOrderService (D-381)', () => {
       Object.assign(built.prisma, prisma);
       const reader = new Proxy(built.tx, {
         get(target, prop: string) {
-          if (prop === 'salesOrder') return prisma.salesOrder;
+          // cc30: el pedido destino de la lista (`findUnique`) y los pedidos del plan (`findMany`,
+          // el del `tx` simulado, que `prismaCalls` cuenta).
+          if (prop === 'salesOrder') {
+            return {
+              findUnique: prisma.salesOrder.findUnique,
+              findMany: target.salesOrder.findMany,
+            };
+          }
           if (prop === 'fiscalDocument' && findManyDocs.mock.calls.length === 0) {
             return prisma.fiscalDocument;
           }
@@ -740,6 +817,8 @@ describe('MoveDocumentToOrderService (D-381)', () => {
       // Por candidato: 4 de `lockAnnulledForReactivation` (comprobante, auditoría, cobros, notas
       // de crédito vivas) + 10 del plan (notas de crédito, pedidos, 2 de despachos, 2 de líneas,
       // otros vivos, borradores, cliente, vendedores). Sin lock no corre el SELECT de borradores.
+      // cc30: sin cambio de cuenta. Los pedidos pasaron de `$queryRaw` a `salesOrder.findMany`
+      // (una por una), y sin lock no corren ni la lectura previa de ids ni `lockOrderDrafts`.
       expect(prismaCalls()).toBe(2 + 14);
     });
 

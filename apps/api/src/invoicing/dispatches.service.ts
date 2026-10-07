@@ -42,6 +42,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { assertSellerAccess, sellerWhere } from '../auth/seller-scope';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { lockDocuments } from '../inventory/document-locks';
 import { sortedUniqueIds } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { consumeReservationQty, restoreReservationQty } from '../sales/reservation-guard';
@@ -189,9 +190,7 @@ export class DispatchesService {
     const dispatchDate = this.operationDate.resolve(actor, input.dispatchDate);
     // Lock del pedido primero, igual que `SalesOrdersService.cancel`: dos despachos
     // simultáneos del mismo pedido se serializan en vez de repartirse el pendiente.
-    await tx.$queryRaw`
-      SELECT "id" FROM "sales_orders" WHERE "id" = ${input.salesOrderId}::uuid FOR UPDATE
-    `;
+    await lockDocuments(tx, { salesOrders: [input.salesOrderId] });
     const order = await tx.salesOrder.findUnique({
       where: { id: input.salesOrderId },
       include: {
@@ -712,22 +711,15 @@ export class DispatchesService {
     mode: { operationDate: string } | { redateInvoiceId: string },
   ): Promise<void> {
     const redateInvoiceId = 'redateInvoiceId' in mode ? mode.redateInvoiceId : null;
-    const rows = await tx.$queryRaw<
-      { id: string; status: DispatchStatus; sales_order_id: string }[]
-    >`
-          SELECT "id", "status", "sales_order_id" FROM "dispatches"
-          WHERE "id" = ${id}::uuid FOR UPDATE
-        `;
-    const head = rows[0];
-    if (!head) throw new NotFoundException('Despacho no encontrado');
+    // cc30 (D-471): despacho → pedido en una sola pasada por la puerta. El pedido del despacho se
+    // lee sin bloquear (no cambia) y el estado se lee ya con los dos tomados.
+    const link = await tx.dispatch.findUnique({ where: { id }, select: { salesOrderId: true } });
+    if (!link) throw new NotFoundException('Despacho no encontrado');
+    await lockDocuments(tx, { dispatches: [id], salesOrders: [link.salesOrderId] });
+    const head = await tx.dispatch.findUniqueOrThrow({ where: { id }, select: { status: true } });
     if (head.status === DispatchStatus.REVERSED) {
       throw new ConflictException('El despacho ya fue revertido');
     }
-
-    // El pedido, en el mismo orden que `create`: pedido → bobinas → saldos.
-    await tx.$queryRaw`
-          SELECT "id" FROM "sales_orders" WHERE "id" = ${head.sales_order_id}::uuid FOR UPDATE
-        `;
 
     const dispatch = await tx.dispatch.findUniqueOrThrow({
       where: { id },
@@ -882,12 +874,7 @@ export class DispatchesService {
     }[],
   ): Promise<void> {
     const reservations = sortedUniqueIds(reservationIds.flatMap((id) => (id === null ? [] : [id])));
-    if (reservations.length > 0) {
-      await tx.$queryRaw`
-        SELECT "id" FROM "reservations" WHERE "id" = ANY(${reservations}::uuid[])
-        ORDER BY "id" FOR UPDATE
-      `;
-    }
+    if (reservations.length > 0) await lockDocuments(tx, { reservations });
     await this.inventory.lockInOrder(tx, { coilIds, items });
   }
 

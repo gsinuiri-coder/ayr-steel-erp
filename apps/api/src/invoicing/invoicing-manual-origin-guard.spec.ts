@@ -42,12 +42,14 @@ describe('InvoicingService.assignInTx — una nota de crédito de un afectado MA
 
   function fakeTx(affectedOrigin: FiscalDocumentOrigin) {
     return {
-      $queryRaw: jest
-        .fn()
-        .mockResolvedValue([
-          { id: 'doc-1', status: FiscalDocumentStatus.DRAFT, doc_type: FiscalDocType.NOTA_CREDITO },
-        ]),
+      // cc30: el bloqueo va por `lockDocuments` (solo ids) y la cabecera se lee con Prisma.
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'doc-1' }]),
       fiscalDocument: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'doc-1',
+          status: FiscalDocumentStatus.DRAFT,
+          docType: FiscalDocType.NOTA_CREDITO,
+        }),
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 'doc-1',
           docType: FiscalDocType.NOTA_CREDITO,

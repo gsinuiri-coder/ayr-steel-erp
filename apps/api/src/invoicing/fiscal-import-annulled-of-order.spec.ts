@@ -103,9 +103,13 @@ describe('FiscalImportService.annulledOfOrder (cc13)', () => {
     const docs = opts.docs ?? [listed];
     const prisma = {
       $transaction: jest.fn(),
-      $queryRaw: jest
-        .fn()
-        .mockResolvedValue([{ status: 'CONFIRMED', customer_id: 'cust-1', seq: 11 }]),
+      // cc30: sin bloqueo no hay SQL crudo; el pedido se lee con Prisma (D-373 y D-378).
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      salesOrder: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ status: 'CONFIRMED', customerId: 'cust-1', seq: 11 }),
+      },
       fiscalDocument: {
         // 1.ª: los anulados del pedido; después, por anulado: notas de crédito (común) y otros
         // comprobantes vivos (D-378).
@@ -168,6 +172,8 @@ describe('FiscalImportService.annulledOfOrder (cc13)', () => {
     for (const call of prisma.$queryRaw.mock.calls) {
       expect(sqlOf(call)).not.toMatch(/FOR UPDATE/);
     }
+    // cc30: ni siquiera la lectura previa de ids de `lockAnnulledForReactivation` (es del `lock`).
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect(audit.write).not.toHaveBeenCalled();
   });
 
