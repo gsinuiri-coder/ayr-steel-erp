@@ -13,6 +13,7 @@ import {
   cancelCuttingOrderSchema,
   createCuttingOrderSchema,
   createCoilScrapSchema,
+  createCoilSplitSchema,
   createProductionOrderSchema,
   consumeStripSchema,
   reportPiecesSchema,
@@ -1495,5 +1496,45 @@ describe('cc30 — corte 2: cotización, comprobante y despacho (contra la base)
       await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
     }
     expectClean(tally, 'C8 borrador con despacho × revertir despacho');
+  });
+});
+
+/**
+ * cc30 (corte 2, C9): editar una compra recibida tomaba la compra con `FOR UPDATE` y después sus
+ * bobinas; partir una bobina de esa compra toma la bobina y después, al insertar las hijas con la
+ * compra heredada, `KEY SHARE` sobre la compra (FK). Con `FOR NO KEY UPDATE` en la edición los dos
+ * modos conviven y el cruce desaparece. Depende de que el único índice único de `purchases` sea
+ * parcial: un `UNIQUE` total sobre columnas que la edición cambia subiría su `UPDATE` a
+ * `FOR UPDATE` y este par volvería a fallar.
+ */
+describe('cc30 — corte 2: editar compra recibida × partir su bobina (contra la base)', () => {
+  it('C9: sin deadlock entre la FK de las hijas y el bloqueo de la compra', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const { coilId, purchaseId } = await roofingCoil('2.50');
+      const items = await prisma.purchaseItem.findMany({
+        where: { purchaseId },
+        select: { id: true },
+      });
+      const ops = [
+        () =>
+          receivedEdit.commit(
+            admin,
+            purchaseId,
+            commitReceivedPurchaseEditSchema.parse({
+              items: items.map((it) => ({ itemId: it.id, unitPrice: '6' })),
+              reason: 'cc30 corregir precio',
+            }),
+          ),
+        () =>
+          coilOps.split(
+            admin,
+            coilId,
+            createCoilSplitSchema.parse({ children: [{ widthMm: '500.00', count: 2 }] }),
+          ),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, 'C9 editar compra × partir bobina');
   });
 });

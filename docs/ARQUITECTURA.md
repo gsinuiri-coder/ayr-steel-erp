@@ -476,6 +476,8 @@
 | D-475 | 2026-10-06 (cc30; **decisión del dueño**) | **Si una operación descubre tarde que necesita otro documento, se reestructura para tomarlo al inicio.** `NOWAIT` con el 409 actual («Otra operación estaba usando este inventario») queda solo como red para los conjuntos que se amplían, igual que el P3-2 de cc18. Un deadlock residual sigue saliendo como 409 con rollback. | Brief de cc30 (decisión 6). |
 | D-476 | 2026-10-06 (cc30; **decisión del dueño**; endurece D-460) | **El push directo a `main` pasa a `deny`** en `.claude/settings.json`: sale de `allow` `AYR_OWNER_PUSH=1 git push origin main`, y entran a `deny` `git push origin main*`, `git push * main` y `AYR_OWNER_PUSH=1 git push*`. Todo entra por PR. `AYR_OWNER_PUSH=1` del hook sigue siendo del dueño, a mano. | Brief de cc30 (decisión 7); D-460 lo había dejado como decisión del dueño. |
 | D-477 | 2026-10-06 (cc30; **provisional**; aplica D-470) | **Planta toma el pedido antes que la OP solo en los caminos que escriben el pedido o la reserva de la OP.** `lockOrder(tx, id, { parent })` toma pedido → OP y `{ own }` agrega la reserva de la OP: los usan reportar y revertir reporte (las dos líneas), cerrar coberturas, anular OP (las dos líneas), confirmar borradores y las vistas previas de cierre. Los demás —consumir y soltar fleje, montar y bajar bobina, cerrar y reabrir drywall, reabrir coberturas, plan, prioridad y borradores— toman solo la OP: no escriben pedido ni reserva, y así no esperan detrás de una operación comercial del mismo pedido (varios corren con el timeout por defecto de 5 s, y la espera podía terminar en un P2028). Ningún camino toma el pedido después de la OP; si alguno lo pidiera, la puerta lo pide con `NOWAIT`. | P2-3 del segundo modelo y P2-1 de la autorrevisión del corte 1: tomar el pedido en todas las operaciones de planta agregaba contención y un modo de falla nuevo; la decisión 1 del brief habla de la operación de planta que necesita el pedido. |
+| D-478 | 2026-10-06 (cc30; **provisional**; aplica D-470..D-475) | **Cómo entran los caminos de ventas y comprobantes al orden del grupo C (corte 2).** (1) **Anular un pedido** toma al inicio, por la puerta, los borradores de comprobante del pedido → su cotización → el pedido → sus OP vivas → sus reservas; después de tomar el pedido relee el conjunto y lo que nació en el medio va con `NOWAIT`. Antes no tomaba las OP «a propósito» (para no cruzar con montar); con pedido → OP en todos los caminos (D-470) ya no cruza, y la condición `DRAFT` del `updateMany` se conserva. (2) **Reactivar (D-373, D-378) y traer a otro pedido (D-381)** toman al inicio el comprobante con **todos** los borradores de sus pedidos y de sus líneas (un superconjunto de lo que cada una tomaba) y después los pedidos; D-373 toma el pedido aunque ninguna línea lo use. (3) **Liberar una reserva a mano** toma pedido → OP vivas → reserva antes de decidir (antes no bloqueaba nada). (4) **Descartar un borrador** lee `DRAFT` con el comprobante bloqueado: un comprobante numerado en el medio ya no se borra (sale el 400 de siempre). (5) **Registrar un manual y despachar a la fecha del comprobante** toman comprobante → pedido antes de decidir. (6) **Crear OP desde una reserva o desde el pedido** toma pedido → reservas por id al inicio. | Lo conservador para «la reserva solo con su documento dueño bloqueado» y «el estado que decide, después del bloqueo» (brief de cc30); matriz `docs/analisis/cc30-matriz-bloqueos.md` y P2 de las revisiones del corte 2. |
+| D-479 | 2026-10-06 (cc30; **provisional**; rama de compras de D-471) | **Compras e importador.** (1) **Editar una compra recibida** toma la compra con `FOR NO KEY UPDATE` (antes `FOR UPDATE`), que convive con el `KEY SHARE` que toman las hijas al partir una bobina o recibir su corte; después de tomar las bobinas relee las de la compra y pide por la puerta las que nacieron mientras esperaba. **Depende de que el único índice único de `purchases` sea parcial**: un `UNIQUE` total sobre columnas que la edición cambia subiría su `UPDATE` a `FOR UPDATE` y el cruce volvería (lo vigila el par C9 de `lock-order.db-spec.ts`). (2) La CLI de **fecha de recepción** toma las compras del lote antes que el inventario (`FOR NO KEY UPDATE`, por id). (3) El **importador de cotizaciones** toma todos sus advisory locks al inicio, ordenados por número de documento. | Cruces C9, C10 y C11 de la matriz; P2-2 del segundo modelo y P2-2 de la autorrevisión del corte 2. |
 
 ---
 
@@ -599,10 +601,16 @@ Cómo se cumple:
   ocupadas, la operación sale con 409.
 - **Si Postgres aborta igual** (40P01, 40001), la API responde **409** «Otra operación estaba
   usando este inventario. Vuelve a intentarlo.» (`LockConflictFilter`), sin reintento automático.
-- **cc30, en dos cortes:** el corte 1 pasa por la puerta de documentos la producción (pedido → OP
-  → reserva) y el cambio de cantidad de una línea (cruces a–d del grupo C de cc18). El corte 2 lleva
-  el resto de los `FOR UPDATE` sobre documentos a la puerta, con su centinela, y los cruces nuevos de
-  la matriz (`docs/analisis/cc30-matriz-bloqueos.md`).
+- **Documentos, también por una puerta (cc30).** `lockDocuments`
+  (`apps/api/src/inventory/document-locks.ts`) es el único `FOR UPDATE` sobre comprobantes,
+  despachos, cotizaciones, pedidos, OP, reservas temporales y reservas; lo vigila
+  `document-locks.sentinel.spec.ts`. Comparte con `lockCoilRows` el estado por transacción: un
+  documento pedido con inventario en mano, de una clase anterior a otra ya tomada o con un id menor
+  que uno de su clase va con `NOWAIT`. La compra, la orden de corte y sus filas siguen con su
+  propio `FOR UPDATE` / `NO KEY UPDATE` (rama aparte, D-471, D-479).
+- **Cómo se llegó:** matriz en `docs/analisis/cc30-matriz-bloqueos.md`; corte 1 = producción y
+  cambio de cantidad (cruces a–d del grupo C de cc18); corte 2 = el resto de los sitios y los
+  cruces C6–C11 (D-478, D-479).
 
 ### 3.4 Roles (RF-02)
 
