@@ -16,7 +16,12 @@ import {
  * El orden canónico completo del sistema es el de esta lista seguido del tramo de inventario de
  * D-386 (bobinas → saldos, `lockCoilRows`/`InventoryService.lockBalance`):
  *
- * cotización → pedido → OP → reserva temporal → reserva → … → bobinas → saldos
+ * comprobante → despacho → cotización → pedido → OP → reserva temporal → reserva → … → bobinas →
+ * saldos
+ *
+ * (D-470, D-471.) Comprobante y despacho van primero porque D-386 ya fijó «el despacho antes que
+ * su pedido» y re-fechar, reactivar y traer un comprobante van comprobante → pedido. La compra y
+ * el corte son una rama aparte (compra → orden de corte → fila), que no pasa por acá.
  *
  * El padre va antes que el hijo: una operación de planta lee el pedido de su OP sin bloquear (el
  * vínculo no cambia), toma pedido y OP juntos por esta puerta, y después relee lo que decide.
@@ -31,6 +36,8 @@ import {
  * Devuelve, por clase, los ids que de verdad existían (y quedaron bloqueados).
  */
 export const DOCUMENT_LOCK_ORDER = [
+  'fiscalDocuments',
+  'dispatches',
   'quotations',
   'salesOrders',
   'productionOrders',
@@ -48,6 +55,8 @@ export type LockedDocuments = Record<DocumentClass, string[]>;
 
 /** Nombre de la clase en el mensaje de un `NOWAIT` (el log lo distingue de una bobina). */
 const LABELS: Record<DocumentClass, string> = {
+  fiscalDocuments: 'comprobante',
+  dispatches: 'despacho',
   quotations: 'cotización',
   salesOrders: 'pedido',
   productionOrders: 'orden de producción',
@@ -57,6 +66,8 @@ const LABELS: Record<DocumentClass, string> = {
 
 /** La tabla de cada clase; el centinela vigila estas. */
 export const DOCUMENT_LOCK_TABLES: Record<DocumentClass, string> = {
+  fiscalDocuments: 'fiscal_documents',
+  dispatches: 'dispatches',
   quotations: 'quotations',
   salesOrders: 'sales_orders',
   productionOrders: 'production_orders',
@@ -75,6 +86,14 @@ async function lockRows(
   nowait: boolean,
 ): Promise<{ id: string }[]> {
   switch (cls) {
+    case 'fiscalDocuments':
+      return nowait
+        ? tx.$queryRaw`SELECT "id" FROM "fiscal_documents" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE NOWAIT`
+        : tx.$queryRaw`SELECT "id" FROM "fiscal_documents" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE`;
+    case 'dispatches':
+      return nowait
+        ? tx.$queryRaw`SELECT "id" FROM "dispatches" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE NOWAIT`
+        : tx.$queryRaw`SELECT "id" FROM "dispatches" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE`;
     case 'quotations':
       return nowait
         ? tx.$queryRaw`SELECT "id" FROM "quotations" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE NOWAIT`
