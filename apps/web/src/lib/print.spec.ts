@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from './api';
-import { PRINT_FAILED_MESSAGE, printFile } from './print';
+import { PRINT_FAILED_MESSAGE, PRINT_LOAD_TIMEOUT_MS, printBlob, printFile } from './print';
 
 /**
  * cc32: «Imprimir» pide el PDF con la misma puerta que la descarga, lo carga en un iframe oculto
@@ -78,7 +78,7 @@ describe('printFile', () => {
       cache: 'no-store',
     });
     expect(frame.getAttribute('src')).toBe('blob:http://localhost/pdf');
-    expect(frame.getAttribute('aria-hidden')).toBe('true');
+    expect(frame.getAttribute('aria-hidden')).toBeNull();
     expect(fakeWin.print).toHaveBeenCalledTimes(1);
     // Nada de `<a download>`: imprimir no deja un archivo en Descargas.
     expect(anchorClick).not.toHaveBeenCalled();
@@ -147,8 +147,10 @@ describe('printFile', () => {
     );
     const err: unknown = await printFile('/api/x/pdf').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
+    // Revisión de cc32: el 404 «sin archivo» también sale para un aceptado sin PDF (un manual, un
+    // fallo de R2); el aviso no promete la aceptación.
     expect((err as ApiError).message).toBe(
-      'El comprobante todavía no tiene ese archivo: se guarda cuando SUNAT lo acepta',
+      'Este documento no tiene un PDF guardado, así que no se puede imprimir. Abre el documento para ver su estado.',
     );
     expect(document.querySelector('iframe')).toBeNull();
     expect(fakeWin.print).not.toHaveBeenCalled();
@@ -187,5 +189,80 @@ describe('printFile', () => {
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toBe(PRINT_FAILED_MESSAGE);
     expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  describe('dos impresiones seguidas y el respaldo a tiempo (revisión de cc32)', () => {
+    beforeEach(() => {
+      let n = 0;
+      URL.createObjectURL = vi.fn(() => `blob:http://localhost/pdf-${String(++n)}`);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('la segunda cancela la primera: termina su promesa y su timer no abre un blob revocado', async () => {
+      const open = vi.spyOn(window, 'open').mockReturnValue({} as Window);
+      const first = printBlob(new Blob(['a']));
+      // La primera nunca carga; empieza otra.
+      const second = printBlob(new Blob(['b']));
+      await first;
+      expect(revoke).toHaveBeenCalledWith('blob:http://localhost/pdf-1');
+      expect(document.querySelectorAll('iframe')).toHaveLength(1);
+
+      document.querySelector('iframe')?.dispatchEvent(new Event('load'));
+      await second;
+      vi.advanceTimersByTime(PRINT_LOAD_TIMEOUT_MS * 2);
+      expect(open).not.toHaveBeenCalled();
+      expect(fakeWin.print).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancelar quita el aviso de `afterprint` de la impresión anterior', async () => {
+      const firstAfter = vi.fn();
+      const first = printBlob(new Blob(['a']), { onAfterPrint: firstAfter });
+      document.querySelector('iframe')?.dispatchEvent(new Event('load'));
+      await first;
+      void printBlob(new Blob(['b']), { onAfterPrint: vi.fn() });
+
+      window.dispatchEvent(new Event('afterprint'));
+      expect(firstAfter).not.toHaveBeenCalled();
+    });
+
+    it('si el iframe no carga, la pestaña se abre a los pocos segundos y, bloqueada, falla enseguida', async () => {
+      expect(PRINT_LOAD_TIMEOUT_MS).toBeLessThanOrEqual(5_000);
+      vi.spyOn(window, 'open').mockReturnValue(null);
+      const done = printBlob(new Blob(['a'])).catch((e: unknown) => e);
+      vi.advanceTimersByTime(PRINT_LOAD_TIMEOUT_MS);
+      const err = await done;
+      expect((err as Error).message).toBe(PRINT_FAILED_MESSAGE);
+      expect(document.querySelector('iframe')).toBeNull();
+    });
+  });
+
+  it('el foco vuelve adonde estaba al pedir la impresión', async () => {
+    const button = document.createElement('button');
+    document.body.appendChild(button);
+    button.focus();
+    // Imprimir le da el foco al iframe: el doble lo saca del botón, como el navegador.
+    fakeWin.focus.mockImplementation(() => {
+      button.blur();
+    });
+    const done = printBlob(new Blob(['a']));
+    document.querySelector('iframe')?.dispatchEvent(new Event('load'));
+    await done;
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('con `onAfterPrint`, el foco lo decide quien llama', async () => {
+    const button = document.createElement('button');
+    document.body.appendChild(button);
+    button.focus();
+    fakeWin.focus.mockImplementation(() => {
+      button.blur();
+    });
+    const done = printBlob(new Blob(['a']), { onAfterPrint: () => undefined });
+    document.querySelector('iframe')?.dispatchEvent(new Event('load'));
+    await done;
+    expect(document.activeElement).not.toBe(button);
   });
 });

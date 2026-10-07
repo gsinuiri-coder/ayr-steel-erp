@@ -128,10 +128,10 @@ async function expectPrintsWithoutDownload(
     () => (window as Window & { __printed?: string[] }).__printed ?? [],
   );
   expect(printed.at(-1)).toBe('application/pdf');
-  // Al cerrar la impresión (`afterprint` del doble) el iframe se va.
+  // Al cerrar la impresión (`afterprint` del doble) el iframe se va. Para entonces el PDF ya se
+  // abrió **dentro** del iframe (`application/pdf` arriba): un PDF que el navegador descarga no
+  // llega a cargarse en el marco, así que no hace falta esperar a ciegas una descarga tardía.
   await expect(page.locator('iframe[src^="blob:"]')).toHaveCount(0);
-  // Un respiro para que una descarga, si la hubiera, alcance a dispararse.
-  await page.waitForTimeout(1_000);
   expect(downloads).toEqual([]);
 }
 
@@ -182,7 +182,8 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
       await expect(page.getByRole('menuitem', { name: 'Revertir despacho' })).toBeVisible();
       await page.keyboard.press('Escape');
 
-      // 2. Con la guía en envío (con número, sin aceptar): se ofrece imprimir, pero espera.
+      // 2. Con la guía en envío (con número, sin aceptar): la principal es verla, como en main;
+      //    imprimir espera deshabilitado en el menú y el texto lo explica.
       let noteStatus = 'ISSUED';
       await page.route(`**/api/dispatches/${dispatch.id}`, async (route) => {
         const res = await route.fetch();
@@ -199,17 +200,26 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
       });
       await page.route(`**/api/invoicing/documents/${FAKE_NOTE_ID}/pdf`, fulfillPdf);
       await page.reload();
-      const waiting = header.getByRole('button', { name: 'Imprimir guía', exact: true });
-      await expect(waiting).toBeDisabled({ timeout: 30_000 });
-      await expect(header).toContainText('Se imprime cuando SUNAT la acepte');
+      await expect(header.getByRole('link', { name: 'Ver la guía', exact: true })).toHaveAttribute(
+        'href',
+        `/comprobantes/${FAKE_NOTE_ID}`,
+        { timeout: 30_000 },
+      );
+      await expect(header).toContainText(
+        'La guía se imprime cuando SUNAT la acepte; ábrela para ver su estado.',
+      );
+      await expect(header.getByRole('button', { name: 'Imprimir guía' })).toHaveCount(0);
       await expect(header.getByRole('button', { name: 'Emitir guía' })).toHaveCount(0);
+      await header.getByRole('button', { name: 'Más opciones' }).click();
+      await expect(page.getByRole('menuitem', { name: 'Imprimir guía' })).toBeDisabled();
+      await page.keyboard.press('Escape');
 
       // 3. Con la guía aceptada: «Imprimir guía» imprime sin descargar.
       noteStatus = 'ACCEPTED';
       await page.reload();
       const print = header.getByRole('button', { name: 'Imprimir guía', exact: true });
       await expect(print).toBeEnabled({ timeout: 30_000 });
-      await expect(header).not.toContainText('Se imprime cuando SUNAT la acepte');
+      await expect(header).not.toContainText('se imprime cuando SUNAT la acepte');
       await expectPrintsWithoutDownload(page, downloads, () => print.click());
 
       // «Más opciones», en orden: descargar el PDF de la guía y verla.
@@ -339,6 +349,43 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
 
         const [sale] = await cashSessionSales(api, session.id);
         if (sale) orderIds.push(sale.salesOrderId);
+      } finally {
+        await closeSessionQuietly(api, session?.id);
+        await purgeSalesTrail(api, { orderIds });
+      }
+    });
+
+    test('con el comprobante pendiente (PSE apagado), imprimir espera y dice por qué', async ({
+      page,
+    }) => {
+      // Es el caso de producción hoy: sin PSE la venta queda ISSUED. Sin `page.route`.
+      const stock = await setupPosStock(api, { qty: '10', listPricePen: '50.0000' });
+      let session: CashSessionDto | undefined;
+      const orderIds: string[] = [];
+      try {
+        session = await openCashSession(api, '0.00');
+        await loginAsAdmin(page);
+        await page.goto('/pos');
+        await page.getByPlaceholder('Buscar por código o nombre…').fill(stock.product.sku);
+        const card = page.getByRole('button', { name: new RegExp(stock.product.sku) });
+        await expect(card).toBeVisible({ timeout: 30_000 });
+        await card.click();
+        await page.getByRole('button', { name: 'Efectivo', exact: true }).click();
+        await page.getByRole('button', { name: /^Cobrar S\// }).click();
+
+        const dialog = page.getByRole('dialog');
+        await expect(dialog).toContainText('cerrada', { timeout: 30_000 });
+        const [sale] = await cashSessionSales(api, session.id);
+        if (sale) orderIds.push(sale.salesOrderId);
+        test.skip(sale?.fiscalDocumentStatus === 'ACCEPTED', 'Este entorno acepta en el acto.');
+
+        const print = dialog.getByRole('button', { name: 'Imprimir comprobante' });
+        await expect(print).toBeDisabled();
+        // El motivo, a la vista y atado al botón.
+        await expect(print).toHaveAccessibleDescription(/se imprime cuando SUNAT lo acepte/i);
+        await expect(dialog.getByText(/pendiente de envío al PSE/)).toBeVisible();
+        await expect(dialog.getByRole('link', { name: 'Descargar PDF' })).toHaveCount(0);
+        await expect(dialog.getByRole('button', { name: 'Nueva venta' })).toBeFocused();
       } finally {
         await closeSessionQuietly(api, session?.id);
         await purgeSalesTrail(api, { orderIds });

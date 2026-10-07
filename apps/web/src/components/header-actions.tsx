@@ -147,10 +147,27 @@ export function onDownloadClick(e: MouseEvent<HTMLAnchorElement>, href: string):
 }
 
 /** cc32: imprime por `printFile`; un fallo sale en un aviso en español, nunca como JSON. */
-export function printWithNotice(href: string, options?: PrintOptions): Promise<void> {
-  return printFile(href, options).catch((err: unknown) => {
-    toast.error(errorMessage(err, PRINT_FAILED_MESSAGE));
-  });
+export function printWithNotice(
+  href: string,
+  options?: PrintOptions & {
+    /**
+     * Revisión de cc32: desde «Más opciones» el menú se cierra y nada dice que el PDF viaja. Con
+     * `preparing`, un aviso «Preparando la impresión…» queda hasta que se abre el diálogo o falla.
+     */
+    preparing?: boolean;
+  },
+): Promise<void> {
+  const notice = options?.preparing ? toast.loading('Preparando la impresión…') : undefined;
+  return printFile(href, options)
+    .then(() => {
+      if (notice !== undefined) toast.dismiss(notice);
+    })
+    .catch((err: unknown) => {
+      toast.error(
+        errorMessage(err, PRINT_FAILED_MESSAGE),
+        notice === undefined ? {} : { id: notice },
+      );
+    });
 }
 
 function PrimaryButton({
@@ -243,7 +260,7 @@ function MenuAction({ action: a }: { action: HeaderAction }) {
       title={a.title}
       onSelect={() => {
         if (a.print !== undefined) {
-          void printWithNotice(a.print);
+          void printWithNotice(a.print, { preparing: true });
           return;
         }
         a.onSelect?.();

@@ -50,6 +50,9 @@ const DISPATCH_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANT
  */
 const NOTE_ON_THE_WAY: readonly FiscalDocumentStatus[] = ['DRAFT', 'ISSUED', 'SEND_ERROR'];
 
+/** Lo que dice el despacho mientras la guía no está aceptada: no promete más de lo que pasa. */
+const NOTE_WAITING_TEXT = 'La guía se imprime cuando SUNAT la acepte; ábrela para ver su estado.';
+
 /** RF-77..RF-79: detalle del despacho, su guía y su reversa. */
 export function DespachoDetalleView({ id }: { id: string }) {
   const { user } = useSession();
@@ -140,7 +143,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
   const busy = issueNote.isPending || reverse.isPending;
   // cc32: el PDF de la guía lo guarda el API recién cuando SUNAT la acepta (`storeFiles` solo
   // corre con `ACCEPTED`, y `file()` responde 404 «se guarda cuando SUNAT lo acepta» mientras
-  // tanto). Una guía todavía en camino se ofrece para imprimir, pero el botón espera y lo dice.
+  // tanto). Con la guía todavía en camino la principal es «Ver la guía» y el texto lo explica.
   const noteStatus = d.dispatchNoteId !== null ? d.dispatchNoteStatus : null;
   const notePrintable = noteStatus === 'ACCEPTED';
   const noteOnTheWay = noteStatus !== null && NOTE_ON_THE_WAY.includes(noteStatus);
@@ -165,11 +168,13 @@ export function DespachoDetalleView({ id }: { id: string }) {
         <div className="flex items-center gap-2">
           <AuditHistoryLink entityType="dispatches" entityId={d.id} />
           <HeaderActions
-            primary={['issue-note', 'print-note']}
+            // Revisión de cc32: con la guía en camino la principal es verla —como en main—, porque
+            // ahí están las acciones reales (reintentar, consultar al PSE); imprimir espera en el menú.
+            primary={['issue-note', 'print-note', 'view-note']}
             primaryFooter={
               noteOnTheWay ? (
-                <span className="text-xs text-muted-foreground">
-                  Se imprime cuando SUNAT la acepte
+                <span className="max-w-64 text-right text-xs text-muted-foreground">
+                  {NOTE_WAITING_TEXT}
                 </span>
               ) : undefined
             }
@@ -190,10 +195,17 @@ export function DespachoDetalleView({ id }: { id: string }) {
               {
                 key: 'print-note',
                 label: 'Imprimir guía',
-                show: notePrintable || noteOnTheWay,
-                disabled: !notePrintable,
-                title: notePrintable ? undefined : 'Se imprime cuando SUNAT la acepte',
+                show: notePrintable,
                 print: notePdfHref,
+              },
+              // La guía en camino: imprimir queda en el menú, deshabilitado; el motivo se lee
+              // bajo «Ver la guía».
+              {
+                key: 'print-note-waiting',
+                label: 'Imprimir guía',
+                show: noteOnTheWay,
+                disabled: true,
+                title: NOTE_WAITING_TEXT,
               },
               {
                 key: 'note-pdf',

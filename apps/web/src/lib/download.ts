@@ -26,6 +26,9 @@ export function filenameFromDisposition(header: string | null): string | null {
   return name ? name.trim() : null;
 }
 
+/** El 404 del API cuando el documento existe pero no tiene el archivo guardado en R2. */
+const NO_STORED_FILE = /todavía no tiene ese archivo/i;
+
 const GENERIC_CLIENT_ERRORS =
   /^(Unauthorized|Forbidden|Forbidden resource|Not Found|Bad Request|Cannot (GET|POST|PUT|PATCH|DELETE) .*)$/;
 
@@ -43,6 +46,12 @@ export async function downloadErrorMessage(
   // Los rechazos genéricos de NestJS vienen en inglés («Forbidden resource», «Cannot GET …»):
   // no son un motivo de negocio y se reemplazan por el texto en español de su código.
   const raw = text0 !== undefined && GENERIC_CLIENT_ERRORS.test(text0) ? undefined : text0;
+  // Revisión de cc32: el 404 «todavía no tiene ese archivo: se guarda cuando SUNAT lo acepta»
+  // también sale para un comprobante ya aceptado sin PDF (un manual, o un fallo al guardarlo).
+  // Prometer la aceptación ahí sería falso: se dice lo que vale en los dos casos.
+  if (res.status === 404 && raw !== undefined && NO_STORED_FILE.test(raw)) {
+    return `Este documento no tiene un PDF guardado, así que no se puede ${verb}. Abre el documento para ver su estado.`;
+  }
   if (raw !== undefined || res.status === 429) {
     const text = errorTextFor(res.status, raw);
     if (text !== SERVER_DOWN_MESSAGE) return text;

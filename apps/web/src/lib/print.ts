@@ -20,14 +20,19 @@ export const PRINT_FAILED_MESSAGE =
 
 /** Cuánto vive el iframe si el navegador nunca avisa que la impresión terminó. */
 export const PRINT_CLEANUP_MS = 10 * 60_000;
-/** Cuánto se espera a que el iframe cargue el PDF antes de probar con la pestaña nueva. */
-export const PRINT_LOAD_TIMEOUT_MS = 20_000;
+/**
+ * Cuánto se espera a que el iframe cargue el PDF antes de probar con la pestaña nueva. Corto a
+ * propósito (revisión de cc32): la pestaña tiene que abrirse mientras dura la activación del
+ * clic del usuario, o el bloqueador de ventanas la frena; y si la frena, el aviso sale enseguida.
+ */
+export const PRINT_LOAD_TIMEOUT_MS = 4_000;
 
 export interface PrintOptions {
   /**
    * Se llama una vez cuando el diálogo de impresión se cierra (`afterprint`). El visor de PDF de
    * algunos navegadores no lo avisa: quien necesite mover el foco lo hace también al resolver la
-   * promesa, que es cuando el diálogo ya se pidió.
+   * promesa, que es cuando el diálogo ya se pidió. Con `onAfterPrint` el foco lo decide quien
+   * llama; sin él, vuelve adonde estaba antes de imprimir.
    */
   onAfterPrint?: () => void;
 }
@@ -35,8 +40,8 @@ export interface PrintOptions {
 /** Los enlaces que se están preparando para imprimir: un doble clic no abre dos diálogos. */
 const inFlight = new Set<string>();
 
-/** El iframe de la última impresión: se quita al terminar o cuando empieza otra. */
-let current: { cleanup: () => void } | null = null;
+/** La impresión en curso: se cancela entera cuando empieza otra. */
+let current: { cancel: () => void } | null = null;
 
 /**
  * Imprime `href` (una ruta `/api/...` que devuelve un PDF). Resuelve cuando el diálogo de
@@ -55,13 +60,20 @@ export async function printFile(href: string, options: PrintOptions = {}): Promi
   }
 }
 
-/** Carga `blob` en un iframe oculto y lo imprime. Exportada para los tests. */
+/**
+ * Carga `blob` en un iframe oculto y lo imprime. Exportada para los tests.
+ *
+ * Cada impresión es un trabajo con sus temporizadores, su listener de `afterprint` y su blob.
+ * Empezar otra cancela el trabajo anterior **entero** —resuelve su promesa, apaga sus timers y
+ * sus listeners, quita el iframe y libera el blob—: si solo se liberara el blob, el timer de
+ * carga de la anterior abría después una pestaña con un blob ya revocado.
+ */
 export function printBlob(blob: Blob, { onAfterPrint }: PrintOptions = {}): Promise<void> {
-  current?.cleanup();
+  current?.cancel();
   const url = URL.createObjectURL(blob);
   const frame = document.createElement('iframe');
+  // Sin `aria-hidden`: tiene título, y el foco que toma para imprimir se devuelve enseguida.
   frame.title = 'Documento para imprimir';
-  frame.setAttribute('aria-hidden', 'true');
   frame.tabIndex = -1;
   // Sin `display: none`: un iframe que no se pinta no carga el visor de PDF en algunos navegadores.
   Object.assign(frame.style, {
@@ -73,63 +85,96 @@ export function printBlob(blob: Blob, { onAfterPrint }: PrintOptions = {}): Prom
     border: '0',
   });
 
-  let cleaned = false;
+  // El foco vuelve adonde estaba (el botón o el menú), salvo que quien llama lo mueva él.
+  const previousFocus = document.activeElement;
+  const restoreFocus = (): void => {
+    if (onAfterPrint !== undefined) return;
+    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+  };
+
+  let loadTimer: ReturnType<typeof setTimeout> | undefined;
   let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  let cleaned = false;
+  let settled = false;
+  let notified = false;
+  let resolvePromise: () => void = () => undefined;
+  let rejectPromise: (err: Error) => void = () => undefined;
+
+  const removeListeners = (): void => {
+    window.removeEventListener('afterprint', afterPrint);
+    frame.contentWindow?.removeEventListener('afterprint', afterPrint);
+  };
+
   const cleanup = (): void => {
     if (cleaned) return;
     cleaned = true;
-    if (cleanupTimer !== undefined) clearTimeout(cleanupTimer);
+    clearTimeout(loadTimer);
+    clearTimeout(cleanupTimer);
+    removeListeners();
     frame.remove();
     URL.revokeObjectURL(url);
-    if (current?.cleanup === cleanup) current = null;
+    if (current === job) current = null;
   };
-  current = { cleanup };
 
-  let notified = false;
-  const afterPrint = (): void => {
+  const finish = (err?: Error): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(loadTimer);
+    if (err) {
+      cleanup();
+      rejectPromise(err);
+      return;
+    }
+    resolvePromise();
+  };
+
+  function afterPrint(): void {
     if (notified) return;
     notified = true;
-    window.removeEventListener('afterprint', afterPrint);
-    onAfterPrint?.();
+    removeListeners();
+    if (onAfterPrint) onAfterPrint();
+    else restoreFocus();
     // Un respiro antes de quitar el iframe: algunos navegadores todavía leen el documento.
+    clearTimeout(cleanupTimer);
     cleanupTimer = setTimeout(cleanup, 1_000);
+  }
+
+  // La pestaña nueva imprime desde el visor del navegador; el iframe ya no hace falta, y el
+  // blob se libera cuando la pestaña ya tuvo tiempo de leerlo.
+  const fallbackToTab = (): void => {
+    if (settled || cleaned) return;
+    const tab = window.open(url, '_blank');
+    if (tab === null) {
+      restoreFocus();
+      finish(new Error(PRINT_FAILED_MESSAGE));
+      return;
+    }
+    notified = true;
+    removeListeners();
+    frame.remove();
+    clearTimeout(cleanupTimer);
+    cleanupTimer = setTimeout(cleanup, 60_000);
+    finish();
   };
 
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const finish = (err?: Error): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(loadTimer);
-      if (err) {
-        cleanup();
-        reject(err);
-        return;
-      }
-      cleanupTimer ??= setTimeout(cleanup, PRINT_CLEANUP_MS);
-      resolve();
-    };
-    // La pestaña nueva imprime desde el visor del navegador; el iframe ya no hace falta, y el
-    // blob se libera cuando la pestaña ya tuvo tiempo de leerlo.
-    const fallbackToTab = (): void => {
-      if (settled) return;
-      const tab = window.open(url, '_blank');
-      if (tab === null) {
-        finish(new Error(PRINT_FAILED_MESSAGE));
-        return;
-      }
-      notified = true;
-      window.removeEventListener('afterprint', afterPrint);
-      frame.remove();
-      cleanupTimer = setTimeout(cleanup, 60_000);
+  const job = {
+    cancel: (): void => {
+      // Otra impresión la reemplaza: la promesa de esta termina sin error.
+      cleanup();
       finish();
-    };
-    // `finish` la lee al terminar, que siempre es después de esta línea (el timer o el `load`).
-    const loadTimer = setTimeout(fallbackToTab, PRINT_LOAD_TIMEOUT_MS);
+    },
+  };
+  current = job;
+
+  return new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+    loadTimer = setTimeout(fallbackToTab, PRINT_LOAD_TIMEOUT_MS);
 
     frame.addEventListener(
       'load',
       () => {
+        if (settled || cleaned) return;
         const win = frame.contentWindow;
         try {
           if (win === null) throw new Error('El iframe no tiene ventana');
@@ -141,6 +186,10 @@ export function printBlob(blob: Blob, { onAfterPrint }: PrintOptions = {}): Prom
           fallbackToTab();
           return;
         }
+        // El diálogo ya se pidió: el foco no se queda en el iframe.
+        restoreFocus();
+        clearTimeout(cleanupTimer);
+        cleanupTimer = setTimeout(cleanup, PRINT_CLEANUP_MS);
         finish();
       },
       { once: true },

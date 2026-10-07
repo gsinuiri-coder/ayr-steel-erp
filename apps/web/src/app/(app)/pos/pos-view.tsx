@@ -657,11 +657,12 @@ function SaleDoneDialog({
             {sale?.customerName}. La mercadería ya salió del almacén.
           </DialogDescription>
         </DialogHeader>
-        {sale?.fiscalPending && (
-          <p className="text-sm text-muted-foreground">
-            El comprobante tomó su número y está pendiente de envío al PSE: se manda solo en cuanto
-            haya conexión (contingencia). La venta no depende de eso. Se imprime cuando SUNAT lo
-            acepte.
+        {/* Revisión de cc32: el motivo de no imprimir, a la vista y atado al botón. */}
+        {sale !== null && !printable && (
+          <p id="pos-print-reason" className="text-sm text-muted-foreground">
+            {sale.fiscalPending
+              ? 'El comprobante tomó su número y está pendiente de envío al PSE: se manda solo en cuanto haya conexión (contingencia). La venta no depende de eso. Se imprime cuando SUNAT lo acepte.'
+              : 'SUNAT todavía no aceptó el comprobante: se imprime cuando lo acepte.'}
           </p>
         )}
         <DialogFooter className="items-center">
@@ -684,7 +685,7 @@ function SaleDoneDialog({
             disabled={!printable}
             pending={printing}
             pendingText="Preparando…"
-            title={printable ? undefined : 'Se imprime cuando SUNAT lo acepte'}
+            aria-describedby={printable ? undefined : 'pos-print-reason'}
             onClick={print}
           >
             Imprimir comprobante

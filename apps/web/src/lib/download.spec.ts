@@ -18,6 +18,25 @@ describe('descargas del API', () => {
     expect(filenameFromDisposition('inline')).toBeNull();
   });
 
+  it('el 404 «sin archivo» no promete la aceptación de SUNAT (revisión de cc32)', async () => {
+    const noFile = () =>
+      new Response(
+        JSON.stringify({
+          message: 'El comprobante todavía no tiene ese archivo: se guarda cuando SUNAT lo acepta',
+        }),
+        { status: 404 },
+      );
+    expect(await downloadErrorMessage(noFile())).toBe(
+      'Este documento no tiene un PDF guardado, así que no se puede descargar. Abre el documento para ver su estado.',
+    );
+    expect(await downloadErrorMessage(noFile(), 'imprimir')).toMatch(/no se puede imprimir/);
+    // Otro 404 con motivo propio sigue diciendo el suyo.
+    const missing = new Response(JSON.stringify({ message: 'Comprobante no encontrado' }), {
+      status: 404,
+    });
+    expect(await downloadErrorMessage(missing, 'imprimir')).toBe('Comprobante no encontrado');
+  });
+
   it('el 400 del tope sale con el mensaje del API', async () => {
     const res = new Response(
       JSON.stringify({
