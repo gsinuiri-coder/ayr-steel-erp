@@ -494,12 +494,12 @@
 | D-493 | 2026-10-07 (cc31, cortes 1–5; **provisional**) | motivos de lista: anulación (5) y merma (6), con «Otro» que exige el detalle. |
 | D-494 | 2026-10-07 (cc31, cortes 1–5; **provisional**) | una coma sola es decimal, salvo «1,500» (coma y tres dígitos), que es ambiguo y se deja como está para que la validación pida el punto; con punto o varias comas, las comas son miles. |
 | D-495 | 2026-10-07 (cc31, cortes 1–5; **provisional**) | una orden de corte que no cabe se bloquea en el formulario como en el API. |
-| D-496 | 2026-10-07 (cc31, corte 6, PR #129 sin merge; **provisional**) | la cabecera conserva la grilla de D-284 (cliente en 2 columnas, observaciones a lo ancho), no la 5/2/2/3 del tablero; la exige `formularios-grilla-d284`. |
-| D-497 | 2026-10-07 (cc31, corte 6, PR #129 sin merge; **provisional**) | el desplegable de línea de negocio sigue en la fila, dentro de la celda del producto; el selector agrega filtros. |
-| D-498 | 2026-10-07 (cc31, corte 6, PR #129 sin merge; **provisional**) | la lista se muestra con IGV, a 2 decimales y en la unidad del campo; reemplaza «Valor de lista: S/ X.XXXX» sin IGV. |
-| D-499 | 2026-10-07 (cc31, corte 6, PR #129 sin merge; **provisional**) | el «+» del último largo pasa a «Agregar largo» debajo del bloque. |
-| D-500 | 2026-10-07 (cc31, corte 6, PR #129 sin merge; **provisional**) | el foco pasa a la cantidad al elegir producto solo si nadie lo tomó (evita cortar lo que se está escribiendo). |
-| D-501 | 2026-10-07 (cc31, corte 6, PR #129 sin merge; **provisional**) | sin «Esta línea no tiene productos activos.» antes de elegir línea de negocio. |
+| D-496 | 2026-10-07 (cc31, corte 6, PR #129; **provisional**) | la cabecera conserva la grilla de D-284 (cliente en 2 columnas, observaciones a lo ancho), no la 5/2/2/3 del tablero; la exige `formularios-grilla-d284`. |
+| D-497 | 2026-10-07 (cc31, corte 6, PR #129; **provisional**) | el desplegable de línea de negocio sigue en la fila, dentro de la celda del producto; el selector agrega filtros. |
+| D-498 | 2026-10-07 (cc31, corte 6, PR #129; **provisional**) | la lista se muestra con IGV, a 2 decimales y en la unidad del campo; reemplaza «Valor de lista: S/ X.XXXX» sin IGV. |
+| D-499 | 2026-10-07 (cc31, corte 6, PR #129; **provisional**) | el «+» del último largo pasa a «Agregar largo» debajo del bloque. |
+| D-500 | 2026-10-07 (cc31, corte 6, PR #129; **provisional**) | el foco pasa a la cantidad al elegir producto solo si nadie lo tomó (evita cortar lo que se está escribiendo). |
+| D-501 | 2026-10-07 (cc31, corte 6, PR #129; **provisional**) | sin «Esta línea no tiene productos activos.» antes de elegir línea de negocio. |
 
 ---
 
