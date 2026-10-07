@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Check, Circle } from 'lucide-react';
-import { changePasswordSchema, type ChangePasswordInput } from '@ayr/shared';
+import { changePasswordSchema, type AuthUser, type ChangePasswordInput } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { errorMessage, toast } from '@/lib/notify';
 import { ME_QUERY_KEY, useSession } from '@/lib/session';
@@ -93,9 +93,15 @@ function ChangePasswordForm({ firstLogin }: { firstLogin: boolean }) {
   async function onSubmit(values: ChangePasswordInput) {
     try {
       await api('/auth/change-password', { method: 'POST', body: values });
-      await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+      // Primero se marca la sesión como ya cambiada y se navega; la recarga del usuario va
+      // después. Al revés, la pantalla se redibujaba en modo normal antes de navegar y el
+      // primer ingreso se quedaba en «Cambiar contraseña».
+      queryClient.setQueryData<AuthUser>(ME_QUERY_KEY, (u) =>
+        u ? { ...u, mustChangePassword: false } : u,
+      );
       toast.success('Contraseña actualizada');
       router.replace('/');
+      void queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
     } catch (err) {
       form.setError('root', {
         message: errorMessage(err, 'No se pudo cambiar la contraseña. Intenta de nuevo.'),
