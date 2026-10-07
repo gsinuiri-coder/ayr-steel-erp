@@ -2,6 +2,26 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-07 — Ventana cc31: mejoras de UX (D-480..D-501, PR #124–#128 en prod, #129 sin merge)
+
+Seis cortes, todos solo `apps/web`, sin API ni migraciones. Detalle en `docs/handoff/ventana-cc31.md`;
+UAT en `docs/uat/cc31.md`.
+
+- **En producción (Vercel), verificados sin errores de consola:**
+  - corte 1, Base: `5fda071f`, 6907064391;
+  - corte 2, Marco: `bc0d8b38`, 6907692122;
+  - corte 3, Detalle y listas: `2c76fc25`, 6908516921;
+  - corte 4, Panel: `67ed4ad2`, 6908858577;
+  - corte 5, Formularios y diálogos: `08e3bbdb`, 6908933579.
+- **Corte 6 (formulario de cotización):** PR #129 abierto. Terminó después de las 07:00, cuando ya
+  no había autorización para el merge. Las revisiones no hallaron P0 ni P1, y las P2 están
+  corregidas.
+- **Decisiones D-480..D-501, provisionales:** esperan la revisión del dueño. D-496..D-501 solo
+  valen si entra el #129.
+- **Registro de riesgo:** sin piezas que toquen el kardex ni los datos. El riesgo funcional está en
+  `ui/input.tsx` y `lib/decimal-input.ts`: la normalización de la coma decimal en todos los campos
+  `inputMode="decimal"`. Ahí conviene mirar primero si aparece una cantidad mal leída.
+
 ## 2026-10-07 — Ventanas cc30: orden de bloqueos entre documentos (D-470..D-479, PR #121 y #122, sin migración)
 
 Dos cortes desplegados en la ventana. Detalle en `docs/handoff/ventana-cc30.md`.
