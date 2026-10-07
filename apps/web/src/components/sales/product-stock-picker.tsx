@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   SEARCH_RESULT_LIMIT,
+  sellsByFixedLength,
   toDecimal,
   toFixedString,
   type BusinessLine,
@@ -13,7 +14,8 @@ import {
   type StockPanelDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatQty, unitSymbol } from '@/lib/format';
+import { formatAmount, formatQty, unitSymbol } from '@/lib/format';
+import { listPriceWithIgv } from '@/lib/list-price';
 import { asyncSearchStatus, belowSearchMinimum } from '@/lib/search-status';
 import { useDebounced } from '@/lib/use-debounced';
 import { Button } from '@/components/ui/button';
@@ -135,44 +137,102 @@ export function RawMaterialPoolList({ rows }: { rows: RawMaterialStockDto[] }) {
   );
 }
 
+/** Una línea de negocio que el selector ofrece como filtro (las que admite el documento). */
+export interface PickerBusinessLine {
+  code: BusinessLine;
+  label: string;
+}
+
+/** cc31 (corte 6): el subtipo de cobertura en minúsculas, para el renglón bajo el nombre. */
+const KIND_HINT: Record<string, string> = {
+  A_MEDIDA: 'a medida',
+  PLANCHA: 'plancha',
+  ACCESORIO: 'accesorio',
+};
+
+/** El precio de lista con IGV, en la unidad en que se negocia la línea. */
+function ListPriceCell({ product }: { product: ProductDto }) {
+  const perUnit = listPriceWithIgv(product);
+  if (perUnit === null) return <span className="text-muted-foreground">sin lista</span>;
+  if (sellsByFixedLength(product)) {
+    const perPiece = listPriceWithIgv(product, true);
+    return (
+      <>
+        <div>{formatAmount(perUnit, 2)} /m</div>
+        {perPiece !== null && (
+          <div className="text-muted-foreground">{formatAmount(perPiece, 2)} la plancha</div>
+        )}
+      </>
+    );
+  }
+  // Un servicio (ZZ) no tiene símbolo de unidad: sin sufijo, en vez de un «/» suelto.
+  const symbol = unitSymbol(product.unit);
+  return (
+    <div>
+      {formatAmount(perUnit, 2)}
+      {symbol === '' ? '' : ` /${symbol}`}
+    </div>
+  );
+}
+
 export function ProductStockPickerDialog({
   open,
   onOpenChange,
+  lineNumber,
   businessLine,
-  businessLineLabel,
+  businessLines,
   selectedProductId,
   onSelect,
+  onPicked,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** cc31: el número de la línea del documento que se está llenando («línea 3»). */
+  lineNumber: number;
+  /** La línea de negocio de la fila: el filtro con el que abre. */
   businessLine: BusinessLine;
-  businessLineLabel: string;
+  /**
+   * cc31 (corte 6): las líneas de negocio que el documento admite, como filtros. Elegir un
+   * producto de otra línea cambia la línea de la fila (`onSelect` la devuelve).
+   */
+  businessLines: readonly PickerBusinessLine[];
   selectedProductId: string;
-  onSelect: (productId: string) => void;
+  onSelect: (productId: string, businessLine: BusinessLine) => void;
+  /** cc31: después de elegir y cerrar, a dónde va el foco (la cantidad de la línea). */
+  onPicked?: () => void;
 }) {
   const [filter, setFilter] = useState('');
+  const [line, setLine] = useState<BusinessLine>(businessLine);
   const debouncedFilter = useDebounced(filter, 250);
   const trimmed = debouncedFilter.trim();
   // RF-S3/cierre: vacío no es "por debajo del mínimo" (ver el mismo ajuste en
   // `search-select-modal.tsx`) — abrir el picker sin escribir muestra los primeros
   // `SEARCH_RESULT_LIMIT` de la línea, en vez de nada.
   const belowMinChars = belowSearchMinimum(trimmed);
+  /** Se eligió un producto: al cerrar, el foco va a la cantidad y no vuelve al botón. */
+  const picked = useRef(false);
+  const rowsRef = useRef<HTMLTableSectionElement>(null);
 
   // El filtro no sobrevive al cierre (mismo motivo que `SearchSelectModal`, D-156): sin esto,
   // reabrir el picker de otra línea —o el mismo después de elegir— mostraba la búsqueda de la
-  // vez anterior, con «0 de N productos» hasta que alguien la borraba a mano.
+  // vez anterior, con «0 de N productos» hasta que alguien la borraba a mano. La línea de
+  // negocio vuelve a la de la fila por el mismo motivo.
   useEffect(() => {
-    if (open) setFilter('');
-  }, [open]);
+    if (open) {
+      setFilter('');
+      setLine(businessLine);
+      picked.current = false;
+    }
+  }, [open, businessLine]);
 
   // RF-S3/M1: busca en el servidor (`GET /catalog/search`) en vez de filtrar el catálogo
   // entero ya cargado del formulario (D-119 sigue existiendo ahí, pero solo para el precio y
   // la unidad de las líneas ya elegidas — este modal no lo necesita más).
   const productsSearch = useQuery({
-    queryKey: ['catalog-search', businessLine, trimmed],
+    queryKey: ['catalog-search', line, trimmed],
     queryFn: () =>
       api<ProductDto[]>(
-        `/catalog/search?${new URLSearchParams({ q: trimmed, businessLine }).toString()}`,
+        `/catalog/search?${new URLSearchParams({ q: trimmed, businessLine: line }).toString()}`,
       ),
     enabled: open && !belowMinChars,
   });
@@ -183,11 +243,11 @@ export function ProductStockPickerDialog({
   const stockIds = matches.map((p) => p.id);
 
   const stockPanel = useQuery({
-    queryKey: ['stock-panel-picker', businessLine, stockIds.join(',')],
+    queryKey: ['stock-panel-picker', line, stockIds.join(',')],
     queryFn: () =>
       api<StockPanelDto>(
         `/sales/stock-panel?${new URLSearchParams({
-          businessLine,
+          businessLine: line,
           productIds: stockIds.join(','),
         }).toString()}`,
       ),
@@ -198,11 +258,36 @@ export function ProductStockPickerDialog({
   // más SKU sin mostrar — no hay forma barata de saber cuántos sin una segunda consulta.
   const mayHaveMore = matches.length === SEARCH_RESULT_LIMIT;
 
+  function choose(productId: string): void {
+    picked.current = true;
+    onSelect(productId, line);
+    onOpenChange(false);
+  }
+
+  /** cc31: ↑ ↓ se mueven entre las filas de resultados. */
+  function focusRow(from: HTMLElement | null, step: 1 | -1): void {
+    const rows = Array.from(
+      rowsRef.current?.querySelectorAll<HTMLElement>('tr[data-product-row]') ?? [],
+    );
+    if (rows.length === 0) return;
+    const at = from === null ? -1 : rows.indexOf(from);
+    rows[Math.min(Math.max(at + step, 0), rows.length - 1)]?.focus();
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent
+        className="sm:max-w-3xl"
+        onCloseAutoFocus={(event) => {
+          if (picked.current && onPicked) {
+            event.preventDefault();
+            picked.current = false;
+            onPicked();
+          }
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>Elegir producto · {businessLineLabel}</DialogTitle>
+          <DialogTitle>Elegir producto · línea {lineNumber}</DialogTitle>
           <DialogDescription>
             El disponible ya descuenta lo reservado, firme y temporal. Elegir un producto sin stock
             no está bloqueado: la línea avisa si no alcanza, y no reserva nada hasta confirmar.
@@ -217,15 +302,43 @@ export function ProductStockPickerDialog({
             onChange={(e) => {
               setFilter(e.target.value);
             }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                focusRow(null, 1);
+              }
+            }}
           />
-          <p className="text-xs text-muted-foreground">
-            {asyncSearchStatus({
-              belowMinimum: belowMinChars,
-              isFetching: productsSearch.isFetching,
-              count: matches.length,
-              mayHaveMore,
-            })}
-          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <div
+              role="group"
+              aria-label="Línea de negocio"
+              className="flex flex-wrap items-center gap-1.5"
+            >
+              {businessLines.map((b) => (
+                <Button
+                  key={b.code}
+                  type="button"
+                  size="xs"
+                  variant={b.code === line ? 'secondary' : 'outline'}
+                  aria-pressed={b.code === line}
+                  onClick={() => {
+                    setLine(b.code);
+                  }}
+                >
+                  {b.label}
+                </Button>
+              ))}
+            </div>
+            <p className="ml-auto text-xs text-muted-foreground">
+              {asyncSearchStatus({
+                belowMinimum: belowMinChars,
+                isFetching: productsSearch.isFetching,
+                count: matches.length,
+                mayHaveMore,
+              })}
+            </p>
+          </div>
           {/* F8-S3b/M1: sin scroll horizontal. Tabla de ancho fijo y celdas que parten línea —
               la base de `TableCell` es `whitespace-nowrap`, y un nombre largo o un disponible
               con su materia prima empujaban «Elegir» fuera de la vista. */}
@@ -234,39 +347,46 @@ export function ProductStockPickerDialog({
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Producto</TableHead>
-                  <TableHead className="w-[38%]">Disponible</TableHead>
+                  <TableHead className="w-[32%]">Disponible</TableHead>
+                  <TableHead className="w-28 text-right">Lista con IGV</TableHead>
                   <TableHead className="w-24 text-right">
                     <span className="sr-only">Elegir</span>
                   </TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
+              <TableBody ref={rowsRef}>
                 {matches.map((p) => {
                   const availability = availabilityOf(
                     stockByProductId.get(p.id),
                     unitSymbol(p.unit),
                   );
+                  const kind = p.roofingKind ? KIND_HINT[p.roofingKind] : undefined;
                   return (
                     <TableRow
                       key={p.id}
+                      data-product-row
                       tabIndex={0}
                       aria-label={`Elegir ${p.sku}`}
                       className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                       onClick={() => {
-                        onSelect(p.id);
-                        onOpenChange(false);
+                        choose(p.id);
                       }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
-                          onSelect(p.id);
-                          onOpenChange(false);
+                          choose(p.id);
+                        } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                          event.preventDefault();
+                          focusRow(event.currentTarget, event.key === 'ArrowDown' ? 1 : -1);
                         }
                       }}
                     >
                       <TableCell className="whitespace-normal break-words">
                         <div className="font-medium">{p.sku}</div>
-                        <div className="text-xs text-muted-foreground">{p.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {p.name}
+                          {kind && ` · ${kind}`}
+                        </div>
                       </TableCell>
                       <TableCell className="text-xs whitespace-normal break-words">
                         <span
@@ -277,6 +397,9 @@ export function ProductStockPickerDialog({
                           {stockPanel.isPending ? 'Cargando…' : availability.text}
                         </span>
                       </TableCell>
+                      <TableCell className="text-right text-xs whitespace-normal tabular-nums">
+                        <ListPriceCell product={p} />
+                      </TableCell>
                       <TableCell className="text-right">
                         <Button
                           size="sm"
@@ -284,8 +407,7 @@ export function ProductStockPickerDialog({
                           aria-label={`Elegir ${p.sku}`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            onSelect(p.id);
-                            onOpenChange(false);
+                            choose(p.id);
                           }}
                         >
                           Elegir
@@ -296,7 +418,7 @@ export function ProductStockPickerDialog({
                 })}
                 {matches.length === 0 && !belowMinChars && (
                   <TableRow>
-                    <TableCell colSpan={3} className="text-center text-muted-foreground">
+                    <TableCell colSpan={4} className="text-center text-muted-foreground">
                       {productsSearch.isFetching
                         ? 'Buscando…'
                         : 'Ningún producto coincide con ese texto.'}
@@ -306,8 +428,29 @@ export function ProductStockPickerDialog({
               </TableBody>
             </Table>
           </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              <Kbd>↑</Kbd> <Kbd>↓</Kbd> moverse
+            </span>
+            <span>
+              <Kbd>Enter</Kbd> elegir y pasar a la cantidad
+            </span>
+            <span>
+              <Kbd>Esc</Kbd> cerrar
+            </span>
+            <span className="ml-auto">Los productos nuevos se crean en Catálogo</span>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Una tecla, para las ayudas de teclado del pie. */
+function Kbd({ children }: { children: string }) {
+  return (
+    <kbd className="rounded border bg-muted px-1 font-sans text-[11px] text-foreground">
+      {children}
+    </kbd>
   );
 }

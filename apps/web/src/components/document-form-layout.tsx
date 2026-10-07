@@ -125,14 +125,17 @@ export function DocumentActions({
   children,
   hint,
   missing,
+  missingHeading,
 }: {
   children: ReactNode;
   hint?: ReactNode;
   /** cc31: lo que falta para guardar, con enlaces a cada campo (`StickyActionBar`). */
   missing?: readonly MissingField[];
+  /** cc31 (corte 6): otro encabezado para la lista de faltantes. */
+  missingHeading?: string;
 }) {
   return (
-    <StickyActionBar hint={hint} missing={missing}>
+    <StickyActionBar hint={hint} missing={missing} missingHeading={missingHeading}>
       {children}
     </StickyActionBar>
   );

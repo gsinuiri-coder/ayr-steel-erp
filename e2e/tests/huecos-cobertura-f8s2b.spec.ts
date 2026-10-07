@@ -174,7 +174,12 @@ test.describe('F8-S2b — huecos de cobertura', () => {
 
       await page.getByLabel('Producto de la línea 1').click();
       const dialog = page.getByRole('dialog');
-      await expect(dialog.getByText(`Elegir producto · ${LINE_LABEL[lineCode]}`)).toBeVisible();
+      // cc31 (corte 6): el título dice la línea del documento; la línea de negocio es el filtro
+      // marcado.
+      await expect(dialog.getByText('Elegir producto · línea 1')).toBeVisible();
+      await expect(
+        dialog.getByRole('button', { name: LINE_LABEL[lineCode], exact: true }),
+      ).toHaveAttribute('aria-pressed', 'true');
 
       // Sin pool: ni el título de la sección, ni el "sin bobinas abiertas" que se ve cuando el
       // pool existe pero está vacío — la sección entera está ausente, no una versión vacía.
