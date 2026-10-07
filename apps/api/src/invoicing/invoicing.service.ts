@@ -1220,6 +1220,9 @@ export class InvoicingService {
 
       // El mismo último control que `send`: dos borradores sobre la misma línea pasan los dos
       // la validación de creación, y este es el punto en el que todavía se puede decir que no.
+      // cc30 (D-471/D-474, matriz F9): con el pedido tomado detrás del comprobante, lo facturado
+      // del pedido se lee sin que una edición o una anulación del pedido cambie en el medio.
+      await lockDocuments(tx, { salesOrders: [document.salesOrderId] });
       await this.assertStillAvailable(tx, document);
 
       const number = fiscalDocumentNumber(input.series, input.correlative);

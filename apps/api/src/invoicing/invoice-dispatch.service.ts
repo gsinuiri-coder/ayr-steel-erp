@@ -313,7 +313,9 @@ export class InvoiceDispatchService {
     // planificaban lo mismo y la segunda, al pasar el lock de `createInTx`, solo veía el
     // pendiente del pedido y despachaba otra vez lo ya despachado. Mismo lock y mismo orden que
     // `createInTx`, que lo vuelve a tomar sin costo.
-    await lockDocuments(tx, { salesOrders: [exists.salesOrderId] });
+    // cc30 (D-471, matriz F4): comprobante → pedido. El plan sale de leer el comprobante, y enlazar
+    // los despachos lo escribe: se toma antes que el pedido (en el re-fechado ya viene tomado).
+    await lockDocuments(tx, { fiscalDocuments: [invoiceId], salesOrders: [exists.salesOrderId] });
     const plan = await this.buildPlan(tx, { id: invoiceId }, { dispatchDate });
     const invoice = plan.invoices[0];
     if (invoice === undefined) {
