@@ -66,7 +66,11 @@ jobs:
     # completo en 12 min, 124 504 consultas a 0,07 ms cada una. 30 deja ×2,5 sobre ese número:
     # alcanza para el crecimiento de la suite, y un corte ya significa «algo se colgó», no «cayó
     # lejos de Neon».
-    timeout-minutes: 30
+    #
+    # cc30: 40. El job también corre `test:db` (los pares de concurrencia de D-386 y del grupo C,
+    # 20 iteraciones cada uno): en el run 37559257048 tomó 6,6 min, y con 551 tests de Playwright
+    # el job se cortó a los 30 sin ningún rojo (el E2E llevaba 21 min).
+    timeout-minutes: 40
     services:
       postgres:
         # La misma imagen que docker-compose.yml: local y CI corren la suite sobre el mismo motor.
