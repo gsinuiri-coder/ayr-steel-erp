@@ -29,6 +29,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ListStateMessage } from '@/components/list-state';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
@@ -149,6 +150,23 @@ export function CajaView() {
 
       {context.isPending ? (
         <Skeleton className="h-64 w-full" />
+      ) : context.isError ? (
+        // cc31: sin contexto no se sabe si hay turno abierto; decir «no tienes caja» mentiría.
+        <ListStateMessage
+          tone="error"
+          title="No se pudo cargar tu caja"
+          hint="No sabemos si tienes un turno abierto: el servidor no respondió."
+          action={
+            <Button
+              size="sm"
+              onClick={() => {
+                void context.refetch();
+              }}
+            >
+              Reintentar
+            </Button>
+          }
+        />
       ) : open === null ? (
         <Card>
           <CardHeader>
@@ -257,12 +275,34 @@ export function CajaView() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {(sales.data ?? []).length === 0 && (
+                    {sales.isError ? (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-sm text-muted-foreground">
-                          Sin ventas todavía.
+                        <TableCell colSpan={6} className="whitespace-normal">
+                          <ListStateMessage
+                            tone="error"
+                            title="No se pudieron cargar las ventas del turno"
+                            hint="No es que no haya: el servidor no respondió."
+                            action={
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  void sales.refetch();
+                                }}
+                              >
+                                Reintentar
+                              </Button>
+                            }
+                          />
                         </TableCell>
                       </TableRow>
+                    ) : (
+                      (sales.data ?? []).length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-sm text-muted-foreground">
+                            Sin ventas todavía.
+                          </TableCell>
+                        </TableRow>
+                      )
                     )}
                   </TableBody>
                 </Table>
@@ -331,6 +371,24 @@ export function CajaView() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {sessions.isError && (
+        <ListStateMessage
+          tone="error"
+          title="No se pudieron cargar los turnos cerrados"
+          hint="El servidor no respondió."
+          action={
+            <Button
+              size="sm"
+              onClick={() => {
+                void sessions.refetch();
+              }}
+            >
+              Reintentar
+            </Button>
+          }
+        />
       )}
 
       {closed.length > 0 && (

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Decimal,
   FISCAL_DOC_TYPE_LABELS,
   FISCAL_DOCUMENT_ORIGIN_LABELS,
   FISCAL_DOCUMENT_ORIGINS,
@@ -29,7 +30,10 @@ import {
   canReactivateWithOrderLines,
   ReactivateWithOrderLinesDialog,
 } from '@/components/invoicing/reactivate-with-order-lines-dialog';
-import { formatDate, formatMoney } from '@/lib/format';
+import { currencyHeader, formatAmount, formatDate } from '@/lib/format';
+import { FilterChip } from '@/components/filter-chip';
+import { ListFooterRow } from '@/components/list-footer';
+import { ListStateRows } from '@/components/list-state';
 import {
   URL_PAGINATION_DEFAULTS,
   useUrlPagination,
@@ -44,7 +48,6 @@ import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatche
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -53,7 +56,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   cn,
   customerSearchHref,
@@ -142,11 +144,44 @@ export function ComprobantesView() {
   const [reactivatingWithLines, setReactivatingWithLines] =
     useState<FiscalDocumentListItemDto | null>(null);
 
+  // cc31: el filtro activo acompaña al título y al pie («4 de 38 comprobantes con saldo»).
+  const filterParts: string[] = [];
+  if (status === 'VOIDED,ANNULLED') {
+    filterParts.push('anulados');
+  } else if (status) {
+    const label =
+      FISCAL_DOCUMENT_STATUS_LABELS[status as keyof typeof FISCAL_DOCUMENT_STATUS_LABELS];
+    filterParts.push(`en «${label}»`);
+  }
+  if (docType) {
+    filterParts.push(
+      `de tipo «${FISCAL_DOC_TYPE_LABELS[docType as keyof typeof FISCAL_DOC_TYPE_LABELS]}»`,
+    );
+  }
+  if (origin) {
+    filterParts.push(
+      `«${FISCAL_DOCUMENT_ORIGIN_LABELS[origin as keyof typeof FISCAL_DOCUMENT_ORIGIN_LABELS]}»`,
+    );
+  }
+  if (pendingOnly) filterParts.push('con saldo');
+  if (filterParts.length === 0 && search) filterParts.push('que coinciden con la búsqueda');
+  const filterLabel = filterParts.join(', ');
+  const filtered = Boolean(search || status || docType || origin) || pendingOnly;
+  // El pie suma el saldo, no el total: sumar totales mezclaría notas de crédito (positivas),
+  // guías y anulados con lo facturado. El saldo ya es lo que se debe, documento por documento.
+  const pageBalance = rows.reduce((acc, d) => acc.plus(d.balancePen), new Decimal(0));
+  // Índice de la columna «Saldo» (la siguiente a «Total»): se corre uno con la columna de
+  // pedido de los anulados.
+  const balanceColumn = (showOrderColumn ? 7 : 6) + 1;
+
   return (
     <RoleGate allow={SALES_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Comprobantes</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold">Comprobantes</h1>
+            {filterLabel && <span className="text-muted-foreground">{filterLabel}</span>}
+          </div>
           <p className="text-xs text-muted-foreground">
             Facturas, boletas y notas de crédito. Un comprobante emitido ya permite despachar aunque
             el PSE todavía no lo haya aceptado.
@@ -155,10 +190,12 @@ export function ComprobantesView() {
         <div className="flex items-center gap-3">
           {/* D-292: el estado del PSE, en un modal (ⓘ) con su badge en la cabecera. */}
           <ContingencyCard />
-          {/* cc26: el Excel lleva los filtros y el orden de la lista (todas las páginas). */}
+          {/* cc31: un solo botón principal y el Excel en «Más opciones». cc26: el Excel lleva
+              los filtros y el orden de la lista (todas las páginas). */}
           <HeaderActions
-            primary={['xlsx']}
+            primary={['new']}
             actions={[
+              { key: 'new', label: 'Nuevo comprobante', href: '/comprobantes/nuevo' },
               {
                 key: 'xlsx',
                 label: 'Descargar Excel',
@@ -166,9 +203,6 @@ export function ComprobantesView() {
               },
             ]}
           />
-          <Button asChild>
-            <Link href="/comprobantes/nuevo">Nuevo comprobante</Link>
-          </Button>
         </div>
       </div>
 
@@ -246,236 +280,248 @@ export function ComprobantesView() {
           negativeValue="VOIDED,ANNULLED"
           allLabel="Todos, sin anulados"
         />
-        <Button
-          variant={pendingOnly ? 'default' : 'outline'}
-          aria-pressed={pendingOnly}
-          onClick={() => {
+        <FilterChip
+          active={pendingOnly}
+          onToggle={() => {
             setUrl({ pendingOnly: pendingOnly ? '' : '1' });
           }}
         >
           Solo con saldo
-        </Button>
+        </FilterChip>
       </div>
 
-      {documents.isPending ? (
-        <Skeleton className="h-64 w-full" />
-      ) : (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <SortableTableHead
-                  active={sort.key === 'number'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('number');
-                  }}
-                >
-                  Número
-                </SortableTableHead>
-                {showOrderColumn && <TableHead>Pedido</TableHead>}
-                <SortableTableHead
-                  className="hidden md:table-cell"
-                  active={sort.key === 'docType'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('docType');
-                  }}
-                >
-                  Tipo
-                </SortableTableHead>
-                <SortableTableHead
-                  active={sort.key === 'customer'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('customer');
-                  }}
-                >
-                  Cliente
-                </SortableTableHead>
-                <SortableTableHead
-                  className="hidden sm:table-cell"
-                  active={sort.key === 'issueDate'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('issueDate');
-                  }}
-                >
-                  Emisión
-                </SortableTableHead>
-                <SortableTableHead
-                  className="hidden md:table-cell"
-                  active={sort.key === 'dueDate'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('dueDate');
-                  }}
-                >
-                  Vencimiento
-                </SortableTableHead>
-                {/* Correcciones 05 / M5: el despacho declarado, o los del pedido rotulados aparte. */}
-                <TableHead className="hidden md:table-cell">Despacho</TableHead>
-                <SortableTableHead
-                  className="text-right"
-                  align="right"
-                  active={sort.key === 'total'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('total');
-                  }}
-                >
-                  Total
-                </SortableTableHead>
-                <TableHead className="text-right">Saldo</TableHead>
-                <SortableTableHead
-                  active={sort.key === 'status'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('status');
-                  }}
-                >
-                  Estado
-                </SortableTableHead>
-                {isAdmin && (
-                  <TableHead className="w-10">
-                    <span className="sr-only">Acciones</span>
-                  </TableHead>
-                )}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((d) => (
-                <TableRow key={d.id}>
-                  <TableCell>
-                    <Link
-                      href={`/comprobantes/${d.id}`}
-                      className={cn('font-medium', LINK_CLASSNAME)}
-                    >
-                      {/* Un borrador todavía no tiene número (D-072): se dice, no se finge. */}
-                      {d.number ?? 'Borrador'}
-                    </Link>
-                    {!showOrderColumn && d.salesOrderCode && d.salesOrderId && (
-                      <div className="text-xs">
-                        <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
-                          {d.salesOrderCode}
-                        </Link>
-                      </div>
-                    )}
-                  </TableCell>
-                  {showOrderColumn && (
-                    <TableCell>
-                      {d.salesOrderCode && d.salesOrderId ? (
-                        <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
-                          {d.salesOrderCode}
-                        </Link>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
+      <div className="rounded-lg border">
+        <Table list>
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <SortableTableHead
+                active={sort.key === 'number'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('number');
+                }}
+              >
+                Número
+              </SortableTableHead>
+              {showOrderColumn && <TableHead>Pedido</TableHead>}
+              <SortableTableHead
+                className="hidden md:table-cell"
+                active={sort.key === 'docType'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('docType');
+                }}
+              >
+                Tipo
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'customer'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('customer');
+                }}
+              >
+                Cliente
+              </SortableTableHead>
+              <SortableTableHead
+                className="hidden sm:table-cell"
+                active={sort.key === 'issueDate'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('issueDate');
+                }}
+              >
+                Emisión
+              </SortableTableHead>
+              <SortableTableHead
+                className="hidden md:table-cell"
+                active={sort.key === 'dueDate'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('dueDate');
+                }}
+              >
+                Vencimiento
+              </SortableTableHead>
+              {/* Correcciones 05 / M5: el despacho declarado, o los del pedido rotulados aparte. */}
+              <TableHead className="hidden md:table-cell">Despacho</TableHead>
+              <SortableTableHead
+                className="text-right"
+                align="right"
+                active={sort.key === 'total'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('total');
+                }}
+              >
+                {currencyHeader('Total')}
+              </SortableTableHead>
+              <TableHead className="text-right">{currencyHeader('Saldo')}</TableHead>
+              <SortableTableHead
+                active={sort.key === 'status'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('status');
+                }}
+              >
+                Estado
+              </SortableTableHead>
+              {isAdmin && (
+                <TableHead className="w-10">
+                  <span className="sr-only">Acciones</span>
+                </TableHead>
+              )}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((d) => (
+              <TableRow key={d.id}>
+                <TableCell>
+                  <Link
+                    href={`/comprobantes/${d.id}`}
+                    className={cn('font-medium', LINK_CLASSNAME)}
+                  >
+                    {/* Un borrador todavía no tiene número (D-072): se dice, no se finge. */}
+                    {d.number ?? 'Borrador'}
+                  </Link>
+                  {!showOrderColumn && d.salesOrderCode && d.salesOrderId && (
+                    <div className="text-xs">
+                      <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
+                        {d.salesOrderCode}
+                      </Link>
+                    </div>
                   )}
-                  <TableCell className="hidden md:table-cell">
-                    {FISCAL_DOC_TYPE_LABELS[d.docType]}
-                  </TableCell>
-                  <TableCell className={CUSTOMER_CELL_CLASSNAME}>
-                    <Link
-                      href={customerSearchHref(d.customerDocNumber)}
-                      className={cn(LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
-                      title={d.customerName}
-                    >
-                      {d.customerName}
-                    </Link>
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {d.customerDocNumber}
-                    </span>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">{formatDate(d.issueDate)}</TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    {d.dueDate ? (
-                      <span className={d.isOverdue ? 'font-medium text-destructive' : undefined}>
-                        {formatDate(d.dueDate)}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">Contado</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <DocumentDispatchLinks
-                      invoicedDispatches={d.invoicedDispatches}
-                      orderDispatches={d.orderDispatches}
-                    />
-                  </TableCell>
-                  <TableCell className="text-right">{formatMoney(d.totalPen)}</TableCell>
-                  <TableCell className="text-right">{formatMoney(d.balancePen)}</TableCell>
+                </TableCell>
+                {showOrderColumn && (
                   <TableCell>
-                    <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
-                    {d.isOverdue && (
-                      <Badge variant="outline" className="ml-2">
-                        Vencido
-                      </Badge>
+                    {d.salesOrderCode && d.salesOrderId ? (
+                      <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
+                        {d.salesOrderCode}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
                     )}
-                    {/*
+                  </TableCell>
+                )}
+                <TableCell className="hidden md:table-cell">
+                  {FISCAL_DOC_TYPE_LABELS[d.docType]}
+                </TableCell>
+                <TableCell className={CUSTOMER_CELL_CLASSNAME}>
+                  <Link
+                    href={customerSearchHref(d.customerDocNumber)}
+                    className={cn(LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
+                    title={d.customerName}
+                  >
+                    {d.customerName}
+                  </Link>
+                  <span className="ml-2 text-xs text-muted-foreground">{d.customerDocNumber}</span>
+                </TableCell>
+                <TableCell className="hidden sm:table-cell">{formatDate(d.issueDate)}</TableCell>
+                <TableCell className="hidden md:table-cell">
+                  {d.dueDate ? (
+                    <span className={d.isOverdue ? 'font-medium text-destructive' : undefined}>
+                      {formatDate(d.dueDate)}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Contado</span>
+                  )}
+                </TableCell>
+                <TableCell className="hidden md:table-cell">
+                  <DocumentDispatchLinks
+                    invoicedDispatches={d.invoicedDispatches}
+                    orderDispatches={d.orderDispatches}
+                  />
+                </TableCell>
+                <TableCell className="text-right">{formatAmount(d.totalPen)}</TableCell>
+                <TableCell className="text-right">{formatAmount(d.balancePen)}</TableCell>
+                <TableCell>
+                  <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
+                  {d.isOverdue && (
+                    <Badge variant="outline" className="ml-2">
+                      Vencido
+                    </Badge>
+                  )}
+                  {/*
                       D-105/D-153: "aceptado" quiere decir tres cosas distintas según de dónde
                       salió el documento. En uno importado o manual, el ERP no vio esa
                       aceptación: la afirma el papel. Por eso el origen se marca siempre que no
                       sea el normal, y no solo para lo importado.
                     */}
-                    {d.origin !== FiscalDocumentOrigin.ISSUED_HERE && (
-                      <Badge variant="secondary" className="ml-2">
-                        {FISCAL_DOCUMENT_ORIGIN_LABELS[d.origin]}
-                      </Badge>
-                    )}
-                  </TableCell>
-                  {isAdmin && (
-                    <TableCell className="w-10">
-                      {/* D-373: «Reactivar» vive en el menú de la fila, solo en lo que la API acepta. */}
-                      <RowActions
-                        label={d.number ?? 'Borrador'}
-                        primary={null}
-                        actions={[
-                          {
-                            key: 'reactivate',
-                            label: 'Reactivar',
-                            show: canReactivate(d),
-                            onSelect: () => {
-                              setReactivating(d);
-                            },
-                          },
-                          {
-                            // D-378: el papel está bien y al pedido le faltaron ítems.
-                            key: 'reactivate-with-order-lines',
-                            label: 'Reactivar con las líneas del pedido',
-                            show: canReactivateWithOrderLines(d),
-                            onSelect: () => {
-                              setReactivatingWithLines(d);
-                            },
-                          },
-                        ]}
-                      />
-                    </TableCell>
+                  {d.origin !== FiscalDocumentOrigin.ISSUED_HERE && (
+                    <Badge variant="secondary" className="ml-2">
+                      {FISCAL_DOCUMENT_ORIGIN_LABELS[d.origin]}
+                    </Badge>
                   )}
-                </TableRow>
-              ))}
-              {rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
-                    No hay comprobantes que coincidan.
+                </TableCell>
+                {isAdmin && (
+                  <TableCell className="w-10">
+                    {/* D-373: «Reactivar» vive en el menú de la fila, solo en lo que la API acepta. */}
+                    <RowActions
+                      label={d.number ?? 'Borrador'}
+                      primary={null}
+                      actions={[
+                        {
+                          key: 'reactivate',
+                          label: 'Reactivar',
+                          show: canReactivate(d),
+                          onSelect: () => {
+                            setReactivating(d);
+                          },
+                        },
+                        {
+                          // D-378: el papel está bien y al pedido le faltaron ítems.
+                          key: 'reactivate-with-order-lines',
+                          label: 'Reactivar con las líneas del pedido',
+                          show: canReactivateWithOrderLines(d),
+                          onSelect: () => {
+                            setReactivatingWithLines(d);
+                          },
+                        },
+                      ]}
+                    />
                   </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-      {!documents.isPending && (
-        <PaginationBar
-          page={page}
-          pageSize={pageSize}
-          total={documents.data?.total ?? 0}
-          onPageChange={setPage}
-          onPageSizeChange={setPageSize}
-          disabled={documents.isFetching}
-        />
-      )}
+                )}
+              </TableRow>
+            ))}
+            <ListStateRows
+              query={documents}
+              colSpan={columnCount}
+              isEmpty={rows.length === 0}
+              filtered={filtered}
+              emptyTitle="Todavía no hay comprobantes"
+              emptyHint="Emite el primero con «Nuevo comprobante»."
+              noResultsTitle={
+                search
+                  ? `Ningún comprobante coincide con «${search}»`
+                  : 'Ningún comprobante con este filtro'
+              }
+              onClearFilters={() => {
+                setSearchText('');
+                setUrl({ search: '', status: '', docType: '', origin: '', pendingOnly: '' });
+              }}
+              errorTitle="No se pudieron cargar los comprobantes"
+            />
+          </TableBody>
+          {rows.length > 0 && (
+            <ListFooterRow
+              shown={rows.length}
+              total={documents.data?.total ?? rows.length}
+              noun={filterLabel ? `comprobantes ${filterLabel}` : 'comprobantes'}
+              colCount={columnCount}
+              amountColumn={balanceColumn}
+              amount={formatAmount(pageBalance)}
+            />
+          )}
+        </Table>
+      </div>
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={documents.data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        disabled={documents.isFetching}
+      />
       {reactivating && (
         <ReactivateDocumentDialog
           document={reactivating}

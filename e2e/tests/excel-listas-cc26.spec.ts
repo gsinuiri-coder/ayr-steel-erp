@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { adminApi, adminCredentials, createUser } from '../helpers/api';
 import { apiAs } from '../helpers/production';
+import { headerAction } from '../helpers/ui';
 
 /**
  * cc26 (D-438, D-446, D-451) — el Excel de las listas.
@@ -56,6 +57,8 @@ test.describe('Excel de las listas (cc26)', () => {
   });
 
   test('cada pantalla ofrece su Excel', async ({ page }) => {
+    // Seis pantallas seguidas: con el web en modo desarrollo cada una se compila al entrar.
+    test.setTimeout(150_000);
     const { email, password } = adminCredentials();
     await page.goto('/login');
     await page.getByLabel('Correo electrónico').fill(email);
@@ -63,17 +66,24 @@ test.describe('Excel de las listas (cc26)', () => {
     await page.getByRole('button', { name: 'Ingresar' }).click();
     await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 
+    // cc31: en las listas el Excel vive en «Más opciones» (el principal es crear); se abre el
+    // menú para alcanzarlo.
     for (const [path, api] of [
       ['/comprobantes', '/api/invoicing/documents/xlsx'],
       ['/cotizaciones', '/api/sales/quotations/xlsx'],
       ['/pedidos', '/api/sales/orders/xlsx'],
       ['/compras', '/api/purchases/xlsx'],
       ['/clientes', '/api/customers/xlsx'],
-      ['/cobranzas', '/api/invoicing/receivables/xlsx'],
     ] as const) {
       await page.goto(path);
-      await expect(page.locator(`a[href^="${api}"]`).first()).toBeAttached({ timeout: 30_000 });
+      const item = await headerAction(page, 'Descargar Excel');
+      await expect(item).toHaveAttribute('href', new RegExp(`^${api}`));
+      await page.keyboard.press('Escape');
     }
+    await page.goto('/cobranzas');
+    await expect(page.locator('a[href^="/api/invoicing/receivables/xlsx"]').first()).toBeAttached({
+      timeout: 30_000,
+    });
   });
 
   test('cc28 (D-446): el clic descarga el archivo y un 400 del tope sale en un aviso', async ({
@@ -88,8 +98,8 @@ test.describe('Excel de las listas (cc26)', () => {
 
     // Un 2xx se descarga con el nombre que manda el API.
     await page.goto('/clientes');
-    const link = page.locator('a[href^="/api/customers/xlsx"]').first();
-    await expect(link).toBeVisible({ timeout: 30_000 });
+    const link = await headerAction(page, 'Descargar Excel');
+    await expect(link).toHaveAttribute('href', /^\/api\/customers\/xlsx/);
     const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
     expect(download.suggestedFilename()).toMatch(/\.xlsx$/);
 
@@ -104,8 +114,8 @@ test.describe('Excel de las listas (cc26)', () => {
       }),
     );
     await page.goto('/comprobantes');
-    const xlsx = page.locator('a[href^="/api/invoicing/documents/xlsx"]').first();
-    await expect(xlsx).toBeVisible({ timeout: 30_000 });
+    const xlsx = await headerAction(page, 'Descargar Excel');
+    await expect(xlsx).toHaveAttribute('href', /^\/api\/invoicing\/documents\/xlsx/);
     await xlsx.click();
     await expect(page.getByText(message)).toBeVisible();
     await expect(page).toHaveURL(/\/comprobantes/);

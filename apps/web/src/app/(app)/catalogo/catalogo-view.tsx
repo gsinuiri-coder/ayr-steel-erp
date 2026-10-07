@@ -69,7 +69,6 @@ export function CatalogoView() {
   // `?bajoPiso=<productId>` — un id concreto resalta esa fila (y abre su línea), el valor
   // `1` (más de 8 en el card) solo llega a la vista sin resaltar nada en particular.
   const highlightProductId = useSearchParams().get('bajoPiso');
-  const [activeLineId, setActiveLineId] = useState<string | null>(null);
   // Punto 13 del cliente (D-290): la búsqueda por SKU o nombre filtra en el cliente sobre
   // el catálogo ya cargado —no pagina (D-113)— y vive en la URL (`?q=`), con debounce de 150 ms.
   // D-326: `?tab=colores` abre la pestaña de colores (el ítem «Colores» del menú); sin él, la línea.
@@ -96,28 +95,34 @@ export function CatalogoView() {
     queryFn: () => api<ProductDto[]>('/catalog'),
   });
 
+  // cc31: la pestaña activa sale de la URL (D-289): `?tab=colores` o `?tab=<código de línea>`.
+  // Sin `tab`, la línea del producto resaltado (`?bajoPiso=`) o la primera.
+  const firstLine = lines.data?.[0];
+  const highlightedLineId =
+    highlightProductId && highlightProductId !== CATALOG_BAJO_PISO_VER_TODOS
+      ? products.data?.find((p) => p.id === highlightProductId)?.businessLineId
+      : undefined;
+  // La pestaña elegida se muestra al instante: la URL se actualiza un momento después y, mientras
+  // tanto, un clic en «Nuevo producto» abría el de la pestaña anterior.
+  const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
-    if (activeLineId !== null || !lines.data) return;
-    const highlighted =
-      highlightProductId && highlightProductId !== CATALOG_BAJO_PISO_VER_TODOS
-        ? products.data?.find((p) => p.id === highlightProductId)
-        : undefined;
-    setActiveLineId(
-      url.tab === 'colores'
-        ? 'colores'
-        : (highlighted?.businessLineId ?? lines.data[0]?.id ?? null),
-    );
-  }, [activeLineId, highlightProductId, lines.data, products.data, url.tab]);
-
-  // El menú lateral cambia `?tab=` con la pantalla ya abierta: la pestaña sigue a la URL.
-  useEffect(() => {
-    if (activeLineId === null) return;
-    if (url.tab === 'colores' && activeLineId !== 'colores') setActiveLineId('colores');
-    if (url.tab !== 'colores' && activeLineId === 'colores') {
-      setActiveLineId(lines.data?.[0]?.id ?? null);
-    }
-    // Solo cuando cambia la URL: elegir una pestaña a mano ya escribe `tab` (abajo).
+    setPicked(null);
   }, [url.tab]);
+  const activeLineId =
+    picked ??
+    (url.tab === 'colores'
+      ? 'colores'
+      : (lines.data?.find((l) => l.code === url.tab)?.id ?? highlightedLineId ?? firstLine?.id));
+  const selectTab = (value: string) => {
+    setPicked(value);
+    if (value === 'colores') {
+      setUrl({ tab: 'colores' });
+      return;
+    }
+    const code = lines.data?.find((l) => l.id === value)?.code ?? '';
+    // La primera línea es el default y no se escribe, salvo que un resaltado mande otra.
+    setUrl({ tab: code === firstLine?.code && !highlightedLineId ? '' : code });
+  };
 
   useEffect(() => {
     if (!highlightProductId || highlightProductId === CATALOG_BAJO_PISO_VER_TODOS) return;
@@ -177,13 +182,7 @@ export function CatalogoView() {
         )}
       </div>
 
-      <Tabs
-        value={activeLineId ?? lines.data[0]?.id}
-        onValueChange={(value) => {
-          setActiveLineId(value);
-          setUrl({ tab: value === 'colores' ? 'colores' : '' });
-        }}
-      >
+      <Tabs value={activeLineId} onValueChange={selectTab}>
         <TabsList>
           {lines.data.map((l) => (
             <TabsTrigger key={l.id} value={l.id}>

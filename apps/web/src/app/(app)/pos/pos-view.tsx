@@ -48,6 +48,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ListStateMessage } from '@/components/list-state';
 
 const POS_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -229,7 +230,24 @@ export function PosView() {
 
       {context.data && <ContingencyNotice context={context.data} />}
 
-      {session === null ? (
+      {/* cc31: si el contexto no carga no se sabe si hay caja abierta; ofrecer abrirla mentiría. */}
+      {context.isError ? (
+        <ListStateMessage
+          tone="error"
+          title="No se pudo cargar el mostrador"
+          hint="No sabemos si tu caja está abierta: el servidor no respondió."
+          action={
+            <Button
+              size="sm"
+              onClick={() => {
+                void context.refetch();
+              }}
+            >
+              Reintentar
+            </Button>
+          }
+        />
+      ) : session === null ? (
         <Card>
           <CardHeader>
             <CardTitle>Abre tu caja para vender</CardTitle>
@@ -279,6 +297,22 @@ export function PosView() {
             />
             {products.isPending ? (
               <Skeleton className="h-64 w-full" />
+            ) : products.isError ? (
+              <ListStateMessage
+                tone="error"
+                title="No se pudieron cargar los productos"
+                hint="No es que no haya: el servidor no respondió."
+                action={
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      void products.refetch();
+                    }}
+                  >
+                    Reintentar
+                  </Button>
+                }
+              />
             ) : (products.data ?? []).length === 0 ? (
               /* S11/F4-01: con el buscador vacío la pantalla decía «no hay productos… para
                  esa búsqueda» sin que nadie hubiera buscado nada. Ese mensaje es la

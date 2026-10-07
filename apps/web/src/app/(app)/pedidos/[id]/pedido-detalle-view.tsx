@@ -24,6 +24,8 @@ import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { CrumbLabel } from '@/components/breadcrumb';
+import { DetailSummary, Stages } from '@/components/detail-summary';
+import { orderStages } from '@/lib/stages';
 import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -52,7 +54,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Stat, StatStrip } from '@/components/stat-strip';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import {
@@ -342,10 +343,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            <Link href={customerSearchHref(o.customerDocNumber)} className={LINK_CLASSNAME}>
-              {o.customerName}
-            </Link>{' '}
-            · {o.customerDocNumber} · {/* D-119: un pedido puede mezclar líneas de negocio. */}
+            {/* D-119: un pedido puede mezclar líneas de negocio. */}
             {o.businessLines.map((b) => BUSINESS_LINE_LABELS[b]).join(', ')}
             {o.quotationId && (
               <>
@@ -365,19 +363,6 @@ export function PedidoDetalleView({ id }: { id: string }) {
               </>
             )}
           </p>
-          <p className="text-sm text-muted-foreground">
-            Fecha prometida:{' '}
-            {o.promisedDeliveryDate ? formatDate(o.promisedDeliveryDate) : 'sin fecha'}
-          </p>
-          {isAdmin && o.status !== 'CANCELLED' && (
-            <div className="mt-2">
-              <PromisedDateControl
-                salesOrderId={o.id}
-                salesOrderCode={o.code}
-                promisedDeliveryDate={o.promisedDeliveryDate}
-              />
-            </div>
-          )}
         </div>
         {/*
           F8-S3b/M3: principal + «⋯». Principal: despachar, que es lo que sigue al pedido y lo
@@ -527,6 +512,48 @@ export function PedidoDetalleView({ id }: { id: string }) {
         </Dialog>
       </div>
 
+      {/* cc31: resumen (con quién, fechas y total) y etapas, en ese orden bajo la cabecera. */}
+      <DetailSummary
+        items={[
+          {
+            label: 'Cliente',
+            value: (
+              <Link href={customerSearchHref(o.customerDocNumber)} className={LINK_CLASSNAME}>
+                {o.customerName}
+              </Link>
+            ),
+            detail: o.customerDocNumber,
+          },
+          {
+            label: 'Fecha',
+            value: formatDate(o.issueDate),
+            detail: o.quotationCode ? 'desde la cotización' : 'pedido directo',
+          },
+          {
+            label: 'Fecha prometida',
+            // El administrador la cambia ahí mismo: el control ya muestra la fecha.
+            value:
+              isAdmin && o.status !== 'CANCELLED' ? (
+                <PromisedDateControl
+                  salesOrderId={o.id}
+                  salesOrderCode={o.code}
+                  promisedDeliveryDate={o.promisedDeliveryDate}
+                />
+              ) : o.promisedDeliveryDate ? (
+                formatDate(o.promisedDeliveryDate)
+              ) : (
+                'Sin fecha'
+              ),
+          },
+        ]}
+        total={{
+          label: 'Total con IGV',
+          value: formatMoney(o.totalPen),
+          detail: `Valor ${formatMoney(o.subtotalPen)} · IGV ${formatMoney(o.igvPen)}`,
+        }}
+      />
+      <Stages {...orderStages(o.stage)} />
+
       {o.shortfalls.length > 0 && o.status !== 'CANCELLED' && (
         <Alert variant="warning">
           <AlertDescription className="grid gap-1">
@@ -542,7 +569,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
             </ul>
             <span className="text-xs">
               Las órdenes de producción existen igual; planta ve el aviso de material faltante.
-              {isAdmin && ' Cuando llegue el material, usa «Completar reserva» en el menú ⋯.'}
+              {isAdmin && ' Cuando llegue el material, usa «Completar reserva» en «Más opciones».'}
             </span>
           </AlertDescription>
         </Alert>
@@ -588,16 +615,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <StatStrip>
-        <Stat label="Fecha">{formatDate(o.issueDate)}</Stat>
-        <Stat label="Subtotal (sin IGV)">{formatMoney(o.subtotalPen)}</Stat>
-        <Stat label="IGV">{formatMoney(o.igvPen)}</Stat>
-        <Stat label="Total (con IGV)" className="font-semibold">
-          {formatMoney(o.totalPen)}
-        </Stat>
-      </StatStrip>
-
-      <Section title="Líneas">
+      <Section title="Líneas" count={o.items.length}>
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -702,6 +720,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
       )}
 
       <Section
+        count={o.reservations.length}
         title={
           <>
             Reservas de material

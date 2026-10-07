@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -15,6 +14,7 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
+import { useUrlState } from '@/lib/use-url-state';
 import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
 import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
@@ -44,7 +44,14 @@ export function InventarioView() {
   // VENDEDOR ve cantidades pero no costos de compra (§3.4): el API se los devuelve en
   // `null`, así que mostrarle tres columnas de guiones sería solo ruido.
   const showCosts = user.role !== Role.VENDEDOR;
-  const [line, setLine] = useState<BusinessLine>(STOCK_LINES[0] ?? 'drywall');
+  // cc31: la pestaña de línea vive en la URL (D-289); la primera no se escribe. Un valor que no
+  // es una línea con stock cae en la primera.
+  const defaultLine: BusinessLine = STOCK_LINES[0] ?? 'drywall';
+  const [url, setUrl] = useUrlState({ line: defaultLine });
+  const line = STOCK_LINES.find((l) => l === url.line) ?? defaultLine;
+  const setLine = (v: BusinessLine) => {
+    setUrl({ line: v });
+  };
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>

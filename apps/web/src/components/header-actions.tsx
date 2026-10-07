@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { errorMessage, toast } from '@/lib/notify';
 
 import { downloadFile } from '@/lib/download';
-import { Ellipsis } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -16,7 +16,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 /**
- * F8-S3b/M3 — el patrón único de acciones de cabecera: **un** botón principal y un menú «⋯» con
+ * F8-S3b/M3 — el patrón único de acciones de cabecera: **un** botón principal y un menú («Más
+ * opciones» desde cc31) con
  * las secundarias.
  *
  * Una vista de detalle llegaba a tener seis u ocho botones del mismo peso en fila (cotización,
@@ -87,14 +88,9 @@ export function HeaderActions({
   if (visible.length === 0) return null;
 
   return (
+    // cc31: siempre en este orden —«Más opciones», la compañera (D-153) y el botón principal al
+    // final—, para que la acción del día quede en el mismo lugar en toda pantalla.
     <div data-slot="header-actions" className="flex flex-wrap items-start gap-2">
-      {main && (
-        <div className="grid justify-items-end gap-1">
-          <PrimaryButton action={main} />
-          {primaryFooter}
-        </div>
-      )}
-      {beside && <PrimaryButton action={beside} variant="outline" />}
       {pendingSecondary && (
         <span role="status" className="self-center text-sm text-muted-foreground">
           {pendingSecondary.pendingText ?? `${pendingSecondary.label}…`}
@@ -103,8 +99,9 @@ export function HeaderActions({
       {rest.length > 0 && (
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" aria-label="Más acciones">
-              <Ellipsis />
+            <Button variant="outline">
+              Más opciones
+              <ChevronDown aria-hidden />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-auto min-w-48">
@@ -117,6 +114,13 @@ export function HeaderActions({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+      )}
+      {beside && <PrimaryButton action={beside} variant="outline" />}
+      {main && (
+        <div className="grid justify-items-end gap-1">
+          <PrimaryButton action={main} />
+          {primaryFooter}
+        </div>
       )}
     </div>
   );

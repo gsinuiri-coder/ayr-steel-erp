@@ -22,8 +22,8 @@ import {
 } from '@/lib/use-url-state';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ListFooterRow } from '@/components/list-footer';
 import { PaginationBar } from '@/components/pagination-bar';
 import {
   Table,
@@ -95,6 +95,7 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
     queryFn: () => api<PaginatedResult<CustomerDto>>(`/customers?${params.toString()}`),
   });
   const rows = customers.data?.items ?? [];
+  const columnCount = isAdmin ? 6 : 5;
 
   const toggleActive = useMutation({
     mutationFn: (c: CustomerDto) =>
@@ -110,31 +111,34 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Clientes</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold">Clientes</h1>
+            {debouncedSearch && (
+              <span className="text-muted-foreground">que coinciden con la búsqueda</span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">Alta, edición y baja de clientes.</p>
         </div>
-        <div className="flex gap-2">
-          {/* cc26 M2: el Excel lleva la búsqueda y el orden de la lista (todas las páginas). */}
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/customers', params),
-              },
-            ]}
-          />
-          {isAdmin && (
-            <Button
-              onClick={() => {
+        {/* cc31: un solo botón principal (solo ADMINISTRADOR) y el Excel en «Más opciones».
+            cc26 M2: el Excel lleva la búsqueda y el orden de la lista (todas las páginas). */}
+        <HeaderActions
+          primary={['new']}
+          actions={[
+            {
+              key: 'new',
+              label: 'Nuevo cliente',
+              show: isAdmin,
+              onSelect: () => {
                 openDialog();
-              }}
-            >
-              Nuevo cliente
-            </Button>
-          )}
-        </div>
+              },
+            },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/customers', params),
+            },
+          ]}
+        />
       </div>
 
       {autoOpenNew && !isAdmin && (
@@ -156,7 +160,7 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
       />
 
       <div className="rounded-lg border">
-        <Table>
+        <Table list>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <SortableTableHead
@@ -256,7 +260,7 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
             ))}
             <ListStateRows
               query={customers}
-              colSpan={6}
+              colSpan={columnCount}
               isEmpty={rows.length === 0}
               filtered={Boolean(debouncedSearch)}
               emptyTitle="Todavía no hay clientes"
@@ -264,10 +268,19 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
               noResultsTitle={`Ningún cliente coincide con «${debouncedSearch}»`}
               onClearFilters={() => {
                 setSearchText('');
+                setUrl({ search: '' });
               }}
               errorTitle="No se pudieron cargar los clientes"
             />
           </TableBody>
+          {rows.length > 0 && (
+            <ListFooterRow
+              shown={rows.length}
+              total={customers.data?.total ?? rows.length}
+              noun={debouncedSearch ? 'clientes que coinciden con la búsqueda' : 'clientes'}
+              colCount={columnCount}
+            />
+          )}
         </Table>
       </div>
       <PaginationBar

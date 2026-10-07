@@ -6,10 +6,12 @@ import { errorMessage, toast } from '@/lib/notify';
 import { DOC_TYPE_LABELS, Role, type SupplierDto } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
+import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { HeaderActions } from '@/components/header-actions';
+import { ListFooterRow } from '@/components/list-footer';
+import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -42,7 +44,12 @@ export function ProveedoresView() {
   const openDialog = (supplier?: SupplierDto) => {
     setDialog((d) => ({ open: true, supplier, nonce: d.nonce + 1 }));
   };
-  const [search, setSearch] = useState('');
+  // cc31: la búsqueda vive en la URL como en las demás listas (D-289). El filtro es local y usa
+  // lo tecleado al instante; la URL se actualiza al dejar de teclear.
+  const [url, setUrl] = useUrlState({ search: '' });
+  const [search, setSearch] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
 
   const suppliers = useQuery({
     queryKey: SUPPLIERS_QUERY_KEY,
@@ -68,22 +75,34 @@ export function ProveedoresView() {
     onError: (err) => toast.error(errorMessage(err, 'No se pudo actualizar')),
   });
 
+  const searching = search.trim() !== '';
+  const shownCount = filtered?.length ?? 0;
+
   return (
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Proveedores</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold">Proveedores</h1>
+            {searching && (
+              <span className="text-muted-foreground">que coinciden con la búsqueda</span>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">Alta, edición y baja de proveedores.</p>
         </div>
-        {isAdmin && (
-          <Button
-            onClick={() => {
-              openDialog();
-            }}
-          >
-            Nuevo proveedor
-          </Button>
-        )}
+        <HeaderActions
+          primary={['new']}
+          actions={[
+            {
+              key: 'new',
+              label: 'Nuevo proveedor',
+              show: isAdmin,
+              onSelect: () => {
+                openDialog();
+              },
+            },
+          ]}
+        />
       </div>
 
       <Input
@@ -96,7 +115,7 @@ export function ProveedoresView() {
       />
 
       <div className="rounded-lg border">
-        <Table>
+        <Table list>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <SortHead sort={sort} onSort={toggleSort} k="code">
@@ -121,21 +140,6 @@ export function ProveedoresView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {suppliers.isPending &&
-              [0, 1, 2].map((i) => (
-                <TableRow key={i}>
-                  <TableCell colSpan={7}>
-                    <Skeleton className="h-5 w-full" />
-                  </TableCell>
-                </TableRow>
-              ))}
-            {suppliers.isError && (
-              <TableRow>
-                <TableCell colSpan={7} className="text-destructive">
-                  No se pudieron cargar los proveedores.
-                </TableCell>
-              </TableRow>
-            )}
             {sortRows(filtered ?? [], sort, {
               code: { text: (s) => s.code },
               document: { text: (s) => `${s.docType} ${s.docNumber}` },
@@ -207,16 +211,29 @@ export function ProveedoresView() {
                 </TableCell>
               </TableRow>
             ))}
-            {filtered?.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  {search
-                    ? 'Ningún proveedor coincide con la búsqueda.'
-                    : 'No hay proveedores registrados.'}
-                </TableCell>
-              </TableRow>
-            )}
+            <ListStateRows
+              query={suppliers}
+              colSpan={7}
+              isEmpty={shownCount === 0}
+              filtered={searching}
+              emptyTitle="Todavía no hay proveedores"
+              emptyHint={isAdmin ? 'Da de alta el primero con «Nuevo proveedor».' : undefined}
+              noResultsTitle={`Ningún proveedor coincide con «${search.trim()}»`}
+              onClearFilters={() => {
+                setSearch('');
+                setUrl({ search: '' });
+              }}
+              errorTitle="No se pudieron cargar los proveedores"
+            />
           </TableBody>
+          {shownCount > 0 && (
+            <ListFooterRow
+              shown={shownCount}
+              total={suppliers.data?.length ?? shownCount}
+              noun={searching ? 'proveedores que coinciden con la búsqueda' : 'proveedores'}
+              colCount={7}
+            />
+          )}
         </Table>
       </div>
 

@@ -81,7 +81,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Stat, StatStrip } from '@/components/stat-strip';
+import { DetailSummary } from '@/components/detail-summary';
 import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatches';
 import { DispatchAtIssueDate } from './dispatch-at-issue-date';
 import {
@@ -622,11 +622,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             </p>
           )}
           <p className="text-sm text-muted-foreground">
-            {FISCAL_DOC_TYPE_LABELS[d.docType]} ·{' '}
-            <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
-              {d.customerName}
-            </Link>{' '}
-            · {d.customerDocNumber}
+            {FISCAL_DOC_TYPE_LABELS[d.docType]}
             {d.salesOrderId && (
               <>
                 {' · '}
@@ -810,18 +806,73 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   setVoidOpen(true);
                 },
               },
+              // cc31: las descargas van en «Más opciones», como en el resto de los detalles.
+              {
+                key: 'pdf',
+                label: 'Descargar PDF',
+                show: d.hasPdf,
+                download: `/api/invoicing/documents/${d.id}/pdf`,
+              },
+              {
+                key: 'xml',
+                label: 'Descargar XML',
+                show: d.hasXml,
+                download: `/api/invoicing/documents/${d.id}/xml`,
+              },
+              {
+                key: 'cdr',
+                label: 'Descargar CDR',
+                show: d.hasCdr,
+                download: `/api/invoicing/documents/${d.id}/cdr`,
+              },
             ]}
           />
         </div>
       </div>
+
+      {/* cc31: resumen bajo la cabecera; el total y el saldo a la derecha. */}
+      <DetailSummary
+        items={[
+          {
+            label: 'Cliente',
+            value: (
+              <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+                {d.customerName}
+              </Link>
+            ),
+            detail: d.customerDocNumber,
+          },
+          { label: 'Emisión', value: formatDate(d.issueDate) },
+          {
+            label: PAYMENT_TERMS_LABELS[d.paymentTerms],
+            value: d.dueDate ? (
+              <span className={d.isOverdue ? 'text-destructive' : undefined}>
+                {formatDate(d.dueDate)}
+              </span>
+            ) : (
+              'Sin vencimiento'
+            ),
+          },
+          {
+            label: 'Total con IGV',
+            value: formatMoney(d.totalPen),
+          },
+        ]}
+        total={{
+          label: 'Saldo',
+          value: formatMoney(d.balancePen),
+          // RF-72: el saldo de una versión archivada ya no suma en cuentas por cobrar.
+          detail: d.archivedAt !== null ? 'Versión archivada: no cuenta en cobranzas' : undefined,
+        }}
+      />
 
       {/* Los avisos de estado. Cada uno dice qué pasó y qué hacer, no solo qué pasó. */}
       {isAdmin && orderCancelled && d.origin === 'MANUAL' && canReactivate(d) && (
         <Alert data-testid="annulled-order-cancelled">
           <AlertDescription>
             Su pedido {d.salesOrderCode} está anulado: este comprobante ya no se reactiva sobre él.
-            Si el papel sigue vigente, abre el pedido correcto (del mismo cliente) y usa «⋯ → Traer
-            comprobante anulado».
+            Si el papel sigue vigente, abre el pedido correcto (del mismo cliente) y usa «Más
+            opciones → Traer comprobante anulado».
           </AlertDescription>
         </Alert>
       )}
@@ -977,56 +1028,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <StatStrip>
-        <Stat label="Emisión">{formatDate(d.issueDate)}</Stat>
-        <Stat label={PAYMENT_TERMS_LABELS[d.paymentTerms]}>
-          {d.dueDate ? (
-            <span className={d.isOverdue ? 'text-destructive' : undefined}>
-              {formatDate(d.dueDate)}
-            </span>
-          ) : (
-            '—'
-          )}
-        </Stat>
-        <Stat label="Total (con IGV)" className="font-semibold">
-          {formatMoney(d.totalPen)}
-        </Stat>
-        <Stat label="Saldo" className="font-semibold">
-          {/* La cifra en su propio elemento, por lo mismo que en el detalle de un despacho. */}
-          <div>{formatMoney(d.balancePen)}</div>
-          {/*
-            RF-72: el saldo de una versión archivada se sigue calculando igual, pero ya no
-            suma en cuentas por cobrar. Sin esta línea, la cifra se lee como una deuda viva.
-          */}
-          {d.archivedAt !== null && (
-            <div className="text-xs font-normal text-muted-foreground">
-              Versión archivada: no cuenta en cobranzas
-            </div>
-          )}
-        </Stat>
-      </StatStrip>
-
-      {(d.hasPdf || d.hasXml || d.hasCdr) && (
-        <div className="flex flex-wrap gap-2">
-          {d.hasPdf && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={`/api/invoicing/documents/${d.id}/pdf`}>Descargar PDF</a>
-            </Button>
-          )}
-          {d.hasXml && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={`/api/invoicing/documents/${d.id}/xml`}>Descargar XML</a>
-            </Button>
-          )}
-          {d.hasCdr && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={`/api/invoicing/documents/${d.id}/cdr`}>Descargar CDR</a>
-            </Button>
-          )}
-        </div>
-      )}
-
-      <Section title="Líneas" className="gap-2">
+      <Section title="Líneas" className="gap-2" count={d.items.length}>
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -1084,6 +1086,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       {!isDispatchNote && d.docType !== 'NOTA_CREDITO' && (
         <Section
           title="Cobros"
+          count={d.payments.length}
           action={
             canCollect ? (
               <Button
@@ -1163,7 +1166,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       )}
 
       {d.creditNotes.length > 0 && (
-        <Section title="Notas de crédito">
+        <Section title="Notas de crédito" count={d.creditNotes.length}>
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>

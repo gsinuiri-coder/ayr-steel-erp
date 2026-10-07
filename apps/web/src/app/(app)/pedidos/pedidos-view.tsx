@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Decimal,
   ORDER_STAGE_LABELS,
   Role,
   type PaginatedResult,
@@ -12,7 +13,9 @@ import {
 import { api } from '@/lib/api';
 import { listXlsxHref } from '@/lib/list-export';
 import { HeaderActions } from '@/components/header-actions';
-import { formatDate, formatMoney } from '@/lib/format';
+import { currencyHeader, formatAmount, formatDate } from '@/lib/format';
+import { ListFooterRow } from '@/components/list-footer';
+import { ListStateRows } from '@/components/list-state';
 import { RoleGate } from '@/components/role-gate';
 import { OrderDocumentLinks } from '@/components/sales/order-documents';
 import { OrderStageBadge } from '@/components/sales/status-badges';
@@ -23,7 +26,6 @@ import {
   useUrlState,
 } from '@/lib/use-url-state';
 import { FilterChip } from '@/components/filter-chip';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PaginationBar } from '@/components/pagination-bar';
 import {
@@ -33,7 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   cn,
   customerSearchHref,
@@ -121,32 +122,45 @@ export function PedidosView() {
       ? [...rawRows].sort((x, y) => compareBy(sort.dir, x.stage, y.stage))
       : rawRows;
 
+  // cc31: el filtro activo acompaña al título y al pie («4 de 38 pedidos en curso»).
+  let filterLabel = 'en curso';
+  if (historyOnly) {
+    filterLabel = stages.map((s) => (s === 'FULFILLED' ? 'atendidos' : 'anulados')).join(' y ');
+  } else if (stages.length > 0) {
+    filterLabel = `en ${stages
+      .map((s) => `«${ORDER_STAGE_LABELS[s as keyof typeof ORDER_STAGE_LABELS]}»`)
+      .join(', ')}`;
+  } else if (search) {
+    filterLabel = 'que coinciden con la búsqueda';
+  }
+  const pageTotal = rows.reduce((acc, o) => acc.plus(o.totalPen), new Decimal(0));
+
   return (
     <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Pedidos</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold">Pedidos</h1>
+            <span className="text-muted-foreground">{filterLabel}</span>
+          </div>
           <p className="text-xs text-muted-foreground">
             Nacen de confirmar una cotización, o directo en las líneas que no la exigen.
           </p>
         </div>
-        <div className="flex gap-2">
-          {/* cc26 M2: el Excel lleva los filtros y el orden de la lista (todas las páginas). El
-              orden por estado es solo de la página y no viaja: el archivo va en el del servidor. */}
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/sales/orders', params),
-              },
-            ]}
-          />
-          <Button asChild variant="outline">
-            <Link href="/pedidos/nuevo">Nuevo pedido directo</Link>
-          </Button>
-        </div>
+        {/* cc31: «Más opciones» (el Excel) y un solo botón principal. cc26 M2: el Excel lleva los
+            filtros y el orden de la lista (todas las páginas); el orden por estado es solo de la
+            página y no viaja. */}
+        <HeaderActions
+          primary={['new']}
+          actions={[
+            { key: 'new', label: 'Nuevo pedido directo', href: '/pedidos/nuevo' },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/sales/orders', params),
+            },
+          ]}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -195,7 +209,7 @@ export function PedidosView() {
       </div>
 
       <div className="rounded-lg border">
-        <Table>
+        <Table list>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <SortableTableHead
@@ -238,7 +252,7 @@ export function PedidosView() {
                   toggleSort('total');
                 }}
               >
-                Total
+                {currencyHeader('Total')}
               </SortableTableHead>
               <TableHead className="hidden text-right lg:table-cell">Reservas activas</TableHead>
               <SortableTableHead
@@ -254,21 +268,6 @@ export function PedidosView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {orders.isPending &&
-              [0, 1, 2].map((i) => (
-                <TableRow key={i}>
-                  <TableCell colSpan={8}>
-                    <Skeleton className="h-5 w-full" />
-                  </TableCell>
-                </TableRow>
-              ))}
-            {orders.isError && (
-              <TableRow>
-                <TableCell colSpan={8} className="text-destructive">
-                  No se pudieron cargar los pedidos.
-                </TableCell>
-              </TableRow>
-            )}
             {rows.map((o) => (
               <TableRow key={o.id}>
                 <TableCell className="font-medium">
@@ -296,10 +295,14 @@ export function PedidosView() {
                   )}
                 </TableCell>
                 <TableCell className="hidden md:table-cell">
-                  <OrderDocumentLinks documents={o.documents ?? []} />
+                  {(o.documents?.length ?? 0) > 0 ? (
+                    <OrderDocumentLinks documents={o.documents ?? []} />
+                  ) : (
+                    <span className="text-muted-foreground">Sin emitir</span>
+                  )}
                 </TableCell>
                 <TableCell className="hidden sm:table-cell">{formatDate(o.issueDate)}</TableCell>
-                <TableCell className="text-right">{formatMoney(o.totalPen)}</TableCell>
+                <TableCell className="text-right">{formatAmount(o.totalPen)}</TableCell>
                 <TableCell className="hidden text-right lg:table-cell">
                   {o.activeReservations}
                 </TableCell>
@@ -308,16 +311,33 @@ export function PedidosView() {
                 </TableCell>
               </TableRow>
             ))}
-            {orders.isSuccess && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
-                  {search || stages.length > 0
-                    ? 'Ningún pedido coincide con el filtro.'
-                    : 'No hay pedidos todavía.'}
-                </TableCell>
-              </TableRow>
-            )}
+            <ListStateRows
+              query={orders}
+              colSpan={8}
+              isEmpty={rows.length === 0}
+              filtered={Boolean(search) || stages.length > 0}
+              emptyTitle="Todavía no hay pedidos en curso"
+              emptyHint="Un pedido nace al confirmar una cotización, o directo con «Nuevo pedido directo»."
+              noResultsTitle={
+                search ? `Ningún pedido coincide con «${search}»` : 'Ningún pedido con este filtro'
+              }
+              onClearFilters={() => {
+                setSearchText('');
+                setUrl({ search: '', stage: '' });
+              }}
+              errorTitle="No se pudieron cargar los pedidos"
+            />
           </TableBody>
+          {rows.length > 0 && (
+            <ListFooterRow
+              shown={rows.length}
+              total={orders.data?.total ?? rows.length}
+              noun={`pedidos ${filterLabel}`}
+              colCount={8}
+              amountColumn={5}
+              amount={formatAmount(pageTotal)}
+            />
+          )}
         </Table>
       </div>
       <PaginationBar

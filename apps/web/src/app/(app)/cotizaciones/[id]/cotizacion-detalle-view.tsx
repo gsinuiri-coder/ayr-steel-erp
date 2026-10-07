@@ -35,7 +35,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Stat, StatStrip } from '@/components/stat-strip';
+import { DetailSummary, Stages } from '@/components/detail-summary';
+import { quotationStages } from '@/lib/stages';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import {
@@ -186,10 +187,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
             <QuotationStatusBadge status={q.status} isExpired={q.isExpired} />
           </div>
           <p className="text-sm text-muted-foreground">
-            <Link href={customerSearchHref(q.customerDocNumber)} className={LINK_CLASSNAME}>
-              {q.customerName}
-            </Link>{' '}
-            · {q.customerDocNumber} · {/* D-119: una cotización puede mezclar líneas de negocio. */}
+            {/* D-119: una cotización puede mezclar líneas de negocio. */}
             {q.businessLines.map((b) => BUSINESS_LINE_LABELS[b]).join(', ')}
           </p>
         </div>
@@ -253,6 +251,47 @@ export function CotizacionDetalleView({ id }: { id: string }) {
           />
         </div>
       </div>
+
+      {/* cc31: resumen y etapas bajo la cabecera. */}
+      <DetailSummary
+        items={[
+          {
+            label: 'Cliente',
+            value: (
+              <Link href={customerSearchHref(q.customerDocNumber)} className={LINK_CLASSNAME}>
+                {q.customerName}
+              </Link>
+            ),
+            detail: q.customerDocNumber,
+          },
+          { label: 'Emisión', value: formatDate(q.issueDate) },
+          {
+            label: 'Válida hasta',
+            // D-157: sin vencimiento no es una fecha faltante, es una cotización que no vence.
+            value: q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil),
+          },
+          // D-387: el mismo estado que la columna de la lista; sin nada, no aparece.
+          ...(q.externalInvoice !== null || q.invoiceDocuments.length > 0
+            ? [
+                {
+                  label: 'Comprobante',
+                  value: (
+                    <QuotationInvoice
+                      externalInvoice={q.externalInvoice}
+                      invoiceDocuments={q.invoiceDocuments}
+                    />
+                  ),
+                },
+              ]
+            : []),
+        ]}
+        total={{
+          label: 'Total con IGV',
+          value: formatMoney(q.totalPen),
+          detail: `Valor ${formatMoney(q.subtotalPen)}`,
+        }}
+      />
+      <Stages {...quotationStages(q.status)} />
 
       {q.status === 'EMITTED' && q.isExpired && (
         <Alert variant="destructive">
@@ -333,31 +372,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <StatStrip>
-        {/* D-387: el mismo estado que la columna de la lista; sin nada, no aparece. */}
-        {(q.externalInvoice !== null || q.invoiceDocuments.length > 0) && (
-          <Stat label="Comprobante">
-            <QuotationInvoice
-              externalInvoice={q.externalInvoice}
-              invoiceDocuments={q.invoiceDocuments}
-            />
-          </Stat>
-        )}
-        <Stat label="Emisión">{formatDate(q.issueDate)}</Stat>
-        {/* D-157: sin vencimiento no es una fecha faltante, es una cotización que no vence
-            (una importada). El guion de `formatDate` diría lo contrario. */}
-        <Stat label="Válida hasta">
-          {q.validUntil === null ? 'Sin vencimiento' : formatDate(q.validUntil)}
-        </Stat>
-        <Stat label="Subtotal (sin IGV)">{formatMoney(q.subtotalPen)}</Stat>
-        {/* El total es el número que se busca de un vistazo: es el único de los cuatro que
-            va en semibold. */}
-        <Stat label="Total (con IGV)" className="font-semibold">
-          {formatMoney(q.totalPen)}
-        </Stat>
-      </StatStrip>
-
-      <Section title="Líneas">
+      <Section title="Líneas" count={q.items.length}>
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>

@@ -29,6 +29,9 @@ import { StatusFilter } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
+import { FilterChip } from '@/components/filter-chip';
+import { ListFooterRow } from '@/components/list-footer';
+import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,7 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
@@ -116,36 +118,57 @@ export function ComprasView() {
   });
   const selectedCount = Object.keys(selected).length;
 
+  // cc31: el filtro activo acompaña al título y al pie («4 de 38 compras con saldo»).
+  const filterParts: string[] = [];
+  if (businessLine) {
+    filterParts.push(
+      `de ${BUSINESS_LINE_LABELS[businessLine as keyof typeof BUSINESS_LINE_LABELS]}`,
+    );
+  }
+  if (type) {
+    filterParts.push(
+      `de tipo «${PURCHASE_TYPE_LABELS[type as keyof typeof PURCHASE_TYPE_LABELS]}»`,
+    );
+  }
+  if (status === 'CANCELLED') {
+    filterParts.push('anuladas');
+  } else if (status) {
+    filterParts.push(
+      `en «${PURCHASE_STATUS_LABELS[status as keyof typeof PURCHASE_STATUS_LABELS]}»`,
+    );
+  }
+  if (onlyWithBalance) filterParts.push('con saldo');
+  if (filterParts.length === 0 && search) filterParts.push('que coinciden con la búsqueda');
+  const filterLabel = filterParts.join(', ');
+  const filtered = Boolean(search || businessLine || type || status) || onlyWithBalance;
+
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Compras</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold">Compras</h1>
+            {filterLabel && <span className="text-muted-foreground">{filterLabel}</span>}
+          </div>
           <p className="text-xs text-muted-foreground">
             Bobinas, producto terminado, servicios y gastos, con su saldo por pagar.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {/* cc26 M2: el Excel lleva los filtros y el orden de la lista (todas las páginas). Los
-              importes solo van en el del ADMINISTRADOR: son costo de compra (D-438). */}
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/purchases', params),
-              },
-            ]}
-          />
-          {/* D-351: la carga en tanda desde planilla, junto al alta de una. */}
-          <Button variant="outline" asChild>
-            <Link href="/compras/importar">Importar compras</Link>
-          </Button>
-          <Button asChild>
-            <Link href="/compras/nueva">Nueva compra</Link>
-          </Button>
-        </div>
+        {/* cc31: un solo botón principal y lo demás en «Más opciones». cc26 M2: el Excel lleva
+            los filtros y el orden de la lista (todas las páginas); los importes solo van en el
+            del ADMINISTRADOR (D-438). D-351: la carga en tanda desde planilla. */}
+        <HeaderActions
+          primary={['new']}
+          actions={[
+            { key: 'new', label: 'Nueva compra', href: '/compras/nueva' },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/purchases', params),
+            },
+            { key: 'import', label: 'Importar compras', href: '/compras/importar' },
+          ]}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -200,15 +223,14 @@ export function ComprasView() {
           className="w-44"
         />
 
-        <Button
-          variant={onlyWithBalance ? 'default' : 'outline'}
-          aria-pressed={onlyWithBalance}
-          onClick={() => {
+        <FilterChip
+          active={onlyWithBalance}
+          onToggle={() => {
             setUrl({ balance: onlyWithBalance ? '' : '1' });
           }}
         >
           Solo con saldo
-        </Button>
+        </FilterChip>
 
         <Input
           aria-label="Buscar compras"
@@ -249,7 +271,7 @@ export function ComprasView() {
       )}
 
       <div className="rounded-lg border">
-        <Table>
+        <Table list>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
               <TableHead className="w-8">
@@ -328,21 +350,6 @@ export function ComprasView() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {purchases.isPending &&
-              [0, 1, 2].map((i) => (
-                <TableRow key={i}>
-                  <TableCell colSpan={10}>
-                    <Skeleton className="h-5 w-full" />
-                  </TableCell>
-                </TableRow>
-              ))}
-            {purchases.isError && (
-              <TableRow>
-                <TableCell colSpan={10} className="text-destructive">
-                  No se pudieron cargar las compras.
-                </TableCell>
-              </TableRow>
-            )}
             {rows.map((p) => (
               <TableRow key={p.id}>
                 <TableCell>
@@ -388,14 +395,34 @@ export function ComprasView() {
                 </TableCell>
               </TableRow>
             ))}
-            {purchases.isSuccess && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={10} className="text-center text-muted-foreground">
-                  No hay compras que coincidan con los filtros.
-                </TableCell>
-              </TableRow>
-            )}
+            <ListStateRows
+              query={purchases}
+              colSpan={10}
+              isEmpty={rows.length === 0}
+              filtered={filtered}
+              emptyTitle="Todavía no hay compras"
+              emptyHint="Registra la primera con «Nueva compra»."
+              noResultsTitle={
+                search
+                  ? `Ninguna compra coincide con «${search}»`
+                  : 'Ninguna compra con este filtro'
+              }
+              onClearFilters={() => {
+                setSearchText('');
+                setUrl({ search: '', line: '', type: '', status: '', balance: '' });
+              }}
+              errorTitle="No se pudieron cargar las compras"
+            />
           </TableBody>
+          {/* La moneda va por fila (PEN o USD): el pie solo cuenta, no suma. */}
+          {rows.length > 0 && (
+            <ListFooterRow
+              shown={rows.length}
+              total={purchases.data?.total ?? rows.length}
+              noun={filterLabel ? `compras ${filterLabel}` : 'compras'}
+              colCount={10}
+            />
+          )}
         </Table>
       </div>
       <PaginationBar

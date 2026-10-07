@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -16,6 +15,7 @@ import {
 import { CUTTING_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import { formatTimestampDate } from '@/lib/format';
+import { useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -46,8 +46,21 @@ const ALL = 'ALL';
 export function CorteView() {
   // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
   const [sort, toggleSort] = useSort<'supplier' | 'line' | 'coils' | 'sent' | 'status'>();
-  const [businessLine, setBusinessLine] = useState<BusinessLine | typeof ALL>(ALL);
-  const [status, setStatus] = useState<CuttingOrderStatus | typeof ALL>(ALL);
+  // cc31: los filtros viven en la URL (D-289); «Todas» y «Todos» no se escriben.
+  const [url, setUrl] = useUrlState({ line: ALL, status: ALL });
+  // Un valor de la URL que no existe se ignora (iría al API y daría 400).
+  const businessLine = (BUSINESS_LINES as readonly string[]).includes(url.line)
+    ? (url.line as BusinessLine)
+    : ALL;
+  const status = (CUTTING_ORDER_STATUSES as readonly string[]).includes(url.status)
+    ? (url.status as CuttingOrderStatus)
+    : ALL;
+  const setBusinessLine = (v: BusinessLine | typeof ALL) => {
+    setUrl({ line: v });
+  };
+  const setStatus = (v: CuttingOrderStatus | typeof ALL) => {
+    setUrl({ status: v });
+  };
 
   const params = new URLSearchParams();
   if (businessLine !== ALL) params.set('businessLine', businessLine);

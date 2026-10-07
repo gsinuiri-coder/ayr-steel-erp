@@ -26,10 +26,11 @@ import {
   DispatchStatusBadge,
   FiscalDocumentStatusBadge,
 } from '@/components/invoicing/status-badges';
+import { HeaderActions } from '@/components/header-actions';
+import { ListFooterRow } from '@/components/list-footer';
+import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
@@ -76,19 +77,33 @@ export function DespachosView() {
 
   const rows = dispatches.data?.items ?? [];
 
+  // cc31: el filtro activo acompaña al título y al pie («4 de 38 despachos revertidos»).
+  let filterLabel = '';
+  if (status === 'REVERSED') {
+    filterLabel = 'revertidos';
+  } else if (status) {
+    filterLabel = `en «${DISPATCH_STATUS_LABELS[status as keyof typeof DISPATCH_STATUS_LABELS]}»`;
+  } else if (search) {
+    filterLabel = 'que coinciden con la búsqueda';
+  }
+
   return (
     <RoleGate allow={DISPATCH_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Despachos</h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-xl font-semibold">Despachos</h1>
+            {filterLabel && <span className="text-muted-foreground">{filterLabel}</span>}
+          </div>
           <p className="text-xs text-muted-foreground">
             El despacho saca la mercadería: mueve el kardex y cierra el pedido. Facturar no lo
             cierra.
           </p>
         </div>
-        <Button asChild>
-          <Link href="/despachos/nuevo">Nuevo despacho</Link>
-        </Button>
+        <HeaderActions
+          primary={['new']}
+          actions={[{ key: 'new', label: 'Nuevo despacho', href: '/despachos/nuevo' }]}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -116,142 +131,153 @@ export function DespachosView() {
         />
       </div>
 
-      {dispatches.isPending ? (
-        <Skeleton className="h-64 w-full" />
-      ) : (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <SortableTableHead
-                  active={sort.key === 'code'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('code');
-                  }}
-                >
-                  Despacho
-                </SortableTableHead>
-                <SortableTableHead
-                  className="hidden md:table-cell"
-                  active={sort.key === 'order'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('order');
-                  }}
-                >
-                  Pedido
-                </SortableTableHead>
-                <SortableTableHead
-                  active={sort.key === 'customer'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('customer');
-                  }}
-                >
-                  Cliente
-                </SortableTableHead>
-                <SortableTableHead
-                  className="hidden sm:table-cell"
-                  active={sort.key === 'date'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('date');
-                  }}
-                >
-                  Fecha
-                </SortableTableHead>
-                <TableHead className="hidden lg:table-cell">Traslado</TableHead>
-                <SortableTableHead
-                  className="hidden text-right lg:table-cell"
-                  align="right"
-                  active={sort.key === 'weight'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('weight');
-                  }}
-                >
-                  Peso
-                </SortableTableHead>
-                <TableHead>Guía</TableHead>
-                <SortableTableHead
-                  active={sort.key === 'status'}
-                  dir={sort.dir}
-                  onClick={() => {
-                    toggleSort('status');
-                  }}
-                >
-                  Estado
-                </SortableTableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((d) => (
-                <TableRow key={d.id} className={d.status === 'REVERSED' ? 'opacity-60' : undefined}>
-                  <TableCell>
-                    <Link href={`/despachos/${d.id}`} className={cn('font-medium', LINK_CLASSNAME)}>
-                      {d.code}
-                    </Link>
-                    <div className="text-xs text-muted-foreground">{d.itemCount} líneas</div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
-                      {d.salesOrderCode}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
-                      {d.customerName}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    {formatDate(d.dispatchDate)}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    <div className="text-sm">{TRANSFER_MODE_LABELS[d.transferMode]}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {d.transferMode === 'PRIVATE' ? d.vehiclePlate : d.carrierName}
+      <div className="rounded-lg border">
+        <Table list>
+          <TableHeader className="sticky top-0 z-10 bg-background">
+            <TableRow>
+              <SortableTableHead
+                active={sort.key === 'code'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('code');
+                }}
+              >
+                Despacho
+              </SortableTableHead>
+              <SortableTableHead
+                className="hidden md:table-cell"
+                active={sort.key === 'order'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('order');
+                }}
+              >
+                Pedido
+              </SortableTableHead>
+              <SortableTableHead
+                active={sort.key === 'customer'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('customer');
+                }}
+              >
+                Cliente
+              </SortableTableHead>
+              <SortableTableHead
+                className="hidden sm:table-cell"
+                active={sort.key === 'date'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('date');
+                }}
+              >
+                Fecha
+              </SortableTableHead>
+              <TableHead className="hidden lg:table-cell">Traslado</TableHead>
+              <SortableTableHead
+                className="hidden text-right lg:table-cell"
+                align="right"
+                active={sort.key === 'weight'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('weight');
+                }}
+              >
+                Peso
+              </SortableTableHead>
+              <TableHead>Guía</TableHead>
+              <SortableTableHead
+                active={sort.key === 'status'}
+                dir={sort.dir}
+                onClick={() => {
+                  toggleSort('status');
+                }}
+              >
+                Estado
+              </SortableTableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((d) => (
+              <TableRow key={d.id} className={d.status === 'REVERSED' ? 'opacity-60' : undefined}>
+                <TableCell>
+                  <Link href={`/despachos/${d.id}`} className={cn('font-medium', LINK_CLASSNAME)}>
+                    {d.code}
+                  </Link>
+                  <div className="text-xs text-muted-foreground">{d.itemCount} líneas</div>
+                </TableCell>
+                <TableCell className="hidden md:table-cell">
+                  <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
+                    {d.salesOrderCode}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+                    {d.customerName}
+                  </Link>
+                </TableCell>
+                <TableCell className="hidden sm:table-cell">{formatDate(d.dispatchDate)}</TableCell>
+                <TableCell className="hidden lg:table-cell">
+                  <div className="text-sm">{TRANSFER_MODE_LABELS[d.transferMode]}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {d.transferMode === 'PRIVATE' ? d.vehiclePlate : d.carrierName}
+                  </div>
+                </TableCell>
+                <TableCell className="hidden text-right lg:table-cell">
+                  {formatQty(d.totalWeightKg, 'kg')}
+                </TableCell>
+                <TableCell>
+                  {d.dispatchNoteStatus ? (
+                    <div className="space-y-1">
+                      <div className="text-xs">{d.dispatchNoteNumber ?? 'Borrador'}</div>
+                      <FiscalDocumentStatusBadge status={d.dispatchNoteStatus} />
                     </div>
-                  </TableCell>
-                  <TableCell className="hidden text-right lg:table-cell">
-                    {formatQty(d.totalWeightKg, 'kg')}
-                  </TableCell>
-                  <TableCell>
-                    {d.dispatchNoteStatus ? (
-                      <div className="space-y-1">
-                        <div className="text-xs">{d.dispatchNoteNumber ?? 'Borrador'}</div>
-                        <FiscalDocumentStatusBadge status={d.dispatchNoteStatus} />
-                      </div>
-                    ) : (
-                      <Badge variant="outline">Sin guía</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <DispatchStatusBadge status={d.status} />
-                  </TableCell>
-                </TableRow>
-              ))}
-              {rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
-                    No hay despachos que coincidan.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
-      {!dispatches.isPending && (
-        <PaginationBar
-          page={page}
-          pageSize={pageSize}
-          total={dispatches.data?.total ?? 0}
-          onPageChange={setPage}
-          onPageSizeChange={setPageSize}
-          disabled={dispatches.isFetching}
-        />
-      )}
+                  ) : (
+                    <Badge variant="outline">Sin guía</Badge>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <DispatchStatusBadge status={d.status} />
+                </TableCell>
+              </TableRow>
+            ))}
+            <ListStateRows
+              query={dispatches}
+              colSpan={8}
+              isEmpty={rows.length === 0}
+              filtered={Boolean(search) || Boolean(status)}
+              emptyTitle="Todavía no hay despachos"
+              emptyHint="Un despacho saca la mercadería de un pedido: créalo con «Nuevo despacho»."
+              noResultsTitle={
+                search
+                  ? `Ningún despacho coincide con «${search}»`
+                  : 'Ningún despacho con este filtro'
+              }
+              onClearFilters={() => {
+                setSearchText('');
+                setUrl({ search: '', status: '' });
+              }}
+              errorTitle="No se pudieron cargar los despachos"
+            />
+          </TableBody>
+          {rows.length > 0 && (
+            <ListFooterRow
+              shown={rows.length}
+              total={dispatches.data?.total ?? rows.length}
+              noun={filterLabel ? `despachos ${filterLabel}` : 'despachos'}
+              colCount={8}
+            />
+          )}
+        </Table>
+      </div>
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        total={dispatches.data?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        disabled={dispatches.isFetching}
+      />
     </RoleGate>
   );
 }

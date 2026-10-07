@@ -26,7 +26,7 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { HeaderActions } from '@/components/header-actions';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { AuditHistoryLink } from '@/components/audit-history-link';
 import { Section } from '@/components/section';
 import { Skeleton } from '@/components/ui/skeleton';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
@@ -38,7 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Stat, StatStrip } from '@/components/stat-strip';
+import { DetailSummary } from '@/components/detail-summary';
 
 const DISPATCH_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA] as const;
 
@@ -140,58 +140,107 @@ export function DespachoDetalleView({ id }: { id: string }) {
             <h1 className="text-xl font-semibold">{d.code}</h1>
             <DispatchStatusBadge status={d.status} />
           </div>
-          <p className="text-sm text-muted-foreground">
-            <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
-              {d.customerName}
-            </Link>{' '}
-            ·{' '}
-            <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
-              {d.salesOrderCode}
-            </Link>{' '}
-            · {formatDate(d.dispatchDate)}
-          </p>
         </div>
         {/*
           F8-S3b/M3: principal + «⋯». Principal: emitir la guía mientras falte; con la guía
           emitida, verla. Revertir es destructivo y va al menú.
         */}
-        <HeaderActions
-          primary={['issue-note', 'view-note']}
-          actions={[
-            {
-              key: 'issue-note',
-              label:
-                d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía de remisión',
-              show: canIssueNote,
-              disabled: busy || pseOff,
-              title: pseOff ? 'Emisión electrónica no habilitada en este entorno' : undefined,
-              pending: issueNote.isPending,
-              pendingText: 'Emitiendo…',
-              onSelect: () => {
-                if (busy) return;
-                issueNote.mutate();
+        {/* cc31: Historial, «Más opciones» y la principal, como en todo detalle. */}
+        <div className="flex items-center gap-2">
+          <AuditHistoryLink entityType="dispatches" entityId={d.id} />
+          <HeaderActions
+            primary={['issue-note', 'view-note']}
+            actions={[
+              {
+                key: 'issue-note',
+                label:
+                  d.dispatchNoteStatus === 'REJECTED' ? 'Reemitir guía' : 'Emitir guía de remisión',
+                show: canIssueNote,
+                disabled: busy || pseOff,
+                title: pseOff ? 'Emisión electrónica no habilitada en este entorno' : undefined,
+                pending: issueNote.isPending,
+                pendingText: 'Emitiendo…',
+                onSelect: () => {
+                  if (busy) return;
+                  issueNote.mutate();
+                },
               },
-            },
-            {
-              key: 'view-note',
-              label: 'Ver guía',
-              show: d.dispatchNoteId !== null,
-              href: `/comprobantes/${d.dispatchNoteId ?? ''}`,
-            },
-            {
-              key: 'reverse',
-              label: 'Revertir despacho',
-              show: canReverse,
-              destructive: true,
-              disabled: busy,
-              onSelect: () => {
-                if (busy) return;
-                setReverseOpen(true);
+              {
+                key: 'view-note',
+                label: 'Ver guía',
+                show: d.dispatchNoteId !== null,
+                href: `/comprobantes/${d.dispatchNoteId ?? ''}`,
               },
-            },
-          ]}
-        />
+              {
+                key: 'reverse',
+                label: 'Revertir despacho',
+                show: canReverse,
+                destructive: true,
+                disabled: busy,
+                onSelect: () => {
+                  if (busy) return;
+                  setReverseOpen(true);
+                },
+              },
+            ]}
+          />
+        </div>
       </div>
+
+      {/* cc31: resumen bajo la cabecera; el peso, que es la cifra del despacho, a la derecha. */}
+      <DetailSummary
+        items={[
+          {
+            label: 'Cliente',
+            value: (
+              <Link href={customerSearchHref(d.customerDocNumber)} className={LINK_CLASSNAME}>
+                {d.customerName}
+              </Link>
+            ),
+            detail: d.customerDocNumber,
+          },
+          {
+            label: 'Pedido',
+            value: (
+              <Link href={`/pedidos/${d.salesOrderId}`} className={LINK_CLASSNAME}>
+                {d.salesOrderCode}
+              </Link>
+            ),
+          },
+          { label: 'Fecha', value: formatDate(d.dispatchDate) },
+          {
+            label: TRANSFER_MODE_LABELS[d.transferMode],
+            value:
+              d.transferMode === 'PRIVATE'
+                ? d.vehiclePlate
+                : d.transferMode === 'PICKUP'
+                  ? 'El cliente recoge'
+                  : d.carrierName,
+            detail:
+              d.transferMode === 'PRIVATE'
+                ? `${d.driverGivenNames ?? ''} ${d.driverFamilyNames ?? ''} · ${d.driverDocType ?? ''} ${d.driverDocNumber ?? ''} · Lic. ${d.driverLicense ?? ''}`
+                : d.transferMode === 'PICKUP'
+                  ? undefined
+                  : `RUC ${d.carrierDocNumber ?? ''}`,
+          },
+          {
+            label: 'Guía',
+            value: d.dispatchNoteStatus ? (
+              <span className="flex flex-wrap items-center gap-2">
+                <span>{d.dispatchNoteNumber ?? 'Borrador'}</span>
+                <FiscalDocumentStatusBadge status={d.dispatchNoteStatus} />
+              </span>
+            ) : (
+              <span className="font-normal text-muted-foreground">Sin emitir</span>
+            ),
+          },
+        ]}
+        total={{
+          label: 'Peso bruto',
+          value: formatQty(d.totalWeightKg, 'kg'),
+          detail: d.packageCount !== null ? `${String(d.packageCount)} bultos` : undefined,
+        }}
+      />
 
       {/*
         El guardrail de D-074, dicho antes de que alguien escriba un motivo: deshacer una
@@ -216,66 +265,23 @@ export function DespachoDetalleView({ id }: { id: string }) {
         </Alert>
       )}
 
-      <StatStrip>
-        <Stat label="Modalidad">{TRANSFER_MODE_LABELS[d.transferMode]}</Stat>
-        <Stat label={d.transferMode === 'PRIVATE' ? 'Vehículo y conductor' : 'Transportista'}>
-          {d.transferMode === 'PRIVATE' ? (
-            <>
-              <div>{d.vehiclePlate}</div>
-              <div className="font-normal text-muted-foreground">
-                {d.driverGivenNames} {d.driverFamilyNames} · {d.driverDocType} {d.driverDocNumber} ·
-                Lic. {d.driverLicense}
-              </div>
-            </>
-          ) : (
-            <>
-              <div>{d.carrierName}</div>
-              <div className="font-normal text-muted-foreground">RUC {d.carrierDocNumber}</div>
-            </>
-          )}
-        </Stat>
-        <Stat label="Peso bruto">
-          {/* La cifra en su propio elemento: pegada al renglón de bultos, ningún elemento
-              tendría por texto el peso solo. Ver `SummaryCard` en el detalle de una OP. */}
-          <span>{formatQty(d.totalWeightKg, 'kg')}</span>
-          {d.packageCount !== null && (
-            <span className="ml-2 font-normal text-muted-foreground">{d.packageCount} bultos</span>
-          )}
-        </Stat>
-        <Stat label="Guía">
-          {d.dispatchNoteStatus ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span>{d.dispatchNoteNumber ?? 'Borrador'}</span>
-              <FiscalDocumentStatusBadge status={d.dispatchNoteStatus} />
-            </div>
-          ) : (
-            <span className="font-normal text-muted-foreground">Todavía sin emitir</span>
-          )}
-        </Stat>
-      </StatStrip>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Ruta</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2 text-sm md:grid-cols-2">
+      <Section title="Partida y llegada" bodyClassName="grid gap-2 px-2.5 py-1 md:grid-cols-2">
+        <div>
+          <div className="text-muted-foreground">Partida</div>
           <div>
-            <div className="text-muted-foreground">Partida</div>
-            <div>
-              {d.originAddress} <span className="text-muted-foreground">({d.originUbigeo})</span>
-            </div>
+            {d.originAddress} <span className="text-muted-foreground">({d.originUbigeo})</span>
           </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Llegada</div>
           <div>
-            <div className="text-muted-foreground">Llegada</div>
-            <div>
-              {d.destinationAddress}{' '}
-              <span className="text-muted-foreground">({d.destinationUbigeo})</span>
-            </div>
+            {d.destinationAddress}{' '}
+            <span className="text-muted-foreground">({d.destinationUbigeo})</span>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Section>
 
-      <Section title="Qué salió">
+      <Section title="Qué salió" count={d.items.length} empty="El despacho no tiene líneas.">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-background">
             <TableRow>
@@ -311,12 +317,9 @@ export function DespachoDetalleView({ id }: { id: string }) {
       </Section>
 
       {d.notes && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Observaciones</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">{d.notes}</CardContent>
-        </Card>
+        <Section title="Observaciones" bodyClassName="px-2.5 py-1 text-muted-foreground">
+          {d.notes}
+        </Section>
       )}
 
       <div className="text-xs text-muted-foreground">
