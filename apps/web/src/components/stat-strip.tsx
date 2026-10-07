@@ -37,11 +37,17 @@ export function Stat({
   label,
   children,
   className,
+  hint,
 }: {
   label: React.ReactNode;
   /** Clase para **la cifra**, no para la celda: es lo único que cada vista quiere retocar. */
   className?: string;
   children: React.ReactNode;
+  /**
+   * cc32: el matiz de la cifra, en una segunda línea pequeña («4 pedidos · 4 comprobantes»),
+   * para que el rótulo quede corto y no se corte.
+   */
+  hint?: React.ReactNode;
 }) {
   return (
     <div className="min-w-0 bg-card px-3 py-2">
@@ -54,6 +60,7 @@ export function Stat({
       {/* Sin `truncate`: hay tiras donde una celda lleva dos líneas (el conductor de una
           guía, el número de comprobante con su estado) y cortarlas escondería el dato. */}
       <dd className={cn('text-sm font-medium tabular-nums', className)}>{children}</dd>
+      {hint && <dd className="text-[11px] leading-tight text-muted-foreground">{hint}</dd>}
     </div>
   );
 }

@@ -52,6 +52,21 @@ describe('ruta de la barra superior', () => {
     expect(crumbsFor('/catalogo').list?.title).toBe('Productos');
   });
 
+  it('cc32: Reportes tiene página de inicio y el grupo enlaza a ella', () => {
+    expect(crumbsFor('/reportes')).toEqual({
+      group: 'Reportes',
+      list: { title: 'Inicio', href: null },
+      leaf: null,
+    });
+    expect(crumbsFor('/reportes/ventas-margen')).toEqual({
+      group: 'Reportes',
+      groupHref: '/reportes',
+      list: { title: 'Ventas y margen', href: null },
+      leaf: null,
+    });
+    expect(crumbsFor('/cotizaciones').groupHref).toBeUndefined();
+  });
+
   it('el Panel no tiene grupo', () => {
     expect(crumbsFor('/')).toEqual({ group: '', list: { title: 'Panel', href: null }, leaf: null });
   });
