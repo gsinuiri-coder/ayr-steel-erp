@@ -26,7 +26,19 @@ import { cn } from '@/lib/utils';
  */
 const NUMERIC = 'px-2 text-right tabular-nums whitespace-nowrap';
 
-const qty = (value: string | null) => (value === null ? '' : formatQty(value));
+/** cc31: la cantidad del kardex conserva sus 3 decimales, con la parte decimal en gris. */
+const qty = (value: string | null): ReactNode => {
+  if (value === null) return '';
+  const text = formatQty(value);
+  const dot = text.indexOf('.');
+  if (dot < 0) return text;
+  return (
+    <>
+      {text.slice(0, dot)}
+      <span className="text-muted-foreground">{text.slice(dot)}</span>
+    </>
+  );
+};
 const unitCost = (value: string | null) =>
   value === null ? '' : formatMoneyOrDash(value, 'PEN', 4);
 const amount = (value: string | null) => (value === null ? '' : formatMoneyOrDash(value));

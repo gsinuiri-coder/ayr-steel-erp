@@ -270,8 +270,8 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       const row = section.getByRole('row').filter({ hasText: op.code });
       await expect(row).toContainText(scenario.product.sku);
       await expect(row).toContainText('En cola');
-      await expect(row).toContainText('0.000 m');
-      await expect(row).toContainText('de 40.000 m');
+      await expect(row).toContainText('0.00 m');
+      await expect(row).toContainText('de 40.00 m');
 
       // Priorizar desde el pedido, con motivo.
       await row.getByRole('button', { name: `Priorizar ${op.code}` }).click();

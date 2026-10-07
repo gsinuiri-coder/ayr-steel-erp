@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   describePieces,
   MAX_REPORT_PIECES,
@@ -11,9 +11,9 @@ import {
   type ProductionOrderDto,
   type ReservationDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { drywallProfilesOf } from '@/lib/drywall-profiles';
-import { formatDate, formatQty } from '@/lib/format';
+import { formatDate, formatQtyAsIs } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { OperationDateField } from '@/components/operation-date-field';
 import {
@@ -74,8 +74,7 @@ export function LinesWithoutOrderCard({ onCreated }: { onCreated: (orderId: stri
       invalidateProduction(queryClient);
       onCreated(order.id);
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo crear la orden')),
   });
 
   const pending = queue.data ?? [];
@@ -87,8 +86,8 @@ export function LinesWithoutOrderCard({ onCreated }: { onCreated: (orderId: stri
       </CardHeader>
       <CardContent className="grid gap-3">
         <p className="text-sm text-muted-foreground">
-          Confirmar un pedido ya crea sus órdenes: acá solo aparecen las líneas cuya orden se anuló.
-          La orden nueva copia los largos del pedido como plan de corte (RF-31, D-084).
+          Confirmar un pedido ya crea sus órdenes: aquí solo aparecen las líneas cuya orden se
+          anuló. La orden nueva copia los largos del pedido como plan de corte.
         </p>
         {queue.isPending && <Skeleton className="h-16 w-full" />}
         {queue.isError && (
@@ -136,8 +135,10 @@ function LineWithoutOrderSummary({ entry }: { entry: LineWithoutOrderDto }) {
       </div>
       <div className="text-xs text-muted-foreground">
         {entry.productSku} — {entry.productName} · {describePieces(entry.pieces)}
-        {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>} ·
-        Prometida:{' '}
+        {entry.theoreticalKg !== null && (
+          <> · {formatQtyAsIs(entry.theoreticalKg, 'kg')} teóricos</>
+        )}{' '}
+        · Prometida:{' '}
         {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'}
       </div>
     </div>
@@ -191,8 +192,7 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
       invalidateProduction(queryClient);
       onCreated(order.id);
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo crear la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo crear la orden')),
   });
 
   // Solo los perfiles de drywall con el SKU completo: una corrida de coberturas no se crea

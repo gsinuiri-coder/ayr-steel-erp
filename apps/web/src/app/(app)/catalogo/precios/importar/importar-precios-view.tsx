@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Role,
   type PriceListImportPreviewDto,
@@ -93,8 +93,7 @@ export function ImportarPreciosView() {
       setResult(null);
       setReverted(null);
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo leer el archivo'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo leer el archivo')),
   });
 
   const confirm = useMutation({
@@ -129,7 +128,7 @@ export function ImportarPreciosView() {
     },
     onError: (err) => {
       idempotency.settle(err);
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo confirmar la carga');
+      toast.error(errorMessage(err, 'No se pudo confirmar la carga'));
     },
   });
 
@@ -153,7 +152,7 @@ export function ImportarPreciosView() {
     },
     onError: (err) => {
       idempotency.settle(err);
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo revertir el lote');
+      toast.error(errorMessage(err, 'No se pudo revertir el lote'));
     },
   });
 
@@ -168,7 +167,7 @@ export function ImportarPreciosView() {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Cargar precios de lista</h1>
+          <h1 className="text-xl font-semibold">Cargar precios de lista</h1>
           <p className="text-xs text-muted-foreground">
             xlsx o csv con columnas <code>SKU</code> y <code>PRECIO CON IGV</code>.
           </p>
@@ -215,8 +214,9 @@ export function ImportarPreciosView() {
             {hasErrors && (
               <Alert variant="destructive">
                 <AlertDescription>
-                  Hay filas con error: corrígelas en el archivo y volvé a subirlo. Ningún error
-                  bloquea las demás filas del preview, pero sí bloquea confirmar el lote entero.
+                  Hay filas con error: corrígelas en el archivo y vuelve a subirlo. Ningún error
+                  bloquea las demás filas de la vista previa, pero sí bloquea confirmar el lote
+                  entero.
                 </AlertDescription>
               </Alert>
             )}

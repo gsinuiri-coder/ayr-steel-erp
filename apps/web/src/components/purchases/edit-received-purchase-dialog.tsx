@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   CURRENCY_LABELS,
   Decimal,
@@ -26,7 +26,7 @@ import {
   type ReceivedPurchaseItemEdit,
   type SupplierDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -276,7 +276,7 @@ export function EditReceivedPurchaseDialog({
     },
     onError: (err) => {
       setPlan(null);
-      setPreviewError(err instanceof ApiError ? err.message : 'No se pudo revisar los cambios');
+      setPreviewError(errorMessage(err, 'No se pudo revisar los cambios'));
     },
   });
 
@@ -298,7 +298,7 @@ export function EditReceivedPurchaseDialog({
       onClose();
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo corregir la compra');
+      toast.error(errorMessage(err, 'No se pudo corregir la compra'));
     },
   });
 
@@ -759,7 +759,7 @@ export function EditReceivedPurchaseDialog({
             )}
             {(currentPlan.warnings ?? []).length > 0 && (
               <ul
-                className="grid list-disc gap-1 pl-4 text-xs text-amber-700 dark:text-amber-400"
+                className="grid list-disc gap-1 pl-4 text-xs text-tone-warning-foreground"
                 data-testid="received-edit-warnings"
               >
                 {(currentPlan.warnings ?? []).map((w) => (

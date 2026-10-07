@@ -3,7 +3,7 @@
 import { useMemo, useState, type ReactElement } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
@@ -69,6 +69,9 @@ import {
 } from '@/lib/line-description';
 import {
   customerLabel,
+  formatKg,
+  formatKgPrecise,
+  formatMeters,
   formatMoney,
   formatQty,
   isPositiveDecimal,
@@ -850,7 +853,7 @@ export function SalesDocumentForm({
       router.push(isQuotation ? `/cotizaciones/${created.id}` : `/pedidos/${created.id}`);
     },
     onError: (err) => {
-      setFormError(err instanceof ApiError ? err.message : 'No se pudo guardar');
+      setFormError(errorMessage(err, 'No se pudo guardar'));
     },
   });
   useUnsavedChanges(
@@ -1164,7 +1167,7 @@ export function SalesDocumentForm({
             <FormField>
               <Label>Vigencia</Label>
               <p className="text-xs text-muted-foreground">
-                Sin vencimiento: viene de un comprobante importado (D-157) y esto no se cambia acá.
+                Sin vencimiento: viene de un comprobante importado y esto no se cambia aquí.
               </p>
             </FormField>
           )}
@@ -1492,9 +1495,7 @@ function LineRow({
             que cada línea de coberturas midiera cuatro renglones de alto.
           */}
           {requiresQuotation && l.kind === 'PRODUCT' && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Se fabrica contra el pedido (RF-31)
-            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Se fabrica contra el pedido</p>
           )}
         </TableCell>
         <TableCell>
@@ -1653,7 +1654,7 @@ function LineRow({
                 {/* D-118: kg teóricos de la línea (espesor × ancho × densidad), informativo
                     — el precio no cambia, es peso estimado para el cliente y la guía. */}
                 {product.theoreticalKgPerUnit && isPositiveDecimal(l.qty) && (
-                  <> · ≈ {new Decimal(product.theoreticalKgPerUnit).times(l.qty).toFixed(3)} kg</>
+                  <> · ≈ {formatKg(new Decimal(product.theoreticalKgPerUnit).times(l.qty))}</>
                 )}
               </span>
             )
@@ -1814,7 +1815,7 @@ function LineRow({
             <p className="mt-2 text-xs text-muted-foreground">
               {parsedPieces === null
                 ? pieceError
-                : `${describePieces(parsedPieces)} · ${String(piecesCount(parsedPieces))} planchas · ${piecesMeters(parsedPieces).toFixed(3)} m`}
+                : `${describePieces(parsedPieces)} · ${String(piecesCount(parsedPieces))} planchas · ${formatMeters(piecesMeters(parsedPieces))}`}
             </p>
           </TableCell>
         </TableRow>
@@ -1866,7 +1867,7 @@ function LineRow({
               ) : (
                 <p className="pb-2 text-xs text-muted-foreground tabular-nums">
                   {isPositiveDecimal(l.qty)
-                    ? `${fixedLengthMeters(fixedLengthMm, l.qty).toFixed(3)} m lineales`
+                    ? `${formatMeters(fixedLengthMeters(fixedLengthMm, l.qty))} lineales`
                     : 'Escribe cuántas planchas lleva la línea'}
                 </p>
               )}
@@ -2026,7 +2027,7 @@ function PriceFloorHint({
     // Se dice en la línea, sin bloquear: sin costo no hay piso (D-163).
     if (l.kind !== 'BOBINA' && stock?.noFloorReason) {
       return (
-        <span className="mt-1 block text-right text-xs text-amber-700 dark:text-amber-400">
+        <span className="mt-1 block text-right text-xs text-tone-warning-foreground">
           {NO_FLOOR_REASON_LABELS[stock.noFloorReason]}
         </span>
       );
@@ -2137,7 +2138,7 @@ function CoilPoolConvert({
           )}
           {pool.data.candidates.length === 0 ? (
             <span className="text-destructive">
-              Ninguna bobina libre del pool alcanza para {formatQty(qty, 'kg')}.
+              Ninguna bobina libre del pool alcanza para {formatKgPrecise(qty)}.
             </span>
           ) : (
             <Select value={chosen} onValueChange={setCoilId}>
@@ -2365,14 +2366,14 @@ function RawMaterialCell({
   return (
     <div className="grid gap-0.5 text-xs">
       <span className="font-medium tabular-nums">
-        {needed === null ? 'Kg a reservar: —' : `${needed.toFixed(3)} kg a reservar`}
+        {needed === null ? 'Kg a reservar: —' : `${formatKgPrecise(needed)} a reservar`}
       </span>
       <span
         className={short ? 'text-destructive tabular-nums' : 'text-muted-foreground tabular-nums'}
       >
         {available === null
           ? 'No se pudo calcular la materia prima de este SKU'
-          : `${available.toFixed(3)} kg disponibles${short ? ' — no alcanza' : ''}`}
+          : `${formatKgPrecise(available)} disponibles${short ? ' — no alcanza' : ''}`}
       </span>
       {stock?.rawMaterialLabel && (
         <span className="text-muted-foreground">{stock.rawMaterialLabel}</span>

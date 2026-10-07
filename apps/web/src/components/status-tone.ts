@@ -154,3 +154,24 @@ export const ORDER_STAGE_TONE: Record<OrderStage, StatusTone> = {
   ...SALES_ORDER_TONE,
   READY: 'warning',
 };
+
+/**
+ * cc31: lo vencido —una fecha prometida que pasó o un saldo fuera de plazo— tiene un solo color
+ * en toda la app. Antes era rojo en planta y en la cola y ámbar en el Panel. El estado «Vencida»
+ * de una cotización es otra cosa (la oferta caducó) y sigue en `QUOTATION_TONE`.
+ */
+export const OVERDUE_TONE: StatusTone = 'destructive';
+
+/** cc31: la marca «Prioridad» de una orden o de un pedido en la cola de producción. */
+export const PRIORITY_TONE: StatusTone = 'progress';
+
+/** cc31: el estado de una orden de coberturas en planta (`stateOf` del panel de la orden). */
+export const PLANT_ORDER_STATE_TONE: Record<
+  'sin-plan' | 'reportada' | 'sin-bobina' | 'lista',
+  StatusTone
+> = {
+  'sin-plan': 'destructive',
+  'sin-bobina': 'outline',
+  lista: 'progress',
+  reportada: 'done',
+};

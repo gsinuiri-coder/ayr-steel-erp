@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   DOC_TYPES,
   Role,
@@ -18,9 +18,9 @@ import {
   type TransferMode,
   type TransportSuggestionsDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
-import { isPositiveDecimal, unitSymbol } from '@/lib/format';
+import { formatKg, formatUnitQty, isPositiveDecimal } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { useSession } from '@/lib/session';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
@@ -278,7 +278,7 @@ export function NuevoDespachoView() {
       router.push(`/despachos/${created.id}`);
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo registrar el despacho');
+      toast.error(errorMessage(err, 'No se pudo registrar el despacho'));
     },
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
@@ -344,7 +344,7 @@ export function NuevoDespachoView() {
   return (
     <RoleGate allow={DISPATCH_ROLES}>
       <div>
-        <h1 className="text-lg font-semibold">Nuevo despacho</h1>
+        <h1 className="text-xl font-semibold">Nuevo despacho</h1>
         <p className="text-xs text-muted-foreground">
           Al guardar, el material sale del kardex y el pedido pasa a atendido —total o en parte—. La
           guía de remisión se emite después, desde el despacho.
@@ -502,7 +502,7 @@ export function NuevoDespachoView() {
                 htmlFor={fieldId('peso-total')}
                 size="lg"
                 numeric
-                help={`Propuesto ${suggestedWeight} kg a partir del material reservado; corrígelo con la báscula.`}
+                help={`Propuesto ${formatKg(suggestedWeight)} a partir del material reservado; corrígelo con la báscula.`}
                 className={transferMode === 'PICKUP' ? 'hidden' : undefined}
               >
                 <Input
@@ -735,9 +735,7 @@ export function NuevoDespachoView() {
                       <div className="text-xs text-muted-foreground">{l.description}</div>
                     </TableCell>
                     <TableCell className="text-sm">{l.itemLabel}</TableCell>
-                    <TableCell className="text-right">
-                      {l.qty} {unitSymbol(l.unit)}
-                    </TableCell>
+                    <TableCell className="text-right">{formatUnitQty(l.qty, l.unit)}</TableCell>
                     <TableCell className="text-right">{l.dispatchedQty}</TableCell>
                     <TableCell className="text-right">{l.pendingDispatchQty}</TableCell>
                     <TableCell>

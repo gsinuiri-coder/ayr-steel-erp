@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { Role, ROLE_LABELS, type UserDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,7 +47,7 @@ export function UsersView() {
       toast.success(updated.active ? 'Usuario activado' : 'Usuario desactivado');
       void queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo actualizar')),
   });
 
   if (me.role !== Role.ADMINISTRADOR) {
@@ -62,8 +62,8 @@ export function UsersView() {
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Usuarios</h1>
-          <p className="text-xs text-muted-foreground">Alta, edición y baja de usuarios (RF-04).</p>
+          <h1 className="text-xl font-semibold">Usuarios</h1>
+          <p className="text-xs text-muted-foreground">Alta, edición y baja de usuarios.</p>
         </div>
         <Button
           onClick={() => {

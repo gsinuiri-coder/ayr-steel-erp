@@ -4,10 +4,10 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { z } from 'zod';
 import { commercialColorIssue, type ColorDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -94,7 +94,7 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
       toast.success(updated.isActive ? 'Color activado' : 'Color desactivado');
       void queryClient.invalidateQueries({ queryKey: colorsQueryKey });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo actualizar')),
   });
 
   if (colors.isPending) return <Skeleton className="h-48 w-full" />;
@@ -106,7 +106,7 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
         <p className="text-sm text-muted-foreground">
           Cada color es un <strong>color comercial</strong> (Rojo, Azul), sin RAL: el RAL va en el
           acabado de cada bobina. La orden de producción monta cualquier bobina del mismo color
-          comercial y espesor, y ofrece primero las del acabado exacto del producto (D-270).
+          comercial y espesor, y ofrece primero las del acabado exacto del producto.
         </p>
         {isAdmin && (
           <Button
@@ -130,7 +130,7 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
               <SortHead sort={sort} onSort={toggleSort} k="name">
                 Color
               </SortHead>
-              <TableHead title="Desde D-273 el RAL va en el acabado">RAL (histórico)</TableHead>
+              <TableHead title="El RAL ahora va en el acabado">RAL (histórico)</TableHead>
               <TableHead>Hex</TableHead>
               <SortHead sort={sort} onSort={toggleSort} k="status">
                 Estado
@@ -247,7 +247,7 @@ function ColorDialog({ color, onClose }: { color: ColorDto | null; onClose: () =
     },
     onError: (err) => {
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'Error inesperado',
+        message: errorMessage(err, 'Error inesperado'),
       });
     },
   });

@@ -90,7 +90,7 @@ export function CuentasPorCobrarView() {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Cuentas por cobrar</h1>
+          <h1 className="text-xl font-semibold">Cuentas por cobrar</h1>
           <p className="text-xs text-muted-foreground">
             Saldo a hoy{data ? ` (${formatDate(data.asOf)})` : ''} de los comprobantes con deuda,
             por cliente y por antigüedad desde el vencimiento. El contado vence el día de su emisión

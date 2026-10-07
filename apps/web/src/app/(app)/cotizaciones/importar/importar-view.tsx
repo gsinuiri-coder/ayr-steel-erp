@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   derivedUnitValue,
   describePieces,
@@ -33,7 +33,7 @@ import {
   type RoofingPieceDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatMoney, formatQty } from '@/lib/format';
+import { formatKgPrecise, formatMeters, formatMoney, formatQty, formatQtyAsIs } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { ExpressCreateCustomer } from '@/components/express-create';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
@@ -352,7 +352,7 @@ export function ImportarCotizacionesView() {
         }
         setDocumentErrors(mapped);
       }
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo importar');
+      toast.error(errorMessage(err, 'No se pudo importar'));
     },
   });
 
@@ -362,7 +362,7 @@ export function ImportarCotizacionesView() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-1">
-              <h1 className="text-lg font-semibold">Importar cotizaciones</h1>
+              <h1 className="text-xl font-semibold">Importar cotizaciones</h1>
               {/* D-292: la explicación estática (4 líneas) pasa a ⓘ; el subtítulo queda en una. */}
               <InfoPopover label="Cómo funciona la importación">
                 <p className="text-sm">
@@ -373,7 +373,8 @@ export function ImportarCotizacionesView() {
               </InfoPopover>
             </div>
             <p className="text-sm text-muted-foreground">
-              Sube el export de ventas detalladas y revisa cada comprobante antes de crear nada.
+              Sube la exportación de ventas detalladas y revisa cada comprobante antes de crear
+              nada.
             </p>
           </div>
           <Button variant="outline" asChild>
@@ -450,7 +451,7 @@ export function ImportarCotizacionesView() {
                   <AlertDescription>
                     El maestro de clientes tiene más de {MAX_CUSTOMER_PAGES * MAX_PAGE_SIZE} activos
                     y el desplegable no los trae a todos. Si el cliente de una fila no aparece,
-                    resolvelo desde el maestro y volvé a subir el archivo.
+                    resuélvelo desde el maestro y vuelve a subir el archivo.
                   </AlertDescription>
                 </Alert>
               )}
@@ -460,7 +461,7 @@ export function ImportarCotizacionesView() {
                     {newCustomers.length === 1
                       ? 'Un comprobante trae un cliente que no está en el maestro y sí en el padrón: se dará de alta al importar, con la razón social que devolvió SUNAT.'
                       : `${String(newCustomers.length)} comprobantes traen clientes que no están en el maestro y sí en el padrón: se darán de alta al importar, con la razón social que devolvió SUNAT.`}{' '}
-                    Si preferís otro, elegilo en la cabecera del comprobante.
+                    Si prefieres otro, elígelo en la cabecera del comprobante.
                   </AlertDescription>
                 </Alert>
               )}
@@ -471,7 +472,7 @@ export function ImportarCotizacionesView() {
                       ? 'Un comprobante tiene algo sin resolver'
                       : `${String(blocking)} cosas quedan sin resolver`}
                     . Corrígelas o quita la línea: un cliente o un producto que falta se crea con el
-                    botón de al lado, sin salir de acá.
+                    botón de al lado, sin salir de aquí.
                   </AlertDescription>
                 </Alert>
               )}
@@ -761,7 +762,10 @@ function DocumentGroupCard({
           onCreated={onCreatedCustomer}
         />
         {group.customerId === null && group.padron !== null && (
-          <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-500">
+          <Badge
+            variant="outline"
+            className="border-tone-warning-foreground/40 text-tone-warning-foreground"
+          >
             Nuevo — se creará desde padrón: {group.padron.name}
           </Badge>
         )}
@@ -934,7 +938,7 @@ function ImportRow({
           // D-385: la fila venía en toneladas y el producto se vende en kilos.
           <div className="mt-1 w-40 text-right text-xs text-muted-foreground">
             {raw.unitConversion.paperQty} {raw.unitConversion.paperUnit} →{' '}
-            {formatQty(trimDecimals(raw.qty), 'kg')}
+            {formatQtyAsIs(trimDecimals(raw.qty), 'kg')}
           </div>
         )}
         <Issue row={row} field="qty" />
@@ -1017,7 +1021,7 @@ function ImportRow({
             />
             {row.pieces && (
               <div className="mt-1 w-40 text-xs text-muted-foreground">
-                {describePieces(row.pieces)} · {piecesMeters(row.pieces).toFixed(3)} m
+                {describePieces(row.pieces)} · {formatMeters(piecesMeters(row.pieces))}
               </div>
             )}
           </>
@@ -1401,7 +1405,7 @@ function resolveRow(
     issues.push({
       field: 'qty',
       severity: 'error',
-      message: `${chosenCoil.code} tiene ${formatQty(chosenCoil.balanceKg, 'kg')}: no alcanza para la línea.`,
+      message: `${chosenCoil.code} tiene ${formatKgPrecise(chosenCoil.balanceKg)}: no alcanza para la línea.`,
     });
   }
   if (!raw.issueDate) {
@@ -1425,7 +1429,7 @@ function resolveRow(
         issues.push({
           field: 'pieces',
           severity: 'error',
-          message: `Los largos suman ${meters.toFixed(3)} m y la línea dice ${toDecimal(qty.trim()).toFixed(3)} m.`,
+          message: `Los largos suman ${formatMeters(meters)} y la línea dice ${formatMeters(toDecimal(qty.trim()))}.`,
         });
       }
     }

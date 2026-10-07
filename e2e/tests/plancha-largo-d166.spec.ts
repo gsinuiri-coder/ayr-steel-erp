@@ -173,7 +173,7 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
 
       // Y con el largo en milímetros el aviso desaparece y la traducción cierra.
       await largo.fill('3000');
-      await expect(page.getByText('= 3.000 m', { exact: false })).toBeVisible();
+      await expect(page.getByText('= 3.00 m', { exact: false })).toBeVisible();
       await expect(page.getByText(/fuera de rango/i)).toHaveCount(0);
     } finally {
       await purgeRoofingTrail(api, { finishId: finish.id, colorId: color.id });
@@ -233,7 +233,7 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
 
       await page.getByLabel('Planchas de la línea 1').fill('10');
       // 10 planchas × 3 m = 30 m lineales. Antes salían 0.030.
-      await expect(page.getByText('30.000 m lineales')).toBeVisible();
+      await expect(page.getByText('30.00 m lineales')).toBeVisible();
 
       // Y el importe: S/ 11 el metro (con IGV) × 3 m × 10 planchas = S/ 330.
       await page.getByLabel('Precio por metro de la línea 1').fill('11');

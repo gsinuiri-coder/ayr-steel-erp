@@ -1,7 +1,7 @@
 'use client';
 
 import { money, salePriceFromValue, toFixedString, type SalesPriceChangeDto } from '@ayr/shared';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDateTime } from '@/lib/format';
 import { Section } from '@/components/section';
 import {
   Table,
@@ -11,18 +11,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-/** Fecha y hora del cambio, en Lima. */
-function formatChangedAt(iso: string): string {
-  return new Intl.DateTimeFormat('es-PE', {
-    timeZone: 'America/Lima',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso));
-}
 
 /**
  * D-162: el precio se muestra **con IGV**, que es el número que se negoció con el cliente; la
@@ -56,7 +44,7 @@ export function PriceChangesCard({ changes }: { changes: SalesPriceChangeDto[] }
         <TableBody>
           {changes.map((c) => (
             <TableRow key={c.id}>
-              <TableCell className="tabular-nums">{formatChangedAt(c.changedAt)}</TableCell>
+              <TableCell className="tabular-nums">{formatDateTime(c.changedAt)}</TableCell>
               <TableCell>{c.changedByName ?? '—'}</TableCell>
               <TableCell>
                 L{c.lineNumber} · {c.productSku}

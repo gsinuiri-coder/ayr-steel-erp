@@ -17,11 +17,12 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
-import { formatDate, formatQty, queueAgeLabel } from '@/lib/format';
+import { formatDate, formatQtyAsIs, queueAgeLabel } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { OVERDUE_TONE, PRIORITY_TONE } from '@/components/status-tone';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -203,7 +204,7 @@ function PlantaHeader({
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 className="text-lg font-semibold">{title}</h1>
+        <h1 className="text-xl font-semibold">{title}</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">{description}</p>
       </div>
       {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
@@ -308,8 +309,8 @@ function NewOrderDrawer({ onCreated }: { onCreated: (orderId: string) => void })
         <SheetHeader className="p-0">
           <SheetTitle>Abrir una orden nueva</SheetTitle>
           <SheetDescription>
-            Confirmar un pedido ya crea sus órdenes de coberturas. Acá se reabre la de una línea que
-            perdió la suya o se abre una corrida de perfiles.
+            Confirmar un pedido ya crea sus órdenes de coberturas. Aquí se reabre la de una línea
+            que perdió la suya o se abre una corrida de perfiles.
           </SheetDescription>
         </SheetHeader>
         {/*
@@ -531,7 +532,7 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
           <>
             {salesOrderId === null
               ? 'Corridas a stock, sin pedido detrás. Cada orden monta su material, reporta lo suyo y se cierra por separado.'
-              : 'Todas las órdenes del pedido, iniciadas o no. Monta la bobina y reporta sin salir de acá; cada orden se guarda por su cuenta.'}
+              : 'Todas las órdenes del pedido, iniciadas o no. Monta la bobina y reporta sin salir de aquí; cada orden se guarda por su cuenta.'}
             {salesOrderId !== null && group?.customerName && <> · {group.customerName}</>}
           </>
         }
@@ -560,9 +561,9 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
                     ? formatDate(group.promisedDeliveryDate)
                     : 'sin fecha'}
                 </span>
-                {group.overdue && <Badge variant="destructive">Vencido</Badge>}
+                {group.overdue && <Badge variant={OVERDUE_TONE}>Vencido</Badge>}
                 {group.prioritized > 0 && (
-                  <Badge>
+                  <Badge variant={PRIORITY_TONE}>
                     {group.prioritized === group.roofing.length
                       ? 'Prioridad'
                       : `Prioridad en ${String(group.prioritized)} de ${String(group.roofing.length)} órdenes`}
@@ -572,8 +573,8 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
               <span className="text-muted-foreground">
                 {group.roofing.length > 0 && (
                   <>
-                    {formatQty(group.reportedMeters, 'm')} de {formatQty(group.planMeters, 'm')}{' '}
-                    reportados ·{' '}
+                    {formatQtyAsIs(group.reportedMeters, 'm')} de{' '}
+                    {formatQtyAsIs(group.planMeters, 'm')} reportados ·{' '}
                   </>
                 )}
                 {group.counts.total}{' '}
@@ -677,7 +678,8 @@ function toRoofingRow(
 
 function queueNoteOf(entry: ProductionQueueEntryDto): string {
   const parts = [`en cola desde ${queueAgeLabel(entry.createdAt)}`];
-  if (entry.theoreticalKg !== null) parts.push(`${formatQty(entry.theoreticalKg, 'kg')} teóricos`);
+  if (entry.theoreticalKg !== null)
+    parts.push(`${formatQtyAsIs(entry.theoreticalKg, 'kg')} teóricos`);
   return parts.join(' · ');
 }
 
@@ -692,7 +694,7 @@ function toDrywallRow(order: ProductionOrderListItemDto): WorkspaceOrder {
     subtitle:
       `${order.productSku} · ${String(order.piecesReported)} piezas` +
       (order.targetPieces === null ? '' : ` de ${String(order.targetPieces)}`) +
-      ` · ${formatQty(order.assignedKg, 'kg')} montados` +
+      ` · ${formatQtyAsIs(order.assignedKg, 'kg')} montados` +
       (order.customerName === null ? '' : ` · ${order.customerName}`),
     // La cola de D-189 es solo de coberturas: una corrida de perfiles nunca la tuvo.
     queueNote: null,

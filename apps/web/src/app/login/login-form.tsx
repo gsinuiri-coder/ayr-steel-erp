@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { loginSchema, type AuthUser, type LoginInput } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/notify';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -42,9 +43,7 @@ export function LoginForm() {
       router.replace(user.mustChangePassword ? '/cambiar-contrasena' : safeNext);
       router.refresh();
     } catch (err) {
-      setError(
-        err instanceof ApiError ? err.message : 'No se pudo iniciar sesión. Intenta de nuevo.',
-      );
+      setError(errorMessage(err, 'No se pudo iniciar sesión. Intenta de nuevo.'));
     }
   }
 

@@ -11,6 +11,10 @@ const alertVariants = cva(
         default: 'bg-card text-card-foreground',
         destructive:
           'bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current',
+        // cc31: advertencia en amarillo — hace falta mirarlo, pero no es un error. Usa el tono
+        // `warning` de D-180, el mismo de las etiquetas de estado.
+        warning:
+          'border-tone-warning-foreground/25 bg-tone-warning text-tone-warning-foreground *:data-[slot=alert-description]:text-tone-warning-foreground/90 *:[svg]:text-current',
       },
     },
     defaultVariants: {

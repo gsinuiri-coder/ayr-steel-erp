@@ -153,7 +153,7 @@ export function CobranzasView() {
   return (
     <RoleGate allow={SALES_ROLES}>
       <div>
-        <h1 className="text-lg font-semibold">Cobranzas</h1>
+        <h1 className="text-xl font-semibold">Cobranzas</h1>
         <p className="text-xs text-muted-foreground">
           Saldo por comprobante. El cobro se registra desde el comprobante, y revertirlo devuelve el
           monto al saldo.

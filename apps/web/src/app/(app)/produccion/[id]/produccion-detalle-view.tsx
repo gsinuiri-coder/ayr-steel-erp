@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Decimal,
   PRODUCTION_ORDER_KIND_LABELS,
@@ -19,12 +19,12 @@ import {
 } from '@ayr/shared';
 import { PRODUCTION_ORDER_TONE, PRODUCTION_REPORT_TONE } from '@/components/status-tone';
 import { Stat, StatStrip } from '@/components/stat-strip';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import {
   formatMoney,
   formatMoneyOrDash,
-  formatQty,
+  formatQtyAsIs,
   formatTimestampDate,
   unitSymbol,
 } from '@/lib/format';
@@ -93,8 +93,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       setCancelling(false);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo anular la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo anular la orden')),
   });
 
   const reopen = useMutation({
@@ -108,8 +107,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       setReopening(false);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo reabrir la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo reabrir la orden')),
   });
 
   const revert = useMutation({
@@ -125,8 +123,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       setReverting(null);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo revertir el reporte'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo revertir el reporte')),
   });
 
   if (order.isPending) return <Skeleton className="h-64 w-full" />;
@@ -178,7 +175,8 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             <p className="text-sm">
               Plan de corte: {describePieces(o.items)}{' '}
               <span className="text-muted-foreground">
-                ({piecesCount(o.items)} planchas · {piecesMeters(o.items).toFixed(3)} m)
+                ({piecesCount(o.items)} planchas ·{' '}
+                {formatQtyAsIs(piecesMeters(o.items).toFixed(3), 'm')})
               </span>
             </p>
           )}
@@ -252,13 +250,13 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             hint={`Del fleje montado, vs. ${o.piecesReported} reportadas`}
           />
         )}
-        <SummaryCard title="Material asignado" value={formatQty(o.assignedKg, 'kg')} />
+        <SummaryCard title="Material asignado" value={formatQtyAsIs(o.assignedKg, 'kg')} />
         <SummaryCard
           title={o.kind === ProductionOrderKind.ROOFING ? 'Despunte' : 'Merma de proceso'}
-          value={o.scrapKg ? formatQty(o.scrapKg, 'kg') : '—'}
+          value={o.scrapKg ? formatQtyAsIs(o.scrapKg, 'kg') : '—'}
           hint={
             o.kind === ProductionOrderKind.ROOFING
-              ? `Al cerrar: los kilos declarados${o.consumedDeclaredKg ? ` (${formatQty(o.consumedDeclaredKg, 'kg')})` : ''} menos el teórico de las planchas reportadas`
+              ? `Al cerrar: los kilos declarados${o.consumedDeclaredKg ? ` (${formatQtyAsIs(o.consumedDeclaredKg, 'kg')})` : ''} menos el teórico de las planchas reportadas`
               : 'Sale sola al cerrar: kilos asignados menos el teórico de las piezas buenas'
           }
         />
@@ -317,9 +315,9 @@ export function ProduccionDetalleView({ id }: { id: string }) {
                       '—'
                     )}
                   </TableCell>
-                  <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
-                  <TableCell className="text-right">{formatQty(c.remainingKg, 'kg')}</TableCell>
+                  <TableCell className="text-right">{formatQtyAsIs(c.assignedKg, 'kg')}</TableCell>
+                  <TableCell className="text-right">{formatQtyAsIs(c.consumedKg, 'kg')}</TableCell>
+                  <TableCell className="text-right">{formatQtyAsIs(c.remainingKg, 'kg')}</TableCell>
                   <TableCell>
                     <Badge variant={c.releasedAt ? 'outline' : 'secondary'}>
                       {c.releasedAt ? 'Liberado' : 'Tomado por la orden'}
@@ -373,13 +371,13 @@ export function ProduccionDetalleView({ id }: { id: string }) {
                           {r.coils.length > 1 && (
                             <span className="text-xs text-muted-foreground">
                               {' '}
-                              ({formatQty(c.kg, 'kg')})
+                              ({formatQtyAsIs(c.kg, 'kg')})
                             </span>
                           )}
                         </span>
                       ))}
                 </TableCell>
-                <TableCell className="text-right">{formatQty(r.theoreticalKg, 'kg')}</TableCell>
+                <TableCell className="text-right">{formatQtyAsIs(r.theoreticalKg, 'kg')}</TableCell>
                 <TableCell className="text-right">{formatMoney(r.materialCostPen)}</TableCell>
                 <TableCell className="text-right">{formatMoney(r.unitCostPen, 'PEN', 4)}</TableCell>
                 <TableCell className="text-muted-foreground">{r.createdByName ?? '—'}</TableCell>
@@ -431,7 +429,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         title="Revertir el reporte de piezas"
         description={
           reverting
-            ? `Las ${reverting.pieces} piezas salen del stock del producto y los ${reverting.theoreticalKg} kg vuelven a los flejes de la orden. Solo se puede si esas piezas todavía no se movieron.`
+            ? `Las ${reverting.pieces} piezas salen del stock del producto y los ${formatQtyAsIs(reverting.theoreticalKg, 'kg')} vuelven a los flejes de la orden. Solo se puede si esas piezas todavía no se movieron.`
             : ''
         }
         confirmLabel="Sí, revertir"

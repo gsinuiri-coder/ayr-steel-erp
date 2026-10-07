@@ -146,7 +146,7 @@ export function ComprobantesView() {
     <RoleGate allow={SALES_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Comprobantes</h1>
+          <h1 className="text-xl font-semibold">Comprobantes</h1>
           <p className="text-xs text-muted-foreground">
             Facturas, boletas y notas de crédito. Un comprobante emitido ya permite despachar aunque
             el PSE todavía no lo haya aceptado.

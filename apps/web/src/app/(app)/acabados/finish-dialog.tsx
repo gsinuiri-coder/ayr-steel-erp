@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { z } from 'zod';
 import {
   BUSINESS_LINE_LABELS,
@@ -135,7 +135,7 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
         }
       }
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'Error inesperado',
+        message: errorMessage(err, 'Error inesperado'),
       });
     },
   });
@@ -157,8 +157,8 @@ export function FinishDialog({ open, finish, onOpenChange }: Props) {
           )}
           {editing && finish.kind === null && (
             <p className="text-sm text-muted-foreground">
-              Acabado sin tipo (anterior a D-203): complétalo. Si ya tiene bobinas de otro color o
-              de otra línea, pásalas antes a su acabado con «Editar bobina».
+              Acabado sin tipo (creado antes de que existieran los tipos): complétalo. Si ya tiene
+              bobinas de otro color o de otra línea, pásalas antes a su acabado con «Editar bobina».
             </p>
           )}
         </DialogHeader>

@@ -66,7 +66,7 @@ export function ProduccionView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Reporte de producción</h1>
+          <h1 className="text-xl font-semibold">Reporte de producción</h1>
           <p className="text-xs text-muted-foreground">
             {BUSINESS_LINE_LABELS[line]}. Una fila por orden de producción, agrupadas por pedido,
             con los movimientos de kardex del rango por la fecha del reporte de planta. El{' '}

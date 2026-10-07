@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   CREDIT_NOTE_REASON_LABELS,
   CREDIT_NOTE_REASONS,
@@ -146,7 +146,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   }, [unauthorized, errorAt, queryClient]);
 
   function onError(err: unknown): void {
-    toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
+    toast.error(errorMessage(err, 'La operación no se pudo completar'));
   }
   function refresh(): void {
     invalidateInvoicing(queryClient, { documentId: id, orderId: d?.salesOrderId ?? undefined });
@@ -204,7 +204,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       refresh();
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo registrar el comprobante');
+      toast.error(errorMessage(err, 'No se pudo registrar el comprobante'));
     },
   });
 
@@ -246,7 +246,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       refresh();
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo corregir la fecha');
+      toast.error(errorMessage(err, 'No se pudo corregir la fecha'));
     },
   });
 
@@ -573,7 +573,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     : toDecimal(payAmount.trim()).decimalPlaces() > 2
       ? 'El monto va con hasta dos decimales (céntimos)'
       : toDecimal(payAmount.trim()).gt(payable)
-        ? `Excede el saldo pendiente (S/ ${payable.toFixed(2)})`
+        ? `Excede el saldo pendiente (${formatMoney(payable.toFixed(4))})`
         : null;
   const canCreateCreditNote =
     typedCreditQty.length === validCreditQty.length && (isFullReason || validCreditQty.length > 0);
@@ -603,7 +603,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold">{d.number ?? 'Borrador'}</h1>
+            <h1 className="text-xl font-semibold">{d.number ?? 'Borrador'}</h1>
             <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
             {/* D-153: el origen se marca siempre que no sea del ERP, no solo si es importado. */}
             {isExternal && (
@@ -1274,8 +1274,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <DialogHeader>
             <DialogTitle>Registrar como comprobante manual</DialogTitle>
             <DialogDescription>
-              El papel salió de la otra app: acá se registra su número tal cual. No se envía nada al
-              PSE, no hay CDR ni XML, y la baja se hace donde se emitió.
+              El papel salió de la otra app: aquí se registra su número tal cual. No se envía nada
+              al PSE, no hay CDR ni XML, y la baja se hace donde se emitió.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-[8rem_1fr]">
@@ -1362,22 +1362,22 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               }}
             />
             <p className="text-sm text-muted-foreground">
-              Actual: <span className="font-mono">{d.issueDate}</span>.
+              Actual: <span className="font-medium">{formatDate(d.issueDate)}</span>.
             </p>
           </div>
           {shiftedDueDate !== null && shiftedDueDate !== d.dueDate && (
             <Alert>
               <AlertDescription>
                 El vencimiento se corre los mismos días, para conservar el plazo pactado: de{' '}
-                <span className="font-mono">{d.dueDate}</span> a{' '}
-                <span className="font-mono">{shiftedDueDate}</span>.
+                <span className="font-medium">{formatDate(d.dueDate)}</span> a{' '}
+                <span className="font-medium">{formatDate(shiftedDueDate)}</span>.
               </AlertDescription>
             </Alert>
           )}
           {linkedDispatches.isError && (
             <Alert variant="destructive">
               <AlertDescription>
-                No se pudieron leer los despachos del comprobante; cerrá y volvé a abrir para
+                No se pudieron leer los despachos del comprobante; cierra y vuelve a abrir para
                 reintentar.
               </AlertDescription>
             </Alert>
@@ -1474,7 +1474,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         open={annulOpen}
         onOpenChange={setAnnulOpen}
         title={`Anular ${d.number ?? ''} internamente`}
-        description="Este comprobante entró por planilla y SUNAT lo recibió fuera del ERP: anularlo acá lo da por no existente para el sistema y su saldo pasa a cero, pero no comunica ninguna baja. Si el comprobante existe de verdad ante SUNAT, dalo de baja donde se emitió."
+        description="Este comprobante entró por planilla y SUNAT lo recibió fuera del ERP: anularlo aquí lo da por no existente para el sistema y su saldo pasa a cero, pero no comunica ninguna baja. Si el comprobante existe de verdad ante SUNAT, dalo de baja donde se emitió."
         confirmLabel="Anular internamente"
         pending={annul.isPending}
         onConfirm={(reason) => {
@@ -1653,7 +1653,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                     <span className="flex-1 text-sm">
                       {item.productSku ?? item.description}
                       <span className="ml-2 text-xs text-muted-foreground">
-                        quedan {pending.toFixed(3)} {unitSymbol(item.unit)}
+                        quedan {formatQty(pending.toFixed(3), unitSymbol(item.unit))}
                       </span>
                     </span>
                     <Input

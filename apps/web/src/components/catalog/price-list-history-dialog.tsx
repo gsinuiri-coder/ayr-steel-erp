@@ -8,7 +8,7 @@ import {
   type ProductListPriceChangeDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDateTime } from '@/lib/format';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -21,17 +21,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-function formatChangedAt(iso: string): string {
-  return new Intl.DateTimeFormat('es-PE', {
-    timeZone: 'America/Lima',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso));
-}
 
 /** Con IGV (D-162), lo que el dueño lee. `null` = sin precio de lista. */
 function priceLabel(valuePen: string | null): string {
@@ -82,7 +71,7 @@ export function PriceListHistoryDialog({
             <TableBody>
               {changes.data.map((c) => (
                 <TableRow key={c.id}>
-                  <TableCell className="tabular-nums">{formatChangedAt(c.changedAt)}</TableCell>
+                  <TableCell className="tabular-nums">{formatDateTime(c.changedAt)}</TableCell>
                   <TableCell>{c.changedByName}</TableCell>
                   <TableCell>
                     <Badge variant={c.origin === 'IMPORT' ? 'secondary' : 'outline'}>

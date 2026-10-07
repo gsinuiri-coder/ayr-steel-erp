@@ -120,9 +120,9 @@ export function ComprasView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Compras</h1>
+          <h1 className="text-xl font-semibold">Compras</h1>
           <p className="text-xs text-muted-foreground">
-            Bobinas, producto terminado, servicios y gastos, con su saldo por pagar (D-030).
+            Bobinas, producto terminado, servicios y gastos, con su saldo por pagar.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

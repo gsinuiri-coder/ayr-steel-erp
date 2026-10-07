@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import type { CoilDto, CoilRestorePlanDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
-import { formatDate, formatQty } from '@/lib/format';
+import { api } from '@/lib/api';
+import { formatDate, formatQtyAsIs } from '@/lib/format';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -76,7 +76,7 @@ export function RestoreCoilDialog({
       void queryClient.invalidateQueries({ queryKey: ['coil', coil.id] });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo restaurar');
+      toast.error(errorMessage(err, 'No se pudo restaurar'));
     },
   });
 
@@ -110,7 +110,7 @@ export function RestoreCoilDialog({
               </dd>
               <dt className="text-muted-foreground">Cantidad y costo</dt>
               <dd>
-                {p.qty ? formatQty(p.qty, 'kg') : '—'} · {p.unitCostPen ?? '—'} PEN/kg
+                {p.qty ? formatQtyAsIs(p.qty, 'kg') : '—'} · {p.unitCostPen ?? '—'} PEN/kg
               </dd>
             </dl>
             {p.mode === 'A_HOY' && p.date && (

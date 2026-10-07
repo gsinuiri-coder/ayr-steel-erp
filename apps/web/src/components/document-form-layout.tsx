@@ -19,7 +19,7 @@ import { FormGrid, StickyActionBar } from '@/components/form';
 export function DocumentFormHeader({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div>
-      <h1 className="text-lg font-semibold">{title}</h1>
+      <h1 className="text-xl font-semibold">{title}</h1>
       {children && <p className="text-xs text-muted-foreground">{children}</p>}
     </div>
   );

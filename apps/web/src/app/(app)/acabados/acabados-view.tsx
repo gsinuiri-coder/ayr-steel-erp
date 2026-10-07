@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   FINISH_KIND_LABELS,
@@ -10,7 +10,7 @@ import {
   type BusinessLine,
   type FinishDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -61,16 +61,16 @@ export function AcabadosView() {
       toast.success(updated.isActive ? 'Acabado activado' : 'Acabado desactivado');
       void queryClient.invalidateQueries({ queryKey: FINISHES_QUERY_KEY });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo actualizar')),
   });
 
   return (
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Acabados</h1>
+          <h1 className="text-xl font-semibold">Acabados</h1>
           <p className="text-xs text-muted-foreground">
-            Catálogo de acabados de bobina: tipo, color, línea y factor de densidad (RF-25, D-203).
+            Catálogo de acabados de bobina: tipo, color, línea y factor de densidad.
           </p>
         </div>
         {isAdmin && (

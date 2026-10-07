@@ -52,10 +52,10 @@ export function FlejesView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Flejes</h1>
+          <h1 className="text-xl font-semibold">Flejes</h1>
           <p className="text-xs text-muted-foreground">
-            Stock de flejes agrupado por acabado, espesor y ancho (RF-42). Nacen del partido interno
-            (RF-15) o de la recepción de corte tercerizado (RF-41).
+            Stock de flejes agrupado por acabado, espesor y ancho. Nacen del partido interno o de la
+            recepción de corte tercerizado.
           </p>
         </div>
         <Select

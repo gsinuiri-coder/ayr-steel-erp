@@ -86,7 +86,7 @@ export function InventarioValorizadoView() {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Inventario valorizado</h1>
+          <h1 className="text-xl font-semibold">Inventario valorizado</h1>
           <p className="text-xs text-muted-foreground">
             {report.data
               ? `Saldo y costo promedio al ${formatDate(report.data.asOf)}.`

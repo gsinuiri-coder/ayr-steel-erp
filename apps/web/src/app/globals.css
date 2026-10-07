@@ -73,7 +73,8 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  /* cc31: un tono más oscuro (≈ #5c5c5c): 6.7:1 sobre blanco y 6.1:1 sobre `muted`, AA holgado. */
+  --muted-foreground: oklch(0.475 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);

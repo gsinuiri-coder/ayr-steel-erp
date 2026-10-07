@@ -204,9 +204,8 @@ export function ProductStockPickerDialog({
         <DialogHeader>
           <DialogTitle>Elegir producto · {businessLineLabel}</DialogTitle>
           <DialogDescription>
-            El disponible ya descuenta lo reservado, firme y temporal (D-185). Elegir un producto
-            sin stock no está bloqueado: la línea avisa si no alcanza, y no reserva nada hasta
-            confirmar.
+            El disponible ya descuenta lo reservado, firme y temporal. Elegir un producto sin stock
+            no está bloqueado: la línea avisa si no alcanza, y no reserva nada hasta confirmar.
           </DialogDescription>
         </DialogHeader>
         <div className="grid min-w-0 gap-3">

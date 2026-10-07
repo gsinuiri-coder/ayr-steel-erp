@@ -69,11 +69,98 @@ export function unitSymbol(unit: string): string {
   return UNIT_SYMBOL[unit] ?? unit;
 }
 
-/** `"4500.000"` → `"4,500.000 kg"` (o la unidad que se pase). */
+/**
+ * Un número con separador de miles y `decimals` decimales, redondeado con `Decimal` (nunca
+ * truncando la cadena). Solo para mostrar: lo que viaja al API conserva su escala.
+ */
+export function formatNumber(value: string | Decimal, decimals: number): string {
+  let parsed: Decimal;
+  try {
+    parsed = new Decimal(typeof value === 'string' ? value.trim() : value);
+  } catch {
+    // Un texto que no es número (un campo a medio escribir) se muestra tal cual.
+    return typeof value === 'string' ? value : value.toString();
+  }
+  const rounded = parsed.toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP).toFixed(decimals);
+  const negative = rounded.startsWith('-') && !/^-0(\.0*)?$/.test(rounded);
+  const [intPart = '0', decPart = ''] = rounded.replace('-', '').split('.');
+  return `${negative ? '-' : ''}${group(intPart)}${decPart ? `.${decPart}` : ''}`;
+}
+
+function withUnit(body: string, unit?: string): string {
+  return unit ? `${body} ${unit}` : body;
+}
+
+/**
+ * cc31: kilos en listas, formularios y reportes, a 2 decimales (`4,027.44 kg`). El kardex y el
+ * detalle de bobina, donde el gramo importa, usan `formatKgPrecise`.
+ *
+ * Una cantidad que no es cero nunca se muestra como `0.00`: «faltan 0.00 kg» cuando faltan
+ * 4 gramos dice lo contrario de lo que pasa. Por debajo del centésimo sale con 3 decimales.
+ */
+export function formatKg(value: string | Decimal, unit: string | null = 'kg'): string {
+  const two = formatNumber(value, 2);
+  const roundsToZero = /^-?0\.00$/.test(two);
+  let nonZero = false;
+  try {
+    nonZero = !new Decimal(typeof value === 'string' ? value.trim() : value).isZero();
+  } catch {
+    nonZero = false;
+  }
+  return withUnit(roundsToZero && nonZero ? formatNumber(value, 3) : two, unit ?? undefined);
+}
+
+/** cc31: kilos con sus 3 decimales (kardex y detalle de bobina). */
+export function formatKgPrecise(value: string | Decimal, unit: string | null = 'kg'): string {
+  return withUnit(formatNumber(value, 3), unit ?? undefined);
+}
+
+/**
+ * cc31: metros a 2 decimales; el tercero solo cuando no es cero (`12.00 m`, `4.205 m`). Un largo
+ * de plancha se corta al milímetro, así que el tercer decimal es dato cuando existe y ruido
+ * cuando es cero.
+ */
+export function formatMeters(value: string | Decimal, unit: string | null = 'm'): string {
+  let three: Decimal;
+  try {
+    three = new Decimal(typeof value === 'string' ? value.trim() : value).toDecimalPlaces(
+      3,
+      Decimal.ROUND_HALF_UP,
+    );
+  } catch {
+    return withUnit(typeof value === 'string' ? value : value.toString(), unit ?? undefined);
+  }
+  const decimals = three.times(1000).mod(10).isZero() ? 2 : 3;
+  return withUnit(formatNumber(three, decimals), unit ?? undefined);
+}
+
+/**
+ * Una cantidad con su unidad. Los kilos y los metros siguen las reglas de cc31 (`formatKg`,
+ * `formatMeters`); el resto (unidades, milímetros) se muestra con la escala que trae.
+ */
 export function formatQty(value: string, unit?: string): string {
+  if (unit === 'kg') return formatKg(value);
+  if (unit === 'm') return formatMeters(value);
+  return formatQtyAsIs(value, unit);
+}
+
+/**
+ * Una cantidad con la escala que trae (`"4500.000"` → `"4,500.000 kg"`). cc31 (D-480): la
+ * usan las pantallas de planta y los diálogos de la bobina, que quedan fuera del cambio a 2
+ * decimales: ahí se declaran y comparan kilos al gramo.
+ */
+export function formatQtyAsIs(value: string, unit?: string): string {
   const [intPart = '0', decPart] = value.split('.');
   const body = decPart ? `${group(intPart)}.${decPart}` : group(intPart);
-  return unit ? `${body} ${unit}` : body;
+  return withUnit(body, unit);
+}
+
+/**
+ * Una cantidad con la unidad SUNAT del producto (`KGM`, `MTR`, `NIU`…): kilos y metros con las
+ * reglas de cc31 y las unidades sin cambio.
+ */
+export function formatUnitQty(value: string, sunatUnit: string): string {
+  return formatQty(value, unitSymbol(sunatUnit));
 }
 
 /** `"2026-08-20"` → `"20/08/2026"`. Sin `Date` para no arrastrar zonas horarias. */
@@ -113,6 +200,29 @@ export function formatTimestampDate(iso: string | null): string {
     day: '2-digit',
   }).format(new Date(iso));
   return formatDate(day);
+}
+
+const DATE_TIME_PARTS = new Intl.DateTimeFormat('en-CA', {
+  timeZone: BUSINESS_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/**
+ * cc31: fecha y hora **de Lima** de un instante, en `DD/MM/AAAA HH:MM` (24 h). Reemplaza las
+ * copias que cada vista armaba con su propio `Intl.DateTimeFormat` o con `toLocaleString`, que
+ * seguía la zona y el idioma del navegador.
+ */
+export function formatDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  const parts = Object.fromEntries(
+    DATE_TIME_PARTS.formatToParts(new Date(iso)).map((p) => [p.type, p.value]),
+  );
+  return `${parts.day ?? ''}/${parts.month ?? ''}/${parts.year ?? ''} ${parts.hour ?? ''}:${parts.minute ?? ''}`;
 }
 
 /**

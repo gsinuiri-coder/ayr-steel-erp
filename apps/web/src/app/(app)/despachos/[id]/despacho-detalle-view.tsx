@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Role,
   STANDING_DOCUMENT_STATUSES,
@@ -12,7 +12,7 @@ import {
   type FiscalDocumentDto,
   type InvoicingSettingsDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { useSession } from '@/lib/session';
 import { formatDate, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
@@ -61,7 +61,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
   const pseOff = settings.data !== undefined && !settings.data.pseEnabled;
 
   function onError(err: unknown): void {
-    toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
+    toast.error(errorMessage(err, 'La operación no se pudo completar'));
   }
   function refresh(): void {
     invalidateInvoicing(queryClient, { dispatchId: id, orderId: d?.salesOrderId });
@@ -135,7 +135,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold">{d.code}</h1>
+            <h1 className="text-xl font-semibold">{d.code}</h1>
             <DispatchStatusBadge status={d.status} />
           </div>
           <p className="text-sm text-muted-foreground">

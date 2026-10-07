@@ -2,8 +2,8 @@
 
 import type { MouseEvent, ReactNode } from 'react';
 import Link from 'next/link';
-import { toast } from 'sonner';
-import { ApiError } from '@/lib/api';
+import { errorMessage, toast } from '@/lib/notify';
+
 import { downloadFile } from '@/lib/download';
 import { Ellipsis } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -132,7 +132,7 @@ function onDownloadClick(e: MouseEvent<HTMLAnchorElement>, href: string): void {
   if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
   downloadFile(href).catch((err: unknown) => {
-    toast.error(err instanceof ApiError ? err.message : 'No se pudo descargar el archivo');
+    toast.error(errorMessage(err, 'No se pudo descargar el archivo'));
   });
 }
 

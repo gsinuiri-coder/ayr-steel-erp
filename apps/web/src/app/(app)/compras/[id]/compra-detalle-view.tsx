@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { z } from 'zod';
 import {
   BUSINESS_LINE_LABELS,
@@ -26,7 +26,7 @@ import {
   type PurchaseDto,
 } from '@ayr/shared';
 import { PURCHASE_TONE } from '@/components/status-tone';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { formatDate, formatMoney, formatQty, isPositiveDecimal, todayIso } from '@/lib/format';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
@@ -143,7 +143,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       toast.success('Compra recibida: el stock ya está en el kardex');
       invalidate();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo recibir'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo recibir')),
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
     await receive.mutateAsync(confirmBackdate);
@@ -160,7 +160,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       setConfirmCancel(false);
       invalidate();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo anular'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo anular')),
   });
 
   // D-132: corregir serie y número del comprobante. No mueve nada —es el dato que
@@ -177,8 +177,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       setEditingDocument(false);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo corregir el número'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo corregir el número')),
   });
 
   const reversePayment = useMutation({
@@ -192,8 +191,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       setReversingPaymentId(null);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo anular el pago'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo anular el pago')),
   });
 
   // D-371: corregir o quitar una línea de una compra en borrador.
@@ -208,8 +206,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       setEditingItem(null);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo corregir la línea'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo corregir la línea')),
   });
   const deleteItem = useMutation({
     mutationFn: (itemId: string) =>
@@ -219,8 +216,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       setDeletingItem(null);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo eliminar la línea'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo eliminar la línea')),
   });
 
   if (purchase.isPending) return <Skeleton className="h-64 w-full" />;
@@ -250,7 +246,7 @@ export function CompraDetalleView({ id }: { id: string }) {
     <>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">
+          <h1 className="text-xl font-semibold">
             {PURCHASE_DOC_TYPE_LABELS[p.docType]} {p.documentLabel}
           </h1>
           <p className="text-xs text-muted-foreground">
@@ -520,7 +516,7 @@ export function CompraDetalleView({ id }: { id: string }) {
       {p.landedCostServices.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Servicios imputados al costo de las bobinas (D-043)</CardTitle>
+            <CardTitle>Servicios imputados al costo de las bobinas</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
@@ -1014,7 +1010,7 @@ function PaymentForm({
     },
     onError: (err) => {
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'No se pudo registrar el pago',
+        message: errorMessage(err, 'No se pudo registrar el pago'),
       });
     },
   });
@@ -1149,7 +1145,7 @@ function PaymentForm({
                     </FormControl>
                     <p className="text-xs text-muted-foreground">
                       El pago está en otra moneda que la compra. En blanco se usa el TC SUNAT de la
-                      fecha del pago (D-029).
+                      fecha del pago.
                     </p>
                     <FormMessage />
                   </FormItem>

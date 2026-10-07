@@ -7,7 +7,7 @@ export default function ChangePasswordPage() {
   return (
     <>
       <div>
-        <h1 className="text-lg font-semibold">Cambiar contraseña</h1>
+        <h1 className="text-xl font-semibold">Cambiar contraseña</h1>
         <p className="text-xs text-muted-foreground">
           Elige una contraseña nueva de al menos 8 caracteres.
         </p>

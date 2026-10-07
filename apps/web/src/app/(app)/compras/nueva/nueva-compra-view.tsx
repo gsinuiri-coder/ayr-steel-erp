@@ -26,7 +26,7 @@ export function NuevaCompraView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
-        <h1 className="text-lg font-semibold">Nueva compra</h1>
+        <h1 className="text-xl font-semibold">Nueva compra</h1>
         <p className="text-xs text-muted-foreground">
           {PURCHASE_TYPE_LABELS[type]}. La compra se registra como borrador; el stock se mueve
           recién al recibirla.
@@ -37,7 +37,7 @@ export function NuevaCompraView() {
         <p className="text-sm text-muted-foreground">
           ¿Tienes el XML de la factura del proveedor?{' '}
           <Button variant="link" className="h-auto p-0" asChild>
-            <Link href="/bobinas/nueva-xml">Súbelo y se prellena solo (RF-11)</Link>
+            <Link href="/bobinas/nueva-xml">Súbelo y se prellena solo</Link>
           </Button>
           .
         </p>

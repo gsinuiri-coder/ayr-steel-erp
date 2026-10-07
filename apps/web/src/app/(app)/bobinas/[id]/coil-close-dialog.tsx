@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { Decimal, type CoilDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
-import { formatMoney, formatQty } from '@/lib/format';
+import { api } from '@/lib/api';
+import { formatMoney, formatQtyAsIs } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -108,8 +108,7 @@ export function CoilCloseDialog({
       onOpenChange(false);
       onDone();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo terminar la bobina'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo terminar la bobina')),
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
     await close.mutateAsync(confirmBackdate);
@@ -121,9 +120,9 @@ export function CoilCloseDialog({
         <DialogHeader>
           <DialogTitle>Terminar {coil.code}</DialogTitle>
           <DialogDescription>
-            El kardex tiene {formatQty(coil.availableKg, 'kg')} de saldo, valorizados en{' '}
+            El kardex tiene {formatQtyAsIs(coil.availableKg, 'kg')} de saldo, valorizados en{' '}
             {formatMoney(balance.times(avgCost).toFixed(4))}. Al terminarla, la diferencia contra lo
-            que quede de verdad se liquida como movimiento de kardex (D-164).
+            que quede de verdad se liquida como movimiento de kardex.
           </DialogDescription>
         </DialogHeader>
 
@@ -148,7 +147,7 @@ export function CoilCloseDialog({
               )}
               {exceedsIntake && (
                 <p className="text-sm text-destructive">
-                  La bobina entró con {formatQty(coil.weightKg, 'kg')}: no puede quedarle más.
+                  La bobina entró con {formatQtyAsIs(coil.weightKg, 'kg')}: no puede quedarle más.
                 </p>
               )}
             </div>
@@ -160,16 +159,17 @@ export function CoilCloseDialog({
                 <p>
                   {isSurplus ? (
                     <>
-                      Entran <strong>{formatQty(liquidatedKg.toFixed(3), 'kg')}</strong> al kardex
+                      Entran <strong>{formatQtyAsIs(liquidatedKg.toFixed(3), 'kg')}</strong> al
+                      kardex
                       {showsPen && <> por {formatMoney(liquidatedPen.toFixed(4))}</>}: el conteo da
                       más que el saldo teórico. Da de alta material, así que el motivo es
                       obligatorio.
                     </>
                   ) : (
                     <>
-                      Se liquidan <strong>{formatQty(liquidatedKg.toFixed(3), 'kg')}</strong> como
-                      merma, <strong>{formatMoney(liquidatedPen.toFixed(4))}</strong> de menos en el
-                      inventario valorizado.
+                      Se liquidan <strong>{formatQtyAsIs(liquidatedKg.toFixed(3), 'kg')}</strong>{' '}
+                      como merma, <strong>{formatMoney(liquidatedPen.toFixed(4))}</strong> de menos
+                      en el inventario valorizado.
                     </>
                   )}
                 </p>

@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { toast } from '@/lib/notify';
 import { changePasswordSchema, type ChangePasswordInput } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { ME_QUERY_KEY, useSession } from '@/lib/session';

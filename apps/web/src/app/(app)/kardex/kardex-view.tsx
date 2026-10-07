@@ -20,7 +20,7 @@ import {
   type PaginatedResult,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatDate, formatTimestampDate } from '@/lib/format';
+import { formatDate, formatDateTime, formatTimestampDate } from '@/lib/format';
 import {
   isIsoDate,
   kardexCustomPatch,
@@ -198,9 +198,7 @@ export function KardexView() {
         )}
         {/* D-124: la fecha de operación manda; el instante de grabación solo si difiere. */}
         {formatDate(m.operationDate) !== formatTimestampDate(m.at) && (
-          <div className="text-xs text-muted-foreground">
-            registrado {new Date(m.at).toLocaleString('es-PE')}
-          </div>
+          <div className="text-xs text-muted-foreground">registrado {formatDateTime(m.at)}</div>
         )}
       </div>
     );
@@ -213,9 +211,9 @@ export function KardexView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Kardex</h1>
+          <h1 className="text-xl font-semibold">Kardex</h1>
           <p className="text-xs text-muted-foreground">
-            Saldo corrido de un producto o de una bobina (RF-53).
+            Saldo corrido de un producto o de una bobina.
           </p>
         </div>
         {hasItem && isAdmin && (
@@ -314,7 +312,7 @@ export function KardexView() {
           className="flex h-40 items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
           data-testid="kardex-empty"
         >
-          Elegí un ítem para ver su kardex
+          Elige un ítem para ver su kardex
         </div>
       ) : (
         <>

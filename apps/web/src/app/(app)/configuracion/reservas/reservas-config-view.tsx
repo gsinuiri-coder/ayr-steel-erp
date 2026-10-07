@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { MAX_TEMPORARY_RESERVATION_BUSINESS_DAYS, Role, type SalesSettingsDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -37,8 +37,7 @@ export function ReservasConfigView() {
       setDays(null);
       void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar la configuración'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo guardar la configuración')),
   });
 
   if (settings.isPending) return <Skeleton className="h-40 w-full" />;

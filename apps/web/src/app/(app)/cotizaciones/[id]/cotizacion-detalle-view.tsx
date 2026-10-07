@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   Role,
@@ -14,7 +14,7 @@ import {
   type QuotationDuplicateDto,
   type SalesOrderDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { unassignedCoilLines } from '@/lib/unassigned-coil-lines';
@@ -70,7 +70,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
   const q = quotation.data;
 
   function onError(err: unknown): void {
-    toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
+    toast.error(errorMessage(err, 'La operación no se pudo completar'));
   }
 
   const confirm = useMutation({
@@ -80,11 +80,13 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         ...(Object.keys(request).length > 0 ? { body: request } : {}),
       }),
     onSuccess: (order) => {
-      toast.success(
-        order.shortfalls.length > 0
-          ? `Pedido ${order.code} creado con faltante: complétalo desde el pedido cuando llegue el material`
-          : `Pedido ${order.code} creado con su reserva y sus órdenes`,
-      );
+      if (order.shortfalls.length > 0) {
+        toast.warning(`Pedido ${order.code} creado con faltante`, {
+          description: `Falta material para ${String(order.shortfalls.length)} ${order.shortfalls.length === 1 ? 'línea' : 'líneas'}: complétalo desde el pedido cuando llegue.`,
+        });
+      } else {
+        toast.success(`Pedido ${order.code} creado con su reserva y sus órdenes`);
+      }
       setConfirmOpen(false);
       invalidateSales(queryClient, { quotationId: id, orderId: order.id });
       router.push(`/pedidos/${order.id}`);
@@ -178,7 +180,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold">{q.code}</h1>
+            <h1 className="text-xl font-semibold">{q.code}</h1>
             <QuotationStatusBadge status={q.status} isExpired={q.isExpired} />
           </div>
           <p className="text-sm text-muted-foreground">
@@ -408,7 +410,11 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                     {item.listPricePen === null ? '—' : formatMoney(item.listPricePen, 'PEN', 4)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    <span className={discounted ? 'font-medium text-amber-600' : undefined}>
+                    <span
+                      className={
+                        discounted ? 'font-medium text-tone-warning-foreground' : undefined
+                      }
+                    >
                       {formatMoney(item.unitPricePen, 'PEN', 4)}
                     </span>
                     {/* D-161: en una plancha lo que se negoció es el valor por metro; el
@@ -493,7 +499,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         open={cancelOpen}
         onOpenChange={setCancelOpen}
         title={`Anular ${q.code}`}
-        description="La cotización queda anulada y no se puede confirmar. Queda registrada con su motivo (RF-95)."
+        description="La cotización queda anulada y no se puede confirmar. Queda registrada con su motivo."
         confirmLabel="Anular cotización"
         pending={cancel.isPending}
         onConfirm={(reason) => {

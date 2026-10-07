@@ -216,7 +216,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // filas antes de tenerlo era invitar a transcribir algo que no se puede guardar.
       await expect(panelA.getByLabel('Largo 1 en metros')).toHaveCount(0);
       await expect(
-        panelA.getByText('Monta una bobina y las líneas del plan que falta aparecen acá'),
+        panelA.getByText('Monta una bobina y las líneas del plan que falta aparecen aquí'),
       ).toBeVisible();
 
       // ---------------------------------------------------------------------

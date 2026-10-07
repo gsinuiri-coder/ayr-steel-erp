@@ -223,8 +223,10 @@ test.describe('F8-S4/M0 — deudas de integridad', () => {
     await page.getByLabel('Precio unitario de la línea 1').fill('70.80');
 
     await page.getByRole('button', { name: 'Agregar ítems' }).click();
-    // El formulario se queda con el error genérico: no sabe si el servidor grabó.
-    await expect(page.getByText('No se pudo guardar')).toBeVisible({ timeout: 30_000 });
+    // El formulario se queda con el error de red (cc31): no sabe si el servidor grabó.
+    await expect(page.getByText('El servidor no respondió').first()).toBeVisible({
+      timeout: 30_000,
+    });
     expect(posts).toHaveLength(1);
 
     return { order, posts };

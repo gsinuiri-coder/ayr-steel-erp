@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BusinessLine,
   COIL_SKU_PREFIX,
@@ -20,8 +20,15 @@ import {
   type SalesOrderDto,
   type UpdateSalesOrderItemPriceInput,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
-import { customerLabel, formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
+import { api } from '@/lib/api';
+import {
+  customerLabel,
+  formatKgPrecise,
+  formatMoney,
+  formatQty,
+  isPositiveDecimal,
+  unitSymbol,
+} from '@/lib/format';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -47,7 +54,7 @@ import {
 } from '@/components/ui/select';
 
 function errorText(err: unknown): string {
-  return err instanceof ApiError ? err.message : 'La operación no se pudo completar';
+  return errorMessage(err, 'La operación no se pudo completar');
 }
 
 /** Precio con IGV que se tipea, desde el valor guardado (D-162), y por metro si aplica (D-161). */
@@ -563,8 +570,8 @@ export function ChangeLineCoilDialog({
             ) : pool.data.candidates.length === 0 ? (
               <p className="text-xs text-destructive">
                 Ninguna bobina libre del pool {pool.data.sku} alcanza para{' '}
-                {formatQty(lastItem?.qty ?? '0', 'kg')} (disponible en el pool:{' '}
-                {formatQty(pool.data.availableKg, 'kg')}).
+                {formatKgPrecise(lastItem?.qty ?? '0')} (disponible en el pool:{' '}
+                {formatKgPrecise(pool.data.availableKg)}).
               </p>
             ) : (
               <>

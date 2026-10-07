@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   FISCAL_DOC_TYPE_LABELS,
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
@@ -26,10 +26,10 @@ import {
   type SalesOrderListItemDto,
   type SalesOrderProgressDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { useSession } from '@/lib/session';
-import { formatDate, formatMoney, isPositiveDecimal, unitSymbol } from '@/lib/format';
+import { formatDate, formatMoney, formatUnitQty, isPositiveDecimal } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { RoleGate } from '@/components/role-gate';
@@ -281,7 +281,7 @@ export function NuevoComprobanteView() {
       router.push(`/comprobantes/${created.id}`);
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo crear el comprobante');
+      toast.error(errorMessage(err, 'No se pudo crear el comprobante'));
     },
   });
 
@@ -445,7 +445,7 @@ export function NuevoComprobanteView() {
             </Select>
             <p className="text-xs text-muted-foreground">
               Enlaza el comprobante con la salida de mercadería que cubre. Queda en el kardex del
-              despacho; si no corresponde a ninguno en particular, dejalo sin declarar.
+              despacho; si no corresponde a ninguno en particular, déjalo sin declarar.
             </p>
           </FormField>
         )}
@@ -542,7 +542,7 @@ export function NuevoComprobanteView() {
                       <div className="text-xs text-muted-foreground">{l.description}</div>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {l.qty} {unitSymbol(l.unit)}
+                      {formatUnitQty(l.qty, l.unit)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{l.invoicedQty}</TableCell>
                     <TableCell className="text-right tabular-nums">{l.pendingInvoiceQty}</TableCell>

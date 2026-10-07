@@ -724,13 +724,13 @@ test.describe('D-152/D-156/D-158 — la pantalla del importador de cotizaciones'
       // cantidad son el mismo dato dicho dos veces (D-083).
       await plan.fill('4x20');
       await expect(
-        lines.getByText('Los largos suman 80.000 m y la línea dice 81.900 m.'),
+        lines.getByText('Los largos suman 80.00 m y la línea dice 81.90 m.'),
       ).toBeVisible();
       await expect(submit).toBeDisabled();
 
       // El reparto real: 4 planchas de 20 m y una de 1.90.
       await plan.fill('4x20, 1x1.9');
-      await expect(lines.getByText('4 × 20.00 m, 1 × 1.90 m · 81.900 m')).toBeVisible();
+      await expect(lines.getByText('4 × 20.00 m, 1 × 1.90 m · 81.90 m')).toBeVisible();
       await expect(submit).toBeEnabled();
 
       const confirmed = page.waitForResponse(

@@ -125,9 +125,9 @@ export function PedidosView() {
     <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Pedidos</h1>
+          <h1 className="text-xl font-semibold">Pedidos</h1>
           <p className="text-xs text-muted-foreground">
-            Nacen de confirmar una cotización, o directo en las líneas que no la exigen (D-065).
+            Nacen de confirmar una cotización, o directo en las líneas que no la exigen.
           </p>
         </div>
         <div className="flex gap-2">

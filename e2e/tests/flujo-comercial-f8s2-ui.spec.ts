@@ -297,7 +297,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       await dialog.getByLabel('Planchas del largo 1', { exact: true }).fill('2');
       await dialog.getByRole('button', { name: 'Guardar cantidad' }).click();
       await expect(dialog).toBeHidden({ timeout: 30_000 });
-      await expect(page.getByText('20.000 m', { exact: true })).toBeVisible();
+      await expect(page.getByText('20.00 m', { exact: true })).toBeVisible();
       const ownActive = (await reservationsOf(api, ownOrder.id)).filter(
         (r) => r.status === 'ACTIVE',
       );
@@ -351,7 +351,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       await page.getByRole('button', { name: 'Confirmar', exact: true }).click();
       const dialog = page.getByRole('dialog');
       await expect(dialog.getByText('Reserva MP y genera OP')).toBeVisible({ timeout: 30_000 });
-      await expect(dialog.getByText('faltan 21.200 kg', { exact: true })).toBeVisible();
+      await expect(dialog.getByText('faltan 21.20 kg', { exact: true })).toBeVisible();
       await expect(dialog.getByText(/Línea 1: .* faltan 21\.200$/)).toBeVisible();
       // D-341: el administrador ya no queda bloqueado por el faltante, pero confirmar exige
       // reconocerlo y explicarlo: el botón sigue apagado hasta la casilla y el motivo.
@@ -428,7 +428,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
         .filter({ has: page.getByRole('link', { name: alive.code, exact: true }) });
       await expect(aliveRow).toHaveCount(1, { timeout: 30_000 });
       await expect(aliveRow.getByText(customer.name)).toBeVisible();
-      await expect(aliveRow.getByText(/L1 · .* · 40\.400 kg/)).toBeVisible();
+      await expect(aliveRow.getByText(/L1 · .* · 40\.40 kg/)).toBeVisible();
       // La vencida no aparece aunque nadie la haya marcado.
       await expect(page.getByRole('link', { name: expired.code, exact: true })).toHaveCount(0);
 
@@ -491,7 +491,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       await expect(page.getByRole('heading', { name: order.code, level: 1 })).toBeVisible({
         timeout: 60_000,
       });
-      await expect(page.getByText('40.400 kg', { exact: true })).toBeVisible();
+      await expect(page.getByText('40.40 kg', { exact: true })).toBeVisible();
 
       await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       const dialog = page.getByRole('dialog');
@@ -506,10 +506,10 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       await expect(dialog).toBeHidden({ timeout: 30_000 });
 
       // La pantalla refleja la cantidad y la reserva nuevas sin recargar.
-      await expect(page.getByText('20.000 m', { exact: true })).toBeVisible();
+      await expect(page.getByText('20.00 m', { exact: true })).toBeVisible();
       const activeRow = page
         .getByRole('row')
-        .filter({ hasText: '80.800 kg' })
+        .filter({ hasText: '80.80 kg' })
         .filter({ hasText: 'Activa' });
       await expect(activeRow).toHaveCount(1);
 

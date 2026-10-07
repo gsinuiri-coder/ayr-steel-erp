@@ -10,7 +10,7 @@ import {
   type ConfirmQuotationInput,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatQty, unitSymbol } from '@/lib/format';
+import { formatKgPrecise, formatQty, unitSymbol } from '@/lib/format';
 import { formatExpiry } from '@/components/sales/temporary-reservation';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -224,7 +224,7 @@ export function ConfirmQuotationDialog({
               </Alert>
             )}
             {withShortfall && (
-              <Alert className="border-amber-500/60">
+              <Alert variant="warning">
                 <AlertDescription className="grid gap-3">
                   <div>
                     <p className="font-medium text-foreground">
@@ -364,9 +364,9 @@ function CoilChoice({
       </Select>
       {chosen && !chosen.withinTolerance && (
         <span className="text-destructive">
-          {chosen.code} tiene {formatQty(chosen.balanceKg, 'kg')} y el papel dice{' '}
-          {formatQty(line.qty, 'kg')}: tiene que estar entre {formatQty(range.minKg, 'kg')} y{' '}
-          {formatQty(range.maxKg, 'kg')}.
+          {chosen.code} tiene {formatKgPrecise(chosen.balanceKg)} y el papel dice{' '}
+          {formatKgPrecise(line.qty)}: tiene que estar entre {formatKgPrecise(range.minKg)} y{' '}
+          {formatKgPrecise(range.maxKg)}.
         </span>
       )}
       {!chosen && (

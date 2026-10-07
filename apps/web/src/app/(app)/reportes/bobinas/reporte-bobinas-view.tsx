@@ -82,7 +82,7 @@ export function ReporteBobinasView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Reporte mensual de bobinas</h1>
+          <h1 className="text-xl font-semibold">Reporte mensual de bobinas</h1>
           <p className="text-xs text-muted-foreground">
             {report.data
               ? `Del ${formatDate(report.data.from)} al ${formatDate(report.data.to)}`

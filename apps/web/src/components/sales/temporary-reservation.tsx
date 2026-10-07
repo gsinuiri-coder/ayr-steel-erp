@@ -1,7 +1,7 @@
 'use client';
 
 import type { TemporaryReservationLineDto } from '@ayr/shared';
-import { formatQty, unitSymbol } from '@/lib/format';
+import { formatQty, unitSymbol, formatDateTime } from '@/lib/format';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -24,14 +24,7 @@ export function remainingLabel(expiresAt: string, now: number = Date.now()): str
 
 /** Fecha y hora de vencimiento, en Lima. */
 export function formatExpiry(expiresAt: string): string {
-  return new Intl.DateTimeFormat('es-PE', {
-    timeZone: 'America/Lima',
-    weekday: 'short',
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(expiresAt));
+  return formatDateTime(expiresAt);
 }
 
 /** El material apartado, una línea por renglón: «L1 · Bobina 0.45 mm ROJO · 89.606 kg». */

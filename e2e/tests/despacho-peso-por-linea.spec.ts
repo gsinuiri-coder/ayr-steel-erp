@@ -131,6 +131,6 @@ test.describe('F8-S1/M3 — peso por línea en el despacho', () => {
     expect(response.ok(), 'El despacho debía crearse con el peso propuesto por línea').toBe(true);
 
     await expect(page).toHaveURL(/\/despachos\/[0-9a-f-]+$/, { timeout: 20_000 });
-    await expect(page.getByText('30.000 kg')).toBeVisible();
+    await expect(page.getByText('30.00 kg')).toBeVisible();
   });
 });

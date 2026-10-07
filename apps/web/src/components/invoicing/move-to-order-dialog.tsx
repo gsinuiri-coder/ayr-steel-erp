@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   toDecimal,
   type FiscalDocumentDto,
@@ -119,7 +119,7 @@ export function MoveToOrderDialog({
       router.push(`/comprobantes/${doc.id}`);
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo traer el comprobante');
+      toast.error(errorMessage(err, 'No se pudo traer el comprobante'));
       void preview.refetch();
     },
   });
@@ -220,7 +220,7 @@ export function MoveToOrderDialog({
               </dd>
             </dl>
             <ul
-              className="grid list-disc gap-1 pl-5 text-sm text-amber-700 dark:text-amber-400"
+              className="grid list-disc gap-1 pl-5 text-sm text-tone-warning-foreground"
               data-testid="move-warnings"
             >
               {p.warnings.map((w) => (

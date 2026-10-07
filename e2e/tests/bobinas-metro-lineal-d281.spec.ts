@@ -139,13 +139,13 @@ test.describe('D-281 — metro lineal teórico en la tabla de bobinas', () => {
     // La fila de la bobina: la celda que sigue al disponible.
     const row = table.getByRole('row').filter({ hasText: coil.code });
     // Por la posición de la columna, no por el texto: el peso inicial y el disponible dicen
-    // los dos 1,000.000 kg en una bobina recién comprada.
+    // los dos 1,000.00 kg en una bobina recién comprada.
     // Disponible va después del peso inicial: la última de las dos.
     // El filtro puede remontar la fila entre toBeVisible y allInnerTexts; espera su valor final.
     await expect
       .poll(async () => {
         const current = (await row.getByRole('cell').allInnerTexts()).map((t) => t.trim());
-        const kgAt = current.lastIndexOf('1,000.000 kg');
+        const kgAt = current.lastIndexOf('1,000.00 kg');
         return kgAt >= 0 ? current[kgAt + 1] : null;
       })
       .toBe('1,623.113 m');

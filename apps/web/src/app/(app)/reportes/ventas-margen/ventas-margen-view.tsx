@@ -75,7 +75,7 @@ export function VentasMargenView() {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Ventas y margen</h1>
+          <h1 className="text-xl font-semibold">Ventas y margen</h1>
           <p className="text-xs text-muted-foreground">
             Comprobantes emitidos en el rango, sin IGV. Costo de venta desde el kardex.
           </p>
@@ -244,7 +244,7 @@ export function VentasMargenView() {
               <h2 className="text-sm font-semibold">Facturación parcial en el rango</h2>
               <p className="text-xs text-muted-foreground">
                 Estos pedidos tienen comprobantes dentro y fuera del rango, y los del rango no
-                declaran su despacho. Su costo cubre más venta que la que se ve acá, así que se
+                declaran su despacho. Su costo cubre más venta que la que se ve aquí, así que se
                 muestra la venta y se deja el costo vacío: quedan fuera de los totales de arriba
                 (venta excluida: {formatMoney(report.data.totals.excludedSalesPen)}).
                 {line === undefined && SERVICES_STILL_COUNT}
@@ -439,7 +439,7 @@ function OrderRow({ order, cols }: { order: SalesMarginOrderDto; cols: Columns }
             <>
               <TableCell className="text-right">
                 {d.costPen === null ? (
-                  <span title="El despacho de este comprobante no está declarado (D-205)">—</span>
+                  <span title="El despacho de este comprobante no está declarado">—</span>
                 ) : (
                   formatMoney(d.costPen)
                 )}

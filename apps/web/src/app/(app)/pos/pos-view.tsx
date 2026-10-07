@@ -18,7 +18,8 @@ import {
   type PosProductDto,
   type PosSaleListItemDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/notify';
 import { formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
 import { invalidatePos } from '@/lib/pos-queries';
 import {
@@ -131,7 +132,7 @@ export function PosView() {
       invalidatePos(queryClient);
     },
     onError: (err) => {
-      setError(err instanceof ApiError ? err.message : 'No se pudo abrir la caja');
+      setError(errorMessage(err, 'No se pudo abrir la caja'));
     },
   });
 
@@ -168,7 +169,7 @@ export function PosView() {
       });
     },
     onError: (err) => {
-      setError(err instanceof ApiError ? err.message : 'No se pudo cerrar la venta');
+      setError(errorMessage(err, 'No se pudo cerrar la venta'));
     },
   });
 
@@ -215,7 +216,7 @@ export function PosView() {
     <RoleGate allow={POS_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">Mostrador</h1>
+          <h1 className="text-xl font-semibold">Mostrador</h1>
           <p className="text-xs text-muted-foreground">
             Venta al contado de productos en stock, con entrega inmediata. Lo que se fabrica a
             medida va por cotización.
@@ -592,7 +593,7 @@ function SaleDoneDialog({
         {sale?.fiscalPending && (
           <p className="text-sm text-muted-foreground">
             El comprobante tomó su número y está pendiente de envío al PSE: se manda solo en cuanto
-            haya conexión (contingencia, D-073). La venta no depende de eso.
+            haya conexión (contingencia). La venta no depende de eso.
           </p>
         )}
         <DialogFooter>

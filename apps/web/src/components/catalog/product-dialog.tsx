@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { z } from 'zod';
 import {
   BusinessLine,
@@ -28,7 +28,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { ColorSwatch } from '@/components/colors/color-swatch';
-import { isPositiveDecimal } from '@/lib/format';
+import { formatKg, formatMeters, isPositiveDecimal } from '@/lib/format';
 import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { Button } from '@/components/ui/button';
 import {
@@ -339,7 +339,7 @@ export function ProductDialog({
         }
       }
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'Error inesperado',
+        message: errorMessage(err, 'Error inesperado'),
       });
     },
   });
@@ -449,7 +449,7 @@ export function ProductDialog({
                       label="Valor de lista (S/, sin IGV)"
                       size="lg"
                       numeric
-                      help="Se sugiere al cotizar (D-068). El vendedor lo puede editar en la línea; queda registrado el precio de lista junto al cotizado."
+                      help="Se sugiere al cotizar. El vendedor lo puede editar en la línea; queda registrado el precio de lista junto al cotizado."
                     >
                       <FormControl>
                         <Input
@@ -479,9 +479,8 @@ export function ProductDialog({
                           help={
                             <>
                               <p>
-                                De su factor de densidad salen los kilos teóricos por metro lineal
-                                (RF-25, D-122). El acabado ya no vive en la receta: una cobertura no
-                                lleva.
+                                De su factor de densidad salen los kilos teóricos por metro lineal.
+                                El acabado ya no vive en la receta: una cobertura no lleva.
                               </p>
                               {showColor && (
                                 <p className="mt-1 text-sm text-muted-foreground">
@@ -512,8 +511,8 @@ export function ProductDialog({
                                   ) : (
                                     '—'
                                   )}
-                                  . El color sale del acabado (D-086): para corregirlo, elige el
-                                  acabado correcto.
+                                  . El color sale del acabado: para corregirlo, elige el acabado
+                                  correcto.
                                 </p>
                               )}
                             </>
@@ -626,7 +625,7 @@ export function ProductDialog({
                         label="Espesor del fleje (mm)"
                         size="md"
                         numeric
-                        help="Con el ancho y el acabado galvanizado, dice qué fleje consume este perfil (D-344)."
+                        help="Con el ancho y el acabado galvanizado, dice qué fleje consume este perfil."
                       >
                         <FormControl>
                           <Input inputMode="decimal" autoComplete="off" {...field} />
@@ -643,7 +642,7 @@ export function ProductDialog({
                         label="Ancho del fleje — desarrollo (mm)"
                         size="md"
                         numeric
-                        help="El ancho de la tira de acero de la que sale el perfil, no el ancho del perfil terminado (D-344)."
+                        help="El ancho de la tira de acero de la que sale el perfil, no el ancho del perfil terminado."
                       >
                         <FormControl>
                           <Input inputMode="decimal" autoComplete="off" {...field} />
@@ -665,7 +664,7 @@ export function ProductDialog({
                           label="Ancho (mm)"
                           size="md"
                           numeric
-                          help="Nominal, para cotizar y calcular kg teóricos (D-118). La producción real usa el ancho del rollo que se monte (D-086), no este dato."
+                          help="Nominal, para cotizar y calcular kg teóricos. La producción real usa el ancho del rollo que se monte, no este dato."
                         >
                           <FormControl>
                             <Input inputMode="decimal" autoComplete="off" {...field} />
@@ -743,13 +742,10 @@ export function ProductDialog({
                                   simple.
                                 </p>
                                 {pieceWeightCheck?.warn && (
-                                  <p
-                                    role="status"
-                                    className="mt-1 text-amber-700 dark:text-amber-500"
-                                  >
+                                  <p role="status" className="mt-1 text-tone-warning-foreground">
                                     ⚠ Se aleja {pieceWeightCheck.deviationPct} % del teórico (
-                                    {pieceWeightCheck.theoreticalKg} kg con este ancho, largo y
-                                    espesor): revisa los cuatro datos. Se guarda igual.
+                                    {formatKg(pieceWeightCheck.theoreticalKg)} con este ancho, largo
+                                    y espesor): revisa los cuatro datos. Se guarda igual.
                                   </p>
                                 )}
                               </>
@@ -814,7 +810,7 @@ function PlateLengthHint({ lengthMm }: { lengthMm: string }) {
   const plausible = isPlausiblePieceLength(typed);
   return (
     <p className={plausible ? 'text-xs text-muted-foreground' : 'text-xs text-destructive'}>
-      = {meters.toFixed(3)} m
+      = {formatMeters(meters)}
       {!plausible && (
         <>
           {' '}

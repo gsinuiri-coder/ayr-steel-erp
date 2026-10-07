@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   money,
   saleValueFromPrice,
@@ -12,7 +12,7 @@ import {
   type PriceListFloorDto,
   type ProductDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatMoney, isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -73,7 +73,7 @@ export function PriceListCell({
       setEditing(false);
       void queryClient.invalidateQueries({ queryKey: ['catalog'] });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo guardar')),
   });
 
   if (!isAdmin) {
