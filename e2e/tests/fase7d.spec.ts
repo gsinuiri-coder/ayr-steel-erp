@@ -209,7 +209,8 @@ test.describe('Fase 7d — paginación server-side y fechas en zona de Lima', ()
       await page.goto(`/bobinas/${coil.id}`);
       await expect(page.getByRole('heading', { name: coil.code })).toBeVisible();
       await expect(page.getByText('Alta', { exact: true })).toBeVisible();
-      await expect(page.getByText(expectedAlta)).toBeVisible();
+      // cc31: el kardex de la bobina muestra fecha y hora; el dato de «Alta» es la fecha sola.
+      await expect(page.getByText(expectedAlta, { exact: true })).toBeVisible();
     } finally {
       if (isProduction) {
         await deactivateTrail(api, { supplierId: supplier.id, finish });
