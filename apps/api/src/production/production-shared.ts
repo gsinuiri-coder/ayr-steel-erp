@@ -22,6 +22,7 @@ import {
   type ToleranceOverrideInput,
 } from '@ayr/shared';
 import { z } from 'zod';
+import { lockDocuments } from '../inventory/document-locks';
 import { restoreReservation } from '../sales/reservation-guard';
 
 /**
@@ -56,11 +57,47 @@ export interface LockedOrder {
 export async function lockOrder(
   tx: Prisma.TransactionClient,
   orderId: string,
+  /**
+   * cc30: las reservas que la operación va a escribir, tomadas en la misma pasada (después de
+   * pedido y OP, antes del inventario). `own` es la reserva de la OP; `extra`, otras de la
+   * misma línea (la del producto fabricado, D-088).
+   */
+  reservations?: { own?: boolean; extra?: readonly (string | null | undefined)[] },
 ): Promise<LockedOrder> {
-  const locked = await tx.$queryRaw<{ id: string }[]>`
-    SELECT "id" FROM "production_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE
-  `;
-  if (locked.length === 0) throw new NotFoundException('Orden de producción no encontrada');
+  // cc30 (grupo C): el padre antes que el hijo. El pedido de la OP se lee sin bloquear —el
+  // vínculo no cambia: cambiar la cantidad de la línea mueve la OP a otra reserva del mismo
+  // pedido— y se toma junto con la OP por la puerta de documentos, pedido primero. Así reportar,
+  // cerrar, revertir y anular toman pedido → OP → reserva, igual que anular el pedido.
+  const parent = await tx.productionOrder
+    .findUniqueOrThrow({
+      where: { id: orderId },
+      select: { reservationId: true, reservation: { select: { salesOrderId: true } } },
+    })
+    .catch((error: unknown) => {
+      if ((error as { code?: unknown }).code === 'P2025') {
+        throw new NotFoundException('Orden de producción no encontrada');
+      }
+      throw error;
+    });
+  // Una OP no se borra nunca: si existía al leerla, existe al tomarla.
+  await lockDocuments(tx, {
+    salesOrders: [parent.reservation?.salesOrderId],
+    productionOrders: [orderId],
+    reservations: [
+      ...(reservations?.own ? [parent.reservationId] : []),
+      ...(reservations?.extra ?? []),
+    ],
+  });
+  const order = await readLockedOrder(tx, orderId);
+  // Con la OP en mano su reserva ya no cambia; si cambió entre la lectura y la toma, la nueva se
+  // toma ahora (la puerta la pide con `NOWAIT` si llega fuera de orden).
+  if (reservations?.own && order.reservationId !== parent.reservationId) {
+    await lockDocuments(tx, { reservations: [order.reservationId] });
+  }
+  return order;
+}
+
+function readLockedOrder(tx: Prisma.TransactionClient, orderId: string): Promise<LockedOrder> {
   return tx.productionOrder.findUniqueOrThrow({
     where: { id: orderId },
     select: {

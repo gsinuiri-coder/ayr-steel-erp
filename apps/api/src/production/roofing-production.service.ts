@@ -78,6 +78,7 @@ import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofi
 import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -998,6 +999,22 @@ export class RoofingProductionService {
     const override = input.toleranceOverride;
     const order = await lockOrder(tx, orderId);
     assertKind(order, ProductionOrderKind.ROOFING);
+    // cc30 (grupo C): las dos reservas que el reporte escribe —la de materia prima de la OP, que se
+    // descuenta, y la del producto fabricado de la misma línea (D-088), que sube después de los
+    // saldos— se toman ahora, juntas y por id, detrás de pedido y OP y antes del inventario.
+    if (order.reservationId) {
+      const line = await tx.reservation.findUniqueOrThrow({
+        where: { id: order.reservationId },
+        select: { salesOrderItemId: true },
+      });
+      const onProduct = await findLineReservation(
+        tx,
+        line.salesOrderItemId,
+        InventoryItemType.PRODUCT,
+        order.productId,
+      );
+      await lockDocuments(tx, { reservations: [order.reservationId, onProduct?.id] });
+    }
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
       throw new BadRequestException(
         order.status === ProductionOrderStatus.DRAFT
@@ -1282,10 +1299,9 @@ export class RoofingProductionService {
       // La misma fila que necesita `ownPromiseScope` (D-154): se lee una vez.
       // Pedido primero, reserva después: `SalesOrdersService.cancel` toma esos dos
       // recursos en ese mismo orden, y con el orden invertido anular un pedido y
-      // reportar producción a la vez se trababan en un deadlock.
-      await tx.$queryRaw`
-        SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
-      `;
+      // reportar producción a la vez se trababan en un deadlock. cc30: el pedido ya viene
+      // tomado de `lockOrder`, antes que la OP; esto no vuelve a esperar.
+      await lockDocuments(tx, { salesOrders: [reservation.salesOrderId] });
       // **Siempre se descuenta** (D-134). Antes había que preguntar si el rollo que se
       // roló era el que el pedido había reservado, porque la promesa nombraba una bobina
       // concreta y nada obligaba a montar esa: descontar la promesa de un rollo del que
@@ -2086,7 +2102,10 @@ export class RoofingProductionService {
     operationDate: string,
     warnings: RawMaterialShortfall[],
   ): Promise<void> {
-    const order = await lockOrder(tx, orderId);
+    // cc30 (grupo C, cruce d): pedido → OP → reserva al inicio. Las dos ramas escriben la reserva
+    // de materia prima (el despunte la descuenta; sin despunte se libera lo que sobró) con las
+    // bobinas y el saldo en mano; antes, sin despunte, se tomaba recién ahí.
+    const order = await lockOrder(tx, orderId, { own: true });
     assertKind(order, ProductionOrderKind.ROOFING);
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
       throw new BadRequestException(
@@ -2233,9 +2252,8 @@ export class RoofingProductionService {
           where: { id: order.reservationId },
           select: { salesOrderId: true, itemId: true },
         });
-        await tx.$queryRaw`
-              SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
-            `;
+        // cc30: pedido y reserva ya vienen tomados de `lockOrder`; esto no vuelve a esperar.
+        await lockDocuments(tx, { salesOrders: [reservation.salesOrderId] });
         // Mismo criterio que el reporte (D-134): el despunte sale de una bobina que la
         // orden montó, y toda bobina que la orden pudo montar cumple el agregado que el
         // pedido prometía. No hay rollo "ajeno" del que descontar por error.
@@ -2494,14 +2512,13 @@ export class RoofingProductionService {
             order.productId,
           );
         }
-        // D-386 (P2-2 de cc15b): la reserva, después las bobinas con sus agregados y al final los
+        // D-386 (P2-2 de cc15b): las reservas, después las bobinas con sus agregados y al final los
         // saldos, todos antes de mirar qué se movió después y antes de la primera reversa. Antes
         // se tomaba el saldo del producto (al revertir el ingreso) y recién después cada bobina.
-        if (onProduct) {
-          await tx.$queryRaw`
-            SELECT "id" FROM "reservations" WHERE "id" = ${onProduct.id}::uuid FOR UPDATE
-          `;
-        }
+        // cc30 (grupo C, cruce b): las dos reservas que esta reversa escribe —la del producto y
+        // la de materia prima de la OP, que se restaura al final— juntas y por id; antes la de
+        // materia prima se tomaba recién al escribirla, con los saldos en mano.
+        await lockDocuments(tx, { reservations: [onProduct?.id, order.reservationId] });
         await this.inventory.lockInOrder(tx, { items: movements.map(itemRefOf) });
 
         // El producto es fungible dentro de su saldo, así que "movimientos posteriores" a
