@@ -24,6 +24,7 @@ import { assertExternalOutputsOff } from '../src/common/external-outputs';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { InvoiceDispatchService } from '../src/invoicing/invoice-dispatch.service';
 import type { RequestUser } from '../src/auth/auth.types';
+import { lockDocuments } from '../src/inventory/document-locks';
 
 const execute = process.argv.includes('--execute');
 const numberFlag = process.argv.indexOf('--number');
@@ -118,9 +119,7 @@ async function main(): Promise<void> {
     console.warn('\nEjecutando…');
     const done = await db.$transaction(
       async (tx) => {
-        await tx.$queryRaw`
-          SELECT "id" FROM "fiscal_documents" WHERE "id" = ${invoice.id}::uuid FOR UPDATE
-        `;
+        await lockDocuments(tx, { fiscalDocuments: [invoice.id] });
         return service.redateInTx(tx, actor, invoice.id);
       },
       { timeout: 120_000 },

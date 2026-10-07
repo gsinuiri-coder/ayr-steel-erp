@@ -24,16 +24,33 @@ jest.mock('../sales/reservation-guard', () => ({
 
 const ADMIN = { id: 'admin', role: 'ADMINISTRADOR' } as RequestUser;
 
+/**
+ * cc30: `lockDocuments` emite `SELECT "id" … WHERE "id" = ANY($ids) … FOR UPDATE` y devuelve las
+ * filas que existían; el mock devuelve todos los ids pedidos, como si existieran.
+ */
+function lockedIds(_sql: TemplateStringsArray, ids?: unknown): Promise<{ id: string }[]> {
+  return Promise.resolve(Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []);
+}
+
+/** La tabla de cada `FOR UPDATE` emitido, en orden. */
+function lockedTables(calls: unknown[][]): string[] {
+  return calls.flatMap((c) => {
+    const sql = (c[0] as string[]).join('?');
+    if (!sql.includes('FOR UPDATE')) return [];
+    const table = /FROM "([a-z_]+)"/.exec(sql)?.[1];
+    return table ? [table] : [];
+  });
+}
+
 function build(declaring: { id: string; number: string } | null = null) {
   const tx = {
-    $queryRaw: jest
-      .fn()
-      .mockResolvedValueOnce([{ id: 'd-1', status: 'ISSUED', sales_order_id: 'ped' }])
-      .mockResolvedValue([]),
+    $queryRaw: jest.fn(lockedIds),
     dispatch: {
+      findUnique: jest.fn().mockResolvedValue({ salesOrderId: 'ped' }),
       findUniqueOrThrow: jest.fn().mockResolvedValue({
         id: 'd-1',
         seq: 19,
+        status: 'ISSUED',
         salesOrderId: 'ped',
         documents: [],
         items: [
@@ -99,10 +116,16 @@ describe('DispatchesService.reverseInTx (D-288)', () => {
     expect(inventory.lockInOrder.mock.invocationCallOrder[0]).toBeLessThan(
       Number(inventory.reverse.mock.invocationCallOrder[0]),
     );
-    const reservationLock = tx.$queryRaw.mock.calls.findIndex((c: unknown[]) =>
-      (c[0] as string[]).join('?').includes('"reservations"'),
+    // cc30 (D-471): despacho → pedido en una pasada por la puerta, y después la reserva.
+    expect(lockedTables(tx.$queryRaw.mock.calls)).toEqual([
+      'dispatches',
+      'sales_orders',
+      'reservations',
+    ]);
+    // El estado se lee con los dos ya tomados.
+    expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      Number(tx.dispatch.findUniqueOrThrow.mock.invocationCallOrder[0]),
     );
-    expect(reservationLock).toBeGreaterThan(0);
     expect(restoreReservationQty).toHaveBeenCalled();
     expect(tx.dispatch.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'REVERSED' }) }),

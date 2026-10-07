@@ -862,7 +862,8 @@ describe('D-368 — comprobante con cotización relacionada', () => {
     });
     expect(quotations.createInTx).not.toHaveBeenCalled();
     // El lock por número se toma antes de revalidar (dos confirmaciones simultáneas).
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    // cc30 (C11): una vez al inicio, en orden, y otra (reentrante) dentro del documento.
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
   });
 
   it('la foto de duplicados agrupa por número y solo devuelve dos o más no anuladas', async () => {

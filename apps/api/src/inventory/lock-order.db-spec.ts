@@ -13,12 +13,14 @@ import {
   cancelCuttingOrderSchema,
   createCuttingOrderSchema,
   createCoilScrapSchema,
+  createCoilSplitSchema,
   createProductionOrderSchema,
   consumeStripSchema,
   reportPiecesSchema,
   createCustomerSchema,
   createDispatchSchema,
   createFinishSchema,
+  createInvoiceSchema,
   createProductSchema,
   createPurchaseSchema,
   createQuotationSchema,
@@ -42,6 +44,7 @@ import { CustomersService } from '../customers/customers.service';
 import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { DispatchesService } from '../invoicing/dispatches.service';
+import { InvoicingService } from '../invoicing/invoicing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { COMMIT_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
 import { ProductionService } from '../production/production.service';
@@ -1208,13 +1211,19 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
     const tally = newTally();
     for (let i = 0; i < ITERATIONS; i++) {
       const agg = await shortfallAggregate();
-      await race(tally, `iteración ${i}`, [
-        () => roofing.close(admin, agg.productionOrderId, closeRoofingOrderSchema.parse({})),
-        async () => {
-          await sleep((i % 10) * 12);
-          return salesOrders.completeReservation(admin, agg.salesOrder.id, 'cc30 completar');
-        },
-      ]);
+      // Una de las dos arranca escalonada, por turnos: si el cierre entra primero libera la reserva
+      // y completar ya no tiene faltante (rechazo de dominio). Con un solo sentido de escalón,
+      // completar no ganaba nunca en el runner y el par no probaba nada (CI del corte 2).
+      const delay = (i % 10) * 12;
+      const close = async () => {
+        if (i % 2 === 1) await sleep(delay);
+        return roofing.close(admin, agg.productionOrderId, closeRoofingOrderSchema.parse({}));
+      };
+      const complete = async () => {
+        if (i % 2 === 0) await sleep(delay);
+        return salesOrders.completeReservation(admin, agg.salesOrder.id, 'cc30 completar');
+      };
+      await race(tally, `iteración ${i}`, [close, complete]);
     }
     expectClean(tally, '(d) cerrar coberturas × completar reserva');
   });
@@ -1405,5 +1414,133 @@ describe('cc30 — grupo C: drywall (contra la base)', () => {
       ]);
     }
     expectClean(tally, '(a) revertir reporte de drywall × despacho');
+  });
+});
+
+/**
+ * cc30 (corte 2): cruces nuevos de la matriz (`docs/analisis/cc30-matriz-bloqueos.md`).
+ *
+ * - C7: reasignar el vendedor de una cotización iba cotización → pedidos, y anular el pedido iba
+ *   pedido → … → cotización.
+ * - C8: crear un borrador de comprobante que declara un despacho iba pedido → despacho, y revertir
+ *   ese despacho iba despacho → pedido.
+ */
+describe('cc30 — corte 2: cotización, comprobante y despacho (contra la base)', () => {
+  let invoicing: InvoicingService;
+  let sellerId = '';
+
+  beforeAll(async () => {
+    invoicing = moduleRef.get(InvoicingService);
+    sellerId = (
+      await prisma.user.create({
+        data: {
+          email: `vendedor-cc30-${letters(8).toLowerCase()}@example.test`,
+          name: 'Vendedor cc30',
+          passwordHash: 'x',
+          role: Role.VENDEDOR,
+        },
+      })
+    ).id;
+  });
+
+  /** Un pedido confirmado desde una cotización, sobre un producto con stock. */
+  async function orderFromQuotation() {
+    const product = await tradingProduct();
+    await productPurchase([product]);
+    const quotation = await quotations.create(
+      admin,
+      createQuotationSchema.parse({
+        customerId,
+        issueDate: businessToday(),
+        items: [{ productId: product, qty: '5', unitPricePen: '50' }],
+      }),
+    );
+    const order = await salesOrders.confirm(admin, quotation.id, {});
+    return { quotationId: quotation.id, order };
+  }
+
+  it('C7: reasignar el vendedor de la cotización × anular su pedido', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const f = await orderFromQuotation();
+      const ops = [
+        () => quotations.reassign(admin, f.quotationId, sellerId, 'cc30 reasignar'),
+        () =>
+          salesOrders.cancel(
+            admin,
+            f.order.id,
+            cancelSalesOrderSchema.parse({ reason: 'cc30 anular', acknowledgeFabricated: true }),
+          ),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, 'C7 reasignar × anular pedido');
+  });
+
+  it('C8: borrador de comprobante con el despacho × revertir ese despacho', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const p = await tradingProduct();
+      await productPurchase([p]);
+      const order = await directOrder([{ productId: p, qty: '5' }]);
+      const dispatch = await dispatchAll(order);
+      const ops = [
+        () =>
+          invoicing.create(
+            admin,
+            createInvoiceSchema.parse({
+              docType: 'FACTURA',
+              customerId,
+              salesOrderId: order.id,
+              dispatchId: dispatch.id,
+              issueDate: businessToday(),
+              items: order.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+            }),
+          ),
+        () => reverseDispatch(dispatch.id),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, 'C8 borrador con despacho × revertir despacho');
+  });
+});
+
+/**
+ * cc30 (corte 2, C9): editar una compra recibida tomaba la compra con `FOR UPDATE` y después sus
+ * bobinas; partir una bobina de esa compra toma la bobina y después, al insertar las hijas con la
+ * compra heredada, `KEY SHARE` sobre la compra (FK). Con `FOR NO KEY UPDATE` en la edición los dos
+ * modos conviven y el cruce desaparece. Depende de que el único índice único de `purchases` sea
+ * parcial: un `UNIQUE` total sobre columnas que la edición cambia subiría su `UPDATE` a
+ * `FOR UPDATE` y este par volvería a fallar.
+ */
+describe('cc30 — corte 2: editar compra recibida × partir su bobina (contra la base)', () => {
+  it('C9: sin deadlock entre la FK de las hijas y el bloqueo de la compra', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const { coilId, purchaseId } = await roofingCoil('2.50');
+      const items = await prisma.purchaseItem.findMany({
+        where: { purchaseId },
+        select: { id: true },
+      });
+      const ops = [
+        () =>
+          receivedEdit.commit(
+            admin,
+            purchaseId,
+            commitReceivedPurchaseEditSchema.parse({
+              items: items.map((it) => ({ itemId: it.id, unitPrice: '6' })),
+              reason: 'cc30 corregir precio',
+            }),
+          ),
+        () =>
+          coilOps.split(
+            admin,
+            coilId,
+            createCoilSplitSchema.parse({ children: [{ widthMm: '500.00', count: 2 }] }),
+          ),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, 'C9 editar compra × partir bobina');
   });
 });

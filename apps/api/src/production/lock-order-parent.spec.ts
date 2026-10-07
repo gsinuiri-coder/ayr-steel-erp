@@ -39,6 +39,8 @@ describe('cc30 — lockOrder toma pedido → OP → reserva', () => {
   >;
   beforeEach(() => {
     spy = jest.spyOn(documentLocks, 'lockDocuments').mockResolvedValue({
+      fiscalDocuments: [],
+      dispatches: [],
       quotations: [],
       salesOrders: [],
       productionOrders: [],
@@ -80,6 +82,8 @@ describe('cc30 — lockOrder toma pedido → OP → reserva', () => {
 
   it('sin opciones, solo la OP (D-477: planta no espera al pedido si no lo escribe)', async () => {
     spy.mockResolvedValueOnce({
+      fiscalDocuments: [],
+      dispatches: [],
       quotations: [],
       salesOrders: [],
       productionOrders: ['op'],

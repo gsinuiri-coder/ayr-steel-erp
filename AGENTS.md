@@ -110,7 +110,7 @@ Reglas de convivencia, sin excepción:
    una migración contra producción, una escritura masiva con `--execute --confirm-production`
    (regla 5) y borrar una rama de Neon (además en `deny`). **El agente no empuja directo a
    `main`: todo entra por PR** (también el cierre de docs), por decisión del dueño (cc28).
-   Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, borrar ramas de Neon,
+   Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, el push directo a `main` (`git push origin main`, `AYR_OWNER_PUSH=1 git push`, D-476), borrar ramas de Neon,
    `e2e:prod`, `prod-reset-go-live` y leer `.env*`. Una rama remota ya mergeada se borra con
    `gh api -X DELETE …/git/refs/heads/<rama>`, nunca con `git push --delete`. Siguen en pie las
    reglas duras que no son de confirmación: la ventana corre entre las 20:00 y las 07:00 de Lima,
@@ -180,17 +180,23 @@ Reglas de convivencia, sin excepción:
     requiere decisión antes de implementar; la recomendación y la decisión se registran como
     `D-nnn`. Esto sustituye la regla anterior de aplicar por cuenta propia la recomendación de
     `docs/ARQUITECTURA.md` §5 salvo acción externa.
-17. **Orden único de bloqueos de fila (D-386).** Toda transacción que toca inventario toma sus
-    filas en el orden documentos → reservas → bobinas → saldos y, dentro de cada nivel, por id
-    ascendente (`docs/ARQUITECTURA.md` §3.3.1); un documento se bloquea antes que sus filas hijas
-    (la orden de corte antes que sus bobinas, cc28). Las bobinas y los saldos se bloquean solo por la
-    puerta única: `lockCoilRows` (`apps/api/src/inventory/row-locks.ts`) e
-    `InventoryService.lockBalance`. Una operación de varios ítems toma su conjunto completo al
-    inicio con `InventoryService.lockInOrder`, antes de cualquier lectura que decida algo. El
-    centinela `row-locks.sentinel.spec.ts` falla si aparece un `FOR UPDATE` sobre `coils` o
-    `inventory_balances` fuera de la puerta. Los pares concurrentes viven en
-    `lock-order.db-spec.ts`. Un camino nuevo que mueva inventario suma su par ahí. **Salvo los
-    cruces del grupo C anotados en PROGRESO, que se cierran en su sesión.**
+17. **Orden único de bloqueos de fila (D-386, D-470, D-471; texto provisional de cc30, pendiente de
+    ratificación del dueño).** Toda transacción toma sus filas en este orden y, dentro de cada
+    clase, por id ascendente (`docs/ARQUITECTURA.md` §3.3.1): comprobante → despacho → cotización →
+    pedido → OP → reserva temporal → reserva → bobinas → saldos. La compra, su orden de corte y las
+    filas de corte son una rama aparte que va antes de reserva e inventario. Un documento se bloquea
+    antes que sus filas hijas (la orden de corte antes que sus bobinas, cc28), y el padre antes que
+    el hijo: la planta lee el pedido de su OP sin bloquear y toma pedido → OP cuando escribe pedido
+    o reserva (D-477). La reserva se escribe con su documento dueño ya bloqueado (D-472). Los
+    documentos se bloquean solo por la puerta `lockDocuments`
+    (`apps/api/src/inventory/document-locks.ts`), y las bobinas y los saldos solo por
+    `lockCoilRows` (`apps/api/src/inventory/row-locks.ts`) e `InventoryService.lockBalance`. Una
+    operación toma su conjunto completo al inicio —documentos con `lockDocuments`, ítems con
+    `InventoryService.lockInOrder`— y lee lo que decide después del bloqueo (D-474). Lo que llega
+    tarde y fuera de orden se pide con `NOWAIT` y sale con 409; es una red, no un camino (D-475).
+    Los centinelas `row-locks.sentinel.spec.ts` y `document-locks.sentinel.spec.ts` fallan si
+    aparece un `FOR UPDATE` sobre esas tablas fuera de su puerta. Los pares concurrentes viven en
+    `lock-order.db-spec.ts`; un camino nuevo que tome documentos o inventario suma su par ahí.
 
 ### 3.1 Credenciales y secretos
 

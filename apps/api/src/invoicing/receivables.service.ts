@@ -32,6 +32,7 @@ import {
   documentOwnerId,
   loadCollectibleDocuments,
 } from './collectible-documents';
+import { lockDocuments } from '../inventory/document-locks';
 
 /**
  * Cobranza y cuentas por cobrar (RF-86..RF-88; D-075).
@@ -102,9 +103,7 @@ export class ReceivablesService {
     const claim = await claimIdempotencyKey(tx, 'customer-payment', input.idempotencyKey);
     if (!claim.claimed) return claim.resourceId;
 
-    await tx.$queryRaw`
-      SELECT "id" FROM "fiscal_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE
-    `;
+    await lockDocuments(tx, { fiscalDocuments: [documentId] });
     const document = await tx.fiscalDocument.findUnique({
       where: { id: documentId },
       include: {
@@ -204,9 +203,7 @@ export class ReceivablesService {
     reason: string,
   ): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`
-        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${documentId}::uuid FOR UPDATE
-      `;
+      await lockDocuments(tx, { fiscalDocuments: [documentId] });
       const payment = await tx.customerPayment.findFirst({
         where: { id: paymentId, documentId },
       });

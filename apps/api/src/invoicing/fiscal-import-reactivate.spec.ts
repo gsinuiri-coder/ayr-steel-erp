@@ -42,6 +42,8 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     emitted: { salesOrderItemId: string; qty: string }[];
     others: { number: string | null }[];
     drafts: number;
+    /** cc30: los ids de borradores que devuelve la lectura previa al bloqueo (`draftIdsOn`). */
+    draftIds: string[];
     /** Estado del pedido, leído con su lock. */
     orderStatus: string;
     /** Eventos de edición de líneas del pedido posteriores a la anulación. */
@@ -87,6 +89,7 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
       emitted: [],
       others: [],
       drafts: 0,
+      draftIds: [],
       orderStatus: 'CONFIRMED',
       orderEdits: [],
       updated: 1,
@@ -95,12 +98,24 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
 
   function build(s: Scenario) {
     const audit = { write: jest.fn().mockResolvedValue(undefined) };
+    // Lo que no es la lectura de ids de borradores: primero notas de crédito; después, los que
+    // refacturaron las líneas.
+    const lists = [s.creditNotes, s.others];
     const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([{ id: 'doc-341', status: s.orderStatus }]),
+      // cc30: `lockDocuments` emite `SELECT "id" … = ANY($ids) … FOR UPDATE` y devuelve las filas
+      // que existían; el mock las da todas por existentes.
+      $queryRaw: jest.fn((_sql: TemplateStringsArray, ids?: unknown) =>
+        Promise.resolve(Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []),
+      ),
+      salesOrder: { findUnique: jest.fn().mockResolvedValue({ status: s.orderStatus }) },
       fiscalDocument: {
         findUnique: jest.fn().mockResolvedValue(s.document),
-        // Primera llamada: notas de crédito; segunda: los que refacturaron las líneas.
-        findMany: jest.fn().mockResolvedValueOnce(s.creditNotes).mockResolvedValueOnce(s.others),
+        // cc30: `draftIdsOn` (select id) lee los ids de borradores sin bloqueo.
+        findMany: jest.fn((args: { select?: { id?: boolean } }) =>
+          Promise.resolve(
+            args.select?.id ? s.draftIds.map((id) => ({ id })) : (lists.shift() ?? []),
+          ),
+        ),
         count: jest.fn().mockResolvedValue(s.drafts),
         updateMany: jest.fn().mockResolvedValue({ count: s.updated }),
       },
@@ -144,8 +159,10 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
       number: 'BBV1-00000341',
     });
 
-    // La fila del comprobante, la del pedido y los borradores sobre sus líneas (revisiones cc07).
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
+    // cc30: dos sentencias de la puerta —el comprobante con los borradores del pedido, y el
+    // pedido—. La re-búsqueda de borradores (`lockOrderDrafts`) no encuentra ninguno nuevo y no
+    // emite otra (antes eran tres: comprobante, pedido, borradores).
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     expect(tx.fiscalDocument.updateMany).toHaveBeenCalledWith({
       where: { id: 'doc-341', status: FiscalDocumentStatus.ANNULLED },
       data: {
@@ -352,19 +369,44 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     expect(tx.fiscalDocument.updateMany).not.toHaveBeenCalled();
   });
 
-  it('bloquea el pedido y los borradores de esas líneas antes de revisarlos (revisiones cc07)', async () => {
-    const { service, tx } = build(happy());
-    await service.reactivateExternal(ADMIN, 'doc-341', INPUT);
+  it('bloquea el pedido y los borradores de esas líneas antes de revisarlos (revisiones cc07; orden cc30)', async () => {
+    const s = happy();
+    s.drafts = 1;
+    s.draftIds = ['doc-900'];
+    const { service, tx } = build(s);
+    await expect(service.reactivateExternal(ADMIN, 'doc-341', INPUT)).rejects.toThrow(/borrador/);
     const sqlOf = (n: number): string =>
       (tx.$queryRaw.mock.calls[n] as [TemplateStringsArray])[0].join('?');
-    expect(sqlOf(1)).toMatch(/FROM "sales_orders" WHERE "id" = \?::uuid FOR UPDATE/);
-    expect(tx.$queryRaw.mock.calls[1]).toContain('so-48');
-    const sql = sqlOf(2);
-    expect(sql).toMatch(/"status" = 'DRAFT'/);
-    expect(sql).toMatch(/ORDER BY d\."id"\s+FOR UPDATE/);
-    expect(tx.$queryRaw.mock.invocationCallOrder[2]).toBeLessThan(
-      tx.fiscalDocument.count.mock.invocationCallOrder[0]!,
+    // cc30 (D-471): comprobante + borradores juntos (por id) → pedido, por la puerta.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(sqlOf(0)).toMatch(
+      /FROM "fiscal_documents" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" FOR UPDATE$/,
     );
+    expect(tx.$queryRaw.mock.calls[0]?.[1]).toEqual(['doc-341', 'doc-900']);
+    expect(sqlOf(1)).toMatch(
+      /FROM "sales_orders" WHERE "id" = ANY\(\?::uuid\[\]\) ORDER BY "id" FOR UPDATE$/,
+    );
+    expect(tx.$queryRaw.mock.calls[1]?.[1]).toEqual(['so-48']);
+    // Los ids de borradores se buscan por el pedido y por las líneas del comprobante.
+    expect(tx.fiscalDocument.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: FiscalDocumentStatus.DRAFT,
+          id: { not: 'doc-341' },
+          OR: expect.arrayContaining([
+            { salesOrderId: { in: ['so-48'] } },
+            { items: { some: { salesOrderItemId: { in: ['soi-1', 'soi-2'] } } } },
+          ]) as unknown,
+        }) as unknown,
+        select: { id: true },
+      }),
+    );
+    // Todo tomado antes de la lectura que decide (la segunda del comprobante), del pedido y de
+    // la cuenta de borradores.
+    const lastLock = tx.$queryRaw.mock.invocationCallOrder[1]!;
+    expect(lastLock).toBeLessThan(tx.fiscalDocument.findUnique.mock.invocationCallOrder[1]!);
+    expect(lastLock).toBeLessThan(tx.salesOrder.findUnique.mock.invocationCallOrder[0]!);
+    expect(lastLock).toBeLessThan(tx.fiscalDocument.count.mock.invocationCallOrder[0]!);
   });
 
   it('un comprobante sin líneas de pedido se reactiva sin chequeo de líneas ni de borradores', async () => {
@@ -375,7 +417,10 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     };
     const { service, tx } = build(s);
     await service.reactivateExternal(ADMIN, 'doc-341', INPUT);
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    // cc30: dos sentencias y no una: la toma inicial lleva también el pedido del comprobante
+    // (`salesOrderId`), aunque ninguna línea lo use, porque se decide antes de leer las líneas.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(tx.salesOrder.findUnique).not.toHaveBeenCalled();
     expect(tx.salesOrderItem.findMany).not.toHaveBeenCalled();
     expect(tx.fiscalDocument.count).not.toHaveBeenCalled();
     expect(tx.fiscalDocument.updateMany).toHaveBeenCalledTimes(1);

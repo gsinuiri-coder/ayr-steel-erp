@@ -98,6 +98,7 @@ import {
   pageWindow,
   type ListWindow,
 } from '../common/list-export';
+import { lockDocuments } from '../inventory/document-locks';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -497,13 +498,21 @@ export class InvoicingService {
     // administrador cambiaba un precio copiaba el precio viejo y el registro decía otro.
     // HOTFIX-401/M2: la misma fila trae `total_pen`, que hace falta más abajo para el tope
     // de cuánto de este pedido ya está facturado o en borrador.
+    // cc30 (D-471, cruce C8): el despacho declarado y el pedido, juntos y en ese orden —despacho →
+    // pedido, como la reversa y el re-fechado—. Antes se tomaba el pedido y después el despacho, y
+    // revertir ese despacho a la vez se cruzaba.
     let orderTotalPen: string | null = null;
+    await lockDocuments(tx, {
+      dispatches: [input.dispatchId],
+      salesOrders: [input.salesOrderId],
+    });
     if (input.salesOrderId) {
-      const [locked] = await tx.$queryRaw<{ total_pen: Prisma.Decimal }[]>`
-        SELECT "total_pen" FROM "sales_orders" WHERE "id" = ${input.salesOrderId}::uuid FOR UPDATE
-      `;
+      const locked = await tx.salesOrder.findUnique({
+        where: { id: input.salesOrderId },
+        select: { totalPen: true },
+      });
       if (!locked) throw new NotFoundException('Pedido no encontrado');
-      orderTotalPen = locked.total_pen.toString();
+      orderTotalPen = locked.totalPen.toString();
     }
 
     const customer = await tx.customer.findUnique({ where: { id: input.customerId } });
@@ -532,10 +541,8 @@ export class InvoicingService {
       // misma tabla. Sin él, dos emisiones concurrentes sobre el mismo despacho leen las dos
       // un `invoice_id` nulo y las dos pasan: `linkInvoiceToDispatch` es idempotente
       // (`WHERE invoice_id IS NULL`), así que la que pierde no escribe **y no se entera**, y
-      // el despacho queda declarando cubrir un comprobante que no es el que lo declaró.
-      await tx.$queryRaw`
-        SELECT "id" FROM "dispatches" WHERE "id" = ${input.dispatchId}::uuid FOR UPDATE
-      `;
+      // el despacho queda declarando cubrir un comprobante que no es el que lo declaró. cc30: ya
+      // viene tomado de arriba, antes que el pedido.
       const dispatch = await tx.dispatch.findUnique({
         where: { id: input.dispatchId },
         select: {
@@ -931,9 +938,7 @@ export class InvoicingService {
       // mismo pendiente y acreditaban el doble: dos correlativos gastados, dos documentos
       // ante SUNAT y un saldo negativo que no se deshace —una nota de crédito no se acredita
       // con otra—. Es el mismo lock que `addPayment` toma para el saldo, por el mismo motivo.
-      await tx.$queryRaw`
-        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${affectedId}::uuid FOR UPDATE
-      `;
+      await lockDocuments(tx, { fiscalDocuments: [affectedId] });
       const affected = await tx.fiscalDocument.findUnique({
         where: { id: affectedId },
         include: {
@@ -1181,9 +1186,7 @@ export class InvoicingService {
     await this.assertOwnership(actor, id, 'registrarlo como manual');
 
     await this.prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
-      `;
+      const rows = (await lockDocuments(tx, { fiscalDocuments: [id] })).fiscalDocuments;
       if (rows.length === 0) throw new NotFoundException('Comprobante no encontrado');
       const document = await tx.fiscalDocument.findUniqueOrThrow({
         where: { id },
@@ -1217,6 +1220,9 @@ export class InvoicingService {
 
       // El mismo último control que `send`: dos borradores sobre la misma línea pasan los dos
       // la validación de creación, y este es el punto en el que todavía se puede decir que no.
+      // cc30 (D-471/D-474, matriz F9): con el pedido tomado detrás del comprobante, lo facturado
+      // del pedido se lee sin que una edición o una anulación del pedido cambie en el medio.
+      await lockDocuments(tx, { salesOrders: [document.salesOrderId] });
       await this.assertStillAvailable(tx, document);
 
       const number = fiscalDocumentNumber(input.series, input.correlative);
@@ -1369,9 +1375,7 @@ export class InvoicingService {
         // —que no haya cobro ni nota de crédito por delante de la fecha nueva— se evalúan
         // sobre lo que se lee acá: sin el lock son una foto, y un cobro registrado en paralelo
         // entra por la ventana que el método dice cerrar.
-        await tx.$queryRaw`
-        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
-      `;
+        await lockDocuments(tx, { fiscalDocuments: [id] });
         const document = await tx.fiscalDocument.findUnique({
           where: { id },
           select: {
@@ -1545,6 +1549,10 @@ export class InvoicingService {
    */
   async discardDraft(actor: RequestUser, id: string, reason: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
+      // cc30 (D-474, matriz F8): el estado `DRAFT` se lee con el comprobante ya bloqueado. Sin
+      // esto, una emisión que confirmaba entre la lectura y el `DELETE` dejaba borrar un
+      // comprobante ya numerado: el `DELETE` esperaba la emisión y después borraba por id.
+      await lockDocuments(tx, { fiscalDocuments: [id] });
       const document = await tx.fiscalDocument.findUnique({
         where: { id },
         select: {
@@ -1773,14 +1781,13 @@ export class InvoicingService {
    * `send`. Lo que cambia es cuánto abarca esa primera transacción, no su orden.
    */
   async assignInTx(tx: Prisma.TransactionClient, actor: RequestUser, id: string): Promise<void> {
-    const rows = await tx.$queryRaw<
-      { id: string; status: FiscalDocumentStatus; doc_type: FiscalDocType }[]
-    >`
-      SELECT "id", "status", "doc_type" FROM "fiscal_documents"
-      WHERE "id" = ${id}::uuid FOR UPDATE
-    `;
-    const head = rows[0];
-    if (!head) throw new NotFoundException('Comprobante no encontrado');
+    await lockDocuments(tx, { fiscalDocuments: [id] });
+    const found = await tx.fiscalDocument.findUnique({
+      where: { id },
+      select: { id: true, status: true, docType: true },
+    });
+    if (!found) throw new NotFoundException('Comprobante no encontrado');
+    const head = { id: found.id, status: found.status, doc_type: found.docType };
     if (head.status !== FiscalDocumentStatus.DRAFT) {
       throw new ConflictException(
         head.status === FiscalDocumentStatus.REJECTED
@@ -2589,9 +2596,7 @@ export class InvoicingService {
       // Los guardrails se revalidan **con la fila bloqueada**: entre la comprobación de
       // arriba y esta escritura pasó una llamada al PSE de hasta un minuto, y en esa
       // ventana alguien pudo registrar un cobro o emitir una nota de crédito.
-      await tx.$queryRaw`
-        SELECT "id" FROM "fiscal_documents" WHERE "id" = ${id}::uuid FOR UPDATE
-      `;
+      await lockDocuments(tx, { fiscalDocuments: [id] });
       const livePayments = await tx.customerPayment.count({
         where: { documentId: id, reversedAt: null },
       });
@@ -2664,9 +2669,7 @@ export class InvoicingService {
       // todavía, pasaban los dos el chequeo de abajo y cada uno creaba su propio borrador
       // —y su propio correlativo— para el mismo despacho: dos guías electrónicas vigentes
       // para un solo traslado físico.
-      await tx.$queryRaw`
-        SELECT "id" FROM "dispatches" WHERE "id" = ${dispatchId}::uuid FOR UPDATE
-      `;
+      await lockDocuments(tx, { dispatches: [dispatchId] });
       const dispatch = await tx.dispatch.findUnique({
         where: { id: dispatchId },
         include: {

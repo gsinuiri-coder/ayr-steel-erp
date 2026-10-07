@@ -50,17 +50,8 @@ function build(notes: string | null) {
   ];
   const audit = { write: jest.fn().mockResolvedValue(undefined) };
   const tx = {
-    $queryRaw: jest.fn().mockResolvedValue([
-      {
-        id: 'q-1',
-        seq: 2,
-        status: 'EMITTED',
-        valid_until: null,
-        created_by_id: 'u-1',
-        seller_id: 'u-1',
-        notes,
-      },
-    ]),
+    // cc30: el `FOR UPDATE` de la puerta devuelve solo el id; la cabecera se lee después.
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 'q-1' }]),
     customer: {
       findUnique: jest.fn().mockResolvedValue({ id: 'c-1', name: 'Cliente', isActive: true }),
     },
@@ -68,7 +59,18 @@ function build(notes: string | null) {
       findMany: jest.fn().mockResolvedValue(stored),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    quotation: { update: jest.fn().mockResolvedValue({}) },
+    quotation: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'q-1',
+        seq: 2,
+        status: 'EMITTED',
+        validUntil: null,
+        createdById: 'u-1',
+        sellerId: 'u-1',
+        notes,
+      }),
+      update: jest.fn().mockResolvedValue({}),
+    },
   };
   const svc = Object.create(QuotationsService.prototype) as QuotationsService;
   Object.assign(svc, {

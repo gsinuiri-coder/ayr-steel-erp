@@ -353,10 +353,19 @@ describe('D-379 — SalesOrdersService', () => {
     prisma.$transaction = jest.fn((fn: (t: unknown) => Promise<unknown>) => fn(tx));
   }
 
+  /** cc30: la puerta (`lockDocuments`) pasa los ids y recibe las filas que bloqueó. */
+  const lockGate = () =>
+    jest.fn((_sql: TemplateStringsArray, ...values: unknown[]) =>
+      Promise.resolve(
+        Array.isArray(values[0]) ? (values[0] as string[]).map((id) => ({ id })) : [],
+      ),
+    );
+
   describe('releaseReservation', () => {
     it('no libera a mano lo fabricado sin despachar de una línea contra pedido', async () => {
       const updateMany = jest.fn();
       useTx({
+        $queryRaw: lockGate(),
         reservation: {
           findUnique: jest.fn().mockResolvedValue({
             ...productReservation(),
@@ -378,6 +387,7 @@ describe('D-379 — SalesOrdersService', () => {
     it('la de un producto de stock se sigue liberando como siempre', async () => {
       const updateMany = jest.fn().mockResolvedValue({ count: 1 });
       useTx({
+        $queryRaw: lockGate(),
         reservation: {
           findUnique: jest.fn().mockResolvedValue({
             ...productReservation({ itemId: 'perfil', unit: 'NIU' }),
@@ -420,19 +430,18 @@ describe('D-379 — SalesOrdersService', () => {
     ) {
       const updateMany = jest.fn().mockResolvedValue({ count: over.updated ?? 1 });
       const tx = {
-        $queryRaw: jest
-          .fn()
-          .mockResolvedValueOnce([
-            {
-              id: 'o-11',
-              seq: 11,
-              status: over.orderStatus ?? SalesOrderStatus.CONFIRMED,
-              origin: 'CREATED_HERE',
-              quotation_id: null,
-              promised_delivery_date: null,
-            },
-          ])
-          .mockResolvedValue([]),
+        $queryRaw: lockGate(),
+        // cc30: la cabecera que `lockOrder` lee después de bloquear el pedido por la puerta.
+        salesOrder: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'o-11',
+            seq: 11,
+            status: over.orderStatus ?? SalesOrderStatus.CONFIRMED,
+            origin: 'CREATED_HERE',
+            quotationId: null,
+            promisedDeliveryDate: null,
+          }),
+        },
         reservation: {
           findUnique: jest.fn().mockResolvedValue({ salesOrderId: 'o-11' }),
           findUniqueOrThrow: jest.fn().mockResolvedValue({ ...released, ...over.reservation }),
@@ -607,9 +616,12 @@ describe('D-379 — SalesOrdersService', () => {
       const { tx } = restoreTx();
       available('348', '300');
       await service.restoreReservation(ADMIN, 'res-prod', 'x');
-      const calls = tx.$queryRaw.mock.calls as unknown as [TemplateStringsArray][];
+      const calls = tx.$queryRaw.mock.calls as unknown as [TemplateStringsArray, string[]][];
+      expect(calls).toHaveLength(2);
       expect(calls[0]?.[0].join('?')).toContain('"sales_orders"');
+      expect(calls[0]?.[1]).toEqual(['o-11']);
       expect(calls[1]?.[0].join('?')).toContain('"reservations"');
+      expect(calls[1]?.[1]).toEqual(['res-prod']);
       expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
         lockAvailability.mock.invocationCallOrder[0] ?? 0,
       );

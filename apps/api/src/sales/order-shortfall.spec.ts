@@ -59,6 +59,34 @@ const ADMIN = {
 };
 const SELLER = { ...ADMIN, id: 'seller-1', role: Role.VENDEDOR, sessionId: 's-seller' };
 
+/**
+ * cc30: `$queryRaw` de una transacción falsa. La puerta (`lockDocuments`, y `lockCoilRows`) pasa
+ * los ids como primer valor y recibe las filas que bloqueó; cualquier otra consulta cruda, nada.
+ */
+const lockGate = () =>
+  jest.fn((_sql: TemplateStringsArray, ...values: unknown[]) =>
+    Promise.resolve(Array.isArray(values[0]) ? (values[0] as string[]).map((id) => ({ id })) : []),
+  );
+/** Las tablas y los ids que la transacción bloqueó, en el orden en que los pidió. */
+const locksOf = (queryRaw: jest.Mock) =>
+  (queryRaw.mock.calls as [TemplateStringsArray, ...unknown[]][])
+    .map(([sql, ids]) => [/FROM "(\w+)"/.exec(sql.join('?'))?.[1], ids])
+    .filter(([, ids]) => Array.isArray(ids));
+/** La cabecera del pedido que `lockOrder` lee después del bloqueo (cc30). */
+const orderHead = (status: SalesOrderStatus = SalesOrderStatus.CONFIRMED) => ({
+  id: 'o-1',
+  seq: 1,
+  status,
+  origin: 'ERP',
+  quotationId: null,
+  promisedDeliveryDate: null,
+});
+/** `salesOrder.findUnique`: el plan de anular lee solo la cotización; `lockOrder`, la cabecera. */
+const orderFindUnique = (status?: SalesOrderStatus) =>
+  jest.fn((args: { select: Record<string, unknown> }) =>
+    Promise.resolve('seq' in args.select ? orderHead(status) : { quotationId: null }),
+  );
+
 describe('D-341 — aritmética del faltante (pura)', () => {
   const d = (v: string) => new Decimal(v);
 
@@ -478,20 +506,17 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       pieces: [],
     };
     return {
-      $queryRaw: jest
-        .fn()
-        .mockResolvedValueOnce([
-          {
-            id: 'q-1',
-            seq: 1,
-            status: 'EMITTED',
-            valid_until: null,
-            created_by_id: 'seller-1',
-            seller_id: null,
-          },
-        ])
-        .mockResolvedValue([]),
+      $queryRaw: lockGate(),
       quotation: {
+        // cc30: la cabecera que `lockQuotationHead` lee después de bloquear la cotización.
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'q-1',
+          seq: 1,
+          status: 'EMITTED',
+          validUntil: null,
+          createdById: 'seller-1',
+          sellerId: null,
+        }),
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           id: 'q-1',
           customerId: 'cust-1',
@@ -536,24 +561,20 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         },
       ];
       const tx = {
-        $queryRaw: jest
-          .fn()
-          .mockResolvedValueOnce([
-            {
-              id: 'o-1',
-              seq: 1,
-              status: SalesOrderStatus.CONFIRMED,
-              origin: 'ERP',
-              quotation_id: null,
-              promised_delivery_date: null,
-            },
-          ])
-          .mockResolvedValue([]),
+        $queryRaw: lockGate(),
+        salesOrder: { findUnique: orderFindUnique() },
         reservation: {
-          findMany: jest
-            .fn()
-            .mockResolvedValueOnce(pending)
-            .mockResolvedValue([{ id: 'res-1', shortfallQty: new Decimal('10') }]),
+          // cc30: primero los ids de las reservas del pedido (para la puerta), después las que
+          // tienen faltante (`include`) y al final cómo quedaron.
+          findMany: jest.fn((args: { select?: { shortfallQty?: boolean }; include?: unknown }) =>
+            Promise.resolve(
+              args.include
+                ? pending
+                : args.select?.shortfallQty
+                  ? [{ id: 'res-1', shortfallQty: new Decimal('10') }]
+                  : (pending as { id: string }[]).map((r) => ({ id: r.id })),
+            ),
+          ),
           update: jest.fn((args: { where: { id: string }; data: Record<string, unknown> }) => {
             updates.push(args);
             return Promise.resolve({});
@@ -592,6 +613,17 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       expect(entry.reason).toBe('llegó bobina');
       expect(entry.before.shortfalls).toEqual([{ reservationId: 'res-1', missingQty: '40.000' }]);
       expect(entry.after.reservedNow).toBe('30.000');
+      // cc30: pedido → reservas del pedido, por la puerta y antes de leer las que tienen faltante.
+      expect(locksOf(tx.$queryRaw)).toEqual([
+        ['sales_orders', ['o-1']],
+        ['reservations', ['res-1']],
+      ]);
+      const pendingRead = (
+        tx.reservation.findMany.mock.calls as [{ include?: unknown }][]
+      ).findIndex(([a]) => a.include);
+      expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+        tx.reservation.findMany.mock.invocationCallOrder[pendingRead]!,
+      );
     });
 
     it('si ya alcanza todo, el faltante queda en cero', async () => {
@@ -616,10 +648,12 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         (fn: (t: unknown) => Promise<unknown>) => fn(tx),
       );
       await service.completeReservation(ADMIN, 'o-1');
+      // cc30: la lectura de las pendientes es la que trae la línea (`include`); antes de ella va
+      // la de los ids para la puerta.
       const where = (
-        (tx.reservation.findMany.mock.calls as unknown[][])[0]?.[0] as {
-          where: { status: { in: string[] } };
-        }
+        (tx.reservation.findMany.mock.calls as unknown[][])
+          .map((c) => c[0] as { include?: unknown; where: { status: { in: string[] } } })
+          .find((a) => a.include) as { where: { status: { in: string[] } } }
       ).where;
       expect(where.status.in).toEqual([ReservationStatus.ACTIVE, ReservationStatus.CONSUMED]);
       // Al reservar algo, la fila vuelve a ACTIVA; sin nada reservado no se toca su estado.
@@ -631,16 +665,7 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
 
     it('un pedido ya atendido no se completa', async () => {
       const { tx } = completeTx();
-      tx.$queryRaw = jest.fn().mockResolvedValueOnce([
-        {
-          id: 'o-1',
-          seq: 1,
-          status: SalesOrderStatus.FULFILLED,
-          origin: 'ERP',
-          quotation_id: null,
-          promised_delivery_date: null,
-        },
-      ]);
+      tx.salesOrder.findUnique = orderFindUnique(SalesOrderStatus.FULFILLED);
       (prisma as { $transaction: unknown }).$transaction = jest.fn(
         (fn: (t: unknown) => Promise<unknown>) => fn(tx),
       );
@@ -669,16 +694,7 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
 
     it('un pedido anulado no se completa', async () => {
       const { tx } = completeTx();
-      tx.$queryRaw = jest.fn().mockResolvedValueOnce([
-        {
-          id: 'o-1',
-          seq: 1,
-          status: SalesOrderStatus.CANCELLED,
-          origin: 'ERP',
-          quotation_id: null,
-          promised_delivery_date: null,
-        },
-      ]);
+      tx.salesOrder.findUnique = orderFindUnique(SalesOrderStatus.CANCELLED);
       (prisma as { $transaction: unknown }).$transaction = jest.fn(
         (fn: (t: unknown) => Promise<unknown>) => fn(tx),
       );
@@ -753,21 +769,9 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
       const updateMany = jest.fn().mockResolvedValue({ count: 1 });
       const tx = {
-        $queryRaw: jest
-          .fn()
-          .mockResolvedValueOnce([
-            {
-              id: 'o-1',
-              seq: 1,
-              status: SalesOrderStatus.CONFIRMED,
-              origin: 'ERP',
-              quotation_id: null,
-              promised_delivery_date: null,
-            },
-          ])
-          .mockResolvedValue([]),
+        $queryRaw: lockGate(),
         reservation: { findMany: jest.fn().mockResolvedValue([activeReservation]), updateMany },
-        salesOrder: { update: jest.fn() },
+        salesOrder: { findUnique: orderFindUnique(), update: jest.fn() },
         // D-383: sin comprobantes, despachos ni producción que bloqueen la anulación.
         salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
         fiscalDocument: { findMany: jest.fn().mockResolvedValue([]) },
@@ -801,21 +805,9 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         productionOrders: [],
       };
       const tx = {
-        $queryRaw: jest
-          .fn()
-          .mockResolvedValueOnce([
-            {
-              id: 'o-1',
-              seq: 1,
-              status: SalesOrderStatus.CONFIRMED,
-              origin: 'ERP',
-              quotation_id: null,
-              promised_delivery_date: null,
-            },
-          ])
-          .mockResolvedValue([]),
+        $queryRaw: lockGate(),
         reservation: { findMany: jest.fn().mockResolvedValue([consumed]), updateMany },
-        salesOrder: { update: jest.fn() },
+        salesOrder: { findUnique: orderFindUnique(), update: jest.fn() },
         // D-383: sin comprobantes, despachos ni producción que bloqueen la anulación.
         salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
         fiscalDocument: { findMany: jest.fn().mockResolvedValue([]) },
@@ -837,26 +829,14 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
     it('anular un pedido sin faltante no agrega ruido a la auditoría', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
       const tx = {
-        $queryRaw: jest
-          .fn()
-          .mockResolvedValueOnce([
-            {
-              id: 'o-1',
-              seq: 1,
-              status: SalesOrderStatus.CONFIRMED,
-              origin: 'ERP',
-              quotation_id: null,
-              promised_delivery_date: null,
-            },
-          ])
-          .mockResolvedValue([]),
+        $queryRaw: lockGate(),
         reservation: {
           findMany: jest
             .fn()
             .mockResolvedValue([{ ...activeReservation, shortfallQty: new Decimal(0) }]),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
-        salesOrder: { update: jest.fn() },
+        salesOrder: { findUnique: orderFindUnique(), update: jest.fn() },
         // D-383: sin comprobantes, despachos ni producción que bloqueen la anulación.
         salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
         fiscalDocument: { findMany: jest.fn().mockResolvedValue([]) },
@@ -880,6 +860,8 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         .mockReturnValue({});
       const updateMany = jest.fn().mockResolvedValue({ count: 1 });
       const tx = {
+        // cc30: liberar toma pedido → OP → reserva por la puerta antes de decidir.
+        $queryRaw: lockGate(),
         reservation: {
           findUnique: jest.fn().mockResolvedValue({
             id: 'res-1',
@@ -910,6 +892,13 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'res-1' }),
       };
       await service.releaseReservation(ADMIN, 'res-1', 'se vendió a otro cliente');
+      expect(locksOf(tx.$queryRaw)).toEqual([
+        ['sales_orders', ['o-1']],
+        ['reservations', ['res-1']],
+      ]);
+      expect(tx.$queryRaw.mock.invocationCallOrder.at(-1)).toBeLessThan(
+        updateMany.mock.invocationCallOrder[0]!,
+      );
       expect(updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({

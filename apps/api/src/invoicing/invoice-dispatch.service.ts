@@ -37,6 +37,7 @@ import {
   type PlanTarget,
 } from './invoice-dispatch-plan';
 import { proratedQty } from './invoicing-math';
+import { lockDocuments } from '../inventory/document-locks';
 
 const LIVE: FiscalDocumentStatus[] = [...LIVE_DOCUMENT_STATUSES];
 const SALE_DOCS: FiscalDocType[] = [FiscalDocType.FACTURA, FiscalDocType.BOLETA];
@@ -233,9 +234,7 @@ export class InvoiceDispatchService {
     // Todos los despachos antes que nada y en orden de id (autorrevisión P2-3): sin esto, una
     // reversa concurrente del segundo podía cruzarse con esta, que ya tiene el pedido tomado.
     const ids = linked.map((d) => d.id).sort();
-    await tx.$queryRaw`
-      SELECT "id" FROM "dispatches" WHERE "id" = ANY(${ids}::uuid[]) ORDER BY "id" FOR UPDATE
-    `;
+    await lockDocuments(tx, { dispatches: ids });
     const reversedQty = sumByLine(
       await tx.dispatchItem.findMany({
         where: { dispatchId: { in: ids } },
@@ -314,11 +313,9 @@ export class InvoiceDispatchService {
     // planificaban lo mismo y la segunda, al pasar el lock de `createInTx`, solo veía el
     // pendiente del pedido y despachaba otra vez lo ya despachado. Mismo lock y mismo orden que
     // `createInTx`, que lo vuelve a tomar sin costo.
-    if (exists.salesOrderId !== null) {
-      await tx.$queryRaw`
-        SELECT "id" FROM "sales_orders" WHERE "id" = ${exists.salesOrderId}::uuid FOR UPDATE
-      `;
-    }
+    // cc30 (D-471, matriz F4): comprobante → pedido. El plan sale de leer el comprobante, y enlazar
+    // los despachos lo escribe: se toma antes que el pedido (en el re-fechado ya viene tomado).
+    await lockDocuments(tx, { fiscalDocuments: [invoiceId], salesOrders: [exists.salesOrderId] });
     const plan = await this.buildPlan(tx, { id: invoiceId }, { dispatchDate });
     const invoice = plan.invoices[0];
     if (invoice === undefined) {

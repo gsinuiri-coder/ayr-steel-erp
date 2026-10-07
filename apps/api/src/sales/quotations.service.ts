@@ -86,6 +86,7 @@ import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines
 import { orderByInvoiceNumber, quotationOrderBy } from '../common/list-orderings';
 import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { searchSeqOf } from '../common/search-seq';
+import { lockDocuments } from '../inventory/document-locks';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -1275,6 +1276,14 @@ export class QuotationsService {
         data: { sellerId: newSellerId },
       });
 
+      // cc30 (cruce C7): los pedidos de la cotización por la puerta y por id, detrás de ella
+      // (cotización → pedido). Anular el pedido toma ahora también la cotización antes que el
+      // pedido, así que ya no se cruzan.
+      const orders = await tx.salesOrder.findMany({
+        where: { quotationId: id },
+        select: { id: true },
+      });
+      await lockDocuments(tx, { salesOrders: orders.map((o) => o.id) });
       await tx.salesOrder.updateMany({
         where: { quotationId: id },
         data: { sellerId: newSellerId },
@@ -1581,36 +1590,24 @@ export class QuotationsService {
     status: QuotationStatus;
     validUntil: Date | null;
     createdById: string;
-    sellerId: string;
+    sellerId: string | null;
     notes: string | null;
   }> {
-    const rows = await tx.$queryRaw<
-      {
-        id: string;
-        seq: number;
-        status: QuotationStatus;
-        valid_until: Date | null;
-        created_by_id: string;
-        seller_id: string;
-        notes: string | null;
-      }[]
-    >`
-      SELECT id, seq, status, valid_until, created_by_id, seller_id, notes
-      FROM "quotations"
-      WHERE "id" = ${id}::uuid
-      FOR UPDATE
-    `;
-    const row = rows[0];
+    await lockDocuments(tx, { quotations: [id] });
+    const row = await tx.quotation.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        seq: true,
+        status: true,
+        validUntil: true,
+        createdById: true,
+        sellerId: true,
+        notes: true,
+      },
+    });
     if (!row) throw new NotFoundException('Cotización no encontrada');
-    return {
-      id: row.id,
-      seq: row.seq,
-      status: row.status,
-      validUntil: row.valid_until,
-      createdById: row.created_by_id,
-      sellerId: row.seller_id,
-      notes: row.notes,
-    };
+    return row;
   }
 
   /**

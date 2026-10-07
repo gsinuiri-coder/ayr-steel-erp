@@ -29,7 +29,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { InventoryService, minRunningAfterReplace } from '../inventory/inventory.service';
-import { balanceLockKey, compareLockKeys } from '../inventory/row-locks';
+import { balanceLockKey, compareLockKeys, lockCoilRows } from '../inventory/row-locks';
 import { liveMovements } from '../inventory/live-movements';
 import { PrismaService } from '../prisma/prisma.service';
 import { findLiveStripAssignments } from '../production/production-assignments';
@@ -114,13 +114,19 @@ export class ReceivedPurchaseEditService {
     return this.prisma.$transaction(
       async (tx) => {
         // Lock de la compra: un pago, una anulación o una segunda edición concurrentes esperan.
-        await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${id}::uuid FOR UPDATE`;
-        const coilIds = (
+        // cc30 (matriz, cruce C9): `NO KEY UPDATE` y no `UPDATE`. Partir una bobina de esta compra
+        // o recibir su corte inserta hijas con la compra heredada, y ese `INSERT` toma `KEY SHARE`
+        // sobre la compra **después** de la bobina: con `FOR UPDATE` se cruzaba con esta edición,
+        // que toma la compra y después las bobinas. Contra otra edición, un pago o la anulación
+        // serializa igual.
+        await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${id}::uuid FOR NO KEY UPDATE`;
+        const firstCoilIds = (
           await tx.coil.findMany({ where: { purchaseId: id }, select: { id: true } })
         )
           .map((c) => c.id)
           .sort();
-        if (coilIds.length > 0) {
+        let coilIds = firstCoilIds;
+        if (firstCoilIds.length > 0) {
           // D-134: bobinas antes que saldos. No solo las de la compra: también las de cada
           // agregado con promesas que ellas cubren, en orden de id, igual que confirmar un pedido
           // o una salida de `record`. Así `replaceEntry`, que las vuelve a pedir, ya las tiene y
@@ -132,6 +138,16 @@ export class ReceivedPurchaseEditService {
             [...coilIds, ...(await this.destinationAggregateCoils(tx, id, input))],
             roofingToleranceMm(this.env),
           );
+          // cc30 (P2-2 del segundo modelo, corte 2): con la compra en `NO KEY UPDATE`, partir una
+          // bobina de la compra o recibir su corte ya no espera a esta edición; una hija que nació
+          // mientras esperábamos a su madre no estaba en la lista. Se relee con las bobinas ya
+          // tomadas y lo nuevo se pide por la puerta (con `NOWAIT`, porque llega tarde).
+          const now = (await tx.coil.findMany({ where: { purchaseId: id }, select: { id: true } }))
+            .map((c) => c.id)
+            .sort(compareLockKeys);
+          const born = now.filter((c) => !firstCoilIds.includes(c));
+          if (born.length > 0) await lockCoilRows(tx, born);
+          coilIds = now;
         }
         // Y los saldos de kardex que la edición puede tocar, **antes** de leer los movimientos
         // posteriores: quien consume o ingresa toma el saldo, no la bobina, así que sin este lock
