@@ -18,7 +18,7 @@ import { usePendingSources } from '@/components/pending-bell';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-/** «martes 6 de octubre», el día de negocio en Lima. */
+/** «Miércoles 7 de octubre», el día de negocio en Lima. */
 function longToday(): string {
   const text = new Intl.DateTimeFormat('es-PE', {
     timeZone: BUSINESS_TIME_ZONE,
@@ -72,6 +72,13 @@ interface Tile {
   href: string;
   /** El conteo pide mirarlo (ámbar) cuando no es cero. */
   attention?: boolean;
+  /** La consulta que da la cifra falló: se muestra «—» y no se ofrece el enlace. */
+  failed?: boolean;
+  /**
+   * El enlace lleva a un aviso del mismo Panel, que solo se pinta cuando hay algo: con 0 no hay a
+   * dónde ir y la tarjeta no es un enlace.
+   */
+  anchor?: boolean;
 }
 
 /** Lo que entrega `GET /sales/dashboard`, ya filtrado por el vendedor en el API. */
@@ -84,9 +91,11 @@ interface SellerDashboardDto {
 
 /**
  * cc31: «Para atender hoy» — una tarjeta por pendiente, cada una lleva a su lista ya filtrada (o a
- * su aviso, más abajo en el Panel). El vendedor ve lo suyo con el mismo endpoint de antes
- * (`/sales/dashboard`, que el API filtra por él); el administrador, la empresa entera con las
- * mismas consultas que la campana; planta, su cola.
+ * su aviso, más abajo en el Panel). Las cifras salen de las mismas consultas que la campana y el
+ * menú (que el API filtra por vendedor), así el número de la tarjeta y la lista a la que lleva
+ * coinciden. Solo «Reservas por expirar» sale de `/sales/dashboard`: el listado de reservas
+ * temporales escribe en cada lectura y no se pide cada minuto (D-488). Planta ya tiene su cola en
+ * el panel de planta: no se repite aquí.
  */
 export function PanelToday() {
   const { user } = useSession();
@@ -104,7 +113,7 @@ export function PanelToday() {
     queryKey: ['pending', 'in-production-orders'],
     queryFn: () =>
       api<PaginatedResult<SalesOrderListItemDto>>('/sales/orders?stage=IN_PRODUCTION&pageSize=1'),
-    enabled: isAdmin,
+    enabled: isAdmin || isSeller,
     refetchInterval: 60_000,
   });
   const stockShortages = useQuery({
@@ -113,98 +122,79 @@ export function PanelToday() {
     enabled: isAdmin,
   });
 
-  let tiles: Tile[] = [];
-  if (isAdmin) {
-    tiles = [
-      {
-        key: 'quotations',
-        count:
-          pending.emittedQuotations === null
-            ? null
-            : expiringQuotationDates(pending.emittedQuotations, businessToday()).length,
-        label: 'Cotizaciones por vencer',
-        detail: 'esta semana',
-        href: '/cotizaciones?status=EMITTED',
-      },
-      {
-        key: 'ready',
-        count: pending.readyOrders,
-        label: 'Pedidos listos',
-        detail: 'para despachar',
-        href: '/pedidos?stage=READY',
-      },
-      {
-        key: 'production',
-        count: inProduction.data?.total ?? null,
-        label: 'Pedidos en producción',
-        href: '/pedidos?stage=IN_PRODUCTION',
-      },
-      {
-        key: 'stock',
-        count: stockShortages.data?.length ?? null,
-        label: 'Cotizaciones sin stock',
-        detail: 'evaluar compra',
-        href: '#cotizaciones-sin-stock',
-        attention: true,
-      },
-      {
-        key: 'shortfall',
-        count: pending.shortfallOrders?.length ?? null,
-        label: 'Pedidos con faltante',
-        detail: 'confirmados sin material',
-        href: '#pedidos-con-faltante',
-        attention: true,
-      },
-      {
-        key: 'floor',
-        count: pending.belowFloorPrices,
-        label: 'Precios de lista bajo el piso',
-        detail: 'revisar precio',
-        href: '#precios-bajo-piso',
-        attention: true,
-      },
-    ];
-  } else if (isSeller) {
-    tiles = [
-      {
-        key: 'quotations',
-        count: seller.data?.expiringQuotations ?? null,
-        label: 'Cotizaciones por vencer',
-        detail: 'en los próximos 3 días hábiles',
-        href: '/cotizaciones?status=DRAFT,EMITTED',
-      },
-      {
-        key: 'reservations',
-        count: seller.data?.expiringReservations ?? null,
-        label: 'Reservas por expirar',
-        detail: 'en los próximos 3 días',
-        href: '/reservas-temporales',
-      },
-      {
-        key: 'production',
-        count: seller.data?.productionOrders ?? null,
-        label: 'Pedidos en producción',
-        href: '/pedidos?stage=IN_PRODUCTION',
-      },
-      {
-        key: 'ready',
-        count: seller.data?.readyOrders ?? null,
-        label: 'Pedidos listos',
-        detail: 'para despachar',
-        href: '/pedidos?stage=READY',
-      },
-    ];
-  } else {
-    tiles = [
-      {
-        key: 'queue',
-        count: pending.productionQueue,
-        label: 'Órdenes en cola',
-        detail: 'esperando producción',
-        href: '/planta',
-      },
-    ];
-  }
+  if (!isAdmin && !isSeller) return null;
+
+  const expiring =
+    pending.emittedQuotations === null
+      ? null
+      : expiringQuotationDates(pending.emittedQuotations, businessToday()).length;
+  const tiles: Tile[] = [
+    {
+      key: 'quotations',
+      count: expiring,
+      label: 'Cotizaciones por vencer',
+      detail: 'en los próximos 7 días',
+      href: '/cotizaciones?status=EMITTED',
+    },
+    ...(isSeller
+      ? [
+          {
+            key: 'reservations',
+            count: seller.data?.expiringReservations ?? null,
+            failed: seller.isError,
+            label: 'Reservas por expirar',
+            detail: 'en los próximos 3 días',
+            href: '/reservas-temporales',
+          },
+        ]
+      : []),
+    {
+      key: 'ready',
+      count: pending.readyOrders,
+      label: 'Pedidos listos',
+      detail: 'para despachar',
+      href: '/pedidos?stage=READY',
+    },
+    {
+      key: 'production',
+      count: inProduction.data?.total ?? null,
+      failed: inProduction.isError,
+      label: 'Pedidos en producción',
+      href: '/pedidos?stage=IN_PRODUCTION',
+    },
+    ...(isAdmin
+      ? [
+          {
+            key: 'stock',
+            count: stockShortages.data?.length ?? null,
+            failed: stockShortages.isError,
+            label: 'Cotizaciones sin stock',
+            detail: 'evaluar compra',
+            href: '#cotizaciones-sin-stock',
+            attention: true,
+            anchor: true,
+          },
+          {
+            key: 'shortfall',
+            count: pending.shortfallOrders?.length ?? null,
+            label: 'Pedidos con faltante',
+            detail: 'confirmados sin material',
+            href: '#pedidos-con-faltante',
+            attention: true,
+            anchor: true,
+          },
+          {
+            key: 'floor',
+            count: pending.belowFloorPrices,
+            label: 'Precios de lista bajo el piso',
+            detail: 'revisar precio',
+            href: '#precios-bajo-piso',
+            attention: true,
+            anchor: true,
+          },
+        ]
+      : []),
+  ];
 
   return (
     <section aria-labelledby="panel-today" className="grid gap-2">
@@ -212,27 +202,43 @@ export function PanelToday() {
         Para atender hoy
       </h2>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-        {tiles.map((t) => (
-          <Link
-            key={t.key}
-            href={t.href}
-            className="group grid gap-0.5 rounded-lg border bg-card px-3 py-2.5 hover:border-primary/40 hover:bg-accent"
-          >
-            <span
-              className={cn(
-                'text-xl font-semibold tabular-nums',
-                t.attention && (t.count ?? 0) > 0 && 'text-tone-warning-foreground',
-                t.count === 0 && 'text-muted-foreground',
+        {tiles.map((t) => {
+          const body = (
+            <>
+              <span
+                className={cn(
+                  'text-xl font-semibold tabular-nums',
+                  t.attention && (t.count ?? 0) > 0 && 'text-tone-warning-foreground',
+                  t.count === 0 && 'text-muted-foreground',
+                )}
+              >
+                {t.failed ? '—' : (t.count ?? '…')}
+              </span>
+              <span className="text-[13px] leading-snug font-medium group-hover:underline">
+                {t.label}
+              </span>
+              {t.failed ? (
+                <span className="text-xs text-destructive">No se pudo calcular</span>
+              ) : (
+                t.detail && <span className="text-xs text-muted-foreground">{t.detail}</span>
               )}
+            </>
+          );
+          const linkable = !t.failed && !(t.anchor && !t.count);
+          return linkable ? (
+            <Link
+              key={t.key}
+              href={t.href}
+              className="group grid gap-0.5 rounded-lg border bg-card px-3 py-2.5 hover:border-primary/40 hover:bg-accent"
             >
-              {t.count ?? '…'}
-            </span>
-            <span className="text-[13px] leading-snug font-medium group-hover:underline">
-              {t.label}
-            </span>
-            {t.detail && <span className="text-xs text-muted-foreground">{t.detail}</span>}
-          </Link>
-        ))}
+              {body}
+            </Link>
+          ) : (
+            <div key={t.key} className="grid gap-0.5 rounded-lg border bg-card px-3 py-2.5">
+              {body}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
