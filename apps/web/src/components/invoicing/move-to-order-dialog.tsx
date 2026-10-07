@@ -264,11 +264,14 @@ export function MoveToOrderDialog({
                 id="move-reason"
                 value={reason}
                 maxLength={240}
-                placeholder="Por qué el comprobante pasa a este pedido"
+                aria-describedby="move-reason-hint"
                 onChange={(e) => {
                   setReason(e.target.value);
                 }}
               />
+              <p id="move-reason-hint" className="text-xs text-muted-foreground">
+                Di por qué el comprobante pasa a este pedido.
+              </p>
               {trimmed.length > 0 && trimmed.length < 3 && (
                 <p className="text-sm text-destructive">
                   Explica el motivo en al menos 3 caracteres.

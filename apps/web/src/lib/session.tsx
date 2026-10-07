@@ -39,6 +39,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const logout = useMutation({
     mutationFn: () => api('/auth/logout', { method: 'POST', noRefresh: true }),
+    meta: { skipPendingRefresh: true },
     // Recarga completa: limpia todo estado en memoria y evita que el refetch de /auth/me redirija con ?next.
     onSettled: () => {
       window.location.assign('/login');

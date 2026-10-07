@@ -33,6 +33,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart';
 import { Skeleton } from '@/components/ui/skeleton';
+import { plural } from '@/lib/pending';
 import { cn } from '@/lib/utils';
 
 /**
@@ -323,7 +324,7 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
           </CardTitle>
           <CardDescription className="text-xs">
             Saldo a hoy por días de vencido; el contado vence al emitir.{' '}
-            {d.receivables.documentCount} comprobantes con saldo.
+            {plural(d.receivables.documentCount, 'comprobante', 'comprobantes')} con saldo.
           </CardDescription>
         </CardHeader>
         <CardContent>

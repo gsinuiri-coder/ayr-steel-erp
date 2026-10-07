@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { ChevronRight, Search } from 'lucide-react';
 import { businessToday } from '@ayr/shared';
 import { NAV, navForRole, type NavItem } from '@/lib/nav';
-import { expiringQuotationDates } from '@/lib/pending';
+import { expiringQuotationDates, plural } from '@/lib/pending';
 import { useSession } from '@/lib/session';
 import { useOpenGoTo } from '@/components/go-to-dialog';
 import { BrandMark } from '@/components/brand-mark';
@@ -90,22 +90,22 @@ export function AppSidebar() {
   // API ya entrega la cifra. RF-38: la cola de producción, para quien ve `/planta`.
   const pending = usePendingSources();
   const openGoTo = useOpenGoTo();
-  const counters: Record<string, { count: number; title: (n: string) => string }> = {
+  const counters: Record<string, { count: number; title: (n: number) => string }> = {
     '/cotizaciones': {
       count: expiringQuotationDates(pending.emittedQuotations ?? [], businessToday()).length,
-      title: (n) => `${n} cotizaciones por vencer esta semana`,
+      title: (n) => `${plural(n, 'cotización vence', 'cotizaciones vencen')} esta semana`,
     },
     '/reservas-temporales': {
       count: pending.temporaryReservations?.length ?? 0,
-      title: (n) => `${n} reservas temporales vigentes`,
+      title: (n) => plural(n, 'reserva temporal vigente', 'reservas temporales vigentes'),
     },
     '/despachos': {
       count: pending.readyOrders ?? 0,
-      title: (n) => `${n} pedidos listos para despachar`,
+      title: (n) => `${plural(n, 'pedido listo', 'pedidos listos')} para despachar`,
     },
     '/planta': {
       count: pending.productionQueue ?? 0,
-      title: (n) => `${n} órdenes esperando producción`,
+      title: (n) => `${plural(n, 'orden esperando', 'órdenes esperando')} producción`,
     },
   };
 
@@ -195,7 +195,7 @@ export function AppSidebar() {
                       {(counters[item.href]?.count ?? 0) > 0 && (
                         <SidebarMenuBadge
                           className="group-data-[collapsible=icon]:hidden"
-                          title={counters[item.href]?.title(String(counters[item.href]?.count))}
+                          title={counters[item.href]?.title(counters[item.href]?.count ?? 0)}
                         >
                           {counters[item.href]?.count}
                         </SidebarMenuBadge>

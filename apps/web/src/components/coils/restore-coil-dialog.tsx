@@ -133,11 +133,14 @@ export function RestoreCoilDialog({
                   id="restore-coil-reason"
                   value={reason}
                   maxLength={240}
-                  placeholder="Por qué se restaura"
+                  aria-describedby="restore-coil-reason-hint"
                   onChange={(e) => {
                     setReason(e.target.value);
                   }}
                 />
+                <p id="restore-coil-reason-hint" className="text-xs text-muted-foreground">
+                  Di por qué se restaura.
+                </p>
               </div>
             )}
           </div>

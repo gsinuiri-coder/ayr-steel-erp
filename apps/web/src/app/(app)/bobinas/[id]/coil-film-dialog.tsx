@@ -94,14 +94,15 @@ export function CoilFilmDialog({
           <Input
             id="film-reason"
             maxLength={240}
-            placeholder={
-              opening ? 'Ej: se abre para la corrida de mañana' : 'Ej: se abrió por error'
-            }
+            aria-describedby="film-reason-hint"
             value={reason}
             onChange={(e) => {
               setReason(e.target.value);
             }}
           />
+          <p id="film-reason-hint" className="text-xs text-muted-foreground">
+            Por ejemplo: {opening ? 'se abre para la corrida de mañana' : 'se abrió por error'}.
+          </p>
           {tooShort && (
             <p className="text-sm text-destructive">Explica el motivo en al menos 3 caracteres.</p>
           )}

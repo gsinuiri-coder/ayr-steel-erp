@@ -54,21 +54,41 @@ D-496..D-501 son del corte 6.
   - los filtros «Todas» y «Bobina completa» del selector;
   - que «Agregar línea» abra el buscador.
 
-## P3 abiertos
+## P3
 
-- **Corte 1:** `lib/download.ts` sigue diciendo «error 500» en descargas fallidas; el diálogo de
-  confirmar mezcla precisiones.
-- **Corte 2:**
-  - la campana no se invalida al despachar o emitir (hasta 60 s de desfase);
-  - el 429 del ingreso pierde la cuenta regresiva al recargar;
-  - «sesión vencida» también sale tras una revocación;
-  - el ARIA del combobox de «Ir a»;
-  - los plurales fijos en los contadores.
-- **Corte 6, según las revisiones:**
-  - «Lista» se muestra a 2 decimales mientras el precio sembrado tiene 4;
-  - la suma de importes por línea puede diferir S/ 0.01 del total redondeado una vez (D-377);
-  - el nombre `listPriceWithIgv` está repetido;
-  - ↑ en la primera fila del selector no vuelve al buscador.
+Lista completa de los informes de revisión de los seis cortes. Estado al 7 de octubre; los
+cerrados en cc32 entraron en su corte 0 (`docs/handoff/ventana-cc32.md`).
+
+| Corte | P3                                                                                                          | Estado                                                          |
+| ----- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 1     | `lib/download.ts` decía «error 500» en una descarga fallida                                                 | Cerrado en cc32 (corte 0)                                       |
+| 1     | El diálogo de confirmar mezcla precisiones (tabla «21.20 kg», nota del API «21.200»)                        | Abierto                                                         |
+| 2     | La campana no se actualizaba al despachar o emitir (hasta 60 s de desfase)                                  | Cerrado en cc32 (corte 0)                                       |
+| 2     | El 429 del ingreso pierde la cuenta regresiva al recargar                                                   | Abierto                                                         |
+| 2     | «Sesión vencida» también sale tras una revocación                                                           | Abierto                                                         |
+| 2     | El ARIA del combobox de «Ir a»                                                                              | Abierto                                                         |
+| 2     | Plurales fijos en los contadores del menú                                                                   | Cerrado en cc32 (corte 0)                                       |
+| 3     | El contador de la sección llevaba `aria-label` en un `<span>` sin rol                                       | Cerrado en cc31 (texto `sr-only`)                               |
+| 3     | El contador del kardex de la bobina contaba todos los movimientos y la tabla muestra 10                     | Cerrado en cc31 (la sección ya no lleva contador)               |
+| 3     | La fila de 34 px de las secciones también alcanza a tablas de producción                                    | Abierto (planta está fuera de cc32)                             |
+| 3     | En el pedido, la fecha prometida salía dos veces para el administrador                                      | Cerrado en cc31 (solo queda el control)                         |
+| 3     | Pedidos: una URL con varios estados activos se rotula «en curso»                                            | Abierto                                                         |
+| 3     | Comentario de `header-actions.tsx` que nombraba el menú «⋯»                                                 | Cerrado en cc31                                                 |
+| 4     | El comentario de la fecha del Panel decía «martes 6»                                                        | Cerrado en cc31                                                 |
+| 4     | Conteos del Panel en «…» fijo si la consulta falla                                                          | Cerrado en cc32 (corte 0: «No se pudo calcular» y «Reintentar») |
+| 4     | «… en cifras» toma el mes del inicio del rango: confirmar que el rango del Panel es siempre el mes en curso | Abierto                                                         |
+| 5     | La unidad de los campos con unidad adentro no estaba en el nombre accesible                                 | Cerrado en cc32 (corte 0)                                       |
+| 5     | El bloqueo del clic afuera de un diálogo no cuenta lo elegido en un Select                                  | Abierto                                                         |
+| 5     | Diálogos de bobina y pedido con el ejemplo dentro del campo                                                 | Cerrado en cc32 (corte 0)                                       |
+| 5     | Orden de corte: una merma esperada inválida no se marca (ya era así antes)                                  | Abierto                                                         |
+| 6     | «Lista» se muestra a 2 decimales y el precio sembrado tiene 4                                               | Abierto                                                         |
+| 6     | La suma de importes por línea puede diferir S/ 0.01 del total redondeado una vez (D-377)                    | Abierto                                                         |
+| 6     | El nombre `listPriceWithIgv` está repetido en tres archivos                                                 | Abierto                                                         |
+| 6     | ↑ en la primera fila del selector no vuelve al buscador                                                     | Abierto                                                         |
+| 6     | La unidad dentro del campo estaba oculta para el lector de pantalla                                         | Cerrado en cc32 (corte 0)                                       |
+| 6     | Posible solape de la cifra con unidades largas como «/und»                                                  | Abierto (no visto en pantalla)                                  |
+| 6     | Con `noFloorReason` desaparece la lista                                                                     | Abierto                                                         |
+| 6     | `focusLineQty` depende de que el foco esté en `body`, sin test que lo fije                                  | Abierto                                                         |
 
 ## Para la siguiente sesión
 

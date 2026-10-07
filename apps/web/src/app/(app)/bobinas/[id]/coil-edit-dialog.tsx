@@ -310,12 +310,15 @@ export function CoilEditDialog({
                   <Input
                     id="edit-reason"
                     maxLength={240}
-                    placeholder="Por qué cambia el costo"
+                    aria-describedby="edit-reason-hint"
                     value={reason}
                     onChange={(e) => {
                       setReason(e.target.value);
                     }}
                   />
+                  <p id="edit-reason-hint" className="text-xs text-muted-foreground">
+                    Di por qué cambia el costo.
+                  </p>
                 </div>
               )}
             </>

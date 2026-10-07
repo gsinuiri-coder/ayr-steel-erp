@@ -187,12 +187,15 @@ export function CoilCloseDialog({
             <Input
               id="close-reason"
               maxLength={240}
-              placeholder="Ej: el rollo se terminó en la corrida del martes"
+              aria-describedby="close-reason-hint"
               value={reason}
               onChange={(e) => {
                 setReason(e.target.value);
               }}
             />
+            <p id="close-reason-hint" className="text-xs text-muted-foreground">
+              Por ejemplo: el rollo se terminó en la corrida del martes.
+            </p>
           </div>
         </div>
 

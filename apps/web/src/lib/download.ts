@@ -1,4 +1,4 @@
-import { ApiError, tryRefresh } from '@/lib/api';
+import { ApiError, errorTextFor, SERVER_DOWN_MESSAGE, tryRefresh } from '@/lib/api';
 
 /**
  * cc28 (D-446, P3 de cc26): las descargas del API (Excel, PDF) pasan por `fetch`.
@@ -26,13 +26,30 @@ export function filenameFromDisposition(header: string | null): string | null {
   return name ? name.trim() : null;
 }
 
-/** El mensaje de un rechazo del API, con el mismo criterio que `api()`. */
+const GENERIC_CLIENT_ERRORS =
+  /^(Unauthorized|Forbidden|Forbidden resource|Not Found|Bad Request|Cannot (GET|POST|PUT|PATCH|DELETE) .*)$/;
+
+/**
+ * El mensaje de un rechazo del API, con el mismo criterio que `api()`. cc32 (P3 de cc31): sin
+ * motivo legible, el aviso dice qué pasó en español y nunca el código («error 500»).
+ */
 export async function downloadErrorMessage(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as { message?: unknown };
-  const message = Array.isArray(body.message) ? body.message.join(' · ') : body.message;
-  return typeof message === 'string' && message.trim() !== ''
-    ? message
-    : `No se pudo descargar el archivo (error ${String(res.status)})`;
+  const joined = Array.isArray(body.message) ? body.message.join(' · ') : body.message;
+  const text0 = typeof joined === 'string' && joined.trim() !== '' ? joined : undefined;
+  // Los rechazos genéricos de NestJS vienen en inglés («Forbidden resource», «Cannot GET …»):
+  // no son un motivo de negocio y se reemplazan por el texto en español de su código.
+  const raw = text0 !== undefined && GENERIC_CLIENT_ERRORS.test(text0) ? undefined : text0;
+  if (raw !== undefined || res.status === 429) {
+    const text = errorTextFor(res.status, raw);
+    if (text !== SERVER_DOWN_MESSAGE) return text;
+  }
+  if (res.status >= 500)
+    return `No se pudo descargar el archivo: ${SERVER_DOWN_MESSAGE.toLowerCase()}.`;
+  if (res.status === 403) return 'No tienes permiso para descargar este archivo.';
+  if (res.status === 404) return 'No se encontró el archivo: puede que ya no exista.';
+  if (res.status === 401) return 'Tu sesión venció. Ingresa de nuevo y vuelve a descargar.';
+  return 'No se pudo descargar el archivo.';
 }
 
 /** Los enlaces que se están descargando: un doble clic no arranca dos exportaciones (SM-3). */
@@ -53,7 +70,12 @@ export async function downloadFile(href: string): Promise<void> {
 }
 
 async function fetchAndSave(href: string): Promise<void> {
-  const get = () => fetch(href, { credentials: 'include', cache: 'no-store' });
+  // Un corte de red sale como «El servidor no respondió», igual que en `api()`.
+  const get = () =>
+    fetch(href, { credentials: 'include', cache: 'no-store' }).catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      throw new ApiError(0, SERVER_DOWN_MESSAGE, undefined, 'NETWORK');
+    });
   let res = await get();
   if (res.status === 401 && (await tryRefresh())) res = await get();
   if (!res.ok) throw new ApiError(res.status, await downloadErrorMessage(res));
