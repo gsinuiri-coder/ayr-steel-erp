@@ -2,12 +2,21 @@ import { describe, expect, it } from 'vitest';
 import {
   PERIOD_STORAGE_KEY,
   completePeriod,
+  defaultMonth,
   defaultPeriod,
   formatPeriodRange,
+  fullMonth,
   isValidDate,
+  isValidMonth,
+  legacyRangePeriod,
+  matchMonthPreset,
   matchPreset,
+  monthError,
+  monthPeriod,
   parseStoredPeriod,
   periodError,
+  periodMonth,
+  presetMonth,
   presetPeriod,
   readStoredPeriod,
   writeStoredPeriod,
@@ -227,5 +236,67 @@ describe('persistencia entre reportes', () => {
     expect(() => {
       writeStoredPeriod(blocked, { from: '2026-10-01', to: TODAY }, 'this-month', TODAY);
     }).not.toThrow();
+  });
+});
+
+describe('mes del Reporte mensual de bobinas (cc32, corte 2)', () => {
+  it('valida el mes', () => {
+    expect(isValidMonth('2026-09')).toBe(true);
+    expect(isValidMonth('2026-13')).toBe(false);
+    expect(isValidMonth('2026-9')).toBe(false);
+    expect(monthError('nada')).toBe('El mes no es válido: revisa la fecha.');
+    expect(monthError('2026-09')).toBeNull();
+  });
+
+  it('atajos y el atajo que corresponde', () => {
+    expect(presetMonth('this-month', TODAY)).toBe('2026-10');
+    expect(presetMonth('last-month', TODAY)).toBe('2026-09');
+    expect(presetMonth('last-month', '2026-01-15')).toBe('2025-12');
+    expect(matchMonthPreset('2026-09', TODAY)).toBe('last-month');
+    expect(matchMonthPreset('2026-08', TODAY)).toBeNull();
+  });
+
+  it('el mes de un periodo es el de su fecha final, sin pasar del mes en curso', () => {
+    expect(periodMonth({ from: '2026-09-01', to: '2026-09-30' }, TODAY)).toBe('2026-09');
+    expect(periodMonth({ from: '2026-08-01', to: '2026-12-31' }, TODAY)).toBe('2026-10');
+    expect(defaultMonth(TODAY, null)).toBe('2026-10');
+    expect(defaultMonth(TODAY, { from: '2026-07-01', to: '2026-07-31' })).toBe('2026-07');
+    expect(defaultMonth(TODAY, { from: '2026-07-31', to: '2026-07-01' })).toBe('2026-10');
+  });
+
+  it('el periodo que se recuerda al elegir un mes', () => {
+    expect(fullMonth('2026-02')).toEqual({ from: '2026-02-01', to: '2026-02-28' });
+    expect(monthPeriod('2026-09', TODAY)).toEqual({ from: '2026-09-01', to: '2026-09-30' });
+    expect(monthPeriod('2026-10', TODAY)).toEqual({ from: '2026-10-01', to: TODAY });
+  });
+});
+
+describe('mes fuera de los años admitidos (cc32, corte 2)', () => {
+  it('rechaza un año fuera de 2000..2100', () => {
+    expect(monthError('1999-12')).toMatch(/entre 2000 y 2100/);
+    expect(monthError('2101-01')).toMatch(/entre 2000 y 2100/);
+    expect(monthError('2100-12')).toBeNull();
+  });
+});
+
+describe('enlaces guardados de Ventas por material con `range` (cc32, corte 2)', () => {
+  it('traduce `range=month|prev` sin fechas al atajo', () => {
+    expect(legacyRangePeriod('prev', '', '', TODAY)).toEqual({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      preset: 'last-month',
+    });
+    expect(legacyRangePeriod('month', '', '', TODAY)).toEqual({
+      from: '2026-10-01',
+      to: TODAY,
+      preset: 'this-month',
+    });
+  });
+
+  it('con fechas, o con otro valor, no hay nada que traducir', () => {
+    expect(legacyRangePeriod('custom', '2026-08-01', '2026-08-31', TODAY)).toBeNull();
+    expect(legacyRangePeriod('prev', '2026-08-01', '', TODAY)).toBeNull();
+    expect(legacyRangePeriod('all', '', '', TODAY)).toBeNull();
+    expect(legacyRangePeriod('', '', '', TODAY)).toBeNull();
   });
 });

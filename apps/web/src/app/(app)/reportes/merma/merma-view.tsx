@@ -1,9 +1,8 @@
 'use client';
 
-import { Fragment, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { keepPreviousInScope } from '@/lib/report-query';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
@@ -11,32 +10,34 @@ import {
   COIL_STATUS_LABELS,
   MISSING_THEORETICAL_LABELS,
   Role,
-  businessToday,
   type CoilWasteDto,
   type CoilWasteLine,
   type CoilWasteRowDto,
+  toDecimal,
 } from '@ayr/shared';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { LineTabs } from '@/components/line-tabs';
+import { ListStateMessage } from '@/components/list-state';
+import { ReportHeader } from '@/components/reports/report-header';
+import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
+import {
+  BusyRegion,
+  DETAIL_ROW_CLASSNAME,
+  ReportTable,
+  type ReportColumn,
+} from '@/components/reports/report-table';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
-import { formatDate, formatQty } from '@/lib/format';
+import { formatDate, formatKg, formatQty } from '@/lib/format';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
-import { useUrlState } from '@/lib/use-url-state';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { allRows, wasteTotalsOf, type WasteTotals } from '@/lib/report-totals';
+import { useSort } from '@/lib/use-sort';
+import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { LINK_CLASSNAME, cn } from '@/lib/utils';
 
 /**
  * cc25 (D-424, D-425, D-429..D-431, D-433). Merma por bobina en un rango. **Solo administrador**
@@ -46,80 +47,86 @@ import { LINK_CLASSNAME } from '@/lib/utils';
  * (consumido − teórico) + despunte + ajuste de cierre, sobre el teórico, contra el 1 % estándar.
  * Nada se estima: una bobina con una producción sin teórico atribuible lo declara y queda sin
  * porcentaje.
+ *
+ * cc32 (corte 2): con la plantilla de reportes —periodo único en la URL, «Cómo se calcula», tabla
+ * con orden, búsqueda, detalle con chevron y total al pie—. Lo que se le pide al API no cambia.
  */
 export function MermaView() {
+  const periodState = useReportPeriod();
+  const { period, valid } = periodState;
   const { tab, select } = useLineTab(LINE_TABS);
   // Sin «Todas», la pestaña siempre es una línea de este reporte.
   const line = tab as CoilWasteLine;
-  const [url, setUrl] = useUrlState({ from: firstOfMonth(), to: businessToday() });
-  const { from, to } = url;
-  const validRange = DATE.test(from) && DATE.test(to) && from <= to;
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
-
-  const report = useQuery({
-    queryKey: ['report', 'coil-waste', from, to, line],
-    queryFn: () =>
-      api<CoilWasteDto>(`/reports/coil-waste?from=${from}&to=${to}&businessLine=${line}`),
-    enabled: validRange,
+  const [url, setUrl] = useUrlState({ search: '' });
+  const [sort, toggleSort] = useSort<string>();
+  const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
   });
-  const data = report.data;
+
+  // El alcance es el reporte y su pestaña; el periodo va después (`keepPreviousInScope`).
+  const scope = ['report', 'coil-waste', line];
+  const report = useQuery({
+    queryKey: [...scope, period.from, period.to],
+    queryFn: () =>
+      api<CoilWasteDto>(
+        `/reports/coil-waste?from=${period.from}&to=${period.to}&businessLine=${line}`,
+      ),
+    enabled: valid,
+    // Al cambiar de periodo, el dato anterior queda a la vista (atenuado) mientras carga; al
+    // cambiar de pestaña, no: sería mostrar otra línea con el nombre de esta.
+    placeholderData: keepPreviousInScope<CoilWasteDto>(scope),
+  });
+  const data = valid ? report.data : undefined;
+  const updating = valid && report.isPlaceholderData;
+  const loading = !periodState.complete || (valid && report.isPending);
   const missingCount = data ? data.totals.coilCount - data.totals.comparableCoilCount : 0;
   // En Drywall, lo que sale al cerrar la OP es la merma de proceso (D-057), no un despunte.
   const trimLabel = line === BusinessLine.DRYWALL ? 'Merma de proceso' : 'Despunte';
 
-  const toggle = (coilId: string) => {
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(coilId)) next.delete(coilId);
-      else next.add(coilId);
-      return next;
-    });
-  };
-
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Merma por bobina</h1>
-          <p className="text-xs text-muted-foreground">
-            {BUSINESS_LINE_LABELS[line]}. Bobinas con producción, {trimLabel.toLowerCase()} o ajuste
-            de cierre en el rango, con los movimientos de kardex del rango. Merma = (consumido −
-            teórico) + {trimLabel.toLowerCase()} + ajuste de cierre.
-          </p>
-          {/* D-434: el teórico ya lleva el 1 % normal (D-165); el porcentaje es lo que lo pasa. */}
-          <p className="text-xs text-muted-foreground" data-testid="aviso-estandar">
-            El teórico ya incluye el 1 % de merma estándar, así que la merma y el porcentaje son lo
-            que queda por encima del estándar. Hasta el {data?.standardPct ?? '1.00'} % es normal
-            (la tolerancia de producción); más que eso se marca en rojo.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1">
-            <Label htmlFor="merma-desde">Desde</Label>
-            <Input
-              id="merma-desde"
-              type="date"
-              max={to}
-              value={from}
-              onChange={(e) => {
-                if (e.target.value) setUrl({ from: e.target.value });
-              }}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="merma-hasta">Hasta</Label>
-            <Input
-              id="merma-hasta"
-              type="date"
-              min={from}
-              value={to}
-              onChange={(e) => {
-                if (e.target.value) setUrl({ to: e.target.value });
-              }}
-            />
-          </div>
-        </div>
-      </div>
+      <ReportHeader
+        title="Merma por bobina"
+        subtitle={`${BUSINESS_LINE_LABELS[line]}. Merma sobre el estándar de cada bobina, con el kardex del periodo.`}
+        howItWorks={
+          <>
+            <p>
+              {BUSINESS_LINE_LABELS[line]}. Bobinas con producción, {trimLabel.toLowerCase()} o
+              ajuste de cierre en el rango, con los movimientos de kardex del rango. Merma =
+              (consumido − teórico) + {trimLabel.toLowerCase()} + ajuste de cierre.
+            </p>
+            {/* D-434: el teórico ya lleva el 1 % normal (D-165); el porcentaje es lo que lo pasa. */}
+            <p data-testid="aviso-estandar">
+              El teórico ya incluye el 1 % de merma estándar, así que la merma y el porcentaje son
+              lo que queda por encima del estándar. Hasta el {data?.standardPct ?? '1.00'} % es
+              normal (la tolerancia de producción); más que eso se marca en rojo.
+            </p>
+            <p>
+              Una bobina con una producción sin teórico atribuible no tiene merma calculada y queda
+              fuera del teórico, la diferencia, la merma y el porcentaje del total. Ábrela con la
+              flecha para ver el motivo.
+            </p>
+            {missingCount > 0 && data && (
+              // El aviso de siempre, entero (antes iba bajo la franja; ahora allí va una línea corta).
+              <p>
+                {missingCount === 1
+                  ? '1 bobina tiene una producción sin teórico atribuible: no tiene merma calculada y queda fuera del teórico, la merma y el porcentaje de arriba.'
+                  : `${String(missingCount)} bobinas tienen producciones sin teórico atribuible: no tienen merma calculada y quedan fuera del teórico, la merma y el porcentaje de arriba.`}{' '}
+                Ábrelas para ver el motivo. Teórico, diferencia y merma:{' '}
+                {data.totals.comparableCoilCount} de {data.totals.coilCount} bobinas, que
+                consumieron {formatKg(data.totals.comparableConsumedKg)}.
+              </p>
+            )}
+            <p>
+              La merma manual («Otra merma») es informativa: no suma a la merma. El total al pie
+              suma las filas de la tabla (con la búsqueda aplicada), con los valores completos y
+              redondeado al final.
+            </p>
+          </>
+        }
+      />
+
+      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -128,282 +135,309 @@ export function MermaView() {
         onChange={select}
       />
 
-      {!validRange && (
-        <p role="alert" className="text-sm text-destructive">
-          El rango de fechas no es válido.
-        </p>
+      {periodState.error !== null && (
+        <ListStateMessage tone="error" title={periodState.error} hint="Elige otro periodo." />
       )}
 
-      {data && (
-        <StatStrip className="sm:grid-cols-3 lg:grid-cols-6">
-          <Stat label="Bobinas">{data.totals.coilCount}</Stat>
-          <Stat label="Consumido en producción">{formatQty(data.totals.consumedKg, 'kg')}</Stat>
-          <Stat label="Teórico">{formatQty(data.totals.theoreticalKg, 'kg')}</Stat>
-          <Stat label={trimLabel}>{formatQty(data.totals.trimKg, 'kg')}</Stat>
-          <Stat label="Merma sobre el estándar">{formatQty(data.totals.wasteKg, 'kg')}</Stat>
-          <Stat label="% sobre el estándar">
-            {data.totals.wastePct === null ? (
-              '—'
-            ) : (
-              <PctBadge pct={data.totals.wastePct} over={data.totals.overStandard} />
-            )}
-          </Stat>
-        </StatStrip>
-      )}
-
-      {data && missingCount > 0 && (
-        <p role="status" className="text-xs text-muted-foreground" data-testid="aviso-sin-teorico">
-          {missingCount === 1
-            ? '1 bobina tiene una producción sin teórico atribuible: no tiene merma calculada y queda fuera del teórico, la merma y el porcentaje de arriba.'
-            : `${missingCount} bobinas tienen producciones sin teórico atribuible: no tienen merma calculada y quedan fuera del teórico, la merma y el porcentaje de arriba.`}{' '}
-          Ábrelas para ver el motivo.
-        </p>
-      )}
-
-      {report.isPending && validRange && <Skeleton className="h-64 w-full" />}
-      {report.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          No se pudo cargar el reporte.
-        </p>
-      )}
-
-      {data && (
-        <div className="overflow-x-auto rounded-md border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>Bobina</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead className="text-right">Consumido</TableHead>
-                <TableHead className="text-right">Teórico</TableHead>
-                <TableHead className="text-right">Diferencia</TableHead>
-                <TableHead className="text-right">{trimLabel}</TableHead>
-                <TableHead className="text-right">Ajuste de cierre</TableHead>
-                <TableHead className="text-right">Merma s/ estándar</TableHead>
-                <TableHead className="text-right">% s/ estándar</TableHead>
-                <TableHead
-                  className="text-right"
-                  title="Merma manual: informativa, fuera de la merma"
+      {periodState.error === null && (
+        <>
+          {loading && <Skeleton className="h-14 w-full" />}
+          {data && (
+            <BusyRegion busy={updating}>
+              <StatStrip className="sm:grid-cols-3 lg:grid-cols-6" data-testid="cifras-merma">
+                <Stat label="Bobinas">{data.totals.coilCount}</Stat>
+                <Stat label="Consumido (kg)">{formatKg(data.totals.consumedKg, null)}</Stat>
+                <Stat
+                  label="Teórico (kg)"
+                  hint={
+                    missingCount > 0
+                      ? `solo ${String(data.totals.comparableCoilCount)} de ${String(data.totals.coilCount)} bobinas · consumieron ${formatKg(data.totals.comparableConsumedKg)}`
+                      : undefined
+                  }
                 >
-                  Otra merma (manual)
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={COLUMNS} className="text-muted-foreground">
-                    No hay bobinas de esta línea con producción, {trimLabel.toLowerCase()} o ajuste
-                    de cierre en ese rango.
-                  </TableCell>
-                </TableRow>
+                  {formatKg(data.totals.theoreticalKg, null)}
+                </Stat>
+                <Stat label={`${trimLabel} (kg)`}>{formatKg(data.totals.trimKg, null)}</Stat>
+                <Stat label="Merma (kg)" hint="sobre el estándar">
+                  {formatKg(data.totals.wasteKg, null)}
+                </Stat>
+                <Stat label="Merma %" hint={`normal hasta ${data.standardPct} %`}>
+                  <Pct pct={data.totals.wastePct} over={data.totals.overStandard} />
+                </Stat>
+              </StatStrip>
+              {missingCount > 0 && (
+                <p
+                  role="status"
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="aviso-sin-teorico"
+                >
+                  {missingCount === 1
+                    ? '1 bobina sin teórico atribuible: queda fuera del teórico y la merma.'
+                    : `${String(missingCount)} bobinas sin teórico atribuible: quedan fuera del teórico y la merma.`}{' '}
+                  Ábrelas para ver el motivo.
+                </p>
               )}
-              {data.rows.map((row) => (
-                <CoilRows
-                  key={row.coilId}
-                  row={row}
-                  open={open.has(row.coilId)}
-                  onToggle={() => {
-                    toggle(row.coilId);
-                  }}
-                />
-              ))}
-            </TableBody>
-            {data.rows.length > 0 && (
-              <TableFooter>
-                <TableRow>
-                  <TableCell colSpan={2}>
-                    Total de {BUSINESS_LINE_LABELS[line]}
-                    {missingCount > 0 && (
-                      <span className="block text-xs font-normal text-muted-foreground">
-                        Teórico, diferencia y merma: {data.totals.comparableCoilCount} de{' '}
-                        {data.totals.coilCount} bobinas, que consumieron{' '}
-                        {formatQty(data.totals.comparableConsumedKg, 'kg')}
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right" data-testid="merma-total-consumido">
-                    {formatQty(data.totals.consumedKg, 'kg')}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(data.totals.theoreticalKg, 'kg')}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(data.totals.differenceKg, 'kg')}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(data.totals.trimKg, 'kg')}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(data.totals.closeAdjustmentKg, 'kg')}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(data.totals.wasteKg, 'kg')}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {data.totals.wastePct === null ? (
-                      '—'
-                    ) : (
-                      <PctBadge pct={data.totals.wastePct} over={data.totals.overStandard} />
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatQty(data.totals.manualScrapKg, 'kg')}
-                  </TableCell>
-                </TableRow>
-              </TableFooter>
-            )}
-          </Table>
-        </div>
+            </BusyRegion>
+          )}
+
+          <Input
+            type="search"
+            aria-label="Buscar en el reporte"
+            placeholder="Buscar bobina, tipo, color u orden"
+            className="h-8 max-w-xs"
+            value={searchText}
+            onChange={(e) => {
+              setSearchText(e.target.value);
+            }}
+          />
+
+          <ReportTable
+            testId="tabla-merma"
+            rowTestId="merma-bobina"
+            columns={columns(trimLabel, data)}
+            rows={data?.rows ?? []}
+            rowKey={(r) => r.coilId}
+            sort={sort}
+            onSort={toggleSort}
+            search={searchText}
+            updating={updating}
+            detail={(r) => <ProductionRows row={r} />}
+            detailLabel={(r) => r.code}
+            footerLabel={(rows) => {
+              const n = rows.length;
+              const t = totalsFor(rows, data);
+              const label = `Total · ${n === 1 ? '1 bobina' : `${String(n)} bobinas`}`;
+              // Con bobinas sin teórico, el teórico y la merma del pie son de una parte.
+              return t.comparableCoilCount < t.coilCount
+                ? `${label} · teórico y merma de ${String(t.comparableCoilCount)} de ${String(t.coilCount)}, que consumieron ${formatKg(t.comparableConsumedKg)}`
+                : label;
+            }}
+            query={{
+              isPending: loading,
+              isError: report.isError,
+              isSuccess: data !== undefined,
+              refetch: report.refetch,
+            }}
+            emptyTitle={`No hay bobinas de esta línea con producción, ${trimLabel.toLowerCase()} o ajuste de cierre en ese periodo`}
+            noResultsTitle={`Ninguna bobina coincide con «${searchText.trim()}»`}
+            onClearSearch={() => {
+              setSearchText('');
+            }}
+            errorTitle="No se pudo cargar el reporte"
+          />
+        </>
       )}
     </RoleGate>
   );
 }
 
-/** La fila de la bobina y, abierta, sus producciones del rango. */
-function CoilRows({
-  row,
-  open,
-  onToggle,
-}: {
-  row: CoilWasteRowDto;
-  open: boolean;
-  onToggle: () => void;
-}) {
+/** El total al pie: el del API sin búsqueda; con búsqueda, el de las bobinas a la vista. */
+function totalsFor(rows: readonly CoilWasteRowDto[], data: CoilWasteDto | undefined): WasteTotals {
+  if (data && allRows(rows, data.rows)) {
+    const t = data.totals;
+    return {
+      coilCount: t.coilCount,
+      consumedKg: toDecimal(t.consumedKg),
+      trimKg: toDecimal(t.trimKg),
+      closeAdjustmentKg: toDecimal(t.closeAdjustmentKg),
+      manualScrapKg: toDecimal(t.manualScrapKg),
+      comparableCoilCount: t.comparableCoilCount,
+      comparableConsumedKg: toDecimal(t.comparableConsumedKg),
+      theoreticalKg: toDecimal(t.theoreticalKg),
+      differenceKg: toDecimal(t.differenceKg),
+      wasteKg: toDecimal(t.wasteKg),
+      wastePct: t.wastePct,
+      overStandard: t.overStandard,
+    };
+  }
+  return wasteTotalsOf(rows, data?.standardPct ?? '1.00');
+}
+
+function columns(
+  trimLabel: string,
+  data: CoilWasteDto | undefined,
+): ReportColumn<CoilWasteRowDto>[] {
+  const total = (rows: readonly CoilWasteRowDto[]) => totalsFor(rows, data);
+  return [
+    {
+      key: 'code',
+      header: 'Bobina',
+      cell: (r) => (
+        <span className="inline-flex flex-col">
+          <Link className={cn(LINK_CLASSNAME, 'font-mono')} href={`/bobinas/${r.coilId}`}>
+            {r.code}
+          </Link>
+          <span className="text-xs text-muted-foreground">
+            {r.typeKey}
+            {r.colorName ? ` · ${r.colorName}` : ''} · ancho {formatQty(r.widthMm, 'mm')}
+          </span>
+          <ToleranceBadge row={r} />
+          {r.productions.some((p) => p.missingTheoretical !== null) && (
+            <Badge variant="secondary" className="mt-1">
+              Sin teórico atribuible
+            </Badge>
+          )}
+        </span>
+      ),
+      sortValue: { text: (r) => r.code },
+      searchText: (r) => [
+        r.code,
+        r.typeKey,
+        r.colorName ?? '',
+        ...r.productions.map((p) => p.productionOrderCode ?? ''),
+      ],
+    },
+    {
+      key: 'status',
+      header: 'Estado',
+      cell: (r) => COIL_STATUS_LABELS[r.status],
+      sortValue: { text: (r) => COIL_STATUS_LABELS[r.status] },
+      searchText: (r) => COIL_STATUS_LABELS[r.status],
+    },
+    {
+      key: 'consumed',
+      header: 'Consumido (kg)',
+      align: 'right',
+      cell: (r) => formatKg(r.consumedKg, null),
+      sortValue: { decimal: (r) => r.consumedKg },
+      total: (rows) => (
+        <span data-testid="merma-total-consumido">{formatKg(total(rows).consumedKg, null)}</span>
+      ),
+    },
+    {
+      key: 'theoretical',
+      header: 'Teórico (kg)',
+      align: 'right',
+      cell: (r) => kgOrDash(r.theoreticalKg),
+      sortValue: { decimal: (r) => r.theoreticalKg ?? '' },
+      total: (rows) => formatKg(total(rows).theoreticalKg, null),
+    },
+    {
+      key: 'difference',
+      header: 'Diferencia (kg)',
+      align: 'right',
+      cell: (r) => kgOrDash(r.differenceKg),
+      sortValue: { decimal: (r) => r.differenceKg ?? '' },
+      total: (rows) => formatKg(total(rows).differenceKg, null),
+    },
+    {
+      key: 'trim',
+      header: `${trimLabel} (kg)`,
+      align: 'right',
+      cell: (r) => formatKg(r.trimKg, null),
+      sortValue: { decimal: (r) => r.trimKg },
+      total: (rows) => formatKg(total(rows).trimKg, null),
+    },
+    {
+      key: 'adjustment',
+      header: 'Ajuste de cierre (kg)',
+      align: 'right',
+      cell: (r) => formatKg(r.closeAdjustmentKg, null),
+      sortValue: { decimal: (r) => r.closeAdjustmentKg },
+      total: (rows) => formatKg(total(rows).closeAdjustmentKg, null),
+    },
+    {
+      key: 'waste',
+      header: 'Merma (kg)',
+      align: 'right',
+      cell: (r) => <span className="font-medium">{kgOrDash(r.wasteKg)}</span>,
+      sortValue: { decimal: (r) => r.wasteKg ?? '' },
+      total: (rows) => formatKg(total(rows).wasteKg, null),
+    },
+    {
+      key: 'pct',
+      header: 'Merma %',
+      align: 'right',
+      cell: (r) => <Pct pct={r.wastePct} over={r.overStandard} />,
+      sortValue: { decimal: (r) => r.wastePct ?? '' },
+      total: (rows) => {
+        const t = total(rows);
+        return <Pct pct={t.wastePct} over={t.overStandard} />;
+      },
+    },
+    {
+      key: 'manual',
+      header: 'Otra merma (kg)',
+      align: 'right',
+      className: 'text-muted-foreground',
+      cell: (r) => formatKg(r.manualScrapKg, null),
+      sortValue: { decimal: (r) => r.manualScrapKg },
+      total: (rows) => formatKg(total(rows).manualScrapKg, null),
+    },
+  ];
+}
+
+/** Cuántas producciones de la bobina se confirmaron fuera de tolerancia (D-388/D-389). */
+function ToleranceBadge({ row }: { row: CoilWasteRowDto }) {
   const flagged = row.productions.filter((p) => p.outOfTolerance !== null).length;
-  const missing = row.productions.some((p) => p.missingTheoretical !== null);
+  if (flagged === 0) return null;
+  return (
+    <Badge variant="warning" className="mt-1">
+      Fuera de tolerancia{flagged > 1 ? ` (${String(flagged)})` : ''}
+    </Badge>
+  );
+}
+
+/** Las producciones de la bobina en el periodo, alineadas con las columnas. */
+function ProductionRows({ row }: { row: CoilWasteRowDto }) {
   return (
     <>
-      <TableRow data-testid="merma-bobina">
-        <TableCell>
-          <div className="flex items-start gap-1">
-            <button
-              type="button"
-              className="mt-0.5"
-              onClick={onToggle}
-              aria-expanded={open}
-              aria-label={`Producciones de ${row.code}`}
-            >
-              {open ? (
-                <ChevronDown className="size-4" aria-hidden />
-              ) : (
-                <ChevronRight className="size-4" aria-hidden />
-              )}
-            </button>
-            <div>
-              <Link className={`${LINK_CLASSNAME} font-mono`} href={`/bobinas/${row.coilId}`}>
-                {row.code}
+      {row.productions.map((p, i) => (
+        <TableRow
+          key={p.reportId ?? `sin-reporte-${String(i)}`}
+          className={DETAIL_ROW_CLASSNAME}
+          data-testid="merma-produccion"
+        >
+          <TableCell className="pl-8">
+            {p.productionOrderId && p.productionOrderCode ? (
+              <Link
+                className={cn(LINK_CLASSNAME, 'font-mono')}
+                href={`/produccion/${p.productionOrderId}`}
+              >
+                {p.productionOrderCode}
               </Link>
-              <div className="text-xs text-muted-foreground">
-                {row.typeKey}
-                {row.colorName ? ` · ${row.colorName}` : ''} · {formatQty(row.widthMm, 'mm')}
-              </div>
-              {flagged > 0 && (
-                <Badge variant="warning" className="mt-1">
-                  Fuera de tolerancia{flagged > 1 ? ` (${flagged})` : ''}
-                </Badge>
-              )}
-              {missing && (
-                <Badge variant="secondary" className="mt-1">
-                  Sin teórico atribuible
-                </Badge>
-              )}
-            </div>
-          </div>
-        </TableCell>
-        <TableCell>{COIL_STATUS_LABELS[row.status]}</TableCell>
-        <TableCell className="text-right">{formatQty(row.consumedKg, 'kg')}</TableCell>
-        <TableCell className="text-right">{kgOrDash(row.theoreticalKg)}</TableCell>
-        <TableCell className="text-right">{kgOrDash(row.differenceKg)}</TableCell>
-        <TableCell className="text-right">{formatQty(row.trimKg, 'kg')}</TableCell>
-        <TableCell className="text-right">{formatQty(row.closeAdjustmentKg, 'kg')}</TableCell>
-        <TableCell className="text-right font-medium">{kgOrDash(row.wasteKg)}</TableCell>
-        <TableCell className="text-right">
-          {row.wastePct === null ? '—' : <PctBadge pct={row.wastePct} over={row.overStandard} />}
-        </TableCell>
-        <TableCell className="text-right text-muted-foreground">
-          {formatQty(row.manualScrapKg, 'kg')}
-        </TableCell>
-      </TableRow>
-      {open && (
-        <TableRow className="bg-muted/40 hover:bg-muted/40">
-          <TableCell colSpan={COLUMNS} className="p-0">
-            <Table aria-label={`Producciones de ${row.code}`}>
-              <TableHeader>
-                <TableRow className="text-xs">
-                  <TableHead className="pl-8">Orden</TableHead>
-                  <TableHead>Fecha</TableHead>
-                  <TableHead className="text-right">Consumido</TableHead>
-                  <TableHead className="text-right">Teórico</TableHead>
-                  <TableHead>Observación</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {row.productions.map((p, i) => (
-                  <Fragment key={p.reportId ?? `sin-reporte-${i}`}>
-                    <TableRow className="text-xs" data-testid="merma-produccion">
-                      <TableCell className="pl-8">
-                        {p.productionOrderId && p.productionOrderCode ? (
-                          <Link
-                            className={`${LINK_CLASSNAME} font-mono`}
-                            href={`/produccion/${p.productionOrderId}`}
-                          >
-                            {p.productionOrderCode}
-                          </Link>
-                        ) : (
-                          '—'
-                        )}
-                      </TableCell>
-                      <TableCell>{formatDate(p.operationDate)}</TableCell>
-                      <TableCell className="text-right">{formatQty(p.consumedKg, 'kg')}</TableCell>
-                      <TableCell className="text-right">{kgOrDash(p.theoreticalKg)}</TableCell>
-                      <TableCell>
-                        {p.outOfTolerance && (
-                          <span className="flex flex-wrap items-center gap-1">
-                            <Badge variant="warning">Fuera de tolerancia</Badge>
-                            {p.outOfTolerance.label} ({p.outOfTolerance.excessPct} %)
-                          </span>
-                        )}
-                        {p.missingTheoretical && (
-                          <span className="text-muted-foreground">
-                            {MISSING_THEORETICAL_LABELS[p.missingTheoretical]}
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  </Fragment>
-                ))}
-              </TableBody>
-            </Table>
+            ) : (
+              <span className="text-muted-foreground">Sin orden</span>
+            )}
+          </TableCell>
+          <TableCell>{formatDate(p.operationDate)}</TableCell>
+          <TableCell className="text-right">{formatKg(p.consumedKg, null)}</TableCell>
+          <TableCell className="text-right">{kgOrDash(p.theoreticalKg)}</TableCell>
+          <TableCell colSpan={COLUMN_COUNT - 4}>
+            {p.outOfTolerance && (
+              <span className="flex flex-wrap items-center gap-1">
+                <Badge variant="warning">Fuera de tolerancia</Badge>
+                {p.outOfTolerance.label} ({p.outOfTolerance.excessPct} %)
+              </span>
+            )}
+            {p.missingTheoretical && (
+              <span className="text-muted-foreground">
+                {MISSING_THEORETICAL_LABELS[p.missingTheoretical]}
+              </span>
+            )}
           </TableCell>
         </TableRow>
-      )}
+      ))}
     </>
   );
 }
 
 /** D-434: el porcentaje, en rojo solo si pasa la tolerancia del 1 % sobre el estándar. */
-function PctBadge({ pct, over }: { pct: string; over: boolean }) {
+function Pct({ pct, over }: { pct: string | null; over: boolean }) {
+  if (pct === null) return <>—</>;
   return over ? <Badge variant="destructive">{pct} %</Badge> : <span>{pct} %</span>;
 }
 
 function kgOrDash(value: string | null): string {
-  return value === null ? '—' : formatQty(value, 'kg');
+  return value === null ? '—' : formatKg(value, null);
 }
 
-/** cc25 (D-424): Coberturas Aluzinc y Drywall, sin «Todas»; el rango sobrevive. */
+/** cc25 (D-424): Coberturas Aluzinc y Drywall, sin «Todas»; el periodo y el orden sobreviven. */
 const LINE_TABS: LineTabsConfig = {
   lines: COIL_REPORT_LINES,
   includeAll: false,
-  keep: ['from', 'to'],
+  keep: ['from', 'to', 'sort', 'dir'],
 };
 
 /** Bobina, estado, las siete cifras y el porcentaje. */
-const COLUMNS = 10;
-
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Primer día del mes de negocio en curso, el rango por defecto. */
-function firstOfMonth(): string {
-  return `${businessToday().slice(0, 7)}-01`;
-}
+const COLUMN_COUNT = 10;

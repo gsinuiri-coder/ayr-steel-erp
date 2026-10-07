@@ -1,6 +1,6 @@
 import type { Role } from '@ayr/shared';
 import { NAV, type NavItem } from './nav';
-import { matchPreset, type ReportPeriod } from './report-period';
+import { periodMonth, type ReportPeriod } from './report-period';
 
 /**
  * cc32 — la página `/reportes`: los siete reportes agrupados por la pregunta que responden. Los
@@ -39,23 +39,19 @@ export const REPORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
 /** Los reportes que leen el periodo de la URL como `from`/`to`. */
 const RANGE_REPORTS = new Set([
   '/reportes/ventas-margen',
+  '/reportes/ventas-material',
   '/reportes/merma',
   '/reportes/produccion',
 ]);
 
 /**
- * El enlace a un reporte con el periodo puesto. Ventas por material lee su propio parámetro
- * (`range`: mes en curso, anterior o libre); Cuentas por cobrar e Inventario valorizado son «a
- * hoy» y el Reporte mensual de bobinas elige un mes: esos van sin periodo.
+ * El enlace a un reporte con el periodo puesto. El Reporte mensual de bobinas elige un mes: el
+ * de la fecha final del periodo (`mes`). Cuentas por cobrar e Inventario valorizado son «a hoy»
+ * y van sin periodo.
  */
 export function reportHref(href: string, period: ReportPeriod, today: string): string {
   if (RANGE_REPORTS.has(href)) return `${href}?from=${period.from}&to=${period.to}`;
-  if (href === '/reportes/ventas-material') {
-    const preset = matchPreset(period, today);
-    if (preset === 'this-month') return `${href}?range=month`;
-    if (preset === 'last-month') return `${href}?range=prev`;
-    return `${href}?range=custom&from=${period.from}&to=${period.to}`;
-  }
+  if (href === '/reportes/bobinas') return `${href}?mes=${periodMonth(period, today)}`;
   return href;
 }
 

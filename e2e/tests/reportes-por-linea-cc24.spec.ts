@@ -78,9 +78,10 @@ test.describe('Reportes por línea (cc24)', () => {
     await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}&to=${to}`);
 
     // D-394: Servicios no tiene este reporte, «todas» no existe acá y la de defecto no se escribe.
+    // cc32 (corte 2): el periodo va siempre en la URL; la fecha que falta se completa (hasta hoy).
     for (const bad of ['services', 'todas', 'metallic-roofing']) {
       await page.goto(`/reportes/ventas-material?from=${FROM}&linea=${bad}`);
-      await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}`);
+      await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}&to=${to}`);
       await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
     }
   });
@@ -105,13 +106,15 @@ test.describe('Reportes por línea (cc24)', () => {
     await expect(page).toHaveURL('/reportes/bobinas?mes=2026-09&linea=drywall');
     await page.reload();
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('#reporte-mes')).toHaveValue('2026-09');
+    // cc32 (corte 2): el mes con el estilo del periodo, escrito al lado.
+    await expect(page.getByTestId('periodo-rango')).toHaveText('Del 01/09/2026 al 30/09/2026');
 
     await page.goBack();
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
 
+    // La línea inválida se quita; el mes va siempre en la URL (cc32, corte 2).
     await page.goto('/reportes/bobinas?linea=services');
-    await expect(page).toHaveURL('/reportes/bobinas');
+    await expect(page).toHaveURL(/\/reportes\/bobinas\?mes=\d{4}-\d{2}$/);
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
   });
 
