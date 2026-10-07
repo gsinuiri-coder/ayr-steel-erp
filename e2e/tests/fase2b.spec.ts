@@ -1107,7 +1107,7 @@ test.describe('Fase 2b — partido, merma, anulación y landed cost', () => {
       const summaryRow = page.getByRole('row').filter({ hasText: coil.typeKey });
       await expect(summaryRow).toBeVisible();
       // El saldo se pinta con el símbolo de la unidad del kardex (`KGM` → `kg`).
-      await expect(summaryRow).toContainText('5,000.000 kg');
+      await expect(summaryRow).toContainText('5,000.00 kg');
       await expect(summaryRow).toContainText('S/ 4.4000');
       await expect(summaryRow).toContainText('S/ 22,000.00');
     } finally {

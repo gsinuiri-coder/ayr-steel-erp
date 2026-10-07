@@ -166,7 +166,7 @@ test.describe('F8-S2b/M1 — cotizaciones sin stock disponible (D-188)', () => {
       });
       const row = page.getByRole('link', { name: new RegExp(quotation.code) });
       await expect(row).toBeVisible();
-      await expect(row.getByText(/faltan 21\.200/)).toBeVisible();
+      await expect(row.getByText(/faltan 21\.20 kg/)).toBeVisible();
 
       await row.click();
       await expect(page).toHaveURL(new RegExp(`/cotizaciones/${quotation.id}$`));

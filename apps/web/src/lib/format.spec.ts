@@ -70,3 +70,21 @@ describe('fecha y hora', () => {
     expect(formatDateTime(null)).toBe('—');
   });
 });
+
+describe('cifras a medio escribir', () => {
+  it('un texto que no es número se muestra tal cual en vez de romper la pantalla', () => {
+    expect(formatKg('')).toBe(' kg');
+    expect(formatKg('12 ')).toBe('12.00 kg');
+    expect(formatNumber('abc', 2)).toBe('abc');
+    expect(formatMeters('4,2')).toBe('4,2 m');
+  });
+});
+
+describe('lo que no es cero no se muestra como cero', () => {
+  it('un faltante de gramos sale con 3 decimales', () => {
+    expect(formatKg('0.004')).toBe('0.004 kg');
+    expect(formatKg('0.0004')).toBe('0.000 kg');
+    expect(formatKg('0')).toBe('0.00 kg');
+    expect(formatKg('0.005')).toBe('0.01 kg');
+  });
+});

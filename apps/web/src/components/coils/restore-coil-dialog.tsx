@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import type { CoilDto, CoilRestorePlanDto } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatDate, formatQty } from '@/lib/format';
+import { formatDate, formatQtyAsIs } from '@/lib/format';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -110,7 +110,7 @@ export function RestoreCoilDialog({
               </dd>
               <dt className="text-muted-foreground">Cantidad y costo</dt>
               <dd>
-                {p.qty ? formatQty(p.qty, 'kg') : '—'} · {p.unitCostPen ?? '—'} PEN/kg
+                {p.qty ? formatQtyAsIs(p.qty, 'kg') : '—'} · {p.unitCostPen ?? '—'} PEN/kg
               </dd>
             </dl>
             {p.mode === 'A_HOY' && p.date && (

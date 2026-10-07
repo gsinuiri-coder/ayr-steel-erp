@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { BrandMark } from '@/components/brand-mark';
 import { Button } from '@/components/ui/button';
 import { formatDateTime } from '@/lib/format';
@@ -40,11 +40,10 @@ export function ErrorScreen({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  const reference = useMemo(
-    () => error.digest ?? Math.random().toString(16).slice(2, 10),
-    [error.digest],
-  );
-  const at = useMemo(() => formatDateTime(new Date().toISOString()), []);
+  // Se fija al montar: un nuevo render no cambia la referencia que el usuario ya anotó.
+  const [fallbackReference] = useState(() => Date.now().toString(36).slice(-8));
+  const reference = error.digest ?? fallbackReference;
+  const [at] = useState(() => formatDateTime(new Date().toISOString()));
   return (
     <ScreenMessage
       title="Esta pantalla tuvo un problema"

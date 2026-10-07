@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import { PurchaseType, Role, type InvoiceXmlPreviewDto } from '@ayr/shared';
-import { ApiError, SERVER_DOWN_MESSAGE } from '@/lib/api';
+import { ApiError, errorTextFor } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -24,13 +24,7 @@ async function uploadXml(file: File): Promise<InvoiceXmlPreviewDto> {
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new ApiError(
-      res.status,
-      body.message ??
-        (res.status >= 500
-          ? SERVER_DOWN_MESSAGE
-          : `No se pudo leer el XML (${String(res.status)})`),
-    );
+    throw new ApiError(res.status, errorTextFor(res.status, body.message));
   }
   return (await res.json()) as InvoiceXmlPreviewDto;
 }

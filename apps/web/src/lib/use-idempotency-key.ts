@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { ApiError } from '@/lib/api';
+import { isClientError } from '@/lib/api';
 
 /**
  * Clave de idempotencia de un intento de submit (D-182).
@@ -40,7 +40,7 @@ export function useIdempotencyKey(): {
   }, []);
 
   const settle = useCallback((error?: unknown) => {
-    const uncertain = error !== undefined && !(error instanceof ApiError && error.status < 500);
+    const uncertain = error !== undefined && !isClientError(error);
     // Solo se olvida la clave del envío que tuvo respuesta; las demás siguen inciertas.
     if (!uncertain) keys.current.delete(lastSent.current);
   }, []);

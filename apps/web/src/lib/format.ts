@@ -74,9 +74,14 @@ export function unitSymbol(unit: string): string {
  * truncando la cadena). Solo para mostrar: lo que viaja al API conserva su escala.
  */
 export function formatNumber(value: string | Decimal, decimals: number): string {
-  const rounded = new Decimal(value)
-    .toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP)
-    .toFixed(decimals);
+  let parsed: Decimal;
+  try {
+    parsed = new Decimal(typeof value === 'string' ? value.trim() : value);
+  } catch {
+    // Un texto que no es número (un campo a medio escribir) se muestra tal cual.
+    return typeof value === 'string' ? value : value.toString();
+  }
+  const rounded = parsed.toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP).toFixed(decimals);
   const negative = rounded.startsWith('-') && !/^-0(\.0*)?$/.test(rounded);
   const [intPart = '0', decPart = ''] = rounded.replace('-', '').split('.');
   return `${negative ? '-' : ''}${group(intPart)}${decPart ? `.${decPart}` : ''}`;
@@ -89,9 +94,20 @@ function withUnit(body: string, unit?: string): string {
 /**
  * cc31: kilos en listas, formularios y reportes, a 2 decimales (`4,027.44 kg`). El kardex y el
  * detalle de bobina, donde el gramo importa, usan `formatKgPrecise`.
+ *
+ * Una cantidad que no es cero nunca se muestra como `0.00`: «faltan 0.00 kg» cuando faltan
+ * 4 gramos dice lo contrario de lo que pasa. Por debajo del centésimo sale con 3 decimales.
  */
 export function formatKg(value: string | Decimal, unit: string | null = 'kg'): string {
-  return withUnit(formatNumber(value, 2), unit ?? undefined);
+  const two = formatNumber(value, 2);
+  const roundsToZero = /^-?0\.00$/.test(two);
+  let nonZero = false;
+  try {
+    nonZero = !new Decimal(typeof value === 'string' ? value.trim() : value).isZero();
+  } catch {
+    nonZero = false;
+  }
+  return withUnit(roundsToZero && nonZero ? formatNumber(value, 3) : two, unit ?? undefined);
 }
 
 /** cc31: kilos con sus 3 decimales (kardex y detalle de bobina). */
@@ -105,7 +121,15 @@ export function formatKgPrecise(value: string | Decimal, unit: string | null = '
  * cuando es cero.
  */
 export function formatMeters(value: string | Decimal, unit: string | null = 'm'): string {
-  const three = new Decimal(value).toDecimalPlaces(3, Decimal.ROUND_HALF_UP);
+  let three: Decimal;
+  try {
+    three = new Decimal(typeof value === 'string' ? value.trim() : value).toDecimalPlaces(
+      3,
+      Decimal.ROUND_HALF_UP,
+    );
+  } catch {
+    return withUnit(typeof value === 'string' ? value : value.toString(), unit ?? undefined);
+  }
   const decimals = three.times(1000).mod(10).isZero() ? 2 : 3;
   return withUnit(formatNumber(three, decimals), unit ?? undefined);
 }

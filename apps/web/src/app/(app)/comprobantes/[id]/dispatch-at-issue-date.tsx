@@ -5,7 +5,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { errorMessage, toast } from '@/lib/notify';
 import type { InvoiceDispatchPlanDto, InvoiceDispatchResultDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, isClientError } from '@/lib/api';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { formatDate } from '@/lib/format';
 import { cn, LINK_CLASSNAME } from '@/lib/utils';
@@ -64,7 +64,7 @@ export function DispatchAtIssueDate({
     // Mientras llega el plan de la fecha nueva se sigue viendo el anterior, marcado como viejo.
     placeholderData: keepPreviousData,
     // Un 4xx (fecha futura, anterior a la carga histórica) no mejora reintentando.
-    retry: (count, err) => !(err instanceof ApiError && err.status < 500) && count < 2,
+    retry: (count, err) => !isClientError(err) && count < 2,
   });
   const execute = useMutation({
     mutationFn: () =>

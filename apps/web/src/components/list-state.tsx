@@ -77,7 +77,11 @@ export function ListStateRows({
         <ListStateMessage
           tone="error"
           title={errorTitle}
-          hint="No es que no haya: el servidor no respondió."
+          hint={
+            isEmpty
+              ? 'No es que no haya: el servidor no respondió.'
+              : 'Lo que ves arriba puede estar desactualizado: el servidor no respondió.'
+          }
           action={
             <Button
               size="sm"

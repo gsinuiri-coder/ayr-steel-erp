@@ -33,7 +33,7 @@ import {
   type RoofingPieceDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatMeters, formatMoney, formatQty } from '@/lib/format';
+import { formatKgPrecise, formatMeters, formatMoney, formatQty, formatQtyAsIs } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { ExpressCreateCustomer } from '@/components/express-create';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
@@ -938,7 +938,7 @@ function ImportRow({
           // D-385: la fila venía en toneladas y el producto se vende en kilos.
           <div className="mt-1 w-40 text-right text-xs text-muted-foreground">
             {raw.unitConversion.paperQty} {raw.unitConversion.paperUnit} →{' '}
-            {formatQty(trimDecimals(raw.qty), 'kg')}
+            {formatQtyAsIs(trimDecimals(raw.qty), 'kg')}
           </div>
         )}
         <Issue row={row} field="qty" />
@@ -1405,7 +1405,7 @@ function resolveRow(
     issues.push({
       field: 'qty',
       severity: 'error',
-      message: `${chosenCoil.code} tiene ${formatQty(chosenCoil.balanceKg, 'kg')}: no alcanza para la línea.`,
+      message: `${chosenCoil.code} tiene ${formatKgPrecise(chosenCoil.balanceKg)}: no alcanza para la línea.`,
     });
   }
   if (!raw.issueDate) {

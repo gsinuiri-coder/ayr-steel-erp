@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, ApiError, SERVER_DOWN_MESSAGE, TOO_MANY_REQUESTS_MESSAGE } from './api';
+import {
+  api,
+  ApiError,
+  isClientError,
+  SERVER_DOWN_MESSAGE,
+  TOO_MANY_REQUESTS_MESSAGE,
+} from './api';
 import { errorMessage } from './notify';
 
 function respond(status: number, body?: unknown): Response {
@@ -60,6 +66,36 @@ describe('mensajes de error', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond(404)));
     const err = (await api('/x').catch((e: unknown) => e)) as ApiError;
     expect(err.message).not.toMatch(/^Error /);
+  });
+
+  it('un corte de red y un 5xx siguen siendo inciertos para la idempotencia (D-182)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const network = await api('/x').catch((e: unknown) => e);
+    expect(isClientError(network)).toBe(false);
+    expect(isClientError(new ApiError(502, SERVER_DOWN_MESSAGE))).toBe(false);
+    expect(isClientError(new ApiError(409, 'Ya está anulado'))).toBe(true);
+    expect(isClientError(new Error('x'))).toBe(false);
+  });
+
+  it('una petición cancelada no se convierte en «el servidor no respondió»', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new DOMException('The user aborted a request.', 'AbortError')),
+    );
+    const err = await api('/x').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DOMException);
+  });
+
+  it('un TypeError de un defecto del código no se disfraza de corte de red', () => {
+    expect(
+      errorMessage(
+        new TypeError("Cannot read properties of undefined (reading 'map')"),
+        'No se pudo',
+      ),
+    ).toBe('No se pudo');
+    expect(
+      errorMessage(new TypeError('NetworkError when attempting to fetch resource.'), 'x'),
+    ).toBe(SERVER_DOWN_MESSAGE);
   });
 
   it('errorMessage usa el motivo del API, o el texto de respaldo para lo demás', () => {

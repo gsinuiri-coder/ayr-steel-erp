@@ -16,7 +16,15 @@ export { SERVER_DOWN_MESSAGE };
  */
 export const SUCCESS_DURATION_MS = 6000;
 
-export const SERVER_DOWN_HINT = 'No se guardó nada. Lo que escribiste sigue en pantalla.';
+/** Los textos con que cada navegador rechaza un `fetch` sin red. */
+const NETWORK_ERROR = /failed to fetch|networkerror|load failed|network request failed/i;
+
+/**
+ * Sin respuesta no se puede saber si el servidor alcanzó a guardar (D-182): el texto no lo
+ * afirma. Reintentar es seguro: la operación lleva su clave de idempotencia.
+ */
+export const SERVER_DOWN_HINT =
+  'Puede que no se haya guardado. Lo que escribiste sigue en pantalla: vuelve a intentar.';
 
 type Message = Parameters<typeof sonner.error>[0];
 
@@ -45,7 +53,8 @@ export const toast = Object.assign(
  */
 export function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) return err.message;
-  // `fetch` rechaza con `TypeError` («Failed to fetch») cuando no hay red o no hay servidor.
-  if (err instanceof TypeError) return SERVER_DOWN_MESSAGE;
+  // Un `fetch` propio (subidas, descargas) rechaza con `TypeError` cuando no hay red. Solo esos:
+  // un `TypeError` de un defecto del código no es «el servidor no respondió».
+  if (err instanceof TypeError && NETWORK_ERROR.test(err.message)) return SERVER_DOWN_MESSAGE;
   return fallback;
 }

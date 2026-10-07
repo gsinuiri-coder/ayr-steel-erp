@@ -70,6 +70,7 @@ import {
 import {
   customerLabel,
   formatKg,
+  formatKgPrecise,
   formatMeters,
   formatMoney,
   formatQty,
@@ -2137,7 +2138,7 @@ function CoilPoolConvert({
           )}
           {pool.data.candidates.length === 0 ? (
             <span className="text-destructive">
-              Ninguna bobina libre del pool alcanza para {formatQty(qty, 'kg')}.
+              Ninguna bobina libre del pool alcanza para {formatKgPrecise(qty)}.
             </span>
           ) : (
             <Select value={chosen} onValueChange={setCoilId}>
@@ -2365,14 +2366,14 @@ function RawMaterialCell({
   return (
     <div className="grid gap-0.5 text-xs">
       <span className="font-medium tabular-nums">
-        {needed === null ? 'Kg a reservar: —' : `${formatKg(needed)} a reservar`}
+        {needed === null ? 'Kg a reservar: —' : `${formatKgPrecise(needed)} a reservar`}
       </span>
       <span
         className={short ? 'text-destructive tabular-nums' : 'text-muted-foreground tabular-nums'}
       >
         {available === null
           ? 'No se pudo calcular la materia prima de este SKU'
-          : `${formatKg(available)} disponibles${short ? ' — no alcanza' : ''}`}
+          : `${formatKgPrecise(available)} disponibles${short ? ' — no alcanza' : ''}`}
       </span>
       {stock?.rawMaterialLabel && (
         <span className="text-muted-foreground">{stock.rawMaterialLabel}</span>

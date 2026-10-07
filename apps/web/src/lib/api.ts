@@ -46,6 +46,29 @@ const GENERIC_SERVER_ERRORS = new Set([
   'Gateway Timeout',
 ]);
 
+/**
+ * cc31: el texto de una respuesta de error. Un 5xx sin motivo propio (o con el «Internal server
+ * error» genérico de Nest, o el de una pasarela) se dice en castellano y sin número: nadie puede
+ * hacer nada con «Error 500». El límite de intentos llega con el texto en inglés de la librería
+ * («ThrottlerException: Too Many Requests»). Lo usan `api()` y los `fetch` propios (subidas).
+ */
+export function errorTextFor(status: number, raw: string | undefined): string {
+  if (status === 429) return TOO_MANY_REQUESTS_MESSAGE;
+  if (status >= 500 && (raw === undefined || GENERIC_SERVER_ERRORS.has(raw))) {
+    return SERVER_DOWN_MESSAGE;
+  }
+  return raw ?? 'No se pudo completar la operación.';
+}
+
+/**
+ * El servidor respondió y rechazó la operación (4xx): no grabó nada y reintentar igual no
+ * cambia el resultado. Un corte de red (`status` 0) o un 5xx **no** lo son: el desenlace es
+ * incierto (D-182) y la clave de idempotencia tiene que sobrevivir para el reintento.
+ */
+export function isClientError(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status >= 400 && err.status < 500;
+}
+
 let refreshInFlight: Promise<boolean> | null = null;
 
 export async function tryRefresh(): Promise<boolean> {
@@ -66,18 +89,9 @@ async function toError(res: Response): Promise<ApiError> {
     /* sin cuerpo */
   }
   const raw = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-  // cc31: un 5xx sin motivo propio (o con el «Internal server error» genérico de Nest, o el de
-  // una pasarela) se dice en castellano y sin número: nadie puede hacer nada con «Error 500».
-  let message = raw ?? `No se pudo completar la operación (${String(res.status)})`;
-  if (res.status >= 500 && (raw === undefined || GENERIC_SERVER_ERRORS.has(raw))) {
-    message = SERVER_DOWN_MESSAGE;
-  }
-  // El límite de intentos responde con el texto en inglés de la librería
-  // («ThrottlerException: Too Many Requests»).
-  if (res.status === 429) message = TOO_MANY_REQUESTS_MESSAGE;
   return new ApiError(
     res.status,
-    message,
+    errorTextFor(res.status, raw),
     body.errors,
     body.code,
     body.excess === undefined ? undefined : { excess: body.excess },
@@ -99,9 +113,12 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
       headers: options.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       cache: 'no-store',
-    }).catch(() => {
+    }).catch((err: unknown) => {
+      // Una petición cancelada (se navegó a otra pantalla) no es un error del servidor.
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
       // cc31: sin red o sin servidor, `fetch` rechaza con «Failed to fetch». Se convierte en un
       // `ApiError` de estado 0 para que toda vista lo muestre igual que cualquier otro error.
+      // Sigue siendo incierto para la idempotencia: ver `isClientError`.
       throw new ApiError(0, SERVER_DOWN_MESSAGE, undefined, 'NETWORK');
     });
 

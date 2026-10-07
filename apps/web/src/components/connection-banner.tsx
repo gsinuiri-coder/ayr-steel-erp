@@ -12,16 +12,21 @@ function subscribe(onChange: () => void): () => void {
   };
 }
 
+/** `true` mientras el navegador tenga red. En el servidor se asume que sí. */
+export function useOnline(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => navigator.onLine,
+    () => true,
+  );
+}
+
 /**
  * cc31: franja fija abajo mientras el navegador no tenga red. Sin ella, cada botón fallaba por
  * su cuenta con un error distinto y nadie sabía que el problema era la conexión.
  */
 export function ConnectionBanner() {
-  const online = useSyncExternalStore(
-    subscribe,
-    () => navigator.onLine,
-    () => true,
-  );
+  const online = useOnline();
   if (online) return null;
   return (
     <div

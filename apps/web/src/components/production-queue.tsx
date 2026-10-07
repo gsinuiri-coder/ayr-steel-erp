@@ -12,7 +12,7 @@ import {
   type SalesOrderDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatDate, formatMeters, formatQty, queueAgeLabel, todayIso } from '@/lib/format';
+import { formatDate, formatQtyAsIs, queueAgeLabel, todayIso } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
 import { OVERDUE_TONE, PRIORITY_TONE, type StatusTone } from '@/components/status-tone';
@@ -103,10 +103,12 @@ export function QueueEntrySummary({
         {entry.customerName !== null && <span className="text-sm">{entry.customerName}</span>}
       </span>
       <span className="text-xs text-muted-foreground">
-        {entry.productSku} ({spec}) · {formatMeters(entry.planMeters)} del plan
+        {entry.productSku} ({spec}) · {formatQtyAsIs(entry.planMeters, 'm')} del plan
         {entry.planItems.length > 0 && <> · {describePieces(entry.planItems)}</>}
-        {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>} ·
-        Compromiso:{' '}
+        {entry.theoreticalKg !== null && (
+          <> · {formatQtyAsIs(entry.theoreticalKg, 'kg')} teóricos</>
+        )}{' '}
+        · Compromiso:{' '}
         {entry.promisedDeliveryDate ? formatDate(entry.promisedDeliveryDate) : 'sin fecha'} · en
         cola desde {queueAgeLabel(entry.createdAt)}
       </span>

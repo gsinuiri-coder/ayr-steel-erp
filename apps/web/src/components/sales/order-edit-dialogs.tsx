@@ -21,7 +21,14 @@ import {
   type UpdateSalesOrderItemPriceInput,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { customerLabel, formatMoney, formatQty, isPositiveDecimal, unitSymbol } from '@/lib/format';
+import {
+  customerLabel,
+  formatKgPrecise,
+  formatMoney,
+  formatQty,
+  isPositiveDecimal,
+  unitSymbol,
+} from '@/lib/format';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
@@ -563,8 +570,8 @@ export function ChangeLineCoilDialog({
             ) : pool.data.candidates.length === 0 ? (
               <p className="text-xs text-destructive">
                 Ninguna bobina libre del pool {pool.data.sku} alcanza para{' '}
-                {formatQty(lastItem?.qty ?? '0', 'kg')} (disponible en el pool:{' '}
-                {formatQty(pool.data.availableKg, 'kg')}).
+                {formatKgPrecise(lastItem?.qty ?? '0')} (disponible en el pool:{' '}
+                {formatKgPrecise(pool.data.availableKg)}).
               </p>
             ) : (
               <>

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ConnectionBanner } from '@/components/connection-banner';
+import { ConnectionBanner, useOnline } from '@/components/connection-banner';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -13,6 +13,7 @@ export function Providers({ children }: { children: ReactNode }) {
         defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
       }),
   );
+  const online = useOnline();
   return (
     <QueryClientProvider client={client}>
       <TooltipProvider>{children}</TooltipProvider>
@@ -23,7 +24,17 @@ export function Providers({ children }: { children: ReactNode }) {
         «Duplicar» devolvía el toast—. Con dos toasts apilados (crear + emitir) la barra
         quedaba muerta varios segundos (S11, hallazgo T-02).
       */}
-      <Toaster position="bottom-right" richColors closeButton />
+      {/*
+        cc31: el error y la advertencia se quedan hasta cerrarlos, así que no pueden tapar la
+        barra fija de los formularios (su «Guardar» vive en esta misma esquina): los mensajes
+        flotan por encima de ella, y más arriba aún con la franja «Sin conexión».
+      */}
+      <Toaster
+        position="bottom-right"
+        richColors
+        closeButton
+        offset={{ bottom: online ? 72 : 112, right: 24 }}
+      />
       <ConnectionBanner />
     </QueryClientProvider>
   );
