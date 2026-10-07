@@ -1211,13 +1211,19 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
     const tally = newTally();
     for (let i = 0; i < ITERATIONS; i++) {
       const agg = await shortfallAggregate();
-      await race(tally, `iteración ${i}`, [
-        () => roofing.close(admin, agg.productionOrderId, closeRoofingOrderSchema.parse({})),
-        async () => {
-          await sleep((i % 10) * 12);
-          return salesOrders.completeReservation(admin, agg.salesOrder.id, 'cc30 completar');
-        },
-      ]);
+      // Una de las dos arranca escalonada, por turnos: si el cierre entra primero libera la reserva
+      // y completar ya no tiene faltante (rechazo de dominio). Con un solo sentido de escalón,
+      // completar no ganaba nunca en el runner y el par no probaba nada (CI del corte 2).
+      const delay = (i % 10) * 12;
+      const close = async () => {
+        if (i % 2 === 1) await sleep(delay);
+        return roofing.close(admin, agg.productionOrderId, closeRoofingOrderSchema.parse({}));
+      };
+      const complete = async () => {
+        if (i % 2 === 0) await sleep(delay);
+        return salesOrders.completeReservation(admin, agg.salesOrder.id, 'cc30 completar');
+      };
+      await race(tally, `iteración ${i}`, [close, complete]);
     }
     expectClean(tally, '(d) cerrar coberturas × completar reserva');
   });
