@@ -51,17 +51,19 @@ function serviceWith(opts: {
   };
   const update = jest.fn().mockResolvedValue({});
   const tx = {
-    $queryRaw: jest.fn().mockResolvedValue([
-      {
+    // cc30: el `FOR UPDATE` de la puerta devuelve solo el id; la cabecera se lee después.
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 'q-1' }]),
+    quotation: {
+      findUnique: jest.fn().mockResolvedValue({
         id: 'q-1',
         seq: 7,
         status: opts.status ?? 'EMITTED',
-        valid_until: null,
-        created_by_id: 'u-1',
-        seller_id: 'u-1',
+        validUntil: null,
+        createdById: 'u-1',
+        sellerId: 'u-1',
         notes: opts.notes === undefined ? 'Factura externa: FFA1-1419' : opts.notes,
-      },
-    ]),
+      }),
+    },
     quotationItem: {
       findFirst: jest.fn(({ where }: { where: { lineNumber?: number } }) =>
         Promise.resolve(

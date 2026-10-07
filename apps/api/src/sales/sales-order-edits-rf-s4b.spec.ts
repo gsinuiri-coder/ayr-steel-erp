@@ -76,16 +76,10 @@ function build(
 ) {
   const found = opts.item ?? item();
   const tx = {
-    $queryRaw: jest.fn().mockResolvedValue([
-      {
-        id: 'o-1',
-        seq: 7,
-        status: 'CONFIRMED',
-        created_by_id: 'u-1',
-        seller_id: null,
-        notes: opts.notes === undefined ? IMPORTED : opts.notes,
-      },
-    ]),
+    // cc30: la puerta (`lockDocuments`) devuelve los ids que bloqueó; la cabecera se lee después.
+    $queryRaw: jest.fn((_sql: TemplateStringsArray, ids: string[]) =>
+      Promise.resolve(ids.map((id) => ({ id }))),
+    ),
     fiscalDocument: { findFirst: jest.fn().mockResolvedValue(null) },
     salesOrderItem: {
       findFirst: jest.fn().mockResolvedValue(found),
@@ -94,11 +88,25 @@ function build(
         .fn()
         .mockResolvedValue({ _sum: { subtotalPen: D('11715.2540'), igvPen: D('2108.7457') } }),
     },
-    salesOrder: { update: jest.fn().mockResolvedValue({}) },
+    salesOrder: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'o-1',
+        seq: 7,
+        status: 'CONFIRMED',
+        createdById: 'u-1',
+        sellerId: null,
+        notes: opts.notes === undefined ? IMPORTED : opts.notes,
+      }),
+      update: jest.fn().mockResolvedValue({}),
+    },
     dispatchItem: {
       findFirst: jest.fn().mockResolvedValue(opts.dispatched ? { id: 'd-1' } : null),
     },
-    reservation: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    reservation: {
+      // cc30: los ids de las reservas de la línea, para tomarlas por la puerta.
+      findMany: jest.fn().mockResolvedValue([{ id: 'res-old' }]),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     coil: {
       findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'c-2', code: 'SALDO-2' }),
     },
@@ -289,6 +297,17 @@ describe('SalesOrderEditsService.updateItemCoil — D-254', () => {
     const { service, tx, orders, audit } = build();
     await service.updateItemCoil(ADMIN, 'o-1', 'i-1', input);
     expect(tx.reservation.updateMany).toHaveBeenCalledTimes(1);
+    // cc30: pedido → reservas de la línea, por la puerta, antes de liberar la reserva anterior.
+    const locks = (tx.$queryRaw.mock.calls as [TemplateStringsArray, string[]][]).map(
+      ([sql, ids]) => [/FROM "(\w+)"/.exec(sql.join('?'))?.[1], ids],
+    );
+    expect(locks).toEqual([
+      ['sales_orders', ['o-1']],
+      ['reservations', ['res-old']],
+    ]);
+    expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      tx.reservation.updateMany.mock.invocationCallOrder[0] ?? 0,
+    );
     // D-341: liberar la reserva anterior cierra también su faltante.
     expect(tx.reservation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -362,17 +381,15 @@ describe('D-256 (aclaración): cambiar la cantidad de un pedido importado', () =
     const { service, tx } = build({ notes, item: item({ sku: 'COB-1' }) });
     Object.assign(tx, {
       reservation: { findMany: jest.fn().mockResolvedValue([]) },
-      // El pedido es del vendedor que lo edita (D-238).
-      $queryRaw: jest.fn().mockResolvedValue([
-        {
-          id: 'o-1',
-          seq: 7,
-          status: 'CONFIRMED',
-          created_by_id: 'u-2',
-          seller_id: 'u-2',
-          notes,
-        },
-      ]),
+    });
+    // El pedido es del vendedor que lo edita (D-238).
+    tx.salesOrder.findUnique.mockResolvedValue({
+      id: 'o-1',
+      seq: 7,
+      status: 'CONFIRMED',
+      createdById: 'u-2',
+      sellerId: 'u-2',
+      notes,
     });
     const resolve = resolveSalesLines as jest.Mock;
     resolve.mockReset();

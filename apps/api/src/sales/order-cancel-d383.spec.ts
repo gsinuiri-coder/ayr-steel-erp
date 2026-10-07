@@ -55,6 +55,8 @@ describe('D-383 — anular un pedido', () => {
     /** Filas de `groupBy` de lo emitido y lo acreditado por línea (`invoicedByOrderItem`). */
     emitted?: unknown[];
     credited?: unknown[];
+    /** La cotización de origen del pedido (cc30: se toma por la puerta antes que el pedido). */
+    quotationId?: string;
   }
 
   const sumRow = (salesOrderItemId: string, qty: string, total: string) => ({
@@ -68,7 +70,8 @@ describe('D-383 — anular un pedido', () => {
 
   /** Lo que la consulta trae: vivos y borradores. Por defecto, una factura aceptada. */
   const withDocDefaults = (docs: Scenario['docs']) =>
-    docs.map((d) => ({
+    docs.map((d, i) => ({
+      id: `fd-${i}`,
       docType: 'FACTURA',
       status: 'ACCEPTED',
       createdAt: new Date('2026-10-03T15:00:00.000Z'),
@@ -94,22 +97,11 @@ describe('D-383 — anular un pedido', () => {
 
   async function build(s: Scenario) {
     const audit = { write: jest.fn().mockResolvedValue(undefined) };
-    const queryRaw = jest.fn((strings: TemplateStringsArray) =>
-      Promise.resolve(
-        strings.join('?').includes('FROM "sales_orders"')
-          ? [
-              {
-                id: 'o-1',
-                seq: 7,
-                status: SalesOrderStatus.CONFIRMED,
-                origin: 'CREATED_HERE',
-                quotation_id: null,
-                promised_delivery_date: null,
-              },
-            ]
-          : [],
-      ),
+    // cc30: la puerta (`lockDocuments`) devuelve los ids que bloqueó; las columnas se leen después.
+    const queryRaw = jest.fn((_strings: TemplateStringsArray, ids: string[]) =>
+      Promise.resolve(ids.map((id) => ({ id }))),
     );
+    const docs = withDocDefaults(s.docs);
     const salesOrderItems = [
       {
         id: 'soi-1',
@@ -132,7 +124,24 @@ describe('D-383 — anular un pedido', () => {
         ]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      salesOrder: { update: jest.fn() },
+      salesOrder: {
+        // cc30: el plan de la anulación lee solo la cotización; `lockOrder`, la cabecera.
+        findUnique: jest.fn((args: { select: Record<string, unknown> }) =>
+          Promise.resolve(
+            'seq' in args.select
+              ? {
+                  id: 'o-1',
+                  seq: 7,
+                  status: SalesOrderStatus.CONFIRMED,
+                  origin: 'CREATED_HERE',
+                  quotationId: s.quotationId ?? null,
+                  promisedDeliveryDate: null,
+                }
+              : { quotationId: s.quotationId ?? null },
+          ),
+        ),
+        update: jest.fn(),
+      },
       salesOrderItem: {
         findMany: jest.fn((args: { select: Record<string, unknown> }) =>
           Promise.resolve(
@@ -142,7 +151,17 @@ describe('D-383 — anular un pedido', () => {
           ),
         ),
       },
-      fiscalDocument: { findMany: jest.fn().mockResolvedValue(withDocDefaults(s.docs)) },
+      fiscalDocument: {
+        // cc30: el plan de la anulación pide solo los ids de los borradores (`status: DRAFT`);
+        // `commercialCancelBlocks`, los vivos y los borradores con sus columnas.
+        findMany: jest.fn((args: { where: { status?: unknown } }) =>
+          Promise.resolve(
+            args.where.status === 'DRAFT'
+              ? docs.filter((d) => d.status === 'DRAFT').map((d) => ({ id: d.id }))
+              : docs,
+          ),
+        ),
+      },
       // `invoicedByOrderItem`: emitido y acreditado por línea (neto de D-346).
       fiscalDocumentItem: {
         groupBy: jest
@@ -198,13 +217,35 @@ describe('D-383 — anular un pedido', () => {
   });
 
   it('toma el lock de los borradores del pedido antes de mirar los comprobantes', async () => {
-    const { service, tx } = await build(happy());
-    await service.cancel(ADMIN, 'o-1', { reason: 'el cliente desistió' });
-    const sqls = (tx.$queryRaw.mock.calls as unknown[][]).map((c) =>
-      (c[0] as TemplateStringsArray).join('?'),
-    );
-    expect(sqls.some((q) => q.includes('"fiscal_documents"') && q.includes('FOR UPDATE'))).toBe(
-      true,
+    // cc30 (D-470/D-471): todo al inicio y por la puerta, en el orden canónico —borradores →
+    // cotización → pedido → reservas—; la relectura con el pedido tomado no pide nada nuevo.
+    const s = happy();
+    s.quotationId = 'q-9';
+    s.docs = [
+      { number: null, origin: 'ISSUED_HERE', status: 'DRAFT', totalPen: D('10'), creditNotes: [] },
+    ];
+    const { service, tx } = await build(s);
+    await expect(
+      service.cancel(ADMIN, 'o-1', { reason: 'el cliente desistió' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const calls = tx.$queryRaw.mock.calls as [TemplateStringsArray, string[]][];
+    const locks = calls.map(([sql, ids]) => {
+      const text = sql.join('?');
+      expect(text).toMatch(/FOR UPDATE$/);
+      return [/FROM "(\w+)"/.exec(text)?.[1], ids];
+    });
+    expect(locks).toEqual([
+      ['fiscal_documents', ['fd-0']],
+      ['quotations', ['q-9']],
+      ['sales_orders', ['o-1']],
+      ['reservations', ['res-p']],
+    ]);
+    // El lock de los borradores va antes de la lectura de `commercialCancelBlocks`.
+    const docReads = tx.fiscalDocument.findMany.mock.calls as [{ where: { status?: unknown } }][];
+    const commercialRead = docReads.findIndex(([a]) => a.where.status !== 'DRAFT');
+    expect(commercialRead).toBeGreaterThanOrEqual(0);
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.fiscalDocument.findMany.mock.invocationCallOrder[commercialRead]!,
     );
   });
 

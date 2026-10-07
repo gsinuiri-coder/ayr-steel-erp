@@ -7,6 +7,7 @@ import {
 import { quotationCode, salesOrderCode } from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import { productsWithUsage } from '../catalog/product-usage';
+import { lockDocuments } from '../inventory/document-locks';
 
 /**
  * **Purga de cotizaciones anuladas elegidas por el dueño (D-350).**
@@ -178,8 +179,13 @@ export async function executeQuotationPurge(
   expectedCodes: readonly string[],
 ): Promise<PurgeResult> {
   const seqs = numbers.map(parseQuotationNumber).filter((s): s is number => s !== null);
-  // El mismo orden siempre (por `seq`): dos purgas a la vez no se cruzan los locks.
-  await tx.$queryRaw`SELECT "id" FROM "quotations" WHERE "seq" = ANY(${seqs}::int[]) ORDER BY "seq" FOR UPDATE`;
+  // El mismo orden siempre: dos purgas a la vez no se cruzan los locks. cc30: por la puerta y
+  // por id, como cualquier otra toma de cotizaciones (antes, por `seq`).
+  const toLock = await tx.quotation.findMany({
+    where: { seq: { in: seqs } },
+    select: { id: true },
+  });
+  await lockDocuments(tx, { quotations: toLock.map((q) => q.id) });
   const plan = await planQuotationPurge(tx, numbers);
   const byCode = (a: string, b: string) => a.localeCompare(b);
   const planned = plan.purgeable.map((c) => c.code).sort(byCode);

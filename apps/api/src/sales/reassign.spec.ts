@@ -9,8 +9,8 @@ describe('QuotationsService - Reassign', () => {
 
   const mockPrisma = {
     user: { findUnique: jest.fn() },
-    quotation: { update: jest.fn() },
-    salesOrder: { updateMany: jest.fn() },
+    quotation: { findUnique: jest.fn(), update: jest.fn() },
+    salesOrder: { findMany: jest.fn(), updateMany: jest.fn() },
     $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   } as any;
@@ -38,19 +38,22 @@ describe('QuotationsService - Reassign', () => {
       role: 'VENDEDOR',
       isActive: true,
     });
-    mockPrisma.$queryRaw.mockResolvedValueOnce([
-      {
-        id: 'q-1',
-        seq: 1,
-        status: 'DRAFT',
-        valid_until: null,
-        created_by_id: 'v-1',
-        seller_id: 'v-1',
-        notes: '',
-      },
-    ]);
+    // cc30: la puerta (`lockDocuments`) devuelve los ids que bloqueó; la cabecera se lee después.
+    mockPrisma.$queryRaw.mockImplementation((_sql: unknown, ids: string[]) =>
+      Promise.resolve(ids.map((id) => ({ id }))),
+    );
+    mockPrisma.quotation.findUnique.mockResolvedValueOnce({
+      id: 'q-1',
+      seq: 1,
+      status: 'DRAFT',
+      validUntil: null,
+      createdById: 'v-1',
+      sellerId: 'v-1',
+      notes: '',
+    });
     mockPrisma.$transaction.mockImplementation((cb: any) => cb(mockPrisma));
     mockPrisma.quotation.update.mockResolvedValueOnce({});
+    mockPrisma.salesOrder.findMany.mockResolvedValueOnce([{ id: 'so-1' }]);
     mockPrisma.salesOrder.updateMany.mockResolvedValueOnce({ count: 1 });
 
     jest.spyOn(service as any, 'findOne').mockResolvedValueOnce({ id: 'q-1' });
@@ -59,6 +62,21 @@ describe('QuotationsService - Reassign', () => {
     expect(res.id).toBe('q-1');
     expect(mockPrisma.quotation.update).toHaveBeenCalledWith({
       where: { id: 'q-1' },
+      data: { sellerId: 'v-2' },
+    });
+    // cc30 (C7): cotización → pedido, los dos por la puerta, y los pedidos antes de reescribirlos.
+    const locks = (mockPrisma.$queryRaw.mock.calls as [TemplateStringsArray, string[]][]).map(
+      ([sql, ids]) => [/FROM "(\w+)"/.exec(sql.join('?'))?.[1], ids],
+    );
+    expect(locks).toEqual([
+      ['quotations', ['q-1']],
+      ['sales_orders', ['so-1']],
+    ]);
+    expect(mockPrisma.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+      mockPrisma.salesOrder.updateMany.mock.invocationCallOrder[0],
+    );
+    expect(mockPrisma.salesOrder.updateMany).toHaveBeenCalledWith({
+      where: { quotationId: 'q-1' },
       data: { sellerId: 'v-2' },
     });
   });

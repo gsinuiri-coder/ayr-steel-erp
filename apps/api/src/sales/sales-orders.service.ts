@@ -10,6 +10,7 @@ import {
   CoilKind,
   CoilStatus,
   FiscalDocType,
+  FiscalDocumentStatus,
   Prisma,
   ProductionOrderStatus,
   ProductionReportStatus,
@@ -193,6 +194,7 @@ import {
   rawMaterialLockSet,
   type RawMaterialSpecRef,
 } from './raw-material';
+import { lockDocuments } from '../inventory/document-locks';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -337,6 +339,82 @@ type ReserveRef =
  * parcial"). Anular el pedido libera las reservas por el mismo camino, y se bloquea
  * mientras una orden de producción viva esté fabricando con ese material.
  */
+/**
+ * cc30: la cotización bloqueada por la puerta y su cabecera leída después, con los nombres de
+ * columna que el resto del servicio ya usaba.
+ */
+async function lockQuotationHead(tx: Prisma.TransactionClient, quotationId: string) {
+  await lockDocuments(tx, { quotations: [quotationId] });
+  const q = await tx.quotation.findUnique({
+    where: { id: quotationId },
+    select: {
+      id: true,
+      seq: true,
+      status: true,
+      validUntil: true,
+      createdById: true,
+      sellerId: true,
+    },
+  });
+  return q
+    ? {
+        id: q.id,
+        seq: q.seq,
+        status: q.status,
+        valid_until: q.validUntil,
+        created_by_id: q.createdById,
+        seller_id: q.sellerId,
+      }
+    : null;
+}
+
+/**
+ * cc30: lo que anular un pedido va a escribir, para tomarlo al inicio por la puerta. Solo ids y
+ * sin bloqueo: la cotización de origen, los borradores de comprobante del pedido (por cabecera o
+ * por líneas), las OP vivas de sus reservas y las reservas.
+ */
+async function cancelLockPlan(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+): Promise<{
+  quotationId: string | null;
+  drafts: string[];
+  productionOrders: string[];
+  reservations: string[];
+}> {
+  const [head, drafts, reservations] = await Promise.all([
+    tx.salesOrder.findUnique({ where: { id: orderId }, select: { quotationId: true } }),
+    tx.fiscalDocument.findMany({
+      where: {
+        status: FiscalDocumentStatus.DRAFT,
+        OR: [
+          { salesOrderId: orderId },
+          { items: { some: { salesOrderItem: { salesOrderId: orderId } } } },
+        ],
+      },
+      select: { id: true },
+    }),
+    tx.reservation.findMany({
+      where: { salesOrderId: orderId },
+      select: {
+        id: true,
+        productionOrders: {
+          where: {
+            status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+          },
+          select: { id: true },
+        },
+      },
+    }),
+  ]);
+  return {
+    quotationId: head?.quotationId ?? null,
+    drafts: drafts.map((d) => d.id),
+    productionOrders: reservations.flatMap((r) => r.productionOrders.map((o) => o.id)),
+    reservations: reservations.map((r) => r.id),
+  };
+}
+
 @Injectable()
 export class SalesOrdersService {
   constructor(
@@ -377,20 +455,7 @@ export class SalesOrdersService {
     const shortfalls: ShortfallLine[] = [];
     const orderId = await this.prisma.$transaction(
       async (tx) => {
-        const rows = await tx.$queryRaw<
-          {
-            id: string;
-            seq: number;
-            status: QuotationStatus;
-            valid_until: Date | null;
-            created_by_id: string;
-            seller_id: string | null;
-          }[]
-        >`
-        SELECT "id", "seq", "status", "valid_until", "created_by_id", "seller_id"
-        FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
-      `;
-        const head = rows[0];
+        const head = await lockQuotationHead(tx, quotationId);
         if (!head) throw new NotFoundException('Cotización no encontrada');
         assertSellerAccess(actor, head.seller_id, 'Cotización');
 
@@ -1938,20 +2003,7 @@ export class SalesOrdersService {
     status: QuotationStatus;
     validUntil: string | null;
   }> {
-    const rows = await tx.$queryRaw<
-      {
-        id: string;
-        seq: number;
-        status: QuotationStatus;
-        valid_until: Date | null;
-        created_by_id: string;
-        seller_id: string | null;
-      }[]
-    >`
-      SELECT "id", "seq", "status", "valid_until", "created_by_id", "seller_id"
-      FROM "quotations" WHERE "id" = ${quotationId}::uuid FOR UPDATE
-    `;
-    const head = rows[0];
+    const head = await lockQuotationHead(tx, quotationId);
     if (!head) throw new NotFoundException('Cotización no encontrada');
     if (actor.role !== Role.ADMINISTRADOR && actor.id !== (head.seller_id ?? head.created_by_id)) {
       throw new NotFoundException('Cotización no encontrada');
@@ -2359,6 +2411,20 @@ export class SalesOrdersService {
   ): Promise<SalesOrderDto> {
     const { reason } = input;
     await this.prisma.$transaction(async (tx) => {
+      // cc30 (D-470/D-471): todo lo que la anulación escribe, al inicio y por la puerta —borradores
+      // de comprobante → cotización → pedido → OP vivas → reservas—. Antes iba pedido → reservas →
+      // borradores → OP → cotización, y eso se cruzaba con reasignar la cotización (cotización →
+      // pedidos, C7) y con reactivar o traer un comprobante (comprobante → pedido). Los ids se leen
+      // sin bloqueo; el estado se lee abajo, ya bloqueado, y los borradores y reservas se vuelven a
+      // pedir con el pedido tomado (lo que nació en el medio va con `NOWAIT`).
+      const plan = await cancelLockPlan(tx, id);
+      await lockDocuments(tx, {
+        fiscalDocuments: plan.drafts,
+        quotations: [plan.quotationId],
+        salesOrders: [id],
+        productionOrders: plan.productionOrders,
+        reservations: plan.reservations,
+      });
       const order = await this.lockOrder(tx, id);
       if (order.status === SalesOrderStatus.CANCELLED) {
         throw new ConflictException('El pedido ya está anulado');
@@ -2367,14 +2433,17 @@ export class SalesOrdersService {
         throw new BadRequestException('Un pedido ya atendido no se anula');
       }
 
-      // Lock de las reservas antes de leerlas, en orden de id. `production.report` escribe
+      // Las reservas, bloqueadas antes de leerlas y en orden de id. `production.report` escribe
       // primero el pedido y después la reserva; sin este lock, las dos transacciones tomaban
       // los mismos dos recursos en orden inverso y Postgres abortaba una con un deadlock que
-      // salía al usuario como un 500 opaco.
-      await tx.$queryRaw`
-        SELECT "id" FROM "reservations" WHERE "sales_order_id" = ${id}::uuid
-        ORDER BY "id" FOR UPDATE
-      `;
+      // salía al usuario como un 500 opaco. cc30: ya vienen tomadas de arriba; con el pedido en
+      // mano se relee el conjunto, y lo que nació entre la lectura y la toma se pide ahora.
+      const relock = await cancelLockPlan(tx, id);
+      await lockDocuments(tx, {
+        fiscalDocuments: relock.drafts,
+        productionOrders: relock.productionOrders,
+        reservations: relock.reservations,
+      });
       const reservations = await tx.reservation.findMany({
         where: { salesOrderId: id },
         include: {
@@ -2414,19 +2483,7 @@ export class SalesOrdersService {
       // deshace primero la venta. Los borradores del pedido se bloquean antes, en orden de id:
       // uno que se esté registrando espera a este commit y `assertStillAvailable` ve el pedido
       // ya anulado. Crear un comprobante o un despacho toma el lock del pedido, que ya es nuestro.
-      await tx.$queryRaw`
-        SELECT d."id" FROM "fiscal_documents" d
-        WHERE d."status" = 'DRAFT'
-          AND (
-            d."sales_order_id" = ${id}::uuid
-            OR EXISTS (
-              SELECT 1 FROM "fiscal_document_items" i
-              JOIN "sales_order_items" s ON s."id" = i."sales_order_item_id"
-              WHERE i."document_id" = d."id" AND s."sales_order_id" = ${id}::uuid
-            )
-          )
-        ORDER BY d."id" FOR UPDATE
-      `;
+      // cc30: ya vienen tomados de arriba, antes que el pedido (D-471: comprobante → pedido).
       const orderCode = salesOrderCode(order.seq);
       const commercial = await commercialCancelBlocks(tx, id, orderCode);
       if (commercial.length > 0) throw new BadRequestException(commercial.join('. '));
@@ -2439,11 +2496,10 @@ export class SalesOrdersService {
       }
 
       if (idleIds.length > 0) {
-        // Sin lock previo de las OP a propósito: montar una bobina bloquea la OP y después la
-        // reserva, y tomarlas acá en el orden inverso abriría un deadlock. En su lugar, la
-        // condición `DRAFT` se reevalúa al escribir: si planta montó una bobina entre la lectura
-        // y esta escritura, la fila ya no es `DRAFT`, se actualizan menos y la anulación entera
-        // se deshace — nunca queda una OP en curso sobre un pedido anulado.
+        // cc30: las OP vivas ya vienen tomadas de arriba, detrás del pedido y antes de las
+        // reservas (D-470). La condición `DRAFT` se sigue reevaluando al escribir, por las dudas:
+        // si no coincide, la anulación entera se deshace — nunca queda una OP en curso sobre un
+        // pedido anulado.
         const cancelledOrders = await tx.productionOrder.updateMany({
           where: { id: { in: idleIds }, status: ProductionOrderStatus.DRAFT },
           data: {
@@ -2601,6 +2657,29 @@ export class SalesOrdersService {
     reason: string,
   ): Promise<ReservationDto> {
     await this.prisma.$transaction(async (tx) => {
+      // cc30 (D-472/D-474, matriz V17): la reserva con su pedido y sus OP bloqueados —pedido → OP
+      // → reserva— antes de decidir. Antes no se bloqueaba nada: «la OP está fabricando» se leía
+      // sin bloqueo y una OP podía nacer o empezar entre la lectura y la liberación.
+      const link = await tx.reservation.findUnique({
+        where: { id: reservationId },
+        // Las OP vivas, como al anular el pedido: son las que deciden «está fabricando».
+        select: {
+          salesOrderId: true,
+          productionOrders: {
+            where: {
+              status: { in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS] },
+            },
+            select: { id: true },
+          },
+        },
+      });
+      if (link) {
+        await lockDocuments(tx, {
+          salesOrders: [link.salesOrderId],
+          productionOrders: link.productionOrders.map((o) => o.id),
+          reservations: [reservationId],
+        });
+      }
       const reservation = await tx.reservation.findUnique({
         where: { id: reservationId },
         select: {
@@ -2702,9 +2781,7 @@ export class SalesOrdersService {
         // El mismo orden de locks que el resto del pedido: primero el pedido, después la fila de
         // la reserva y al final el saldo del ítem (`lockAvailability`).
         const order = await this.lockOrder(tx, head.salesOrderId);
-        await tx.$queryRaw`
-          SELECT "id" FROM "reservations" WHERE "id" = ${reservationId}::uuid FOR UPDATE
-        `;
+        await lockDocuments(tx, { reservations: [reservationId] });
         const reservation = await tx.reservation.findUniqueOrThrow({
           where: { id: reservationId },
           select: {
@@ -2881,10 +2958,12 @@ export class SalesOrdersService {
         if (order.status === SalesOrderStatus.FULFILLED) {
           throw new BadRequestException('El pedido ya está atendido: no hay reserva que completar');
         }
-        await tx.$queryRaw`
-          SELECT "id" FROM "reservations" WHERE "sales_order_id" = ${orderId}::uuid
-          ORDER BY "id" FOR UPDATE
-        `;
+        // cc30: las reservas del pedido por la puerta, detrás del pedido (ya tomado).
+        const own = await tx.reservation.findMany({
+          where: { salesOrderId: orderId },
+          select: { id: true },
+        });
+        await lockDocuments(tx, { reservations: own.map((r) => r.id) });
         // `ACTIVA` o `CONSUMIDA`: la producción o el despacho agotan lo reservado (`qty` llega a 0
         // y la fila pasa a `CONSUMIDA`) sin tocar `shortfall_qty`, así que el faltante sigue siendo
         // del pedido. Una `LIBERADA` ya no promete nada (D-341) y no entra.
@@ -4220,30 +4299,27 @@ export class SalesOrdersService {
     quotationId: string | null;
     promisedDeliveryDate: string | null;
   }> {
-    const rows = await tx.$queryRaw<
-      {
-        id: string;
-        seq: number;
-        status: SalesOrderStatus;
-        origin: SalesOrderOrigin;
-        quotation_id: string | null;
-        promised_delivery_date: Date | null;
-      }[]
-    >`
-      SELECT "id", "seq", "status", "origin", "quotation_id",
-             "promised_delivery_date"
-      FROM "sales_orders" WHERE "id" = ${id}::uuid FOR UPDATE
-    `;
-    const row = rows[0];
+    await lockDocuments(tx, { salesOrders: [id] });
+    const row = await tx.salesOrder.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        seq: true,
+        status: true,
+        origin: true,
+        quotationId: true,
+        promisedDeliveryDate: true,
+      },
+    });
     if (!row) throw new NotFoundException('Pedido no encontrado');
     return {
       id: row.id,
       seq: row.seq,
       status: row.status,
       origin: row.origin,
-      quotationId: row.quotation_id,
-      promisedDeliveryDate: row.promised_delivery_date
-        ? row.promised_delivery_date.toISOString().slice(0, 10)
+      quotationId: row.quotationId,
+      promisedDeliveryDate: row.promisedDeliveryDate
+        ? row.promisedDeliveryDate.toISOString().slice(0, 10)
         : null,
     };
   }

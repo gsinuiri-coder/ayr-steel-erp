@@ -33,17 +33,19 @@ describe('D-256 (3): la marca «Factura externa:» la pone solo el importador', 
   it('la edición la rechaza en una cotización que no la tenía, y la acepta en una importada', async () => {
     const run = async (currentNotes: string | null) => {
       const tx = {
-        $queryRaw: jest.fn().mockResolvedValue([
-          {
+        // cc30: el `FOR UPDATE` de la puerta devuelve solo el id; la cabecera se lee después.
+        $queryRaw: jest.fn().mockResolvedValue([{ id: 'q-1' }]),
+        quotation: {
+          findUnique: jest.fn().mockResolvedValue({
             id: 'q-1',
             seq: 9,
             status: 'EMITTED',
-            valid_until: null,
-            created_by_id: 'u-1',
-            seller_id: 'u-1',
+            validUntil: null,
+            createdById: 'u-1',
+            sellerId: 'u-1',
             notes: currentNotes,
-          },
-        ]),
+          }),
+        },
         customer: { findUnique: jest.fn().mockRejectedValue(new Error('siguió de largo')) },
       };
       const svc = Object.create(QuotationsService.prototype) as QuotationsService;

@@ -399,10 +399,12 @@ export class SalesOrderEditsService {
       throw new NotFoundException(`${coil.code}: no existe el producto de venta de la bobina`);
     }
 
-    await tx.$queryRaw`
-          SELECT "id" FROM "reservations" WHERE "sales_order_item_id" = ${item.id}::uuid
-          ORDER BY "id" FOR UPDATE
-        `;
+    // cc30: las reservas de la línea por la puerta, detrás del pedido (ya tomado).
+    const lineReservations = await tx.reservation.findMany({
+      where: { salesOrderItemId: item.id },
+      select: { id: true },
+    });
+    await lockDocuments(tx, { reservations: lineReservations.map((r) => r.id) });
     await tx.reservation.updateMany({
       where: { salesOrderItemId: item.id, status: ReservationStatus.ACTIVE },
       data: {
@@ -884,21 +886,20 @@ export class SalesOrderEditsService {
     orderId: string,
     _what: string,
   ): Promise<LockedOrder> {
-    const rows = await tx.$queryRaw<
-      {
-        id: string;
-        seq: number;
-        status: SalesOrderStatus;
-        created_by_id: string;
-        seller_id: string | null;
-        notes: string | null;
-      }[]
-    >`
-      SELECT "id", "seq", "status", "created_by_id", "seller_id", "notes"
-      FROM "sales_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE
-    `;
-    const head = rows[0];
-    if (!head) throw new NotFoundException('Pedido no encontrado');
+    await lockDocuments(tx, { salesOrders: [orderId] });
+    const found = await tx.salesOrder.findUnique({
+      where: { id: orderId },
+      select: { id: true, seq: true, status: true, createdById: true, sellerId: true, notes: true },
+    });
+    if (!found) throw new NotFoundException('Pedido no encontrado');
+    const head = {
+      id: found.id,
+      seq: found.seq,
+      status: found.status,
+      created_by_id: found.createdById,
+      seller_id: found.sellerId,
+      notes: found.notes,
+    };
     if (head.status === SalesOrderStatus.CANCELLED) {
       throw new BadRequestException(`El pedido está anulado: no se puede ${_what}`);
     }
