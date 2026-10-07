@@ -111,10 +111,27 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
   }) => {
     await loginAsAdmin(page);
     await mockReports(page);
+    const request = page.waitForRequest(
+      (r) => new URL(r.url()).pathname === '/api/reports/coil-waste',
+    );
     await page.goto('/reportes/merma?from=2026-10-01&to=2026-10-07');
+    // Lo que se pide al API: el periodo y la pestaña, tal cual.
+    expect(new URL((await request).url()).search).toBe(
+      '?from=2026-10-01&to=2026-10-07&businessLine=metallic-roofing',
+    );
 
     const rows = page.getByTestId('merma-bobina');
     await expect(rows).toHaveCount(3);
+    // Una bobina sin teórico: el aviso corto a la vista y el consumo de las comparables.
+    await expect(page.getByTestId('aviso-sin-teorico')).toContainText(
+      '1 bobina sin teórico atribuible',
+    );
+    await expect(page.getByTestId('cifras-merma')).toContainText(
+      'solo 2 de 3 bobinas · consumieron 3,250.75 kg',
+    );
+    await expect(page.getByTestId('tabla-merma-total')).toContainText(
+      'teórico y merma de 2 de 3, que consumieron 3,250.75 kg',
+    );
     await expect(rows.first()).toContainText('BOB-E2E-001');
 
     await page.getByRole('button', { name: 'Consumido (kg)' }).click();
@@ -291,7 +308,12 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
     await page.getByRole('button', { name: 'Venta (S/)', exact: true }).click();
     await expect(rows.first()).toContainText('AZUL');
 
-    // El diálogo se conserva: la fila lo abre.
+    // El diálogo se conserva: la fila lo abre, y se anuncia como tal.
+    await expect(rows.first()).toHaveAttribute('aria-haspopup', 'dialog');
+    await expect(rows.first()).toHaveAttribute(
+      'aria-label',
+      'Ver el desglose de Coberturas 0.40 mm AZUL',
+    );
     await rows.first().click();
     const dialog = page.getByTestId('desglose-material');
     await expect(dialog).toBeVisible();
@@ -300,6 +322,34 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
     await expect(dialog.getByRole('link', { name: 'F001-00000102' })).toHaveAttribute(
       'href',
       `/comprobantes/${uuid(102)}`,
+    );
+  });
+
+  test('Ventas por material: pide al API la línea y los filtros; traduce un `range=prev` guardado', async ({
+    page,
+  }) => {
+    const prev = previousMonth(businessToday());
+    await loginAsAdmin(page);
+    await mockReports(page);
+
+    // Lo que se pide: periodo, pestaña y filtros, tal cual (solo la consulta filtrada lleva `kind`).
+    const filtered = page.waitForRequest((r) => {
+      const url = new URL(r.url());
+      return url.pathname === '/api/reports/sales-by-material' && url.searchParams.has('kind');
+    });
+    await page.goto(
+      '/reportes/ventas-material?from=2026-09-01&to=2026-09-30&linea=drywall&tipo=PERFIL&espesor=0.40&color=ROJO',
+    );
+    expect(new URL((await filtered).url()).search).toBe(
+      '?from=2026-09-01&to=2026-09-30&businessLine=drywall&kind=PERFIL&thicknessMm=0.40&color=ROJO',
+    );
+
+    // Un enlace guardado de antes de cc32: `range=prev` sin fechas pasa al mes anterior.
+    await page.goto('/reportes/ventas-material?range=prev');
+    await expect(page).toHaveURL(`/reportes/ventas-material?from=${prev.from}&to=${prev.to}`);
+    await expect(page.getByRole('button', { name: 'Mes anterior' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
     );
   });
 });

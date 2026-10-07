@@ -105,15 +105,18 @@ export function MermaView() {
               Una bobina con una producción sin teórico atribuible no tiene merma calculada y queda
               fuera del teórico, la diferencia, la merma y el porcentaje del total. Ábrela con la
               flecha para ver el motivo.
-              {missingCount > 0 && (
-                <span data-testid="aviso-sin-teorico">
-                  {' '}
-                  {missingCount === 1
-                    ? 'En este periodo, 1 bobina está así.'
-                    : `En este periodo, ${String(missingCount)} bobinas están así.`}
-                </span>
-              )}
             </p>
+            {missingCount > 0 && data && (
+              // El aviso de siempre, entero (antes iba bajo la franja; ahora allí va una línea corta).
+              <p>
+                {missingCount === 1
+                  ? '1 bobina tiene una producción sin teórico atribuible: no tiene merma calculada y queda fuera del teórico, la merma y el porcentaje de arriba.'
+                  : `${String(missingCount)} bobinas tienen producciones sin teórico atribuible: no tienen merma calculada y quedan fuera del teórico, la merma y el porcentaje de arriba.`}{' '}
+                Ábrelas para ver el motivo. Teórico, diferencia y merma:{' '}
+                {data.totals.comparableCoilCount} de {data.totals.coilCount} bobinas, que
+                consumieron {formatKg(data.totals.comparableConsumedKg)}.
+              </p>
+            )}
             <p>
               La merma manual («Otra merma») es informativa: no suma a la merma. El total al pie
               suma las filas de la tabla (con la búsqueda aplicada), con los valores completos y
@@ -148,7 +151,7 @@ export function MermaView() {
                   label="Teórico (kg)"
                   hint={
                     missingCount > 0
-                      ? `solo ${String(data.totals.comparableCoilCount)} de ${String(data.totals.coilCount)} bobinas`
+                      ? `solo ${String(data.totals.comparableCoilCount)} de ${String(data.totals.coilCount)} bobinas · consumieron ${formatKg(data.totals.comparableConsumedKg)}`
                       : undefined
                   }
                 >
@@ -162,6 +165,18 @@ export function MermaView() {
                   <Pct pct={data.totals.wastePct} over={data.totals.overStandard} />
                 </Stat>
               </StatStrip>
+              {missingCount > 0 && (
+                <p
+                  role="status"
+                  className="mt-1 text-xs text-muted-foreground"
+                  data-testid="aviso-sin-teorico"
+                >
+                  {missingCount === 1
+                    ? '1 bobina sin teórico atribuible: queda fuera del teórico y la merma.'
+                    : `${String(missingCount)} bobinas sin teórico atribuible: quedan fuera del teórico y la merma.`}{' '}
+                  Ábrelas para ver el motivo.
+                </p>
+              )}
             </BusyRegion>
           )}
 
@@ -188,9 +203,15 @@ export function MermaView() {
             updating={updating}
             detail={(r) => <ProductionRows row={r} />}
             detailLabel={(r) => r.code}
-            footerLabel={({ length: n }) =>
-              `Total · ${n === 1 ? '1 bobina' : `${String(n)} bobinas`}`
-            }
+            footerLabel={(rows) => {
+              const n = rows.length;
+              const t = totalsFor(rows, data);
+              const label = `Total · ${n === 1 ? '1 bobina' : `${String(n)} bobinas`}`;
+              // Con bobinas sin teórico, el teórico y la merma del pie son de una parte.
+              return t.comparableCoilCount < t.coilCount
+                ? `${label} · teórico y merma de ${String(t.comparableCoilCount)} de ${String(t.coilCount)}, que consumieron ${formatKg(t.comparableConsumedKg)}`
+                : label;
+            }}
             query={{
               isPending: loading,
               isError: report.isError,

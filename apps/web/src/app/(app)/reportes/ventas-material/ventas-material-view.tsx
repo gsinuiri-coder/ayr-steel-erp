@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -16,6 +16,7 @@ import {
   SALES_PRODUCT_UNTRACEABLE_LABELS,
   SALES_MATERIAL_UNTRACEABLE_LABELS,
   toDecimal,
+  businessToday,
   type SalesByMaterialDto,
   type SalesByMaterialLine,
   type SalesByProductDto,
@@ -29,6 +30,7 @@ import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
 import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
+import { legacyRangePeriod } from '@/lib/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
@@ -119,7 +121,23 @@ export function VentasMaterialView() {
   const kinds = KINDS_BY_LINE[line];
   // D-417: Coberturas (UPVC) y Reventa van por producto, sin bobina.
   const byProduct = SALES_BY_PRODUCT_LINES.includes(line);
-  const [url, setUrl] = useUrlState({ tipo: '', espesor: '', color: '', search: '' });
+  const [url, setUrl] = useUrlState({
+    tipo: '',
+    espesor: '',
+    color: '',
+    search: '',
+    // Solo para traducir los enlaces guardados de antes de cc32 (`range=month|prev`).
+    range: '',
+    from: '',
+    to: '',
+  });
+  // Un enlace guardado con `range=month|prev` y sin fechas se traduce una vez al atajo y `range`
+  // sale de la URL. Este efecto va después del de `useReportPeriod`, así que su `replace` gana.
+  useEffect(() => {
+    if (url.range === '') return;
+    const legacy = legacyRangePeriod(url.range, url.from, url.to, businessToday());
+    setUrl(legacy === null ? { range: '' } : { range: '', from: legacy.from, to: legacy.to });
+  }, [url.range]);
   const [sort, toggleSort] = useSort<string>();
   const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });
@@ -158,7 +176,7 @@ export function VentasMaterialView() {
   const options = useMemo(() => {
     const rows = unfiltered.data?.rows ?? [];
     const thicknesses = [...new Set(rows.map((r) => r.thicknessMm))].sort((a, b) =>
-      a.localeCompare(b, 'es', { numeric: true }),
+      toDecimal(a).comparedTo(toDecimal(b)),
     );
     const colors = [...new Set(rows.map((r) => r.colorLabel))].sort((a, b) =>
       a.localeCompare(b, 'es'),
@@ -336,6 +354,9 @@ export function VentasMaterialView() {
               updating={updating}
               onRowActivate={setSelected}
               rowTitle="Ver el desglose por bobina y comprobante"
+              rowLabel={(r) =>
+                `Ver el desglose de ${SALES_MATERIAL_KIND_LABELS[r.kind]} ${r.thicknessMm} mm ${r.colorLabel}`
+              }
               footerLabel={() => 'Total'}
               query={query}
               emptyTitle={`No hay ventas trazables de ${lineLabel} en ese periodo`}
@@ -620,7 +641,7 @@ function MaterialUntraceable({ data }: { data: SalesByMaterialDto }) {
                 )}
               </TableCell>
               <TableCell className="text-right font-semibold">
-                {formatAmount(sumDecimal(data.untraceable, (u) => u.salesPen))}
+                {formatAmount(data.untraceableSalesPen)}
               </TableCell>
             </TableRow>
           </TableFooter>
@@ -749,7 +770,7 @@ function ProductUntraceable({
                 Total no trazable
               </TableCell>
               <TableCell className="text-right font-semibold">
-                {formatAmount(sumDecimal(products.untraceable, (u) => u.salesPen))}
+                {formatAmount(untraceableSalesPen)}
               </TableCell>
             </TableRow>
           </TableFooter>
@@ -980,8 +1001,8 @@ function MaterialBreakdownDialog({
                                 <TableHead>Comprobante</TableHead>
                                 <TableHead>Fecha</TableHead>
                                 <TableHead>Cliente</TableHead>
-                                <TableHead className="text-right">Kg atribuidos (kg)</TableHead>
-                                <TableHead className="text-right">ML atribuidos (m)</TableHead>
+                                <TableHead className="text-right">Atribuido (kg)</TableHead>
+                                <TableHead className="text-right">Atribuido (m)</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>

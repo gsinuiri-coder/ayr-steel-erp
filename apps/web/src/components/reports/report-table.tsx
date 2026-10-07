@@ -56,6 +56,7 @@ export function ReportTable<T>({
   testId,
   onRowActivate,
   rowTitle,
+  rowLabel,
   updating = false,
   filtered,
 }: {
@@ -86,6 +87,11 @@ export function ReportTable<T>({
   onRowActivate?: (row: T) => void;
   /** El aviso nativo de la fila interactiva («Ver el desglose…»). */
   rowTitle?: string;
+  /**
+   * El nombre accesible de la fila interactiva: qué abre («Ver el desglose de Coberturas 0.40 mm
+   * ROJO»). Sin él, `rowTitle`.
+   */
+  rowLabel?: (row: T) => string;
   /**
    * Las filas son el dato del periodo anterior mientras carga el nuevo (`isPlaceholderData`): la
    * tabla se atenúa y se anuncia ocupada (`aria-busy`).
@@ -162,6 +168,9 @@ export function ReportTable<T>({
                       className: 'cursor-pointer hover:bg-muted/50',
                       tabIndex: 0,
                       title: rowTitle,
+                      // La fila abre un diálogo (D-370): se anuncia como tal y dice qué abre.
+                      'aria-haspopup': 'dialog' as const,
+                      'aria-label': rowLabel?.(row) ?? rowTitle,
                       onClick: () => {
                         onRowActivate(row);
                       },

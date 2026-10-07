@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { keepPreviousInScope } from '@/lib/report-query';
@@ -89,6 +89,13 @@ export function CuentasPorCobrarView() {
   });
   const data = report.data;
   const updating = report.isPlaceholderData;
+  // Los vendedores de la última respuesta: al cambiar de vendedor las cifras no se conservan,
+  // pero el selector sigue pintando el nombre elegido mientras carga.
+  const [lastSellers, setLastSellers] = useState<ReceivablesAgingDto['sellers']>([]);
+  useEffect(() => {
+    if (data) setLastSellers(data.sellers);
+  }, [data]);
+  const sellers = data?.sellers ?? lastSellers;
   // Un vendedor que ya no tiene saldo no está entre las opciones: se vuelve a «todos» para que el
   // selector no quede en blanco.
   const unknownSeller =
@@ -172,7 +179,7 @@ export function CuentasPorCobrarView() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>Todos los vendedores</SelectItem>
-            {data?.sellers.map((s) => (
+            {sellers.map((s) => (
               <SelectItem key={s.id} value={s.id}>
                 {s.name}
               </SelectItem>

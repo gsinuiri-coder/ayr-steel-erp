@@ -8,6 +8,7 @@ import {
   fullMonth,
   isValidDate,
   isValidMonth,
+  legacyRangePeriod,
   matchMonthPreset,
   matchPreset,
   monthError,
@@ -275,5 +276,27 @@ describe('mes fuera de los años admitidos (cc32, corte 2)', () => {
     expect(monthError('1999-12')).toMatch(/entre 2000 y 2100/);
     expect(monthError('2101-01')).toMatch(/entre 2000 y 2100/);
     expect(monthError('2100-12')).toBeNull();
+  });
+});
+
+describe('enlaces guardados de Ventas por material con `range` (cc32, corte 2)', () => {
+  it('traduce `range=month|prev` sin fechas al atajo', () => {
+    expect(legacyRangePeriod('prev', '', '', TODAY)).toEqual({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      preset: 'last-month',
+    });
+    expect(legacyRangePeriod('month', '', '', TODAY)).toEqual({
+      from: '2026-10-01',
+      to: TODAY,
+      preset: 'this-month',
+    });
+  });
+
+  it('con fechas, o con otro valor, no hay nada que traducir', () => {
+    expect(legacyRangePeriod('custom', '2026-08-01', '2026-08-31', TODAY)).toBeNull();
+    expect(legacyRangePeriod('prev', '2026-08-01', '', TODAY)).toBeNull();
+    expect(legacyRangePeriod('all', '', '', TODAY)).toBeNull();
+    expect(legacyRangePeriod('', '', '', TODAY)).toBeNull();
   });
 });

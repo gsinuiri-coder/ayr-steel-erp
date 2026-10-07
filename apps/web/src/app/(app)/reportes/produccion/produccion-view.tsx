@@ -34,7 +34,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
-import { formatAmount, formatKg, formatMeters } from '@/lib/format';
+import { formatAmount, formatKg, formatMeters, formatNumber } from '@/lib/format';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import { allRows, productionTotalsOf, type ProductionTotals } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
@@ -165,7 +165,7 @@ export function ProduccionView() {
                   label="Salido (kg)"
                   hint={
                     unattributed
-                      ? `más ${formatKg(data.totals.unattributedKg)} sin reporte de planta`
+                      ? `más ${formatKg(data.totals.unattributedKg)} sin reporte de planta: no son de ninguna orden ni están en las filas`
                       : undefined
                   }
                 >
@@ -463,7 +463,9 @@ function OrderLine({ order: o }: { order: ProductionSummaryOrderDto }) {
 function quantityText(o: ProductionSummaryOrderDto): string {
   if (o.quantityUnit === 'm') return formatMeters(o.quantity);
   const pieces = toDecimal(o.quantity);
-  return `${o.quantity} ${pieces.eq(1) ? 'pieza' : 'piezas'}`;
+  // Con separador de miles, en la escala que trae («1,200 piezas»).
+  const decimals = pieces.decimalPlaces();
+  return `${formatNumber(o.quantity, decimals)} ${pieces.eq(1) ? 'pieza' : 'piezas'}`;
 }
 
 /** Lo que cada bobina dio a la orden, alineado con las columnas de la orden. */
@@ -521,9 +523,11 @@ function OrderRows({ group, withCosts }: { group: ProductionSummaryGroupDto; wit
               {' · '}
               {o.productSku}
               {o.lineNumber !== null && ` · línea ${String(o.lineNumber)}`}
+              {` · ${quantityText(o)}`}
             </span>
           </TableCell>
-          <TableCell className="text-right">{quantityText(o)}</TableCell>
+          {/* La columna del pedido es «Órdenes»: la cantidad de la orden va junto a su código. */}
+          <TableCell />
           <TableCell className="text-right">{formatKg(o.theoreticalKg, null)}</TableCell>
           <TableCell className="text-right">{formatKg(o.consumedKg, null)}</TableCell>
           <TableCell className="text-right">{formatKg(o.trimKg, null)}</TableCell>
