@@ -2,6 +2,7 @@ import type { Prisma, InventoryMovement, Purchase } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import type { InventoryService } from '../inventory/inventory.service';
 import type { AuditService } from '../audit/audit.service';
+import { compareLockKeys } from '../inventory/row-locks';
 
 const day = (date: Date): string => date.toISOString().slice(0, 10);
 const limaDay = (date: Date): string =>
@@ -50,7 +51,7 @@ async function lockPurchases(
   tx: Prisma.TransactionClient,
   ids: readonly (string | null)[],
 ): Promise<void> {
-  const sorted = [...new Set(ids.filter((id): id is string => !!id))].sort();
+  const sorted = [...new Set(ids.filter((id): id is string => !!id))].sort(compareLockKeys);
   if (sorted.length === 0) return;
   await tx.$queryRaw`
     SELECT "id" FROM "purchases" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR NO KEY UPDATE

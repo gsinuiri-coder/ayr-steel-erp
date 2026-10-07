@@ -144,7 +144,7 @@ export class ReceivedPurchaseEditService {
           // tomadas y lo nuevo se pide por la puerta (con `NOWAIT`, porque llega tarde).
           const now = (await tx.coil.findMany({ where: { purchaseId: id }, select: { id: true } }))
             .map((c) => c.id)
-            .sort();
+            .sort(compareLockKeys);
           const born = now.filter((c) => !firstCoilIds.includes(c));
           if (born.length > 0) await lockCoilRows(tx, born);
           coilIds = now;

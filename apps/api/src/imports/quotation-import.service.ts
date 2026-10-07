@@ -60,6 +60,7 @@ import {
   parseSpreadsheet,
   type ImportColumn,
 } from './parse-spreadsheet';
+import { compareLockKeys } from '../inventory/row-locks';
 
 /**
  * Importador masivo de cotizaciones (D-152).
@@ -854,7 +855,7 @@ export class QuotationImportService {
         // orden, fuera de los savepoints. Antes se tomaban de a uno en el orden del archivo, y dos
         // confirmaciones con los mismos documentos en distinto orden se cruzaban. El lock de abajo
         // vuelve a pedir el mismo (es reentrante) y no espera.
-        for (const key of [...groups.keys()].sort()) {
+        for (const key of [...groups.keys()].sort(compareLockKeys)) {
           await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quotation-import:${key}`}))`;
         }
         for (const [index, [documentKey, rows]] of [...groups.entries()].entries()) {
