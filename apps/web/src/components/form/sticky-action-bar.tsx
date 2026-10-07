@@ -25,13 +25,21 @@ export function focusField(target: string): void {
 }
 
 /** «Faltan 2 datos: ubigeo de llegada · placa», cada uno un enlace a su campo. */
-export function MissingFieldsHint({ missing }: { missing: readonly MissingField[] }) {
+export function MissingFieldsHint({
+  missing,
+  heading,
+}: {
+  missing: readonly MissingField[];
+  /** cc31 (corte 6): otro encabezado que «Faltan N datos:», p. ej. «2 líneas por corregir:». */
+  heading?: string;
+}) {
   if (missing.length === 0) return null;
   return (
     <p role="status" className="flex flex-wrap items-center gap-x-1.5 text-sm">
       <CircleAlert className="size-4 shrink-0 text-tone-warning-foreground" aria-hidden />
       <span className="font-medium text-foreground">
-        {missing.length === 1 ? 'Falta 1 dato:' : `Faltan ${String(missing.length)} datos:`}
+        {heading ??
+          (missing.length === 1 ? 'Falta 1 dato:' : `Faltan ${String(missing.length)} datos:`)}
       </span>
       {missing.map((m, i) => (
         <span key={m.target + m.label}>
@@ -71,14 +79,22 @@ export function StickyActionBar({
   children,
   hint,
   missing,
+  missingHeading,
   className,
 }: {
   children: ReactNode;
   hint?: ReactNode;
   missing?: readonly MissingField[];
+  /** cc31 (corte 6): ver `MissingFieldsHint.heading`. */
+  missingHeading?: string;
   className?: string;
 }) {
-  const left = missing && missing.length > 0 ? <MissingFieldsHint missing={missing} /> : hint;
+  const left =
+    missing && missing.length > 0 ? (
+      <MissingFieldsHint missing={missing} heading={missingHeading} />
+    ) : (
+      hint
+    );
   return (
     <div
       data-slot="sticky-action-bar"

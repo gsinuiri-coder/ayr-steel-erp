@@ -76,7 +76,7 @@ async function loginAsAdmin(page: Page): Promise<void> {
 
 /** El editor de largos de una línea en metros solo se pinta cuando el catálogo ya llegó. */
 async function waitForCatalog(page: Page): Promise<void> {
-  await expect(page.getByText('Planchas de esta línea (cantidad × largo)')).toBeVisible({
+  await expect(page.getByText('Largos · planchas × metros')).toBeVisible({
     timeout: 60_000,
   });
 }
