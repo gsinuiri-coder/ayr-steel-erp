@@ -165,9 +165,12 @@ function ListPriceCell({ product }: { product: ProductDto }) {
       </>
     );
   }
+  // Un servicio (ZZ) no tiene símbolo de unidad: sin sufijo, en vez de un «/» suelto.
+  const symbol = unitSymbol(product.unit);
   return (
     <div>
-      {formatAmount(perUnit, 2)} /{unitSymbol(product.unit)}
+      {formatAmount(perUnit, 2)}
+      {symbol === '' ? '' : ` /${symbol}`}
     </div>
   );
 }

@@ -35,7 +35,7 @@ export function MissingFieldsHint({
 }) {
   if (missing.length === 0) return null;
   return (
-    <p role="status" className="flex flex-wrap items-center gap-x-1.5 text-sm">
+    <p className="flex flex-wrap items-center gap-x-1.5 text-sm">
       <CircleAlert className="size-4 shrink-0 text-tone-warning-foreground" aria-hidden />
       <span className="font-medium text-foreground">
         {heading ??

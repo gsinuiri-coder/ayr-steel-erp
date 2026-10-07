@@ -1625,7 +1625,7 @@ function LineRow({
     ? '/m'
     : l.kind === 'BOBINA'
       ? '/kg'
-      : product
+      : product && unitSymbol(product.unit) !== ''
         ? `/${unitSymbol(product.unit)}`
         : '';
   // El renglón bajo el producto: el subtipo y si se fabrica contra el pedido.
@@ -1980,6 +1980,7 @@ function LineRow({
             stock={stock}
             pricing={pricing}
             coil={saleCoil}
+            imported={imported}
             onPatch={onPatch}
           />
           {/*
@@ -2248,6 +2249,7 @@ function PriceFloorHint({
   stock,
   pricing,
   coil,
+  imported,
   onPatch,
 }: {
   line: LineDraft;
@@ -2256,6 +2258,12 @@ function PriceFloorHint({
   pricing: LinePricing | null;
   /** D-116/D-163: la bobina de una línea `BOBINA`, que trae su propio piso por kg. */
   coil: SellableCoilDto | undefined;
+  /**
+   * D-163/D-255: la cotización viene del importador. Está exenta del piso (igual que en
+   * `validate()`, `lineIssue` y el API): el mínimo se informa, pero sin rojo ni «Usar», que
+   * pisaría el precio del papel y sacaría la línea de «intacta».
+   */
+  imported: boolean;
   onPatch: (patch: Partial<LineDraft>) => void;
 }): ReactElement | null {
   const status = floorStatus(l, product, stock, pricing, coil);
@@ -2270,7 +2278,13 @@ function PriceFloorHint({
   // la que se cotizó por plancha (D-263), por unidad en el resto. La bobina entera no tiene lista.
   const list = l.kind === 'PRODUCT' && product ? listPriceWithIgv(product, l.pricePerPiece) : null;
   // El mínimo es por metro en una plancha; si el campo es por plancha, se dice la unidad.
-  const unit = byFixedLength(product) && l.pricePerPiece ? ' /m' : '';
+  // Con el importe sin IGV cargado, el campo no es un precio: el mínimo dice su unidad y que es
+  // con IGV, y la lista no se muestra (se leería como un importe).
+  const byAmount = l.amountMode === 'AMOUNT';
+  const symbol = l.kind === 'BOBINA' ? 'kg' : product ? unitSymbol(product.unit) : '';
+  const unit =
+    (byFixedLength(product) && l.pricePerPiece ? ' /m' : '') +
+    (byAmount ? `${symbol === '' ? '' : ` /${symbol}`} con IGV` : '');
   if (status === null) {
     return list === null ? null : (
       <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
@@ -2279,7 +2293,7 @@ function PriceFloorHint({
     );
   }
   const min = formatAmount(status.minPricePen, 2);
-  if (status.below) {
+  if (status.below && !imported) {
     // Hacia arriba a dos decimales: el mínimo ya viene tipeable, y si no, nunca queda por debajo.
     const typeable = toDecimal(status.minPricePen).toDecimalPlaces(2, Decimal.ROUND_UP).toFixed(2);
     const canUse = l.amountMode === 'PRICE' && !l.pricePerPiece;
@@ -2310,6 +2324,7 @@ function PriceFloorHint({
       Mín. {min}
       {unit}
       {l.kind === 'PRODUCT' &&
+        !byAmount &&
         (list === null ? ' · sin lista' : ` · Lista ${formatAmount(list, 2)}`)}
     </span>
   );
