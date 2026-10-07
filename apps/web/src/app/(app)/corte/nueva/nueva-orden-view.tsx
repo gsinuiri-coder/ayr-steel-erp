@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Decimal,
   MIN_CHILD_WIDTH_MM,
@@ -13,12 +13,12 @@ import {
   type ProductDto,
   type SupplierDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { FilmOpenNotice } from '@/components/film-open-notice';
 import { drywallProfilesOf, type DrywallProfile } from '@/lib/drywall-profiles';
 import { OperationDateField } from '@/components/operation-date-field';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
-import { formatQty, isPositiveDecimal } from '@/lib/format';
+import { formatKg, formatQty, isPositiveDecimal } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -124,8 +124,7 @@ export function NuevaOrdenCorteView() {
       toast.success('Orden de corte enviada');
       router.push(`/corte/${order.id}`);
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo enviar la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo enviar la orden')),
   });
 
   const canSubmit =
@@ -136,10 +135,10 @@ export function NuevaOrdenCorteView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
-        <h1 className="text-lg font-semibold">Enviar bobinas a corte</h1>
+        <h1 className="text-xl font-semibold">Enviar bobinas a corte</h1>
         <p className="text-xs text-muted-foreground">
-          El envío no mueve el kardex (D-050): la bobina sigue siendo propia, solo cambia de
-          ubicación mientras el tercero la corta.
+          El envío no mueve el kardex: la bobina sigue siendo propia, solo cambia de ubicación
+          mientras el tercero la corta.
         </p>
       </div>
 
@@ -167,7 +166,7 @@ export function NuevaOrdenCorteView() {
             )}
             {!suppliers.isError && cuttingSuppliers?.length === 0 && (
               <p className="text-xs text-muted-foreground">
-                Ningún proveedor tiene marcado &quot;presta servicio de corte&quot; (RF-81).
+                Ningún proveedor tiene marcado &quot;presta servicio de corte&quot;.
               </p>
             )}
           </div>
@@ -426,7 +425,7 @@ function DraftCoilCard({
         </div>
         <p className={`text-sm ${fit.error ? 'text-destructive' : 'text-muted-foreground'}`}>
           {fit.error ??
-            `Consume ${fit.consumedWidthMm} mm de ${draft.coil.widthMm} mm (queda ${fit.remainingWidthMm} mm) · ≈ ${theoreticalKg.toFixed(3)} kg teóricos.`}
+            `Consume ${fit.consumedWidthMm} mm de ${draft.coil.widthMm} mm (queda ${fit.remainingWidthMm} mm) · ≈ ${formatKg(theoreticalKg)} teóricos.`}
         </p>
       </CardContent>
     </Card>

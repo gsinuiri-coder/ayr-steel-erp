@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   businessLineOf,
   PURCHASE_TYPE_LABELS,
@@ -157,7 +157,7 @@ export function ImportarComprasView() {
     },
     onError: (err, vars) => {
       if (vars.version !== version.current) return;
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo revalidar');
+      toast.error(errorMessage(err, 'No se pudo revalidar'));
     },
   });
 
@@ -233,7 +233,7 @@ export function ImportarComprasView() {
         }
         setServerErrors(mapped);
       }
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo importar');
+      toast.error(errorMessage(err, 'No se pudo importar'));
     },
   });
 
@@ -249,7 +249,7 @@ export function ImportarComprasView() {
       toast.success(`${String(data.cancelled.length)} compras anuladas`);
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo deshacer el lote');
+      toast.error(errorMessage(err, 'No se pudo deshacer el lote'));
     },
   });
 
@@ -261,7 +261,7 @@ export function ImportarComprasView() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-1">
-              <h1 className="text-lg font-semibold">Importar compras</h1>
+              <h1 className="text-xl font-semibold">Importar compras</h1>
               <InfoPopover label="Cómo funciona la importación de compras">
                 <p className="text-sm">
                   Cada comprobante se convierte en una <strong>compra en borrador</strong> por el
@@ -414,7 +414,7 @@ export function ImportarComprasView() {
                       ? 'Un comprobante tiene'
                       : `${String(blocking)} comprobantes tienen`}{' '}
                     algo sin resolver. Corrígelo o quítalo: un proveedor o un producto que falta se
-                    crea desde su campo, sin salir de acá.
+                    crea desde su campo, sin salir de aquí.
                   </AlertDescription>
                 </Alert>
               )}
@@ -627,7 +627,7 @@ function DocumentCard({
           <>
             <Badge
               variant="outline"
-              className="border-amber-500 text-amber-700 dark:text-amber-500"
+              className="border-tone-warning-foreground/40 text-tone-warning-foreground"
             >
               Nuevo — se creará desde padrón: {doc.newSupplier.name}
             </Badge>
@@ -649,7 +649,7 @@ function DocumentCard({
       </div>
 
       {doc.initialLoadMatch !== null && (
-        <div className="flex flex-wrap items-center gap-2 border-t bg-amber-500/5 px-4 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 border-t bg-tone-warning px-4 py-2 text-sm">
           <Checkbox
             id={`other-${doc.key}`}
             checked={doc.confirmedNotInitialLoad}
@@ -674,7 +674,7 @@ function DocumentCard({
             <li
               key={`${i.field}-${i.message}`}
               className={
-                i.severity === 'error' ? 'text-destructive' : 'text-amber-700 dark:text-amber-500'
+                i.severity === 'error' ? 'text-destructive' : 'text-tone-warning-foreground'
               }
             >
               {i.severity === 'warning' ? '⚠ ' : ''}

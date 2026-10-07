@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { z } from 'zod';
 import { createUserSchema, passwordSchema, ROLE_LABELS, ROLES, type UserDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
@@ -87,7 +87,7 @@ export function UserDialog({ open, user, onOpenChange }: Props) {
         }
       }
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'Error inesperado',
+        message: errorMessage(err, 'Error inesperado'),
       });
     },
   });

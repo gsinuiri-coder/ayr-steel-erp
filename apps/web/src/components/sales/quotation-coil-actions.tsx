@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import type { QuotationDto, QuotationItemCoilCandidatesDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatQty } from '@/lib/format';
 import { invalidateSales } from '@/lib/sales-queries';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -65,7 +65,7 @@ export function QuotationCoilLineActions({
       invalidateSales(queryClient, { quotationId });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cambiar la bobina');
+      toast.error(errorMessage(err, 'No se pudo cambiar la bobina'));
     },
   });
   const busy = disabled || setCoil.isPending;

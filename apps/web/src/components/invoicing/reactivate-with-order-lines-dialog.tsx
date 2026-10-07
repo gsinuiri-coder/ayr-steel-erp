@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   FiscalDocumentOrigin,
   toDecimal,
@@ -209,7 +209,7 @@ export function ReactivateWithOrderLinesDialog({
       router.push(`/comprobantes/${d.id}?despacho=${DISPATCH_AT_DOCUMENT_DATE}`);
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo reactivar');
+      toast.error(errorMessage(err, 'No se pudo reactivar'));
       // Autorrevisión cc13 (P3): si el pedido cambió mientras el diálogo estaba abierto, el antes
       // y el después que se ven ya no son los que la API calculó: se vuelven a pedir.
       void preview.refetch();

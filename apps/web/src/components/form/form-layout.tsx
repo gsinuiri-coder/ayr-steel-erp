@@ -92,7 +92,7 @@ function HelpArea({
   return (
     <div
       data-slot="form-cell-help"
-      className="mt-1 min-h-4 w-full text-[11px] leading-4 break-words"
+      className="mt-1 min-h-4 w-full text-xs leading-4 break-words"
       id={id}
     >
       {error ? (

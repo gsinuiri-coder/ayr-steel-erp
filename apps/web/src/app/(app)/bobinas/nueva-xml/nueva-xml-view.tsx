@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { PurchaseType, Role, type InvoiceXmlPreviewDto } from '@ayr/shared';
-import { ApiError } from '@/lib/api';
+import { ApiError, SERVER_DOWN_MESSAGE } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -24,7 +24,13 @@ async function uploadXml(file: File): Promise<InvoiceXmlPreviewDto> {
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string };
-    throw new ApiError(res.status, body.message ?? `Error ${res.status}`);
+    throw new ApiError(
+      res.status,
+      body.message ??
+        (res.status >= 500
+          ? SERVER_DOWN_MESSAGE
+          : `No se pudo leer el XML (${String(res.status)})`),
+    );
   }
   return (await res.json()) as InvoiceXmlPreviewDto;
 }
@@ -40,14 +46,14 @@ export function NuevaXmlView() {
     mutationFn: uploadXml,
     onSuccess: setPreview,
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo leer el XML');
+      toast.error(errorMessage(err, 'No se pudo leer el XML'));
     },
   });
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div>
-        <h1 className="text-lg font-semibold">Bobinas desde XML</h1>
+        <h1 className="text-xl font-semibold">Bobinas desde XML</h1>
         <p className="text-xs text-muted-foreground">
           Sube el XML de la factura electrónica del proveedor (UBL 2.1). Se prellena la compra y sus
           bobinas; tú completas acabado, ancho y espesor de cada una antes de confirmar.

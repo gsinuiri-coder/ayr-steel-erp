@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Decimal,
   PRODUCTION_ORDER_KIND_LABELS,
@@ -19,9 +19,11 @@ import {
 } from '@ayr/shared';
 import { PRODUCTION_ORDER_TONE, PRODUCTION_REPORT_TONE } from '@/components/status-tone';
 import { Stat, StatStrip } from '@/components/stat-strip';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import {
+  formatKg,
+  formatMeters,
   formatMoney,
   formatMoneyOrDash,
   formatQty,
@@ -93,8 +95,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       setCancelling(false);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo anular la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo anular la orden')),
   });
 
   const reopen = useMutation({
@@ -108,8 +109,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       setReopening(false);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo reabrir la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo reabrir la orden')),
   });
 
   const revert = useMutation({
@@ -125,8 +125,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       setReverting(null);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo revertir el reporte'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo revertir el reporte')),
   });
 
   if (order.isPending) return <Skeleton className="h-64 w-full" />;
@@ -178,7 +177,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             <p className="text-sm">
               Plan de corte: {describePieces(o.items)}{' '}
               <span className="text-muted-foreground">
-                ({piecesCount(o.items)} planchas · {piecesMeters(o.items).toFixed(3)} m)
+                ({piecesCount(o.items)} planchas · {formatMeters(piecesMeters(o.items))})
               </span>
             </p>
           )}
@@ -242,7 +241,9 @@ export function ProduccionDetalleView({ id }: { id: string }) {
       >
         <SummaryCard
           title={o.metersReported === null ? 'Piezas buenas' : 'Metros buenos'}
-          value={o.metersReported === null ? String(o.piecesReported) : `${o.metersReported} m`}
+          value={
+            o.metersReported === null ? String(o.piecesReported) : formatMeters(o.metersReported)
+          }
           hint={o.metersReported === null ? undefined : `${String(o.piecesReported)} planchas`}
         />
         {theoreticalPieces !== null && (
@@ -431,7 +432,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         title="Revertir el reporte de piezas"
         description={
           reverting
-            ? `Las ${reverting.pieces} piezas salen del stock del producto y los ${reverting.theoreticalKg} kg vuelven a los flejes de la orden. Solo se puede si esas piezas todavía no se movieron.`
+            ? `Las ${reverting.pieces} piezas salen del stock del producto y los ${formatKg(reverting.theoreticalKg)} vuelven a los flejes de la orden. Solo se puede si esas piezas todavía no se movieron.`
             : ''
         }
         confirmLabel="Sí, revertir"

@@ -105,10 +105,7 @@ export function CancelOrderDialog({
         )}
 
         {p && p.annulledManualDocuments.length > 0 && (
-          <p
-            className="text-sm text-amber-700 dark:text-amber-400"
-            data-testid="cancel-annulled-manual"
-          >
+          <p className="text-sm text-tone-warning-foreground" data-testid="cancel-annulled-manual">
             Este pedido tiene{' '}
             {p.annulledManualDocuments.length === 1
               ? 'el comprobante manual anulado'
@@ -133,7 +130,7 @@ export function CancelOrderDialog({
                 </li>
               ))}
             </ul>
-            <p className="text-sm text-amber-700 dark:text-amber-400">
+            <p className="text-sm text-tone-warning-foreground">
               Al anular, lo fabricado queda en inventario sin pedido.
               {p.fabricated.some((l) => l.madeToOrder) &&
                 ' Lo fabricado contra pedido (coberturas, planchas, accesorios) no lo toma ningún pedido nuevo ni el mostrador: queda suelto hasta revertir la producción (reabrir la orden y revertir sus reportes).'}

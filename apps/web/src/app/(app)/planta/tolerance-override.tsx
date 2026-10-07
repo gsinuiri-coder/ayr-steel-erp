@@ -14,7 +14,7 @@ import {
 } from '@ayr/shared';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import { formatQty } from '@/lib/format';
+import { formatQtyAsIs } from '@/lib/format';
 
 /** D-388/D-389: lo que se marcó para una fila fuera de tolerancia (la casilla y el motivo). */
 export interface ToleranceOverrideState {
@@ -113,10 +113,11 @@ export function ToleranceOverrideRow({
       )}
       <p>
         <strong>{title} fuera de tolerancia:</strong> lo reportado equivale a{' '}
-        {formatQty(excess.theoreticalKg, 'kg')} y quedan {formatQty(excess.availableKg, 'kg')}{' '}
-        montados. Diferencia {formatQty(excess.excessKg, 'kg')} ({excess.excessPct} % del teórico):
-        pasa el {excess.tolerancePct} %. Para confirmar, marca la casilla y elige el motivo; se
-        descuentan los {formatQty(excess.availableKg, 'kg')} montados y {drained}.
+        {formatQtyAsIs(excess.theoreticalKg, 'kg')} y quedan{' '}
+        {formatQtyAsIs(excess.availableKg, 'kg')} montados. Diferencia{' '}
+        {formatQtyAsIs(excess.excessKg, 'kg')} ({excess.excessPct} % del teórico): pasa el{' '}
+        {excess.tolerancePct} %. Para confirmar, marca la casilla y elige el motivo; se descuentan
+        los {formatQtyAsIs(excess.availableKg, 'kg')} montados y {drained}.
       </p>
       <div className="grid gap-2 sm:grid-cols-[auto_minmax(0,16rem)_minmax(0,1fr)] sm:items-center">
         <label className="flex items-center gap-2 font-medium" htmlFor={`${id}-check`}>

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
@@ -15,7 +15,7 @@ import {
   type BusinessLineDto,
   type ProductDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { CATALOG_BAJO_PISO_VER_TODOS } from '@/lib/catalog-links';
 import { useSession } from '@/lib/session';
 import { sortRows } from '@/lib/sort-rows';
@@ -43,6 +43,7 @@ import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
 import { FilterChip } from '@/components/filter-chip';
+import { formatKg } from '@/lib/format';
 
 /** El color solo tiene sentido donde hay material prepintado: coberturas (D-085). */
 function usesColor(lineCode: BusinessLine): boolean {
@@ -136,7 +137,7 @@ export function CatalogoView() {
       toast.success(updated.isActive ? 'Producto activado' : 'Producto desactivado');
       void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo actualizar')),
   });
 
   const deleteProduct = useMutation({
@@ -147,7 +148,7 @@ export function CatalogoView() {
       void queryClient.invalidateQueries({ queryKey: CATALOG_QUERY_KEY });
     },
     onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo borrar el producto');
+      toast.error(errorMessage(err, 'No se pudo borrar el producto'));
       // Hallazgo de la autorrevisión: un 409 real (otra pestaña usó el producto justo antes)
       // dejaba el `canDelete` viejo en la fila hasta el próximo refetch — «Eliminar» seguía
       // pareciendo posible aunque el backend ya lo hubiera rechazado.
@@ -166,8 +167,8 @@ export function CatalogoView() {
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Catálogo</h1>
-          <p className="text-xs text-muted-foreground">Productos por línea de negocio (RF-50).</p>
+          <h1 className="text-xl font-semibold">Catálogo</h1>
+          <p className="text-xs text-muted-foreground">Productos por línea de negocio.</p>
         </div>
         {isAdmin && (
           <Button variant="outline" size="sm" asChild>
@@ -315,7 +316,9 @@ export function CatalogoView() {
                         id={`catalog-row-${p.id}`}
                         data-state={p.isActive ? undefined : 'inactive'}
                         className={
-                          p.id === highlightProductId ? 'bg-amber-500/10 outline-amber-500/50' : ''
+                          p.id === highlightProductId
+                            ? 'bg-tone-warning outline-tone-warning-foreground/40'
+                            : ''
                         }
                       >
                         <TableCell className="font-medium">{p.sku}</TableCell>
@@ -323,16 +326,16 @@ export function CatalogoView() {
                           {p.name}
                           {/* D-342/D-344: un perfil de drywall al que le falta espesor, ancho o peso no tiene piso de precio. */}
                           {p.isActive && p.noFloorReason && (
-                            <span className="block text-xs text-amber-700 dark:text-amber-400">
+                            <span className="block text-xs text-tone-warning-foreground">
                               {NO_FLOOR_REASON_LABELS[p.noFloorReason]}
                             </span>
                           )}
                           {/* D-344: aviso (no bloqueo) de que el kg/pieza se aleja del teórico. */}
                           {p.isActive && p.pieceWeightCheck?.warn && (
-                            <span className="block text-xs text-amber-700 dark:text-amber-400">
+                            <span className="block text-xs text-tone-warning-foreground">
                               Peso por pieza {p.pieceWeightCheck.deviationPct} % fuera del teórico (
-                              {p.pieceWeightCheck.theoreticalKg} kg): revisa ancho, largo, espesor y
-                              peso
+                              {formatKg(p.pieceWeightCheck.theoreticalKg)}): revisa ancho, largo,
+                              espesor y peso
                             </span>
                           )}
                         </TableCell>
@@ -401,7 +404,7 @@ export function CatalogoView() {
                                   disabled: !p.canDelete,
                                   title: p.canDelete
                                     ? undefined
-                                    : 'Ya se usó (kardex, un documento comercial o producción): desactivalo en vez de borrarlo',
+                                    : 'Ya se usó (kardex, un documento comercial o producción): desactívalo en vez de borrarlo',
                                   onSelect: () => {
                                     setDeleteTarget(p);
                                   },

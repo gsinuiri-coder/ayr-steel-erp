@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   CURRENCIES,
   CURRENCY_LABELS,
@@ -13,7 +13,7 @@ import {
   FINISH_FIELD_LABEL,
   finishLabels,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -147,7 +147,7 @@ export function CoilEditDialog({
       onOpenChange(false);
       onDone();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo editar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo editar')),
   });
 
   const canSubmit =
@@ -161,7 +161,7 @@ export function CoilEditDialog({
           <DialogTitle>Editar {coil.code}</DialogTitle>
           <DialogDescription>
             {canEditCost
-              ? 'Cambiar la moneda, el tipo de cambio o el costo recuesta el ingreso en el kardex (D-045) y solo se puede si la bobina no se movió después.'
+              ? 'Cambiar la moneda, el tipo de cambio o el costo recuesta el ingreso en el kardex y solo se puede si la bobina no se movió después.'
               : 'Ancho, acabado y observaciones. El costo y la moneda los edita un administrador.'}
           </DialogDescription>
         </DialogHeader>
@@ -232,7 +232,7 @@ export function CoilEditDialog({
               )}
               .{' '}
               {coil.status === 'OPEN'
-                ? 'El color sale del acabado: para corregirlo, elige el acabado correcto. La orden de coberturas ofrece las bobinas del mismo color comercial que el producto, primero las de su mismo acabado (RAL) (D-270, D-271).'
+                ? 'El color sale del acabado: para corregirlo, elige el acabado correcto. La orden de coberturas ofrece las bobinas del mismo color comercial que el producto, primero las de su mismo acabado (RAL).'
                 : 'El acabado solo se edita con la bobina vigente (no terminada).'}
             </p>
           </div>

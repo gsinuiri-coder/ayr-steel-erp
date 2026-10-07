@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Decimal,
   MAX_SPLIT_CHILDREN,
@@ -11,7 +11,7 @@ import {
   MIN_SPLIT_YIELD,
   type CoilDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -87,7 +87,7 @@ export function CoilSplitDialog({
       onOpenChange(false);
       onDone();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo partir'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo partir')),
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
     await split.mutateAsync(confirmBackdate);

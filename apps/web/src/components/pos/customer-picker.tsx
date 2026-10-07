@@ -10,7 +10,8 @@ import {
   type CustomerDto,
   type DocumentLookupDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/notify';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { Button } from '@/components/ui/button';
 import {
@@ -107,7 +108,7 @@ export function CustomerPicker({
     },
     onError: (err) => {
       setSearched(true);
-      setError(err instanceof ApiError ? err.message : 'No se pudo buscar el documento');
+      setError(errorMessage(err, 'No se pudo buscar el documento'));
     },
   });
 
@@ -122,7 +123,7 @@ export function CustomerPicker({
       onOpenChange(false);
     },
     onError: (err) => {
-      setError(err instanceof ApiError ? err.message : 'No se pudo crear el cliente');
+      setError(errorMessage(err, 'No se pudo crear el cliente'));
     },
   });
 

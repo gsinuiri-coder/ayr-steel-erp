@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
@@ -29,7 +29,7 @@ import {
   type RoofingReportDraftDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatQty } from '@/lib/format';
+import { formatQtyAsIs } from '@/lib/format';
 import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
@@ -45,6 +45,7 @@ import { LengthEditor } from '@/components/production/length-editor';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { PLANT_ORDER_STATE_TONE, PRIORITY_TONE } from '@/components/status-tone';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -252,8 +253,7 @@ export function RoofingOrderPanel({
       onDraft({ rows: null, consumedKg: '', editingDraftId: null });
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo montar la bobina'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo montar la bobina')),
   });
 
   const release = useMutation({
@@ -268,8 +268,7 @@ export function RoofingOrderPanel({
       onNotes(NO_NOTES);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo bajar la bobina'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo bajar la bobina')),
   });
 
   const savePlan = useMutation({
@@ -283,8 +282,7 @@ export function RoofingOrderPanel({
       onDraft({ planRows: null, rows: null, consumedKg: '', editingDraftId: null });
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar el plan'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo guardar el plan')),
   });
 
   const resolved = resolveDraft(order, draft);
@@ -347,8 +345,7 @@ export function RoofingOrderPanel({
       onDraft({ rows: [EMPTY_PIECE_ROW], consumedKg: '', editingDraftId: null });
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar la fila'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo guardar la fila')),
   });
 
   const removeDraft = useMutation({
@@ -363,8 +360,7 @@ export function RoofingOrderPanel({
       }
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo quitar la fila'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo quitar la fila')),
   });
 
   const submitKey = useIdempotencyKey();
@@ -407,7 +403,7 @@ export function RoofingOrderPanel({
       return;
     }
     reasonToSend.current = null;
-    toast.error(err instanceof ApiError ? err.message : 'No se pudo ejecutar el borrador');
+    toast.error(errorMessage(err, 'No se pudo ejecutar el borrador'));
   };
   const commit = useMutation({
     mutationFn: (variables: { close: boolean; reason: string | null; confirmBackdate: boolean }) =>
@@ -457,7 +453,7 @@ export function RoofingOrderPanel({
       }),
     onSuccess: (updated) => {
       toast.success(
-        `${order.code}: orden cerrada con ${formatQty(updated.scrapKg ?? '0.000', 'kg')} de despunte`,
+        `${order.code}: orden cerrada con ${formatQtyAsIs(updated.scrapKg ?? '0.000', 'kg')} de despunte`,
       );
       reasonToSend.current = null;
       invalidate();
@@ -467,7 +463,7 @@ export function RoofingOrderPanel({
         setAskingReason(true);
         return;
       }
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden');
+      toast.error(errorMessage(err, 'No se pudo cerrar la orden'));
     },
   });
 
@@ -487,7 +483,7 @@ export function RoofingOrderPanel({
         return;
       }
       reasonToSend.current = null;
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden');
+      toast.error(errorMessage(err, 'No se pudo cerrar la orden'));
     },
   });
 
@@ -583,7 +579,7 @@ export function RoofingOrderPanel({
               )}
               {order.customerName !== null && <> · {order.customerName}</>}
             </span>
-            {order.priority && <Badge>Prioridad</Badge>}
+            {order.priority && <Badge variant={PRIORITY_TONE}>Prioridad</Badge>}
             {/* D-189: la prioridad es de la orden; se fija desde su propio panel. */}
             {user.role === Role.ADMINISTRADOR && (
               <span className="ml-auto">
@@ -685,18 +681,18 @@ export function RoofingOrderPanel({
                 <div>
                   <div className="font-mono font-medium">{c.coilCode}</div>
                   <div className="text-sm text-muted-foreground">
-                    {c.widthMm} mm · pendiente {formatQty(c.remainingKg, 'kg')}
+                    {c.widthMm} mm · pendiente {formatQtyAsIs(c.remainingKg, 'kg')}
                     {/*
                       F8-S3c/M3: kg · ≈ ML de lo que le queda a esta bobina montada (D-116),
                       presentación pura — la asignación y el kardex siguen en kg.
                     */}
-                    {remainingMeters !== null && <> · ≈ {formatQty(remainingMeters, 'm')}</>}
+                    {remainingMeters !== null && <> · ≈ {formatQtyAsIs(remainingMeters, 'm')}</>}
                   </div>
                 </div>
                 {/* S10/M3: avance de la orden mientras esta bobina está montada, solo lectura. */}
                 <div className="text-sm text-muted-foreground">
-                  {formatQty(order.reportedMeters, 'm')} de la orden ·{' '}
-                  {formatQty(c.consumedKg, 'kg')} consumidos de esta bobina
+                  {formatQtyAsIs(order.reportedMeters, 'm')} de la orden ·{' '}
+                  {formatQtyAsIs(c.consumedKg, 'kg')} consumidos de esta bobina
                 </div>
                 <div className="flex items-center gap-2">
                   {liveCoils.length > 1 && (
@@ -794,7 +790,7 @@ export function RoofingOrderPanel({
           <CardContent className="grid gap-3">
             {liveCoils.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Monta una bobina y las líneas del plan que falta aparecen acá, listas para ajustar.
+                Monta una bobina y las líneas del plan que falta aparecen aquí, listas para ajustar.
               </p>
             ) : (
               <div className="grid gap-3 rounded-lg border p-3">
@@ -847,7 +843,7 @@ export function RoofingOrderPanel({
                       </p>
                     )}
                     {resolved.deviation !== null && (
-                      <p className="text-amber-700 dark:text-amber-500">⚠ {resolved.deviation}</p>
+                      <p className="text-tone-warning-foreground">⚠ {resolved.deviation}</p>
                     )}
                     {resolved.completesPlan && (
                       <p className="text-muted-foreground">
@@ -1018,13 +1014,14 @@ export function RoofingOrderPanel({
                 <p className="text-sm text-muted-foreground">
                   Sin este dato el cierre usa los kilos declarados reporte a reporte (y el teórico
                   donde no se declaró); el piso son los{' '}
-                  {formatQty(resolved.closeBounds.consumedFloorKg.toFixed(3), 'kg')} teóricos de las
-                  planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. Lo que pase
-                  del piso sale como despunte; el resto de la bobina vuelve al almacén.
+                  {formatQtyAsIs(resolved.closeBounds.consumedFloorKg.toFixed(3), 'kg')} teóricos de
+                  las planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. Lo que
+                  pase del piso sale como despunte; el resto de la bobina vuelve al almacén.
                   {draft.closeKg.trim() === '' && resolved.estimatedScrapKg.gt(0) && (
                     <>
                       {' '}
-                      Despunte estimado: {formatQty(resolved.estimatedScrapKg.toFixed(3), 'kg')}.
+                      Despunte estimado: {formatQtyAsIs(resolved.estimatedScrapKg.toFixed(3), 'kg')}
+                      .
                     </>
                   )}
                   {resolved.closeBounds.closeKgError !== null && (
@@ -1035,7 +1032,7 @@ export function RoofingOrderPanel({
                       <>
                         {' '}
                         Despunte al cerrar:{' '}
-                        {formatQty(resolved.closeBounds.scrapKg.toFixed(3), 'kg')}.
+                        {formatQtyAsIs(resolved.closeBounds.scrapKg.toFixed(3), 'kg')}.
                       </>
                     )}
                 </p>
@@ -1114,7 +1111,7 @@ export function RoofingOrderPanel({
           setAskingReason(open);
         }}
         title="Cerrar con despunte alto"
-        description={`Las planchas representan ${formatQty(
+        description={`Las planchas representan ${formatQtyAsIs(
           resolved.closeBounds.consumedFloorKg.toFixed(3),
           'kg',
         )} y se declara un consumo mayor: la diferencia —más del ${String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} %— sale del inventario como despunte y su costo se reparte entre el producto bueno. ¿Sigue en el almacén para otra OP? Si el material está entero, vuelve y declara menos kilos consumidos: lo que no se consume vuelve al almacén. Si de verdad salió como despunte, explica por qué.`}
@@ -1234,8 +1231,8 @@ function PlanCard({
           Plan de corte
           <InfoPopover label="Sobre el plan de corte">
             El plan es una intención: lo que mueve inventario son los largos que reportes. Es
-            también el tope de lo que se puede reportar (D-146), así que si de verdad hay que
-            producir más, se cambia acá.
+            también el tope de lo que se puede reportar, así que si de verdad hay que producir más,
+            se cambia aquí.
           </InfoPopover>
         </CardTitle>
       </CardHeader>
@@ -1349,21 +1346,7 @@ export function stateOf(order: RoofingBatchOrderDto): OrderState {
 }
 
 export function StateBadge({ state }: { state: OrderState }) {
-  return (
-    <Badge
-      variant={
-        state === 'reportada'
-          ? 'secondary'
-          : state === 'lista'
-            ? 'default'
-            : state === 'sin-plan'
-              ? 'destructive'
-              : 'outline'
-      }
-    >
-      {STATE_LABELS[state]}
-    </Badge>
-  );
+  return <Badge variant={PLANT_ORDER_STATE_TONE[state]}>{STATE_LABELS[state]}</Badge>;
 }
 
 export function MiniStat({

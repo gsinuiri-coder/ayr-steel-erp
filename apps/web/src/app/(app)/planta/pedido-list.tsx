@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { formatDate, formatQty } from '@/lib/format';
+import { formatDate, formatQtyAsIs } from '@/lib/format';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { QueueEntrySummary } from '@/components/production-queue';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { OVERDUE_TONE, PRIORITY_TONE } from '@/components/status-tone';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { plantaHref } from './planta-links';
@@ -107,8 +108,8 @@ function PedidoCard({
               {quotation.quotationCode}
             </Link>
           )}
-          {g.prioritized > 0 && <Badge>Prioridad</Badge>}
-          {g.overdue && <Badge variant="destructive">Vencido</Badge>}
+          {g.prioritized > 0 && <Badge variant={PRIORITY_TONE}>Prioridad</Badge>}
+          {g.overdue && <Badge variant={OVERDUE_TONE}>Vencido</Badge>}
         </CardTitle>
       </CardHeader>
       <CardContent className="grid gap-2 text-sm">
@@ -126,7 +127,8 @@ function PedidoCard({
           </span>
           {g.roofing.length > 0 && (
             <span>
-              {formatQty(g.reportedMeters, 'm')} de {formatQty(g.planMeters, 'm')} reportados
+              {formatQtyAsIs(g.reportedMeters, 'm')} de {formatQtyAsIs(g.planMeters, 'm')}{' '}
+              reportados
             </span>
           )}
         </div>

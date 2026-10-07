@@ -15,7 +15,7 @@ import {
 } from '@ayr/shared';
 import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
-import { formatDate, formatQty } from '@/lib/format';
+import { formatDate, formatQtyAsIs } from '@/lib/format';
 import { groupHistoryByOrder, type HistoryGroup } from '@/lib/order-history';
 import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { URL_PAGINATION_DEFAULTS, useUrlPagination, useUrlState } from '@/lib/use-url-state';
@@ -321,7 +321,7 @@ function HistoryRow({
         <TableCell className="text-right tabular-nums">
           {group.planMeters === null
             ? '—'
-            : `${formatQty(group.reportedMeters ?? '0.000', 'm')} / ${formatQty(group.planMeters, 'm')}`}
+            : `${formatQtyAsIs(group.reportedMeters ?? '0.000', 'm')} / ${formatQtyAsIs(group.planMeters, 'm')}`}
         </TableCell>
         <TableCell>
           <Badge variant={PRODUCTION_ORDER_TONE[group.status]}>
@@ -467,7 +467,7 @@ function CoilOverflow({
         key: c.key,
         label: c.label,
         href: c.href,
-        detail: c.kg === null ? null : formatQty(c.kg, 'kg'),
+        detail: c.kg === null ? null : formatQtyAsIs(c.kg, 'kg'),
       }))}
     />
   );
@@ -475,12 +475,12 @@ function CoilOverflow({
 
 function producedLabel(order: ProductionOrderListItemDto): string {
   if (order.planMeters !== null) {
-    return `${formatQty(order.planMetersReported ?? '0.000', 'm')} / ${formatQty(order.planMeters, 'm')}`;
+    return `${formatQtyAsIs(order.planMetersReported ?? '0.000', 'm')} / ${formatQtyAsIs(order.planMeters, 'm')}`;
   }
   if (order.metersReported === null) {
     return order.targetPieces === null
       ? `${String(order.piecesReported)} pzs`
       : `${String(order.piecesReported)} / ${String(order.targetPieces)} pzs`;
   }
-  return `${formatQty(order.metersReported, 'm')} · ${String(order.piecesReported)} pzs`;
+  return `${formatQtyAsIs(order.metersReported, 'm')} · ${String(order.piecesReported)} pzs`;
 }

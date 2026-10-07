@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   DOC_TYPE_LABELS,
   Role,
@@ -10,7 +10,7 @@ import {
   type PaginatedResult,
   type CustomerQuery,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { listXlsxHref } from '@/lib/list-export';
 import { HeaderActions } from '@/components/header-actions';
 import { useSession } from '@/lib/session';
@@ -25,7 +25,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PaginationBar } from '@/components/pagination-bar';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -37,6 +36,7 @@ import {
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { useSort } from '@/lib/use-sort';
 import { CustomerDialog } from '@/components/customers/customer-dialog';
+import { ListStateRows } from '@/components/list-state';
 import { RowActions } from '@/components/row-actions';
 
 /**
@@ -103,15 +103,15 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
       toast.success(updated.isActive ? 'Cliente activado' : 'Cliente desactivado');
       void queryClient.invalidateQueries({ queryKey: CUSTOMERS_QUERY_KEY });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo actualizar')),
   });
 
   return (
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Clientes</h1>
-          <p className="text-xs text-muted-foreground">Alta, edición y baja de clientes (RF-80).</p>
+          <h1 className="text-xl font-semibold">Clientes</h1>
+          <p className="text-xs text-muted-foreground">Alta, edición y baja de clientes.</p>
         </div>
         <div className="flex gap-2">
           {/* cc26 M2: el Excel lleva la búsqueda y el orden de la lista (todas las páginas). */}
@@ -140,8 +140,8 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
       {autoOpenNew && !isAdmin && (
         <Alert>
           <AlertDescription>
-            Solo un administrador da de alta clientes (RF-85). Pídeselo con el número de documento a
-            mano: la búsqueda por RUC completa el resto.
+            Solo un administrador da de alta clientes. Pídeselo con el número de documento a mano:
+            la búsqueda por RUC completa el resto.
           </AlertDescription>
         </Alert>
       )}
@@ -201,21 +201,6 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
             </TableRow>
           </TableHeader>
           <TableBody>
-            {customers.isPending &&
-              [0, 1, 2].map((i) => (
-                <TableRow key={i}>
-                  <TableCell colSpan={6}>
-                    <Skeleton className="h-5 w-full" />
-                  </TableCell>
-                </TableRow>
-              ))}
-            {customers.isError && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-destructive">
-                  No se pudieron cargar los clientes.
-                </TableCell>
-              </TableRow>
-            )}
             {rows.map((c) => (
               <TableRow key={c.id} data-state={c.isActive ? undefined : 'inactive'}>
                 <TableCell className="font-medium">
@@ -224,7 +209,7 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 <TableCell>
                   {c.name}
                   {c.needsReview && (
-                    <Badge variant="outline" className="ml-2 text-amber-600 dark:text-amber-400">
+                    <Badge variant="outline" className="ml-2 text-tone-warning-foreground">
                       Por completar
                     </Badge>
                   )}
@@ -269,15 +254,19 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 )}
               </TableRow>
             ))}
-            {customers.isSuccess && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
-                  {debouncedSearch
-                    ? 'Ningún cliente coincide con la búsqueda.'
-                    : 'No hay clientes registrados.'}
-                </TableCell>
-              </TableRow>
-            )}
+            <ListStateRows
+              query={customers}
+              colSpan={6}
+              isEmpty={rows.length === 0}
+              filtered={Boolean(debouncedSearch)}
+              emptyTitle="Todavía no hay clientes"
+              emptyHint={isAdmin ? 'Da de alta el primero con «Nuevo cliente».' : undefined}
+              noResultsTitle={`Ningún cliente coincide con «${debouncedSearch}»`}
+              onClearFilters={() => {
+                setSearchText('');
+              }}
+              errorTitle="No se pudieron cargar los clientes"
+            />
           </TableBody>
         </Table>
       </div>

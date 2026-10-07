@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { DOC_TYPE_LABELS, Role, type SupplierDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -65,17 +65,15 @@ export function ProveedoresView() {
       toast.success(updated.isActive ? 'Proveedor activado' : 'Proveedor desactivado');
       void queryClient.invalidateQueries({ queryKey: SUPPLIERS_QUERY_KEY });
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo actualizar'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo actualizar')),
   });
 
   return (
     <>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Proveedores</h1>
-          <p className="text-xs text-muted-foreground">
-            Alta, edición y baja de proveedores (RF-81).
-          </p>
+          <h1 className="text-xl font-semibold">Proveedores</h1>
+          <p className="text-xs text-muted-foreground">Alta, edición y baja de proveedores.</p>
         </div>
         {isAdmin && (
           <Button
@@ -154,7 +152,7 @@ export function ProveedoresView() {
                 <TableCell>
                   {s.name}
                   {s.needsReview && (
-                    <Badge variant="outline" className="ml-2 text-amber-600 dark:text-amber-400">
+                    <Badge variant="outline" className="ml-2 text-tone-warning-foreground">
                       Por completar
                     </Badge>
                   )}

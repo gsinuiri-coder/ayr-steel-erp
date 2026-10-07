@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   piecesTheoreticalKg,
   TOLERANCE_OVERRIDE_REQUIRED,
@@ -14,7 +14,7 @@ import {
   type RoofingBatchOrderDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatQty } from '@/lib/format';
+import { formatQtyAsIs } from '@/lib/format';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
@@ -173,7 +173,7 @@ export function AccessoryReportCard({
       setAsking(true);
       return;
     }
-    toast.error(err instanceof ApiError ? err.message : 'No se pudo guardar el reporte');
+    toast.error(errorMessage(err, 'No se pudo guardar el reporte'));
   };
   const send = useMutation({
     mutationFn: (variables: { close: boolean; reason: string | null; confirmBackdate: boolean }) =>
@@ -259,9 +259,9 @@ export function AccessoryReportCard({
         ) : (
           <>
             <p className="text-sm text-muted-foreground">
-              Encargado: {formatQty(order.planMeters, 'm')} · reportado:{' '}
-              {formatQty(order.reportedMeters, 'm')} · falta:{' '}
-              {formatQty(order.remainingMeters, 'm')}
+              Encargado: {formatQtyAsIs(order.planMeters, 'm')} · reportado:{' '}
+              {formatQtyAsIs(order.reportedMeters, 'm')} · falta:{' '}
+              {formatQtyAsIs(order.remainingMeters, 'm')}
             </p>
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="grid gap-1.5">
@@ -325,7 +325,7 @@ export function AccessoryReportCard({
                 </p>
               )}
               {overOrdered && (
-                <p className="text-amber-700 dark:text-amber-500">
+                <p className="text-tone-warning-foreground">
                   ⚠ Con este reporte suman {total.toFixed(3)} m de bobina y el pedido encargó{' '}
                   {ordered.toFixed(3)} m. Rindió más de lo planeado: se guarda igual y queda
                   anotado.

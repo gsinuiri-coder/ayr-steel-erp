@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   RESERVATION_STALE_DAYS,
@@ -17,7 +17,7 @@ import {
   type SalesOrderDto,
   type SalesOrderProgressDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
@@ -121,7 +121,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const plantSheetActions = usePlantSheetActions(id, o?.code ?? '');
 
   function onError(err: unknown): void {
-    toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
+    toast.error(errorMessage(err, 'La operación no se pudo completar'));
   }
 
   const cancel = useMutation({
@@ -194,11 +194,13 @@ export function PedidoDetalleView({ id }: { id: string }) {
         body: { reason },
       }),
     onSuccess: (updated) => {
-      toast.success(
-        updated.shortfalls.length > 0
-          ? 'Reserva completada en parte: todavía falta material'
-          : 'Reserva completada: el pedido ya no tiene faltante',
-      );
+      if (updated.shortfalls.length > 0) {
+        toast.warning('La reserva quedó incompleta', {
+          description: `Falta material para ${String(updated.shortfalls.length)} ${updated.shortfalls.length === 1 ? 'línea' : 'líneas'} de ${updated.code}.`,
+        });
+      } else {
+        toast.success('Reserva completada: el pedido ya no tiene faltante');
+      }
       setCompleteOpen(false);
       invalidateSales(queryClient, { orderId: id });
     },
@@ -315,7 +317,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-lg font-semibold">{o.code}</h1>
+            <h1 className="text-xl font-semibold">{o.code}</h1>
             <OrderStageBadge stage={o.stage} />
             {/* D-341: confirmado por un administrador con material sin reservar. */}
             {o.shortfalls.length > 0 && <Badge variant="warning">Con faltante</Badge>}
@@ -524,7 +526,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
       </div>
 
       {o.shortfalls.length > 0 && o.status !== 'CANCELLED' && (
-        <Alert className="border-amber-500/60">
+        <Alert variant="warning">
           <AlertDescription className="grid gap-1">
             <span className="font-medium text-foreground">
               Este pedido se confirmó con faltante de material. Falta reservar:
@@ -702,8 +704,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
           <>
             Reservas de material
             <InfoPopover label="Sobre las reservas de material">
-              Una reserva activa descuenta el disponible del ítem sin tocar el kardex (D-054): el
-              material sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
+              Una reserva activa descuenta el disponible del ítem sin tocar el kardex: el material
+              sigue físicamente en el almacén, pero ninguna otra operación lo puede tomar.
             </InfoPopover>
           </>
         }
@@ -729,7 +731,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
                 <TableCell className="text-right">
                   {formatQty(r.qty, unitSymbol(r.unit))}
                   {r.status === 'ACTIVE' && toDecimal(r.shortfallQty).gt(0) && (
-                    <span className="block text-xs text-amber-700 dark:text-amber-400">
+                    <span className="block text-xs text-tone-warning-foreground">
                       faltan {formatQty(r.shortfallQty, unitSymbol(r.unit))}
                     </span>
                   )}

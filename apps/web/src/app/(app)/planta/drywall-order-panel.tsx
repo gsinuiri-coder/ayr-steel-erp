@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Decimal,
   DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS,
@@ -22,7 +22,7 @@ import {
 } from '@ayr/shared';
 import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
-import { formatQty } from '@/lib/format';
+import { formatQtyAsIs } from '@/lib/format';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
@@ -111,8 +111,7 @@ export function DrywallOrderPanel({
       toast.success('Fleje montado en la orden');
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo consumir el fleje'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo consumir el fleje')),
   });
 
   const release = useMutation({
@@ -124,8 +123,7 @@ export function DrywallOrderPanel({
       toast.success('Fleje liberado de la orden');
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo liberar el fleje'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo liberar el fleje')),
   });
 
   const submitKey = useIdempotencyKey();
@@ -164,7 +162,7 @@ export function DrywallOrderPanel({
       // A-1 de cc29: si el API pidió la casilla, la pantalla tenía cifras viejas (otro reporte
       // consumió flejes, o cambió el peso por pieza): se recargan para que ofrezca la casilla.
       if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) invalidate();
-      toast.error(err instanceof ApiError ? err.message : 'No se pudieron reportar las piezas');
+      toast.error(errorMessage(err, 'No se pudieron reportar las piezas'));
     },
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
@@ -183,13 +181,12 @@ export function DrywallOrderPanel({
       }),
     onSuccess: (o) => {
       toast.success(
-        `Orden cerrada: ${o.piecesReported} piezas y ${formatQty(o.scrapKg ?? '0.000', 'kg')} de merma`,
+        `Orden cerrada: ${o.piecesReported} piezas y ${formatQtyAsIs(o.scrapKg ?? '0.000', 'kg')} de merma`,
       );
       setClosing(false);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo cerrar la orden')),
   });
   /** D-453: lo que el cierre va a hacer, calculado por el API sin escribir nada. */
   const previewClose = useMutation({
@@ -202,8 +199,7 @@ export function DrywallOrderPanel({
       setClosing(false);
       setClosePreview({ preview, args });
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cerrar la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo cerrar la orden')),
   });
 
   if (order.isPending) return <Skeleton className="h-64 w-full" />;
@@ -300,7 +296,7 @@ export function DrywallOrderPanel({
               }
             />
             <BigStat label="Meta" value={o.targetPieces === null ? '—' : String(o.targetPieces)} />
-            <BigStat label="Fleje pendiente" value={formatQty(pendingKg.toFixed(3), 'kg')} />
+            <BigStat label="Fleje pendiente" value={formatQtyAsIs(pendingKg.toFixed(3), 'kg')} />
             <BigStat label="Alcanza para" value={`${String(maxPieces)} pzs`} />
           </div>
           <p className="text-sm text-muted-foreground">
@@ -405,8 +401,8 @@ export function DrywallOrderPanel({
               <div>
                 <div className="font-mono font-medium">{c.coilCode}</div>
                 <div className="text-sm text-muted-foreground">
-                  {c.widthMm} mm · pendiente {formatQty(c.remainingKg, 'kg')} de{' '}
-                  {formatQty(c.assignedKg, 'kg')}
+                  {c.widthMm} mm · pendiente {formatQtyAsIs(c.remainingKg, 'kg')} de{' '}
+                  {formatQtyAsIs(c.assignedKg, 'kg')}
                   {c.parentCoilCode && <> · madre {c.parentCoilCode}</>}
                 </div>
               </div>
@@ -417,8 +413,8 @@ export function DrywallOrderPanel({
                 existía en el DTO sin mostrarse.
               */}
               <div className="text-sm text-muted-foreground">
-                {o.piecesReported} piezas de la orden · {formatQty(c.consumedKg, 'kg')} consumidos
-                de este fleje
+                {o.piecesReported} piezas de la orden · {formatQtyAsIs(c.consumedKg, 'kg')}{' '}
+                consumidos de este fleje
               </div>
               {isLive && new Decimal(c.consumedKg).lte(0) && (
                 <Button
@@ -476,7 +472,7 @@ export function DrywallOrderPanel({
                 <div>
                   <div className="font-mono font-medium">{s.code}</div>
                   <div className="text-sm text-muted-foreground">
-                    {formatQty(s.availableKg, 'kg')} · alcanza para {s.estimatedPieces} piezas
+                    {formatQtyAsIs(s.availableKg, 'kg')} · alcanza para {s.estimatedPieces} piezas
                     {s.parentCoilCode && <> · madre {s.parentCoilCode}</>}
                   </div>
                 </div>
@@ -507,7 +503,7 @@ export function DrywallOrderPanel({
         >
           {close.isPending || previewClose.isPending
             ? 'Calculando…'
-            : `Cerrar ${o.code} (${formatQty(pendingKg.toFixed(3), 'kg')} irán a merma)`}
+            : `Cerrar ${o.code} (${formatQtyAsIs(pendingKg.toFixed(3), 'kg')} irán a merma)`}
         </Button>
       )}
 
@@ -515,7 +511,7 @@ export function DrywallOrderPanel({
         open={closing}
         onOpenChange={setClosing}
         title="Cerrar con merma de proceso"
-        description={`Quedan ${formatQty(pendingKg.toFixed(3), 'kg')} sin convertir en piezas sobre ${formatQty(assignedKg.toFixed(3), 'kg')} montados: esa diferencia sale del inventario como merma y su costo se reparte entre las piezas buenas. Explica por qué.`}
+        description={`Quedan ${formatQtyAsIs(pendingKg.toFixed(3), 'kg')} sin convertir en piezas sobre ${formatQtyAsIs(assignedKg.toFixed(3), 'kg')} montados: esa diferencia sale del inventario como merma y su costo se reparte entre las piezas buenas. Explica por qué.`}
         confirmLabel="Cerrar la orden"
         pending={close.isPending || previewClose.isPending}
         withOperationDate

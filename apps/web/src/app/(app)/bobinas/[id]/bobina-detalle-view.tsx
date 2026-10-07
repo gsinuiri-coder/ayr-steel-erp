@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   COIL_FILM_EVENT_TYPE_LABELS,
@@ -25,14 +25,16 @@ import {
   type PaginatedResult,
 } from '@ayr/shared';
 import { COIL_SPLIT_TONE, coilTone } from '@/components/status-tone';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import {
   formatMoneyOrDash,
+  formatDateTime,
   formatQty,
   formatTimestampDate,
   isPositiveDecimal,
   unitSymbol,
 } from '@/lib/format';
+import { PreciseQty } from '@/components/precise-qty';
 import { INVOICE_LINK_ROLES, REF_TARGET_ROLES } from '@/lib/nav';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -149,8 +151,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
       setPending(null);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo completar la operación'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo completar la operación')),
   });
 
   if (coil.isPending) return <Skeleton className="h-64 w-full" />;
@@ -307,16 +308,20 @@ export function BobinaDetalleView({ id }: { id: string }) {
           <Row label="Acabado" value={`${c.finishCode} — ${c.finishName}`} />
           <Row label="Espesor" value={`${c.thicknessMm} mm`} />
           <Row label="Ancho" value={`${c.widthMm} mm`} />
-          <Row label="Peso de alta" value={formatQty(c.weightKg, 'kg')} />
+          <Row label="Peso de alta" value={<PreciseQty value={c.weightKg} />} />
           <Row label="Film de protección" value={c.film === 'SEALED' ? 'Sellada' : 'Abierta'} />
           <Row
             label="Disponible"
             value={
               // F8-S3c/M3: kg · ≈ ML del saldo (D-116), presentación pura — el kardex sigue
               // en kg, esto solo lo traduce para quien piensa en metros de plancha.
-              c.equivalentMeters !== null
-                ? `${formatQty(c.availableKg, 'kg')} · ≈ ${formatQty(c.equivalentMeters, 'm')}`
-                : formatQty(c.availableKg, 'kg')
+              c.equivalentMeters !== null ? (
+                <>
+                  <PreciseQty value={c.availableKg} /> · ≈ {formatQty(c.equivalentMeters, 'm')}
+                </>
+              ) : (
+                <PreciseQty value={c.availableKg} />
+              )
             }
           />
         </Section>
@@ -403,7 +408,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
         </Table>
       </Section>
 
-      <Section title="Partidos (RF-15)">
+      <Section title="Partidos">
         <Table>
           <TableHeader>
             <TableRow>
@@ -419,12 +424,12 @@ export function BobinaDetalleView({ id }: { id: string }) {
             <QueryStates query={splits} colSpan={6} error="No se pudieron cargar los partidos." />
             {splits.data?.map((s) => (
               <TableRow key={s.id}>
-                <TableCell className="whitespace-nowrap">
-                  {new Date(s.createdAt).toLocaleString('es-PE')}
-                </TableCell>
-                <TableCell className="text-right">{formatQty(s.splitWeightKg, 'kg')}</TableCell>
+                <TableCell className="whitespace-nowrap">{formatDateTime(s.createdAt)}</TableCell>
                 <TableCell className="text-right">
-                  {s.kerfLossMm} mm · {formatQty(s.kerfLossKg, 'kg')}
+                  <PreciseQty value={s.splitWeightKg} />
+                </TableCell>
+                <TableCell className="text-right">
+                  {s.kerfLossMm} mm · <PreciseQty value={s.kerfLossKg} />
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-2">
@@ -434,7 +439,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
                         className={cn('font-mono text-xs', LINK_CLASSNAME)}
                         href={`/bobinas/${child.id}`}
                       >
-                        {child.code} ({child.widthMm} mm · {formatQty(child.weightKg, 'kg')})
+                        {child.code} ({child.widthMm} mm · <PreciseQty value={child.weightKg} />)
                       </Link>
                     ))}
                   </div>
@@ -514,8 +519,12 @@ export function BobinaDetalleView({ id }: { id: string }) {
                     <span className="text-muted-foreground">Sin pedido</span>
                   )}
                 </TableCell>
-                <TableCell className="text-right">{formatQty(c.assignedKg, 'kg')}</TableCell>
-                <TableCell className="text-right">{formatQty(c.consumedKg, 'kg')}</TableCell>
+                <TableCell className="text-right">
+                  <PreciseQty value={c.assignedKg} />
+                </TableCell>
+                <TableCell className="text-right">
+                  <PreciseQty value={c.consumedKg} />
+                </TableCell>
                 <TableCell>{PRODUCTION_ORDER_STATUS_LABELS[c.productionOrderStatus]}</TableCell>
               </TableRow>
             ))}
@@ -531,7 +540,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
       </Section>
 
       <Section
-        title="Kardex de la bobina (RF-53)"
+        title="Kardex de la bobina"
         action={
           <Button variant="outline" size="sm" asChild>
             <Link href={`/kardex?itemType=COIL&item=${id}&range=all`}>Ver kardex completo</Link>
@@ -554,9 +563,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
             <QueryStates query={movements} colSpan={7} error="No se pudo cargar el kardex." />
             {movementRows.map((m) => (
               <TableRow key={m.id} className={m.reversedById ? 'opacity-60' : undefined}>
-                <TableCell className="whitespace-nowrap">
-                  {new Date(m.at).toLocaleString('es-PE')}
-                </TableCell>
+                <TableCell className="whitespace-nowrap">{formatDateTime(m.at)}</TableCell>
                 <TableCell>
                   {INVENTORY_MOVEMENT_TYPE_LABELS[m.type]}
                   {m.reversalOfId && (
@@ -594,10 +601,18 @@ export function BobinaDetalleView({ id }: { id: string }) {
                   )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {m.type === 'ADJUST' ? '—' : formatQty(m.qty, unitSymbol(m.unit))}
+                  {m.type === 'ADJUST' ? (
+                    '—'
+                  ) : (
+                    <PreciseQty value={m.qty} unit={unitSymbol(m.unit)} />
+                  )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {m.balanceQty ? formatQty(m.balanceQty, unitSymbol(m.unit)) : '—'}
+                  {m.balanceQty ? (
+                    <PreciseQty value={m.balanceQty} unit={unitSymbol(m.unit)} />
+                  ) : (
+                    '—'
+                  )}
                 </TableCell>
                 <TableCell className="max-w-xs truncate text-muted-foreground">
                   {m.notes ?? ''}
@@ -714,8 +729,8 @@ function pendingDescription(action: PendingAction | null): string {
   }
   if (action?.kind === 'reopen') {
     return action.qty === null
-      ? 'La bobina vuelve a estar disponible para producción y partido. Si al terminarla se había liquidado un remanente, esos kilos vuelven al saldo con un movimiento inverso (D-164).'
-      : `Al terminarla se liquidaron ${action.qty} kg: reabrirla los devuelve al saldo con un movimiento inverso (D-164). El ajuste original no se borra.`;
+      ? 'La bobina vuelve a estar disponible para producción y partido. Si al terminarla se había liquidado un remanente, esos kilos vuelven al saldo con un movimiento inverso.'
+      : `Al terminarla se liquidaron ${action.qty} kg: reabrirla los devuelve al saldo con un movimiento inverso. El ajuste original no se borra.`;
   }
   return 'La bobina queda anulada y su ingreso se revierte en el kardex. Solo se puede si no tiene ningún otro movimiento.';
 }

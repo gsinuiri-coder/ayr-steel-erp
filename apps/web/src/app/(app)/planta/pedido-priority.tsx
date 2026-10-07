@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import type { ProductionOrderDto, RoofingBatchOrderDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { invalidateProduction } from '@/lib/production-queries';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Button } from '@/components/ui/button';
@@ -50,7 +50,7 @@ export function PedidoPriorityControl({
           });
           done += 1;
         } catch (err) {
-          const detail = err instanceof ApiError ? err.message : 'error desconocido';
+          const detail = errorMessage(err, 'error desconocido');
           throw new Error(
             `${String(done)} de ${String(pendingOrders.length)} órdenes actualizadas; ${order.code} falló: ${detail}`,
           );
@@ -124,7 +124,7 @@ export function PedidoPriorityControl({
         title={target ? `Priorizar ${salesOrderCode}` : `Quitar prioridad a ${salesOrderCode}`}
         description={`Se aplica a ${
           target ? String(orders.length - prioritized) : String(prioritized)
-        } de las ${String(orders.length)} órdenes de coberturas abiertas del pedido —en cola o en curso— y decide su lugar en la cola de producción. Queda registrado en la auditoría (RF-95).`}
+        } de las ${String(orders.length)} órdenes de coberturas abiertas del pedido —en cola o en curso— y decide su lugar en la cola de producción. Queda registrado en la auditoría.`}
         confirmLabel={target ? 'Priorizar' : 'Quitar prioridad'}
         pending={apply.isPending}
         onConfirm={(reason) => {

@@ -57,7 +57,7 @@ export function SellerDashboardCards() {
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">{q.data.productionOrders}</div>
-          <p className="text-xs text-muted-foreground">Con OP viva en progreso o draft</p>
+          <p className="text-xs text-muted-foreground">Con OP viva en progreso o en borrador</p>
         </CardContent>
       </Card>
       <Card>

@@ -33,6 +33,19 @@ interface ErrorBody {
   excess?: MountedKgExcess;
 }
 
+/** cc31: lo que se ve cuando el servidor no contesta o falla sin decir por qué. */
+export const SERVER_DOWN_MESSAGE = 'El servidor no respondió';
+export const TOO_MANY_REQUESTS_MESSAGE =
+  'Demasiados intentos seguidos. Espera un minuto y vuelve a probar.';
+
+const GENERIC_SERVER_ERRORS = new Set([
+  'Internal server error',
+  'Internal Server Error',
+  'Bad Gateway',
+  'Service Unavailable',
+  'Gateway Timeout',
+]);
+
 let refreshInFlight: Promise<boolean> | null = null;
 
 export async function tryRefresh(): Promise<boolean> {
@@ -52,9 +65,16 @@ async function toError(res: Response): Promise<ApiError> {
   } catch {
     /* sin cuerpo */
   }
-  const message = Array.isArray(body.message)
-    ? body.message.join(', ')
-    : (body.message ?? `Error ${res.status}`);
+  const raw = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+  // cc31: un 5xx sin motivo propio (o con el «Internal server error» genérico de Nest, o el de
+  // una pasarela) se dice en castellano y sin número: nadie puede hacer nada con «Error 500».
+  let message = raw ?? `No se pudo completar la operación (${String(res.status)})`;
+  if (res.status >= 500 && (raw === undefined || GENERIC_SERVER_ERRORS.has(raw))) {
+    message = SERVER_DOWN_MESSAGE;
+  }
+  // El límite de intentos responde con el texto en inglés de la librería
+  // («ThrottlerException: Too Many Requests»).
+  if (res.status === 429) message = TOO_MANY_REQUESTS_MESSAGE;
   return new ApiError(
     res.status,
     message,
@@ -79,6 +99,10 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
       headers: options.body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       cache: 'no-store',
+    }).catch(() => {
+      // cc31: sin red o sin servidor, `fetch` rechaza con «Failed to fetch». Se convierte en un
+      // `ApiError` de estado 0 para que toda vista lo muestre igual que cualquier otro error.
+      throw new ApiError(0, SERVER_DOWN_MESSAGE, undefined, 'NETWORK');
     });
 
   let res = await doFetch();

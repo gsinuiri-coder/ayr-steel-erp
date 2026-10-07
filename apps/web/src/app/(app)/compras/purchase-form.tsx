@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { z } from 'zod';
 import {
   BUSINESS_LINE_LABELS,
@@ -36,7 +36,7 @@ import {
   FINISH_FIELD_LABEL,
   finishLabels,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { ColorSwatch } from '@/components/colors/color-swatch';
@@ -311,7 +311,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
     },
     onError: (err) => {
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'No se pudo registrar la compra',
+        message: errorMessage(err, 'No se pudo registrar la compra'),
       });
     },
   });
@@ -555,7 +555,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                       <Input placeholder="Automático (SUNAT del día)" {...field} />
                     </FormControl>
                     <p className="text-xs text-muted-foreground">
-                      En blanco usa el TC SUNAT de la fecha de emisión (D-029).
+                      En blanco usa el TC SUNAT de la fecha de emisión.
                     </p>
                   </FormFieldCell>
                 )}
@@ -636,7 +636,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 control={form.control}
                 name="relatedPurchaseId"
                 render={({ field }) => (
-                  <FormFieldCell span={8} label="Imputar al costo de una compra de bobinas (D-043)">
+                  <FormFieldCell span={8} label="Imputar al costo de una compra de bobinas">
                     <Select
                       value={field.value ?? NO_LINK}
                       onValueChange={(v) => {
@@ -671,7 +671,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 control={form.control}
                 name="relatedCuttingOrderId"
                 render={({ field }) => (
-                  <FormFieldCell span={8} label="Imputar al costo de una orden de corte (RF-41)">
+                  <FormFieldCell span={8} label="Imputar al costo de una orden de corte">
                     <Select
                       value={field.value ?? NO_LINK}
                       onValueChange={(v) => {
@@ -724,8 +724,8 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           <CardContent className="grid gap-3">
             {isCoil && (
               <p className="text-sm text-muted-foreground">
-                Cada línea es una bobina: al recibir la compra se crea con su código RF-13 y su
-                entrada de kardex.
+                Cada línea es una bobina: al recibir la compra se crea con su código y su entrada de
+                kardex.
               </p>
             )}
             {items.fields.map((row, index) => (
@@ -964,7 +964,7 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
               <span>{formatMoney(totals.total, currency)}</span>
             </div>
             <p className="pt-2 text-xs text-muted-foreground">
-              El costo que entra al kardex es el valor sin IGV (D-038); el IGV se guarda aparte.
+              El costo que entra al kardex es el valor sin IGV; el IGV se guarda aparte.
             </p>
           </CardContent>
         </Card>

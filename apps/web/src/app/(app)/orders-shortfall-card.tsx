@@ -45,7 +45,7 @@ export function OrdersShortfallCard() {
   if (rows.length === 0) return null;
 
   return (
-    <Card className="max-w-xl border-amber-500/50">
+    <Card className="max-w-xl border-tone-warning-foreground/30">
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           Pedidos con faltante

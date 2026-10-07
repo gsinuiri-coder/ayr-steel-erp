@@ -224,7 +224,7 @@ export function ConfirmQuotationDialog({
               </Alert>
             )}
             {withShortfall && (
-              <Alert className="border-amber-500/60">
+              <Alert variant="warning">
                 <AlertDescription className="grid gap-3">
                   <div>
                     <p className="font-medium text-foreground">

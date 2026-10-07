@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { z } from 'zod';
 import {
   DOC_TYPE_LABELS,
@@ -162,7 +162,7 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
         }
       }
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'Error inesperado',
+        message: errorMessage(err, 'Error inesperado'),
       });
     },
   });
@@ -266,8 +266,7 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
                     />
                   </FormControl>
                   <p className="text-xs text-muted-foreground">
-                    3 a 6 letras. Es el primer segmento del código de cada bobina de este proveedor
-                    (RF-13).
+                    3 a 6 letras. Es el primer segmento del código de cada bobina de este proveedor.
                   </p>
                   <FormMessage />
                 </FormItem>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   Decimal,
   MIN_CHILD_WIDTH_MM,
@@ -10,7 +10,7 @@ import {
   type CuttingOrderCoilDto,
   type CuttingOrderDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -98,7 +98,7 @@ export function CuttingReceiveDialog({
       onOpenChange(false);
       onDone();
     },
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : 'No se pudo recibir'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo recibir')),
   });
   const backdate = useBackdateConfirm(async (confirmBackdate) => {
     await receive.mutateAsync(confirmBackdate);

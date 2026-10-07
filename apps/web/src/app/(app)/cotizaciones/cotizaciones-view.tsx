@@ -91,9 +91,9 @@ export function CotizacionesView() {
     <RoleGate allow={SALES_ROLES}>
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Cotizaciones</h1>
+          <h1 className="text-xl font-semibold">Cotizaciones</h1>
           <p className="text-xs text-muted-foreground">
-            Cotizar no reserva stock; confirmar crea el pedido y la reserva (RF-61, RF-62).
+            Cotizar no reserva stock; confirmar crea el pedido y la reserva.
           </p>
         </div>
         <div className="flex gap-2">

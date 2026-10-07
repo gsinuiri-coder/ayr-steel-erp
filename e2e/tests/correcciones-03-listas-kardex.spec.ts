@@ -275,7 +275,7 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       await expect(page.getByRole('heading', { name: 'Kardex', exact: true })).toBeVisible({
         timeout: 60_000,
       });
-      await expect(page.getByText('Elegí un ítem para ver su kardex')).toBeVisible();
+      await expect(page.getByText('Elige un ítem para ver su kardex')).toBeVisible();
       await expect(page.getByTestId('kardex-empty')).toBeVisible();
       await expect(page.getByRole('table')).toHaveCount(0);
 

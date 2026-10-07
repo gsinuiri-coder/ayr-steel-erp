@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: 'Panel' };
 export default function HomePage() {
   return (
     <>
-      <h1 className="text-lg font-semibold">Panel</h1>
+      <h1 className="text-xl font-semibold">Panel</h1>
       <HomeGreeting />
       <SellerDashboardCards />
       {/* cc27 (D-457): el mes del vendedor, solo VENDEDOR y solo lo suyo. */}

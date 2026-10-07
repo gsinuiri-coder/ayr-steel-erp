@@ -7,7 +7,7 @@ import {
   toDecimal,
   type PlantClosePreviewDto,
 } from '@ayr/shared';
-import { formatQty } from '@/lib/format';
+import { formatQtyAsIs } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -116,13 +116,13 @@ export function ClosePreviewDialog({
                   <TableRow key={c.coilId}>
                     <TableCell className="font-mono">{c.coilCode}</TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatQty(c.balanceBeforeKg, 'kg')}
+                      {formatQtyAsIs(c.balanceBeforeKg, 'kg')}
                     </TableCell>
                     <TableCell className="text-right tabular-nums font-medium">
-                      {formatQty(c.consumedKg, 'kg')}
+                      {formatQtyAsIs(c.consumedKg, 'kg')}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatQty(c.balanceAfterKg, 'kg')}
+                      {formatQtyAsIs(c.balanceAfterKg, 'kg')}
                     </TableCell>
                     <TableCell>{c.terminated ? 'Terminada' : 'Vuelve al almacén'}</TableCell>
                   </TableRow>
@@ -134,13 +134,13 @@ export function ClosePreviewDialog({
               <div
                 role="alert"
                 data-testid="aviso-sigue-en-almacen"
-                className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5"
+                className="rounded-md border border-tone-warning-foreground/30 bg-tone-warning p-2.5"
               >
                 <span className="font-medium">¿Sigue en el almacén para otra OP?</span> El{' '}
                 {scrapLabel.toLowerCase()} pasa del {String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} %
-                de lo montado ({formatQty(mountedKg ?? '0.000', 'kg')}). Si el material está entero,
-                vuelve y declara menos kilos consumidos: lo que no se consume vuelve al almacén en
-                vez de salir como {scrapLabel.toLowerCase()}.
+                de lo montado ({formatQtyAsIs(mountedKg ?? '0.000', 'kg')}). Si el material está
+                entero, vuelve y declara menos kilos consumidos: lo que no se consume vuelve al
+                almacén en vez de salir como {scrapLabel.toLowerCase()}.
               </div>
             )}
 
@@ -149,14 +149,14 @@ export function ClosePreviewDialog({
                 <li>
                   Vuelve al almacén:{' '}
                   <span className="font-medium" data-testid="vuelve-al-almacen">
-                    {backToStock?.gt(0) ? formatQty(backToStock.toFixed(3), 'kg') : 'nada'}
+                    {backToStock?.gt(0) ? formatQtyAsIs(backToStock.toFixed(3), 'kg') : 'nada'}
                   </span>
                 </li>
               )}
               <li>
                 {scrapLabel}:{' '}
                 <span className="font-medium">
-                  {scrap?.gt(0) ? formatQty(preview.scrapKg, 'kg') : 'ninguno'}
+                  {scrap?.gt(0) ? formatQtyAsIs(preview.scrapKg, 'kg') : 'ninguno'}
                 </span>
               </li>
               <li>
@@ -172,7 +172,7 @@ export function ClosePreviewDialog({
             {preview.outOfTolerance.length > 0 && (
               <div
                 role="alert"
-                className="grid gap-1 rounded-md border border-amber-500/50 bg-amber-500/10 p-2.5"
+                className="grid gap-1 rounded-md border border-tone-warning-foreground/30 bg-tone-warning p-2.5"
               >
                 <span className="font-medium">
                   Fuera de tolerancia (se registra con la casilla)

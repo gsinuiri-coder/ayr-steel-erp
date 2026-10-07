@@ -80,7 +80,7 @@ export function MermaView() {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Merma por bobina</h1>
+          <h1 className="text-xl font-semibold">Merma por bobina</h1>
           <p className="text-xs text-muted-foreground">
             {BUSINESS_LINE_LABELS[line]}. Bobinas con producción, {trimLabel.toLowerCase()} o ajuste
             de cierre en el rango, con los movimientos de kardex del rango. Merma = (consumido −
@@ -183,7 +183,7 @@ export function MermaView() {
                 <TableHead className="text-right">% s/ estándar</TableHead>
                 <TableHead
                   className="text-right"
-                  title="Merma manual (RF-17): informativa, fuera de la merma"
+                  title="Merma manual: informativa, fuera de la merma"
                 >
                   Otra merma (manual)
                 </TableHead>

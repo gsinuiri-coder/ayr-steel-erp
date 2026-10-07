@@ -12,6 +12,7 @@ import { api } from '@/lib/api';
 import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
+import { OVERDUE_TONE } from '@/components/status-tone';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -43,7 +44,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Estado de cuenta</h1>
+          <h1 className="text-xl font-semibold">Estado de cuenta</h1>
           <p className="text-xs text-muted-foreground">
             {s.supplierCode} — {s.supplierName}
           </p>
@@ -146,7 +147,7 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
                   {p.overdueDays === null ? (
                     <span className="text-muted-foreground">Contado</span>
                   ) : p.overdueDays > 0 ? (
-                    <Badge variant="destructive">Vencida hace {p.overdueDays} d</Badge>
+                    <Badge variant={OVERDUE_TONE}>Vencida hace {p.overdueDays} d</Badge>
                   ) : p.overdueDays === 0 ? (
                     <Badge variant="secondary">Vence hoy</Badge>
                   ) : (

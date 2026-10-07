@@ -2,14 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Info } from 'lucide-react';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   FISCAL_DOC_TYPE_LABELS,
   Role,
   type FiscalSeriesDto,
   type InvoicingSettingsDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -55,7 +55,7 @@ export function ContingencyCard() {
   });
 
   function onError(err: unknown): void {
-    toast.error(err instanceof ApiError ? err.message : 'La operación no se pudo completar');
+    toast.error(errorMessage(err, 'La operación no se pudo completar'));
   }
   function refresh(): void {
     void queryClient.invalidateQueries({ queryKey: ['invoicing-series'] });

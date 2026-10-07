@@ -6,7 +6,6 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   AUDIT_ENTITY_TYPES,
   AUDIT_SOURCE_LABELS,
-  BUSINESS_TIME_ZONE,
   money,
   Role,
   salePriceFromValue,
@@ -24,7 +23,7 @@ import {
   auditFieldValueLabel,
   isPriceListValueField,
 } from '@/lib/audit-labels';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDateTime } from '@/lib/format';
 import { useDebouncedValue } from '@/hooks/use-debounced-value';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
@@ -48,18 +47,6 @@ import {
 } from '@/components/ui/table';
 
 const ALL = 'ALL';
-
-/** `"2026-09-16T21:03:11.000Z"` → `"16/09/2026, 16:03"` en hora de Lima. */
-function formatDateTime(iso: string): string {
-  return new Intl.DateTimeFormat('es-PE', {
-    timeZone: BUSINESS_TIME_ZONE,
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(iso));
-}
 
 /** Precio de lista (D-217): se guarda sin IGV y el catálogo lo muestra con IGV — el visor sigue
  *  el mismo vocabulario en vez de mostrar el valor crudo de la base (D-225/ajustes UAT). */
@@ -181,9 +168,9 @@ export function AuditoriaView() {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="space-y-4">
         <div>
-          <h1 className="text-lg font-semibold">Auditoría</h1>
+          <h1 className="text-xl font-semibold">Auditoría</h1>
           <p className="text-xs text-muted-foreground">
-            Historial de acciones sensibles del sistema (RF-95). Solo lectura.
+            Historial de acciones sensibles del sistema. Solo lectura.
           </p>
         </div>
 

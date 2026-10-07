@@ -7,7 +7,7 @@ import {
   ROOFING_THICKNESS_TOLERANCE_MM,
   type RoofingCoilOptionDto,
 } from '@ayr/shared';
-import { formatQty } from '@/lib/format';
+import { formatQtyAsIs } from '@/lib/format';
 import { ColorSwatch } from '@/components/colors/color-swatch';
 import { FilmOpenNotice } from '@/components/film-open-notice';
 import { Badge } from '@/components/ui/badge';
@@ -131,7 +131,7 @@ export function CoilPicker({
       <p className="text-sm text-muted-foreground">
         No hay bobinas libres del color comercial y el espesor de {productSku} (±
         {ROOFING_THICKNESS_TOLERANCE_MM} mm). Una bobina en corte tercerizado, montada en otra orden
-        o prometida a otro pedido tampoco aparece acá.
+        o prometida a otro pedido tampoco aparece aquí.
       </p>
     );
   }
@@ -307,10 +307,10 @@ export function CoilPicker({
                           <FinishCell coil={c} />
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {formatQty(c.weightKg, 'kg')}
+                          {formatQtyAsIs(c.weightKg, 'kg')}
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
-                          {formatQty(c.availableKg, 'kg')}
+                          {formatQtyAsIs(c.availableKg, 'kg')}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
@@ -377,17 +377,17 @@ export function CoilPicker({
                                 <FinishCell coil={c} />
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
-                                {formatQty(c.weightKg, 'kg')}
+                                {formatQtyAsIs(c.weightKg, 'kg')}
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {c.closeAdjustment === null
                                   ? '—'
-                                  : `${c.closeAdjustment.kind === 'SHORTAGE' ? '−' : '+'}${formatQty(c.closeAdjustment.qtyKg, 'kg')}`}
+                                  : `${c.closeAdjustment.kind === 'SHORTAGE' ? '−' : '+'}${formatQtyAsIs(c.closeAdjustment.qtyKg, 'kg')}`}
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {c.needsPhysicalKg
                                   ? 'Pide el peso físico'
-                                  : formatQty(c.availableKg, 'kg')}
+                                  : formatQtyAsIs(c.availableKg, 'kg')}
                               </TableCell>
                               <TableCell className="text-right">
                                 <Button
@@ -502,7 +502,7 @@ function ReopenStep({
     <div className="grid gap-3">
       <div
         role="alert"
-        className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+        className="rounded-lg border border-tone-warning-foreground/30 bg-tone-warning p-3 text-sm"
       >
         {coil.needsPhysicalKg ? (
           <>
@@ -517,11 +517,11 @@ function ReopenStep({
         ) : (
           <>
             <span className="font-mono font-medium">{coil.code}</span> terminada con ajuste de{' '}
-            {formatQty(adjustment.qtyKg, 'kg')} (
+            {formatQtyAsIs(adjustment.qtyKg, 'kg')} (
             {adjustment.kind === 'SHORTAGE' ? 'faltante' : 'sobrante'}) — reabrirla revierte el
             ajuste: {adjustment.kind === 'SHORTAGE' ? 'vuelven al kardex' : 'salen del kardex'}{' '}
-            {formatQty(adjustment.qtyKg, 'kg')} con un asiento compensatorio. Al terminarla de nuevo
-            se calcula un ajuste nuevo con el saldo real.
+            {formatQtyAsIs(adjustment.qtyKg, 'kg')} con un asiento compensatorio. Al terminarla de
+            nuevo se calcula un ajuste nuevo con el saldo real.
           </>
         )}{' '}
         {coil.needsPhysicalKg ? (
@@ -532,7 +532,7 @@ function ReopenStep({
             Si bajas la bobina sin usarla, el sobrante se deshace.
           </>
         ) : (
-          <>Queda montada en esta orden con {formatQty(coil.availableKg, 'kg')}.</>
+          <>Queda montada en esta orden con {formatQtyAsIs(coil.availableKg, 'kg')}.</>
         )}
       </div>
       <FilmOpenNotice
@@ -552,7 +552,7 @@ function ReopenStep({
             }}
           />
           <p className="text-xs text-muted-foreground">
-            Hasta {formatQty(coil.weightKg, 'kg')}, el peso con que entró.
+            Hasta {formatQtyAsIs(coil.weightKg, 'kg')}, el peso con que entró.
           </p>
         </div>
       )}

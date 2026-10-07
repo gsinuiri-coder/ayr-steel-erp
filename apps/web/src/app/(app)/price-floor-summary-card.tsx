@@ -48,14 +48,14 @@ export function PriceFloorSummaryCard() {
   if (rows.length === 0) return null;
 
   return (
-    <Card className="max-w-xl border-amber-500/50">
+    <Card className="max-w-xl border-tone-warning-foreground/30">
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           SKUs con lista bajo piso
           <Badge variant="outline">{rows.length}</Badge>
         </CardTitle>
         <CardDescription>
-          Precio de lista por debajo del mínimo de D-163 (costo promedio del kardex sobre el margen
+          Precio de lista por debajo del precio mínimo (costo promedio del kardex sobre el margen
           mínimo de su línea). No bloquea: el catálogo se sigue vendiendo igual.
         </CardDescription>
       </CardHeader>

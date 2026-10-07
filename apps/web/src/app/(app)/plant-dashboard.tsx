@@ -136,7 +136,7 @@ function PlantDashboardBody({ d }: { d: PlantDashboardDto }) {
               </Link>
             </CardTitle>
             <CardDescription className="text-xs">
-              En el orden de la cola de Producción (fecha prometida y prioridad, D-189).
+              En el orden de la cola de Producción (fecha prometida y prioridad).
             </CardDescription>
           </CardHeader>
           <CardContent>

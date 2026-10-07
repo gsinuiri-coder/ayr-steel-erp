@@ -158,9 +158,9 @@ export function BobinasView() {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Bobinas</h1>
+          <h1 className="text-xl font-semibold">Bobinas</h1>
           <p className="text-xs text-muted-foreground">
-            Materia prima por línea de negocio (RF-23). El alta entra por compra, XML o planilla.
+            Materia prima por línea de negocio. El alta entra por compra, XML o planilla.
           </p>
         </div>
         {/*

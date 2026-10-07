@@ -49,10 +49,10 @@ export function InventarioView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>
       <div>
-        <h1 className="text-lg font-semibold">Inventario</h1>
+        <h1 className="text-xl font-semibold">Inventario</h1>
         <p className="text-xs text-muted-foreground">
-          Stock valorizado en soles por línea de negocio (RF-51). Las bobinas se agrupan por tipo:
-          mismo acabado y espesor, sin importar el ancho (RF-14).
+          Stock valorizado en soles por línea de negocio. Las bobinas se agrupan por tipo: mismo
+          acabado y espesor, sin importar el ancho.
         </p>
       </div>
 
@@ -206,7 +206,7 @@ function SummaryTable({
                   {new Decimal(row.reservedQty).isZero() ? (
                     <span className="text-muted-foreground">—</span>
                   ) : (
-                    <span className="font-medium text-amber-600">
+                    <span className="font-medium text-tone-warning-foreground">
                       {formatQty(row.reservedQty, unitSymbol(row.unit))}
                     </span>
                   )}

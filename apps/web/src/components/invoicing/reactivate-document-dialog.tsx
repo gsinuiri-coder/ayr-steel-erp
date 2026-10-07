@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   FiscalDocType,
   FiscalDocumentOrigin,
@@ -11,7 +11,7 @@ import {
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatDate, formatTimestampDate } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { Button } from '@/components/ui/button';
@@ -93,7 +93,7 @@ export function ReactivateDocumentDialog({
       router.push(`/comprobantes/${d.id}?despacho=${DISPATCH_AT_DOCUMENT_DATE}`);
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo reactivar');
+      toast.error(errorMessage(err, 'No se pudo reactivar'));
     },
   });
 

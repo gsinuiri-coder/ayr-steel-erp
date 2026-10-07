@@ -54,7 +54,7 @@ const salesConfig = {
 
 const agingConfig = {
   current: { label: 'Por vencer', color: 'var(--primary)' },
-  overdue: { label: 'Vencido', color: 'var(--tone-warning-foreground)' },
+  overdue: { label: 'Vencido', color: 'var(--destructive)' },
 } satisfies ChartConfig;
 
 /** Lo que el gráfico guarda de cada fila: el importe tal cual viene del reporte. */
@@ -318,7 +318,7 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
             </Link>
           </CardTitle>
           <CardDescription className="text-xs">
-            Saldo a hoy por días de vencido; el contado vence al emitir (D-428).{' '}
+            Saldo a hoy por días de vencido; el contado vence al emitir.{' '}
             {d.receivables.documentCount} comprobantes con saldo.
           </CardDescription>
         </CardHeader>

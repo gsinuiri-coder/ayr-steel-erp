@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   CUTTING_ORDER_COIL_STATUS_LABELS,
@@ -13,7 +13,7 @@ import {
   type CuttingOrderDto,
 } from '@ayr/shared';
 import { CUTTING_ORDER_COIL_TONE, CUTTING_ORDER_TONE } from '@/components/status-tone';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { formatMoney, formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -69,8 +69,7 @@ export function CorteDetalleView({ id }: { id: string }) {
       setCancelling(false);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo anular la orden'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo anular la orden')),
   });
 
   const revert = useMutation({
@@ -84,8 +83,7 @@ export function CorteDetalleView({ id }: { id: string }) {
       setReverting(null);
       invalidate();
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo revertir la recepción'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo revertir la recepción')),
   });
 
   if (order.isPending) return <Skeleton className="h-64 w-full" />;
@@ -101,7 +99,7 @@ export function CorteDetalleView({ id }: { id: string }) {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">{o.supplierName}</h1>
+          <h1 className="text-xl font-semibold">{o.supplierName}</h1>
           <p className="text-xs text-muted-foreground">
             {BUSINESS_LINE_LABELS[o.businessLine]} · enviada el{' '}
             {new Date(o.sentAt).toLocaleDateString('es-PE')}
@@ -233,7 +231,7 @@ export function CorteDetalleView({ id }: { id: string }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Servicios de corte imputados (RF-41)</CardTitle>
+          <CardTitle>Servicios de corte imputados</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
           <Table>
@@ -284,7 +282,7 @@ export function CorteDetalleView({ id }: { id: string }) {
         open={cancelling}
         onOpenChange={setCancelling}
         title="Cancelar lo pendiente de la orden"
-        description="Las bobinas que todavía no volvieron del tercero quedan abiertas otra vez (RF-22). Lo ya recibido no se toca."
+        description="Las bobinas que todavía no volvieron del tercero quedan abiertas otra vez. Lo ya recibido no se toca."
         confirmLabel="Sí, cancelar"
         pending={cancel.isPending}
         withOperationDate

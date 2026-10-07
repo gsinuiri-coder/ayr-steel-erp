@@ -160,7 +160,7 @@ export function VentasMaterialView() {
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">Ventas por material</h1>
+          <h1 className="text-xl font-semibold">Ventas por material</h1>
           <p className="text-xs text-muted-foreground">
             {lineLabel}. Comprobantes emitidos en el rango, sin IGV;{' '}
             {byProduct

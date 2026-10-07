@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/notify';
 import type { CoilDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';

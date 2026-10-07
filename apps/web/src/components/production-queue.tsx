@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   describePieces,
   type LineWithoutOrderDto,
@@ -11,11 +11,11 @@ import {
   type QueueSemaphore,
   type SalesOrderDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
-import { formatDate, formatQty, queueAgeLabel, todayIso } from '@/lib/format';
+import { api } from '@/lib/api';
+import { formatDate, formatMeters, formatQty, queueAgeLabel, todayIso } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
-import type { StatusTone } from '@/components/status-tone';
+import { OVERDUE_TONE, PRIORITY_TONE, type StatusTone } from '@/components/status-tone';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -59,7 +59,7 @@ export const SEMAPHORE_LABEL: Record<QueueSemaphore, string> = {
  * sistema. Un semáforo es exactamente el caso para el que existe `warning`.
  */
 export const SEMAPHORE_VARIANT: Record<QueueSemaphore, StatusTone> = {
-  VENCIDO: 'destructive',
+  VENCIDO: OVERDUE_TONE,
   PROXIMO: 'warning',
   A_TIEMPO: 'done',
   SIN_FECHA: 'outline',
@@ -90,8 +90,8 @@ export function QueueEntrySummary({
           {srPrefix && <span className="sr-only">Abrir en producción </span>}
           {entry.code}
         </span>
-        {entry.priority && <Badge>Prioridad</Badge>}
-        {entry.overdue && <Badge variant="destructive">Vencida</Badge>}
+        {entry.priority && <Badge variant={PRIORITY_TONE}>Prioridad</Badge>}
+        {entry.overdue && <Badge variant={OVERDUE_TONE}>Vencida</Badge>}
         {!entry.overdue && (
           <Badge variant={SEMAPHORE_VARIANT[entry.semaphore]}>
             {SEMAPHORE_LABEL[entry.semaphore]}
@@ -103,7 +103,7 @@ export function QueueEntrySummary({
         {entry.customerName !== null && <span className="text-sm">{entry.customerName}</span>}
       </span>
       <span className="text-xs text-muted-foreground">
-        {entry.productSku} ({spec}) · {entry.planMeters} m del plan
+        {entry.productSku} ({spec}) · {formatMeters(entry.planMeters)} del plan
         {entry.planItems.length > 0 && <> · {describePieces(entry.planItems)}</>}
         {entry.theoreticalKg !== null && <> · {formatQty(entry.theoreticalKg, 'kg')} teóricos</>} ·
         Compromiso:{' '}
@@ -144,8 +144,7 @@ export function PromisedDateControl({
       invalidateSales(queryClient, { orderId: salesOrderId });
       invalidateProduction(queryClient);
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cambiar la fecha'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo cambiar la fecha')),
   });
 
   return (
@@ -192,8 +191,7 @@ export function OrderPriorityControl({
       invalidateProduction(queryClient, orderId);
       setReasonOpen(false);
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo cambiar la prioridad'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo cambiar la prioridad')),
   });
 
   return (
@@ -214,7 +212,7 @@ export function OrderPriorityControl({
         open={reasonOpen}
         onOpenChange={setReasonOpen}
         title={priority ? `Quitar prioridad a ${orderCode}` : `Priorizar ${orderCode}`}
-        description="Mueve la orden en la cola de producción. Queda registrado en la auditoría (RF-95)."
+        description="Mueve la orden en la cola de producción. Queda registrado en la auditoría."
         confirmLabel={priority ? 'Quitar prioridad' : 'Priorizar'}
         pending={setPriority.isPending}
         onConfirm={(reason) => {

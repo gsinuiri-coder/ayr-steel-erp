@@ -3,7 +3,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import Link from 'next/link';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import type { InvoiceDispatchPlanDto, InvoiceDispatchResultDto } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
@@ -83,7 +83,7 @@ export function DispatchAtIssueDate({
       invalidateInvoicing(queryClient, { documentId, orderId: salesOrderId });
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo despachar');
+      toast.error(errorMessage(err, 'No se pudo despachar'));
     },
   });
 
@@ -130,7 +130,7 @@ export function DispatchAtIssueDate({
           />
         </label>
         <p className="text-xs text-muted-foreground">
-          Default D-285:{' '}
+          Fecha sugerida:{' '}
           {defaultLines
             .map(
               (line) =>
@@ -172,7 +172,7 @@ export function DispatchAtIssueDate({
                   >
                     Restaurar reserva
                   </Link>{' '}
-                  y volver acá para despacharla.
+                  y volver aquí para despacharla.
                 </span>
               )}
             </li>

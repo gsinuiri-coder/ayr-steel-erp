@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import { Role, type TemporaryReservationListItemDto } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { invalidateSales } from '@/lib/sales-queries';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -62,14 +62,13 @@ export function ReservasTemporalesView() {
       setReleasing(null);
       invalidateSales(queryClient, { quotationId: variables.quotationId });
     },
-    onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'No se pudo liberar la reserva'),
+    onError: (err) => toast.error(errorMessage(err, 'No se pudo liberar la reserva')),
   });
 
   return (
     <RoleGate allow={SALES_ROLES}>
       <div>
-        <h1 className="text-lg font-semibold">Reservas temporales</h1>
+        <h1 className="text-xl font-semibold">Reservas temporales</h1>
         <p className="text-xs text-muted-foreground">
           Material apartado sobre cotizaciones emitidas mientras el cliente confirma. Descuenta
           disponible igual que un pedido y se libera solo al vencer.

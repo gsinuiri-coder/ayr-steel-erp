@@ -16,7 +16,8 @@ import {
   type PosContextDto,
   type PosSaleListItemDto,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
+import { errorMessage } from '@/lib/notify';
 import { formatMoney } from '@/lib/format';
 import { invalidatePos } from '@/lib/pos-queries';
 import { useSession } from '@/lib/session';
@@ -106,7 +107,7 @@ export function CajaView() {
       invalidatePos(queryClient);
     },
     onError: (err) => {
-      setError(err instanceof ApiError ? err.message : 'No se pudo cerrar la caja');
+      setError(errorMessage(err, 'No se pudo cerrar la caja'));
     },
   });
 
@@ -128,7 +129,7 @@ export function CajaView() {
       // Se cierra el diálogo **antes** de pintar el error: con el diálogo abierto encima, el
       // mensaje quedaba detrás y la anulación parecía no hacer nada.
       setVoiding(null);
-      setError(err instanceof ApiError ? err.message : 'No se pudo anular la venta');
+      setError(errorMessage(err, 'No se pudo anular la venta'));
     },
   });
 
@@ -138,7 +139,7 @@ export function CajaView() {
     <RoleGate allow={POS_ROLES}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">Caja</h1>
+          <h1 className="text-xl font-semibold">Caja</h1>
           <p className="text-xs text-muted-foreground">
             El arqueo compara el efectivo esperado del turno contra el que cuentas. Tarjeta, Yape y
             transferencia se listan aparte: no ponen billetes en el cajón.

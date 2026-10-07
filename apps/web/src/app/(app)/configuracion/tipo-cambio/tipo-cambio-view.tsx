@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { toast } from 'sonner';
+import { errorMessage, toast } from '@/lib/notify';
 import {
   businessToday,
   CURRENCIES,
@@ -13,7 +13,7 @@ import {
   type ExchangeRateDto,
   type UpsertManualExchangeRateInput,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -75,7 +75,7 @@ export function TipoCambioView() {
     },
     onError: (err) => {
       form.setError('root', {
-        message: err instanceof ApiError ? err.message : 'Error inesperado',
+        message: errorMessage(err, 'Error inesperado'),
       });
     },
   });
@@ -91,7 +91,7 @@ export function TipoCambioView() {
   return (
     <>
       <div>
-        <h1 className="text-lg font-semibold">Tipo de cambio</h1>
+        <h1 className="text-xl font-semibold">Tipo de cambio</h1>
         <p className="text-xs text-muted-foreground">
           Se consulta a apis.net.pe (SUNAT) por fecha y se cachea. Si la API externa falla, el
           sistema usa el último valor conocido; aquí puedes registrar uno a mano.

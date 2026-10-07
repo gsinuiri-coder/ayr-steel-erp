@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ConnectionBanner } from '@/components/connection-banner';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
@@ -23,6 +24,7 @@ export function Providers({ children }: { children: ReactNode }) {
         quedaba muerta varios segundos (S11, hallazgo T-02).
       */}
       <Toaster position="bottom-right" richColors closeButton />
+      <ConnectionBanner />
     </QueryClientProvider>
   );
 }
