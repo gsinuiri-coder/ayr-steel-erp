@@ -7,6 +7,7 @@
 ## P0
 
 ### P0-1. Un corte de red ahora descarta la clave de idempotencia y el reintento duplica el documento
+
 - Archivo: `apps/web/src/lib/use-idempotency-key.ts:43` (disparado por `apps/web/src/lib/api.ts:102-105`).
 - Qué pasa: `api()` ahora convierte el rechazo de `fetch` en `new ApiError(0, SERVER_DOWN_MESSAGE, undefined, 'NETWORK')`. `settle` decide así:
   `uncertain = error !== undefined && !(error instanceof ApiError && error.status < 500)`.
@@ -20,7 +21,9 @@
 ## P1
 
 ### P1-1. Specs E2E con cifras y textos que cambian y no se actualizaron (la suite saldrá en rojo)
+
 Solo se tocaron 2 specs de E2E (`correcciones-03-listas-kardex`, `planta-espacio-produccion-ui`). Verificado contra el código nuevo:
+
 - `e2e/tests/plancha-largo-d166.spec.ts:236` espera `30.000 m lineales`; el código (`sales-document-form.tsx:1869`) ahora da `30.00 m lineales`. Lo mismo en `:170` y `:176` (`= 0.003 m`, `= 3.000 m`; `product-dialog.tsx` usa `formatMeters`: `= 3.00 m`; el `0.003` conserva el tercer decimal, el `3.000` no).
 - `e2e/tests/import-cotizaciones-ui.spec.ts:727` (`Los largos suman 80.000 m y la línea dice 81.900 m.`) y `:733` (`… · 81.900 m`): ahora `80.00 m`, `81.90 m`.
 - `e2e/tests/planta-cola-f8s3-ui.spec.ts:131` (`40.000 m del plan`, `production-queue.tsx` usa `formatMeters`) y posiblemente `:183`, `:125`, `:273-274`.
@@ -29,11 +32,13 @@ Solo se tocaron 2 specs de E2E (`correcciones-03-listas-kardex`, `planta-espacio
 - Arreglo: correr la suite E2E completa (build de producción) y actualizar las aserciones; no afirmar verde sin esa corrida.
 
 ### P1-2. `errorMessage` presenta como «El servidor no respondió» cualquier `TypeError` del propio código
+
 - Archivo: `apps/web/src/lib/notify.ts:48-51`.
 - Qué pasa: `if (err instanceof TypeError) return SERVER_DOWN_MESSAGE`. Los `fetch` crudos que no pasan por `api()` (`nueva-xml-view.tsx:20`, `download.ts`, `plant-sheet-buttons.tsx`) sí lanzan `TypeError` por red, pero un `TypeError` por un defecto (`undefined.map`, un `Decimal` mal formado dentro de un `onError`/`catch`) también se mostrará como «El servidor no respondió» más el aviso «No se guardó nada. Lo que escribiste sigue en pantalla.» Eso es falso en el segundo caso y oculta el error real al dueño.
 - Arreglo: comparar el mensaje (`/failed to fetch|networkerror|load failed/i`, que cubre Chrome, Firefox y Safari) o que los `fetch` crudos lancen el mismo `ApiError(0,…)`; para cualquier otro `TypeError`, devolver `fallback`.
 
 ### P1-3. `formatNumber` lanza si el valor no es un decimal válido, y `formatQty` antes toleraba cualquier cadena
+
 - Archivo: `apps/web/src/lib/format.ts:77-84` (vía `formatQty` con `kg`/`m`, `format.ts:109-113`).
 - Qué pasa: `formatQty('', 'kg')` antes devolvía `0 kg`; ahora `new Decimal('')` lanza y rompe el render de toda la vista (cae en el `error.tsx` nuevo). Hay llamadores con cadenas escritas por el usuario: `sales-document-form.tsx:2140` (`formatQty(qty, 'kg')`, `qty` pasa por `isPositiveDecimal` que hace `trim()` pero `Decimal` no admite espacios: `'12 '` lanza) y `importar-view.tsx:1432` (`toDecimal(qty.trim())` protegido por `isNumeric`, ese está bien).
 - No hallé un caso concreto que hoy llegue con vacío desde el API, por eso lo dejo en P1 y no P0; el riesgo es una regresión latente en un helper que usan ~40 llamadores.
