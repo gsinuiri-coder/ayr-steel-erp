@@ -12,14 +12,14 @@
 - Un PR por corte, encadenados. La vuelta atrás es promover el despliegue anterior en Vercel y
   revertir el PR.
 
-| Corte              | PR   | `main`     | Vercel (prod) | Vuelta atrás            | Verificación en producción                                |
-| ------------------ | ---- | ---------- | ------------- | ----------------------- | --------------------------------------------------------- |
-| 1 Base             | #124 | `5fda071f` | 6907064391    | 6902941524 (`dbfd6d7c`) | ingreso, Panel, /pedidos, /clientes, /bobinas             |
-| 2 Marco            | #125 | `bc0d8b38` | 6907692122    | 6907064391              | ingreso, Panel, /pedidos, /comprobantes, tipo de cambio   |
-| 3 Detalle y listas | #126 | `2c76fc25` | 6908516921    | 6907692122              | ingreso, Panel, /pedidos, /cotizaciones, /comprobantes    |
-| 4 Panel            | #127 | `67ed4ad2` | 6908858577    | 6908516921              | ingreso, Panel, /cotizaciones                             |
-| 5 Formularios      | #128 | `08e3bbdb` | 6908933579    | 6908858577              | ingreso, Panel, /despachos/nuevo, /compras/nueva          |
-| 6 Cotización       | #129 | —          | —             | —                       | **sin merge**: terminó a las 07:07, después de la ventana |
+| Corte              | PR   | `main`     | Vercel (prod) | Vuelta atrás            | Verificación en producción                                                                     |
+| ------------------ | ---- | ---------- | ------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
+| 1 Base             | #124 | `5fda071f` | 6907064391    | 6902941524 (`dbfd6d7c`) | ingreso, Panel, /pedidos, /clientes, /bobinas                                                  |
+| 2 Marco            | #125 | `bc0d8b38` | 6907692122    | 6907064391              | ingreso, Panel, /pedidos, /comprobantes, tipo de cambio                                        |
+| 3 Detalle y listas | #126 | `2c76fc25` | 6908516921    | 6907692122              | ingreso, Panel, /pedidos, /cotizaciones, /comprobantes                                         |
+| 4 Panel            | #127 | `67ed4ad2` | 6908858577    | 6908516921              | ingreso, Panel, /cotizaciones                                                                  |
+| 5 Formularios      | #128 | `08e3bbdb` | 6908933579    | 6908858577              | ingreso, Panel, /despachos/nuevo, /compras/nueva                                               |
+| 6 Cotización       | #129 | `ebb0205b` | 6914510396    | 6912775303 (`7d890f9d`) | ingreso, Panel, nueva cotización, pedido directo, editar cotización (agregar ítems: ver abajo) |
 
 En los cinco cortes desplegados la consola salió sin errores. La verificación usó un admin efímero
 y Playwright contra `https://v2.mareliac.pe`, nunca `e2e:prod`.
@@ -40,7 +40,7 @@ y Playwright contra `https://v2.mareliac.pe`, nunca `e2e:prod`.
 ## Decisiones provisionales (D-480..D-501)
 
 Están en `docs/ARQUITECTURA.md` §0.2. Todas son provisionales y esperan la revisión del dueño.
-D-496..D-501 son del corte 6 y solo valen si el #129 entra.
+D-496..D-501 son del corte 6.
 
 ## Omisiones por falta de dato del API
 
@@ -72,8 +72,12 @@ D-496..D-501 son del corte 6 y solo valen si el #129 entra.
 
 ## Para la siguiente sesión
 
-- **#129 (corte 6):** revisarlo y desplegarlo en una ventana. Las P2 de las dos revisiones están
-  corregidas en la rama (ver `docs/revision/cc31-c6-segundo-modelo.md`).
+- **#129 (corte 6):** entró el mismo 7 de octubre a las 10:56 de Lima (el dueño aclaró que la
+  autorización llegaba hasta las 07:00 del jueves 8, no del miércoles), con la CI completa en verde
+  —SonarCloud incluido, tras sumar `lib/list-price.spec.ts` para la cobertura del código nuevo—.
+  Verificado en producción sin errores de consola. «Agregar ítems» no se pudo abrir en producción:
+  no hay ningún pedido en curso (los 100 visibles están atendidos) y no se crean documentos de
+  prueba; ese uso queda cubierto por la E2E de la CI y la local.
 - **Riesgo:** es el corte de mayor riesgo. Las revisiones confirmaron que no cambian el payload, los
   pisos, las validaciones ni el habilitado del botón. Sí agrega tres comportamientos:
   - elegir un producto de otra línea cambia la línea de la fila;
