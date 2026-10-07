@@ -997,7 +997,7 @@ export class RoofingProductionService {
     // D-388/D-389: la casilla la marca cualquiera que pueda reportar (el controlador ya limita los
     // roles); sin administrador de por medio desde D-389.
     const override = input.toleranceOverride;
-    const order = await lockOrder(tx, orderId);
+    const order = await lockOrder(tx, orderId, { parent: true });
     assertKind(order, ProductionOrderKind.ROOFING);
     // cc30 (grupo C): las dos reservas que el reporte escribe —la de materia prima de la OP, que se
     // descuenta, y la del producto fabricado de la misma línea (D-088), que sube después de los
@@ -2451,7 +2451,8 @@ export class RoofingProductionService {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
-        const order = await lockOrder(tx, orderId);
+        // cc30: pedido → OP; las dos reservas se toman abajo, juntas.
+        const order = await lockOrder(tx, orderId, { parent: true });
         assertKind(order, ProductionOrderKind.ROOFING);
         if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
           throw new BadRequestException(
@@ -2855,7 +2856,8 @@ export class RoofingProductionService {
     // hay nada que fechar; la validación corre igual para que el contrato no mienta.
     this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
-      const order = await lockOrder(tx, orderId);
+      // cc30: anular restaura la reserva y el pedido (`restoreReservationIfIdle`).
+      const order = await lockOrder(tx, orderId, { own: true });
       assertKind(order, ProductionOrderKind.ROOFING);
       assertLive(order, 'anularla');
 

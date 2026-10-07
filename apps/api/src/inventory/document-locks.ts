@@ -8,10 +8,10 @@ import {
 } from './row-locks';
 
 /**
- * cc30 (grupo C de D-386): **el único `FOR UPDATE` sobre las tablas de documentos.** Es la puerta
- * de documentos, con el mismo patrón que `lockCoilRows` para las bobinas: recibe el conjunto
+ * cc30 (grupo C de D-386): **la puerta de los `FOR UPDATE` sobre las tablas de documentos.**
+ * Tiene el mismo patrón que `lockCoilRows` para las bobinas: recibe el conjunto
  * entero de la operación y lo toma en el orden canónico, una sentencia por clase y por id
- * ascendente dentro de cada una. Lo vigila `document-locks.sentinel.spec.ts`.
+ * ascendente dentro de cada una. Lo vigila `document-locks.sentinel.spec.ts` (desde el corte 2).
  *
  * El orden canónico completo del sistema es el de esta lista seguido del tramo de inventario de
  * D-386 (bobinas → saldos, `lockCoilRows`/`InventoryService.lockBalance`):

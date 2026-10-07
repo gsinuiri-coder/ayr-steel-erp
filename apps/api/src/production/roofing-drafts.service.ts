@@ -269,7 +269,8 @@ export class RoofingDraftsService {
     operationDate: string,
     warnings: RawMaterialShortfall[],
   ): Promise<void> {
-    const state = await this.loadState(tx, orderId);
+    // cc30: confirmar los borradores reporta (y quizá cierra): pedido → OP antes que nada.
+    const state = await this.loadState(tx, orderId, { parent: true });
     const drafts = await this.drafts(tx, orderId);
     if (drafts.length === 0 && input.close !== true) {
       throw new BadRequestException(
@@ -355,8 +356,9 @@ export class RoofingDraftsService {
   private async loadState(
     tx: Prisma.TransactionClient,
     orderId: string,
+    lockOptions: Parameters<typeof lockOrder>[2] = {},
   ): Promise<DraftCheckState & { liveReports: number }> {
-    const order = await lockOrder(tx, orderId);
+    const order = await lockOrder(tx, orderId, lockOptions);
     assertKind(order, ProductionOrderKind.ROOFING);
     if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
       throw new BadRequestException(

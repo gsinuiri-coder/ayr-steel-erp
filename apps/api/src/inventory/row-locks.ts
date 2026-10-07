@@ -100,7 +100,9 @@ export class LockOrderConflict extends Error {
   /** `55P03` (`lock_not_available`): no es un deadlock, y el log lo distingue (autorrevisión P3-5). */
   readonly code = '55P03';
   constructor(what = 'bobina') {
-    super(`NOWAIT: ${what} tomada por otra operación; esperar habría roto el orden de bloqueos`);
+    super(
+      `NOWAIT: fila de ${what} tomada por otra operación; esperar habría roto el orden de bloqueos`,
+    );
   }
 }
 

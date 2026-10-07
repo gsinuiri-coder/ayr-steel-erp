@@ -53,21 +53,29 @@ export interface LockedOrder {
  * `SELECT … FOR UPDATE` sobre la orden y después su lectura. El lock va primero y siempre:
  * reportar, cerrar, revertir y anular compiten por las mismas filas de asignación, y sin él
  * dos de esas operaciones simultáneas ven cada una un estado que la otra está por cambiar.
+ *
+ * cc30 (grupo C, D-470/D-477): el padre antes que el hijo. Un camino que escribe el pedido o la
+ * reserva de la OP pide `parent` (o `own`, que lo incluye): el pedido de la OP se lee sin
+ * bloquear —el vínculo no cambia: cambiar la cantidad de la línea mueve la OP a otra reserva del
+ * mismo pedido— y se toma junto con la OP por la puerta de documentos, pedido primero; con `own`,
+ * la reserva de la OP va detrás. Los demás toman solo la OP: nunca escriben pedido ni reserva, y
+ * así no esperan detrás de una operación comercial del mismo pedido. Ninguno toma el pedido
+ * después de la OP: dentro de una transacción, quien empieza sin `parent` no lo pide después
+ * (la puerta lo pediría con `NOWAIT`).
  */
 export async function lockOrder(
   tx: Prisma.TransactionClient,
   orderId: string,
-  /**
-   * cc30: las reservas que la operación va a escribir, tomadas en la misma pasada (después de
-   * pedido y OP, antes del inventario). `own` es la reserva de la OP; `extra`, otras de la
-   * misma línea (la del producto fabricado, D-088).
-   */
-  reservations?: { own?: boolean; extra?: readonly (string | null | undefined)[] },
+  options: { parent?: boolean; own?: boolean } = {},
 ): Promise<LockedOrder> {
-  // cc30 (grupo C): el padre antes que el hijo. El pedido de la OP se lee sin bloquear —el
-  // vínculo no cambia: cambiar la cantidad de la línea mueve la OP a otra reserva del mismo
-  // pedido— y se toma junto con la OP por la puerta de documentos, pedido primero. Así reportar,
-  // cerrar, revertir y anular toman pedido → OP → reserva, igual que anular el pedido.
+  const withParent = options.parent === true || options.own === true;
+  if (!withParent) {
+    const locked = await lockDocuments(tx, { productionOrders: [orderId] });
+    if (locked.productionOrders.length === 0) {
+      throw new NotFoundException('Orden de producción no encontrada');
+    }
+    return readLockedOrder(tx, orderId);
+  }
   const parent = await tx.productionOrder
     .findUniqueOrThrow({
       where: { id: orderId },
@@ -83,15 +91,12 @@ export async function lockOrder(
   await lockDocuments(tx, {
     salesOrders: [parent.reservation?.salesOrderId],
     productionOrders: [orderId],
-    reservations: [
-      ...(reservations?.own ? [parent.reservationId] : []),
-      ...(reservations?.extra ?? []),
-    ],
+    reservations: options.own ? [parent.reservationId] : [],
   });
   const order = await readLockedOrder(tx, orderId);
   // Con la OP en mano su reserva ya no cambia; si cambió entre la lectura y la toma, la nueva se
   // toma ahora (la puerta la pide con `NOWAIT` si llega fuera de orden).
-  if (reservations?.own && order.reservationId !== parent.reservationId) {
+  if (options.own && order.reservationId !== parent.reservationId) {
     await lockDocuments(tx, { reservations: [order.reservationId] });
   }
   return order;

@@ -471,10 +471,11 @@
 | D-470 | 2026-10-06 (cc30; **decisión del dueño**; amplía D-386, reemplaza «la OP antes que el pedido») | **Orden canónico entre documentos: cotización → pedido → OP → reserva → inventario.** El tramo de inventario es el de D-386 (bobinas con su agregado → saldos) y no cambia. Dentro de cada clase, por id ascendente. El padre va primero: una operación de planta lee el pedido de su OP sin bloquear (el vínculo no cambia: cambiar la cantidad mueve la OP a otra reserva del mismo pedido), toma pedido → OP y relee. Reemplaza la regla «la OP antes que el pedido» de D-386 §3.3.1. | Brief de cc30 (decisión 1). |
 | D-471 | 2026-10-06 (cc30; **provisional**; aplica D-470 y respeta D-386) | **Dónde van comprobante, despacho, compra y corte.** Orden completo de ventas: **comprobante → despacho → cotización → pedido → OP → reserva temporal → reserva → inventario.** D-386 ya fijó «el despacho antes que su pedido» (reversa y re-fechado), y re-fechar, D-373, D-378 y D-381 van comprobante → pedido; la matriz (`docs/analisis/cc30-matriz-bloqueos.md`, §7) muestra que ningún camino toma comprobante o despacho junto con una OP ni una cotización junto con un comprobante, salvo anular el pedido, que se reordena. La alternativa «padre antes que hijos» (pedido → despacho → comprobante) obligaba a invertir lo que D-386 fijó. **Compra → orden de corte → fila de corte** es una rama aparte, antes de reserva e inventario: ningún camino toma a la vez un documento de compras o corte y uno de ventas. La temporal va antes que la firme porque confirmar una cotización libera sus temporales antes de crear las reservas del pedido. | Brief de cc30 (decisión 2): ubicarlos según la matriz sin alterar D-386. |
 | D-472 | 2026-10-06 (cc30; **decisión del dueño**) | **La reserva se escribe con su documento dueño ya bloqueado** (pedido o cotización). Sus filas se toman por id, después de los documentos y antes del inventario. | Brief de cc30 (decisión 3). |
-| D-473 | 2026-10-06 (cc30; **decisión del dueño**) | **Una sola puerta para bloquear documentos:** `lockDocuments` (`apps/api/src/inventory/document-locks.ts`), con el patrón de `lockCoilRows`: recibe el conjunto y lo toma en el orden de D-470/D-471, una sentencia por clase y por id. Comparte con `lockCoilRows` el estado por transacción, así que un documento pedido con inventario en mano, de una clase anterior a otra ya tomada o con un id menor que uno ya tomado de su clase va con `NOWAIT`. Centinela `document-locks.sentinel.spec.ts`: falla si aparece un `FOR UPDATE` (o `NO KEY UPDATE`, `SHARE`, `KEY SHARE`) sobre esas tablas fuera de la puerta. | Brief de cc30 (decisión 4). |
+| D-473 | 2026-10-06 (cc30; **decisión del dueño**) | **Una sola puerta para bloquear documentos:** `lockDocuments` (`apps/api/src/inventory/document-locks.ts`), con el patrón de `lockCoilRows`: recibe el conjunto y lo toma en el orden de D-470/D-471, una sentencia por clase y por id. Comparte con `lockCoilRows` el estado por transacción, así que un documento pedido con inventario en mano, de una clase anterior a otra ya tomada o con un id menor que uno ya tomado de su clase va con `NOWAIT`. Centinela `document-locks.sentinel.spec.ts`: falla si aparece un `FOR UPDATE` (o `NO KEY UPDATE`, `SHARE`, `KEY SHARE`) sobre esas tablas fuera de la puerta; entra con el corte 2, que pasa por la puerta los sitios que quedan. | Brief de cc30 (decisión 4). |
 | D-474 | 2026-10-06 (cc30; **decisión del dueño**) | **Todo estado que decide una rama se lee o se relee después de tomar el bloqueo.** Los ids que hacen falta para saber qué bloquear se leen antes, sin bloqueo, y lo que decide se relee bajo el bloqueo. | Brief de cc30 (decisión 5). |
 | D-475 | 2026-10-06 (cc30; **decisión del dueño**) | **Si una operación descubre tarde que necesita otro documento, se reestructura para tomarlo al inicio.** `NOWAIT` con el 409 actual («Otra operación estaba usando este inventario») queda solo como red para los conjuntos que se amplían, igual que el P3-2 de cc18. Un deadlock residual sigue saliendo como 409 con rollback. | Brief de cc30 (decisión 6). |
 | D-476 | 2026-10-06 (cc30; **decisión del dueño**; endurece D-460) | **El push directo a `main` pasa a `deny`** en `.claude/settings.json`: sale de `allow` `AYR_OWNER_PUSH=1 git push origin main`, y entran a `deny` `git push origin main*`, `git push * main` y `AYR_OWNER_PUSH=1 git push*`. Todo entra por PR. `AYR_OWNER_PUSH=1` del hook sigue siendo del dueño, a mano. | Brief de cc30 (decisión 7); D-460 lo había dejado como decisión del dueño. |
+| D-477 | 2026-10-06 (cc30; **provisional**; aplica D-470) | **Planta toma el pedido antes que la OP solo en los caminos que escriben el pedido o la reserva de la OP.** `lockOrder(tx, id, { parent })` toma pedido → OP y `{ own }` agrega la reserva de la OP: los usan reportar y revertir reporte (las dos líneas), cerrar coberturas, anular OP (las dos líneas), confirmar borradores y las vistas previas de cierre. Los demás —consumir y soltar fleje, montar y bajar bobina, cerrar y reabrir drywall, reabrir coberturas, plan, prioridad y borradores— toman solo la OP: no escriben pedido ni reserva, y así no esperan detrás de una operación comercial del mismo pedido (varios corren con el timeout por defecto de 5 s, y la espera podía terminar en un P2028). Ningún camino toma el pedido después de la OP; si alguno lo pidiera, la puerta lo pide con `NOWAIT`. | P2-3 del segundo modelo y P2-1 de la autorrevisión del corte 1: tomar el pedido en todas las operaciones de planta agregaba contención y un modo de falla nuevo; la decisión 1 del brief habla de la operación de planta que necesita el pedido. |
 
 ---
 
@@ -570,9 +571,12 @@ Segunda regla transversal (D-066, Fase 5a): **`inventory` es también el único 
 Toda transacción que toca inventario toma sus bloqueos de fila en este orden, y dentro de cada
 nivel por id ascendente:
 
-1. **Documentos**: la OP antes que el pedido; el despacho antes que su pedido; el pedido antes que
-   sus reservas; la compra sola. Varias filas del mismo tipo, en una sentencia
-   `ORDER BY "id" FOR UPDATE`.
+1. **Documentos** (D-470, D-471, cc30): comprobante → despacho → cotización → **pedido → OP** →
+   reserva temporal → reserva. El padre antes que el hijo: una operación de planta lee el pedido de
+   su OP sin bloquear y toma pedido → OP (antes de cc30 era al revés). La compra, con su orden de
+   corte y sus filas, es una rama aparte (compra → orden de corte → fila). Varias filas de la misma
+   clase, en una sentencia `ORDER BY "id" FOR UPDATE`, por la puerta `lockDocuments`
+   (`apps/api/src/inventory/document-locks.ts`).
 2. **Reservas**, por id, en una sentencia.
 3. **Bobinas**: el conjunto entero de la operación —las que toca, las de los ítems que mueve y las
    de cada agregado de materia prima con promesas vivas que alcanzan— en **una sola** sentencia
@@ -595,8 +599,10 @@ Cómo se cumple:
   ocupadas, la operación sale con 409.
 - **Si Postgres aborta igual** (40P01, 40001), la API responde **409** «Otra operación estaba
   usando este inventario. Vuelve a intentarlo.» (`LockConflictFilter`), sin reintento automático.
-- **Pendiente (pieza propia):** el orden entre documentos OP ↔ pedido ↔ reserva no es único en
-  todos los caminos (grupo C de cc18, en `docs/PROGRESO.md`).
+- **cc30, en dos cortes:** el corte 1 pasa por la puerta de documentos la producción (pedido → OP
+  → reserva) y el cambio de cantidad de una línea (cruces a–d del grupo C de cc18). El corte 2 lleva
+  el resto de los `FOR UPDATE` sobre documentos a la puerta, con su centinela, y los cruces nuevos de
+  la matriz (`docs/analisis/cc30-matriz-bloqueos.md`).
 
 ### 3.4 Roles (RF-02)
 

@@ -1496,7 +1496,8 @@ export class ProductionService {
     input: CancelProductionOrderInput,
   ): Promise<ProductionOrderDto> {
     await this.prisma.$transaction(async (tx) => {
-      const order = await this.lockOrder(tx, orderId);
+      // cc30: anular restaura la reserva y el pedido (`restoreReservationIfIdle`).
+      const order = await this.lockOrder(tx, orderId, { own: true });
       this.assertLive(order, 'anularla');
 
       const live = await tx.productionReport.findMany({

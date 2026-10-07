@@ -60,13 +60,35 @@ describe('cc30 — lockOrder toma pedido → OP → reserva', () => {
     });
   });
 
-  it('una OP a stock no tiene pedido que tomar', async () => {
-    await lockOrder(fakeTx([{ reservationId: null, salesOrderId: null }]), 'op');
+  it('con `parent`, pedido y OP sin la reserva', async () => {
+    await lockOrder(fakeTx([{ reservationId: 'r', salesOrderId: 's' }]), 'op', { parent: true });
     expect(spy.mock.calls[0]?.[1]).toEqual({
-      salesOrders: [undefined],
+      salesOrders: ['s'],
       productionOrders: ['op'],
       reservations: [],
     });
+  });
+
+  it('una OP a stock no tiene pedido que tomar', async () => {
+    await lockOrder(fakeTx([{ reservationId: null, salesOrderId: null }]), 'op', { own: true });
+    expect(spy.mock.calls[0]?.[1]).toEqual({
+      salesOrders: [undefined],
+      productionOrders: ['op'],
+      reservations: [null],
+    });
+  });
+
+  it('sin opciones, solo la OP (D-477: planta no espera al pedido si no lo escribe)', async () => {
+    spy.mockResolvedValueOnce({
+      quotations: [],
+      salesOrders: [],
+      productionOrders: ['op'],
+      quotationReservations: [],
+      reservations: [],
+    });
+    await lockOrder(fakeTx([{ reservationId: 'r', salesOrderId: 's' }]), 'op');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]?.[1]).toEqual({ productionOrders: ['op'] });
   });
 
   it('si la reserva cambió entre la lectura y la toma, la nueva se toma después', async () => {
@@ -82,8 +104,11 @@ describe('cc30 — lockOrder toma pedido → OP → reserva', () => {
     expect(spy.mock.calls[1]?.[1]).toEqual({ reservations: ['r-nueva'] });
   });
 
-  it('una OP que no existe es un 404', async () => {
-    await expect(lockOrder(fakeTx([]), 'op')).rejects.toBeInstanceOf(NotFoundException);
+  it('una OP que no existe es un 404, con o sin el pedido', async () => {
+    await expect(lockOrder(fakeTx([]), 'op', { own: true })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     expect(spy).not.toHaveBeenCalled();
+    await expect(lockOrder(fakeTx([]), 'op')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
