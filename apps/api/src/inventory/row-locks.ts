@@ -64,12 +64,23 @@ export async function lockCoilRows(
  * Lo que una transacción ya bloqueó, por objeto de transacción (el `tx` de Prisma es el mismo
  * objeto durante toda la transacción interactiva). `WeakMap`: se olvida solo con la transacción.
  */
-const lockStates = new WeakMap<object, { coils: Set<string>; balances: boolean }>();
+const lockStates = new WeakMap<object, TxLockState>();
 
-function lockStateOf(tx: Prisma.TransactionClient): { coils: Set<string>; balances: boolean } {
+/**
+ * `documents` (cc30): las filas de documento ya tomadas por `lockDocuments`
+ * (`document-locks.ts`), por clase. Vive en el mismo estado que las bobinas y los saldos porque
+ * el orden es uno solo: un documento pedido con inventario ya en mano va fuera de orden.
+ */
+export interface TxLockState {
+  coils: Set<string>;
+  balances: boolean;
+  documents: Map<string, Set<string>>;
+}
+
+export function lockStateOf(tx: Prisma.TransactionClient): TxLockState {
   let state = lockStates.get(tx);
   if (!state) {
-    state = { coils: new Set(), balances: false };
+    state = { coils: new Set(), balances: false, documents: new Map() };
     lockStates.set(tx, state);
   }
   return state;
@@ -88,13 +99,15 @@ export function markBalanceHeld(tx: Prisma.TransactionClient): void {
 export class LockOrderConflict extends Error {
   /** `55P03` (`lock_not_available`): no es un deadlock, y el log lo distingue (autorrevisión P3-5). */
   readonly code = '55P03';
-  constructor() {
-    super('NOWAIT: bobina tomada por otra operación; esperar habría roto el orden de bloqueos');
+  constructor(what = 'bobina') {
+    super(
+      `NOWAIT: fila de ${what} tomada por otra operación; esperar habría roto el orden de bloqueos`,
+    );
   }
 }
 
 /** `55P03` (`lock_not_available`), como lo entrega Prisma desde un `$queryRaw`. */
-function isLockNotAvailable(error: unknown): boolean {
+export function isLockNotAvailable(error: unknown): boolean {
   const e = error as { code?: unknown; meta?: { code?: unknown }; message?: unknown };
   return (
     e.meta?.code === '55P03' ||

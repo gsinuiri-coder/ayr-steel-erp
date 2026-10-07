@@ -52,6 +52,7 @@ import { drywallStripMismatch, drywallStripSpec, drywallStripWhere } from '../co
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { liveMovements } from '../inventory/live-movements';
+import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertCoilsNotReserved, markReservationConsumed } from '../sales/reservation-guard';
@@ -596,7 +597,8 @@ export class ProductionService {
         const claim = await claimIdempotencyKey(tx, 'production-report', input.idempotencyKey);
         if (!claim.claimed) return;
 
-        const order = await this.lockOrder(tx, orderId);
+        // cc30: pedido → OP → reserva, todo antes de decidir nada (la reserva se consume abajo).
+        const order = await this.lockOrder(tx, orderId, { own: true });
         if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
           throw new BadRequestException(
             order.status === ProductionOrderStatus.DRAFT
@@ -676,10 +678,9 @@ export class ProductionService {
           // Pedido primero, reserva después: `SalesOrdersService.cancel` toma esos dos
           // recursos en ese mismo orden (lock del pedido → lock de sus reservas). Con el
           // orden invertido, anular un pedido y reportar producción a la vez se trababan en
-          // un deadlock que Postgres resolvía abortando una con un 500 opaco.
-          await tx.$queryRaw`
-            SELECT "id" FROM "sales_orders" WHERE "id" = ${reservation.salesOrderId}::uuid FOR UPDATE
-          `;
+          // un deadlock que Postgres resolvía abortando una con un 500 opaco. cc30: los dos ya
+          // vienen tomados de `lockOrder`, antes que la OP; esto no vuelve a esperar.
+          await lockDocuments(tx, { salesOrders: [reservation.salesOrderId] });
           const consumed = await markReservationConsumed(tx, order.reservationId);
           if (consumed) {
             await tx.salesOrder.updateMany({
@@ -860,7 +861,10 @@ export class ProductionService {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(
       async (tx) => {
-        const order = await this.lockOrder(tx, orderId);
+        // cc30 (grupo C, cruce a): pedido → OP → reserva al inicio. La reserva y el pedido se
+        // escriben al final (`restoreReservationIfIdle`), con los saldos en mano; antes se
+        // tomaban recién ahí y cruzaban con anular el pedido y con su despacho.
+        const order = await this.lockOrder(tx, orderId, { own: true });
         if (order.status !== ProductionOrderStatus.IN_PROGRESS) {
           throw new BadRequestException(
             order.status === ProductionOrderStatus.CLOSED
@@ -1492,7 +1496,8 @@ export class ProductionService {
     input: CancelProductionOrderInput,
   ): Promise<ProductionOrderDto> {
     await this.prisma.$transaction(async (tx) => {
-      const order = await this.lockOrder(tx, orderId);
+      // cc30: anular restaura la reserva y el pedido (`restoreReservationIfIdle`).
+      const order = await this.lockOrder(tx, orderId, { own: true });
       this.assertLive(order, 'anularla');
 
       const live = await tx.productionReport.findMany({
@@ -1850,8 +1855,12 @@ export class ProductionService {
    * lock, y añade el chequeo de `kind`: sin él, mandar acá el id de una OP de coberturas la
    * operaría con la aritmética de drywall, que es el error más caro de encontrar después.
    */
-  private async lockOrder(tx: Prisma.TransactionClient, orderId: string) {
-    const order = await lockProductionOrder(tx, orderId);
+  private async lockOrder(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    reservations?: Parameters<typeof lockProductionOrder>[2],
+  ) {
+    const order = await lockProductionOrder(tx, orderId, reservations);
     assertKind(order, ProductionOrderKind.DRYWALL);
     return order;
   }

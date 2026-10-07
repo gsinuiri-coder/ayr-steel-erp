@@ -41,6 +41,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
+import { lockDocuments } from '../inventory/document-locks';
 import { derivePiecesPlan } from '../production/roofing-math';
 import { RoofingProductionService } from '../production/roofing-production.service';
 import {
@@ -653,10 +654,18 @@ export class SalesOrderEditsService {
           );
         }
 
-        await tx.$queryRaw`
-          SELECT "id" FROM "reservations" WHERE "sales_order_item_id" = ${item.id}::uuid
-          ORDER BY "id" FOR UPDATE
-        `;
+        // cc30 (grupo C, cruce c): las OP de la línea y sus reservas, juntas, detrás del pedido y
+        // antes del inventario. Antes la OP se escribía al final (`productionOrder.update`), con las
+        // bobinas y los saldos en mano, mientras reportar coberturas iba OP → pedido. Los ids se
+        // leen sin bloqueo y se releen abajo, ya bloqueados.
+        const linked = await tx.reservation.findMany({
+          where: { salesOrderItemId: item.id },
+          select: { id: true, productionOrders: { select: { id: true } } },
+        });
+        await lockDocuments(tx, {
+          productionOrders: linked.flatMap((r) => r.productionOrders.map((o) => o.id)),
+          reservations: linked.map((r) => r.id),
+        });
         const reservations = await tx.reservation.findMany({
           where: { salesOrderItemId: item.id },
           select: {

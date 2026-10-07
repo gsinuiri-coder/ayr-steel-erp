@@ -94,7 +94,8 @@ export async function previewPlantClose(
         // cc28 (A-6 de cc27): la orden se bloquea **antes** de leer el «antes», como lo hace la
         // acción. Sin esto, un movimiento que entraba entre la lectura y el bloqueo de la acción
         // aparecía en el resumen como consumo de este cierre.
-        await lockOrder(tx, orderId);
+        // cc30: la acción puede escribir pedido y reserva: pedido → OP desde el inicio.
+        await lockOrder(tx, orderId, { parent: true });
         const order = await tx.productionOrder.findUniqueOrThrow({
           where: { id: orderId },
           select: { seq: true },

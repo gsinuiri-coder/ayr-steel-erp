@@ -5,11 +5,17 @@ import { Prisma, Role } from '@prisma/client';
 import {
   businessToday,
   cancelPurchaseSchema,
+  cancelSalesOrderSchema,
+  closeRoofingOrderSchema,
+  updateSalesOrderItemQtySchema,
   commitRoofingDraftsSchema,
   commitReceivedPurchaseEditSchema,
   cancelCuttingOrderSchema,
   createCuttingOrderSchema,
   createCoilScrapSchema,
+  createProductionOrderSchema,
+  consumeStripSchema,
+  reportPiecesSchema,
   createCustomerSchema,
   createDispatchSchema,
   createFinishSchema,
@@ -38,14 +44,17 @@ import { FinishesService } from '../finishes/finishes.service';
 import { DispatchesService } from '../invoicing/dispatches.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { COMMIT_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
+import { ProductionService } from '../production/production.service';
 import { RoofingDraftsService } from '../production/roofing-drafts.service';
 import { RoofingProductionService } from '../production/roofing-production.service';
 import { ReceivedPurchaseEditService } from '../purchases/purchase-received-edit.service';
 import { PurchasesService } from '../purchases/purchases.service';
 import { QuotationsService } from '../sales/quotations.service';
+import { SalesOrderEditsService } from '../sales/sales-order-edits.service';
 import { SalesOrdersService } from '../sales/sales-orders.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { InventoryService } from './inventory.service';
+import * as documentLocks from './document-locks';
 import * as rowLocks from './row-locks';
 
 /**
@@ -329,6 +338,8 @@ let thicknessStep = 0;
 async function roofingAggregate(coils: number): Promise<{
   coils: { coilId: string; purchaseId: string }[];
   productionOrderId: string;
+  /** cc30: el pedido que dejó la confirmación, para los pares entre documentos. */
+  salesOrder: SalesOrderDto;
 }> {
   thicknessStep += 1;
   // cc29: paso de 0,03 mm (más que la tolerancia de ±0,02 de D-086, así los agregados no se
@@ -371,7 +382,7 @@ async function roofingAggregate(coils: number): Promise<{
   const order = await salesOrders.confirm(admin, quotation.id, {});
   const raw = order.reservations.find((r) => r.itemType === 'RAW_MATERIAL');
   if (!raw?.productionOrderId) throw new Error('La confirmación no dejó la OP de coberturas');
-  return { coils: made, productionOrderId: raw.productionOrderId };
+  return { coils: made, productionOrderId: raw.productionOrderId, salesOrder: order };
 }
 
 /** La bobina `i` del agregado, o un error claro si la fixture no la creó. */
@@ -448,10 +459,12 @@ interface Tally {
   outcomes: Map<string, number>;
   /** Cuántas veces terminó bien cada operación del par, por posición. */
   okByOp: number[];
+  /** cc30: los mensajes de rechazo de dominio, para leer en el log qué rechazó cada par. */
+  rejections: Map<string, number>;
 }
 
 function newTally(): Tally {
-  return { conflicts: [], unexpected: [], outcomes: new Map(), okByOp: [] };
+  return { conflicts: [], unexpected: [], outcomes: new Map(), okByOp: [], rejections: new Map() };
 }
 
 /** Corre las dos a la vez y clasifica: éxito, rechazo de dominio, conflicto de bloqueo u otro. */
@@ -461,14 +474,18 @@ async function race(tally: Tally, label: string, ops: (() => Promise<unknown>)[]
     tally.okByOp[i] = (tally.okByOp[i] ?? 0) + (r.status === 'fulfilled' ? 1 : 0);
   });
   const shape = results
-    .map((r) => {
+    .map((r, i) => {
       if (r.status === 'fulfilled') return 'ok';
       const reason: unknown = r.reason;
       if (isLockConflict(reason)) {
         tally.conflicts.push(`${label}: ${(reason as Error).message.slice(0, 200)}`);
         return 'LOCK';
       }
-      if (reason instanceof HttpException) return `rechazo ${String(reason.getStatus())}`;
+      if (reason instanceof HttpException) {
+        const message = `${String(i)}: ${reason.message.slice(0, 120)}`;
+        tally.rejections.set(message, (tally.rejections.get(message) ?? 0) + 1);
+        return `rechazo ${String(reason.getStatus())}`;
+      }
       tally.unexpected.push(
         `${label}: ${reason instanceof Prisma.PrismaClientKnownRequestError ? reason.code : ''} ${(reason as Error).message?.slice(0, 300) ?? String(reason)}`,
       );
@@ -478,15 +495,28 @@ async function race(tally: Tally, label: string, ops: (() => Promise<unknown>)[]
   tally.outcomes.set(shape, (tally.outcomes.get(shape) ?? 0) + 1);
 }
 
-function expectClean(tally: Tally, name: string): void {
+function expectClean(
+  tally: Tally,
+  name: string,
+  /**
+   * cc30: las posiciones de operaciones que el dominio rechaza siempre en ese par, **después** de
+   * tomar sus bloqueos (anular un pedido con una OP en curso: toma pedido y reservas, y recién ahí
+   * ve la OP). El cruce de bloqueos ocurre igual; lo que se exige es que no haya deadlock.
+   */
+  alwaysRejected: number[] = [],
+): void {
   // Visible en el log de la corrida: qué combinaciones de resultados salieron.
-  console.warn(`[D-386] ${name}: ${JSON.stringify(Object.fromEntries(tally.outcomes))}`);
+  console.warn(
+    `[D-386] ${name}: ${JSON.stringify(Object.fromEntries(tally.outcomes))} ${JSON.stringify(Object.fromEntries(tally.rejections))}`,
+  );
   expect(tally.unexpected).toEqual([]);
   expect(tally.conflicts).toEqual([]);
   // Autorrevisión P2-2: un par en el que una operación nunca terminó bien no probó nada (una
   // fixture rota que rechaza siempre con 400 daba verde). Cada operación, al menos una vez.
   expect(tally.okByOp.length).toBeGreaterThan(0);
-  for (const ok of tally.okByOp) expect(ok).toBeGreaterThan(0);
+  tally.okByOp.forEach((ok, i) => {
+    if (!alwaysRejected.includes(i)) expect(ok).toBeGreaterThan(0);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,5 +1036,374 @@ describe('cc28 — la vista previa de un cierre no deja nada ni retiene bloqueos
         where: { productionOrderId: orderId, status: 'ACTIVE' },
       }),
     ).toBe(1);
+  });
+});
+
+/**
+ * cc30 (grupo C de cc18): **el orden entre documentos** —cotización → pedido → OP → reserva →
+ * inventario—, contra la base y con concurrencia de verdad. Los cruces que anotó cc18:
+ *
+ * - (b) revertir un reporte de coberturas restauraba la reserva de materia prima al final, con
+ *   los saldos en mano; anular el pedido toma sus reservas por id al inicio;
+ * - (c) cambiar la cantidad de una línea iba pedido → reservas → OP, y reportar coberturas iba
+ *   OP → pedido;
+ * - (d) cerrar coberturas sin despunte liberaba la reserva después de los saldos.
+ *
+ * Anular un pedido con la OP en curso lo rechaza el dominio siempre, pero **después** de tomar
+ * pedido y reservas: el cruce ocurre igual, y es lo que se mide (`alwaysRejected`).
+ */
+describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
+  let edits: SalesOrderEditsService;
+
+  beforeAll(() => {
+    edits = moduleRef.get(SalesOrderEditsService);
+    // Las pausas también después de cada toma de documentos: con la puerta nueva, el cruce entre
+    // documentos deja de depender de la suerte igual que el de inventario.
+    const realLockDocuments = documentLocks.lockDocuments;
+    jest.spyOn(documentLocks, 'lockDocuments').mockImplementation(async (tx, set) => {
+      const locked = await realLockDocuments(tx, set);
+      await sleep(PAUSE_MS);
+      return locked;
+    });
+  });
+
+  const cancelOrder = (orderId: string) =>
+    salesOrders.cancel(
+      admin,
+      orderId,
+      cancelSalesOrderSchema.parse({ reason: 'cc30 anular', acknowledgeFabricated: true }),
+    );
+
+  async function reportedAggregate() {
+    const agg = await roofingAggregate(1);
+    await mount(agg.productionOrderId, coilAt(agg, 0).coilId);
+    await report(agg.productionOrderId);
+    const reportRow = await prisma.productionReport.findFirstOrThrow({
+      where: { productionOrderId: agg.productionOrderId },
+      orderBy: { seq: 'desc' },
+    });
+    return { ...agg, reportId: reportRow.id };
+  }
+
+  it('(b) revertir un reporte de coberturas × anular el pedido', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const agg = await reportedAggregate();
+      await race(tally, `iteración ${i}`, [
+        () =>
+          roofing.reverseReport(
+            admin,
+            agg.productionOrderId,
+            agg.reportId,
+            reverseMovementSchema.parse({ reason: 'cc30 revertir reporte' }),
+          ),
+        // Anular es más corto: arranca escalonado para barrer la ventana en que el otro ya tomó
+        // su primera fila y todavía no la segunda.
+        async () => {
+          await sleep((i % 10) * 12);
+          return cancelOrder(agg.salesOrder.id);
+        },
+      ]);
+    }
+    expectClean(tally, '(b) revertir reporte de coberturas × anular pedido', [1]);
+  });
+
+  it('(c) cambiar la cantidad de la línea × reportar coberturas', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const agg = await roofingAggregate(1);
+      await mount(agg.productionOrderId, coilAt(agg, 0).coilId);
+      const item = agg.salesOrder.items[0];
+      if (!item) throw new Error('El pedido de la fixture no tiene líneas');
+      const ops = [
+        () => report(agg.productionOrderId),
+        () =>
+          edits.updateItemQty(
+            admin,
+            agg.salesOrder.id,
+            item.id,
+            updateSalesOrderItemQtySchema.parse({
+              qty: '9.000',
+              pieces: [{ lengthMm: '3000.00', qty: 3 }],
+            }),
+          ),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, '(c) cambiar cantidad × reportar coberturas');
+  });
+
+  it('(d) cerrar coberturas sin despunte × anular el pedido (sin ciclo: regresión)', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const agg = await reportedAggregate();
+      await race(tally, `iteración ${i}`, [
+        () => roofing.close(admin, agg.productionOrderId, closeRoofingOrderSchema.parse({})),
+        // Anular es más corto: arranca escalonado para barrer la ventana en que el otro ya tomó
+        // su primera fila y todavía no la segunda.
+        async () => {
+          await sleep((i % 10) * 12);
+          return cancelOrder(agg.salesOrder.id);
+        },
+      ]);
+    }
+    expectClean(tally, '(d) cerrar coberturas × anular pedido', [1]);
+  });
+
+  /**
+   * La pareja real de (d) según la matriz (C5): completar la reserva de un pedido confirmado con
+   * faltante (D-341) va pedido → reservas → bobinas del agregado, y el cierre sin despunte liberaba
+   * la reserva de materia prima con las bobinas y el saldo ya en mano.
+   */
+  async function shortfallAggregate() {
+    thicknessStep += 1;
+    const thicknessMm = (0.3 + thicknessStep * 0.03).toFixed(2);
+    const product = await catalog.create(
+      admin,
+      createProductSchema.parse({
+        businessLineId: roofingLineId,
+        sku: `E-CC30${letters(6)}`,
+        name: 'Cobertura cc30',
+        unit: 'MTR',
+        source: 'MANUFACTURED',
+        listPricePen: '30',
+        finishId: roofingFinishId,
+        colorId: redColorId,
+        thicknessMm,
+        widthMm: '1000',
+        roofingKind: 'A_MEDIDA',
+      }),
+    );
+    const first = await roofingCoil(thicknessMm);
+    // 900 m de un metro de ancho pasan los 2000 kg de la bobina: se confirma con faltante.
+    const quotation = await quotations.create(
+      admin,
+      createQuotationSchema.parse({
+        customerId,
+        issueDate: businessToday(),
+        items: [
+          {
+            productId: product.id,
+            qty: '900.000',
+            unitPricePen: (100 + 200 * Number(thicknessMm)).toFixed(2),
+            pieces: [{ lengthMm: '3000.00', qty: 300 }],
+          },
+        ],
+      }),
+    );
+    const order = await salesOrders.confirm(admin, quotation.id, {
+      confirmShortfall: true,
+      shortfallReason: 'cc30: faltante de prueba',
+    });
+    const raw = order.reservations.find((r) => r.itemType === 'RAW_MATERIAL');
+    if (!raw?.productionOrderId) throw new Error('La confirmación no dejó la OP de coberturas');
+    await mount(raw.productionOrderId, first.coilId);
+    await report(raw.productionOrderId);
+    // Material nuevo del mismo agregado: completar la reserva tiene de dónde tomar.
+    await roofingCoil(thicknessMm);
+    return { productionOrderId: raw.productionOrderId, salesOrder: order };
+  }
+
+  it('(d) cerrar coberturas sin despunte × completar la reserva', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const agg = await shortfallAggregate();
+      await race(tally, `iteración ${i}`, [
+        () => roofing.close(admin, agg.productionOrderId, closeRoofingOrderSchema.parse({})),
+        async () => {
+          await sleep((i % 10) * 12);
+          return salesOrders.completeReservation(admin, agg.salesOrder.id, 'cc30 completar');
+        },
+      ]);
+    }
+    expectClean(tally, '(d) cerrar coberturas × completar reserva');
+  });
+});
+
+/**
+ * cc30 (grupo C, cruce a): revertir un reporte de drywall restauraba la reserva y escribía el
+ * pedido **después** de los saldos (`restoreReservationIfIdle`: reserva → pedido), mientras anular
+ * el pedido va pedido → reservas y el despacho del mismo pedido va pedido → reservas → saldos.
+ *
+ * Fixture por iteración: una bobina de drywall cortada en dos flejes, un perfil fabricado, stock del
+ * perfil hecho por una OP sin pedido (primer fleje), un pedido directo que lo reserva y la OP de ese
+ * pedido con un reporte (segundo fleje): la reserva queda consumida y el pedido «en producción».
+ */
+describe('cc30 — grupo C: drywall (contra la base)', () => {
+  let production: ProductionService;
+  let cutting: CuttingService;
+  let drywallLineId = '';
+  let cutterId = '';
+  let galvanizedId = '';
+
+  beforeAll(async () => {
+    production = moduleRef.get(ProductionService);
+    cutting = moduleRef.get(CuttingService);
+    drywallLineId = (await prisma.businessLine.findUniqueOrThrow({ where: { code: 'DRYWALL' } }))
+      .id;
+    cutterId = (
+      await suppliers.create(
+        admin,
+        createSupplierSchema.parse({
+          code: letters(6),
+          docType: 'RUC',
+          docNumber: `20${digits(9)}`,
+          name: 'Proveedor de corte cc30',
+          creditDays: 0,
+          providesCuttingService: true,
+        }),
+      )
+    ).id;
+    galvanizedId = (
+      await finishes.create(
+        admin,
+        createFinishSchema.parse({
+          code: `G${letters(5)}`,
+          name: 'Galvanizado cc30',
+          densityFactor: '7.85',
+          kind: 'GALVANIZADO',
+          businessLine: 'drywall',
+        }),
+      )
+    ).id;
+  });
+
+  async function twoStrips(): Promise<[string, string]> {
+    const purchase = await purchases.create(
+      admin,
+      createPurchaseSchema.parse({
+        supplierId,
+        docType: 'FACTURA',
+        series: 'F001',
+        number: digits(8),
+        issueDate: businessToday(),
+        currency: 'PEN',
+        paymentTerms: 'CONTADO',
+        businessLine: 'drywall',
+        type: 'COIL',
+        items: [
+          {
+            description: 'Bobina cc30',
+            qty: '2400',
+            unit: 'KGM',
+            unitPrice: '4',
+            finishId: galvanizedId,
+            widthMm: '1200',
+            thicknessMm: '0.50',
+            coilStatus: 'OPEN',
+          },
+        ],
+      }),
+    );
+    await purchases.receive(admin, purchase.id);
+    const mother = await prisma.coil.findFirstOrThrow({ where: { purchaseId: purchase.id } });
+    const order = await cutting.send(
+      admin,
+      createCuttingOrderSchema.parse({
+        supplierId: cutterId,
+        coils: [{ coilId: mother.id, widthPlanMm: [{ widthMm: '600.00', stripsCount: 2 }] }],
+      }),
+    );
+    await cutting.receive(
+      admin,
+      order.id,
+      mother.id,
+      receiveCuttingOrderCoilSchema.parse({
+        receivedWidthsMm: [{ widthMm: '600.00', stripsCount: 2 }],
+        receivedWeightKg: '2400',
+      }),
+    );
+    const strips = await prisma.coil.findMany({
+      where: { parentCoilId: mother.id },
+      orderBy: { code: 'asc' },
+    });
+    const [a, b] = strips;
+    if (!a || !b) throw new Error('El corte no dejó dos flejes');
+    return [a.id, b.id];
+  }
+
+  /** El pedido «en producción» con su OP reportada y lo necesario para revertirla. */
+  async function reportedDrywallOrder() {
+    const [stockStrip, orderStrip] = await twoStrips();
+    const product = await catalog.create(
+      admin,
+      createProductSchema.parse({
+        businessLineId: drywallLineId,
+        sku: `D-CC30${letters(6)}`,
+        name: 'Perfil cc30',
+        unit: 'NIU',
+        source: 'MANUFACTURED',
+        listPricePen: '30',
+        thicknessMm: '0.50',
+        widthMm: '600',
+        lengthMm: '3000',
+        pieceWeightKg: '2.000',
+      }),
+    );
+    // Stock del perfil: una OP sin pedido.
+    const stockOp = await production.create(
+      admin,
+      createProductionOrderSchema.parse({ productId: product.id }),
+    );
+    await production.consume(admin, stockOp.id, consumeStripSchema.parse({ coilId: stockStrip }));
+    await production.report(admin, stockOp.id, reportPiecesSchema.parse({ pieces: 50 }));
+    // El pedido reserva 10 piezas; su OP reporta 5 y consume la reserva.
+    const order = await directOrder([{ productId: product.id, qty: '10' }]);
+    const reservation = order.reservations.find((r) => r.itemType === 'PRODUCT');
+    if (!reservation) throw new Error('El pedido no reservó el perfil');
+    const op = await production.create(
+      admin,
+      createProductionOrderSchema.parse({ productId: product.id, reservationId: reservation.id }),
+    );
+    await production.consume(admin, op.id, consumeStripSchema.parse({ coilId: orderStrip }));
+    await production.report(admin, op.id, reportPiecesSchema.parse({ pieces: 5 }));
+    const reportRow = await prisma.productionReport.findFirstOrThrow({
+      where: { productionOrderId: op.id },
+    });
+    return { order, opId: op.id, reportId: reportRow.id };
+  }
+
+  const reverseDrywall = (opId: string, reportId: string) =>
+    production.reverseReport(
+      admin,
+      opId,
+      reportId,
+      reverseMovementSchema.parse({ reason: 'cc30 revertir reporte de drywall' }),
+    );
+
+  it('(a) revertir un reporte de drywall × anular el pedido', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const f = await reportedDrywallOrder();
+      await race(tally, `iteración ${i}`, [
+        () => reverseDrywall(f.opId, f.reportId),
+        async () => {
+          await sleep((i % 10) * 12);
+          return salesOrders.cancel(
+            admin,
+            f.order.id,
+            cancelSalesOrderSchema.parse({ reason: 'cc30 anular', acknowledgeFabricated: true }),
+          );
+        },
+      ]);
+    }
+    expectClean(tally, '(a) revertir reporte de drywall × anular pedido', [1]);
+  });
+
+  it('(a) revertir un reporte de drywall × despachar el pedido', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const f = await reportedDrywallOrder();
+      // El despacho arranca escalonado: la reversa escribe el pedido al final, con los saldos en
+      // mano, y el cruce pide que el despacho tome el pedido justo antes.
+      await race(tally, `iteración ${i}`, [
+        () => reverseDrywall(f.opId, f.reportId),
+        async () => {
+          await sleep((i % 10) * 15);
+          return dispatchAll(f.order);
+        },
+      ]);
+    }
+    expectClean(tally, '(a) revertir reporte de drywall × despacho');
   });
 });
