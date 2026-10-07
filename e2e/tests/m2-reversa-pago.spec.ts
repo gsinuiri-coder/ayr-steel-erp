@@ -306,7 +306,7 @@ test.describe('Sesión M-2 — anular un pago a proveedor (cierra D-039)', () =>
       // --- Con el pago revertido, el comprobante ya se puede anular ---
       // `exact` importa: sin él, este selector también matchea "Anular pago" de la tabla.
       await (await headerAction(page, 'Anular')).click();
-      await page.getByLabel('Motivo').fill('Cierre de la prueba E2E');
+      await page.getByLabel('Detalle').fill('Cierre de la prueba E2E');
       await page.getByRole('button', { name: 'Sí, anular' }).click();
       await expect(page.getByText('Compra anulada')).toBeVisible();
 

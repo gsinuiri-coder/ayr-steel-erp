@@ -22,6 +22,7 @@ import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
 import { RowActions } from '@/components/row-actions';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 
 export const USERS_QUERY_KEY = ['users'] as const;
 
@@ -40,10 +41,14 @@ export function UsersView() {
 
   const users = useQuery({ queryKey: USERS_QUERY_KEY, queryFn: () => api<UserDto[]>('/users') });
 
+  // cc31 (ESPEC §6): desactivar pide confirmación; activar no.
+  const [toDeactivate, setToDeactivate] = useState<UserDto | null>(null);
+
   const toggleActive = useMutation({
     mutationFn: (u: UserDto) =>
       api<UserDto>(`/users/${u.id}`, { method: 'PATCH', body: { active: !u.active } }),
     onSuccess: (updated) => {
+      setToDeactivate(null);
       toast.success(updated.active ? 'Usuario activado' : 'Usuario desactivado');
       void queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY });
     },
@@ -155,7 +160,8 @@ export function UsersView() {
                         pending: toggleActive.isPending && toggleActive.variables?.id === u.id,
                         onSelect: () => {
                           if (toggleActive.isPending) return;
-                          toggleActive.mutate(u);
+                          if (u.active) setToDeactivate(u);
+                          else toggleActive.mutate(u);
                         },
                       },
                     ]}
@@ -173,6 +179,21 @@ export function UsersView() {
           </TableBody>
         </Table>
       </div>
+
+      {toDeactivate && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setToDeactivate(null);
+          }}
+          title={`Desactivar a ${toDeactivate.name}`}
+          consequences="Se cierran sus sesiones abiertas y ya no podrá ingresar; puedes volver a activarlo."
+          pending={toggleActive.isPending}
+          onConfirm={() => {
+            toggleActive.mutate(toDeactivate);
+          }}
+        />
+      )}
 
       <UserDialog
         key={`${dialog.user?.id ?? 'nuevo'}-${dialog.nonce}`}

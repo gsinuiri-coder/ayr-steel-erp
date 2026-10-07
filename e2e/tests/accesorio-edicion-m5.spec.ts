@@ -65,10 +65,21 @@ test.describe('M5 — editar un accesorio sin cambiar espesor, color ni subtipo'
 
     // Solo el nombre y el precio: ni el espesor, ni el acabado, ni el subtipo se tocan.
     await dialog.getByLabel('Nombre').fill('Accesorio E2E M5 (editado)');
-    await dialog.getByLabel('Valor de lista (S/, sin IGV)').fill('35');
+    // cc31: el diálogo muestra y acepta el precio con IGV, como la celda del catálogo. El
+    // guardado (30 sin IGV) se ve con IGV: 35.4000.
+    const listPrice = dialog.getByLabel('Precio de lista (S/, con IGV)');
+    await expect(listPrice).toHaveValue('35.4000');
+    await listPrice.fill('41.30');
+    await expect(dialog.getByTestId('list-price-without-igv')).toContainText('35.00');
     await dialog.getByRole('button', { name: 'Guardar cambios' }).click();
     await expect(dialog).toBeHidden();
     await expect(row).toContainText('Accesorio E2E M5 (editado)');
+    // Al API viaja el valor sin IGV, como siempre.
+    const saved = await getJson<{ listPricePen: string | null }>(
+      api,
+      `/api/catalog/${accessory.id}`,
+    );
+    expect(saved.listPricePen).toMatch(/^35(\.0+)?$/);
 
     // D-348: sin uso real, el espesor cambia y el SKU se vuelve a formar solo.
     const newSku = canonicalAccessorySku('0.45', color.code);

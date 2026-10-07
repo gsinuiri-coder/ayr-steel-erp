@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useFieldArray, useForm } from 'react-hook-form';
@@ -40,13 +40,14 @@ import { api } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
 import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { ColorSwatch } from '@/components/colors/color-swatch';
-import { formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
+import { formatKg, formatMoney, isPositiveDecimal, todayIso } from '@/lib/format';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Form, FormControl, FormField } from '@/components/ui/form';
-import { FormFieldCell, StickyActionBar } from '@/components/form';
-import { Input } from '@/components/ui/input';
+import { FormFieldCell, focusField, StickyActionBar, type MissingField } from '@/components/form';
+import { Input, InputWithUnit } from '@/components/ui/input';
+import { Section } from '@/components/section';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import {
   Select,
   SelectContent,
@@ -67,10 +68,10 @@ const decimalField = (message: string) =>
 
 const itemSchema = z.object({
   productId: z.string().optional(),
-  description: z.string().trim().min(1, 'Obligatorio').max(240),
-  qty: decimalField('Cantidad inválida'),
+  description: z.string().trim().min(1, 'Escribe la descripción de la línea').max(240),
+  qty: decimalField('Escribe una cantidad mayor que cero'),
   unit: z.enum(UNITS),
-  unitPrice: decimalField('Precio inválido'),
+  unitPrice: decimalField('Escribe el precio sin IGV, mayor que cero'),
   finishId: z.string().optional(),
   widthMm: z.string().trim().optional(),
   thicknessMm: z.string().trim().optional(),
@@ -85,18 +86,18 @@ const baseFormSchema = z.object({
     .string()
     .trim()
     .toUpperCase()
-    .regex(/^[A-Z0-9]{1,10}$/, 'Serie inválida (ej: F001)'),
+    .regex(/^[A-Z0-9]{1,10}$/, 'Escribe la serie: hasta 10 letras o números, como F001'),
   number: z
     .string()
     .trim()
-    .regex(/^[0-9]{1,20}$/, 'Solo dígitos'),
-  issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida'),
+    .regex(/^[0-9]{1,20}$/, 'Escribe el número del comprobante, solo con dígitos'),
+  issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Elige la fecha de emisión'),
   currency: z.enum(CURRENCIES),
   exchangeRate: z.string().trim().optional(),
   igvRate: z
     .string()
     .trim()
-    .regex(/^\d+(\.\d+)?$/, 'Tasa inválida'),
+    .regex(/^\d+(\.\d+)?$/, 'Escribe la tasa de IGV, como 18'),
   paymentTerms: z.enum(PAYMENT_TERMS),
   creditDays: z.string().trim().optional(),
   serviceKind: z.enum(SERVICE_KINDS).optional(),
@@ -124,7 +125,7 @@ const formSchema = baseFormSchema.superRefine((d, ctx) => {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['creditDays'],
-        message: 'Días de crédito: un entero entre 1 y 365',
+        message: 'Escribe los días de crédito: un entero entre 1 y 365',
       });
     }
   }
@@ -148,14 +149,14 @@ const formSchema = baseFormSchema.superRefine((d, ctx) => {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['items', index, 'widthMm'],
-          message: 'Ancho en mm inválido',
+          message: 'Escribe el ancho en mm, mayor que cero',
         });
       }
       if (!isPositiveDecimal(item.thicknessMm ?? '')) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['items', index, 'thicknessMm'],
-          message: 'Espesor en mm inválido',
+          message: 'Escribe el espesor en mm, mayor que cero',
         });
       }
     }
@@ -217,6 +218,11 @@ interface Props {
   /** Avisos del parseo del XML (RF-11) a mostrar antes de confirmar. */
   warnings?: string[];
   submitLabel?: string;
+  /**
+   * cc31: el formulario nace con datos que se perderían al salir (los leídos de un XML), así que
+   * avisa aunque todavía no se haya tocado nada.
+   */
+  startsDirty?: boolean;
 }
 
 /**
@@ -225,13 +231,23 @@ interface Props {
  * FINISHED_GOOD pide producto del catálogo, SERVICE pide la clase de servicio y
  * EXPENSE solo descripción y montos (no toca inventario).
  */
-export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }: Props) {
+export function PurchaseForm({
+  initialValues,
+  lockType,
+  warnings,
+  submitLabel,
+  startsDirty = false,
+}: Props) {
   const router = useRouter();
   const form = useForm<PurchaseFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: initialValues,
+    // cc31: el foco lo lleva la barra al primer faltante, en el orden de la pantalla (los
+    // selectores no registran `ref` y RHF los saltaba).
+    shouldFocusError: false,
   });
   const items = useFieldArray({ control: form.control, name: 'items' });
+  const formRef = useRef<HTMLFormElement>(null);
 
   const type = form.watch('type');
   const currency = form.watch('currency');
@@ -316,18 +332,66 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
     },
   });
   // cc27 (UX26-13, D-455): salir con la compra a medio cargar avisa; guardada, ya no.
-  useUnsavedChanges(form.formState.isDirty && !save.isSuccess);
+  useUnsavedChanges((startsDirty || form.formState.isDirty) && !save.isSuccess);
 
   const isCoil = type === PurchaseType.COIL;
   const isFinishedGood = type === PurchaseType.FINISHED_GOOD;
 
+  // cc31 (ESPEC §6): el botón principal no se apaga por un dato faltante. Al pulsarlo con
+  // faltantes no se envía: RHF marca los campos y la barra los lista, con enlaces, en el orden
+  // de la pantalla; el foco va al primero.
+  const [attempted, setAttempted] = useState(false);
+  const [missing, setMissing] = useState<MissingField[]>([]);
+  const focusFirst = useRef(false);
+  const errorPaths: string[] = [];
+  collectErrorPaths(form.formState.errors, '', errorPaths);
+  const errorKey = attempted ? errorPaths.join('|') : '';
+  // Cada intento cuenta: pulsar dos veces con lo mismo pendiente vuelve a llevar el foco.
+  const submitCount = form.formState.submitCount;
+  useEffect(() => {
+    if (!attempted) return;
+    const next = readInvalidFields(formRef.current, isCoil ? 'Bobina' : 'Línea');
+    setMissing(next);
+    if (focusFirst.current && next[0]) {
+      focusFirst.current = false;
+      focusField(next[0].target);
+    }
+  }, [attempted, errorKey, isCoil, submitCount]);
+
+  // cc31 (ESPEC §6, defecto): cambiar el tipo de compra rehace las líneas. Con líneas cargadas
+  // se pregunta antes; sin nada escrito, cambia directo.
+  const [pendingType, setPendingType] = useState<PurchaseType | null>(null);
+  const filledLines = watchedItems.filter(lineHasData).length;
+  const applyType = (next: PurchaseType) => {
+    form.setValue('type', next, { shouldDirty: true });
+    items.replace([emptyItem(next)]);
+    // D-116: solo Drywall y Metallic Roofing compran bobinas; si la línea elegida no aplica,
+    // cae a Drywall en vez de dejar un 400 silencioso.
+    if (
+      next === PurchaseType.COIL &&
+      !COIL_BUSINESS_LINES.includes(form.getValues('businessLine'))
+    ) {
+      form.setValue('businessLine', 'drywall');
+    }
+  };
+
+  const outcome = summarizeOutcome(watchedItems);
+
   return (
     <Form {...form}>
       <form
-        onSubmit={form.handleSubmit((v) => {
-          save.mutate(v);
-        })}
-        className="grid gap-6"
+        ref={formRef}
+        onSubmit={form.handleSubmit(
+          (v) => {
+            if (save.isPending) return;
+            save.mutate(v);
+          },
+          () => {
+            setAttempted(true);
+            focusFirst.current = true;
+          },
+        )}
+        className="grid gap-4"
         noValidate
       >
         {warnings && warnings.length > 0 && (
@@ -348,11 +412,9 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           </p>
         )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Comprobante</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-12 items-start gap-x-3 gap-y-1">
+        {/* cc31 (ESPEC §6): secciones con banda gris; lo que decide la compra va primero. */}
+        <Section title="Compra" separated={false}>
+          <div className="grid grid-cols-12 items-start gap-x-3 gap-y-1 pt-2">
             <FormField
               control={form.control}
               name="type"
@@ -361,16 +423,13 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                   <Select
                     value={field.value}
                     onValueChange={(v) => {
-                      field.onChange(v);
-                      items.replace([emptyItem(v as PurchaseType)]);
-                      // D-116: solo Drywall y Metallic Roofing compran bobinas; si la línea
-                      // elegida no aplica, cae a Drywall en vez de dejar un 400 silencioso.
-                      if (
-                        v === PurchaseType.COIL &&
-                        !COIL_BUSINESS_LINES.includes(form.getValues('businessLine'))
-                      ) {
-                        form.setValue('businessLine', 'drywall');
+                      const next = v as PurchaseType;
+                      if (next === field.value) return;
+                      if (filledLines > 0) {
+                        setPendingType(next);
+                        return;
                       }
+                      applyType(next);
                     }}
                     disabled={lockType}
                   >
@@ -468,145 +527,6 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 </FormFieldCell>
               )}
             />
-            <FormField
-              control={form.control}
-              name="docType"
-              render={({ field }) => (
-                <FormFieldCell span={4} label="Comprobante">
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {PURCHASE_DOC_TYPES.map((d) => (
-                        <SelectItem key={d} value={d}>
-                          {PURCHASE_DOC_TYPE_LABELS[d]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormFieldCell>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="series"
-              render={({ field }) => (
-                <FormFieldCell span={4} label="Serie">
-                  <FormControl>
-                    <Input placeholder="F001" autoComplete="off" {...field} />
-                  </FormControl>
-                </FormFieldCell>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="number"
-              render={({ field }) => (
-                <FormFieldCell span={4} label="Número">
-                  <FormControl>
-                    <Input placeholder="1523" autoComplete="off" {...field} />
-                  </FormControl>
-                </FormFieldCell>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="issueDate"
-              render={({ field }) => (
-                <FormFieldCell span={4} label="Fecha de emisión">
-                  <FormControl>
-                    <Input type="date" {...field} />
-                  </FormControl>
-                </FormFieldCell>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="currency"
-              render={({ field }) => (
-                <FormFieldCell span={4} label="Moneda">
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {CURRENCIES.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {CURRENCY_LABELS[c]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormFieldCell>
-              )}
-            />
-            {currency !== 'PEN' && (
-              <FormField
-                control={form.control}
-                name="exchangeRate"
-                render={({ field }) => (
-                  <FormFieldCell span={4} label="Tipo de cambio" numeric>
-                    <FormControl>
-                      <Input placeholder="Automático (SUNAT del día)" {...field} />
-                    </FormControl>
-                    <p className="text-xs text-muted-foreground">
-                      En blanco usa el TC SUNAT de la fecha de emisión.
-                    </p>
-                  </FormFieldCell>
-                )}
-              />
-            )}
-            <FormField
-              control={form.control}
-              name="igvRate"
-              render={({ field }) => (
-                <FormFieldCell span={4} label="IGV (%)" numeric>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                </FormFieldCell>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="paymentTerms"
-              render={({ field }) => (
-                <FormFieldCell span={4} label="Condición de pago">
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <FormControl>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {PAYMENT_TERMS.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {PAYMENT_TERMS_LABELS[t]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FormFieldCell>
-              )}
-            />
-            {paymentTerms === 'CREDITO' && (
-              <FormField
-                control={form.control}
-                name="creditDays"
-                render={({ field }) => (
-                  <FormFieldCell span={4} label="Días de crédito" numeric>
-                    <FormControl>
-                      <Input type="number" min={1} max={365} {...field} />
-                    </FormControl>
-                  </FormFieldCell>
-                )}
-              />
-            )}
             {type === PurchaseType.SERVICE && (
               <FormField
                 control={form.control}
@@ -703,274 +623,427 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
                 )}
               />
             )}
+          </div>
+        </Section>
+
+        <Section title="Comprobante del proveedor">
+          <div className="grid grid-cols-12 items-start gap-x-3 gap-y-1 pt-2">
             <FormField
               control={form.control}
-              name="notes"
+              name="docType"
               render={({ field }) => (
-                <FormFieldCell span={12} label="Observaciones">
+                <FormFieldCell span={4} label="Comprobante">
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {PURCHASE_DOC_TYPES.map((d) => (
+                        <SelectItem key={d} value={d}>
+                          {PURCHASE_DOC_TYPE_LABELS[d]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormFieldCell>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="series"
+              render={({ field }) => (
+                <FormFieldCell span={4} label="Serie" help="Por ejemplo: F001">
                   <FormControl>
-                    <Input autoComplete="off" placeholder="Opcional" {...field} />
+                    <Input autoComplete="off" {...field} />
                   </FormControl>
                 </FormFieldCell>
               )}
             />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>{isCoil ? 'Bobinas' : 'Detalle'}</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            {isCoil && (
-              <p className="text-sm text-muted-foreground">
-                Cada línea es una bobina: al recibir la compra se crea con su código y su entrada de
-                kardex.
-              </p>
+            <FormField
+              control={form.control}
+              name="number"
+              render={({ field }) => (
+                <FormFieldCell span={4} label="Número" help="Por ejemplo: 1523">
+                  <FormControl>
+                    <Input autoComplete="off" {...field} />
+                  </FormControl>
+                </FormFieldCell>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="issueDate"
+              render={({ field }) => (
+                <FormFieldCell span={4} label="Fecha de emisión">
+                  <FormControl>
+                    <Input type="date" {...field} />
+                  </FormControl>
+                </FormFieldCell>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="currency"
+              render={({ field }) => (
+                <FormFieldCell span={4} label="Moneda">
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {CURRENCIES.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {CURRENCY_LABELS[c]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormFieldCell>
+              )}
+            />
+            {currency !== 'PEN' && (
+              <FormField
+                control={form.control}
+                name="exchangeRate"
+                render={({ field }) => (
+                  <FormFieldCell
+                    span={4}
+                    label="Tipo de cambio"
+                    numeric
+                    optional
+                    help="En blanco se usa el de SUNAT de la fecha de emisión."
+                  >
+                    <FormControl>
+                      <Input inputMode="decimal" {...field} />
+                    </FormControl>
+                  </FormFieldCell>
+                )}
+              />
             )}
-            {items.fields.map((row, index) => (
-              <div
-                key={row.id}
-                className="grid grid-cols-12 items-start gap-x-3 gap-y-1 rounded-lg border p-3"
-              >
-                {isFinishedGood && (
-                  <FormField
-                    control={form.control}
-                    name={`items.${index}.productId`}
-                    render={({ field }) => (
-                      <FormFieldCell span={4} label="Producto">
-                        <Select
-                          value={field.value ?? ''}
-                          onValueChange={(v) => {
-                            field.onChange(v);
-                            const product = products.data?.find((p) => p.id === v);
-                            if (product) {
-                              form.setValue(`items.${index}.description`, product.name);
-                              form.setValue(`items.${index}.unit`, coerceUnit(product.unit));
-                            }
-                          }}
-                        >
-                          <FormControl>
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Elige" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {products.data
-                              ?.filter((p) => p.isActive)
-                              .map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.sku} — {p.name}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                        {products.isError && (
-                          <p className="text-xs text-destructive">
-                            No se pudo cargar el catálogo de la línea.
-                          </p>
-                        )}
-                      </FormFieldCell>
-                    )}
-                  />
+            <FormField
+              control={form.control}
+              name="igvRate"
+              render={({ field }) => (
+                <FormFieldCell span={4} label="IGV" numeric size="md">
+                  <FormControl>
+                    <InputWithUnit unit="%" inputMode="decimal" {...field} />
+                  </FormControl>
+                </FormFieldCell>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="paymentTerms"
+              render={({ field }) => (
+                <FormFieldCell span={4} label="Condición de pago">
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {PAYMENT_TERMS.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {PAYMENT_TERMS_LABELS[t]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormFieldCell>
+              )}
+            />
+            {paymentTerms === 'CREDITO' && (
+              <FormField
+                control={form.control}
+                name="creditDays"
+                render={({ field }) => (
+                  <FormFieldCell span={4} label="Días de crédito" numeric size="md">
+                    <FormControl>
+                      <InputWithUnit unit="días" type="number" min={1} max={365} {...field} />
+                    </FormControl>
+                  </FormFieldCell>
                 )}
-                {isCoil && (
-                  <FormField
-                    control={form.control}
-                    name={`items.${index}.finishId`}
-                    render={({ field }) => (
-                      <FormFieldCell span={2} label={FINISH_FIELD_LABEL}>
-                        <Select value={field.value ?? ''} onValueChange={field.onChange}>
-                          <FormControl>
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Elige" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {/* D-203: solo acabados completos de la línea de la compra. Uno sin
-                                tipo no dice qué color lleva la bobina. */}
-                            {(() => {
-                              const options = (finishes.data ?? []).filter(
-                                (f) =>
-                                  (f.isActive || f.id === field.value) &&
-                                  f.kind !== null &&
-                                  f.businessLine === businessLine,
-                              );
-                              // F8-S7/M2: el color comercial manda; el código solo aparece si
-                              // dos opciones de **esta** lista comparten color.
-                              const labels = finishLabels(options);
-                              return options.map((f) => (
-                                <SelectItem key={f.id} value={f.id}>
-                                  {labels.get(f.id) ?? f.code}
-                                </SelectItem>
-                              ));
-                            })()}
-                          </SelectContent>
-                        </Select>
-                        <FinishColorHint
-                          loading={finishes.isPending}
-                          finish={
-                            finishes.data?.find(
-                              (f) => f.id === field.value && f.businessLine === businessLine,
-                            ) ?? null
-                          }
-                          unmapped={
-                            finishes.data?.filter((f) => f.isActive && f.kind === null).length ?? 0
-                          }
-                        />
-                        {finishes.isError && (
-                          <p className="text-xs text-destructive">
-                            No se pudieron cargar los acabados.
-                          </p>
-                        )}
-                      </FormFieldCell>
-                    )}
-                  />
-                )}
+              />
+            )}
+          </div>
+        </Section>
+
+        <Section title={isCoil ? 'Bobinas' : 'Detalle'} bodyClassName="grid gap-3 pt-2">
+          {isCoil && (
+            <p className="text-sm text-muted-foreground">
+              Cada línea es una bobina: al recibir la compra se crea con su código y su entrada de
+              kardex.
+            </p>
+          )}
+          {items.fields.map((row, index) => (
+            <div
+              key={row.id}
+              // cc31: la barra de faltantes nombra el campo por su línea («Bobina 2 · Peso»).
+              data-line={index + 1}
+              className="grid grid-cols-12 items-start gap-x-3 gap-y-1 rounded-lg border p-3"
+            >
+              {isFinishedGood && (
                 <FormField
                   control={form.control}
-                  name={`items.${index}.description`}
+                  name={`items.${index}.productId`}
                   render={({ field }) => (
-                    <FormFieldCell span={4} label="Descripción">
-                      <FormControl>
-                        <Input autoComplete="off" {...field} />
-                      </FormControl>
-                    </FormFieldCell>
-                  )}
-                />
-                {isCoil && (
-                  <>
-                    <FormField
-                      control={form.control}
-                      name={`items.${index}.widthMm`}
-                      render={({ field }) => (
-                        <FormFieldCell span={2} label="Ancho (mm)" numeric>
-                          <FormControl>
-                            <Input inputMode="decimal" {...field} />
-                          </FormControl>
-                        </FormFieldCell>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name={`items.${index}.thicknessMm`}
-                      render={({ field }) => (
-                        <FormFieldCell span={2} label="Espesor (mm)" numeric>
-                          <FormControl>
-                            <Input inputMode="decimal" {...field} />
-                          </FormControl>
-                        </FormFieldCell>
-                      )}
-                    />
-                  </>
-                )}
-                <FormField
-                  control={form.control}
-                  name={`items.${index}.qty`}
-                  render={({ field }) => (
-                    <FormFieldCell span={2} label={isCoil ? 'Peso (kg)' : 'Cantidad'} numeric>
-                      <FormControl>
-                        <Input inputMode="decimal" {...field} />
-                      </FormControl>
-                    </FormFieldCell>
-                  )}
-                />
-                {!isCoil && (
-                  <FormField
-                    control={form.control}
-                    name={`items.${index}.unit`}
-                    render={({ field }) => (
-                      <FormFieldCell span={2} label="Unidad">
-                        <Select value={field.value} onValueChange={field.onChange}>
-                          <FormControl>
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {UNITS.map((u) => (
-                              <SelectItem key={u} value={u}>
-                                {UNIT_LABELS[u]}
+                    <FormFieldCell span={4} label="Producto">
+                      <Select
+                        value={field.value ?? ''}
+                        onValueChange={(v) => {
+                          field.onChange(v);
+                          const product = products.data?.find((p) => p.id === v);
+                          if (product) {
+                            form.setValue(`items.${index}.description`, product.name);
+                            form.setValue(`items.${index}.unit`, coerceUnit(product.unit));
+                          }
+                        }}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Elige" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {products.data
+                            ?.filter((p) => p.isActive)
+                            .map((p) => (
+                              <SelectItem key={p.id} value={p.id}>
+                                {p.sku} — {p.name}
                               </SelectItem>
                             ))}
-                          </SelectContent>
-                        </Select>
-                      </FormFieldCell>
-                    )}
-                  />
-                )}
-                <FormField
-                  control={form.control}
-                  name={`items.${index}.unitPrice`}
-                  render={({ field }) => (
-                    <FormFieldCell
-                      span={2}
-                      label={<>{isCoil ? 'Precio por kg' : 'Precio unitario'} (sin IGV)</>}
-                      numeric
-                    >
-                      <FormControl>
-                        <Input inputMode="decimal" {...field} />
-                      </FormControl>
+                        </SelectContent>
+                      </Select>
+                      {products.isError && (
+                        <p className="text-xs text-destructive">
+                          No se pudo cargar el catálogo de la línea.
+                        </p>
+                      )}
                     </FormFieldCell>
                   )}
                 />
-                <div className="col-span-2 mt-5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={items.fields.length === 1}
-                    onClick={() => {
-                      items.remove(index);
-                    }}
+              )}
+              {isCoil && (
+                <FormField
+                  control={form.control}
+                  name={`items.${index}.finishId`}
+                  render={({ field }) => (
+                    <FormFieldCell span={2} label={FINISH_FIELD_LABEL}>
+                      <Select value={field.value ?? ''} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Elige" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {/* D-203: solo acabados completos de la línea de la compra. Uno sin
+                                tipo no dice qué color lleva la bobina. */}
+                          {(() => {
+                            const options = (finishes.data ?? []).filter(
+                              (f) =>
+                                (f.isActive || f.id === field.value) &&
+                                f.kind !== null &&
+                                f.businessLine === businessLine,
+                            );
+                            // F8-S7/M2: el color comercial manda; el código solo aparece si
+                            // dos opciones de **esta** lista comparten color.
+                            const labels = finishLabels(options);
+                            return options.map((f) => (
+                              <SelectItem key={f.id} value={f.id}>
+                                {labels.get(f.id) ?? f.code}
+                              </SelectItem>
+                            ));
+                          })()}
+                        </SelectContent>
+                      </Select>
+                      <FinishColorHint
+                        loading={finishes.isPending}
+                        finish={
+                          finishes.data?.find(
+                            (f) => f.id === field.value && f.businessLine === businessLine,
+                          ) ?? null
+                        }
+                        unmapped={
+                          finishes.data?.filter((f) => f.isActive && f.kind === null).length ?? 0
+                        }
+                      />
+                      {finishes.isError && (
+                        <p className="text-xs text-destructive">
+                          No se pudieron cargar los acabados.
+                        </p>
+                      )}
+                    </FormFieldCell>
+                  )}
+                />
+              )}
+              <FormField
+                control={form.control}
+                name={`items.${index}.description`}
+                render={({ field }) => (
+                  <FormFieldCell span={4} label="Descripción">
+                    <FormControl>
+                      <Input autoComplete="off" {...field} />
+                    </FormControl>
+                  </FormFieldCell>
+                )}
+              />
+              {isCoil && (
+                <>
+                  <FormField
+                    control={form.control}
+                    name={`items.${index}.widthMm`}
+                    render={({ field }) => (
+                      <FormFieldCell span={2} label="Ancho" numeric>
+                        <FormControl>
+                          <InputWithUnit unit="mm" inputMode="decimal" {...field} />
+                        </FormControl>
+                      </FormFieldCell>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name={`items.${index}.thicknessMm`}
+                    render={({ field }) => (
+                      <FormFieldCell span={2} label="Espesor" numeric>
+                        <FormControl>
+                          <InputWithUnit unit="mm" inputMode="decimal" {...field} />
+                        </FormControl>
+                      </FormFieldCell>
+                    )}
+                  />
+                </>
+              )}
+              <FormField
+                control={form.control}
+                name={`items.${index}.qty`}
+                render={({ field }) => (
+                  <FormFieldCell span={2} label={isCoil ? 'Peso' : 'Cantidad'} numeric>
+                    <FormControl>
+                      {isCoil ? (
+                        <InputWithUnit unit="kg" inputMode="decimal" {...field} />
+                      ) : (
+                        <Input inputMode="decimal" {...field} />
+                      )}
+                    </FormControl>
+                  </FormFieldCell>
+                )}
+              />
+              {!isCoil && (
+                <FormField
+                  control={form.control}
+                  name={`items.${index}.unit`}
+                  render={({ field }) => (
+                    <FormFieldCell span={2} label="Unidad">
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {UNITS.map((u) => (
+                            <SelectItem key={u} value={u}>
+                              {UNIT_LABELS[u]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </FormFieldCell>
+                  )}
+                />
+              )}
+              <FormField
+                control={form.control}
+                name={`items.${index}.unitPrice`}
+                render={({ field }) => (
+                  <FormFieldCell
+                    span={2}
+                    label={<>{isCoil ? 'Precio por kg' : 'Precio unitario'} (sin IGV)</>}
+                    numeric
                   >
-                    Quitar
-                  </Button>
-                </div>
+                    <FormControl>
+                      <Input inputMode="decimal" {...field} />
+                    </FormControl>
+                  </FormFieldCell>
+                )}
+              />
+              <div className="col-span-2 mt-5">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={items.fields.length === 1}
+                  onClick={() => {
+                    items.remove(index);
+                  }}
+                >
+                  Quitar
+                </Button>
               </div>
-            ))}
-            <div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  items.append(emptyItem(type));
-                }}
-              >
-                {isCoil ? 'Agregar bobina' : 'Agregar línea'}
-              </Button>
             </div>
-            {form.formState.errors.items?.message && (
-              <p className="text-sm text-destructive">{form.formState.errors.items.message}</p>
-            )}
-          </CardContent>
-        </Card>
+          ))}
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                items.append(emptyItem(type));
+              }}
+            >
+              {isCoil ? 'Agregar bobina' : 'Agregar línea'}
+            </Button>
+          </div>
+          {form.formState.errors.items?.message && (
+            <p className="text-sm text-destructive">{form.formState.errors.items.message}</p>
+          )}
+        </Section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Totales</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-1 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Valor de venta (sin IGV)</span>
-              <span>{formatMoney(totals.subtotal, currency)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">IGV</span>
-              <span>{formatMoney(totals.igv, currency)}</span>
-            </div>
-            <div className="flex justify-between font-medium">
-              <span>Total</span>
-              <span>{formatMoney(totals.total, currency)}</span>
-            </div>
-            <p className="pt-2 text-xs text-muted-foreground">
-              El costo que entra al kardex es el valor sin IGV; el IGV se guarda aparte.
-            </p>
-          </CardContent>
-        </Card>
+        <Section title="Observaciones">
+          <div className="grid grid-cols-12 items-start gap-x-3 gap-y-1 pt-2">
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormFieldCell span={12} label="Observaciones" optional>
+                  <FormControl>
+                    <Input autoComplete="off" {...field} />
+                  </FormControl>
+                </FormFieldCell>
+              )}
+            />
+          </div>
+        </Section>
+
+        {/* cc31 (ESPEC §6): «Qué va a pasar», con cifras, antes de la barra. */}
+        <div className="grid gap-1 rounded-lg bg-muted px-3 py-2 text-sm">
+          <p className="text-xs font-semibold text-muted-foreground">Qué va a pasar</p>
+          <p>
+            {isCoil
+              ? `La compra queda en borrador. Al recibirla entran ${pluralize(outcome.lines, 'bobina', 'bobinas')} · ${formatKg(outcome.kg)}.`
+              : isFinishedGood
+                ? `La compra queda en borrador. Al recibirla entran ${pluralize(outcome.lines, 'línea', 'líneas')} al inventario.`
+                : 'La compra queda en borrador. No mueve el inventario.'}
+          </p>
+          <dl className="grid max-w-md grid-cols-[1fr_auto] gap-x-8 gap-y-0.5 tabular-nums">
+            <dt className="text-muted-foreground">Valor de venta (sin IGV)</dt>
+            <dd className="text-right">{formatMoney(totals.subtotal, currency)}</dd>
+            <dt className="text-muted-foreground">IGV</dt>
+            <dd className="text-right">{formatMoney(totals.igv, currency)}</dd>
+            <dt className="font-medium">Total</dt>
+            <dd className="text-right font-medium">{formatMoney(totals.total, currency)}</dd>
+          </dl>
+          <p className="text-xs text-muted-foreground">
+            El costo que entra al kardex es el valor sin IGV; el IGV se guarda aparte.
+          </p>
+        </div>
 
         {/* cc27 (D-454): la acción principal queda a la vista en una compra larga. */}
-        <StickyActionBar>
+        <StickyActionBar missing={missing}>
           <Button
             type="button"
             variant="outline"
@@ -990,8 +1063,80 @@ export function PurchaseForm({ initialValues, lockType, warnings, submitLabel }:
           </Button>
         </StickyActionBar>
       </form>
+
+      <ConfirmDialog
+        open={pendingType !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingType(null);
+        }}
+        title="Cambiar el tipo de compra"
+        consequences={`Cambiar el tipo borra ${filledLines === 1 ? 'la línea cargada' : `las ${String(filledLines)} líneas cargadas`}. ¿Cambiar igual?`}
+        confirmLabel="Cambiar igual"
+        onConfirm={() => {
+          if (pendingType) applyType(pendingType);
+          setPendingType(null);
+        }}
+      />
     </Form>
   );
+}
+
+/** «1 bobina», «3 bobinas». */
+function pluralize(n: number, one: string, many: string): string {
+  return `${String(n)} ${n === 1 ? one : many}`;
+}
+
+/** Una línea con algo escrito: cambiar el tipo la perdería. */
+function lineHasData(item: PurchaseFormValues['items'][number]): boolean {
+  return [
+    item.description,
+    item.qty,
+    item.unitPrice,
+    item.widthMm,
+    item.thicknessMm,
+    item.finishId,
+    item.productId,
+  ].some((v) => (v ?? '').trim() !== '');
+}
+
+/** Lo que entra al recibir: líneas con cantidad válida y la suma de kilos (bobinas). */
+function summarizeOutcome(items: PurchaseFormValues['items']): { lines: number; kg: Decimal } {
+  let lines = 0;
+  let kg = new Decimal(0);
+  for (const item of items) {
+    if (!isDecimalString(item.qty)) continue;
+    lines += 1;
+    kg = kg.plus(item.qty);
+  }
+  return { lines, kg };
+}
+
+/** Las rutas de los errores de RHF («supplierId», «items.0.qty»), sin el error del servidor. */
+function collectErrorPaths(node: unknown, prefix: string, out: string[]): void {
+  if (!node || typeof node !== 'object') return;
+  const record = node as Record<string, unknown>;
+  if (prefix && prefix !== 'root' && typeof record.type === 'string') out.push(prefix);
+  for (const [key, value] of Object.entries(record)) {
+    if (key === 'ref' || key === 'type' || key === 'message' || key === 'types') continue;
+    if (!prefix && key === 'root') continue;
+    collectErrorPaths(value, prefix ? `${prefix}.${key}` : key, out);
+  }
+}
+
+/**
+ * Los campos marcados en la pantalla, en su orden: el control con `aria-invalid` (lo pone
+ * `FormControl` de RHF) y su rótulo. Un campo de una línea se nombra con ella («Bobina 2 · Peso»).
+ */
+function readInvalidFields(root: HTMLElement | null, lineNoun: string): MissingField[] {
+  if (!root) return [];
+  const out: MissingField[] = [];
+  root.querySelectorAll<HTMLElement>('[aria-invalid="true"][id]').forEach((el) => {
+    const label = root.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+    const text = (label?.textContent ?? '').replace(/\s*·\s*opcional$/, '').trim() || 'Dato';
+    const line = el.closest('[data-line]')?.getAttribute('data-line');
+    out.push({ label: line ? `${lineNoun} ${line} · ${text}` : text, target: el.id });
+  });
+  return out;
 }
 
 /** Totales de vista previa. Decimal, nunca `number` (D-003). */

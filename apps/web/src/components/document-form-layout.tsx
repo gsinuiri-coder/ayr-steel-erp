@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/format';
-import { FormGrid, StickyActionBar } from '@/components/form';
+import { FormGrid, StickyActionBar, type MissingField } from '@/components/form';
 
 /**
  * D-284: el esqueleto común de los formularios de documento (cotización, pedido directo,
@@ -121,6 +121,19 @@ export function DocumentLinesFooter({ children }: { children: ReactNode }) {
  * El pie del formulario: Cancelar y la acción principal, abajo a la derecha. cc27 (D-454): fijo
  * al borde inferior mientras el formulario siga a la vista, con `hint` (el total) a la izquierda.
  */
-export function DocumentActions({ children, hint }: { children: ReactNode; hint?: ReactNode }) {
-  return <StickyActionBar hint={hint}>{children}</StickyActionBar>;
+export function DocumentActions({
+  children,
+  hint,
+  missing,
+}: {
+  children: ReactNode;
+  hint?: ReactNode;
+  /** cc31: lo que falta para guardar, con enlaces a cada campo (`StickyActionBar`). */
+  missing?: readonly MissingField[];
+}) {
+  return (
+    <StickyActionBar hint={hint} missing={missing}>
+      {children}
+    </StickyActionBar>
+  );
 }

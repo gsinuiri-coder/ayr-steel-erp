@@ -32,6 +32,7 @@ import {
 import { invalidateProduction } from '@/lib/production-queries';
 import { useSession } from '@/lib/session';
 import { ReasonDialog } from '@/components/reason-dialog';
+import { ANNUL_REASONS } from '@/lib/reasons';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -459,6 +460,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         open={cancelling}
         onOpenChange={setCancelling}
         title="Anular la orden de producción"
+        reasons={ANNUL_REASONS}
         description={`Los ${liveStrips.length} fleje(s) que la orden tiene tomados quedan libres otra vez. Solo se puede si no le queda ningún reporte de piezas vigente.`}
         confirmLabel="Sí, anular"
         pending={cancel.isPending}

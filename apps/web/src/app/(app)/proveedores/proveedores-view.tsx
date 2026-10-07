@@ -25,6 +25,7 @@ import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
 import { RowActions } from '@/components/row-actions';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 
 const SUPPLIERS_QUERY_KEY = ['suppliers'] as const;
 
@@ -65,10 +66,14 @@ export function ProveedoresView() {
     );
   });
 
+  // cc31 (ESPEC §6): desactivar pide confirmación; activar no.
+  const [toDeactivate, setToDeactivate] = useState<SupplierDto | null>(null);
+
   const toggleActive = useMutation({
     mutationFn: (s: SupplierDto) =>
       api<SupplierDto>(`/suppliers/${s.id}`, { method: 'PATCH', body: { isActive: !s.isActive } }),
     onSuccess: (updated) => {
+      setToDeactivate(null);
       toast.success(updated.isActive ? 'Proveedor activado' : 'Proveedor desactivado');
       void queryClient.invalidateQueries({ queryKey: SUPPLIERS_QUERY_KEY });
     },
@@ -203,7 +208,8 @@ export function ProveedoresView() {
                         pending: toggleActive.isPending && toggleActive.variables?.id === s.id,
                         onSelect: () => {
                           if (toggleActive.isPending) return;
-                          toggleActive.mutate(s);
+                          if (s.isActive) setToDeactivate(s);
+                          else toggleActive.mutate(s);
                         },
                       },
                     ]}
@@ -236,6 +242,21 @@ export function ProveedoresView() {
           )}
         </Table>
       </div>
+
+      {toDeactivate && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setToDeactivate(null);
+          }}
+          title={`Desactivar a ${toDeactivate.name}`}
+          consequences="Ya no podrás registrarle compras ni órdenes de corte nuevas; lo registrado se conserva y puedes volver a activarlo."
+          pending={toggleActive.isPending}
+          onConfirm={() => {
+            toggleActive.mutate(toDeactivate);
+          }}
+        />
+      )}
 
       {isAdmin && (
         <SupplierDialog

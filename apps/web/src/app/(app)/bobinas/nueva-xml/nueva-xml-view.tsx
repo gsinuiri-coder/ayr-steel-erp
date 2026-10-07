@@ -112,6 +112,8 @@ export function NuevaXmlView() {
             lockType
             warnings={preview.warnings}
             submitLabel="Confirmar compra y bobinas"
+            // cc31 (ESPEC §6): lo leído del XML se pierde al salir; avisa hasta confirmar.
+            startsDirty
           />
         </>
       )}

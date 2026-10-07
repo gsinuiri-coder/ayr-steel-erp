@@ -32,7 +32,10 @@ import { useSession } from '@/lib/session';
 import { formatDate, formatMoney, formatUnitQty, isPositiveDecimal } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { RoleGate } from '@/components/role-gate';
+import { Section } from '@/components/section';
+import { focusField, type MissingField } from '@/components/form';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -100,6 +103,11 @@ export function NuevoComprobanteView() {
   const [freeLines, setFreeLines] = useState<
     { key: string; description: string; qty: string; unit: string; unitPricePen: string }[]
   >([{ key: 'l0', description: '', qty: '', unit: 'NIU', unitPricePen: '' }]);
+  /** cc31: tras el primer intento de crear, los faltantes se marcan en su campo. */
+  const [attempted, setAttempted] = useState(false);
+  /** cc31: el usuario tocó alguna cantidad a facturar (para el aviso de cambios sin guardar). */
+  const [qtyEdited, setQtyEdited] = useState(false);
+  const initialOrderId = useRef(searchParams.get('pedido') ?? NONE);
 
   const customers = useQuery({
     queryKey: ['customers', 'picker'],
@@ -215,12 +223,30 @@ export function NuevoComprobanteView() {
         return toDecimal(raw).gt(toDecimal(l.pendingInvoiceQty));
       }).length;
     }
-    return freeLines.filter(
-      (l) =>
-        (l.qty.trim() !== '' && !isPositiveDecimal(l.qty)) ||
-        (l.unitPricePen.trim() !== '' && !isPositiveDecimal(l.unitPricePen)),
-    ).length;
-  }, [salesOrderId, progress.data, qtyByLine, freeLines]);
+    // cc31: en la venta directa, cada campo dice su error debajo (`freeLineErrors`).
+    return 0;
+  }, [salesOrderId, progress.data, qtyByLine]);
+
+  /**
+   * cc31 (ESPEC §6, defecto): una línea libre con algo escrito tiene que estar completa. Antes
+   * una línea sin descripción pasaba y el borrador quedaba con un renglón en blanco. Con todas
+   * vacías, la primera es la que falta. La cantidad y el valor mal escritos se dicen al tipear;
+   * lo vacío, al intentar crear.
+   */
+  const freeLineErrors = useMemo(() => {
+    if (salesOrderId !== NONE) return [];
+    const anyFilled = freeLines.some(freeLineIsFilled);
+    return freeLines.map((l, i): FreeLineErrors => {
+      if (!freeLineIsFilled(l) && (anyFilled || i > 0)) return {};
+      return {
+        description: l.description.trim() ? undefined : 'Escribe la descripción de la línea',
+        qty: isPositiveDecimal(l.qty) ? undefined : 'Escribe una cantidad mayor que cero',
+        unitPricePen: isPositiveDecimal(l.unitPricePen)
+          ? undefined
+          : 'Escribe el valor unitario sin IGV, mayor que cero',
+      };
+    });
+  }, [salesOrderId, freeLines]);
 
   // D-377 (R2): el total del documento se redondea al céntimo una sola vez, como el API.
   const lineSums = lines.length > 0 ? salesTotals(lines) : null;
@@ -285,19 +311,71 @@ export function NuevoComprobanteView() {
     },
   });
 
-  // El botón respeta las mismas tres reglas que la pantalla ya muestra en rojo: sin
-  // esto, el usuario apretaba y el API devolvía en un toast el mismo texto que tenía
-  // delante.
+  // El botón respeta las mismas reglas que la pantalla ya muestra en rojo: sin esto, el
+  // usuario apretaba y el API devolvía en un toast el mismo texto que tenía delante.
   const factureNeedsRuc =
     docType === 'FACTURA' && customer !== undefined && customer.docType !== 'RUC';
-  const canSubmit =
-    customerId !== '' &&
-    lines.length > 0 &&
-    invalidLines === 0 &&
-    !factureNeedsRuc &&
-    !(isGenericCustomer && docType !== 'BOLETA') &&
-    !(overGenericCap && !forceGeneric) &&
-    !create.isPending;
+
+  // cc31 (ESPEC §6): el botón no se apaga por un dato faltante. La barra dice qué falta, con
+  // enlace a cada campo; al pulsar con faltantes no se crea nada, se marcan los campos y el
+  // foco va al primero.
+  const orderLines = progress.data?.lines ?? [];
+  const missing: MissingField[] = [];
+  if (customerId === '') missing.push({ label: 'Cliente', target: 'invoice-customer' });
+  if (salesOrderId !== NONE) {
+    orderLines.forEach((l) => {
+      const raw = (qtyByLine[l.salesOrderItemId] ?? '').trim();
+      if (raw !== '' && orderLineQtyError(raw, l.pendingInvoiceQty)) {
+        missing.push({
+          label: `${l.productSku} · cantidad`,
+          target: orderQtyId(l.salesOrderItemId),
+        });
+      }
+    });
+    if (lines.length === 0 && invalidLines === 0) {
+      const first = orderLines.find((l) => Number(l.pendingInvoiceQty) > 0);
+      missing.push({
+        label: 'Cantidad a facturar',
+        target: first ? orderQtyId(first.salesOrderItemId) : 'invoice-order',
+      });
+    }
+  } else {
+    freeLines.forEach((l, i) => {
+      const errors = freeLineErrors[i] ?? {};
+      const n = String(i + 1);
+      if (errors.description) {
+        missing.push({ label: `Línea ${n} · descripción`, target: freeLineId(l.key, 'desc') });
+      }
+      if (errors.qty) {
+        missing.push({ label: `Línea ${n} · cantidad`, target: freeLineId(l.key, 'qty') });
+      }
+      if (errors.unitPricePen) {
+        missing.push({ label: `Línea ${n} · valor unitario`, target: freeLineId(l.key, 'price') });
+      }
+    });
+  }
+  /** Lo que no es un dato que falte sino una combinación que no se emite (los avisos en rojo). */
+  const blocker: string | null = factureNeedsRuc
+    ? 'invoice-doc-type'
+    : isGenericCustomer && docType !== 'BOLETA'
+      ? 'invoice-doc-type'
+      : overGenericCap && !forceGeneric
+        ? 'invoice-customer'
+        : null;
+
+  // cc31 (ESPEC §6): salir con el comprobante a medio cargar avisa; creado, ya no.
+  useUnsavedChanges(
+    (notes.trim() !== '' ||
+      freeLines.some(freeLineIsFilled) ||
+      qtyEdited ||
+      salesOrderId !== initialOrderId.current ||
+      (salesOrderId === NONE && customerId !== '')) &&
+      !create.isSuccess,
+  );
+
+  /** Un campo con error: el mal escrito, siempre; el vacío, tras un intento. */
+  const showError = (message: string | undefined, value: string): string | undefined =>
+    message && (attempted || value.trim() !== '') ? message : undefined;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -355,7 +433,11 @@ export function NuevoComprobanteView() {
         <FormField span={2}>
           <Label htmlFor="invoice-customer">Cliente</Label>
           <Select value={customerId} onValueChange={setCustomerId} disabled={salesOrderId !== NONE}>
-            <SelectTrigger id="invoice-customer" className="w-full">
+            <SelectTrigger
+              id="invoice-customer"
+              className="w-full"
+              aria-invalid={attempted && customerId === ''}
+            >
               <SelectValue placeholder="Elige un cliente" />
             </SelectTrigger>
             <SelectContent>
@@ -366,6 +448,11 @@ export function NuevoComprobanteView() {
               ))}
             </SelectContent>
           </Select>
+          {attempted && customerId === '' && (
+            <p role="alert" className="text-xs text-destructive">
+              Elige el cliente al que se emite.
+            </p>
+          )}
         </FormField>
 
         <FormField>
@@ -403,7 +490,10 @@ export function NuevoComprobanteView() {
         </FormField>
 
         <FormField>
-          <Label htmlFor="invoice-due-date">Vencimiento</Label>
+          <Label htmlFor="invoice-due-date">
+            Vencimiento
+            {paymentTerms === 'CREDITO' && <OptionalMark />}
+          </Label>
           <Input
             id="invoice-due-date"
             type="date"
@@ -423,7 +513,10 @@ export function NuevoComprobanteView() {
 
         {salesOrderId !== NONE && linkableDispatches.length > 0 && (
           <FormField>
-            <Label htmlFor="invoice-dispatch">Despacho que factura</Label>
+            <Label htmlFor="invoice-dispatch">
+              Despacho que factura
+              <OptionalMark />
+            </Label>
             <Select
               value={dispatchId}
               onValueChange={(value) => {
@@ -451,7 +544,10 @@ export function NuevoComprobanteView() {
         )}
 
         <FormField span={4}>
-          <Label htmlFor="invoice-notes">Observaciones</Label>
+          <Label htmlFor="invoice-notes">
+            Observaciones
+            <OptionalMark />
+          </Label>
           <Input
             id="invoice-notes"
             value={notes}
@@ -514,14 +610,11 @@ export function NuevoComprobanteView() {
       )}
 
       {salesOrderId !== NONE ? (
-        <section className="space-y-2">
-          <div>
-            <h2 className="text-sm font-medium">Líneas del pedido</h2>
-            <p className="text-xs text-muted-foreground">
-              Se propone facturar todo lo pendiente. Baja la cantidad para facturar en partes; deja
-              una línea en blanco para no incluirla.
-            </p>
-          </div>
+        <Section title="Líneas del pedido" bodyClassName="grid gap-2 pt-1">
+          <p className="text-xs text-muted-foreground">
+            Se propone facturar todo lo pendiente. Baja la cantidad para facturar en partes; deja
+            una línea en blanco para no incluirla.
+          </p>
           <div className="rounded-lg border">
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-background">
@@ -550,19 +643,38 @@ export function NuevoComprobanteView() {
                       {formatMoney(l.unitPricePen, 'PEN', 4)}
                     </TableCell>
                     <TableCell>
-                      <Input
-                        inputMode="decimal"
-                        className="text-right tabular-nums"
-                        aria-label={`A facturar de ${l.productSku}`}
-                        disabled={Number(l.pendingInvoiceQty) <= 0}
-                        value={qtyByLine[l.salesOrderItemId] ?? ''}
-                        onChange={(e) => {
-                          setQtyByLine((prev) => ({
-                            ...prev,
-                            [l.salesOrderItemId]: e.target.value,
-                          }));
-                        }}
-                      />
+                      {(() => {
+                        const raw = qtyByLine[l.salesOrderItemId] ?? '';
+                        const error =
+                          raw.trim() !== ''
+                            ? orderLineQtyError(raw.trim(), l.pendingInvoiceQty)
+                            : null;
+                        return (
+                          <>
+                            <Input
+                              id={orderQtyId(l.salesOrderItemId)}
+                              inputMode="decimal"
+                              className="text-right tabular-nums"
+                              aria-label={`A facturar de ${l.productSku}`}
+                              aria-invalid={error !== null}
+                              disabled={Number(l.pendingInvoiceQty) <= 0}
+                              value={raw}
+                              onChange={(e) => {
+                                setQtyEdited(true);
+                                setQtyByLine((prev) => ({
+                                  ...prev,
+                                  [l.salesOrderItemId]: e.target.value,
+                                }));
+                              }}
+                            />
+                            {error && (
+                              <p role="alert" className="mt-1 text-xs text-destructive">
+                                {error}
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -576,10 +688,9 @@ export function NuevoComprobanteView() {
               </TableBody>
             </Table>
           </div>
-        </section>
+        </Section>
       ) : (
-        <section className="space-y-2">
-          <h2 className="text-sm font-medium">Líneas</h2>
+        <Section title="Líneas" bodyClassName="pt-1">
           {/*
             D-284: una tabla con una etiqueta por columna, como las líneas de cotización y
             pedido, en vez de filas sueltas que repetían los rótulos en cada renglón.
@@ -602,7 +713,11 @@ export function NuevoComprobanteView() {
                   <TableRow key={line.key} className="align-top">
                     <TableCell>
                       <Input
+                        id={freeLineId(line.key, 'desc')}
                         aria-label={`Descripción de la línea ${i + 1}`}
+                        aria-invalid={
+                          showError(freeLineErrors[i]?.description, line.description) !== undefined
+                        }
                         value={line.description}
                         maxLength={240}
                         onChange={(e) => {
@@ -613,12 +728,17 @@ export function NuevoComprobanteView() {
                           );
                         }}
                       />
+                      <FieldError
+                        message={showError(freeLineErrors[i]?.description, line.description)}
+                      />
                     </TableCell>
                     <TableCell>
                       <Input
+                        id={freeLineId(line.key, 'qty')}
                         inputMode="decimal"
                         className="text-right tabular-nums"
                         aria-label={`Cantidad de la línea ${i + 1}`}
+                        aria-invalid={showError(freeLineErrors[i]?.qty, line.qty) !== undefined}
                         value={line.qty}
                         onChange={(e) => {
                           setFreeLines((prev) =>
@@ -626,6 +746,7 @@ export function NuevoComprobanteView() {
                           );
                         }}
                       />
+                      <FieldError message={showError(freeLineErrors[i]?.qty, line.qty)} />
                     </TableCell>
                     <TableCell>
                       {/*
@@ -658,9 +779,14 @@ export function NuevoComprobanteView() {
                     </TableCell>
                     <TableCell>
                       <Input
+                        id={freeLineId(line.key, 'price')}
                         inputMode="decimal"
                         className="text-right tabular-nums"
                         aria-label={`Valor unitario de la línea ${i + 1}`}
+                        aria-invalid={
+                          showError(freeLineErrors[i]?.unitPricePen, line.unitPricePen) !==
+                          undefined
+                        }
                         value={line.unitPricePen}
                         onChange={(e) => {
                           setFreeLines((prev) =>
@@ -669,6 +795,9 @@ export function NuevoComprobanteView() {
                             ),
                           );
                         }}
+                      />
+                      <FieldError
+                        message={showError(freeLineErrors[i]?.unitPricePen, line.unitPricePen)}
                       />
                     </TableCell>
                     <TableCell className="text-right">
@@ -688,7 +817,7 @@ export function NuevoComprobanteView() {
               </TableBody>
             </Table>
           </div>
-        </section>
+        </Section>
       )}
 
       <DocumentLinesFooter>
@@ -721,7 +850,26 @@ export function NuevoComprobanteView() {
         )}
       </DocumentLinesFooter>
 
-      <DocumentActions>
+      {/* cc31 (ESPEC §6): «Qué va a pasar», con cifras, antes de la barra. */}
+      <div className="grid gap-1 rounded-lg bg-muted px-3 py-2 text-sm">
+        <p className="text-xs font-semibold text-muted-foreground">Qué va a pasar</p>
+        <p>
+          Se crea un borrador de {FISCAL_DOC_TYPE_LABELS[docType].toLowerCase()}
+          {customer ? ` a ${customer.name}` : ''}
+          {totals ? (
+            <>
+              {' '}
+              por{' '}
+              <span className="font-medium tabular-nums">
+                {formatMoney(totals.total.toFixed(4))}
+              </span>
+            </>
+          ) : null}
+          . El correlativo se toma recién al emitirlo.
+        </p>
+      </div>
+
+      <DocumentActions missing={missing}>
         <Button
           variant="outline"
           onClick={() => {
@@ -731,11 +879,19 @@ export function NuevoComprobanteView() {
           Cancelar
         </Button>
         <Button
-          disabled={!canSubmit}
+          disabled={create.isPending}
           pending={create.isPending}
           pendingText="Creando…"
           onClick={() => {
             if (create.isPending) return;
+            // cc31: con faltantes, o con una combinación que no se emite, no se crea nada: se
+            // marcan los campos y el foco va al primero.
+            const target = missing[0]?.target ?? blocker;
+            if (target) {
+              setAttempted(true);
+              focusField(target);
+              return;
+            }
             create.mutate();
           }}
         >
@@ -744,4 +900,45 @@ export function NuevoComprobanteView() {
       </DocumentActions>
     </RoleGate>
   );
+}
+
+interface FreeLineErrors {
+  description?: string;
+  qty?: string;
+  unitPricePen?: string;
+}
+
+/** Una línea libre con algo escrito (la unidad tiene valor por defecto y no cuenta). */
+function freeLineIsFilled(l: { description: string; qty: string; unitPricePen: string }): boolean {
+  return l.description.trim() !== '' || l.qty.trim() !== '' || l.unitPricePen.trim() !== '';
+}
+
+function freeLineId(key: string, field: 'desc' | 'qty' | 'price'): string {
+  return `invoice-line-${key}-${field}`;
+}
+
+function orderQtyId(salesOrderItemId: string): string {
+  return `invoice-qty-${salesOrderItemId}`;
+}
+
+/** La cantidad a facturar de una línea del pedido: decimal positivo y no más que lo pendiente. */
+function orderLineQtyError(raw: string, pending: string): string | null {
+  if (!isPositiveDecimal(raw)) return 'Escribe una cantidad mayor que cero';
+  if (toDecimal(raw).gt(toDecimal(pending))) return `Pasa lo pendiente (${pending})`;
+  return null;
+}
+
+/** El error bajo un campo de la tabla de líneas. */
+function FieldError({ message }: { message: string | undefined }) {
+  if (!message) return null;
+  return (
+    <p role="alert" className="mt-1 text-xs text-destructive">
+      {message}
+    </p>
+  );
+}
+
+/** «· opcional» junto al rótulo (ESPEC §6: se marca lo opcional, no lo obligatorio). */
+function OptionalMark() {
+  return <span className="font-normal text-muted-foreground">{' · opcional'}</span>;
 }

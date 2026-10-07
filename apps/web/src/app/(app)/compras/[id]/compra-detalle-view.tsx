@@ -33,6 +33,7 @@ import { formatDate, formatMoney, formatQty, isPositiveDecimal, todayIso } from 
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
+import { ANNUL_REASONS } from '@/lib/reasons';
 import { EditReceivedPurchaseDialog } from '@/components/purchases/edit-received-purchase-dialog';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
@@ -650,6 +651,7 @@ export function CompraDetalleView({ id }: { id: string }) {
         open={confirmCancel}
         onOpenChange={setConfirmCancel}
         title={`Anular la compra ${p.documentLabel}`}
+        reasons={ANNUL_REASONS}
         description={
           p.status === 'RECEIVED'
             ? 'Se revierten todos los movimientos de kardex de la compra y sus bobinas quedan anuladas. Solo se puede si nada de lo que entró con ella se movió después.'

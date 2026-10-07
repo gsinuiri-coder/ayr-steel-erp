@@ -173,6 +173,9 @@ export function UserDialog({ open, user, onOpenChange }: Props) {
                 <FormItem>
                   <FormLabel>
                     {editing ? 'Nueva contraseña temporal' : 'Contraseña temporal'}
+                    {editing && (
+                      <span className="font-normal text-muted-foreground"> · opcional</span>
+                    )}
                   </FormLabel>
                   <FormControl>
                     <Input type="password" autoComplete="new-password" {...field} />

@@ -42,22 +42,49 @@ import {
 
 const SUPPLIERS_QUERY_KEY = ['suppliers'] as const;
 
-const formSchema = z.object({
-  code: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .regex(/^[A-Z]{3,6}$/, 'Entre 3 y 6 letras, sin espacios ni números'),
-  docType: z.enum(DOC_TYPES),
-  docNumber: z.string().trim().min(1, 'Obligatorio').max(20),
-  name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
-  address: z.string().trim().max(240).optional(),
-  email: z.string().trim().max(160).optional(),
-  phone: z.string().trim().max(30).optional(),
-  creditDays: z.coerce.number().int().min(0).max(365),
-  providesCuttingService: z.boolean(),
-});
-type FormValues = z.infer<typeof formSchema>;
+const CODE_PATTERN = /^[A-Z]{3,6}$/;
+
+/**
+ * cc31 (ESPEC §6): el correo se valida aquí (el API ya lo rechazaba) y los días de crédito
+ * llevan mensajes en español: el `z.coerce.number().int()` sin mensaje mostraba el texto en
+ * inglés de Zod.
+ *
+ * `originalCode`: al editar, el código que ya tiene el proveedor no se vuelve a validar. Un
+ * código antiguo fuera de la regla de hoy dejaba el formulario sin poder guardar nada.
+ */
+function buildFormSchema(originalCode?: string) {
+  return z.object({
+    code: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .refine((v) => (originalCode !== undefined && v === originalCode) || CODE_PATTERN.test(v), {
+        message: 'Entre 3 y 6 letras, sin espacios ni números',
+      }),
+    docType: z.enum(DOC_TYPES),
+    docNumber: z.string().trim().min(1, 'Obligatorio').max(20),
+    name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
+    address: z.string().trim().max(240, 'Máximo 240 caracteres').optional(),
+    email: z
+      .string()
+      .trim()
+      .max(160, 'Máximo 160 caracteres')
+      .refine((v) => v === '' || z.string().email().safeParse(v).success, {
+        message: 'Escribe un correo válido, como nombre@empresa.pe',
+      })
+      .optional(),
+    phone: z.string().trim().max(30, 'Máximo 30 caracteres').optional(),
+    creditDays: z.coerce
+      .number({ invalid_type_error: 'Escribe los días en número' })
+      .int('Escribe los días sin decimales')
+      .min(0, 'No puede ser negativo')
+      .max(365, 'Máximo 365 días'),
+    providesCuttingService: z.boolean(),
+  });
+}
+type FormValues = z.infer<ReturnType<typeof buildFormSchema>>;
+
+const OPTIONAL_MARK = <span className="font-normal text-muted-foreground"> · opcional</span>;
 
 interface Props {
   open: boolean;
@@ -82,7 +109,7 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
   }, [open]);
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(buildFormSchema(supplier?.code)),
     defaultValues: {
       code: supplier?.code ?? initial?.code ?? '',
       docType: supplier?.docType ?? 'RUC',
@@ -142,7 +169,11 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
   const save = useMutation({
     mutationFn: (values: FormValues) => {
       if (editing) {
-        const { docType: _docType, docNumber: _docNumber, ...body } = values;
+        const { docType: _docType, docNumber: _docNumber, code, ...rest } = values;
+        // cc31: el código solo viaja si cambió. El API solo lo mira cuando cambia (y lo
+        // rechaza si el proveedor ya tiene bobinas), pero lo valida con la regla de hoy aunque
+        // sea el mismo: un código antiguo bloqueaba cualquier otra edición.
+        const body = code === supplier.code ? rest : { ...rest, code };
         return api<SupplierDto>(`/suppliers/${supplier.id}`, { method: 'PATCH', body });
       }
       return api<SupplierDto>('/suppliers', { method: 'POST', body: values });
@@ -257,7 +288,6 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
                   <FormControl>
                     <Input
                       autoComplete="off"
-                      placeholder="Ej: ACERO"
                       maxLength={6}
                       {...field}
                       onChange={(e) => {
@@ -266,7 +296,10 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
                     />
                   </FormControl>
                   <p className="text-xs text-muted-foreground">
-                    3 a 6 letras. Es el primer segmento del código de cada bobina de este proveedor.
+                    Por ejemplo: ACERO. 3 a 6 letras; es el primer segmento del código de cada
+                    bobina de este proveedor.
+                    {editing &&
+                      ' No se puede cambiar si el proveedor ya tiene bobinas registradas.'}
                   </p>
                   <FormMessage />
                 </FormItem>
@@ -290,7 +323,7 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
               name="address"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Dirección</FormLabel>
+                  <FormLabel>Dirección{OPTIONAL_MARK}</FormLabel>
                   <FormControl>
                     <Input autoComplete="off" {...field} />
                   </FormControl>
@@ -304,7 +337,7 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Correo</FormLabel>
+                    <FormLabel>Correo{OPTIONAL_MARK}</FormLabel>
                     <FormControl>
                       <Input type="email" autoComplete="off" {...field} />
                     </FormControl>
@@ -317,7 +350,7 @@ export function SupplierDialog({ open, supplier, initial, onCreated, onOpenChang
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Teléfono</FormLabel>
+                    <FormLabel>Teléfono{OPTIONAL_MARK}</FormLabel>
                     <FormControl>
                       <Input autoComplete="off" {...field} />
                     </FormControl>

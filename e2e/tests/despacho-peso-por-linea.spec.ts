@@ -111,7 +111,7 @@ test.describe('F8-S1/M3 — peso por línea en el despacho', () => {
     });
     await expect(weightInput).toHaveValue('30.000', { timeout: 20_000 });
 
-    // Modalidad por defecto es "Transporte privado": es exactamente el caso que F2-01
+    // Modalidad por defecto es «Vehículo propio» (transporte privado): el caso que F2-01
     // reprodujo (no se podía despachar ninguna línea que no fuera en kilos).
     await field(page, 'Dirección de partida').fill('Av. Almacén 100, Lima');
     await field(page, 'Ubigeo de partida').fill('150101');
@@ -121,7 +121,7 @@ test.describe('F8-S1/M3 — peso por línea en el despacho', () => {
     await field(page, 'Nombres del conductor').fill('Juan');
     await field(page, 'Apellidos del conductor').fill('Pérez');
     await field(page, 'Número de documento').fill('45678912');
-    await field(page, 'Licencia').fill('Q12345678');
+    await field(page, 'Licencia de conducir').fill('Q12345678');
 
     const created = page.waitForResponse(
       (r) => r.url().includes('/api/dispatches') && r.request().method() === 'POST',
