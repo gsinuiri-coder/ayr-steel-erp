@@ -220,14 +220,16 @@ export function PanelToday() {
           >
             <span
               className={cn(
-                'text-2xl font-semibold tabular-nums',
+                'text-xl font-semibold tabular-nums',
                 t.attention && (t.count ?? 0) > 0 && 'text-tone-warning-foreground',
                 t.count === 0 && 'text-muted-foreground',
               )}
             >
               {t.count ?? '…'}
             </span>
-            <span className="font-medium group-hover:underline">{t.label}</span>
+            <span className="text-[13px] leading-snug font-medium group-hover:underline">
+              {t.label}
+            </span>
             {t.detail && <span className="text-xs text-muted-foreground">{t.detail}</span>}
           </Link>
         ))}

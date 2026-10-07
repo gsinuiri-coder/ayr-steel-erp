@@ -121,12 +121,16 @@ function AdminDashboardBody({ d }: { d: AdminDashboardDto }) {
   const maxLine = Math.max(1, ...d.salesByLine.map((l) => Number(l.salesPen)));
   const rangeLabel = `${formatDate(d.current.from)} – ${formatDate(d.current.to)}`;
   const billed = billedPen(d.sales);
+  // cc31: «Octubre en cifras», el mes del rango (mediodía UTC: cae en el mismo día en Lima).
+  const month = new Intl.DateTimeFormat('es-PE', { month: 'long', timeZone: 'UTC' }).format(
+    new Date(`${d.current.from}T12:00:00.000Z`),
+  );
 
   return (
     <section className="grid gap-3" aria-labelledby="admin-dashboard-title">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="admin-dashboard-title" className="text-sm font-semibold">
-          El mes en cifras
+          {month.charAt(0).toUpperCase() + month.slice(1)} en cifras
         </h2>
         <p className="text-xs text-muted-foreground">
           {rangeLabel} · cada cifra abre su reporte con este rango
