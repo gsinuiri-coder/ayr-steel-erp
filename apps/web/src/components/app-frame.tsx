@@ -25,7 +25,10 @@ export function AppFrame({ children }: { children: ReactNode }) {
   const toggleGoTo = useCallback(() => {
     setGoToOpen((open) => !open);
   }, []);
-  useGoToShortcut(toggleGoTo);
+  // En el primer ingreso no hay marco: el atajo no hace nada (si no, el diálogo quedaba abierto
+  // para cuando apareciera el marco).
+  const noop = useCallback(() => undefined, []);
+  useGoToShortcut(user.mustChangePassword ? noop : toggleGoTo);
 
   if (user.mustChangePassword) {
     return <>{children}</>;
@@ -48,7 +51,10 @@ export function AppFrame({ children }: { children: ReactNode }) {
             <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
               <SidebarTrigger className="-ml-1" aria-label="Mostrar u ocultar menú" />
               <Separator orientation="vertical" className="h-4" />
-              <Breadcrumb />
+              {/* `useSearchParams` de la ruta pide un límite de Suspense. */}
+              <Suspense fallback={null}>
+                <Breadcrumb />
+              </Suspense>
               <div className="ml-auto flex items-center gap-2">
                 <DemoBadge />
                 <PendingBell />

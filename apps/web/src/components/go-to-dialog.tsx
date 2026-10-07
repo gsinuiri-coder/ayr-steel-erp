@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Search } from 'lucide-react';
 import { filterGoTo, goToEntries, type GoToEntry } from '@/lib/go-to';
 import { useSession } from '@/lib/session';
@@ -49,7 +49,6 @@ export function GoToDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const router = useRouter();
   const { user } = useSession();
   const entries = useMemo(() => goToEntries(user.role), [user.role]);
   const [query, setQuery] = useState('');
@@ -67,10 +66,9 @@ export function GoToDialog({
     setActive(0);
   }
 
-  function go(entry: GoToEntry | undefined) {
-    if (!entry) return;
-    close();
-    router.push(entry.href);
+  /** Enter: el clic del enlace activo, para que pase por lo mismo que un clic con el mouse. */
+  function goActive() {
+    listRef.current?.querySelector<HTMLAnchorElement>(`[data-index="${String(active)}"]`)?.click();
   }
 
   useEffect(() => {
@@ -120,7 +118,7 @@ export function GoToDialog({
                 setActive((i) => Math.max(i - 1, 0));
               } else if (e.key === 'Enter') {
                 e.preventDefault();
-                go(results[active]);
+                goActive();
               }
             }}
           />
@@ -148,12 +146,16 @@ export function GoToDialog({
                   {section.title}
                 </p>
                 {items.map(({ entry, index }) => (
-                  <div
+                  // Un enlace de verdad y no un `router.push`: así el aviso de cambios sin guardar
+                  // (D-455), que intercepta los clics en enlaces, también cubre «Ir a».
+                  <Link
                     key={entry.href}
+                    href={entry.href}
                     id={`go-to-${String(index)}`}
                     data-index={index}
                     role="option"
                     aria-selected={index === active}
+                    tabIndex={-1}
                     className={cn(
                       'flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5',
                       index === active && 'bg-accent text-accent-foreground',
@@ -161,9 +163,7 @@ export function GoToDialog({
                     onMouseMove={() => {
                       setActive(index);
                     }}
-                    onClick={() => {
-                      go(entry);
-                    }}
+                    onClick={close}
                   >
                     <entry.icon className="size-4 text-muted-foreground" aria-hidden />
                     <span className="flex-1">{entry.title}</span>
@@ -173,7 +173,7 @@ export function GoToDialog({
                     {index === active && (
                       <kbd className="rounded border px-1 text-xs text-muted-foreground">Enter</kbd>
                     )}
-                  </div>
+                  </Link>
                 ))}
               </div>
             );

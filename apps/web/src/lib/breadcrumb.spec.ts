@@ -31,8 +31,25 @@ describe('ruta de la barra superior', () => {
     expect(crumbsFor('/pos/caja').leaf).toEqual({ title: 'Caja' });
   });
 
-  it('las pestañas de configuración caen en su ítem', () => {
-    expect(crumbsFor('/configuracion/tipo-cambio').list?.title).toBe('Márgenes y tipo de cambio');
+  it('las pestañas hermanas son la pantalla actual, sin hoja colgada en «…»', () => {
+    expect(crumbsFor('/configuracion/tipo-cambio')).toEqual({
+      group: 'Administración',
+      list: { title: 'Márgenes y tipo de cambio', href: null },
+      leaf: null,
+    });
+  });
+
+  it('una subruta que no es un documento enlaza su lista y no espera un código', () => {
+    expect(crumbsFor('/planta/tanda')).toEqual({
+      group: 'Planta',
+      list: { title: 'Producción', href: '/planta' },
+      leaf: null,
+    });
+  });
+
+  it('un ítem con query gana cuando la pantalla la tiene', () => {
+    expect(crumbsFor('/catalogo', new URLSearchParams('tab=colores')).list?.title).toBe('Colores');
+    expect(crumbsFor('/catalogo').list?.title).toBe('Productos');
   });
 
   it('el Panel no tiene grupo', () => {

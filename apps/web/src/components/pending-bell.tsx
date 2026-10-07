@@ -13,7 +13,6 @@ import {
   type ProductionQueueEntryDto,
   type QuotationListItemDto,
   type SalesOrderListItemDto,
-  type TemporaryReservationListItemDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { pendingRows, type PendingSources } from '@/lib/pending';
@@ -25,17 +24,28 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 const REFRESH_MS = 60_000;
 
 /**
+ * Lo caro se recalcula cada 10 minutos: el piso de precios recorre el catálogo entero y las
+ * cotizaciones emitidas traen hasta 200 filas. El límite de peticiones del API se comparte entre
+ * todos los usuarios (una sola IP detrás del proxy), así que la campana no puede gastarlo.
+ */
+const SLOW_REFRESH_MS = 600_000;
+
+/**
  * cc31: lo que alimenta la campana y los contadores del menú. Cada consulta usa la misma clave
  * que la pantalla que ya la pedía (Panel, comprobantes, reservas…), así que no se piden dos veces.
  * Para el vendedor solo se usan endpoints que el API ya filtra por vendedor.
  */
-export function usePendingSources(): PendingSources & { own: boolean } {
+export function usePendingSources(): PendingSources & {
+  own: boolean;
+  status: 'loading' | 'error' | 'ok';
+} {
   const { user } = useSession();
   const isAdmin = user.role === Role.ADMINISTRADOR;
   const isSeller = user.role === Role.VENDEDOR;
   const sells = isAdmin || isSeller;
   const plants = isAdmin || user.role === Role.SUPERVISOR_PLANTA;
   const live = { refetchInterval: REFRESH_MS, staleTime: 30_000 } as const;
+  const slow = { refetchInterval: SLOW_REFRESH_MS, staleTime: SLOW_REFRESH_MS / 2 } as const;
 
   // El administrador usa el contador global; el vendedor, la lista filtrada por él.
   const alerts = useQuery({
@@ -61,7 +71,7 @@ export function usePendingSources(): PendingSources & { own: boolean } {
     queryKey: ['price-list-floor-summary'],
     queryFn: () => api<PriceListFloorSummaryDto>('/catalog/price-list/floor-summary'),
     enabled: isAdmin,
-    ...live,
+    ...slow,
   });
   const ready = useQuery({
     queryKey: ['pending', 'ready-orders'],
@@ -70,18 +80,17 @@ export function usePendingSources(): PendingSources & { own: boolean } {
     enabled: sells,
     ...live,
   });
-  const reservations = useQuery({
-    queryKey: ['temporary-reservations'],
-    queryFn: () => api<TemporaryReservationListItemDto[]>('/sales/temporary-reservations'),
-    enabled: sells,
-    ...live,
-  });
+  // D-488: las reservas temporales no entran a la campana: su listado barre (escribe) las
+  // vencidas en cada lectura, y pedirlo cada minuto desde toda pantalla multiplicaba esa escritura.
   const quotations = useQuery({
     queryKey: ['pending', 'emitted-quotations'],
     queryFn: () =>
-      api<PaginatedResult<QuotationListItemDto>>('/sales/quotations?status=EMITTED&pageSize=200'),
+      // Las más antiguas primero: son las que vencen antes, y con más de 200 no se pierden.
+      api<PaginatedResult<QuotationListItemDto>>(
+        '/sales/quotations?status=EMITTED&pageSize=200&sort=issueDate&dir=asc',
+      ),
     enabled: sells,
-    ...live,
+    ...slow,
   });
   const queue = useQuery({
     queryKey: ['production-queue'],
@@ -90,8 +99,17 @@ export function usePendingSources(): PendingSources & { own: boolean } {
     ...live,
   });
 
+  const enabled = [alerts, ownDocuments, shortfall, floor, ready, quotations, queue].filter(
+    (q) => !(q.fetchStatus === 'idle' && q.status === 'pending'),
+  );
   return {
     own: isSeller,
+    // Sin esto, mientras carga o si algo falla, la campana decía «No hay nada pendiente».
+    status: enabled.some((q) => q.isError)
+      ? 'error'
+      : enabled.some((q) => q.isPending)
+        ? 'loading'
+        : 'ok',
     unacceptedDocuments: isAdmin
       ? (alerts.data?.pending ?? null)
       : isSeller
@@ -100,7 +118,7 @@ export function usePendingSources(): PendingSources & { own: boolean } {
     shortfallOrders: shortfall.data ?? null,
     belowFloorPrices: floor.data?.belowFloor.length ?? null,
     readyOrders: ready.data?.total ?? null,
-    temporaryReservations: reservations.data ?? null,
+    temporaryReservations: null,
     emittedQuotations: quotations.data?.items ?? null,
     productionQueue: queue.data?.length ?? null,
   };
@@ -137,8 +155,15 @@ export function PendingBell() {
           <span className="font-semibold">Pendientes</span>
           <span className="text-xs text-muted-foreground">se actualiza cada minuto</span>
         </div>
+        {sources.status === 'error' && (
+          <p role="alert" className="border-b px-3 py-2 text-xs text-destructive">
+            No se pudo calcular todo: puede faltar algún pendiente.
+          </p>
+        )}
         {rows.length === 0 ? (
-          <p className="px-3 py-6 text-center text-muted-foreground">No hay nada pendiente.</p>
+          <p className="px-3 py-6 text-center text-muted-foreground">
+            {sources.status === 'loading' ? 'Calculando los pendientes…' : 'No hay nada pendiente.'}
+          </p>
         ) : (
           <ul className="divide-y">
             {rows.map((row) => (

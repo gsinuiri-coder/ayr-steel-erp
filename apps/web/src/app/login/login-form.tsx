@@ -6,7 +6,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { loginSchema, type AuthUser, type LoginInput } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { crumbsFor } from '@/lib/breadcrumb';
+import { safeNext, screenName } from '@/lib/login-redirect';
 import { errorMessage } from '@/lib/notify';
 import { PasswordInput } from '@/components/password-input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -23,21 +23,6 @@ import { Input } from '@/components/ui/input';
 
 /** Segundos que se espera tras «demasiados intentos» (el límite del API es por minuto). */
 const THROTTLE_WAIT_S = 60;
-
-/** `next` solo si es una ruta propia: nada de `//otro-sitio` ni barras invertidas. */
-export function safeNext(next: string | null): string {
-  return next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')
-    ? next
-    : '/';
-}
-
-/** El nombre de la pantalla a la que se vuelve, para el aviso de sesión vencida. */
-export function screenName(path: string): string | null {
-  const crumbs = crumbsFor(path.split('?')[0] ?? path);
-  if (crumbs.leaf && crumbs.leaf !== 'document') return crumbs.leaf.title;
-  if (crumbs.leaf === 'document' && crumbs.list) return `un documento de ${crumbs.list.title}`;
-  return crumbs.list?.title ?? null;
-}
 
 /**
  * cc31: el texto propio de cada rechazo del ingreso. El API dice «Credenciales inválidas» y

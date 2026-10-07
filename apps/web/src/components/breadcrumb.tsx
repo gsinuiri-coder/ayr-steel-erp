@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { crumbsFor } from '@/lib/breadcrumb';
 
@@ -44,7 +44,8 @@ export function CrumbLabel({ label }: { label: string }) {
 export function Breadcrumb() {
   const pathname = usePathname();
   const label = useContext(CrumbContext)?.label ?? null;
-  const crumbs = crumbsFor(pathname);
+  const search = useSearchParams();
+  const crumbs = crumbsFor(pathname, search);
   const parts: ReactNode[] = [];
   if (crumbs.group)
     parts.push(
