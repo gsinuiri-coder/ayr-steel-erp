@@ -68,6 +68,17 @@ describe('atajos de periodo', () => {
     expect(matchPreset({ from: '2026-10-01', to: TODAY }, TODAY)).toBe('this-month');
     expect(matchPreset({ from: '2026-10-02', to: TODAY }, TODAY)).toBeNull();
   });
+
+  it('en enero, «Este año» y «Este mes» coinciden: manda el atajo elegido', () => {
+    const january = '2026-01-15';
+    const period = { from: '2026-01-01', to: january };
+    expect(matchPreset(period, january, 'this-year')).toBe('this-year');
+    expect(matchPreset(period, january, 'this-month')).toBe('this-month');
+    // Un atajo elegido que ya no describe el periodo no se impone.
+    expect(matchPreset({ from: '2025-12-01', to: '2025-12-31' }, january, 'this-year')).toBe(
+      'last-month',
+    );
+  });
 });
 
 describe('rango inválido', () => {
@@ -78,6 +89,13 @@ describe('rango inválido', () => {
     expect(isValidDate('')).toBe(false);
     expect(isValidDate('2028-02-29')).toBe(true);
     expect(periodError({ from: '2026-02-30', to: TODAY })).not.toBeNull();
+  });
+
+  it('un año a medio teclear (0002) o fuera de rango no es un periodo', () => {
+    expect(periodError({ from: '0002-10-01', to: TODAY })).toMatch(/año/);
+    expect(periodError({ from: '1999-12-31', to: TODAY })).toMatch(/año/);
+    expect(periodError({ from: '2026-10-01', to: '2101-01-01' })).toMatch(/año/);
+    expect(periodError({ from: '2000-01-01', to: '2100-12-31' })).toBeNull();
   });
 
   it('un rango que termina antes de empezar', () => {
@@ -91,31 +109,38 @@ describe('rango inválido', () => {
 
 describe('predeterminado', () => {
   it('sin nada guardado, el mes en curso', () => {
-    expect(defaultPeriod(TODAY, null)).toEqual({ from: '2026-10-01', to: TODAY });
+    expect(defaultPeriod(TODAY, null)).toEqual({
+      from: '2026-10-01',
+      to: TODAY,
+      preset: 'this-month',
+    });
   });
 
   it('con un periodo guardado y válido, ese', () => {
-    const stored = { from: '2026-09-01', to: '2026-09-30' };
+    const stored = { from: '2026-09-01', to: '2026-09-15', preset: null };
     expect(defaultPeriod(TODAY, stored)).toEqual(stored);
   });
 
   it('un periodo guardado inválido no se usa', () => {
-    expect(defaultPeriod(TODAY, { from: '2026-10-10', to: '2026-10-01' })).toEqual({
+    expect(defaultPeriod(TODAY, { from: '2026-10-10', to: '2026-10-01', preset: null })).toEqual({
       from: '2026-10-01',
       to: TODAY,
+      preset: 'this-month',
     });
   });
 
   it('completa la URL: sin fechas, el predeterminado; con una, la otra sale del mes', () => {
-    const stored = { from: '2026-09-01', to: '2026-09-30' };
+    const stored = { from: '2026-09-01', to: '2026-09-15', preset: null };
     expect(completePeriod({ from: '', to: '' }, TODAY, stored)).toEqual(stored);
     expect(completePeriod({ from: '2026-01-01', to: '' }, TODAY, stored)).toEqual({
       from: '2026-01-01',
       to: TODAY,
+      preset: null,
     });
     expect(completePeriod({ from: '', to: '2026-10-05' }, TODAY, null)).toEqual({
       from: '2026-10-01',
       to: '2026-10-05',
+      preset: null,
     });
   });
 
@@ -127,27 +152,69 @@ describe('predeterminado', () => {
 });
 
 describe('persistencia entre reportes', () => {
-  it('guarda y vuelve a leer el periodo', () => {
+  it('un rango libre se guarda con sus fechas', () => {
     const storage = memoryStorage();
-    writeStoredPeriod(storage, { from: '2026-08-01', to: '2026-08-31' });
-    expect(readStoredPeriod(storage)).toEqual({ from: '2026-08-01', to: '2026-08-31' });
+    writeStoredPeriod(storage, { from: '2026-08-03', to: '2026-08-20' }, null, TODAY);
+    expect(storage.data.get(PERIOD_STORAGE_KEY)).toBe('{"from":"2026-08-03","to":"2026-08-20"}');
+    expect(readStoredPeriod(storage, '2026-12-01')).toEqual({
+      from: '2026-08-03',
+      to: '2026-08-20',
+      preset: null,
+    });
   });
 
-  it('no guarda un periodo inválido', () => {
+  it('un atajo se guarda como atajo y se resuelve con la fecha del día en que se lee', () => {
     const storage = memoryStorage();
-    writeStoredPeriod(storage, { from: '2026-10-10', to: '2026-10-01' });
+    writeStoredPeriod(storage, presetPeriod('this-month', TODAY), 'this-month', TODAY);
+    expect(storage.data.get(PERIOD_STORAGE_KEY)).toBe('{"preset":"this-month"}');
+    // Al día siguiente, «Este mes» llega hasta el día siguiente.
+    expect(readStoredPeriod(storage, '2026-10-08')).toEqual({
+      from: '2026-10-01',
+      to: '2026-10-08',
+      preset: 'this-month',
+    });
+    // Y el mes siguiente, es el mes nuevo.
+    expect(readStoredPeriod(storage, '2026-11-02')).toEqual({
+      from: '2026-11-01',
+      to: '2026-11-02',
+      preset: 'this-month',
+    });
+  });
+
+  it('un rango libre que coincide con un atajo se guarda como atajo', () => {
+    const storage = memoryStorage();
+    writeStoredPeriod(storage, { from: '2026-09-01', to: '2026-09-30' }, null, TODAY);
+    expect(storage.data.get(PERIOD_STORAGE_KEY)).toBe('{"preset":"last-month"}');
+  });
+
+  it('en enero se guarda el atajo elegido, no el primero que coincide', () => {
+    const storage = memoryStorage();
+    const january = '2026-01-15';
+    writeStoredPeriod(storage, presetPeriod('this-year', january), 'this-year', january);
+    expect(storage.data.get(PERIOD_STORAGE_KEY)).toBe('{"preset":"this-year"}');
+    expect(readStoredPeriod(storage, '2026-03-01')?.from).toBe('2026-01-01');
+  });
+
+  it('no guarda un periodo inválido, tampoco un año a medio teclear', () => {
+    const storage = memoryStorage();
+    writeStoredPeriod(storage, { from: '2026-10-10', to: '2026-10-01' }, null, TODAY);
+    writeStoredPeriod(storage, { from: '0002-10-01', to: TODAY }, null, TODAY);
     expect(storage.data.size).toBe(0);
   });
 
   it('lo guardado roto o ajeno se ignora', () => {
-    expect(parseStoredPeriod('no es json')).toBeNull();
-    expect(parseStoredPeriod('{"from":1,"to":"2026-01-01"}')).toBeNull();
-    expect(parseStoredPeriod('null')).toBeNull();
-    expect(readStoredPeriod(memoryStorage({ [PERIOD_STORAGE_KEY]: '{"from":"x"}' }))).toBeNull();
+    expect(parseStoredPeriod('no es json', TODAY)).toBeNull();
+    expect(parseStoredPeriod('{"from":1,"to":"2026-01-01"}', TODAY)).toBeNull();
+    expect(parseStoredPeriod('{"preset":"ayer"}', TODAY)).toBeNull();
+    expect(parseStoredPeriod('{"from":"0002-01-01","to":"2026-01-01"}', TODAY)).toBeNull();
+    expect(parseStoredPeriod('null', TODAY)).toBeNull();
+    expect(
+      readStoredPeriod(memoryStorage({ [PERIOD_STORAGE_KEY]: '{"from":"x"}' }), TODAY),
+    ).toBeNull();
   });
 
   it('sin almacenamiento, o si el navegador lo bloquea, no lanza', () => {
-    expect(readStoredPeriod(null)).toBeNull();
+    expect(readStoredPeriod(null, TODAY)).toBeNull();
     const blocked = {
       getItem: () => {
         throw new Error('SecurityError');
@@ -156,9 +223,9 @@ describe('persistencia entre reportes', () => {
         throw new Error('QuotaExceeded');
       },
     };
-    expect(readStoredPeriod(blocked)).toBeNull();
+    expect(readStoredPeriod(blocked, TODAY)).toBeNull();
     expect(() => {
-      writeStoredPeriod(blocked, { from: '2026-10-01', to: TODAY });
+      writeStoredPeriod(blocked, { from: '2026-10-01', to: TODAY }, 'this-month', TODAY);
     }).not.toThrow();
   });
 });

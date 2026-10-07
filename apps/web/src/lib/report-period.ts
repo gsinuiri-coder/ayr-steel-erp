@@ -6,8 +6,10 @@ import { formatDate } from './format';
  * - Fechas de negocio en Lima como texto `AAAA-MM-DD` (`businessToday`): nada de `Date` local,
  *   que corre el día según el huso del navegador. `Date.UTC` se usa solo para la aritmética de
  *   calendario (último día del mes, comprobar que la fecha existe), nunca para «hoy».
- * - El periodo va siempre en la URL (`from`, `to`), también el predeterminado; el último que se
- *   eligió se guarda en `sessionStorage` para abrir el siguiente reporte con el mismo.
+ * - El periodo va siempre en la URL (`from`, `to`) con fechas absolutas, también el
+ *   predeterminado; el último que se eligió se guarda en `sessionStorage` para abrir el siguiente
+ *   reporte con el mismo. Un atajo se guarda como atajo («Este mes») y se resuelve con la fecha
+ *   del día en que se lee: guardado como fechas, mañana ya no sería «este mes».
  */
 export interface ReportPeriod {
   from: string;
@@ -16,6 +18,11 @@ export interface ReportPeriod {
 
 export const PERIOD_PRESETS = ['this-month', 'last-month', 'last-3-months', 'this-year'] as const;
 export type PeriodPreset = (typeof PERIOD_PRESETS)[number];
+
+/** Un periodo con el atajo que lo describe, o `null` si es un rango libre. */
+export interface ResolvedPeriod extends ReportPeriod {
+  preset: PeriodPreset | null;
+}
 
 export const PERIOD_PRESET_LABELS: Record<PeriodPreset, string> = {
   'this-month': 'Este mes',
@@ -26,6 +33,13 @@ export const PERIOD_PRESET_LABELS: Record<PeriodPreset, string> = {
 
 /** La clave del último periodo elegido, compartida por todos los reportes de la sesión. */
 export const PERIOD_STORAGE_KEY = 'ayr.reportes.periodo';
+
+/**
+ * Años razonables. El campo de fecha avisa cada dígito que se teclea: sin este tope, el año
+ * «0002» de camino a «2026» se consultaría y se guardaría como periodo recordado.
+ */
+export const MIN_YEAR = 2000;
+export const MAX_YEAR = 2100;
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -77,19 +91,36 @@ export function presetPeriod(preset: PeriodPreset, today: string): ReportPeriod 
   }
 }
 
-/** El atajo que describe exactamente este periodo, o `null` si es un rango libre. */
-export function matchPreset(period: ReportPeriod, today: string): PeriodPreset | null {
-  for (const preset of PERIOD_PRESETS) {
-    const p = presetPeriod(preset, today);
-    if (p.from === period.from && p.to === period.to) return preset;
-  }
-  return null;
+function samePeriod(a: ReportPeriod, b: ReportPeriod): boolean {
+  return a.from === b.from && a.to === b.to;
+}
+
+/**
+ * El atajo que describe exactamente este periodo, o `null` si es un rango libre. Dos atajos
+ * pueden dar las mismas fechas (en enero, «Este mes» y «Este año»): manda el que se eligió
+ * (`preferred`) si todavía describe el periodo.
+ */
+export function matchPreset(
+  period: ReportPeriod,
+  today: string,
+  preferred: PeriodPreset | null = null,
+): PeriodPreset | null {
+  if (preferred !== null && samePeriod(presetPeriod(preferred, today), period)) return preferred;
+  return PERIOD_PRESETS.find((p) => samePeriod(presetPeriod(p, today), period)) ?? null;
+}
+
+function yearOf(date: string): number {
+  return Number(date.slice(0, 4));
 }
 
 /** El motivo por el que el periodo no sirve, en palabras del usuario; `null` si sirve. */
 export function periodError(period: ReportPeriod): string | null {
   if (!isValidDate(period.from) || !isValidDate(period.to)) {
     return 'El periodo no es válido: revisa las fechas.';
+  }
+  const years = [yearOf(period.from), yearOf(period.to)];
+  if (years.some((y) => y < MIN_YEAR || y > MAX_YEAR)) {
+    return `El periodo no es válido: el año tiene que estar entre ${String(MIN_YEAR)} y ${String(MAX_YEAR)}.`;
   }
   if (period.from > period.to) {
     return 'El periodo no es válido: la fecha de inicio es posterior a la de fin.';
@@ -98,9 +129,9 @@ export function periodError(period: ReportPeriod): string | null {
 }
 
 /** El predeterminado: el último periodo guardado si es válido; si no, el mes en curso. */
-export function defaultPeriod(today: string, stored: ReportPeriod | null): ReportPeriod {
+export function defaultPeriod(today: string, stored: ResolvedPeriod | null): ResolvedPeriod {
   if (stored !== null && periodError(stored) === null) return stored;
-  return presetPeriod('this-month', today);
+  return { ...presetPeriod('this-month', today), preset: 'this-month' };
 }
 
 /**
@@ -111,13 +142,14 @@ export function defaultPeriod(today: string, stored: ReportPeriod | null): Repor
 export function completePeriod(
   current: { from: string; to: string },
   today: string,
-  stored: ReportPeriod | null,
-): ReportPeriod {
+  stored: ResolvedPeriod | null,
+): ResolvedPeriod {
   if (current.from === '' && current.to === '') return defaultPeriod(today, stored);
   const month = presetPeriod('this-month', today);
   return {
     from: current.from === '' ? month.from : current.from,
     to: current.to === '' ? month.to : current.to,
+    preset: null,
   };
 }
 
@@ -126,16 +158,24 @@ export function formatPeriodRange(period: ReportPeriod): string {
   return `Del ${formatDate(period.from)} al ${formatDate(period.to)}`;
 }
 
-/** Lo guardado, si se puede leer y es un periodo válido. */
-export function parseStoredPeriod(raw: string | null): ReportPeriod | null {
+function isPreset(value: unknown): value is PeriodPreset {
+  return (PERIOD_PRESETS as readonly unknown[]).includes(value);
+}
+
+/**
+ * Lo guardado, resuelto con la fecha de hoy: un atajo da sus fechas de hoy y un rango libre las
+ * suyas. `null` si no se puede leer o no es un periodo válido.
+ */
+export function parseStoredPeriod(raw: string | null, today: string): ResolvedPeriod | null {
   if (raw === null) return null;
   try {
     const value: unknown = JSON.parse(raw);
     if (typeof value !== 'object' || value === null) return null;
-    const { from, to } = value as Record<string, unknown>;
+    const { preset, from, to } = value as Record<string, unknown>;
+    if (isPreset(preset)) return { ...presetPeriod(preset, today), preset };
     if (typeof from !== 'string' || typeof to !== 'string') return null;
     const period = { from, to };
-    return periodError(period) === null ? period : null;
+    return periodError(period) === null ? { ...period, preset: null } : null;
   } catch {
     return null;
   }
@@ -156,19 +196,33 @@ export function sessionStore(): Storage | null {
   }
 }
 
-export function readStoredPeriod(storage: ReadableStorage | null): ReportPeriod | null {
+export function readStoredPeriod(
+  storage: ReadableStorage | null,
+  today: string,
+): ResolvedPeriod | null {
   if (storage === null) return null;
   try {
-    return parseStoredPeriod(storage.getItem(PERIOD_STORAGE_KEY));
+    return parseStoredPeriod(storage.getItem(PERIOD_STORAGE_KEY), today);
   } catch {
     return null;
   }
 }
 
-export function writeStoredPeriod(storage: WritableStorage | null, period: ReportPeriod): void {
+/**
+ * Guarda el periodo: el atajo si lo describe (`preset`, comprobado contra `today`), y si no, las
+ * dos fechas. Un periodo inválido no se guarda.
+ */
+export function writeStoredPeriod(
+  storage: WritableStorage | null,
+  period: ReportPeriod,
+  preset: PeriodPreset | null,
+  today: string,
+): void {
   if (storage === null || periodError(period) !== null) return;
+  const matched = matchPreset(period, today, preset);
+  const value = matched === null ? { from: period.from, to: period.to } : { preset: matched };
   try {
-    storage.setItem(PERIOD_STORAGE_KEY, JSON.stringify({ from: period.from, to: period.to }));
+    storage.setItem(PERIOD_STORAGE_KEY, JSON.stringify(value));
   } catch {
     // Sin almacenamiento, el periodo sigue en la URL; solo no se recuerda.
   }

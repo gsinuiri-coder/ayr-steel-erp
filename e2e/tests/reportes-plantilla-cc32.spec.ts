@@ -106,17 +106,34 @@ function fixture(from: string, to: string): SalesMarginDto {
   };
 }
 
-/** Responde el reporte con el fixture, con el periodo que la pantalla pidió. */
-async function mockSalesMargin(page: Page): Promise<void> {
+/**
+ * Responde el reporte con el fixture, con el periodo que la pantalla pidió. `hold`: las
+ * consultas que cumplen la condición esperan hasta que se llame a `release` (para ver la
+ * pantalla mientras carga).
+ */
+async function mockSalesMargin(
+  page: Page,
+  hold: (params: URLSearchParams) => boolean = () => false,
+): Promise<{ release: () => void }> {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   await page.route(
     (url) => url.pathname === '/api/reports/sales-margin',
     async (route) => {
       const url = new URL(route.request().url());
+      if (hold(url.searchParams)) await held;
       await route.fulfill({
         json: fixture(url.searchParams.get('from') ?? '', url.searchParams.get('to') ?? ''),
       });
     },
   );
+  return {
+    release: () => {
+      release();
+    },
+  };
 }
 
 function firstOfMonth(today: string): string {
@@ -279,6 +296,37 @@ test.describe('Plantilla de reportes (cc32)', () => {
     await page.getByRole('button', { name: 'Ver detalle de Marco T.' }).click();
     await expect(page.getByTestId('detalle-pedido')).toHaveCount(2);
     await expect(page.getByTestId('detalle-pedido').first()).toContainText('PED-E2E-002');
+  });
+
+  test('mientras carga otro periodo, el dato anterior se ve marcado; otra línea no lo hereda', async ({
+    page,
+  }) => {
+    const prev = previousMonth(businessToday());
+    await loginAsAdmin(page);
+    const mock = await mockSalesMargin(page, (p) => p.get('from') === prev.from);
+    await page.goto('/reportes/ventas-margen?from=2026-10-01&to=2026-10-07');
+    const table = page.getByTestId('tabla-ventas-margen');
+    const rows = page.getByTestId('fila-pedido');
+    await expect(rows).toHaveCount(4);
+    await expect(table).not.toHaveAttribute('aria-busy', 'true');
+
+    // Otro periodo en la misma pestaña: el dato anterior queda, atenuado y ocupado.
+    await page.getByRole('button', { name: 'Mes anterior' }).click();
+    await expect(table).toHaveAttribute('aria-busy', 'true');
+    await expect(page.getByTestId('actualizando')).toHaveText('Actualizando…');
+    await expect(rows).toHaveCount(4);
+    mock.release();
+    await expect(table).not.toHaveAttribute('aria-busy', 'true');
+    await expect(page.getByTestId('actualizando')).toHaveCount(0);
+
+    // Otra pestaña de línea: no se muestran las filas de «Todas» mientras carga.
+    const drywall = await mockSalesMargin(page, (p) => p.get('businessLine') === 'drywall');
+    await page.getByTestId('pestanas-linea').getByRole('tab', { name: 'Drywall' }).click();
+    await expect(page).toHaveURL(/linea=drywall/);
+    await expect(rows).toHaveCount(0);
+    await expect(page.getByTestId('actualizando')).toHaveCount(0);
+    drywall.release();
+    await expect(rows).toHaveCount(4);
   });
 
   test('un rango inválido muestra el error y ningún esqueleto', async ({ page }) => {

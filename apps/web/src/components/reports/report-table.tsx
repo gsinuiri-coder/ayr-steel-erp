@@ -54,6 +54,8 @@ export function ReportTable<T>({
   errorTitle,
   rowTestId,
   testId,
+  updating = false,
+  filtered,
 }: {
   columns: readonly ReportColumn<T>[];
   rows: readonly T[];
@@ -65,8 +67,8 @@ export function ReportTable<T>({
   detail?: (row: T) => ReactNode;
   /** Qué fila abre el chevron, para el lector de pantalla («PED-000061»). */
   detailLabel?: (row: T) => string;
-  /** «Total · 4 pedidos». */
-  footerLabel: (count: number) => string;
+  /** «Total · 4 pedidos», a partir de las filas a la vista. */
+  footerLabel: (rows: readonly T[]) => string;
   query: ListQueryState;
   emptyTitle: string;
   emptyHint?: ReactNode;
@@ -75,6 +77,16 @@ export function ReportTable<T>({
   errorTitle: string;
   rowTestId?: string;
   testId?: string;
+  /**
+   * Las filas son el dato del periodo anterior mientras carga el nuevo (`isPlaceholderData`): la
+   * tabla se atenúa y se anuncia ocupada (`aria-busy`).
+   */
+  updating?: boolean;
+  /**
+   * Si hay una búsqueda activa, cuando la vista ya filtró las filas antes de pasarlas (p. ej. para
+   * agruparlas). Por defecto, `search` no vacío.
+   */
+  filtered?: boolean;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const visible = visibleReportRows(rows, columns, search, sort);
@@ -89,7 +101,11 @@ export function ReportTable<T>({
   const alignClass = (c: ReportColumn<T>) => (c.align === 'right' ? 'text-right' : undefined);
 
   return (
-    <div className="rounded-lg border" data-testid={testId}>
+    <div
+      className={cn('rounded-lg border transition-opacity', updating && 'opacity-60')}
+      data-testid={testId}
+      aria-busy={updating || undefined}
+    >
       <Table list>
         <TableHeader className="sticky top-0 z-10 bg-background">
           <TableRow>
@@ -118,7 +134,7 @@ export function ReportTable<T>({
             query={query}
             colSpan={columns.length}
             isEmpty={visible.length === 0}
-            filtered={search.trim() !== '' && rows.length > 0}
+            filtered={filtered ?? (search.trim() !== '' && rows.length > 0)}
             emptyTitle={emptyTitle}
             emptyHint={emptyHint}
             noResultsTitle={noResultsTitle}
@@ -177,13 +193,35 @@ export function ReportTable<T>({
                     i === 0 ? 'font-normal text-muted-foreground' : 'font-semibold',
                   )}
                 >
-                  {i === 0 ? footerLabel(visible.length) : c.total?.(visible)}
+                  {i === 0 ? footerLabel(visible) : c.total?.(visible)}
                 </TableCell>
               ))}
             </TableRow>
           </TableFooter>
         )}
       </Table>
+    </div>
+  );
+}
+
+/**
+ * cc32: lo que en un reporte muestra el dato del periodo anterior mientras carga el nuevo (la
+ * franja de cifras, las tablas secundarias): atenuado y anunciado como ocupado. La tabla
+ * principal lo hace con `ReportTable updating`.
+ */
+export function BusyRegion({
+  busy,
+  className,
+  children,
+  ...rest
+}: { busy: boolean } & React.ComponentProps<'div'>) {
+  return (
+    <div
+      {...rest}
+      aria-busy={busy || undefined}
+      className={cn('transition-opacity', busy && 'opacity-60', className)}
+    >
+      {children}
     </div>
   );
 }

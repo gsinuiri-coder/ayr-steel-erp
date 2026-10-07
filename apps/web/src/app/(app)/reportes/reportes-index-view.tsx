@@ -19,7 +19,8 @@ export function ReportesIndexView() {
   // Lo guardado se lee después de montar: el servidor no tiene `sessionStorage`.
   const [period, setPeriod] = useState(() => defaultPeriod(today, null));
   useEffect(() => {
-    setPeriod(defaultPeriod(businessToday(), readStoredPeriod(sessionStore())));
+    const today = businessToday();
+    setPeriod(defaultPeriod(today, readStoredPeriod(sessionStore(), today)));
   }, []);
   const sections = reportSectionsFor(user.role);
 

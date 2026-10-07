@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { toDecimal, type SalesMarginOrderDto } from '@ayr/shared';
 import {
+  countLabel,
+  filterSalesMargin,
   groupSalesMargin,
   parseSalesMarginView,
   summarizeSalesMargin,
@@ -9,7 +11,7 @@ import { filterReportRows, marginPctOf, sumDecimal, visibleReportRows } from './
 
 /** cc32 — «Ver por» de Ventas y margen y la tabla de reporte. */
 function order(
-  code: string,
+  code: string | null,
   seller: string | null,
   customer: string,
   sales: string,
@@ -17,7 +19,8 @@ function order(
 ): SalesMarginOrderDto {
   const margin = cost === null ? null : toDecimal(sales).minus(cost).toFixed(2);
   return {
-    salesOrderId: null,
+    salesOrderId:
+      code === null ? null : `00000000-0000-4000-8000-${code.slice(-6).padStart(12, '0')}`,
     orderCode: code,
     customerName: customer,
     sellerName: seller,
@@ -39,7 +42,7 @@ const ORDERS = [
   order('PED-000060', 'Marco T.', 'Techos del Sur E.I.R.L.', '7135.59', '5280.34'),
   order('PED-000059', 'Gabriela R.', 'Drywall Norte S.A.C.', '3355.93', '2651.18'),
   order('PED-000058', 'Marco T.', 'Inversiones Rímac S.A.C.', '1822.03', '1603.39'),
-  order('PED-000057', null, 'Techos del Sur E.I.R.L.', '0.01', '0.00'),
+  order(null, null, 'Techos del Sur E.I.R.L.', '0.01', '0.00'),
   order('PED-000056', 'Marco T.', 'Drywall Norte S.A.C.', '333.33', null),
 ];
 
@@ -93,6 +96,43 @@ describe('Ver por', () => {
     ]);
   });
 
+  it.each(['vendedor', 'cliente'] as const)(
+    'por %s con búsqueda, la suma de los grupos es la suma de las filas filtradas',
+    (by) => {
+      const filtered = filterSalesMargin(ORDERS, 'drywall');
+      expect(filtered.map((o) => o.orderCode)).toEqual(['PED-000059', 'PED-000056']);
+      const total = summarizeSalesMargin(filtered);
+      const groups = groupSalesMargin(filtered, by);
+      const sales = groups.reduce((acc, g) => acc.plus(g.sales), toDecimal('0'));
+      const cost = groups.reduce((acc, g) => acc.plus(g.cost), toDecimal('0'));
+      expect(sales.equals(total.sales)).toBe(true);
+      expect(cost.equals(total.cost)).toBe(true);
+      expect(total.sales.toFixed(2)).toBe('3689.26');
+      // Ningún grupo arrastra pedidos que no coinciden.
+      expect(groups.flatMap((g) => g.orders)).toHaveLength(2);
+    },
+  );
+
+  it('la búsqueda mira pedido, comprobante, cliente, vendedor y estado del costo', () => {
+    expect(filterSalesMargin(ORDERS, 'marco').map((o) => o.orderCode)).toEqual([
+      'PED-000060',
+      'PED-000058',
+      'PED-000056',
+    ]);
+    expect(filterSalesMargin(ORDERS, 'parcial', () => 'Costo parcial')).toHaveLength(ORDERS.length);
+    expect(filterSalesMargin(ORDERS, '')).toHaveLength(ORDERS.length);
+  });
+
+  it('D-518: cuenta pedidos y nombra aparte las ventas sin pedido', () => {
+    const total = summarizeSalesMargin(ORDERS);
+    expect([total.count, total.orderCount, total.directSaleCount]).toEqual([6, 5, 1]);
+    expect(countLabel(total)).toBe('5 pedidos · 1 venta sin pedido');
+    expect(countLabel(summarizeSalesMargin(ORDERS.slice(0, 1)))).toBe('1 pedido');
+    const groups = groupSalesMargin(ORDERS, 'vendedor');
+    expect(groups.reduce((n, g) => n + g.orderCount, 0)).toBe(total.orderCount);
+    expect(groups.reduce((n, g) => n + g.directSaleCount, 0)).toBe(total.directSaleCount);
+  });
+
   it('sin base positiva, el porcentaje se calla', () => {
     expect(summarizeSalesMargin([]).marginPct).toBeNull();
     expect(marginPctOf(toDecimal('-10'), toDecimal('-10'))).toBeNull();
@@ -132,7 +172,7 @@ describe('tabla de reporte', () => {
       'PED-000058',
       'PED-000061',
       'PED-000056',
-      'PED-000057',
+      null,
     ]);
     const byCode = visibleReportRows(ORDERS, columns, '', { key: 'order', dir: 'asc' });
     expect(byCode[0]?.orderCode).toBe('PED-000056');
