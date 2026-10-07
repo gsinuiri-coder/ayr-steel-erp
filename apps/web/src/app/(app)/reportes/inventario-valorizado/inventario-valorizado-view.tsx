@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { keepPreviousInScope } from '@/lib/report-query';
 import {
   BUSINESS_LINE_LABELS,
   COIL_BUSINESS_LINES,
@@ -28,6 +29,7 @@ import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ReportHeader } from '@/components/reports/report-header';
 import {
+  BusyRegion,
   DETAIL_ROW_CLASSNAME,
   ReportTable,
   type ReportColumn,
@@ -93,18 +95,22 @@ export function InventarioValorizadoView() {
   });
   // D-391: kilos en las líneas con bobinas; unidades en Coberturas (UPVC) y Reventa, que no
   // tienen bobinas propias (la bobina de reventa vive en la línea que la compró, D-116).
+  // «A hoy», sin periodo: el alcance es el reporte y su pestaña, y es toda la clave. Al cambiar de
+  // pestaña no se muestran las filas de la otra línea: se espera con el esqueleto
+  // (`keepPreviousInScope`).
+  const scope = ['report', 'inventory-valuation', line ?? 'todas'];
   const report = useQuery({
-    queryKey: ['report', 'inventory-valuation', line ?? 'todas'],
+    queryKey: scope,
     queryFn: () =>
       api<InventoryValuationDto>(
         line === undefined
           ? '/reports/inventory-valuation'
           : `/reports/inventory-valuation?businessLine=${line}`,
       ),
-    // Al cambiar de pestaña, el dato anterior queda a la vista mientras carga.
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousInScope<InventoryValuationDto>(scope),
   });
   const data = report.data;
+  const updating = report.isPlaceholderData;
   // cc23, autorrevisión P3-10: si una bobina con saldo tuviera otra línea (la regla vive en la
   // aplicación, no en la base), su valor está en el «Total» y la tabla se muestra igual.
   const hasCoils =
@@ -180,32 +186,36 @@ export function InventarioValorizadoView() {
 
       {report.isPending && <Skeleton className="h-14 w-full" />}
       {data && hasCoils && (
-        <StatStrip className="sm:grid-cols-2 lg:grid-cols-4" data-testid="cifras-inventario">
-          <Stat
-            label="Bobinas"
-            hint={coilCount === 1 ? '1 bobina' : `${String(coilCount)} bobinas`}
-          >
-            {formatMoney(data.totals.coilValuePen)}
-          </Stat>
-          <Stat label="Bobinas (kg)">{formatKg(data.totals.coilQtyKg, null)}</Stat>
-          <Stat
-            label="Productos"
-            hint={
-              data.products.length === 1
-                ? '1 producto'
-                : `${String(data.products.length)} productos`
-            }
-          >
-            {formatMoney(data.totals.productValuePen)}
-          </Stat>
-          <Stat label="Total">{formatMoney(data.totals.totalValuePen)}</Stat>
-        </StatStrip>
+        <BusyRegion busy={updating}>
+          <StatStrip className="sm:grid-cols-2 lg:grid-cols-4" data-testid="cifras-inventario">
+            <Stat
+              label="Bobinas"
+              hint={coilCount === 1 ? '1 bobina' : `${String(coilCount)} bobinas`}
+            >
+              {formatMoney(data.totals.coilValuePen)}
+            </Stat>
+            <Stat label="Bobinas (kg)">{formatKg(data.totals.coilQtyKg, null)}</Stat>
+            <Stat
+              label="Productos"
+              hint={
+                data.products.length === 1
+                  ? '1 producto'
+                  : `${String(data.products.length)} productos`
+              }
+            >
+              {formatMoney(data.totals.productValuePen)}
+            </Stat>
+            <Stat label="Total">{formatMoney(data.totals.totalValuePen)}</Stat>
+          </StatStrip>
+        </BusyRegion>
       )}
       {data && !hasCoils && (
-        <StatStrip className="sm:grid-cols-2 lg:grid-cols-2" data-testid="cifras-inventario">
-          <Stat label="Productos con stock">{data.products.length}</Stat>
-          <Stat label="Total">{formatMoney(data.totals.totalValuePen)}</Stat>
-        </StatStrip>
+        <BusyRegion busy={updating}>
+          <StatStrip className="sm:grid-cols-2 lg:grid-cols-2" data-testid="cifras-inventario">
+            <Stat label="Productos con stock">{data.products.length}</Stat>
+            <Stat label="Total">{formatMoney(data.totals.totalValuePen)}</Stat>
+          </StatStrip>
+        </BusyRegion>
       )}
 
       <Input
@@ -231,9 +241,12 @@ export function InventarioValorizadoView() {
             sort={sort}
             onSort={toggleSort}
             search={searchText}
+            updating={updating}
             detail={(g) => <CoilRows group={g} />}
             detailLabel={(g) => `${coilGroupLabel(g)} ${g.thicknessMm} mm`}
-            footerLabel={(n) => `Total · ${n === 1 ? '1 grupo' : `${String(n)} grupos`}`}
+            footerLabel={({ length: n }) =>
+              `Total · ${n === 1 ? '1 grupo' : `${String(n)} grupos`}`
+            }
             query={query}
             emptyTitle="No hay bobinas con saldo"
             noResultsTitle={`Ningún grupo de bobinas coincide con «${searchText.trim()}»`}
@@ -254,7 +267,10 @@ export function InventarioValorizadoView() {
           sort={productSort}
           onSort={toggleProductSort}
           search={searchText}
-          footerLabel={(n) => `Total · ${n === 1 ? '1 producto' : `${String(n)} productos`}`}
+          updating={updating}
+          footerLabel={({ length: n }) =>
+            `Total · ${n === 1 ? '1 producto' : `${String(n)} productos`}`
+          }
           query={query}
           emptyTitle="No hay productos con stock"
           noResultsTitle={`Ningún producto coincide con «${searchText.trim()}»`}
@@ -265,7 +281,7 @@ export function InventarioValorizadoView() {
 
       {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
       {data && line === undefined && (
-        <section className="space-y-2">
+        <BusyRegion busy={updating} className="space-y-2">
           <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
           <div className="rounded-md border">
             <Table>
@@ -303,7 +319,7 @@ export function InventarioValorizadoView() {
               </TableBody>
             </Table>
           </div>
-        </section>
+        </BusyRegion>
       )}
     </RoleGate>
   );

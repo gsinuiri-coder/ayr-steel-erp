@@ -2,7 +2,8 @@
 
 import { useEffect } from 'react';
 import Link from 'next/link';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { keepPreviousInScope } from '@/lib/report-query';
 import {
   AGING_BUCKETS,
   AGING_BUCKET_LABELS,
@@ -18,6 +19,7 @@ import { Stat, StatStrip } from '@/components/stat-strip';
 import { HeaderActions } from '@/components/header-actions';
 import { ReportHeader } from '@/components/reports/report-header';
 import {
+  BusyRegion,
   DETAIL_ROW_CLASSNAME,
   ReportTable,
   type ReportColumn,
@@ -73,16 +75,20 @@ export function CuentasPorCobrarView() {
     if (url.vendedor !== '' && sellerId === '') setUrl({ vendedor: '' });
   }, [url.vendedor, sellerId, setUrl]);
 
+  // «A hoy», sin periodo: el alcance es el reporte y el vendedor, y es toda la clave. Al cambiar
+  // de vendedor no se muestran las cifras del anterior (serían las de otro con el nombre de este):
+  // se espera con el esqueleto, como en el cambio de pestaña de los demás (`keepPreviousInScope`).
+  const scope = ['report', 'receivables-aging', sellerId || 'todos'];
   const report = useQuery({
-    queryKey: ['report', 'receivables-aging', sellerId || 'todos'],
-    // Al cambiar de vendedor, el selector y las cifras siguen a la vista hasta que llega el nuevo.
-    placeholderData: keepPreviousData,
+    queryKey: scope,
+    placeholderData: keepPreviousInScope<ReceivablesAgingDto>(scope),
     queryFn: () =>
       api<ReceivablesAgingDto>(
         `/reports/receivables-aging${sellerId ? `?sellerId=${sellerId}` : ''}`,
       ),
   });
   const data = report.data;
+  const updating = report.isPlaceholderData;
   // Un vendedor que ya no tiene saldo no está entre las opciones: se vuelve a «todos» para que el
   // selector no quede en blanco.
   const unknownSeller =
@@ -133,23 +139,25 @@ export function CuentasPorCobrarView() {
 
       {report.isPending && <Skeleton className="h-14 w-full" />}
       {data && (
-        <StatStrip className="sm:grid-cols-3 lg:grid-cols-6" data-testid="cifras-cxc">
-          <Stat
-            label="Saldo total"
-            hint={`${plural(data.totals.customerCount, 'cliente', 'clientes')} · ${plural(data.totals.documentCount, 'comprobante', 'comprobantes')}`}
-          >
-            {formatMoney(data.totals.balancePen)}
-          </Stat>
-          {AGING_BUCKETS.map((b) => (
+        <BusyRegion busy={updating}>
+          <StatStrip className="sm:grid-cols-3 lg:grid-cols-6" data-testid="cifras-cxc">
             <Stat
-              key={b}
-              label={AGING_BUCKET_LABELS[b]}
-              hint={b === 'CURRENT' ? undefined : 'vencido'}
+              label="Saldo total"
+              hint={`${plural(data.totals.customerCount, 'cliente', 'clientes')} · ${plural(data.totals.documentCount, 'comprobante', 'comprobantes')}`}
             >
-              {formatMoney(data.totals.buckets[b])}
+              {formatMoney(data.totals.balancePen)}
             </Stat>
-          ))}
-        </StatStrip>
+            {AGING_BUCKETS.map((b) => (
+              <Stat
+                key={b}
+                label={AGING_BUCKET_LABELS[b]}
+                hint={b === 'CURRENT' ? undefined : 'vencido'}
+              >
+                {formatMoney(data.totals.buckets[b])}
+              </Stat>
+            ))}
+          </StatStrip>
+        </BusyRegion>
       )}
 
       <div className="flex flex-wrap items-center gap-3">
@@ -192,9 +200,10 @@ export function CuentasPorCobrarView() {
         sort={sort}
         onSort={toggleSort}
         search={searchText}
+        updating={updating}
         detail={(c) => <DocumentRows customer={c} />}
         detailLabel={(c) => c.customerName}
-        footerLabel={(n) => `Total · ${plural(n, 'cliente', 'clientes')}`}
+        footerLabel={({ length: n }) => `Total · ${plural(n, 'cliente', 'clientes')}`}
         query={{
           isPending: report.isPending,
           isError: report.isError,

@@ -3,7 +3,8 @@
 import { Fragment, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { keepPreviousInScope } from '@/lib/report-query';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
@@ -28,7 +29,7 @@ import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
 import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
-import { ReportTable, type ReportColumn } from '@/components/reports/report-table';
+import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import { RoleGate } from '@/components/role-gate';
@@ -135,19 +136,23 @@ export function VentasMaterialView() {
   const filterQs = filters.toString();
   const qs = filterQs === '' ? base : `${base}&${filterQs}`;
 
+  // El alcance es el reporte, su pestaña y los filtros que no son periodo; el periodo va después
+  // (`keepPreviousInScope`): al cambiar de periodo el dato anterior queda a la vista, atenuado;
+  // al cambiar de pestaña o de filtro, no (serían otras filas con el nombre de estas).
+  const scope = ['report', 'sales-by-material', line, filterQs];
   const report = useQuery({
-    queryKey: ['report', 'sales-by-material', qs],
+    queryKey: [...scope, period.from, period.to],
     queryFn: () => api<SalesByMaterialDto>(`/reports/sales-by-material?${qs}`),
     enabled: valid,
-    // Al cambiar de periodo, de pestaña o de filtro, el dato anterior queda a la vista.
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousInScope<SalesByMaterialDto>(scope),
   });
   // Las opciones de espesor y color salen del rango sin filtrar (misma consulta sin filtros).
+  const unfilteredScope = ['report', 'sales-by-material', line, ''];
   const unfiltered = useQuery({
-    queryKey: ['report', 'sales-by-material', base],
+    queryKey: [...unfilteredScope, period.from, period.to],
     queryFn: () => api<SalesByMaterialDto>(`/reports/sales-by-material?${base}`),
     enabled: valid,
-    placeholderData: keepPreviousData,
+    placeholderData: keepPreviousInScope<SalesByMaterialDto>(unfilteredScope),
   });
 
   const options = useMemo(() => {
@@ -164,6 +169,7 @@ export function VentasMaterialView() {
   // D-370: el desglose se abre desde la fila; ya no hay un botón para todas las filas.
   const [selected, setSelected] = useState<SalesMaterialRowDto | null>(null);
   const data = valid ? report.data : undefined;
+  const updating = valid && report.isPlaceholderData;
   const loading = !periodState.complete || (valid && report.isPending);
   const query = {
     isPending: loading,
@@ -231,7 +237,7 @@ export function VentasMaterialView() {
         }
       />
 
-      <PeriodPicker state={periodState} />
+      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -247,7 +253,11 @@ export function VentasMaterialView() {
       {periodState.error === null && (
         <>
           {loading && <Skeleton className="h-14 w-full" />}
-          {data && <Figures data={data} />}
+          {data && (
+            <BusyRegion busy={updating}>
+              <Figures data={data} />
+            </BusyRegion>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             {!byProduct && (
@@ -303,7 +313,10 @@ export function VentasMaterialView() {
               sort={sort}
               onSort={toggleSort}
               search={searchText}
-              footerLabel={(n) => `Total · ${n === 1 ? '1 producto' : `${String(n)} productos`}`}
+              updating={updating}
+              footerLabel={({ length: n }) =>
+                `Total · ${n === 1 ? '1 producto' : `${String(n)} productos`}`
+              }
               query={query}
               emptyTitle="No hay ventas con costo trazable en ese periodo"
               noResultsTitle={`Ningún producto coincide con «${searchText.trim()}»`}
@@ -320,6 +333,7 @@ export function VentasMaterialView() {
               sort={sort}
               onSort={toggleSort}
               search={searchText}
+              updating={updating}
               onRowActivate={setSelected}
               rowTitle="Ver el desglose por bobina y comprobante"
               footerLabel={() => 'Total'}
@@ -331,19 +345,20 @@ export function VentasMaterialView() {
             />
           )}
 
-          {data?.products === null && data.subtotals.length > 0 && <KindSubtotals data={data} />}
-          {data?.products === null && data.untraceable.length > 0 && (
-            <MaterialUntraceable data={data} />
-          )}
-          {data?.products && data.products.untraceable.length > 0 && (
-            <ProductUntraceable
-              products={data.products}
-              untraceableSalesPen={data.untraceableSalesPen}
-            />
-          )}
-
           {data && (
-            <ReconciliationNotes data={data} line={line} from={period.from} to={period.to} />
+            <BusyRegion busy={updating} className="space-y-3">
+              {data.products === null && data.subtotals.length > 0 && <KindSubtotals data={data} />}
+              {data.products === null && data.untraceable.length > 0 && (
+                <MaterialUntraceable data={data} />
+              )}
+              {data.products && data.products.untraceable.length > 0 && (
+                <ProductUntraceable
+                  products={data.products}
+                  untraceableSalesPen={data.untraceableSalesPen}
+                />
+              )}
+              <ReconciliationNotes data={data} line={line} from={period.from} to={period.to} />
+            </BusyRegion>
           )}
         </>
       )}

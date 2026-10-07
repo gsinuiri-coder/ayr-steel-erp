@@ -1,7 +1,8 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import Link from 'next/link';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   PROFIT_SOURCES_NOTICE,
   BUSINESS_LINE_LABELS,
@@ -24,16 +25,21 @@ import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
 import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
 import {
+  BusyRegion,
   DETAIL_ROW_CLASSNAME,
   ReportTable,
   type ReportColumn,
 } from '@/components/reports/report-table';
+import { keepPreviousInScope } from '@/lib/report-query';
 import { Segmented } from '@/components/reports/segmented';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import {
   SALES_MARGIN_VIEWS,
   SALES_MARGIN_VIEW_LABELS,
+  countLabel,
+  filterSalesMargin,
   groupSalesMargin,
+  salesMarginSearchText,
   parseSalesMarginView,
   summarizeSalesMargin,
   type SalesMarginGroup,
@@ -82,16 +88,20 @@ export function VentasMargenView() {
   const noCost = line !== undefined && NO_COST_REPORT_LINES.includes(line);
   const qs = `from=${period.from}&to=${period.to}${line === undefined ? '' : `&businessLine=${line}`}`;
 
+  // El alcance es el reporte y su pestaña; el periodo va después (`keepPreviousInScope`).
+  const scope = ['report', 'sales-margin', line ?? 'todas'];
   const report = useQuery({
-    queryKey: ['report', 'sales-margin', period.from, period.to, line ?? 'todas'],
+    queryKey: [...scope, period.from, period.to],
     queryFn: () => api<SalesMarginDto>(`/reports/sales-margin?${qs}`),
     enabled: valid,
-    // Al cambiar de periodo o de pestaña, el dato anterior queda a la vista mientras carga.
-    placeholderData: keepPreviousData,
+    // Al cambiar de periodo en la misma pestaña, el dato anterior queda a la vista, marcado,
+    // mientras carga; al cambiar de pestaña, no (sería el dato de otra línea).
+    placeholderData: keepPreviousInScope<SalesMarginDto>(scope),
   });
   // Con un rango inválido no se muestra nada viejo: solo el mensaje.
   const data = valid ? report.data : undefined;
   const loading = !periodState.complete || (valid && report.isPending);
+  const updating = valid && report.isPlaceholderData;
 
   // D-412: en Servicios, la venta suma aunque el pedido tenga un costo no comparable o no
   // rastreable por otra línea (`inTotals`); esas secciones son solo de lo que quedó fuera.
@@ -102,6 +112,7 @@ export function VentasMargenView() {
     data?.orders.filter((o) => !o.inTotals && o.costStatus === 'NO_RASTREABLE') ?? [];
   const included = data?.orders.filter((o) => o.inTotals) ?? [];
   const showOpMaterial = line === undefined;
+  const searching = searchText.trim() !== '';
 
   const query = {
     isPending: loading,
@@ -147,7 +158,7 @@ export function VentasMargenView() {
         }
       />
 
-      <PeriodPicker state={periodState} />
+      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -163,7 +174,11 @@ export function VentasMargenView() {
       {periodState.error === null && (
         <>
           {loading && <Skeleton className="h-14 w-full" />}
-          {data && <Figures data={data} line={line} noCost={noCost} included={included} />}
+          {data && (
+            <BusyRegion busy={updating}>
+              <Figures data={data} line={line} noCost={noCost} included={included} />
+            </BusyRegion>
+          )}
 
           <div className="flex flex-wrap items-center gap-3">
             <Segmented<SalesMarginView>
@@ -192,6 +207,8 @@ export function VentasMargenView() {
 
           {view === 'pedido' ? (
             <ReportTable
+              // Cambiar de vista vuelve a empezar: las filas abiertas son de la otra vista.
+              key="pedido"
               testId="tabla-ventas-margen"
               rowTestId="fila-pedido"
               columns={orderColumns(!noCost)}
@@ -200,11 +217,12 @@ export function VentasMargenView() {
               sort={sort}
               onSort={toggleSort}
               search={searchText}
+              updating={updating}
               detail={(order) => (
                 <OrderDetail order={order} cost={!noCost} opMaterial={showOpMaterial} />
               )}
               detailLabel={(order) => order.orderCode ?? 'la venta sin pedido'}
-              footerLabel={(n) => `Total · ${plural(n, 'pedido', 'pedidos')}`}
+              footerLabel={(rows) => `Total · ${countLabel(summarizeSalesMargin(rows))}`}
               query={query}
               emptyTitle={emptyTitle}
               noResultsTitle={`Ningún pedido coincide con «${searchText.trim()}»`}
@@ -213,17 +231,30 @@ export function VentasMargenView() {
             />
           ) : (
             <ReportTable
+              key={view}
               testId="tabla-ventas-margen"
               rowTestId="fila-grupo"
               columns={groupColumns(view, !noCost)}
-              rows={groupSalesMargin(included, view)}
+              // Se busca en las filas y se agrupa después: cada grupo y el pie suman solo los
+              // pedidos que coinciden.
+              rows={groupSalesMargin(
+                filterSalesMargin(included, searchText, (o) => COST_STATUS_LABELS[o.costStatus]),
+                view,
+              )}
               rowKey={(g) => `g:${g.key}`}
               sort={sort}
               onSort={toggleSort}
-              search={searchText}
+              search=""
+              filtered={searching && included.length > 0}
+              updating={updating}
               detail={(group) => <GroupDetail group={group} view={view} cost={!noCost} />}
               detailLabel={(group) => group.label}
-              footerLabel={() => 'Total'}
+              footerLabel={(groups) => {
+                const direct = groups.reduce((n, g) => n + g.directSaleCount, 0);
+                return direct === 0
+                  ? 'Total'
+                  : `Total · ${plural(direct, 'venta sin pedido', 'ventas sin pedido')}`;
+              }}
               query={query}
               emptyTitle={emptyTitle}
               noResultsTitle={`Ningún ${view === 'vendedor' ? 'vendedor' : 'cliente'} coincide con «${searchText.trim()}»`}
@@ -232,87 +263,93 @@ export function VentasMargenView() {
             />
           )}
 
-          {data && excluded.length > 0 && (
-            <section className="space-y-2">
-              <h2 className="text-sm font-semibold">Facturación parcial en el periodo</h2>
-              <p className="text-xs text-muted-foreground">
-                Estos pedidos tienen comprobantes dentro y fuera del periodo, y los del periodo no
-                declaran su despacho. Su costo cubre más venta que la que se ve aquí, así que se
-                muestra la venta y se deja el costo vacío: quedan fuera de los totales de arriba
-                (venta excluida: {formatMoney(data.totals.excludedSalesPen)}).
-                {line === undefined && SERVICES_STILL_COUNT}
-              </p>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Pedido</TableHead>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead className="text-right">Venta en el periodo (S/)</TableHead>
-                      {showOpMaterial && (
-                        <TableHead className="hidden text-right xl:table-cell">
-                          Material de órdenes (S/)
-                        </TableHead>
-                      )}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {excluded.map((order) => (
-                      <TableRow key={orderKey(order)}>
-                        <TableCell>
-                          <OrderCode order={order} />
-                        </TableCell>
-                        <TableCell>{order.customerName}</TableCell>
-                        <TableCell className="text-right">{formatAmount(order.salesPen)}</TableCell>
+          <BusyRegion busy={updating} className="space-y-3">
+            {data && excluded.length > 0 && (
+              <section className="space-y-2">
+                <h2 className="text-sm font-semibold">Facturación parcial en el periodo</h2>
+                <p className="text-xs text-muted-foreground">
+                  Estos pedidos tienen comprobantes dentro y fuera del periodo, y los del periodo no
+                  declaran su despacho. Su costo cubre más venta que la que se ve aquí, así que se
+                  muestra la venta y se deja el costo vacío: quedan fuera de los totales de arriba
+                  (venta excluida: {formatMoney(data.totals.excludedSalesPen)}).
+                  {line === undefined && SERVICES_STILL_COUNT}
+                </p>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Pedido</TableHead>
+                        <TableHead>Cliente</TableHead>
+                        <TableHead className="text-right">Venta en el periodo (S/)</TableHead>
                         {showOpMaterial && (
-                          <TableCell className="hidden text-right xl:table-cell">
-                            {formatAmount(order.opMaterialCostPen)}
-                          </TableCell>
+                          <TableHead className="hidden text-right xl:table-cell">
+                            Material de órdenes (S/)
+                          </TableHead>
                         )}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </section>
-          )}
+                    </TableHeader>
+                    <TableBody>
+                      {excluded.map((order) => (
+                        <TableRow key={orderKey(order)}>
+                          <TableCell>
+                            <OrderCode order={order} />
+                          </TableCell>
+                          <TableCell>{order.customerName}</TableCell>
+                          <TableCell className="text-right">
+                            {formatAmount(order.salesPen)}
+                          </TableCell>
+                          {showOpMaterial && (
+                            <TableCell className="hidden text-right xl:table-cell">
+                              {formatAmount(order.opMaterialCostPen)}
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </section>
+            )}
 
-          {data && untraceable.length > 0 && (
-            <section className="space-y-2">
-              <h2 className="text-sm font-semibold">Costo no rastreable</h2>
-              <p className="text-xs text-muted-foreground">
-                Estos pedidos se despacharon sin su salida de inventario, así que no se sabe su
-                costo. Quedan fuera de los totales de arriba (venta excluida:{' '}
-                {formatMoney(data.totals.untraceableSalesPen)}).
-                {line === undefined && SERVICES_STILL_COUNT}
-              </p>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Pedido</TableHead>
-                      <TableHead>Cliente</TableHead>
-                      <TableHead className="text-right">Venta en el periodo (S/)</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {untraceable.map((order) => (
-                      <TableRow key={orderKey(order)}>
-                        <TableCell>
-                          <OrderCode order={order} />
-                        </TableCell>
-                        <TableCell>{order.customerName}</TableCell>
-                        <TableCell className="text-right">{formatAmount(order.salesPen)}</TableCell>
+            {data && untraceable.length > 0 && (
+              <section className="space-y-2">
+                <h2 className="text-sm font-semibold">Costo no rastreable</h2>
+                <p className="text-xs text-muted-foreground">
+                  Estos pedidos se despacharon sin su salida de inventario, así que no se sabe su
+                  costo. Quedan fuera de los totales de arriba (venta excluida:{' '}
+                  {formatMoney(data.totals.untraceableSalesPen)}).
+                  {line === undefined && SERVICES_STILL_COUNT}
+                </p>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Pedido</TableHead>
+                        <TableHead>Cliente</TableHead>
+                        <TableHead className="text-right">Venta en el periodo (S/)</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </section>
-          )}
+                    </TableHeader>
+                    <TableBody>
+                      {untraceable.map((order) => (
+                        <TableRow key={orderKey(order)}>
+                          <TableCell>
+                            <OrderCode order={order} />
+                          </TableCell>
+                          <TableCell>{order.customerName}</TableCell>
+                          <TableCell className="text-right">
+                            {formatAmount(order.salesPen)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </section>
+            )}
 
-          {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
-          {data && line === undefined && <TotalsByLine data={data} />}
+            {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
+            {data && line === undefined && <TotalsByLine data={data} />}
+          </BusyRegion>
         </>
       )}
     </RoleGate>
@@ -331,10 +368,14 @@ function Figures({
   noCost: boolean;
   included: readonly SalesMarginOrderDto[];
 }) {
-  const orders = included.filter((o) => o.salesOrderId !== null).length;
+  // D-518: el mismo conteo que el pie de la tabla.
   const documents = included.reduce((n, o) => n + o.documents.length, 0);
-  const counts = `${plural(orders, 'pedido', 'pedidos')} · ${plural(documents, 'comprobante', 'comprobantes')}`;
+  const counts = `${countLabel(summarizeSalesMargin(included))} · ${plural(documents, 'comprobante', 'comprobantes')}`;
   const partial = data.totals.partialOrderCount;
+  // D-409/D-419: en «Todas», el margen se calcula sin la venta sin costo registrado.
+  const withoutNoCost = line === undefined ? 'sin servicios ni líneas sin producto' : null;
+  const partialHint =
+    partial > 0 ? `${plural(partial, 'pedido', 'pedidos')} con costo parcial: es un techo` : null;
   if (noCost) {
     return (
       <StatStrip className="sm:grid-cols-2 lg:grid-cols-2">
@@ -356,17 +397,12 @@ function Figures({
         {formatMoney(data.totals.salesPen)}
       </Stat>
       <Stat label="Costo de venta">{formatMoney(data.totals.costPen)}</Stat>
-      <Stat
-        label="Margen"
-        hint={
-          partial > 0
-            ? `${plural(partial, 'pedido', 'pedidos')} con costo parcial: es un techo`
-            : undefined
-        }
-      >
+      <Stat label="Margen" hint={hintLines([withoutNoCost, partialHint])}>
         {formatMoney(data.totals.marginPen)}
       </Stat>
-      <Stat label="Margen %">{pctText(data.totals.marginPct)}</Stat>
+      <Stat label="Margen %" hint={hintLines([withoutNoCost])}>
+        {pctText(data.totals.marginPct)}
+      </Stat>
       {/* D-409/D-419: en «Todas», la venta sin costo registrado (Servicios y líneas sin
           producto) suma a la venta y queda fuera del margen. */}
       {line === undefined && (
@@ -376,6 +412,17 @@ function Figures({
       )}
     </StatStrip>
   );
+}
+
+/** Los matices de una cifra, uno por línea; sin ninguno, `undefined` (la cifra no lleva línea). */
+function hintLines(lines: readonly (string | null)[]): ReactNode {
+  const shown = lines.filter((l): l is string => l !== null);
+  if (shown.length === 0) return undefined;
+  return shown.map((l) => (
+    <span key={l} className="block">
+      {l}
+    </span>
+  ));
 }
 
 /** La explicación larga, que antes ocupaba la cabecera y los avisos. No se pierde ningún texto. */
@@ -432,6 +479,16 @@ function HowItWorksText({
           : ' Su margen incluye la venta sin costo registrado de esos pedidos, así que puede no coincidir con el de la franja.'}{' '}
         «Ver por» Vendedor o Cliente agrupa esas mismas filas: la suma de los grupos es el total.
       </p>
+      {line === undefined && (
+        // D-412: la venta de Servicios de un pedido no comparable o no rastreable suma arriba.
+        <p>
+          La venta de la franja incluye también la venta de Servicios de los pedidos que se listan
+          debajo como facturación parcial o costo no rastreable: esa venta no depende del costo y
+          suma igual, aunque el pedido quede fuera de la tabla. Por eso la venta de la franja puede
+          no coincidir con la del pie, no solo el margen.
+        </p>
+      )}
+      <p>Se cuentan los pedidos; las ventas sin pedido (ventas directas) se nombran aparte.</p>
     </>
   );
 }
@@ -460,14 +517,13 @@ function orderColumns(cost: boolean): ReportColumn<SalesMarginOrderDto>[] {
       header: 'Pedido',
       cell: (o) => <OrderCode order={o} />,
       sortValue: { text: (o) => o.orderCode ?? '' },
-      searchText: (o) => [o.orderCode ?? '', ...o.documents.map((d) => d.number ?? '')],
+      searchText: (o) => salesMarginSearchText(o, COST_STATUS_LABELS[o.costStatus]),
     },
     {
       key: 'customer',
       header: 'Cliente',
       cell: (o) => o.customerName,
       sortValue: { text: (o) => o.customerName },
-      searchText: (o) => o.customerName,
     },
     {
       key: 'seller',
@@ -475,7 +531,6 @@ function orderColumns(cost: boolean): ReportColumn<SalesMarginOrderDto>[] {
       className: 'hidden lg:table-cell',
       cell: (o) => o.sellerName ?? '—',
       sortValue: { text: (o) => o.sellerName ?? '' },
-      searchText: (o) => o.sellerName ?? '',
     },
     {
       key: 'sales',
@@ -518,7 +573,6 @@ function orderColumns(cost: boolean): ReportColumn<SalesMarginOrderDto>[] {
       header: 'Costo registrado',
       cell: (o) => <CostStatusBadge status={o.costStatus} />,
       sortValue: { text: (o) => COST_STATUS_LABELS[o.costStatus] },
-      searchText: (o) => COST_STATUS_LABELS[o.costStatus],
     },
   ];
 }
@@ -598,23 +652,14 @@ function groupColumns(
       header: SALES_MARGIN_VIEW_LABELS[view],
       cell: (g) => g.label,
       sortValue: { text: (g) => g.label },
-      searchText: (g) => [
-        g.label,
-        ...g.orders.flatMap((o) => [
-          o.orderCode ?? '',
-          o.customerName,
-          o.sellerName ?? '',
-          ...o.documents.map((d) => d.number ?? ''),
-        ]),
-      ],
     },
     {
       key: 'count',
       header: 'Pedidos',
       align: 'right',
-      cell: (g) => String(g.count),
-      sortValue: { decimal: (g) => String(g.count) },
-      total: (groups) => String(groups.reduce((n, g) => n + g.count, 0)),
+      cell: (g) => String(g.orderCount),
+      sortValue: { decimal: (g) => String(g.orderCount) },
+      total: (groups) => String(groups.reduce((n, g) => n + g.orderCount, 0)),
     },
     {
       key: 'sales',
@@ -675,10 +720,13 @@ function GroupDetail({
               {' · '}
               {view === 'vendedor' ? o.customerName : (o.sellerName ?? '—')}
             </span>
+            {cost && (
+              <span className="ml-2">
+                <CostStatusBadge status={o.costStatus} />
+              </span>
+            )}
           </TableCell>
-          <TableCell className="text-right">
-            {cost && <CostStatusBadge status={o.costStatus} />}
-          </TableCell>
+          <TableCell />
           <TableCell className="text-right">{formatAmount(o.salesPen)}</TableCell>
           {cost && (
             <>

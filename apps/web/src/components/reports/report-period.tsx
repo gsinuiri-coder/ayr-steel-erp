@@ -32,13 +32,16 @@ import { useUrlState } from '@/lib/use-url-state';
 
 export interface ReportPeriodState {
   period: ReportPeriod;
+  /** El atajo que describe el periodo (el elegido, si dos coinciden), o `null` si es libre. */
+  preset: PeriodPreset | null;
   /** La URL ya trae las dos fechas. Mientras no, no se pide nada al API. */
   complete: boolean;
   /** Completo y válido: se puede pedir el reporte. */
   valid: boolean;
   /** El mensaje del rango inválido, o `null`. */
   error: string | null;
-  setPeriod: (period: ReportPeriod) => void;
+  /** Cambia el periodo; `preset` es el atajo que lo eligió, si fue un atajo. */
+  setPeriod: (period: ReportPeriod, preset?: PeriodPreset | null) => void;
 }
 
 /**
@@ -46,34 +49,45 @@ export interface ReportPeriodState {
  *
  * Al abrir sin fechas, la URL se completa con `replace` usando el último periodo elegido en la
  * sesión (o el mes en curso). Lo guardado se lee en un efecto y no al pintar: el servidor no
- * tiene `sessionStorage` y la primera pintura tiene que coincidir con la suya.
+ * tiene `sessionStorage` y la primera pintura tiene que coincidir con la suya. Un atajo se
+ * recuerda como atajo (`writeStoredPeriod`), así «Este mes» sigue siendo este mes mañana.
  */
 export function useReportPeriod(): ReportPeriodState {
   const [url, setUrl] = useUrlState({ from: '', to: '' });
   const search = useSearchParams().toString();
   const complete = url.from !== '' && url.to !== '';
+  // El atajo que se eligió: en enero «Este mes» y «Este año» dan las mismas fechas.
+  const [chosen, setChosen] = useState<PeriodPreset | null>(null);
 
   // `search` en las dependencias: otro `replace` de la misma pintura (la pestaña inválida que se
   // corrige, D-395) puede pisar este con la URL vieja; al volver sin fechas, se completa otra vez.
   useEffect(() => {
     if (complete) return;
-    setUrl(completePeriod(url, businessToday(), readStoredPeriod(sessionStore())));
+    const today = businessToday();
+    const next = completePeriod(url, today, readStoredPeriod(sessionStore(), today));
+    setChosen(next.preset);
+    setUrl({ from: next.from, to: next.to });
   }, [complete, search]);
 
   const period = { from: url.from, to: url.to };
   const error = complete ? periodError(period) : null;
   const valid = complete && error === null;
+  const preset = complete ? matchPreset(period, businessToday(), chosen) : null;
 
   useEffect(() => {
-    if (valid) writeStoredPeriod(sessionStore(), { from: url.from, to: url.to });
-  }, [valid, url.from, url.to]);
+    if (valid) {
+      writeStoredPeriod(sessionStore(), { from: url.from, to: url.to }, preset, businessToday());
+    }
+  }, [valid, url.from, url.to, preset]);
 
   return {
     period,
+    preset,
     complete,
     valid,
     error,
-    setPeriod: (next) => {
+    setPeriod: (next, nextPreset = null) => {
+      setChosen(nextPreset);
       setUrl({ from: next.from, to: next.to });
     },
   };
@@ -83,19 +97,25 @@ type PickerValue = PeriodPreset | 'custom';
 
 /**
  * cc32: el selector de periodo, igual en todos los reportes: atajos, «Otro periodo…» con dos
- * fechas y el rango escrito al lado.
+ * fechas y el rango escrito al lado. `updating`: se está mostrando el dato del periodo anterior
+ * mientras llega el nuevo (`useReportQueryState`), y se dice.
  */
-export function PeriodPicker({ state }: { state: ReportPeriodState }) {
+export function PeriodPicker({
+  state,
+  updating = false,
+}: {
+  state: ReportPeriodState;
+  updating?: boolean;
+}) {
   const today = businessToday();
   const { period, complete } = state;
-  const matched = complete ? matchPreset(period, today) : null;
   // «Otro periodo…» abre las fechas aunque el rango coincida con un atajo.
   const [customOpen, setCustomOpen] = useState(false);
   const value: PickerValue | null = !complete
     ? null
-    : customOpen || matched === null
+    : customOpen || state.preset === null
       ? 'custom'
-      : matched;
+      : state.preset;
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="periodo">
@@ -112,7 +132,7 @@ export function PeriodPicker({ state }: { state: ReportPeriodState }) {
             return;
           }
           setCustomOpen(false);
-          state.setPeriod(presetPeriod(next, today));
+          state.setPeriod(presetPeriod(next, today), next);
         }}
       />
       {value === 'custom' && (
@@ -148,6 +168,11 @@ export function PeriodPicker({ state }: { state: ReportPeriodState }) {
           {formatPeriodRange(period)}
         </span>
       )}
+      {updating && (
+        <span role="status" className="text-sm text-muted-foreground" data-testid="actualizando">
+          Actualizando…
+        </span>
+      )}
     </div>
   );
 }
@@ -174,7 +199,8 @@ export function useReportMonth(): ReportMonthState {
 
   useEffect(() => {
     if (complete) return;
-    setUrl({ mes: defaultMonth(businessToday(), readStoredPeriod(sessionStore())) });
+    const today = businessToday();
+    setUrl({ mes: defaultMonth(today, readStoredPeriod(sessionStore(), today)) });
   }, [complete, search]);
 
   const error = complete ? monthError(url.mes) : null;
@@ -186,7 +212,9 @@ export function useReportMonth(): ReportMonthState {
     setMonth: (next) => {
       setUrl({ mes: next });
       if (monthError(next) === null) {
-        writeStoredPeriod(sessionStore(), monthPeriod(next, businessToday()));
+        // Con las reglas de guardado de la plantilla: el atajo si lo describe; si no, el rango.
+        const today = businessToday();
+        writeStoredPeriod(sessionStore(), monthPeriod(next, today), null, today);
       }
     },
   };
@@ -200,7 +228,14 @@ const MONTH_PRESET_LABELS: Record<MonthPreset, string> = {
 type MonthPickerValue = MonthPreset | 'custom';
 
 /** cc32 (corte 2): el selector de mes, con el mismo estilo que el de periodo. */
-export function MonthPicker({ state }: { state: ReportMonthState }) {
+export function MonthPicker({
+  state,
+  updating = false,
+}: {
+  state: ReportMonthState;
+  /** Se muestra el mes anterior mientras llega el nuevo (como `PeriodPicker`). */
+  updating?: boolean;
+}) {
   const today = businessToday();
   const { month, complete, valid } = state;
   const matched = complete ? matchMonthPreset(month, today) : null;
@@ -251,6 +286,11 @@ export function MonthPicker({ state }: { state: ReportMonthState }) {
       {period && (
         <span className="text-sm text-muted-foreground" data-testid="periodo-rango">
           {formatPeriodRange(period)}
+        </span>
+      )}
+      {updating && (
+        <span role="status" className="text-sm text-muted-foreground" data-testid="actualizando">
+          Actualizando…
         </span>
       )}
     </div>

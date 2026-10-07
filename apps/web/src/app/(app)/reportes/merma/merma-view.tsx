@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { keepPreviousInScope } from '@/lib/report-query';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
@@ -20,6 +21,7 @@ import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
 import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
 import {
+  BusyRegion,
   DETAIL_ROW_CLASSNAME,
   ReportTable,
   type ReportColumn,
@@ -61,17 +63,21 @@ export function MermaView() {
     setUrl({ search: v });
   });
 
+  // El alcance es el reporte y su pestaña; el periodo va después (`keepPreviousInScope`).
+  const scope = ['report', 'coil-waste', line];
   const report = useQuery({
-    queryKey: ['report', 'coil-waste', period.from, period.to, line],
+    queryKey: [...scope, period.from, period.to],
     queryFn: () =>
       api<CoilWasteDto>(
         `/reports/coil-waste?from=${period.from}&to=${period.to}&businessLine=${line}`,
       ),
     enabled: valid,
-    // Al cambiar de periodo o de pestaña, el dato anterior queda a la vista mientras carga.
-    placeholderData: keepPreviousData,
+    // Al cambiar de periodo, el dato anterior queda a la vista (atenuado) mientras carga; al
+    // cambiar de pestaña, no: sería mostrar otra línea con el nombre de esta.
+    placeholderData: keepPreviousInScope<CoilWasteDto>(scope),
   });
   const data = valid ? report.data : undefined;
+  const updating = valid && report.isPlaceholderData;
   const loading = !periodState.complete || (valid && report.isPending);
   const missingCount = data ? data.totals.coilCount - data.totals.comparableCoilCount : 0;
   // En Drywall, lo que sale al cerrar la OP es la merma de proceso (D-057), no un despunte.
@@ -117,7 +123,7 @@ export function MermaView() {
         }
       />
 
-      <PeriodPicker state={periodState} />
+      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -134,27 +140,29 @@ export function MermaView() {
         <>
           {loading && <Skeleton className="h-14 w-full" />}
           {data && (
-            <StatStrip className="sm:grid-cols-3 lg:grid-cols-6" data-testid="cifras-merma">
-              <Stat label="Bobinas">{data.totals.coilCount}</Stat>
-              <Stat label="Consumido (kg)">{formatKg(data.totals.consumedKg, null)}</Stat>
-              <Stat
-                label="Teórico (kg)"
-                hint={
-                  missingCount > 0
-                    ? `solo ${String(data.totals.comparableCoilCount)} de ${String(data.totals.coilCount)} bobinas`
-                    : undefined
-                }
-              >
-                {formatKg(data.totals.theoreticalKg, null)}
-              </Stat>
-              <Stat label={`${trimLabel} (kg)`}>{formatKg(data.totals.trimKg, null)}</Stat>
-              <Stat label="Merma (kg)" hint="sobre el estándar">
-                {formatKg(data.totals.wasteKg, null)}
-              </Stat>
-              <Stat label="Merma %" hint={`normal hasta ${data.standardPct} %`}>
-                <Pct pct={data.totals.wastePct} over={data.totals.overStandard} />
-              </Stat>
-            </StatStrip>
+            <BusyRegion busy={updating}>
+              <StatStrip className="sm:grid-cols-3 lg:grid-cols-6" data-testid="cifras-merma">
+                <Stat label="Bobinas">{data.totals.coilCount}</Stat>
+                <Stat label="Consumido (kg)">{formatKg(data.totals.consumedKg, null)}</Stat>
+                <Stat
+                  label="Teórico (kg)"
+                  hint={
+                    missingCount > 0
+                      ? `solo ${String(data.totals.comparableCoilCount)} de ${String(data.totals.coilCount)} bobinas`
+                      : undefined
+                  }
+                >
+                  {formatKg(data.totals.theoreticalKg, null)}
+                </Stat>
+                <Stat label={`${trimLabel} (kg)`}>{formatKg(data.totals.trimKg, null)}</Stat>
+                <Stat label="Merma (kg)" hint="sobre el estándar">
+                  {formatKg(data.totals.wasteKg, null)}
+                </Stat>
+                <Stat label="Merma %" hint={`normal hasta ${data.standardPct} %`}>
+                  <Pct pct={data.totals.wastePct} over={data.totals.overStandard} />
+                </Stat>
+              </StatStrip>
+            </BusyRegion>
           )}
 
           <Input
@@ -177,9 +185,12 @@ export function MermaView() {
             sort={sort}
             onSort={toggleSort}
             search={searchText}
+            updating={updating}
             detail={(r) => <ProductionRows row={r} />}
             detailLabel={(r) => r.code}
-            footerLabel={(n) => `Total · ${n === 1 ? '1 bobina' : `${String(n)} bobinas`}`}
+            footerLabel={({ length: n }) =>
+              `Total · ${n === 1 ? '1 bobina' : `${String(n)} bobinas`}`
+            }
             query={{
               isPending: loading,
               isError: report.isError,

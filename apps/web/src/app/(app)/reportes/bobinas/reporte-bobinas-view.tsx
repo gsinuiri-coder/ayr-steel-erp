@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { keepPreviousInScope } from '@/lib/report-query';
 import {
   BUSINESS_LINE_LABELS,
   COIL_REPORT_LINES,
@@ -21,7 +22,7 @@ import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
 import { MonthPicker, useReportMonth } from '@/components/reports/report-period';
-import { ReportTable, type ReportColumn } from '@/components/reports/report-table';
+import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import { allRows, coilMonthTotalsOf } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
@@ -76,14 +77,17 @@ export function ReporteBobinasView() {
   });
   const qs = `month=${month}&businessLine=${line}`;
 
+  // El alcance es el reporte y su pestaña; el mes va después (`keepPreviousInScope`).
+  const scope = ['report', 'coils', line];
   const report = useQuery({
-    queryKey: ['report', 'coils', month, line],
+    queryKey: [...scope, month],
     queryFn: () => api<CoilMonthReportDto>(`/reports/coils?${qs}`),
     enabled: valid,
-    // Al cambiar de mes o de pestaña, el dato anterior queda a la vista mientras carga.
-    placeholderData: keepPreviousData,
+    // Al cambiar de mes, el dato anterior queda a la vista (atenuado) mientras carga.
+    placeholderData: keepPreviousInScope<CoilMonthReportDto>(scope),
   });
   const data = valid ? report.data : undefined;
+  const updating = valid && report.isPlaceholderData;
   const loading = !monthState.complete || (valid && report.isPending);
   const query = {
     isPending: loading,
@@ -144,7 +148,7 @@ export function ReporteBobinasView() {
         }
       />
 
-      <MonthPicker state={monthState} />
+      <MonthPicker state={monthState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -161,26 +165,28 @@ export function ReporteBobinasView() {
         <>
           {loading && <Skeleton className="h-14 w-full" />}
           {data && (
-            <StatStrip
-              aria-label={`Total de ${BUSINESS_LINE_LABELS[line]}`}
-              data-testid="cifras-bobinas"
-              className={
-                data.totals.closingValuePen === null
-                  ? 'sm:grid-cols-3 lg:grid-cols-3'
-                  : 'sm:grid-cols-4 lg:grid-cols-4'
-              }
-            >
-              <Stat label="Saldo inicio (kg)" hint="al primer día del mes">
-                {formatKg(data.totals.openingKg, null)}
-              </Stat>
-              <Stat label="Peso de alta (kg)">{formatKg(data.totals.weightKg, null)}</Stat>
-              <Stat label="Saldo fin (kg)" hint="al último día del mes">
-                {formatKg(data.totals.closingKg, null)}
-              </Stat>
-              {data.totals.closingValuePen !== null && (
-                <Stat label="Valor fin de mes">{formatMoney(data.totals.closingValuePen)}</Stat>
-              )}
-            </StatStrip>
+            <BusyRegion busy={updating}>
+              <StatStrip
+                aria-label={`Total de ${BUSINESS_LINE_LABELS[line]}`}
+                data-testid="cifras-bobinas"
+                className={
+                  data.totals.closingValuePen === null
+                    ? 'sm:grid-cols-3 lg:grid-cols-3'
+                    : 'sm:grid-cols-4 lg:grid-cols-4'
+                }
+              >
+                <Stat label="Saldo inicio (kg)" hint="al primer día del mes">
+                  {formatKg(data.totals.openingKg, null)}
+                </Stat>
+                <Stat label="Peso de alta (kg)">{formatKg(data.totals.weightKg, null)}</Stat>
+                <Stat label="Saldo fin (kg)" hint="al último día del mes">
+                  {formatKg(data.totals.closingKg, null)}
+                </Stat>
+                {data.totals.closingValuePen !== null && (
+                  <Stat label="Valor fin de mes">{formatMoney(data.totals.closingValuePen)}</Stat>
+                )}
+              </StatStrip>
+            </BusyRegion>
           )}
 
           <Input
@@ -204,6 +210,7 @@ export function ReporteBobinasView() {
               setSearchText('');
             }}
             query={query}
+            updating={updating}
           />
           <MonthTable
             title="Abiertas"
@@ -215,8 +222,13 @@ export function ReporteBobinasView() {
               setSearchText('');
             }}
             query={query}
+            updating={updating}
           />
-          {data && <MonthSummary report={data} />}
+          {data && (
+            <BusyRegion busy={updating}>
+              <MonthSummary report={data} />
+            </BusyRegion>
+          )}
         </>
       )}
     </RoleGate>
@@ -263,6 +275,7 @@ function MonthTable({
   search,
   onClearSearch,
   query,
+  updating,
 }: {
   title: string;
   film: CoilFilmState;
@@ -271,6 +284,7 @@ function MonthTable({
   search: string;
   onClearSearch: () => void;
   query: { isPending: boolean; isError: boolean; isSuccess: boolean; refetch: () => unknown };
+  updating: boolean;
 }) {
   // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
   const [sort, toggleSort] = useSort<string>(film === 'SEALED' ? 'sellada' : 'abierta');
@@ -295,8 +309,11 @@ function MonthTable({
         sort={sort}
         onSort={toggleSort}
         search={search}
-        footerLabel={(n) => `Subtotal ${title} · ${n === 1 ? '1 bobina' : `${String(n)} bobinas`}`}
+        footerLabel={({ length: n }) =>
+          `Subtotal ${title} · ${n === 1 ? '1 bobina' : `${String(n)} bobinas`}`
+        }
         query={query}
+        updating={updating}
         emptyTitle={emptyText}
         noResultsTitle={`Ninguna bobina ${title.toLowerCase().slice(0, -1)} coincide con «${search.trim()}»`}
         onClearSearch={onClearSearch}

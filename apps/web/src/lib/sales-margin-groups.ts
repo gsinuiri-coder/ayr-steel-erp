@@ -1,5 +1,5 @@
 import type { Decimal, SalesMarginOrderDto } from '@ayr/shared';
-import { marginPctOf, sumDecimal } from './report-table';
+import { filterReportRows, marginPctOf, sumDecimal } from './report-table';
 
 /**
  * cc32 — «Ver por» de Ventas y margen: agrupa en el navegador las filas que el reporte ya trae.
@@ -28,6 +28,10 @@ export function parseSalesMarginView(raw: string): SalesMarginView {
 export interface SalesMarginSummary {
   /** Filas sumadas. */
   count: number;
+  /** Filas con pedido. */
+  orderCount: number;
+  /** Filas sin pedido: ventas directas, que se agrupan solas (D-518). */
+  directSaleCount: number;
   sales: Decimal;
   /** Suma de los costos conocidos; una fila sin costo no suma. */
   cost: Decimal;
@@ -43,13 +47,65 @@ export function summarizeSalesMargin(orders: readonly SalesMarginOrderDto[]): Sa
   // La base del porcentaje es la venta de las filas que tienen margen: una fila sin costo
   // comparable no puede bajar ni subir el porcentaje.
   const marginBase = sumDecimal(orders, (o) => (o.marginPen === null ? null : o.salesPen));
+  const orderCount = orders.filter((o) => o.salesOrderId !== null).length;
   return {
     count: orders.length,
+    orderCount,
+    directSaleCount: orders.length - orderCount,
     sales,
     cost: sumDecimal(orders, (o) => o.costPen),
     margin,
     marginPct: marginPctOf(marginBase, margin),
   };
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${String(n)} ${n === 1 ? one : many}`;
+}
+
+/**
+ * D-518 (provisional): un solo criterio para contar, en la franja, el pie y la columna
+ * «Pedidos»: se cuentan los pedidos, y las ventas sin pedido (directas) se nombran aparte.
+ * «4 pedidos» o «4 pedidos · 1 venta sin pedido».
+ */
+export function countLabel(summary: Pick<SalesMarginSummary, 'orderCount' | 'directSaleCount'>) {
+  const orders = plural(summary.orderCount, 'pedido', 'pedidos');
+  return summary.directSaleCount === 0
+    ? orders
+    : `${orders} · ${plural(summary.directSaleCount, 'venta sin pedido', 'ventas sin pedido')}`;
+}
+
+/**
+ * Lo que el buscador mira de una fila: el pedido, sus comprobantes, el cliente, el vendedor y el
+ * estado del costo. Es el mismo en la vista por pedido y en «Ver por».
+ */
+export function salesMarginSearchText(
+  order: SalesMarginOrderDto,
+  costStatusLabel: string,
+): string[] {
+  return [
+    order.orderCode ?? '',
+    ...order.documents.map((d) => d.number ?? ''),
+    order.customerName,
+    order.sellerName ?? '',
+    costStatusLabel,
+  ];
+}
+
+/**
+ * Las filas que coinciden con la búsqueda. En «Ver por» se filtra **antes** de agrupar: así cada
+ * grupo y el pie suman solo los pedidos que coinciden.
+ */
+export function filterSalesMargin(
+  orders: readonly SalesMarginOrderDto[],
+  search: string,
+  costStatusLabel: (order: SalesMarginOrderDto) => string = () => '',
+): SalesMarginOrderDto[] {
+  return filterReportRows(
+    orders,
+    [{ key: 'all', searchText: (o) => salesMarginSearchText(o, costStatusLabel(o)) }],
+    search,
+  );
 }
 
 export interface SalesMarginGroup extends SalesMarginSummary {

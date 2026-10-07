@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { keepPreviousInScope } from '@/lib/report-query';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
@@ -20,6 +21,7 @@ import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
 import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
 import {
+  BusyRegion,
   DETAIL_ROW_CLASSNAME,
   ReportTable,
   type ReportColumn,
@@ -62,14 +64,17 @@ export function ProduccionView() {
   });
   const qs = `from=${period.from}&to=${period.to}&businessLine=${line}`;
 
+  // El alcance es el reporte y su pestaña; el periodo va después (`keepPreviousInScope`).
+  const scope = ['report', 'production-summary', line];
   const report = useQuery({
-    queryKey: ['report', 'production-summary', period.from, period.to, line],
+    queryKey: [...scope, period.from, period.to],
     queryFn: () => api<ProductionSummaryDto>(`/reports/production-summary?${qs}`),
     enabled: valid,
-    // Al cambiar de periodo o de pestaña, el dato anterior queda a la vista mientras carga.
-    placeholderData: keepPreviousData,
+    // Al cambiar de periodo, el dato anterior queda a la vista (atenuado) mientras carga.
+    placeholderData: keepPreviousInScope<ProductionSummaryDto>(scope),
   });
   const data = valid ? report.data : undefined;
+  const updating = valid && report.isPlaceholderData;
   const loading = !periodState.complete || (valid && report.isPending);
   const withCosts = data?.withCosts === true;
   // En Drywall, lo que sale al cerrar la OP es la merma de proceso (D-057), no un despunte.
@@ -135,7 +140,7 @@ export function ProduccionView() {
         }
       />
 
-      <PeriodPicker state={periodState} />
+      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -152,24 +157,26 @@ export function ProduccionView() {
         <>
           {loading && <Skeleton className="h-14 w-full" />}
           {data && (
-            <StatStrip className="sm:grid-cols-3 lg:grid-cols-5" data-testid="cifras-produccion">
-              <Stat label="Órdenes">{data.totals.orderCount}</Stat>
-              <Stat label="Teórico (kg)">{formatKg(data.totals.theoreticalKg, null)}</Stat>
-              <Stat
-                label="Salido (kg)"
-                hint={
-                  unattributed
-                    ? `más ${formatKg(data.totals.unattributedKg)} sin reporte de planta`
-                    : undefined
-                }
-              >
-                {formatKg(data.totals.consumedKg, null)}
-              </Stat>
-              <Stat label={`${trimLabel} (kg)`}>{formatKg(data.totals.trimKg, null)}</Stat>
-              <Stat label="Merma %" hint={`normal hasta ${data.standardPct} %`}>
-                <Pct value={data.totals.wastePct} over={data.totals.overStandard} />
-              </Stat>
-            </StatStrip>
+            <BusyRegion busy={updating}>
+              <StatStrip className="sm:grid-cols-3 lg:grid-cols-5" data-testid="cifras-produccion">
+                <Stat label="Órdenes">{data.totals.orderCount}</Stat>
+                <Stat label="Teórico (kg)">{formatKg(data.totals.theoreticalKg, null)}</Stat>
+                <Stat
+                  label="Salido (kg)"
+                  hint={
+                    unattributed
+                      ? `más ${formatKg(data.totals.unattributedKg)} sin reporte de planta`
+                      : undefined
+                  }
+                >
+                  {formatKg(data.totals.consumedKg, null)}
+                </Stat>
+                <Stat label={`${trimLabel} (kg)`}>{formatKg(data.totals.trimKg, null)}</Stat>
+                <Stat label="Merma %" hint={`normal hasta ${data.standardPct} %`}>
+                  <Pct value={data.totals.wastePct} over={data.totals.overStandard} />
+                </Stat>
+              </StatStrip>
+            </BusyRegion>
           )}
 
           <div className="flex flex-wrap items-center gap-3">
@@ -207,9 +214,12 @@ export function ProduccionView() {
               sort={sort}
               onSort={toggleSort}
               search={searchText}
+              updating={updating}
               detail={(o) => <CoilRows order={o} withCosts={withCosts} trimLabel={trimLabel} />}
               detailLabel={(o) => o.code}
-              footerLabel={(n) => `Total · ${n === 1 ? '1 orden' : `${String(n)} órdenes`}`}
+              footerLabel={({ length: n }) =>
+                `Total · ${n === 1 ? '1 orden' : `${String(n)} órdenes`}`
+              }
               query={query}
               emptyTitle={emptyTitle}
               noResultsTitle={`Ninguna orden coincide con «${searchText.trim()}»`}
@@ -226,6 +236,7 @@ export function ProduccionView() {
               sort={sort}
               onSort={toggleSort}
               search={searchText}
+              updating={updating}
               detail={(g) => <OrderRows group={g} withCosts={withCosts} />}
               detailLabel={(g) => g.salesOrderCode ?? 'las órdenes a stock'}
               footerLabel={() => 'Total'}
