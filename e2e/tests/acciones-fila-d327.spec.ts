@@ -57,6 +57,10 @@ test.describe('D-327 — acciones de fila en un menú', () => {
 
     // Desactivar desde el menú (con el helper de los E2E) cambia el estado de verdad.
     await (await rowAction(page, customer.name, 'Desactivar')).click();
+    // cc31: desactivar pide confirmación; el botón repite el título.
+    const confirm = page.getByRole('dialog');
+    await confirm.getByRole('button', { name: `Desactivar a ${customer.name}` }).click();
+    await expect(confirm).toBeHidden();
     await expect
       .poll(
         async () =>

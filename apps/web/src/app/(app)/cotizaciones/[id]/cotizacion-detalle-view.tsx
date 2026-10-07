@@ -38,6 +38,7 @@ import {
 import { DetailSummary, Stages } from '@/components/detail-summary';
 import { quotationStages } from '@/lib/stages';
 import { ReasonDialog } from '@/components/reason-dialog';
+import { ANNUL_REASONS } from '@/lib/reasons';
 import { RoleGate } from '@/components/role-gate';
 import {
   ConfirmQuotationDialog,
@@ -516,6 +517,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         open={cancelOpen}
         onOpenChange={setCancelOpen}
         title={`Anular ${q.code}`}
+        reasons={ANNUL_REASONS}
         description="La cotización queda anulada y no se puede confirmar. Queda registrada con su motivo."
         confirmLabel="Anular cotización"
         pending={cancel.isPending}

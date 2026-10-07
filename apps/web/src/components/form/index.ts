@@ -7,4 +7,9 @@ export {
   type CellSpan,
   type ControlSize,
 } from './form-layout';
-export { StickyActionBar } from './sticky-action-bar';
+export {
+  focusField,
+  MissingFieldsHint,
+  StickyActionBar,
+  type MissingField,
+} from './sticky-action-bar';

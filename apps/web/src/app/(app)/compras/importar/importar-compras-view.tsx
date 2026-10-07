@@ -20,6 +20,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { formatMoney } from '@/lib/format';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { useSession } from '@/lib/session';
 import {
   documentStatus,
@@ -252,6 +253,9 @@ export function ImportarComprasView() {
       toast.error(errorMessage(err, 'No se pudo deshacer el lote'));
     },
   });
+
+  // cc31 (ESPEC §6): con un archivo leído y sin importar, salir pierde la revisión y lo corregido.
+  useUnsavedChanges(docs !== null && docs.length > 0);
 
   const busy = confirm.isPending || upload.isPending;
 

@@ -93,6 +93,13 @@ function ChangePasswordForm({ firstLogin }: { firstLogin: boolean }) {
   async function onSubmit(values: ChangePasswordInput) {
     try {
       await api('/auth/change-password', { method: 'POST', body: values });
+      if (firstLogin) {
+        // En el primer ingreso la pantalla cambia de marco (sin menú → con menú) al marcar la
+        // sesión, y ese cambio se comía la navegación del router: el usuario quedaba en
+        // «Cambiar contraseña». Una carga completa del Panel no depende de ese orden.
+        window.location.replace('/');
+        return;
+      }
       // Primero se marca la sesión como ya cambiada y se navega; la recarga del usuario va
       // después. Al revés, la pantalla se redibujaba en modo normal antes de navegar y el
       // primer ingreso se quedaba en «Cambiar contraseña».

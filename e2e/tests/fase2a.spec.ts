@@ -152,9 +152,9 @@ async function fillCoilLine(page: Page, index: number, line: CoilLineInput): Pro
     line.finishLabel,
   );
   await page.getByLabel('Descripción').nth(index).fill(line.description);
-  await page.getByLabel('Ancho (mm)').nth(index).fill(line.widthMm);
-  await page.getByLabel('Espesor (mm)').nth(index).fill(line.thicknessMm);
-  await page.getByLabel('Peso (kg)').nth(index).fill(line.weightKg);
+  await page.getByLabel('Ancho', { exact: true }).nth(index).fill(line.widthMm);
+  await page.getByLabel('Espesor', { exact: true }).nth(index).fill(line.thicknessMm);
+  await page.getByLabel('Peso', { exact: true }).nth(index).fill(line.weightKg);
   await page.getByLabel('Precio por kg').nth(index).fill(line.unitPricePerKg);
 }
 
@@ -244,7 +244,7 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await page.getByLabel('Número').fill(number);
 
       await page.getByRole('button', { name: 'Agregar bobina' }).click();
-      await expect(page.getByLabel('Peso (kg)')).toHaveCount(2);
+      await expect(page.getByLabel('Peso', { exact: true })).toHaveCount(2);
       await fillCoilLine(page, 0, {
         finishLabel: finishOptionLabel(finish),
         description: 'Bobina E2E gruesa',
@@ -408,12 +408,12 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
       await expect(page.getByLabel('Descripción').nth(0)).toHaveValue(
         'BOBINA LAMINADO EN CALIENTE (LAC) 2.00MM x 1220MM',
       );
-      await expect(page.getByLabel('Peso (kg)').nth(0)).toHaveValue('5000.000');
+      await expect(page.getByLabel('Peso', { exact: true }).nth(0)).toHaveValue('5000.000');
       await expect(page.getByLabel('Precio por kg').nth(0)).toHaveValue('4.2400');
       await expect(page.getByLabel('Descripción').nth(1)).toHaveValue(
         'BOBINA GALVANIZADA 1.50MM x 1000MM',
       );
-      await expect(page.getByLabel('Peso (kg)').nth(1)).toHaveValue('1500.000');
+      await expect(page.getByLabel('Peso', { exact: true }).nth(1)).toHaveValue('1500.000');
       await expect(page.getByLabel('Precio por kg').nth(1)).toHaveValue('2.0000');
 
       // Los datos físicos no vienen en el comprobante: los completa el usuario.
@@ -423,15 +423,15 @@ test.describe('Fase 2a — compras, bobinas y kardex', () => {
         page.getByRole('combobox', { name: FINISH_FIELD_LABEL }).nth(0),
         finishLabel,
       );
-      await page.getByLabel('Ancho (mm)').nth(0).fill('1220');
-      await page.getByLabel('Espesor (mm)').nth(0).fill('2');
+      await page.getByLabel('Ancho', { exact: true }).nth(0).fill('1220');
+      await page.getByLabel('Espesor', { exact: true }).nth(0).fill('2');
       await selectOption(
         page,
         page.getByRole('combobox', { name: FINISH_FIELD_LABEL }).nth(1),
         finishLabel,
       );
-      await page.getByLabel('Ancho (mm)').nth(1).fill('1000');
-      await page.getByLabel('Espesor (mm)').nth(1).fill('1.5');
+      await page.getByLabel('Ancho', { exact: true }).nth(1).fill('1000');
+      await page.getByLabel('Espesor', { exact: true }).nth(1).fill('1.5');
 
       await page.getByRole('button', { name: 'Confirmar compra y bobinas' }).click();
       await expect(page.getByText('Compra registrada')).toBeVisible();

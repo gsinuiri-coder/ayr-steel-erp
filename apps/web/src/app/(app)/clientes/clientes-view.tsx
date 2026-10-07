@@ -38,6 +38,7 @@ import { useSort } from '@/lib/use-sort';
 import { CustomerDialog } from '@/components/customers/customer-dialog';
 import { ListStateRows } from '@/components/list-state';
 import { RowActions } from '@/components/row-actions';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 
 /**
  * Prefijo de invalidación: React Query hace *match* parcial, así que
@@ -97,10 +98,14 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
   const rows = customers.data?.items ?? [];
   const columnCount = isAdmin ? 6 : 5;
 
+  // cc31 (ESPEC §6): desactivar pide confirmación; activar no.
+  const [toDeactivate, setToDeactivate] = useState<CustomerDto | null>(null);
+
   const toggleActive = useMutation({
     mutationFn: (c: CustomerDto) =>
       api<CustomerDto>(`/customers/${c.id}`, { method: 'PATCH', body: { isActive: !c.isActive } }),
     onSuccess: (updated) => {
+      setToDeactivate(null);
       toast.success(updated.isActive ? 'Cliente activado' : 'Cliente desactivado');
       void queryClient.invalidateQueries({ queryKey: CUSTOMERS_QUERY_KEY });
     },
@@ -249,7 +254,8 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                           pending: toggleActive.isPending && toggleActive.variables?.id === c.id,
                           onSelect: () => {
                             if (toggleActive.isPending) return;
-                            toggleActive.mutate(c);
+                            if (c.isActive) setToDeactivate(c);
+                            else toggleActive.mutate(c);
                           },
                         },
                       ]}
@@ -291,6 +297,21 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
         onPageSizeChange={setPageSize}
         disabled={customers.isFetching}
       />
+
+      {toDeactivate && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setToDeactivate(null);
+          }}
+          title={`Desactivar a ${toDeactivate.name}`}
+          consequences="Ya no podrás hacerle cotizaciones ni pedidos nuevos; lo registrado se conserva y puedes volver a activarlo."
+          pending={toggleActive.isPending}
+          onConfirm={() => {
+            toggleActive.mutate(toDeactivate);
+          }}
+        />
+      )}
 
       {isAdmin && (
         <CustomerDialog

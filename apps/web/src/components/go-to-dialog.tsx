@@ -88,6 +88,7 @@ export function GoToDialog({
       <DialogContent
         className="top-[20%] translate-y-0 gap-0 p-0 sm:max-w-lg"
         showCloseButton={false}
+        keepOpenWhenTyped={false}
       >
         <DialogTitle className="sr-only">Ir a</DialogTitle>
         <DialogDescription className="sr-only">

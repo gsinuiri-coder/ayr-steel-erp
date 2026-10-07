@@ -121,7 +121,7 @@ for (const viewport of VIEWPORTS) {
       const plancha = page.getByRole('option', { name: /Plancha/ });
       if (await plancha.count()) await plancha.first().click();
       await dialog
-        .getByPlaceholder('3000')
+        .getByLabel('Largo de la plancha (mm)')
         .fill('3')
         .catch(() => undefined);
       expectClean(await measure(page, '[role="dialog"]'), 'ProductDialog coberturas', false);

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -14,6 +15,8 @@ import {
   type UpsertManualExchangeRateInput,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { formatDate } from '@/lib/format';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -65,15 +68,26 @@ export function TipoCambioView() {
     defaultValues: { date: today, currency: 'USD', buy: '', sell: '' },
   });
 
+  // cc31 (ESPEC §6): guardar sobre una fecha y moneda que ya tienen tipo de cambio lo
+  // reemplaza (el API hace upsert). Se pide confirmación antes. Solo se compara contra lo que
+  // trae el historial (los últimos 365 registros): más atrás no hay con qué comparar sin
+  // consultar la API externa, y esa consulta graba.
+  const [replacing, setReplacing] = useState<{
+    values: UpsertManualExchangeRateInput;
+    existing: ExchangeRateDto;
+  } | null>(null);
+
   const save = useMutation({
     mutationFn: (values: UpsertManualExchangeRateInput) =>
       api<ExchangeRateDto>('/exchange-rates/manual', { method: 'PUT', body: values }),
     onSuccess: () => {
+      setReplacing(null);
       toast.success('Tipo de cambio guardado');
       void queryClient.invalidateQueries({ queryKey: EXCHANGE_RATES_QUERY_KEY });
       form.reset({ date: today, currency: 'USD', buy: '', sell: '' });
     },
     onError: (err) => {
+      setReplacing(null);
       form.setError('root', {
         message: errorMessage(err, 'Error inesperado'),
       });
@@ -106,7 +120,11 @@ export function TipoCambioView() {
           <Form {...form}>
             <form
               onSubmit={form.handleSubmit((v) => {
-                save.mutate(v);
+                const existing = rates.data?.find(
+                  (r) => r.date.slice(0, 10) === v.date && r.currency === v.currency,
+                );
+                if (existing) setReplacing({ values: v, existing });
+                else save.mutate(v);
               })}
               className="grid gap-4"
               noValidate
@@ -163,8 +181,9 @@ export function TipoCambioView() {
                     <FormItem>
                       <FormLabel>Compra</FormLabel>
                       <FormControl>
-                        <Input inputMode="decimal" placeholder="3.7500" {...field} />
+                        <Input inputMode="decimal" {...field} />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground">Por ejemplo: 3.7500</p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -176,8 +195,9 @@ export function TipoCambioView() {
                     <FormItem>
                       <FormLabel>Venta</FormLabel>
                       <FormControl>
-                        <Input inputMode="decimal" placeholder="3.7600" {...field} />
+                        <Input inputMode="decimal" {...field} />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground">Por ejemplo: 3.7600</p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -242,7 +262,7 @@ export function TipoCambioView() {
               source: { text: (r) => r.source },
             }).map((r) => (
               <TableRow key={r.id}>
-                <TableCell className="font-medium">{r.date}</TableCell>
+                <TableCell className="font-medium">{formatDate(r.date)}</TableCell>
                 <TableCell>{CURRENCY_LABELS[r.currency]}</TableCell>
                 <TableCell>{r.buy}</TableCell>
                 <TableCell>{r.sell}</TableCell>
@@ -265,6 +285,21 @@ export function TipoCambioView() {
           </TableBody>
         </Table>
       </div>
+
+      {replacing && (
+        <ConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setReplacing(null);
+          }}
+          title={`Reemplazar el tipo de cambio del ${formatDate(replacing.values.date)}`}
+          consequences={`Ya hay un tipo de cambio para el ${formatDate(replacing.values.date)}: compra S/ ${replacing.existing.buy}, venta S/ ${replacing.existing.sell}. ¿Reemplazarlo por compra S/ ${replacing.values.buy}, venta S/ ${replacing.values.sell}?`}
+          pending={save.isPending}
+          onConfirm={() => {
+            save.mutate(replacing.values);
+          }}
+        />
+      )}
     </>
   );
 }

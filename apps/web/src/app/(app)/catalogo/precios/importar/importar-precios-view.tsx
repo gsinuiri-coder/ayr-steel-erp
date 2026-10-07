@@ -13,6 +13,7 @@ import {
 } from '@ayr/shared';
 import { ApiError } from '@/lib/api';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -154,6 +155,9 @@ export function ImportarPreciosView() {
       toast.error(errorMessage(err, 'No se pudo revertir el lote'));
     },
   });
+
+  // cc31 (ESPEC §6): con un archivo leído y sin confirmar, salir pierde la vista previa.
+  useUnsavedChanges(preview !== null && result === null);
 
   const hasErrors = (preview?.summary.errors ?? 0) > 0;
   const confirmableCount = preview

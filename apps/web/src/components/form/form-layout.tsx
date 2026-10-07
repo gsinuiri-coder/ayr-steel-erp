@@ -120,8 +120,22 @@ interface CellProps {
   size?: ControlSize;
   /** Cifras alineadas en columnas (`tabular-nums`) y a la derecha. */
   numeric?: boolean;
+  /**
+   * cc31 (ESPEC §6): lo obligatorio no lleva marca; se marca lo opcional («· opcional»).
+   */
+  optional?: boolean;
   className?: string;
   children: ReactNode;
+}
+
+/** La etiqueta de una celda, con «· opcional» cuando corresponde. */
+function CellLabel({ label, optional }: { label: ReactNode; optional?: boolean }) {
+  return (
+    <>
+      {label}
+      {optional && <span className="font-normal text-muted-foreground"> · opcional</span>}
+    </>
+  );
 }
 
 function controlClass(size: ControlSize, numeric: boolean): string {
@@ -140,13 +154,14 @@ export function FormCell({
   error,
   size = 'full',
   numeric = false,
+  optional = false,
   className,
   children,
 }: CellProps & { htmlFor?: string; error?: string | null }) {
   return (
     <div data-slot="form-cell" className={cn(CELL_CLASS, SPAN[span], className)}>
       <Label htmlFor={htmlFor} className={LABEL_CLASS}>
-        {label}
+        <CellLabel label={label} optional={optional} />
       </Label>
       <div className={controlClass(size, numeric)}>{children}</div>
       <HelpArea error={error} help={help} />
@@ -180,12 +195,15 @@ export function FormFieldCell({
   help,
   size = 'full',
   numeric = false,
+  optional = false,
   className,
   children,
 }: CellProps) {
   return (
     <FormItem data-slot="form-cell" className={cn(CELL_CLASS, 'gap-0', SPAN[span], className)}>
-      <FormLabel className={LABEL_CLASS}>{label}</FormLabel>
+      <FormLabel className={LABEL_CLASS}>
+        <CellLabel label={label} optional={optional} />
+      </FormLabel>
       <div className={controlClass(size, numeric)}>{children}</div>
       <RhfHelp help={help} />
     </FormItem>

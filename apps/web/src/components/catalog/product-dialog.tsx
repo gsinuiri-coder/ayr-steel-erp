@@ -11,6 +11,7 @@ import {
   canonicalAccessorySku,
   drywallPieceWeightCheck,
   isPlausiblePieceLength,
+  money,
   PIECE_LENGTH_RANGE_LABEL,
   PRODUCT_SOURCE_LABELS,
   PRODUCT_SOURCES,
@@ -19,7 +20,10 @@ import {
   ROOFING_PRODUCT_KIND_LABELS,
   ROOFING_PRODUCT_KINDS,
   RoofingProductKind,
+  saleValueFromPrice,
+  salePriceFromValue,
   toDecimal,
+  toFixedString,
   type FinishDto,
   type ProductDto,
   FINISH_FIELD_LABEL,
@@ -28,7 +32,7 @@ import {
 import { api, ApiError } from '@/lib/api';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { ColorSwatch } from '@/components/colors/color-swatch';
-import { formatKg, formatMeters, isPositiveDecimal } from '@/lib/format';
+import { formatKg, formatMeters, formatMoney, isPositiveDecimal } from '@/lib/format';
 import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,10 +58,12 @@ const CATALOG_QUERY_KEY = ['catalog'] as const;
 const formSchema = z.object({
   sku: z.string().trim().min(1, 'Obligatorio').max(40),
   name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
-  unit: z.string().trim().min(1, 'Obligatorio').max(20),
+  unit: z.string().trim().min(1, 'Escribe la unidad de venta').max(20),
   source: z.enum(PRODUCT_SOURCES),
   /**
    * D-068: vacío significa "sin precio de lista", que el API guarda como `null`.
+   * cc31 (ESPEC §6): se tipea **con IGV**, como en la celda del catálogo (`PriceListCell`); lo
+   * que viaja al API sigue siendo el valor sin IGV (`listPriceToSend`).
    * La comparación va con `isPositiveDecimal` (Decimal), no con `parseFloat`: regla dura 1.
    */
   listPricePen: z
@@ -83,6 +89,18 @@ const formSchema = z.object({
   roofingKind: z.string(),
 });
 type FormValues = z.infer<typeof formSchema>;
+
+/** El precio con IGV de un valor de lista sin IGV, con las mismas funciones que la celda. */
+function listPriceWithIgv(listPricePen: string | null | undefined): string {
+  if (listPricePen === null || listPricePen === undefined || listPricePen === '') return '';
+  return toFixedString(money(salePriceFromValue(listPricePen)), 'MONEY');
+}
+
+/** El valor sin IGV de lo tipeado con IGV; vacío sigue vacío (sin precio de lista). */
+function listValueFromTyped(typed: string): string {
+  if (typed === '') return '';
+  return toFixedString(money(saleValueFromPrice(typed)), 'MONEY');
+}
 
 interface Props {
   open: boolean;
@@ -176,9 +194,13 @@ export function ProductDialog({
     defaultValues: {
       sku: product?.sku ?? initial?.sku ?? '',
       name: product?.name ?? initial?.name ?? '',
-      unit: product?.unit ?? '',
+      // cc31 (ESPEC §6): una cobertura nueva nace A MEDIDA (abajo), y subtipo y unidad son el
+      // mismo hecho: la unidad arranca con la del subtipo en vez de quedar vacía.
+      unit:
+        product?.unit ??
+        (usesRoofingFields(businessLineCode) ? ROOFING_KIND_UNIT[RoofingProductKind.A_MEDIDA] : ''),
       source: product?.source ?? 'MANUFACTURED',
-      listPricePen: product?.listPricePen ?? '',
+      listPricePen: listPriceWithIgv(product?.listPricePen),
       finishId: product?.finishId ?? '',
       thicknessMm: product?.thicknessMm ?? '',
       widthMm: product?.widthMm ?? '',
@@ -253,6 +275,14 @@ export function ProductDialog({
     }
   }, [editing, accessoryStructureChanged, savedSku, form]);
 
+  // cc31: lo tipeado va con IGV; al API viaja sin IGV. Si al editar no se tocó, viaja el valor
+  // guardado tal cual (la vuelta con IGV y sin IGV redondea y podría moverlo un céntimo).
+  const listPriceToSend = (typed: string): string =>
+    editing && typed === listPriceWithIgv(product.listPricePen)
+      ? (product.listPricePen ?? '')
+      : listValueFromTyped(typed);
+  const typedListPrice = form.watch('listPricePen');
+
   const save = useMutation({
     mutationFn: (values: FormValues) => {
       const roofingKind = showRoofingFields ? (values.roofingKind as RoofingProductKind) : null;
@@ -306,7 +336,7 @@ export function ProductDialog({
             name: values.name,
             unit: values.unit,
             source: values.source,
-            listPricePen: values.listPricePen,
+            listPricePen: listPriceToSend(values.listPricePen),
             ...(showColor && finishChanged ? { colorId } : {}),
             ...(showRoofingFields ? { finishId: values.finishId } : {}),
             ...changedStructuredFields,
@@ -317,6 +347,7 @@ export function ProductDialog({
         method: 'POST',
         body: {
           ...values,
+          listPricePen: listPriceToSend(values.listPricePen),
           colorId,
           finishId: showRoofingFields ? values.finishId : '',
           ...structuredFields,
@@ -411,9 +442,9 @@ export function ProductDialog({
                   control={form.control}
                   name="unit"
                   render={({ field }) => (
-                    <FormFieldCell span={3} label="Unidad">
+                    <FormFieldCell span={3} label="Unidad" help="Por ejemplo: kg, unidad, m">
                       <FormControl>
-                        <Input placeholder="kg, unidad, m…" autoComplete="off" {...field} />
+                        <Input autoComplete="off" {...field} />
                       </FormControl>
                     </FormFieldCell>
                   )}
@@ -446,18 +477,27 @@ export function ProductDialog({
                   render={({ field }) => (
                     <FormFieldCell
                       span={6}
-                      label="Valor de lista (S/, sin IGV)"
+                      label="Precio de lista (S/, con IGV)"
+                      optional
                       size="lg"
                       numeric
-                      help="Se sugiere al cotizar. El vendedor lo puede editar en la línea; queda registrado el precio de lista junto al cotizado."
+                      help={
+                        <>
+                          {typedListPrice.trim() !== '' &&
+                            isPositiveDecimal(typedListPrice.trim()) && (
+                              <p data-testid="list-price-without-igv">
+                                Sin IGV: {formatMoney(listValueFromTyped(typedListPrice.trim()))}
+                              </p>
+                            )}
+                          <p>
+                            Se sugiere al cotizar. El vendedor lo puede editar en la línea; queda
+                            registrado el precio de lista junto al cotizado.
+                          </p>
+                        </>
+                      }
                     >
                       <FormControl>
-                        <Input
-                          inputMode="decimal"
-                          placeholder="Opcional"
-                          autoComplete="off"
-                          {...field}
-                        />
+                        <Input inputMode="decimal" autoComplete="off" {...field} />
                       </FormControl>
                     </FormFieldCell>
                   )}
@@ -694,6 +734,7 @@ export function ProductDialog({
                                 mientras se tipea lo hace obvio en el momento, que es cuando se
                                 puede corregir sin consecuencias. */}
                                 <PlateLengthHint lengthMm={field.value} />
+                                <p>Por ejemplo: 3000 (una plancha de 3 metros).</p>
                                 <p>
                                   Solo la plancha de catálogo tiene largo fijo. A medida, el largo
                                   lo trae cada línea de la cotización.
@@ -702,12 +743,7 @@ export function ProductDialog({
                             }
                           >
                             <FormControl>
-                              <Input
-                                inputMode="decimal"
-                                autoComplete="off"
-                                placeholder="3000"
-                                {...field}
-                              />
+                              <Input inputMode="decimal" autoComplete="off" {...field} />
                             </FormControl>
                           </FormFieldCell>
                         )}

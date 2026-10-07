@@ -41,16 +41,34 @@ import {
 
 const CUSTOMERS_QUERY_KEY = ['customers'] as const;
 
+/**
+ * cc31 (ESPEC §6): el correo se valida aquí (el API ya lo rechazaba) y los días de crédito
+ * llevan mensajes en español: el `z.coerce.number().int()` sin mensaje mostraba el texto en
+ * inglés de Zod.
+ */
 const formSchema = z.object({
   docType: z.enum(DOC_TYPES),
   docNumber: z.string().trim().min(1, 'Obligatorio').max(20),
   name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
-  address: z.string().trim().max(240).optional(),
-  email: z.string().trim().max(160).optional(),
-  phone: z.string().trim().max(30).optional(),
-  creditDays: z.coerce.number().int().min(0).max(365),
+  address: z.string().trim().max(240, 'Máximo 240 caracteres').optional(),
+  email: z
+    .string()
+    .trim()
+    .max(160, 'Máximo 160 caracteres')
+    .refine((v) => v === '' || z.string().email().safeParse(v).success, {
+      message: 'Escribe un correo válido, como nombre@empresa.pe',
+    })
+    .optional(),
+  phone: z.string().trim().max(30, 'Máximo 30 caracteres').optional(),
+  creditDays: z.coerce
+    .number({ invalid_type_error: 'Escribe los días en número' })
+    .int('Escribe los días sin decimales')
+    .min(0, 'No puede ser negativo')
+    .max(365, 'Máximo 365 días'),
 });
 type FormValues = z.infer<typeof formSchema>;
+
+const OPTIONAL_MARK = <span className="font-normal text-muted-foreground"> · opcional</span>;
 
 interface Props {
   open: boolean;
@@ -262,7 +280,7 @@ export function CustomerDialog({ open, customer, initial, onCreated, onOpenChang
               name="address"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Dirección</FormLabel>
+                  <FormLabel>Dirección{OPTIONAL_MARK}</FormLabel>
                   <FormControl>
                     <Input autoComplete="off" {...field} />
                   </FormControl>
@@ -276,7 +294,7 @@ export function CustomerDialog({ open, customer, initial, onCreated, onOpenChang
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Correo</FormLabel>
+                    <FormLabel>Correo{OPTIONAL_MARK}</FormLabel>
                     <FormControl>
                       <Input type="email" autoComplete="off" {...field} />
                     </FormControl>
@@ -289,7 +307,7 @@ export function CustomerDialog({ open, customer, initial, onCreated, onOpenChang
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Teléfono</FormLabel>
+                    <FormLabel>Teléfono{OPTIONAL_MARK}</FormLabel>
                     <FormControl>
                       <Input autoComplete="off" {...field} />
                     </FormControl>

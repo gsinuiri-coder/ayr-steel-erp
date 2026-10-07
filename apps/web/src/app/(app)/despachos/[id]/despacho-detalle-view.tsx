@@ -23,6 +23,7 @@ import {
   FiscalDocumentStatusBadge,
 } from '@/components/invoicing/status-badges';
 import { ReasonDialog } from '@/components/reason-dialog';
+import { ANNUL_REASONS } from '@/lib/reasons';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { HeaderActions } from '@/components/header-actions';
@@ -330,6 +331,7 @@ export function DespachoDetalleView({ id }: { id: string }) {
         open={reverseOpen}
         onOpenChange={setReverseOpen}
         title={`Revertir ${d.code}`}
+        reasons={ANNUL_REASONS}
         description="Devuelve el material al kardex, restaura las reservas del pedido y recalcula si el pedido sigue atendido. La fila del despacho no se borra: queda marcada como revertida."
         confirmLabel="Revertir despacho"
         pending={reverse.isPending}

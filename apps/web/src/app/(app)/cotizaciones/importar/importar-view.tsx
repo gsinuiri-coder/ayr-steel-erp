@@ -34,6 +34,7 @@ import {
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatKgPrecise, formatMeters, formatMoney, formatQty, formatQtyAsIs } from '@/lib/format';
+import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { RoleGate } from '@/components/role-gate';
 import { ExpressCreateCustomer } from '@/components/express-create';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
@@ -355,6 +356,9 @@ export function ImportarCotizacionesView() {
       toast.error(errorMessage(err, 'No se pudo importar'));
     },
   });
+
+  // cc31 (ESPEC §6): con un archivo leído y sin importar, salir pierde la revisión y lo elegido.
+  useUnsavedChanges(preview !== null);
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>

@@ -46,6 +46,7 @@ import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { CrumbLabel } from '@/components/breadcrumb';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { ReasonDialog } from '@/components/reason-dialog';
+import { ANNUL_REASONS } from '@/lib/reasons';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -1479,6 +1480,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         open={annulOpen}
         onOpenChange={setAnnulOpen}
         title={`Anular ${d.number ?? ''} internamente`}
+        reasons={ANNUL_REASONS}
         description="Este comprobante entró por planilla y SUNAT lo recibió fuera del ERP: anularlo aquí lo da por no existente para el sistema y su saldo pasa a cero, pero no comunica ninguna baja. Si el comprobante existe de verdad ante SUNAT, dalo de baja donde se emitió."
         confirmLabel="Anular internamente"
         pending={annul.isPending}

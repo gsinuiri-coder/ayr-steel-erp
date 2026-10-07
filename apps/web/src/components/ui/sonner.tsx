@@ -32,7 +32,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
           '--border-radius': 'var(--radius)',
         } as React.CSSProperties
       }
+      // cc31: el lector de pantalla oye la región y el botón de cerrar en castellano.
+      containerAriaLabel="Avisos"
       toastOptions={{
+        closeButtonAriaLabel: 'Cerrar aviso',
         classNames: {
           toast: 'cn-toast',
         },
