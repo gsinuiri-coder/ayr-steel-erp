@@ -1,13 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
   COIL_REPORT_LINES,
   Role,
-  businessToday,
+  toDecimal,
+  type Decimal,
   type ProductionSummaryDto,
   type ProductionSummaryGroupDto,
   type ProductionSummaryLine,
@@ -15,109 +16,126 @@ import {
 } from '@ayr/shared';
 import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
+import { ListStateMessage } from '@/components/list-state';
+import { ReportHeader } from '@/components/reports/report-header';
+import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
+import {
+  DETAIL_ROW_CLASSNAME,
+  ReportTable,
+  type ReportColumn,
+} from '@/components/reports/report-table';
+import { Segmented } from '@/components/reports/segmented';
 import { RoleGate } from '@/components/role-gate';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
-import { formatMoneyOrDash, formatQty } from '@/lib/format';
+import { formatAmount, formatKg, formatMeters } from '@/lib/format';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
-import { useUrlState } from '@/lib/use-url-state';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { allRows, productionTotalsOf, type ProductionTotals } from '@/lib/report-totals';
+import { useSort } from '@/lib/use-sort';
+import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { LINK_CLASSNAME, cn } from '@/lib/utils';
 
 /**
  * cc29 (M2, D-420, D-464, D-468). Reporte de producción: una fila por OP (un producto y una línea
  * del pedido), con lo que cada bobina dio según el kardex y un subtotal por pedido. Administrador y
  * supervisor de planta; los costos los trae el API solo para el administrador. Solo lectura.
+ *
+ * cc32 (corte 2): con la plantilla de reportes —periodo único en la URL, «Cómo se calcula», tabla
+ * con orden, búsqueda, detalle con chevron y total al pie—. El subtotal por pedido, que con el
+ * orden por columna ya no puede ir entre las filas, pasa a «Ver por» Pedido. Lo que se le pide al
+ * API no cambia.
  */
 export function ProduccionView() {
+  const periodState = useReportPeriod();
+  const { period, valid } = periodState;
   const { tab, select } = useLineTab(LINE_TABS);
   const line = tab as ProductionSummaryLine;
-  const [url, setUrl] = useUrlState({ from: firstOfMonth(), to: businessToday() });
-  const { from, to } = url;
-  const validRange = DATE.test(from) && DATE.test(to) && from <= to;
+  const [url, setUrl] = useUrlState({ ver: 'orden', search: '' });
+  const view: ProductionView = url.ver === 'pedido' ? 'pedido' : 'orden';
+  const [sort, toggleSort] = useSort<string>();
+  const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
+  const qs = `from=${period.from}&to=${period.to}&businessLine=${line}`;
 
   const report = useQuery({
-    queryKey: ['report', 'production-summary', from, to, line],
-    queryFn: () =>
-      api<ProductionSummaryDto>(
-        `/reports/production-summary?from=${from}&to=${to}&businessLine=${line}`,
-      ),
-    enabled: validRange,
+    queryKey: ['report', 'production-summary', period.from, period.to, line],
+    queryFn: () => api<ProductionSummaryDto>(`/reports/production-summary?${qs}`),
+    enabled: valid,
+    // Al cambiar de periodo o de pestaña, el dato anterior queda a la vista mientras carga.
+    placeholderData: keepPreviousData,
   });
-  const data = report.data;
+  const data = valid ? report.data : undefined;
+  const loading = !periodState.complete || (valid && report.isPending);
   const withCosts = data?.withCosts === true;
   // En Drywall, lo que sale al cerrar la OP es la merma de proceso (D-057), no un despunte.
   const trimLabel = line === BusinessLine.DRYWALL ? 'Merma de proceso' : 'Despunte';
-  const columns = withCosts ? 12 : 10;
+  const orders = data?.groups.flatMap((g) => g.orders) ?? [];
+  const unattributed = data !== undefined && !toDecimal(data.totals.unattributedKg).isZero();
+
+  const query = {
+    isPending: loading,
+    isError: report.isError,
+    isSuccess: data !== undefined,
+    refetch: report.refetch,
+  };
+  const clearSearch = () => {
+    setSearchText('');
+  };
+  const emptyTitle = 'No hay producción de esta línea en ese periodo';
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Reporte de producción</h1>
-          <p className="text-xs text-muted-foreground">
-            {BUSINESS_LINE_LABELS[line]}. Una fila por orden de producción, agrupadas por pedido,
-            con los movimientos de kardex del rango por la fecha del reporte de planta. El{' '}
-            {trimLabel.toLowerCase()} es de la orden; por bobina va como lo registró el kardex,
-            repartido en orden de montaje. El ajuste de cierre de una bobina no es de ninguna orden:
-            está en «Merma por bobina».
-          </p>
-          <p className="text-xs text-muted-foreground" data-testid="aviso-estandar">
-            El teórico ya incluye el 1 % de merma estándar; el porcentaje es lo que lo pasa. Hasta
-            el {data?.standardPct ?? '1.00'} % es normal; más que eso se marca en rojo.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1">
-            <Label htmlFor="produccion-desde">Desde</Label>
-            <Input
-              id="produccion-desde"
-              type="date"
-              max={to}
-              value={from}
-              onChange={(e) => {
-                if (e.target.value) setUrl({ from: e.target.value });
-              }}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="produccion-hasta">Hasta</Label>
-            <Input
-              id="produccion-hasta"
-              type="date"
-              min={from}
-              value={to}
-              onChange={(e) => {
-                if (e.target.value) setUrl({ to: e.target.value });
-              }}
-            />
-          </div>
-          {validRange && (
+      <ReportHeader
+        title="Reporte de producción"
+        subtitle={`${BUSINESS_LINE_LABELS[line]}. Lo que produjo cada orden en el periodo, con los kilos del kardex.`}
+        howItWorks={
+          <>
+            <p>
+              {BUSINESS_LINE_LABELS[line]}. Una fila por orden de producción, con los movimientos de
+              kardex del rango por la fecha del reporte de planta. «Ver por» Pedido las agrupa por
+              pedido, con su subtotal. El {trimLabel.toLowerCase()} es de la orden; por bobina va
+              como lo registró el kardex, repartido en orden de montaje. El ajuste de cierre de una
+              bobina no es de ninguna orden: está en «Merma por bobina».
+            </p>
+            <p data-testid="aviso-estandar">
+              El teórico ya incluye el 1 % de merma estándar; el porcentaje es lo que lo pasa. Hasta
+              el {data?.standardPct ?? '1.00'} % es normal; más que eso se marca en rojo.
+            </p>
+            {unattributed && (
+              <p data-testid="aviso-sin-reporte">
+                {formatKg(data.totals.unattributedKg)} salieron como producción en el rango sin
+                apuntar a un reporte de planta: no son de ninguna orden y no están en las filas.
+              </p>
+            )}
+            <p>
+              El total al pie suma las filas de la tabla (con la búsqueda aplicada), con los valores
+              completos y redondeado al final.
+            </p>
+          </>
+        }
+        actions={
+          // Descarga directa contra el API (patrón D-149), con el periodo y la pestaña que se ven.
+          valid ? (
             <HeaderActions
               primary={['xlsx']}
               actions={[
                 {
                   key: 'xlsx',
                   label: 'Descargar Excel',
-                  download: `/api/reports/production-summary/xlsx?from=${from}&to=${to}&businessLine=${line}`,
+                  download: `/api/reports/production-summary/xlsx?${qs}`,
                 },
               ]}
             />
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
+
+      <PeriodPicker state={periodState} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -126,130 +144,320 @@ export function ProduccionView() {
         onChange={select}
       />
 
-      {!validRange && (
-        <p role="alert" className="text-sm text-destructive">
-          El rango de fechas no es válido.
-        </p>
+      {periodState.error !== null && (
+        <ListStateMessage tone="error" title={periodState.error} hint="Elige otro periodo." />
       )}
 
-      {data && (
-        <StatStrip className="sm:grid-cols-3 lg:grid-cols-5">
-          <Stat label="Órdenes">{data.totals.orderCount}</Stat>
-          <Stat label="Kg teórico">{formatQty(data.totals.theoreticalKg, 'kg')}</Stat>
-          <Stat label="Kg salido">{formatQty(data.totals.consumedKg, 'kg')}</Stat>
-          <Stat label={trimLabel}>{formatQty(data.totals.trimKg, 'kg')}</Stat>
-          <Stat label="% sobre el estándar">
-            <Pct value={data.totals.wastePct} over={data.totals.overStandard} />
-          </Stat>
-        </StatStrip>
-      )}
+      {periodState.error === null && (
+        <>
+          {loading && <Skeleton className="h-14 w-full" />}
+          {data && (
+            <StatStrip className="sm:grid-cols-3 lg:grid-cols-5" data-testid="cifras-produccion">
+              <Stat label="Órdenes">{data.totals.orderCount}</Stat>
+              <Stat label="Teórico (kg)">{formatKg(data.totals.theoreticalKg, null)}</Stat>
+              <Stat
+                label="Salido (kg)"
+                hint={
+                  unattributed
+                    ? `más ${formatKg(data.totals.unattributedKg)} sin reporte de planta`
+                    : undefined
+                }
+              >
+                {formatKg(data.totals.consumedKg, null)}
+              </Stat>
+              <Stat label={`${trimLabel} (kg)`}>{formatKg(data.totals.trimKg, null)}</Stat>
+              <Stat label="Merma %" hint={`normal hasta ${data.standardPct} %`}>
+                <Pct value={data.totals.wastePct} over={data.totals.overStandard} />
+              </Stat>
+            </StatStrip>
+          )}
 
-      {data && data.totals.unattributedKg !== '0.000' && (
-        <p role="status" className="text-xs text-muted-foreground" data-testid="aviso-sin-reporte">
-          {formatQty(data.totals.unattributedKg, 'kg')} salieron como producción en el rango sin
-          apuntar a un reporte de planta: no son de ninguna orden y no están en las filas.
-        </p>
-      )}
+          <div className="flex flex-wrap items-center gap-3">
+            <Segmented<ProductionView>
+              label="Ver por"
+              showLabel
+              value={view}
+              options={[
+                { value: 'orden', label: 'Orden' },
+                { value: 'pedido', label: 'Pedido' },
+              ]}
+              onChange={(v) => {
+                setUrl({ ver: v });
+              }}
+            />
+            <Input
+              type="search"
+              aria-label="Buscar en el reporte"
+              placeholder="Buscar orden, pedido, producto o bobina"
+              className="h-8 max-w-xs"
+              value={searchText}
+              onChange={(e) => {
+                setSearchText(e.target.value);
+              }}
+            />
+          </div>
 
-      {report.isPending && validRange && <Skeleton className="h-64 w-full" />}
-      {report.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          No se pudo cargar el reporte.
-        </p>
-      )}
-
-      {data && (
-        <div className="overflow-x-auto rounded-md border">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background">
-              <TableRow>
-                <TableHead>OP</TableHead>
-                <TableHead>Pedido y línea</TableHead>
-                <TableHead>Producto</TableHead>
-                <TableHead className="text-right">Metros o piezas</TableHead>
-                <TableHead className="text-right">Kg teórico</TableHead>
-                <TableHead className="text-right">Kg salido</TableHead>
-                <TableHead className="text-right">{trimLabel}</TableHead>
-                <TableHead className="text-right">% s/ estándar</TableHead>
-                {withCosts && <TableHead className="text-right">Costo salido</TableHead>}
-                {withCosts && (
-                  <TableHead className="text-right">Costo {trimLabel.toLowerCase()}</TableHead>
-                )}
-                <TableHead colSpan={2}>Bobinas (kg salido · {trimLabel.toLowerCase()})</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.groups.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={columns} className="text-muted-foreground">
-                    No hay producción de esta línea en ese rango.
-                  </TableCell>
-                </TableRow>
-              )}
-              {data.groups.map((g) => (
-                <GroupRows
-                  key={g.salesOrderId ?? 'sin-pedido'}
-                  group={g}
-                  withCosts={withCosts}
-                  trimLabel={trimLabel}
-                />
-              ))}
-            </TableBody>
-            {data.groups.length > 0 && (
-              <TableFooter>
-                <TableRow data-testid="produccion-total">
-                  <TableCell colSpan={4}>
-                    Total de {BUSINESS_LINE_LABELS[line]} ({data.totals.orderCount} órdenes)
-                  </TableCell>
-                  <FigureCells f={data.totals} withCosts={withCosts} />
-                  <TableCell colSpan={2} />
-                </TableRow>
-              </TableFooter>
-            )}
-          </Table>
-        </div>
+          {view === 'orden' ? (
+            <ReportTable
+              testId="tabla-produccion"
+              rowTestId="produccion-op"
+              columns={orderColumns(trimLabel, withCosts, data, orders)}
+              rows={orders}
+              rowKey={(o) => o.productionOrderId}
+              sort={sort}
+              onSort={toggleSort}
+              search={searchText}
+              detail={(o) => <CoilRows order={o} withCosts={withCosts} trimLabel={trimLabel} />}
+              detailLabel={(o) => o.code}
+              footerLabel={(n) => `Total · ${n === 1 ? '1 orden' : `${String(n)} órdenes`}`}
+              query={query}
+              emptyTitle={emptyTitle}
+              noResultsTitle={`Ninguna orden coincide con «${searchText.trim()}»`}
+              onClearSearch={clearSearch}
+              errorTitle="No se pudo cargar el reporte"
+            />
+          ) : (
+            <ReportTable
+              testId="tabla-produccion"
+              rowTestId="produccion-subtotal"
+              columns={groupColumns(trimLabel, withCosts, data)}
+              rows={data?.groups ?? []}
+              rowKey={(g) => g.salesOrderId ?? 'sin-pedido'}
+              sort={sort}
+              onSort={toggleSort}
+              search={searchText}
+              detail={(g) => <OrderRows group={g} withCosts={withCosts} />}
+              detailLabel={(g) => g.salesOrderCode ?? 'las órdenes a stock'}
+              footerLabel={() => 'Total'}
+              query={query}
+              emptyTitle={emptyTitle}
+              noResultsTitle={`Ningún pedido coincide con «${searchText.trim()}»`}
+              onClearSearch={clearSearch}
+              errorTitle="No se pudo cargar el reporte"
+            />
+          )}
+        </>
       )}
     </RoleGate>
   );
 }
 
-function GroupRows({
-  group,
-  withCosts,
-  trimLabel,
-}: {
-  group: ProductionSummaryGroupDto;
-  withCosts: boolean;
-  trimLabel: string;
-}) {
+type ProductionView = 'orden' | 'pedido';
+
+/** Las cifras del API, como `Decimal`, para el pie sin búsqueda. */
+function apiTotals(t: ProductionSummaryDto['totals']): ProductionTotals {
+  return {
+    theoreticalKg: toDecimal(t.theoreticalKg),
+    consumedKg: toDecimal(t.consumedKg),
+    trimKg: toDecimal(t.trimKg),
+    wastePct: t.wastePct,
+    overStandard: t.overStandard,
+    materialCostPen: t.materialCostPen === null ? null : toDecimal(t.materialCostPen),
+    trimCostPen: t.trimCostPen === null ? null : toDecimal(t.trimCostPen),
+  };
+}
+
+type Figures = Pick<
+  ProductionSummaryOrderDto,
+  | 'theoreticalKg'
+  | 'consumedKg'
+  | 'trimKg'
+  | 'wastePct'
+  | 'overStandard'
+  | 'materialCostPen'
+  | 'trimCostPen'
+>;
+
+/** Las columnas de cifras, iguales para una orden y para un pedido. */
+function figureColumns<T>(
+  figures: (row: T) => Figures,
+  total: (rows: readonly T[]) => ProductionTotals,
+  trimLabel: string,
+  withCosts: boolean,
+): ReportColumn<T>[] {
+  const columns: ReportColumn<T>[] = [
+    {
+      key: 'theoretical',
+      header: 'Teórico (kg)',
+      align: 'right',
+      cell: (r) => formatKg(figures(r).theoreticalKg, null),
+      sortValue: { decimal: (r) => figures(r).theoreticalKg },
+      total: (rows) => formatKg(total(rows).theoreticalKg, null),
+    },
+    {
+      key: 'consumed',
+      header: 'Salido (kg)',
+      align: 'right',
+      cell: (r) => formatKg(figures(r).consumedKg, null),
+      sortValue: { decimal: (r) => figures(r).consumedKg },
+      total: (rows) => formatKg(total(rows).consumedKg, null),
+    },
+    {
+      key: 'trim',
+      header: `${trimLabel} (kg)`,
+      align: 'right',
+      cell: (r) => formatKg(figures(r).trimKg, null),
+      sortValue: { decimal: (r) => figures(r).trimKg },
+      total: (rows) => formatKg(total(rows).trimKg, null),
+    },
+    {
+      key: 'pct',
+      header: 'Merma %',
+      align: 'right',
+      cell: (r) => <Pct value={figures(r).wastePct} over={figures(r).overStandard} />,
+      sortValue: { decimal: (r) => figures(r).wastePct ?? '' },
+      total: (rows) => {
+        const t = total(rows);
+        return <Pct value={t.wastePct} over={t.overStandard} />;
+      },
+    },
+  ];
+  if (!withCosts) return columns;
+  return [
+    ...columns,
+    {
+      key: 'materialCost',
+      header: 'Costo salido (S/)',
+      align: 'right',
+      cell: (r) => amountOrDash(figures(r).materialCostPen),
+      sortValue: { decimal: (r) => figures(r).materialCostPen ?? '' },
+      total: (rows) => amountOrDash(total(rows).materialCostPen),
+    },
+    {
+      key: 'trimCost',
+      header: `Costo ${trimLabel.toLowerCase()} (S/)`,
+      align: 'right',
+      cell: (r) => amountOrDash(figures(r).trimCostPen),
+      sortValue: { decimal: (r) => figures(r).trimCostPen ?? '' },
+      total: (rows) => amountOrDash(total(rows).trimCostPen),
+    },
+  ];
+}
+
+function orderColumns(
+  trimLabel: string,
+  withCosts: boolean,
+  data: ProductionSummaryDto | undefined,
+  all: readonly ProductionSummaryOrderDto[],
+): ReportColumn<ProductionSummaryOrderDto>[] {
+  const total = (rows: readonly ProductionSummaryOrderDto[]) =>
+    data && allRows(rows, all)
+      ? apiTotals(data.totals)
+      : productionTotalsOf(rows, data?.standardPct ?? '1.00');
+  return [
+    {
+      key: 'code',
+      header: 'Orden',
+      cell: (o) => (
+        <Link
+          className={cn(LINK_CLASSNAME, 'font-mono')}
+          href={`/produccion/${o.productionOrderId}`}
+        >
+          {o.code}
+        </Link>
+      ),
+      sortValue: { text: (o) => o.code },
+      searchText: (o) => [o.code, ...o.coils.map((c) => c.code)],
+    },
+    {
+      key: 'order',
+      header: 'Pedido',
+      cell: (o) => <OrderLine order={o} />,
+      sortValue: { text: (o) => o.salesOrderCode ?? '' },
+      searchText: (o) => o.salesOrderCode ?? 'A stock',
+    },
+    {
+      key: 'product',
+      header: 'Producto',
+      cell: (o) => (
+        <span className="inline-flex flex-col">
+          <span className="font-mono text-xs">{o.productSku}</span>
+          <span className="text-xs text-muted-foreground">{o.productName}</span>
+        </span>
+      ),
+      sortValue: { text: (o) => o.productSku },
+      searchText: (o) => [o.productSku, o.productName],
+    },
+    {
+      key: 'quantity',
+      header: 'Cantidad',
+      align: 'right',
+      cell: (o) => quantityText(o),
+      sortValue: { decimal: (o) => o.quantity },
+    },
+    ...figureColumns<ProductionSummaryOrderDto>((o) => o, total, trimLabel, withCosts),
+  ];
+}
+
+function groupColumns(
+  trimLabel: string,
+  withCosts: boolean,
+  data: ProductionSummaryDto | undefined,
+): ReportColumn<ProductionSummaryGroupDto>[] {
+  const total = (rows: readonly ProductionSummaryGroupDto[]) =>
+    data && allRows(rows, data.groups)
+      ? apiTotals(data.totals)
+      : productionTotalsOf(
+          rows.flatMap((g) => g.orders),
+          data?.standardPct ?? '1.00',
+        );
+  return [
+    {
+      key: 'order',
+      header: 'Pedido',
+      cell: (g) =>
+        g.salesOrderId !== null && g.salesOrderCode !== null ? (
+          <Link className={cn(LINK_CLASSNAME, 'font-mono')} href={`/pedidos/${g.salesOrderId}`}>
+            {g.salesOrderCode}
+          </Link>
+        ) : (
+          'Sin pedido (a stock)'
+        ),
+      sortValue: { text: (g) => g.salesOrderCode ?? '' },
+      searchText: (g) => [
+        g.salesOrderCode ?? 'Sin pedido (a stock)',
+        ...g.orders.flatMap((o) => [o.code, o.productSku, o.productName]),
+      ],
+    },
+    {
+      key: 'count',
+      header: 'Órdenes',
+      align: 'right',
+      cell: (g) => String(g.orders.length),
+      sortValue: { decimal: (g) => String(g.orders.length) },
+      total: (groups) => String(groups.reduce((n, g) => n + g.orders.length, 0)),
+    },
+    ...figureColumns<ProductionSummaryGroupDto>((g) => g.subtotal, total, trimLabel, withCosts),
+  ];
+}
+
+/** El pedido y la línea de la orden; una corrida a stock no tiene pedido. */
+function OrderLine({ order: o }: { order: ProductionSummaryOrderDto }) {
+  if (o.salesOrderId === null || o.salesOrderCode === null) {
+    return <span className="text-muted-foreground">A stock</span>;
+  }
   return (
-    <>
-      {group.orders.map((o) => (
-        <OrderRow key={o.productionOrderId} order={o} withCosts={withCosts} trimLabel={trimLabel} />
-      ))}
-      <TableRow
-        className="bg-muted/40 font-medium hover:bg-muted/40"
-        data-testid="produccion-subtotal"
-      >
-        <TableCell colSpan={4}>
-          Subtotal{' '}
-          {group.salesOrderId !== null && group.salesOrderCode !== null ? (
-            <Link className={`${LINK_CLASSNAME} font-mono`} href={`/pedidos/${group.salesOrderId}`}>
-              {group.salesOrderCode}
-            </Link>
-          ) : (
-            'sin pedido (a stock)'
-          )}
-        </TableCell>
-        <FigureCells f={group.subtotal} withCosts={withCosts} />
-        <TableCell colSpan={2} />
-      </TableRow>
-    </>
+    <span>
+      <Link className={cn(LINK_CLASSNAME, 'font-mono')} href={`/pedidos/${o.salesOrderId}`}>
+        {o.salesOrderCode}
+      </Link>
+      {o.lineNumber !== null && (
+        <span className="text-muted-foreground"> · línea {String(o.lineNumber)}</span>
+      )}
+    </span>
   );
 }
 
-function OrderRow({
-  order: o,
+/** Lo producido: metros (producto en metros) o piezas. */
+function quantityText(o: ProductionSummaryOrderDto): string {
+  if (o.quantityUnit === 'm') return formatMeters(o.quantity);
+  const pieces = toDecimal(o.quantity);
+  return `${o.quantity} ${pieces.eq(1) ? 'pieza' : 'piezas'}`;
+}
+
+/** Lo que cada bobina dio a la orden, alineado con las columnas de la orden. */
+function CoilRows({
+  order,
   withCosts,
   trimLabel,
 }: {
@@ -258,78 +466,67 @@ function OrderRow({
   trimLabel: string;
 }) {
   return (
-    <TableRow data-testid="produccion-op">
-      <TableCell>
-        <Link className={`${LINK_CLASSNAME} font-mono`} href={`/produccion/${o.productionOrderId}`}>
-          {o.code}
-        </Link>
-      </TableCell>
-      <TableCell className="font-mono text-xs">
-        {o.salesOrderCode === null ? 'A stock' : `${o.salesOrderCode} · L${String(o.lineNumber)}`}
-      </TableCell>
-      <TableCell>
-        <span className="font-mono text-xs">{o.productSku}</span>
-        <span className="block text-xs text-muted-foreground">{o.productName}</span>
-      </TableCell>
-      <TableCell className="text-right">
-        {o.quantityUnit === 'm' ? formatQty(o.quantity, 'm') : `${o.quantity} pzs`}
-      </TableCell>
-      <FigureCells f={o} withCosts={withCosts} />
-      <TableCell colSpan={2} className="text-xs">
-        <ul className="grid gap-0.5">
-          {o.coils.map((c) => (
-            <li key={c.coilId}>
-              <Link className={`${LINK_CLASSNAME} font-mono`} href={`/bobinas/${c.coilId}`}>
-                {c.code}
-              </Link>{' '}
-              {formatQty(c.consumedKg, 'kg')}
-              {c.trimKg !== '0.000' && (
-                <span
-                  className="text-muted-foreground"
-                  title={`${trimLabel} de la orden, repartido en orden de montaje`}
-                >
-                  {' '}
-                  · {trimLabel.toLowerCase()} {formatQty(c.trimKg, 'kg')} (repartido en orden de
-                  montaje)
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      </TableCell>
-    </TableRow>
+    <>
+      {order.coils.map((c) => (
+        <TableRow key={c.coilId} className={DETAIL_ROW_CLASSNAME} data-testid="produccion-bobina">
+          <TableCell className="pl-8">
+            <Link className={cn(LINK_CLASSNAME, 'font-mono')} href={`/bobinas/${c.coilId}`}>
+              {c.code}
+            </Link>
+          </TableCell>
+          <TableCell colSpan={3} className="text-muted-foreground">
+            {!toDecimal(c.trimKg).isZero() &&
+              `${trimLabel} de la orden repartido en orden de montaje`}
+          </TableCell>
+          <TableCell />
+          <TableCell className="text-right">{formatKg(c.consumedKg, null)}</TableCell>
+          <TableCell className="text-right">{formatKg(c.trimKg, null)}</TableCell>
+          <TableCell />
+          {withCosts && <TableCell colSpan={2} />}
+        </TableRow>
+      ))}
+    </>
   );
 }
 
-function FigureCells({
-  f,
-  withCosts,
-}: {
-  f: {
-    theoreticalKg: string;
-    consumedKg: string;
-    trimKg: string;
-    wastePct: string | null;
-    overStandard: boolean;
-    materialCostPen: string | null;
-    trimCostPen: string | null;
-  };
-  withCosts: boolean;
-}) {
+/** Las órdenes de un pedido, alineadas con las columnas del pedido. */
+function OrderRows({ group, withCosts }: { group: ProductionSummaryGroupDto; withCosts: boolean }) {
   return (
     <>
-      <TableCell className="text-right">{formatQty(f.theoreticalKg, 'kg')}</TableCell>
-      <TableCell className="text-right">{formatQty(f.consumedKg, 'kg')}</TableCell>
-      <TableCell className="text-right">{formatQty(f.trimKg, 'kg')}</TableCell>
-      <TableCell className="text-right">
-        <Pct value={f.wastePct} over={f.overStandard} />
-      </TableCell>
-      {withCosts && (
-        <TableCell className="text-right">{formatMoneyOrDash(f.materialCostPen)}</TableCell>
-      )}
-      {withCosts && (
-        <TableCell className="text-right">{formatMoneyOrDash(f.trimCostPen)}</TableCell>
-      )}
+      {group.orders.map((o) => (
+        <TableRow
+          key={o.productionOrderId}
+          className={DETAIL_ROW_CLASSNAME}
+          data-testid="produccion-op"
+        >
+          <TableCell className="pl-8">
+            <Link
+              className={cn(LINK_CLASSNAME, 'font-mono')}
+              href={`/produccion/${o.productionOrderId}`}
+            >
+              {o.code}
+            </Link>
+            <span className="text-muted-foreground">
+              {' · '}
+              {o.productSku}
+              {o.lineNumber !== null && ` · línea ${String(o.lineNumber)}`}
+            </span>
+          </TableCell>
+          <TableCell className="text-right">{quantityText(o)}</TableCell>
+          <TableCell className="text-right">{formatKg(o.theoreticalKg, null)}</TableCell>
+          <TableCell className="text-right">{formatKg(o.consumedKg, null)}</TableCell>
+          <TableCell className="text-right">{formatKg(o.trimKg, null)}</TableCell>
+          <TableCell className="text-right">
+            <Pct value={o.wastePct} over={o.overStandard} />
+          </TableCell>
+          {withCosts && (
+            <>
+              <TableCell className="text-right">{amountOrDash(o.materialCostPen)}</TableCell>
+              <TableCell className="text-right">{amountOrDash(o.trimCostPen)}</TableCell>
+            </>
+          )}
+        </TableRow>
+      ))}
     </>
   );
 }
@@ -340,16 +537,14 @@ function Pct({ value, over }: { value: string | null; over: boolean }) {
   return over ? <Badge variant="destructive">{value} %</Badge> : <span>{value} %</span>;
 }
 
-/** Coberturas Aluzinc y Drywall, sin «Todas» (como la merma, D-424); el rango sobrevive. */
+/** Un importe sin símbolo (la columna dice «S/»); sin costo (supervisor), guion. */
+function amountOrDash(value: string | Decimal | null): string {
+  return value === null ? '—' : formatAmount(value);
+}
+
+/** Coberturas Aluzinc y Drywall, sin «Todas» (como la merma, D-424); periodo, vista y orden sobreviven. */
 const LINE_TABS: LineTabsConfig = {
   lines: COIL_REPORT_LINES,
   includeAll: false,
-  keep: ['from', 'to'],
+  keep: ['from', 'to', 'ver', 'sort', 'dir'],
 };
-
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Primer día del mes de negocio en curso, el rango por defecto. */
-function firstOfMonth(): string {
-  return `${businessToday().slice(0, 7)}-01`;
-}

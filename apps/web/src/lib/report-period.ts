@@ -121,6 +121,71 @@ export function completePeriod(
   };
 }
 
+/* ------------------------------------------------------------------------------------- *
+ * cc32 (corte 2): el Reporte mensual de bobinas sigue eligiendo un mes (`?mes=AAAA-MM`). El mes
+ * va siempre en la URL, como el periodo de los demás, y sale del mismo periodo recordado: al
+ * llegar desde otro reporte, el mes es el de su fecha final.
+ * ------------------------------------------------------------------------------------- */
+
+export const MONTH_PRESETS = ['this-month', 'last-month'] as const;
+export type MonthPreset = (typeof MONTH_PRESETS)[number];
+
+const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
+
+/** `AAAA-MM` con un mes que existe. */
+export function isValidMonth(value: string): boolean {
+  return MONTH.test(value);
+}
+
+/** El mes de un atajo, contado desde `today` (día de Lima). */
+export function presetMonth(preset: MonthPreset, today: string): string {
+  if (preset === 'this-month') return today.slice(0, 7);
+  const [y, m] = monthBefore(today, 1);
+  return `${String(y)}-${pad(m)}`;
+}
+
+/** El atajo que describe este mes, o `null` si es otro. */
+export function matchMonthPreset(month: string, today: string): MonthPreset | null {
+  for (const preset of MONTH_PRESETS) if (presetMonth(preset, today) === month) return preset;
+  return null;
+}
+
+/**
+ * El mes de un periodo: el de su fecha final, sin pasar del mes en curso (un rango libre puede
+ * terminar después de hoy y el reporte de un mes que no empezó no dice nada).
+ */
+export function periodMonth(period: ReportPeriod, today: string): string {
+  const current = today.slice(0, 7);
+  if (!isValidDate(period.to)) return current;
+  const month = period.to.slice(0, 7);
+  return month > current ? current : month;
+}
+
+/** El mes predeterminado: el del último periodo guardado si es válido; si no, el mes en curso. */
+export function defaultMonth(today: string, stored: ReportPeriod | null): string {
+  return stored !== null && periodError(stored) === null
+    ? periodMonth(stored, today)
+    : today.slice(0, 7);
+}
+
+/** Del primer al último día del mes, como el corte del reporte. */
+export function fullMonth(month: string): ReportPeriod {
+  const year = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  return { from: `${month}-01`, to: `${month}-${pad(daysInMonth(year, m))}` };
+}
+
+/** El periodo de un mes, para recordarlo: el mes entero, o hasta hoy si es el mes en curso. */
+export function monthPeriod(month: string, today: string): ReportPeriod {
+  if (month === today.slice(0, 7)) return presetPeriod('this-month', today);
+  return fullMonth(month);
+}
+
+/** El motivo por el que el mes no sirve, en palabras del usuario; `null` si sirve. */
+export function monthError(month: string): string | null {
+  return isValidMonth(month) ? null : 'El mes no es válido: revisa la fecha.';
+}
+
 /** «Del 01/10/2026 al 07/10/2026». */
 export function formatPeriodRange(period: ReportPeriod): string {
   return `Del ${formatDate(period.from)} al ${formatDate(period.to)}`;

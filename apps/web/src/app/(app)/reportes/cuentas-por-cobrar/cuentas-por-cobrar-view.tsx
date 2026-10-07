@@ -1,25 +1,36 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
   AGING_BUCKETS,
   AGING_BUCKET_LABELS,
   FISCAL_DOC_TYPE_LABELS,
   Role,
+  toDecimal,
+  type AgingBucket,
+  type Decimal,
   type ReceivablesAgingCustomerDto,
   type ReceivablesAgingDto,
 } from '@ayr/shared';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { HeaderActions } from '@/components/header-actions';
+import { ReportHeader } from '@/components/reports/report-header';
+import {
+  DETAIL_ROW_CLASSNAME,
+  ReportTable,
+  type ReportColumn,
+} from '@/components/reports/report-table';
 import { api } from '@/lib/api';
-import { formatDate, formatMoney } from '@/lib/format';
-import { useUrlState } from '@/lib/use-url-state';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { formatAmount, formatDate, formatMoney } from '@/lib/format';
+import { agingTotalsOf, allRows } from '@/lib/report-totals';
+import { useSort } from '@/lib/use-sort';
+import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { LINK_CLASSNAME, cn } from '@/lib/utils';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
@@ -32,7 +43,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -44,12 +54,19 @@ import {
  * Por cliente y sin pestañas de línea: el cobro es por comprobante y un comprobante mezcla
  * líneas (D-421). El saldo es el de /cobranzas, leído igual: el total de acá es el de sus
  * tarjetas. Cada cliente se abre en sus comprobantes, con enlace al comprobante y al pedido.
+ *
+ * cc32 (corte 2): con la plantilla de reportes —«Cómo se calcula», tabla con orden, búsqueda,
+ * detalle con chevron y total al pie—. Sigue «a hoy», sin selector de periodo. Lo que se le pide
+ * al API no cambia.
  */
 export function CuentasPorCobrarView() {
   // D-423: el vendedor va en la URL, como los filtros de D-289; vacío es «todos».
-  const [url, setUrl] = useUrlState({ vendedor: '' });
+  const [url, setUrl] = useUrlState({ vendedor: '', search: '' });
   const sellerId = UUID.test(url.vendedor) ? url.vendedor : '';
-  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [sort, toggleSort] = useSort<string>();
+  const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
+  });
 
   // Un valor que no es un id (escrito a mano) cae a «todos» y se corrige la URL.
   useEffect(() => {
@@ -77,49 +94,30 @@ export function CuentasPorCobrarView() {
     if (unknownSeller) setUrl({ vendedor: '' });
   }, [unknownSeller, setUrl]);
 
-  const toggle = (customerId: string) => {
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(customerId)) next.delete(customerId);
-      else next.add(customerId);
-      return next;
-    });
-  };
-
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Cuentas por cobrar</h1>
-          <p className="text-xs text-muted-foreground">
-            Saldo a hoy{data ? ` (${formatDate(data.asOf)})` : ''} de los comprobantes con deuda,
-            por cliente y por antigüedad desde el vencimiento. El contado vence el día de su emisión
-            (Cobranzas no lo cuenta como vencido; el saldo es el mismo). Importes en soles, con IGV.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="grid gap-1 text-sm">
-            <span className="text-muted-foreground">Vendedor</span>
-            <Select
-              value={sellerId || ALL}
-              onValueChange={(v) => {
-                setUrl({ vendedor: v === ALL ? '' : v });
-              }}
-            >
-              <SelectTrigger className="w-56" aria-label="Vendedor">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Todos los vendedores</SelectItem>
-                {data?.sellers.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-          {/* cc25 (M3): descarga directa contra el API (patrón D-149), con el mismo vendedor. */}
+      <ReportHeader
+        title="Cuentas por cobrar"
+        subtitle={`Saldo a hoy${data ? ` (${formatDate(data.asOf)})` : ''} por cliente y antigüedad, en soles con IGV.`}
+        howItWorks={
+          <>
+            <p>
+              Saldo a hoy de los comprobantes con deuda, por cliente y por antigüedad desde el
+              vencimiento. El contado vence el día de su emisión (Cobranzas no lo cuenta como
+              vencido; el saldo es el mismo). Importes en soles, con IGV.
+            </p>
+            <p>
+              El saldo es el de Cobranzas, leído igual: el total de este reporte es el de sus
+              tarjetas. Abre un cliente con la flecha para ver sus comprobantes.
+            </p>
+            <p>
+              El total al pie suma los clientes de la tabla (con la búsqueda aplicada), con los
+              valores completos y redondeado al final.
+            </p>
+          </>
+        }
+        actions={
+          // cc25 (M3): descarga directa contra el API (patrón D-149), con el mismo vendedor.
           <HeaderActions
             primary={['xlsx']}
             actions={[
@@ -130,216 +128,249 @@ export function CuentasPorCobrarView() {
               },
             ]}
           />
-        </div>
-      </div>
+        }
+      />
 
+      {report.isPending && <Skeleton className="h-14 w-full" />}
       {data && (
-        <StatStrip className="sm:grid-cols-3 lg:grid-cols-6">
-          <Stat label="Saldo total">{formatMoney(data.totals.balancePen)}</Stat>
+        <StatStrip className="sm:grid-cols-3 lg:grid-cols-6" data-testid="cifras-cxc">
+          <Stat
+            label="Saldo total"
+            hint={`${plural(data.totals.customerCount, 'cliente', 'clientes')} · ${plural(data.totals.documentCount, 'comprobante', 'comprobantes')}`}
+          >
+            {formatMoney(data.totals.balancePen)}
+          </Stat>
           {AGING_BUCKETS.map((b) => (
-            <Stat key={b} label={AGING_BUCKET_LABELS[b]}>
+            <Stat
+              key={b}
+              label={AGING_BUCKET_LABELS[b]}
+              hint={b === 'CURRENT' ? undefined : 'vencido'}
+            >
               {formatMoney(data.totals.buckets[b])}
             </Stat>
           ))}
         </StatStrip>
       )}
 
-      {report.isPending && <Skeleton className="h-64 w-full" />}
-      {report.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          No se pudo cargar el reporte.
-        </p>
-      )}
+      <div className="flex flex-wrap items-center gap-3">
+        <Select
+          value={sellerId || ALL}
+          onValueChange={(v) => {
+            setUrl({ vendedor: v === ALL ? '' : v });
+          }}
+        >
+          <SelectTrigger className="h-8 w-56" aria-label="Vendedor">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Todos los vendedores</SelectItem>
+            {data?.sellers.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Input
+          type="search"
+          aria-label="Buscar en el reporte"
+          placeholder="Buscar cliente, RUC, comprobante o pedido"
+          className="h-8 max-w-xs"
+          value={searchText}
+          onChange={(e) => {
+            setSearchText(e.target.value);
+          }}
+        />
+      </div>
 
-      {data && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold">
-            Por cliente ({data.totals.customerCount}{' '}
-            {data.totals.customerCount === 1 ? 'cliente' : 'clientes'}, {data.totals.documentCount}{' '}
-            {data.totals.documentCount === 1 ? 'comprobante' : 'comprobantes'})
-          </h2>
-          <div className="overflow-x-auto rounded-md border">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background">
-                <TableRow>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead className="text-right">Comprob.</TableHead>
-                  {AGING_BUCKETS.map((b) => (
-                    <TableHead key={b} className="text-right">
-                      {AGING_BUCKET_LABELS[b]}
-                    </TableHead>
-                  ))}
-                  <TableHead className="text-right">Saldo</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.customers.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={COLUMNS} className="text-muted-foreground">
-                      {sellerId
-                        ? 'Este vendedor no tiene comprobantes con saldo.'
-                        : 'No hay comprobantes con saldo.'}
-                    </TableCell>
-                  </TableRow>
-                )}
-                {data.customers.map((c) => (
-                  <CustomerRows
-                    key={c.customerId}
-                    customer={c}
-                    open={open.has(c.customerId)}
-                    onToggle={() => {
-                      toggle(c.customerId);
-                    }}
-                  />
-                ))}
-              </TableBody>
-              {data.customers.length > 0 && (
-                <TableFooter>
-                  <TableRow>
-                    <TableCell>Total</TableCell>
-                    <TableCell className="text-right">{data.totals.documentCount}</TableCell>
-                    {AGING_BUCKETS.map((b) => (
-                      <TableCell key={b} className="text-right">
-                        {formatMoney(data.totals.buckets[b])}
-                      </TableCell>
-                    ))}
-                    <TableCell className="text-right font-semibold" data-testid="cxc-total">
-                      {formatMoney(data.totals.balancePen)}
-                    </TableCell>
-                  </TableRow>
-                </TableFooter>
-              )}
-            </Table>
-          </div>
-        </section>
-      )}
+      <ReportTable
+        testId="tabla-cxc"
+        rowTestId="cxc-cliente"
+        columns={columns(data)}
+        rows={data?.customers ?? []}
+        rowKey={(c) => c.customerId}
+        sort={sort}
+        onSort={toggleSort}
+        search={searchText}
+        detail={(c) => <DocumentRows customer={c} />}
+        detailLabel={(c) => c.customerName}
+        footerLabel={(n) => `Total · ${plural(n, 'cliente', 'clientes')}`}
+        query={{
+          isPending: report.isPending,
+          isError: report.isError,
+          isSuccess: data !== undefined,
+          refetch: report.refetch,
+        }}
+        emptyTitle={
+          sellerId
+            ? 'Este vendedor no tiene comprobantes con saldo'
+            : 'No hay comprobantes con saldo'
+        }
+        noResultsTitle={`Ningún cliente coincide con «${searchText.trim()}»`}
+        onClearSearch={() => {
+          setSearchText('');
+        }}
+        errorTitle="No se pudo cargar el reporte"
+      />
     </RoleGate>
   );
 }
 
-/** La fila del cliente y, abierta, el detalle de sus comprobantes debajo. */
-function CustomerRows({
-  customer,
-  open,
-  onToggle,
-}: {
-  customer: ReceivablesAgingCustomerDto;
-  open: boolean;
-  onToggle: () => void;
-}) {
+function columns(
+  data: ReceivablesAgingDto | undefined,
+): ReportColumn<ReceivablesAgingCustomerDto>[] {
+  // Sin búsqueda, el total del API; con búsqueda, el de los clientes a la vista.
+  const total = (rows: readonly ReceivablesAgingCustomerDto[]) => {
+    if (data && allRows(rows, data.customers)) {
+      const t = data.totals;
+      return {
+        documentCount: t.documentCount,
+        balancePen: toDecimal(t.balancePen),
+        buckets: Object.fromEntries(
+          AGING_BUCKETS.map((b) => [b, toDecimal(t.buckets[b])]),
+        ) as Record<AgingBucket, Decimal>,
+      };
+    }
+    return agingTotalsOf(rows);
+  };
+  return [
+    {
+      key: 'customer',
+      header: 'Cliente',
+      // Sin página de detalle de cliente en la app: el nombre no es enlace (se anota en el informe).
+      cell: (c) => (
+        <span>
+          <span className="font-medium">{c.customerName}</span>
+          <span className="ml-2 font-mono text-xs text-muted-foreground">
+            {c.customerDocNumber}
+          </span>
+        </span>
+      ),
+      sortValue: { text: (c) => c.customerName },
+      searchText: (c) => [
+        c.customerName,
+        c.customerDocNumber,
+        ...c.documents.flatMap((d) => [d.number ?? '', d.salesOrderCode ?? '', d.sellerName ?? '']),
+      ],
+    },
+    {
+      key: 'documents',
+      header: 'Comprobantes',
+      align: 'right',
+      cell: (c) => String(c.documentCount),
+      sortValue: { decimal: (c) => String(c.documentCount) },
+      total: (rows) => String(total(rows).documentCount),
+    },
+    ...AGING_BUCKETS.map((b): ReportColumn<ReceivablesAgingCustomerDto> => ({
+      key: BUCKET_KEYS[b],
+      header: `${AGING_BUCKET_LABELS[b]} (S/)`,
+      align: 'right',
+      cell: (c) => formatAmount(c.buckets[b]),
+      sortValue: { decimal: (c) => c.buckets[b] },
+      total: (rows) => formatAmount(total(rows).buckets[b]),
+    })),
+    {
+      key: 'balance',
+      header: 'Saldo (S/)',
+      align: 'right',
+      cell: (c) => <span className="font-medium">{formatAmount(c.balancePen)}</span>,
+      sortValue: { decimal: (c) => c.balancePen },
+      total: (rows) => <span data-testid="cxc-total">{formatAmount(total(rows).balancePen)}</span>,
+    },
+  ];
+}
+
+/** Los comprobantes del cliente, del más vencido al que vence más tarde. */
+function DocumentRows({ customer }: { customer: ReceivablesAgingCustomerDto }) {
   return (
-    <>
-      <TableRow data-testid="cxc-cliente">
-        <TableCell>
-          <button
-            type="button"
-            className="flex items-center gap-1 text-left"
-            onClick={onToggle}
-            aria-expanded={open}
-          >
-            {open ? (
-              <ChevronDown className="size-4 shrink-0" aria-hidden />
-            ) : (
-              <ChevronRight className="size-4 shrink-0" aria-hidden />
-            )}
-            <span>
-              <span className="font-medium">{customer.customerName}</span>
-              <span className="ml-2 font-mono text-xs text-muted-foreground">
-                {customer.customerDocNumber}
-              </span>
-            </span>
-          </button>
-        </TableCell>
-        <TableCell className="text-right">{customer.documentCount}</TableCell>
-        {AGING_BUCKETS.map((b) => (
-          <TableCell key={b} className="text-right">
-            {customer.buckets[b] === ZERO ? '—' : formatMoney(customer.buckets[b])}
-          </TableCell>
-        ))}
-        <TableCell className="text-right font-medium">{formatMoney(customer.balancePen)}</TableCell>
-      </TableRow>
-      {open && (
-        <TableRow className="bg-muted/40 hover:bg-muted/40">
-          <TableCell colSpan={COLUMNS} className="p-0">
-            <Table aria-label={`Comprobantes de ${customer.customerName}`}>
-              <TableHeader>
-                <TableRow className="text-xs">
-                  <TableHead className="pl-8">Comprobante</TableHead>
-                  <TableHead>Pedido</TableHead>
-                  <TableHead>Vendedor</TableHead>
-                  <TableHead>Emisión</TableHead>
-                  <TableHead>Vence</TableHead>
-                  <TableHead className="text-right">Días vencido</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Cobrado</TableHead>
-                  <TableHead className="text-right">Notas de crédito</TableHead>
-                  <TableHead className="text-right">Saldo</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {customer.documents.map((d) => (
-                  <TableRow key={d.id} className="text-xs" data-testid="cxc-comprobante">
-                    <TableCell className="pl-8">
-                      <Link
-                        className={`${LINK_CLASSNAME} font-mono`}
-                        href={`/comprobantes/${d.id}`}
-                      >
-                        {d.number ?? '—'}
-                      </Link>
-                      <span className="ml-2 text-muted-foreground">
-                        {FISCAL_DOC_TYPE_LABELS[d.docType]}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      {d.salesOrderId && d.salesOrderCode ? (
-                        <Link
-                          className={`${LINK_CLASSNAME} font-mono`}
-                          href={`/pedidos/${d.salesOrderId}`}
-                        >
-                          {d.salesOrderCode}
-                        </Link>
-                      ) : (
-                        <span className="text-muted-foreground">Sin pedido</span>
-                      )}
-                    </TableCell>
-                    <TableCell>{d.sellerName ?? '—'}</TableCell>
-                    <TableCell>{formatDate(d.issueDate)}</TableCell>
-                    <TableCell>
-                      {d.dueDate === null ? (
-                        <span title="Al contado vence el día de su emisión">Contado</span>
-                      ) : (
-                        formatDate(d.dueDate)
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {d.daysOverdue > 0 ? (
-                        <Badge variant={d.daysOverdue > 90 ? 'destructive' : 'warning'}>
-                          {d.daysOverdue}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">Por vencer</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">{formatMoney(d.totalPen)}</TableCell>
-                    <TableCell className="text-right">{formatMoney(d.paidPen)}</TableCell>
-                    <TableCell className="text-right">{formatMoney(d.creditedPen)}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatMoney(d.balancePen)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableCell>
-        </TableRow>
-      )}
-    </>
+    <TableRow className={DETAIL_ROW_CLASSNAME}>
+      <TableCell colSpan={COLUMN_COUNT} className="p-0 pl-6">
+        <Table aria-label={`Comprobantes de ${customer.customerName}`}>
+          <TableHeader>
+            <TableRow className="text-xs">
+              <TableHead>Comprobante</TableHead>
+              <TableHead>Pedido</TableHead>
+              <TableHead>Vendedor</TableHead>
+              <TableHead>Emisión</TableHead>
+              <TableHead>Vence</TableHead>
+              <TableHead className="text-right">Días vencido</TableHead>
+              <TableHead className="text-right">Total (S/)</TableHead>
+              <TableHead className="text-right">Cobrado (S/)</TableHead>
+              <TableHead className="text-right">Notas de crédito (S/)</TableHead>
+              <TableHead className="text-right">Saldo (S/)</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {customer.documents.map((d) => (
+              <TableRow key={d.id} className="text-xs" data-testid="cxc-comprobante">
+                <TableCell>
+                  <Link className={cn(LINK_CLASSNAME, 'font-mono')} href={`/comprobantes/${d.id}`}>
+                    {d.number ?? '—'}
+                  </Link>
+                  <span className="ml-2 text-muted-foreground">
+                    {FISCAL_DOC_TYPE_LABELS[d.docType]}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  {d.salesOrderId && d.salesOrderCode ? (
+                    <Link
+                      className={cn(LINK_CLASSNAME, 'font-mono')}
+                      href={`/pedidos/${d.salesOrderId}`}
+                    >
+                      {d.salesOrderCode}
+                    </Link>
+                  ) : (
+                    <span className="text-muted-foreground">Sin pedido</span>
+                  )}
+                </TableCell>
+                <TableCell>{d.sellerName ?? '—'}</TableCell>
+                <TableCell>{formatDate(d.issueDate)}</TableCell>
+                <TableCell>
+                  {d.dueDate === null ? (
+                    <span title="Al contado vence el día de su emisión">Contado</span>
+                  ) : (
+                    formatDate(d.dueDate)
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {d.daysOverdue > 0 ? (
+                    <Badge variant={d.daysOverdue > 90 ? 'destructive' : 'warning'}>
+                      {d.daysOverdue}
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground">Por vencer</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">{formatAmount(d.totalPen)}</TableCell>
+                <TableCell className="text-right">{formatAmount(d.paidPen)}</TableCell>
+                <TableCell className="text-right">{formatAmount(d.creditedPen)}</TableCell>
+                <TableCell className="text-right font-medium">
+                  {formatAmount(d.balancePen)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableCell>
+    </TableRow>
   );
 }
 
+function plural(n: number, one: string, many: string): string {
+  return `${String(n)} ${n === 1 ? one : many}`;
+}
+
+/** Claves de columna (en la URL al ordenar) de cada tramo. */
+const BUCKET_KEYS: Record<AgingBucket, string> = {
+  CURRENT: 'current',
+  D1_30: 'd1-30',
+  D31_60: 'd31-60',
+  D61_90: 'd61-90',
+  OVER_90: 'over-90',
+};
+
 /** Cliente, comprobantes, los cinco tramos y el saldo. */
-const COLUMNS = 3 + AGING_BUCKETS.length;
+const COLUMN_COUNT = 3 + AGING_BUCKETS.length;
 
 const ALL = '__todos__';
-const ZERO = '0.0000';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

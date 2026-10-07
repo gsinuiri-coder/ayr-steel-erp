@@ -161,8 +161,12 @@ test('reporte de producción: una OP de drywall con su reporte y su cierre, y lo
       .click();
     await expect(page).toHaveURL(`/reportes/produccion?${range}&linea=drywall`);
     const opRow = page.getByTestId('produccion-op').filter({ hasText: order.code });
-    await expect(opRow).toContainText('600 pzs');
-    await expect(opRow).toContainText('repartido en orden de montaje');
+    // cc32 (corte 2): «piezas» sin abreviar; las bobinas de la orden van en su detalle (chevron).
+    await expect(opRow).toContainText('600 piezas');
+    await page.getByRole('button', { name: `Ver detalle de ${order.code}` }).click();
+    await expect(page.getByTestId('produccion-bobina').first()).toContainText(
+      'repartido en orden de montaje',
+    );
     await expect(page.getByRole('columnheader', { name: 'Costo salido' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Descargar Excel' })).toBeVisible();
   } finally {

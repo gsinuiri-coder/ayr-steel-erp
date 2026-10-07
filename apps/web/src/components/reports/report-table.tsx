@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState, type ReactNode } from 'react';
+import { Fragment, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { ListStateRows, type ListQueryState } from '@/components/list-state';
 import { SortHead } from '@/components/sortable-table-head';
@@ -54,6 +54,8 @@ export function ReportTable<T>({
   errorTitle,
   rowTestId,
   testId,
+  onRowActivate,
+  rowTitle,
 }: {
   columns: readonly ReportColumn<T>[];
   rows: readonly T[];
@@ -75,6 +77,13 @@ export function ReportTable<T>({
   errorTitle: string;
   rowTestId?: string;
   testId?: string;
+  /**
+   * cc32 (corte 2): la fila entera abre algo (el diálogo de Ventas por material, D-370), con
+   * clic, Enter o espacio. Sin él, la fila no es interactiva.
+   */
+  onRowActivate?: (row: T) => void;
+  /** El aviso nativo de la fila interactiva («Ver el desglose…»). */
+  rowTitle?: string;
 }) {
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const visible = visibleReportRows(rows, columns, search, sort);
@@ -131,7 +140,24 @@ export function ReportTable<T>({
               const expanded = open.has(key);
               return (
                 <Fragment key={key}>
-                  <TableRow data-testid={rowTestId}>
+                  <TableRow
+                    data-testid={rowTestId}
+                    {...(onRowActivate && {
+                      className: 'cursor-pointer hover:bg-muted/50',
+                      tabIndex: 0,
+                      title: rowTitle,
+                      onClick: () => {
+                        onRowActivate(row);
+                      },
+                      onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onRowActivate(row);
+                        }
+                      },
+                    })}
+                  >
                     {columns.map((c, i) => (
                       <TableCell key={c.key} className={cn(alignClass(c), c.className)}>
                         {i === 0 && detail ? (

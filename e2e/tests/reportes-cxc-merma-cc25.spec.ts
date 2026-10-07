@@ -160,14 +160,16 @@ test.describe('Reportes de CxC y merma (cc25)', () => {
     await expect(page).toHaveURL(`/reportes/merma?from=${FROM}&to=${to}&linea=drywall`);
     await page.reload();
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('#merma-desde')).toHaveValue(FROM);
+    // cc32 (corte 2): el periodo único, con el rango escrito al lado.
+    await expect(page.getByTestId('periodo-rango')).toContainText('Del 01/01/2026 al ');
 
     await page.goBack();
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
 
+    // cc32 (corte 2): el periodo va siempre en la URL; la fecha que falta se completa (hasta hoy).
     for (const bad of ['services', 'todas', 'trading']) {
       await page.goto(`/reportes/merma?from=${FROM}&linea=${bad}`);
-      await expect(page).toHaveURL(`/reportes/merma?from=${FROM}`);
+      await expect(page).toHaveURL(`/reportes/merma?from=${FROM}&to=${to}`);
       await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
     }
   });

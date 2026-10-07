@@ -405,9 +405,13 @@ test.describe('D-328 — film de protección', () => {
       const sealedTable = page.getByRole('region', { name: 'Bobinas selladas' });
       await expect(sealedTable).toContainText('Subtotal Selladas');
       await expect(sealedTable.getByRole('row').filter({ hasText: code })).toContainText('Sellada');
-      await expect(page.getByRole('region', { name: 'Bobinas abiertas' })).toContainText(
-        'Subtotal Abiertas',
-      );
+      // cc32 (corte 2): el subtotal va al pie de la tabla y solo cuando la tabla tiene filas; las
+      // abiertas pueden no tener ninguna en la base de la suite.
+      await expect(
+        page
+          .getByRole('region', { name: 'Bobinas abiertas' })
+          .getByRole('heading', { name: 'Abiertas' }),
+      ).toBeVisible();
     } finally {
       await purgeRoofingTrail(api, trailOf(scenario));
       await api.dispose();
