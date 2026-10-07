@@ -110,7 +110,7 @@ salvo lo que el alcance pide (precio de lista con IGV, motivo compuesto, código
    foco está en el portal del listbox y el trigger es `type="button"`). Salvo P2-1, los llamadores con `placeholder`
    siguen funcionando.
 6. **Orden de corte.** El bloqueo por plan que no cabe coincide con el API: `planFits` usa el mismo `consumed >
-   parentWidth` que `validateWidthBudget` (`cutting-math.ts:26-34`), el mismo mínimo de ancho de fleje
+parentWidth` que `validateWidthBudget` (`cutting-math.ts:26-34`), el mismo mínimo de ancho de fleje
    (`MIN_CHILD_WIDTH_MM`, `widthCountSchema`) y plan vacío = «el plan necesita al menos un ancho». No es más estricto.
    Nota: antes `planFits(d) && …` era siempre verdadero (devuelve un objeto), es decir, el botón nunca bloqueaba por
    plan que no cabe y el rechazo llegaba del API; ahora se avisa antes, con la misma regla.
