@@ -48,6 +48,9 @@ export function Section({
     <section
       aria-labelledby={headingId}
       data-slot="section"
+      // cc31: las secciones con contador son las de la plantilla de detalle; solo ellas llevan
+      // filas de 34 px (globals.css), no las de pantallas fuera de la pieza.
+      data-counted={count !== undefined ? '' : undefined}
       className={cn('grid content-start gap-1', className)}
     >
       {separated && <Separator className="mb-1" />}
@@ -57,11 +60,9 @@ export function Section({
           {title}
         </h2>
         {count !== undefined && (
-          <span
-            className="rounded-full bg-background px-1.5 text-xs font-medium text-muted-foreground tabular-nums"
-            aria-label={`${String(count)} ${count === 1 ? 'fila' : 'filas'}`}
-          >
+          <span className="rounded-full bg-background px-1.5 text-xs font-medium text-muted-foreground tabular-nums">
             {count}
+            <span className="sr-only"> {count === 1 ? 'fila' : 'filas'}</span>
           </span>
         )}
         {summary && <span className="truncate text-xs text-muted-foreground">{summary}</span>}

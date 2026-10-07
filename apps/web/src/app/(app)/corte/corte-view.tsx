@@ -48,8 +48,13 @@ export function CorteView() {
   const [sort, toggleSort] = useSort<'supplier' | 'line' | 'coils' | 'sent' | 'status'>();
   // cc31: los filtros viven en la URL (D-289); «Todas» y «Todos» no se escriben.
   const [url, setUrl] = useUrlState({ line: ALL, status: ALL });
-  const businessLine = url.line as BusinessLine | typeof ALL;
-  const status = url.status as CuttingOrderStatus | typeof ALL;
+  // Un valor de la URL que no existe se ignora (iría al API y daría 400).
+  const businessLine = (BUSINESS_LINES as readonly string[]).includes(url.line)
+    ? (url.line as BusinessLine)
+    : ALL;
+  const status = (CUTTING_ORDER_STATUSES as readonly string[]).includes(url.status)
+    ? (url.status as CuttingOrderStatus)
+    : ALL;
   const setBusinessLine = (v: BusinessLine | typeof ALL) => {
     setUrl({ line: v });
   };

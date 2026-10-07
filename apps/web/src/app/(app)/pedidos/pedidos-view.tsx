@@ -126,8 +126,10 @@ export function PedidosView() {
   let filterLabel = 'en curso';
   if (historyOnly) {
     filterLabel = stages.map((s) => (s === 'FULFILLED' ? 'atendidos' : 'anulados')).join(' y ');
-  } else if (stages.length === 1 && stages[0]) {
-    filterLabel = `en «${ORDER_STAGE_LABELS[stages[0] as keyof typeof ORDER_STAGE_LABELS]}»`;
+  } else if (stages.length > 0) {
+    filterLabel = `en ${stages
+      .map((s) => `«${ORDER_STAGE_LABELS[s as keyof typeof ORDER_STAGE_LABELS]}»`)
+      .join(', ')}`;
   } else if (search) {
     filterLabel = 'que coinciden con la búsqueda';
   }

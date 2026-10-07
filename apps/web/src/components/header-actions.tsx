@@ -16,7 +16,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 /**
- * F8-S3b/M3 — el patrón único de acciones de cabecera: **un** botón principal y un menú «⋯» con
+ * F8-S3b/M3 — el patrón único de acciones de cabecera: **un** botón principal y un menú («Más
+ * opciones» desde cc31) con
  * las secundarias.
  *
  * Una vista de detalle llegaba a tener seis u ocho botones del mismo peso en fila (cotización,

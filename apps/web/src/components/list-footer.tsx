@@ -23,8 +23,11 @@ export function ListFooterRow({
   amountColumn?: number;
   amount?: ReactNode;
 }) {
+  // Con más filas que las de la página, la suma es solo de lo que se ve: se dice.
   const label =
-    shown === total ? `${String(total)} ${noun}` : `${String(shown)} de ${String(total)} ${noun}`;
+    shown === total
+      ? `${String(total)} ${noun}`
+      : `${String(shown)} de ${String(total)} ${noun}${amount === undefined ? '' : ' · la suma es de esta página'}`;
   if (amountColumn === undefined || amount === undefined) {
     return (
       <TableFooter>

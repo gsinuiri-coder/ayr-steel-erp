@@ -36,7 +36,10 @@ export function FlejesView() {
   >();
   // cc31: la línea vive en la URL (D-289); «Todas las líneas» no se escribe.
   const [url, setUrl] = useUrlState({ line: ALL });
-  const businessLine = url.line as BusinessLine | typeof ALL;
+  // Un valor de la URL que no existe se ignora (iría al API y daría 400).
+  const businessLine = (BUSINESS_LINES as readonly string[]).includes(url.line)
+    ? (url.line as BusinessLine)
+    : ALL;
   const setBusinessLine = (v: BusinessLine | typeof ALL) => {
     setUrl({ line: v });
   };

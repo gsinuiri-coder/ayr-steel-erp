@@ -78,7 +78,7 @@ que `isItemActive` del menú (que sí mira el query), o aceptar y documentarlo.
 ## P3
 
 1. Textos con plural fijo: `app-sidebar.tsx` (`'${n} cotizaciones por vencer…'`, `'${n} reservas
-   temporales vigentes'`, `'${n} pedidos listos…'`, `'${n} órdenes…'`) dicen «1 reservas». La campana
+temporales vigentes'`, `'${n} pedidos listos…'`, `'${n} órdenes…'`) dicen «1 reservas». La campana
    sí pluraliza (`plural()`); reusarla.
 2. Primer ingreso, al guardar: `invalidateQueries(ME)` deja `mustChangePassword=false` antes del
    `router.replace('/')`, y por un instante se dibuja la pantalla de «Cambiar contraseña» dentro
@@ -129,7 +129,7 @@ que `isItemActive` del menú (que sí mira el query), o aceptar y documentarlo.
   internos visibles (los `status=ISSUED,SEND_ERROR` son solo URL).
 - **E2E.** `getByRole('button', { name: 'Ingresar' })` sigue siendo único (los botones «Mostrar
   la contraseña» no coinciden; «Ingresando…» no contiene «Ingresar»). `getByLabel('Contraseña',
-  { exact: true })` sigue dando un solo campo. Las etiquetas del cambio de contraseña
+{ exact: true })` sigue dando un solo campo. Las etiquetas del cambio de contraseña
   (`Contraseña temporal`, `Contraseña nueva`, `Repite la contraseña nueva`, `Guardar y entrar`)
   están actualizadas en `e2e/helpers/ui.ts`, `auth.spec.ts` y `usuarios.spec.ts`. No queda ningún
   E2E que busque el botón «Cerrar sesión» ni «Volver al mostrador» fuera de lo ya editado.

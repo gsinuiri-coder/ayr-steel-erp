@@ -57,6 +57,8 @@ test.describe('Excel de las listas (cc26)', () => {
   });
 
   test('cada pantalla ofrece su Excel', async ({ page }) => {
+    // Seis pantallas seguidas: con el web en modo desarrollo cada una se compila al entrar.
+    test.setTimeout(150_000);
     const { email, password } = adminCredentials();
     await page.goto('/login');
     await page.getByLabel('Correo electrónico').fill(email);

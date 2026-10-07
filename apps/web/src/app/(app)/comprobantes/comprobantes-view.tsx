@@ -167,9 +167,12 @@ export function ComprobantesView() {
   if (filterParts.length === 0 && search) filterParts.push('que coinciden con la búsqueda');
   const filterLabel = filterParts.join(', ');
   const filtered = Boolean(search || status || docType || origin) || pendingOnly;
-  const pageTotal = rows.reduce((acc, d) => acc.plus(d.totalPen), new Decimal(0));
-  // Índice de la columna «Total»: se corre uno con la columna de pedido de los anulados.
-  const totalColumn = showOrderColumn ? 7 : 6;
+  // El pie suma el saldo, no el total: sumar totales mezclaría notas de crédito (positivas),
+  // guías y anulados con lo facturado. El saldo ya es lo que se debe, documento por documento.
+  const pageBalance = rows.reduce((acc, d) => acc.plus(d.balancePen), new Decimal(0));
+  // Índice de la columna «Saldo» (la siguiente a «Total»): se corre uno con la columna de
+  // pedido de los anulados.
+  const balanceColumn = (showOrderColumn ? 7 : 6) + 1;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -505,8 +508,8 @@ export function ComprobantesView() {
               total={documents.data?.total ?? rows.length}
               noun={filterLabel ? `comprobantes ${filterLabel}` : 'comprobantes'}
               colCount={columnCount}
-              amountColumn={totalColumn}
-              amount={formatAmount(pageTotal)}
+              amountColumn={balanceColumn}
+              amount={formatAmount(pageBalance)}
             />
           )}
         </Table>

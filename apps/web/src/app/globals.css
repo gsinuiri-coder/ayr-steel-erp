@@ -197,12 +197,12 @@
 
 /*
  * cc31: alto de fila — 38 px en las listas (`<Table data-density="list">`) y 34 px dentro de las
- * secciones de un detalle. Las tablas de planta no cambian (fuera de la pieza).
+ * secciones con contador de un detalle (`<Section count>`). Las demás tablas no cambian.
  */
 [data-slot='table'][data-density='list'] > tbody > tr > td {
   height: 38px;
 }
-[data-slot='section'] [data-slot='table'] > tbody > tr > td {
+[data-slot='section'][data-counted] [data-slot='table'] > tbody > tr > td {
   height: 34px;
 }
 /* El pie de una lista (cuántas filas y la suma) queda a la vista, como la cabecera. */

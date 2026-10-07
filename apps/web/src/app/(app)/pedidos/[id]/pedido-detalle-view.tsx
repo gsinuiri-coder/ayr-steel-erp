@@ -531,15 +531,19 @@ export function PedidoDetalleView({ id }: { id: string }) {
           },
           {
             label: 'Fecha prometida',
-            value: o.promisedDeliveryDate ? formatDate(o.promisedDeliveryDate) : 'Sin fecha',
-            detail:
+            // El administrador la cambia ahí mismo: el control ya muestra la fecha.
+            value:
               isAdmin && o.status !== 'CANCELLED' ? (
                 <PromisedDateControl
                   salesOrderId={o.id}
                   salesOrderCode={o.code}
                   promisedDeliveryDate={o.promisedDeliveryDate}
                 />
-              ) : undefined,
+              ) : o.promisedDeliveryDate ? (
+                formatDate(o.promisedDeliveryDate)
+              ) : (
+                'Sin fecha'
+              ),
           },
         ]}
         total={{
@@ -565,7 +569,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
             </ul>
             <span className="text-xs">
               Las órdenes de producción existen igual; planta ve el aviso de material faltante.
-              {isAdmin && ' Cuando llegue el material, usa «Completar reserva» en el menú ⋯.'}
+              {isAdmin && ' Cuando llegue el material, usa «Completar reserva» en «Más opciones».'}
             </span>
           </AlertDescription>
         </Alert>

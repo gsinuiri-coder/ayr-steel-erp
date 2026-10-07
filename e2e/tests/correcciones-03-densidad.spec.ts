@@ -138,12 +138,15 @@ test('densidad: filas por pantalla y cajas anidadas', async ({ page, baseURL }) 
     }
     console.log(`DENSIDAD ${JSON.stringify(report)}`);
 
-    // Umbrales del estilo compacto (D-294).
+    // Umbrales del estilo compacto (D-294). cc31 (especificación aprobada, §5): las listas con el
+    // estándar nuevo (`<Table list>`) llevan filas de 38 px; las demás siguen en el compacto.
+    const STANDARD_LISTS = ['lista /cotizaciones', 'lista /pedidos'];
     const lists = Object.entries(report).filter(([k]) => k.startsWith('lista '));
     for (const [name, value] of lists) {
       const m = value as ListMetrics;
       expect(m.rowHeight, `${name}: alto de fila`).toBeGreaterThan(0);
-      expect(m.rowHeight, `${name}: alto de fila (celdas py-1)`).toBeLessThanOrEqual(29);
+      const max = STANDARD_LISTS.includes(name) ? 39 : 29;
+      expect(m.rowHeight, `${name}: alto de fila`).toBeLessThanOrEqual(max);
     }
     for (const [name, value] of Object.entries(report).filter(([k]) => k.startsWith('detalle '))) {
       expect((value as DetailMetrics).nestedBoxes, `${name}: cajas con borde anidadas`).toBe(0);

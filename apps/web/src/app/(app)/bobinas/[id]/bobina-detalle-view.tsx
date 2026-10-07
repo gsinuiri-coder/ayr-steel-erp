@@ -544,7 +544,6 @@ export function BobinaDetalleView({ id }: { id: string }) {
 
       <Section
         title="Kardex de la bobina"
-        count={movements.data?.items.length}
         action={
           <Button variant="outline" size="sm" asChild>
             <Link href={`/kardex?itemType=COIL&item=${id}&range=all`}>Ver kardex completo</Link>

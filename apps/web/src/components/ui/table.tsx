@@ -53,7 +53,7 @@ function Table({
       data-overflow={overflow ? 'true' : undefined}
       className={cn(
         'relative w-full overflow-x-auto',
-        list && 'max-h-[calc(100svh-15rem)] min-h-40 overflow-y-auto',
+        list && 'max-h-[calc(100svh-13rem)] overflow-y-auto',
       )}
       // Un grupo y no una región: una región es un punto de referencia y varias con el mismo
       // nombre se repiten en la lista de landmarks (axe `landmark-unique`, segundo modelo SM-3).

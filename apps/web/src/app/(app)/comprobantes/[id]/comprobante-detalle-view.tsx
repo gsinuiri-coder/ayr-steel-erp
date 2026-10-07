@@ -871,8 +871,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         <Alert data-testid="annulled-order-cancelled">
           <AlertDescription>
             Su pedido {d.salesOrderCode} está anulado: este comprobante ya no se reactiva sobre él.
-            Si el papel sigue vigente, abre el pedido correcto (del mismo cliente) y usa «⋯ → Traer
-            comprobante anulado».
+            Si el papel sigue vigente, abre el pedido correcto (del mismo cliente) y usa «Más
+            opciones → Traer comprobante anulado».
           </AlertDescription>
         </Alert>
       )}
