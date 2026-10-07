@@ -49,9 +49,19 @@ export function Breadcrumb() {
   const parts: ReactNode[] = [];
   if (crumbs.group)
     parts.push(
-      <span key="g" className="text-muted-foreground">
-        {crumbs.group}
-      </span>,
+      crumbs.groupHref ? (
+        <Link
+          key="g"
+          href={crumbs.groupHref}
+          className="text-muted-foreground hover:text-foreground hover:underline"
+        >
+          {crumbs.group}
+        </Link>
+      ) : (
+        <span key="g" className="text-muted-foreground">
+          {crumbs.group}
+        </span>
+      ),
     );
   if (crumbs.list) {
     parts.push(

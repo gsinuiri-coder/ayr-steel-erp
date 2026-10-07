@@ -95,7 +95,8 @@ test.describe('Reportes por línea (cc23)', () => {
   test('una línea inválida o sin reporte cae a «Todas» y corrige la URL', async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto(`/reportes/ventas-margen?from=${FROM}&linea=acero`);
-    await expect(page).toHaveURL(`/reportes/ventas-margen?from=${FROM}`);
+    // cc32: el periodo va siempre en la URL; la fecha que falta se completa (hasta hoy).
+    await expect(page).toHaveURL(`/reportes/ventas-margen?from=${FROM}&to=${businessToday()}`);
     await expect(tab(page, 'Todas')).toHaveAttribute('aria-selected', 'true');
 
     // D-394: Servicios no tiene inventario valorizado: ni pestaña ni URL.

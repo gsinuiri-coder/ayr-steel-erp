@@ -9,6 +9,8 @@ import { NAV } from '@/lib/nav';
 export interface Crumbs {
   /** El grupo del menú («Comercial»); vacío para el Panel. */
   group: string;
+  /** cc32: el grupo enlaza a su página de inicio cuando la tiene (`/reportes`). */
+  groupHref?: string;
   /** La pantalla de lista. `href` es `null` cuando es la pantalla actual. */
   list: { title: string; href: string | null } | null;
   /**
@@ -17,6 +19,12 @@ export interface Crumbs {
    */
   leaf: { title: string } | 'document' | null;
 }
+
+/** cc32: la página de inicio de Reportes. */
+export const REPORTS_HOME = '/reportes';
+
+/** Los grupos del menú que tienen página propia. */
+const GROUP_HOMES: Partial<Record<string, string>> = { Reportes: REPORTS_HOME };
 
 const EXTRA_LEAVES: Record<string, string> = {
   '/pos/caja': 'Caja',
@@ -31,6 +39,10 @@ export function crumbsFor(
   search: URLSearchParams = new URLSearchParams(),
 ): Crumbs {
   if (pathname === '/') return { group: '', list: { title: 'Panel', href: null }, leaf: null };
+  // cc32: el inicio de Reportes no es un ítem del menú sino la página de su grupo.
+  if (pathname === REPORTS_HOME) {
+    return { group: 'Reportes', list: { title: 'Inicio', href: null }, leaf: null };
+  }
   if (pathname === '/cambiar-contrasena') {
     return { group: '', list: null, leaf: { title: 'Cambiar contraseña' } };
   }
@@ -61,8 +73,10 @@ export function crumbsFor(
   }
   if (!best) return { group: '', list: null, leaf: null };
   // La pantalla es el ítem (o una de sus pestañas hermanas, `activePrefix`).
+  const groupHref = GROUP_HOMES[best.group];
+  const group = groupHref === undefined ? { group: best.group } : { group: best.group, groupHref };
   if (pathname === best.prefix) {
-    return { group: best.group, list: { title: best.title, href: null }, leaf: null };
+    return { ...group, list: { title: best.title, href: null }, leaf: null };
   }
   const list = { title: best.title, href: best.path };
   const create = CREATE_ENTRIES.find((c) => c.href === pathname);
@@ -77,5 +91,5 @@ export function crumbsFor(
   // Solo un id es un documento cuyo código pone la pantalla; cualquier otra subruta se queda con
   // la lista enlazada y sin hoja (nunca «…» para siempre).
   else if (ID_SEGMENT.test(pathname)) leaf = 'document';
-  return { group: best.group, list, leaf };
+  return { ...group, list, leaf };
 }
