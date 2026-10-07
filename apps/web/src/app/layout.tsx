@@ -23,7 +23,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       suppressHydrationWarning
     >
       <body className="antialiased">
-        <Providers>{children}</Providers>
+        <Providers isDemo={process.env.AYR_ENVIRONMENT === 'demo'}>{children}</Providers>
       </body>
     </html>
   );

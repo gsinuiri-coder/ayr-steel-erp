@@ -13,7 +13,6 @@ import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { OVERDUE_TONE } from '@/components/status-tone';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LINK_CLASSNAME } from '@/lib/utils';
@@ -49,9 +48,6 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
             {s.supplierCode} — {s.supplierName}
           </p>
         </div>
-        <Button variant="outline" asChild>
-          <Link href="/proveedores">Volver a proveedores</Link>
-        </Button>
       </div>
 
       <Card className="max-w-sm">

@@ -12,6 +12,7 @@ import {
   type CuttingOrderCoilDto,
   type CuttingOrderDto,
 } from '@ayr/shared';
+import { CrumbLabel } from '@/components/breadcrumb';
 import { CUTTING_ORDER_COIL_TONE, CUTTING_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
@@ -99,6 +100,7 @@ export function CorteDetalleView({ id }: { id: string }) {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
+          <CrumbLabel label={o.supplierName} />
           <h1 className="text-xl font-semibold">{o.supplierName}</h1>
           <p className="text-xs text-muted-foreground">
             {BUSINESS_LINE_LABELS[o.businessLine]} · enviada el{' '}

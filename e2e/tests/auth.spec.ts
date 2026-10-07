@@ -15,33 +15,67 @@ async function login(page: import('@playwright/test').Page, email: string, passw
   await page.getByRole('button', { name: 'Ingresar' }).click();
 }
 
+/**
+ * cc31: cerrar sesión vive en el menú de usuario del pie del menú lateral; en el primer ingreso
+ * (sin menú) es el enlace «Salir e ingresar con otro usuario».
+ */
+async function logoutUi(page: import('@playwright/test').Page) {
+  if (/\/cambiar-contrasena$/.test(page.url())) {
+    await page.getByRole('button', { name: 'Salir e ingresar con otro usuario' }).click();
+    return;
+  }
+  await page.getByRole('button', { name: /^Menú de / }).click();
+  await page.getByRole('menuitem', { name: 'Cerrar sesión' }).click();
+}
+
 test.describe('Autenticación (RF-01, RF-03)', () => {
   test('login correcto entra a la aplicación', async ({ page }) => {
     const { email, password } = adminCredentials();
     await login(page, email, password);
     // Puede caer en Inicio o en cambio de contraseña obligatorio; en ambos hay sesión.
-    await expect(page).toHaveURL(/\/(cambiar-contrasena)?$/);
-    await expect(page.getByRole('button', { name: 'Cerrar sesión' })).toBeVisible();
-    // S11/D-179: el correo dejó de ocupar una línea propia en el pie del menú —el menú no
-    // entra a 768 px de alto— y vive en el `title` de la línea del usuario. Sigue siendo el
-    // dato que identifica la sesión, que es lo que este caso comprueba.
-    await expect(page.getByTitle(email)).toBeVisible();
+    await expect(page).toHaveURL(/\/(cambiar-contrasena)?$/, { timeout: 60_000 });
+    // S11/D-179: el correo vive en el `title` de la línea del usuario (menú de usuario, cc31);
+    // en el primer ingreso, sin menú, se lee bajo «Elige tu contraseña».
+    await expect(page.getByTitle(email).or(page.getByText(email, { exact: true }))).toBeVisible();
+  });
+
+  test('el ingreso muestra la contraseña con «Mostrar» y avisa la sesión vencida', async ({
+    page,
+  }) => {
+    await page.goto('/login?next=%2Fdespachos%2Fnuevo&expired=1');
+    await expect(page.getByRole('heading', { name: 'Ingresar' })).toBeVisible();
+    await expect(
+      page.getByRole('alert').filter({
+        hasText: 'Tu sesión venció. Ingresa de nuevo y vuelves a Nuevo despacho.',
+      }),
+    ).toBeVisible();
+    const password = page.getByLabel('Contraseña', { exact: true });
+    await password.fill('secreta-123');
+    await expect(password).toHaveAttribute('type', 'password');
+    await page.getByRole('button', { name: 'Mostrar la contraseña' }).click();
+    await expect(password).toHaveAttribute('type', 'text');
+    await expect(
+      page.getByText('¿Olvidaste tu contraseña? Pídele una temporal al administrador.'),
+    ).toBeVisible();
   });
 
   test('login con contraseña incorrecta muestra error y no entra', async ({ page }) => {
     const { email } = adminCredentials();
     await login(page, email, 'contraseña-incorrecta-123');
     await expect(
-      page.getByRole('alert').filter({ hasText: 'Credenciales inválidas' }),
+      page.getByRole('alert').filter({
+        hasText: 'El correo o la contraseña no coinciden. Revisa y vuelve a intentar.',
+      }),
     ).toBeVisible();
     await expect(page).toHaveURL(/\/login$/);
-    await expect(page.getByRole('button', { name: 'Cerrar sesión' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Menú de / })).toHaveCount(0);
   });
 
   test('cerrar sesión vuelve al login y protege las rutas', async ({ page }) => {
     const { email, password } = adminCredentials();
     await login(page, email, password);
-    await page.getByRole('button', { name: 'Cerrar sesión' }).click();
+    await expect(page).toHaveURL(/\/(cambiar-contrasena)?$/);
+    await logoutUi(page);
     await expect(page).toHaveURL(/\/login$/);
     await page.goto('/');
     await expect(page).toHaveURL(/\/login/);
@@ -55,7 +89,9 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
     expect(res.ok()).toBeTruthy();
 
     await login(page, user.email, user.password);
-    await expect(page.getByRole('alert').filter({ hasText: 'Usuario desactivado' })).toBeVisible();
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'Tu usuario está desactivado' }),
+    ).toBeVisible();
     await expect(page).toHaveURL(/\/login$/);
   });
 
@@ -65,7 +101,8 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
     const user = await createUser(api, 'VENDEDOR');
 
     await login(page, user.email, user.password);
-    await expect(page.getByRole('button', { name: 'Cerrar sesión' })).toBeVisible();
+    // Primer ingreso: la pantalla de «Elige tu contraseña», ya con sesión.
+    await expect(page.getByRole('heading', { name: 'Elige tu contraseña' })).toBeVisible();
     const meBefore = await page.request.get('/api/auth/me');
     expect(meBefore.status()).toBe(200);
 
@@ -92,16 +129,16 @@ test.describe('Autenticación (RF-01, RF-03)', () => {
 
     await login(page, user.email, user.password);
     await expect(page).toHaveURL(/\/cambiar-contrasena$/);
-    await expect(page.getByRole('heading', { name: 'Cambiar contraseña' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Elige tu contraseña' })).toBeVisible();
 
     // Intentar ir a otra ruta lo devuelve al cambio de contraseña.
     await page.goto('/');
     await expect(page).toHaveURL(/\/cambiar-contrasena$/);
 
-    await page.getByLabel('Contraseña actual').fill(user.password);
-    await page.getByLabel('Nueva contraseña', { exact: true }).fill('NuevaClave2026!');
-    await page.getByLabel('Confirmar nueva contraseña').fill('NuevaClave2026!');
-    await page.getByRole('button', { name: 'Guardar contraseña' }).click();
+    await page.getByLabel('Contraseña temporal').fill(user.password);
+    await page.getByLabel('Contraseña nueva', { exact: true }).fill('NuevaClave2026!');
+    await page.getByLabel('Repite la contraseña nueva').fill('NuevaClave2026!');
+    await page.getByRole('button', { name: 'Guardar y entrar' }).click();
 
     await expect(page).toHaveURL(/\/$/);
     // S10/M2: "Inicio" pasa a llamarse "Panel".

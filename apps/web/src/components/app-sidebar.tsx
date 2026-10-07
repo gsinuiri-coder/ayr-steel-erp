@@ -3,12 +3,15 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { ChevronRight, LogOut } from 'lucide-react';
-import { ROLE_LABELS, Role } from '@ayr/shared';
+import { ChevronRight, Search } from 'lucide-react';
+import { businessToday } from '@ayr/shared';
 import { NAV, navForRole, type NavItem } from '@/lib/nav';
+import { expiringQuotationDates } from '@/lib/pending';
 import { useSession } from '@/lib/session';
-import { useProductionQueue } from '@/components/production-queue';
-import { Button } from '@/components/ui/button';
+import { useOpenGoTo } from '@/components/go-to-dialog';
+import { BrandMark } from '@/components/brand-mark';
+import { usePendingSources } from '@/components/pending-bell';
+import { UserMenu } from '@/components/user-menu';
 import {
   Sidebar,
   SidebarContent,
@@ -73,7 +76,7 @@ export function AppSidebar() {
   const search = useSearchParams();
   const { state: sidebarState } = useSidebar();
   const iconOnly = sidebarState === 'collapsed';
-  const { user, logout, isLoggingOut } = useSession();
+  const { user } = useSession();
   const groups = navForRole(user.role);
   const activeGroupLabel =
     groups.find((g) => g.label && g.items.some((i) => !i.soon && isItemActive(i, pathname, search)))
@@ -83,20 +86,52 @@ export function AppSidebar() {
   useEffect(() => {
     if (activeGroupLabel !== null) setOpenGroup(activeGroupLabel);
   }, [activeGroupLabel]);
-  // RF-38: cuántos pedidos esperan producción. Solo para quien ve `/planta` en el menú.
-  const seesPlanta = ([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA] as Role[]).includes(user.role);
-  const queue = useProductionQueue({ enabled: seesPlanta });
-  const queueCount = queue.data?.length ?? 0;
+  // cc31: los contadores del menú salen de las mismas consultas que la campana, y solo donde el
+  // API ya entrega la cifra. RF-38: la cola de producción, para quien ve `/planta`.
+  const pending = usePendingSources();
+  const openGoTo = useOpenGoTo();
+  const counters: Record<string, { count: number; title: (n: string) => string }> = {
+    '/cotizaciones': {
+      count: expiringQuotationDates(pending.emittedQuotations ?? [], businessToday()).length,
+      title: (n) => `${n} cotizaciones por vencer esta semana`,
+    },
+    '/reservas-temporales': {
+      count: pending.temporaryReservations?.length ?? 0,
+      title: (n) => `${n} reservas temporales vigentes`,
+    },
+    '/despachos': {
+      count: pending.readyOrders ?? 0,
+      title: (n) => `${n} pedidos listos para despachar`,
+    },
+    '/planta': {
+      count: pending.productionQueue ?? 0,
+      title: (n) => `${n} órdenes esperando producción`,
+    },
+  };
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="px-3 py-3">
+      <SidebarHeader className="gap-2 px-3 py-3">
         <Link href="/" className="flex items-center gap-2 font-semibold">
-          <span className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
-            AYR
-          </span>
+          <BrandMark />
           <span className="truncate group-data-[collapsible=icon]:hidden">Steel ERP</span>
         </Link>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              variant="outline"
+              tooltip="Ir a… (Ctrl K)"
+              className="text-muted-foreground"
+              onClick={openGoTo}
+            >
+              <Search />
+              <span>Ir a…</span>
+              <kbd className="ml-auto rounded border px-1 text-xs group-data-[collapsible=icon]:hidden">
+                Ctrl K
+              </kbd>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
         {groups.map((group) => {
@@ -157,12 +192,12 @@ export function AppSidebar() {
                           Pronto
                         </SidebarMenuBadge>
                       )}
-                      {item.href === '/planta' && queueCount > 0 && (
+                      {(counters[item.href]?.count ?? 0) > 0 && (
                         <SidebarMenuBadge
                           className="group-data-[collapsible=icon]:hidden"
-                          title={`${String(queueCount)} órdenes esperando producción`}
+                          title={counters[item.href]?.title(String(counters[item.href]?.count))}
                         >
-                          {queueCount}
+                          {counters[item.href]?.count}
                         </SidebarMenuBadge>
                       )}
                     </SidebarMenuItem>
@@ -173,26 +208,14 @@ export function AppSidebar() {
           );
         })}
       </SidebarContent>
-      {/* S11/B2: el pie ocupaba 113 px de un menú que ya no entra a 768 px de alto. El correo
-          pasa al `title` —se usa para identificarse, no se lee— y el rol acompaña al nombre
-          en la misma línea. */}
+      {/* cc31: el pie es el menú de usuario (cambiar contraseña y cerrar sesión), en una sola
+          fila: el menú ya casi no entra a 768 px de alto (S11/B2). */}
       <SidebarFooter className="border-t p-2">
-        <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-          <p className="truncate text-xs font-medium" title={user.email}>
-            {user.name}{' '}
-            <span className="font-normal text-muted-foreground">{ROLE_LABELS[user.role]}</span>
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full justify-start group-data-[collapsible=icon]:justify-center"
-          onClick={logout}
-          disabled={isLoggingOut}
-        >
-          <LogOut />
-          <span className="group-data-[collapsible=icon]:hidden">Cerrar sesión</span>
-        </Button>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <UserMenu />
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

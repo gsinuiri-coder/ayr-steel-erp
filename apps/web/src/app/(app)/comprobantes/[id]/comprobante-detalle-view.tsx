@@ -43,6 +43,7 @@ import {
 } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
+import { CrumbLabel } from '@/components/breadcrumb';
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
@@ -603,6 +604,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
+            <CrumbLabel label={d.number ?? 'Borrador'} />
             <h1 className="text-xl font-semibold">{d.number ?? 'Borrador'}</h1>
             <FiscalDocumentStatusBadge status={d.status} isStalled={d.isStalled} />
             {/* D-153: el origen se marca siempre que no sea del ERP, no solo si es importado. */}

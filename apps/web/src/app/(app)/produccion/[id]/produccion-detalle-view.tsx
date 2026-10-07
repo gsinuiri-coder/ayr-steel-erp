@@ -17,6 +17,7 @@ import {
   type ProductionOrderDto,
   type ProductionReportDto,
 } from '@ayr/shared';
+import { CrumbLabel } from '@/components/breadcrumb';
 import { PRODUCTION_ORDER_TONE, PRODUCTION_REPORT_TONE } from '@/components/status-tone';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
@@ -153,6 +154,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
+          <CrumbLabel label={o.code} />
           <h1 className="font-mono text-lg font-semibold">{o.code}</h1>
           <p className="text-xs text-muted-foreground">
             {o.productSku} · {o.productName} ·{' '}

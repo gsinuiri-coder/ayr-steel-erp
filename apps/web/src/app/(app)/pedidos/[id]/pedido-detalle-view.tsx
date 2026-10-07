@@ -23,6 +23,7 @@ import { formatDate, formatMoney, formatQty, formatTimestampDate, unitSymbol } f
 import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
+import { CrumbLabel } from '@/components/breadcrumb';
 import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -317,6 +318,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-3">
+            <CrumbLabel label={o.code} />
             <h1 className="text-xl font-semibold">{o.code}</h1>
             <OrderStageBadge stage={o.stage} />
             {/* D-341: confirmado por un administrador con material sin reservar. */}
