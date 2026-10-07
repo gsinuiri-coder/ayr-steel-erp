@@ -284,10 +284,16 @@ export class ProductionService {
       // consumir, porque es lo que decide qué material puede montar esta orden.
       if (input.reservationId !== undefined) {
         // Lock de la fila antes de mirarla: sin él, dos altas concurrentes pasaban las dos
-        // el chequeo de "reserva ya tomada" y la promesa quedaba prometida dos veces.
-        await tx.$queryRaw`
-          SELECT "id" FROM "reservations" WHERE "id" = ${input.reservationId}::uuid FOR UPDATE
-        `;
+        // el chequeo de "reserva ya tomada" y la promesa quedaba prometida dos veces. cc30
+        // (D-472): pedido → reserva, y el estado del pedido se lee ya bloqueado.
+        const owner = await tx.reservation.findUnique({
+          where: { id: input.reservationId },
+          select: { salesOrderId: true },
+        });
+        await lockDocuments(tx, {
+          salesOrders: [owner?.salesOrderId],
+          reservations: [input.reservationId],
+        });
         const reservation = await tx.reservation.findUnique({
           where: { id: input.reservationId },
           include: {

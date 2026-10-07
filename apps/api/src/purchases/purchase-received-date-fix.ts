@@ -40,6 +40,23 @@ async function lockPlanItems(
   await inventory.lockInOrder(tx, { items: balances });
 }
 
+/**
+ * cc30 (matriz, cruce C10): las compras del lote **antes** que el inventario, por id y con
+ * `NO KEY UPDATE` (el mismo modo del `UPDATE` de la fecha). Antes la compra se escribía al final,
+ * con bobinas y saldos en mano, mientras anular o editar la compra la toman primero (compra →
+ * inventario, D-471).
+ */
+async function lockPurchases(
+  tx: Prisma.TransactionClient,
+  ids: readonly (string | null)[],
+): Promise<void> {
+  const sorted = [...new Set(ids.filter((id): id is string => !!id))].sort();
+  if (sorted.length === 0) return;
+  await tx.$queryRaw`
+    SELECT "id" FROM "purchases" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR NO KEY UPDATE
+  `;
+}
+
 export interface ReceivedDateCase {
   purchaseId: string;
   document: string;
@@ -234,6 +251,10 @@ export async function executePurchaseReceivedDates(
   selectedIds?: readonly string[],
 ): Promise<ReceivedDateCase[]> {
   const expectedSelected = selectSafeCases(expected, selectedIds);
+  await lockPurchases(
+    tx,
+    expectedSelected.map((c) => c.purchaseId),
+  );
   await lockPlanItems(
     tx,
     inventory,
@@ -377,6 +398,10 @@ export async function undoPurchaseReceivedDates(
   )
     throw new Error('Reversas del lote incompletas; no se puede deshacer');
   const ownReversalIds = ownReversals.map((m) => m.id);
+  await lockPurchases(
+    tx,
+    logs.map((l) => l.entityId),
+  );
   await lockPlanItems(tx, inventory, [...lastBatchMovementByItem.keys()]);
   for (const [itemKey, lastId] of lastBatchMovementByItem) {
     const [itemType, itemId] = itemKey.split(':') as [InventoryMovement['itemType'], string];

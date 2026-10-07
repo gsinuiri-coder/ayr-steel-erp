@@ -263,10 +263,16 @@ export class RoofingProductionService {
     input: { reservationId: string; operationDate: string; notes: string | null },
   ): Promise<string> {
     // Lock antes de mirar: sin él, dos altas concurrentes pasaban las dos el chequeo de
-    // "reserva ya tomada" y el material quedaba prometido a dos órdenes.
-    await tx.$queryRaw`
-        SELECT "id" FROM "reservations" WHERE "id" = ${input.reservationId}::uuid FOR UPDATE
-      `;
+    // "reserva ya tomada" y el material quedaba prometido a dos órdenes. cc30 (D-472): la reserva
+    // con su pedido delante —pedido → reserva—, y el estado del pedido se lee ya bloqueado.
+    const owner = await tx.reservation.findUnique({
+      where: { id: input.reservationId },
+      select: { salesOrderId: true },
+    });
+    await lockDocuments(tx, {
+      salesOrders: [owner?.salesOrderId],
+      reservations: [input.reservationId],
+    });
     const reservation = await tx.reservation.findUnique({
       where: { id: input.reservationId },
       include: {
@@ -1883,6 +1889,17 @@ export class RoofingProductionService {
 
     return this.prisma.$transaction(
       async (tx) => {
+        // cc30 (cruce C6): el pedido y todas sus reservas de materia prima al inicio, por id. Antes
+        // el pedido no se tomaba y las reservas se tomaban de a una, en orden de línea, entre alta y
+        // alta de OP: se cruzaba con anular el pedido y con completar su reserva.
+        const raw = await tx.reservation.findMany({
+          where: { salesOrderId, itemType: InventoryItemType.RAW_MATERIAL },
+          select: { id: true },
+        });
+        await lockDocuments(tx, {
+          salesOrders: [salesOrderId],
+          reservations: raw.map((r) => r.id),
+        });
         const salesOrder = await tx.salesOrder.findUnique({
           where: { id: salesOrderId },
           select: { id: true, seq: true, status: true },

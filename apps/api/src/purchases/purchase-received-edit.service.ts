@@ -114,7 +114,12 @@ export class ReceivedPurchaseEditService {
     return this.prisma.$transaction(
       async (tx) => {
         // Lock de la compra: un pago, una anulación o una segunda edición concurrentes esperan.
-        await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${id}::uuid FOR UPDATE`;
+        // cc30 (matriz, cruce C9): `NO KEY UPDATE` y no `UPDATE`. Partir una bobina de esta compra
+        // o recibir su corte inserta hijas con la compra heredada, y ese `INSERT` toma `KEY SHARE`
+        // sobre la compra **después** de la bobina: con `FOR UPDATE` se cruzaba con esta edición,
+        // que toma la compra y después las bobinas. Contra otra edición, un pago o la anulación
+        // serializa igual.
+        await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${id}::uuid FOR NO KEY UPDATE`;
         const coilIds = (
           await tx.coil.findMany({ where: { purchaseId: id }, select: { id: true } })
         )

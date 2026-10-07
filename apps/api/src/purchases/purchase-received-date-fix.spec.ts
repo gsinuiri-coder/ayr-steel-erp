@@ -97,6 +97,8 @@ describe('ejecución del lote', () => {
     } as InventoryMovement;
     const expected = classifyReceivedDate(target, [m], [m])!;
     const tx = {
+      // cc30: las compras del lote se toman antes que el inventario.
+      $queryRaw: jest.fn().mockResolvedValue([]),
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([PRODUCT_BALANCE]) },
       purchase: {
         findMany: jest.fn().mockResolvedValue([target]),
@@ -139,6 +141,8 @@ describe('undo de lote', () => {
       totalCost: new Prisma.Decimal('8'),
     } as InventoryMovement;
     const tx = {
+      // cc30: las compras del lote se toman antes que el inventario.
+      $queryRaw: jest.fn().mockResolvedValue([]),
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([PRODUCT_BALANCE]) },
       auditLog: {
         findMany: jest.fn().mockResolvedValue([
@@ -231,6 +235,8 @@ describe('undo de lote', () => {
 
   it('bloquea el lote completo si el ítem tuvo un movimiento posterior', async () => {
     const tx = {
+      // cc30: las compras del lote se toman antes que el inventario.
+      $queryRaw: jest.fn().mockResolvedValue([]),
       inventoryBalance: { findMany: jest.fn().mockResolvedValue([PRODUCT_BALANCE]) },
       auditLog: {
         findMany: jest.fn().mockResolvedValue([

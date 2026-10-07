@@ -850,6 +850,13 @@ export class QuotationImportService {
           row.customerId ??
           (row.newCustomer ? (padronCustomers.get(row.newCustomer.docNumber) ?? null) : null);
 
+        // cc30 (matriz, cruce C11): los locks por número de todos los documentos, al inicio y en
+        // orden, fuera de los savepoints. Antes se tomaban de a uno en el orden del archivo, y dos
+        // confirmaciones con los mismos documentos en distinto orden se cruzaban. El lock de abajo
+        // vuelve a pedir el mismo (es reentrante) y no espera.
+        for (const key of [...groups.keys()].sort()) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`quotation-import:${key}`}))`;
+        }
         for (const [index, [documentKey, rows]] of [...groups.entries()].entries()) {
           const savepoint = `cotizacion_${String(index)}`;
           await tx.$executeRawUnsafe(`SAVEPOINT ${savepoint}`);
