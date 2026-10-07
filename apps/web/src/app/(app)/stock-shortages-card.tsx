@@ -52,7 +52,10 @@ export function StockShortagesCard() {
   if (rows.length === 0) return null;
 
   return (
-    <Card className="max-w-xl border-tone-warning-foreground/30">
+    <Card
+      id="cotizaciones-sin-stock"
+      className="max-w-xl scroll-mt-14 border-tone-warning-foreground/30"
+    >
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           Cotizaciones sin stock disponible

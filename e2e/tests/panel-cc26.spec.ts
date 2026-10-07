@@ -114,7 +114,8 @@ test.describe('Panel del administrador (cc26)', () => {
     await page.getByRole('button', { name: 'Ingresar' }).click();
     await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 
-    const section = page.getByRole('region', { name: 'El mes en cifras' });
+    // cc31: el título lleva el nombre del mes («Octubre en cifras»).
+    const section = page.getByRole('region', { name: / en cifras$/ });
     await expect(section).toBeVisible({ timeout: 30_000 });
     await expect(
       section.locator(
