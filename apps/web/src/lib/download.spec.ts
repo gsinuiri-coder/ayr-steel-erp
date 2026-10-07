@@ -47,6 +47,16 @@ describe('descargas del API', () => {
     expect(await downloadErrorMessage(new Response('', { status: 404 }))).toBe(
       'No se encontró el archivo: puede que ya no exista.',
     );
+    const nest403 = new Response(JSON.stringify({ message: 'Forbidden resource' }), {
+      status: 403,
+    });
+    expect(await downloadErrorMessage(nest403)).toBe(
+      'No tienes permiso para descargar este archivo.',
+    );
+    const nest404 = new Response(JSON.stringify({ message: 'Cannot GET /api/x' }), { status: 404 });
+    expect(await downloadErrorMessage(nest404)).toBe(
+      'No se encontró el archivo: puede que ya no exista.',
+    );
     expect(await downloadErrorMessage(new Response('', { status: 429 }))).toMatch(
       /Espera un minuto/,
     );

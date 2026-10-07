@@ -144,7 +144,7 @@ export function PanelToday() {
           {
             key: 'reservations',
             count: seller.data?.expiringReservations ?? null,
-            failed: seller.isError,
+            failed: seller.isError && seller.data === undefined,
             retry: () => void seller.refetch(),
             label: 'Reservas por expirar',
             detail: 'en los próximos 3 días',
@@ -164,7 +164,7 @@ export function PanelToday() {
     {
       key: 'production',
       count: inProduction.data?.total ?? null,
-      failed: inProduction.isError,
+      failed: inProduction.isError && inProduction.data === undefined,
       retry: () => void inProduction.refetch(),
       label: 'Pedidos en producción',
       href: '/pedidos?stage=IN_PRODUCTION',
@@ -174,7 +174,7 @@ export function PanelToday() {
           {
             key: 'stock',
             count: stockShortages.data?.length ?? null,
-            failed: stockShortages.isError,
+            failed: stockShortages.isError && stockShortages.data === undefined,
             retry: () => void stockShortages.refetch(),
             label: 'Cotizaciones sin stock',
             detail: 'evaluar compra',

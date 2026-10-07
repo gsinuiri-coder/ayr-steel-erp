@@ -70,9 +70,14 @@ function Input({ className, type, onBlur, ...props }: React.ComponentProps<'inpu
  * nombra con la etiqueta y la unidad (`aria-labelledby`). La unidad visible sigue oculta para el
  * lector, así no se lee dos veces.
  */
+/** «/m» o «/und» no se leen bien («barra m»): esos campos ya dicen «por metro» en su nombre. */
+function readableUnit(unit: string): boolean {
+  return unit !== '' && !unit.startsWith('/');
+}
+
 /** El nombre con la unidad, salvo que ya la diga («Peso (kg) de la línea 1») o no haya unidad. */
 function withUnit(label: string | undefined, unit: string): string | undefined {
-  if (label === undefined || unit === '' || label.includes(`(${unit})`)) return label;
+  if (!readableUnit(unit) || label === undefined || label.includes(`(${unit})`)) return label;
   return `${label} (${unit})`;
 }
 
@@ -99,9 +104,12 @@ function InputWithUnit({
     const label = input.id
       ? document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(input.id)}"]`)
       : input.closest('label');
-    if (!label || unit === '' || label.textContent?.includes(`(${unit})`)) return;
+    if (!label || !readableUnit(unit) || label.textContent?.includes(`(${unit})`)) return;
     if (!label.id) label.id = `${unitId}-label`;
     input.setAttribute('aria-labelledby', `${label.id} ${unitId}`);
+    return () => {
+      input.removeAttribute('aria-labelledby');
+    };
   }, [named, unitId, unit, props.id]);
   return (
     <div className="relative w-full">
