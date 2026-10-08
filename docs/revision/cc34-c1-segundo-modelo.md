@@ -18,6 +18,7 @@ Las cuotas de todas las claves menos la última se redondean con `roundTo` (a 3 
 Escenario: total escrito que deja 0,002 kg de exceso con 4 bobinas vivas de peso reportado igual. Cada una de las tres primeras da 0,0005, que redondea a 0,001, y suman 0,003. La cuarta queda en −0,001.
 
 Consecuencia en `allocateRoofingScrap`:
+
 1. `targets` suma 0,002 (por tanto `scrapKg` y `declaredKg` salen con 0,002).
 2. En el tope por saldo, la cuota negativa no entra a `placed` (`take.gt(0)` es falso) y tampoco suma a `overflow` (`kg − take = 0`).
 3. `placed` queda con 0,003 repartido en tres bobinas.
@@ -26,6 +27,7 @@ Consecuencia en `allocateRoofingScrap`:
 Pasa solo con 3 o más bobinas con peso y un exceso de unos pocos gramos. Es improbable, pero rompe la invariante «la suma de lo repartido es el despunte», que el spec declara probar. El mismo defecto existe en el reparto de `delta` de un parte con 3 o más bobinas.
 
 Propuesta:
+
 - Repartir por acumulado, como `planCoilSplit`: la cuota i es `round(total × acumulado_i / suma) − round(total × acumulado_{i−1} / suma)`. Así nunca queda negativa si el total no lo es.
 - O acotar cada cuota a `[0, resto]` (para totales positivos).
 - Sumar un test con 4 bobinas y total 0,002.
@@ -73,6 +75,7 @@ Un `consumedKg: '0'` o `''` se trata como «no escrito». Es igual que antes (`i
 ### P3-5 — Cobertura
 
 Faltan:
+
 - Test de 3 o más bobinas (P2-1).
 - Un parte con `declaredKg` y bobinas mezcladas con `explicitTotalKg` y bobina no viva (P3-1).
 - Una cobertura o accesorio cerrado por la vista previa (`previewPlantClose` ejecuta `closeInTx` y deshace, así que usa el mismo código; no se ve riesgo, pero ningún test lo toca con 2 bobinas).
@@ -105,11 +108,11 @@ El mensaje «La orden tiene X kg montados y se declaran Y kg consumidos» usa `Y
 
 ## Qué se hizo con cada hallazgo
 
-| Hallazgo | Resolución |
-| -------- | ---------- |
-| P2 redondeo | Corregido (mismo que P2-1 de la autorrevisión): cuotas truncadas, resto a la de más peso, red Σ = despunte; test con 4 bobinas y mutación. |
-| P2 desborde por parte | Se mantiene y se registra como D-539 provisional: lo que una bobina declaró y no entra en su saldo sale de las otras vivas en orden de montaje, igual que el total escrito. Es lo que menos cambia: hasta hoy ese exceso también salía de otras bobinas, y descartarlo haría perder kilos declarados sin aviso. |
-| P3 bobina no viva / parte sin salidas / sin salida de kardex / `consumedKg: '0'` | Sin cambio: no se dan en el producto (montar rechaza duplicados, bajar una bobina con consumo está prohibido, todo parte deja su salida) o es igual que antes. |
-| P3 tests | Agregados: 4 bobinas y total escrito sin reportado en vivas. |
-| P3 mensaje | Sin cambio. |
-| Menores | Comentario de `close-preview.ts` corregido; `reportsOutKg` sigue en uso por su spec y `mounted-kg.spec.ts`. |
+| Hallazgo                                                                         | Resolución                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P2 redondeo                                                                      | Corregido (mismo que P2-1 de la autorrevisión): cuotas truncadas, resto a la de más peso, red Σ = despunte; test con 4 bobinas y mutación.                                                                                                                                                                      |
+| P2 desborde por parte                                                            | Se mantiene y se registra como D-539 provisional: lo que una bobina declaró y no entra en su saldo sale de las otras vivas en orden de montaje, igual que el total escrito. Es lo que menos cambia: hasta hoy ese exceso también salía de otras bobinas, y descartarlo haría perder kilos declarados sin aviso. |
+| P3 bobina no viva / parte sin salidas / sin salida de kardex / `consumedKg: '0'` | Sin cambio: no se dan en el producto (montar rechaza duplicados, bajar una bobina con consumo está prohibido, todo parte deja su salida) o es igual que antes.                                                                                                                                                  |
+| P3 tests                                                                         | Agregados: 4 bobinas y total escrito sin reportado en vivas.                                                                                                                                                                                                                                                    |
+| P3 mensaje                                                                       | Sin cambio.                                                                                                                                                                                                                                                                                                     |
+| Menores                                                                          | Comentario de `close-preview.ts` corregido; `reportsOutKg` sigue en uso por su spec y `mounted-kg.spec.ts`.                                                                                                                                                                                                     |

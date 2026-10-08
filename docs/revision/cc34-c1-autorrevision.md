@@ -191,13 +191,13 @@ Propuesta: usar `scrapPlan.scrapKg` y calcular la razón ahí, o que `allocateRo
 
 ## Qué se hizo con cada hallazgo
 
-| Hallazgo | Resolución |
-| -------- | ---------- |
-| P2-1 | Corregido: `splitProportionally` trunca cada cuota y da el resto a la clave de más peso; red que exige Σ asignaciones = despunte y cuotas positivas. Test con 4 bobinas (falla con el reparto anterior: mutación hecha). |
-| P2-2 | Fuera de la pieza: la estimación de la pantalla de planta necesita el consumo por bobina, que el brief deja para el rediseño de «Producir una OP». La vista previa del cierre ya muestra la cifra real, y el 400 pide el motivo si hace falta. Queda en el registro de riesgo. |
-| P2-3 | Corregido: el CLI toma todas las cerradas (71), no solo las que tienen despunte. |
-| P2-4 | Corregido: si el total escrito coincide con lo declarado, el CLI calcula los dos repartos y marca la orden como ambigua con las dos cifras (`ambiguousTotalWritten`). |
-| P3 D-539 | Registrada como provisional al cierre (parte repartido entre dos bobinas y sobrante al pasar el saldo). |
-| P3 comentario | Corregido en `close-preview.ts`. |
-| P3 mensaje / dos fuentes / `reportsOutKg` | Sin cambio: el mensaje es el de siempre con el total que se pretende sacar; `reportsOutKg` sigue con su spec y lo usa `mounted-kg.spec.ts`. |
-| P3 tests | Agregado el total escrito sin nada reportado en las vivas. El E2E no cubre el total escrito con dos bobinas: lo cubren los unitarios. |
+| Hallazgo                                  | Resolución                                                                                                                                                                                                                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| P2-1                                      | Corregido: `splitProportionally` trunca cada cuota y da el resto a la clave de más peso; red que exige Σ asignaciones = despunte y cuotas positivas. Test con 4 bobinas (falla con el reparto anterior: mutación hecha).                                                       |
+| P2-2                                      | Fuera de la pieza: la estimación de la pantalla de planta necesita el consumo por bobina, que el brief deja para el rediseño de «Producir una OP». La vista previa del cierre ya muestra la cifra real, y el 400 pide el motivo si hace falta. Queda en el registro de riesgo. |
+| P2-3                                      | Corregido: el CLI toma todas las cerradas (71), no solo las que tienen despunte.                                                                                                                                                                                               |
+| P2-4                                      | Corregido: si el total escrito coincide con lo declarado, el CLI calcula los dos repartos y marca la orden como ambigua con las dos cifras (`ambiguousTotalWritten`).                                                                                                          |
+| P3 D-539                                  | Registrada como provisional al cierre (parte repartido entre dos bobinas y sobrante al pasar el saldo).                                                                                                                                                                        |
+| P3 comentario                             | Corregido en `close-preview.ts`.                                                                                                                                                                                                                                               |
+| P3 mensaje / dos fuentes / `reportsOutKg` | Sin cambio: el mensaje es el de siempre con el total que se pretende sacar; `reportsOutKg` sigue con su spec y lo usa `mounted-kg.spec.ts`.                                                                                                                                    |
+| P3 tests                                  | Agregado el total escrito sin nada reportado en las vivas. El E2E no cubre el total escrito con dos bobinas: lo cubren los unitarios.                                                                                                                                          |
