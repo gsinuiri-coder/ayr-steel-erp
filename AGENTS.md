@@ -113,9 +113,11 @@ Reglas de convivencia, sin excepción:
    Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, el push directo a `main` (`git push origin main`, `AYR_OWNER_PUSH=1 git push`, D-476), borrar ramas de Neon,
    `e2e:prod`, `prod-reset-go-live` y leer `.env*`. Una rama remota ya mergeada se borra con
    `gh api -X DELETE …/git/refs/heads/<rama>`, nunca con `git push --delete`. Siguen en pie las
-   reglas duras que no son de confirmación: la ventana corre entre las 20:00 y las 07:00 de Lima,
-   comprobado con la hora real, salvo los días en que el dueño avise que el cliente no usa la app
-   (como D-437 y D-458); sin SQL directo contra producción; una migración detiene la sesión y se
+   reglas duras que no son de confirmación: **la ventana de 20:00 a 07:00 de Lima está suspendida
+   (D-533)**: se puede desplegar a producción a cualquier hora hasta que el dueño diga
+   explícitamente que vuelve. Cuando vuelva, rige otra vez esta regla: la ventana corre entre las
+   20:00 y las 07:00 de Lima, comprobado con la hora real, salvo los días en que el dueño avise que
+   el cliente no usa la app (como D-437 y D-458). Sin SQL directo contra producción; una migración detiene la sesión y se
    pregunta (y en una sesión desatendida no se hace); credenciales nunca en argv; y si falla el
    deploy, el merge o el smoke, la vuelta atrás es automática (API a la revisión anterior y revert
    del merge), otro smoke y el registro escrito, sin arreglos en caliente.
@@ -368,8 +370,8 @@ suite completa. `--grep` sí funciona por ser una opción.
 
 Después del push de la rama de trabajo, verificar la CI de GitHub Actions antes de declarar la
 sesión cerrada. Un merge a `main` (siempre por PR, D-445) sigue el punto de control de D-232: el
-resumen al dueño va siempre; desde D-411/D-445 la ejecución dentro de la ventana no necesita un OK
-por acción.
+resumen al dueño va siempre; desde D-411/D-445 la ejecución no necesita un OK por acción, y con
+la ventana suspendida (D-533) puede ser a cualquier hora.
 
 ---
 
@@ -437,8 +439,9 @@ diseño/diagnóstico (effort alto) y uno de solo lectura para revisión.
 
 ## 10. Qué NO hacer, resumido
 
-- No empujar directo a `main` (todo por PR, D-445); no mergear sin el resumen de D-232 ni fuera de
-  la ventana (20:00–07:00 de Lima, salvo aviso del dueño); no usar `gh repo sync` ni borrar ramas
+- No empujar directo a `main` (todo por PR, D-445); no mergear sin el resumen de D-232. La ventana
+  (20:00–07:00 de Lima, salvo aviso del dueño) está suspendida por D-533: mientras siga así, el
+  merge y el despliegue van a cualquier hora. No usar `gh repo sync` ni borrar ramas
   protegidas.
 - No tocar 4000/4001.
 - No correr SQL contra prod ni imprimir credenciales.

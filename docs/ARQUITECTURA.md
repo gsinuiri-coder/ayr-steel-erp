@@ -531,6 +531,7 @@
 | D-530 | 2026-10-07 (cc32, corte 3; **provisional**) | el 404 «sin archivo» dice que el documento no tiene PDF guardado. |
 | D-531 | 2026-10-07 (cc32, corte 3; **provisional**) | «Preparando la impresión…» solo desde «Más opciones». |
 | D-532 | 2026-10-07 (cc32, corte 3; **provisional**) | una impresión que reemplaza a otra cancela la anterior sin aviso. |
+| D-533 | 2026-10-08 (dueño, tras cc32) | **Ventana suspendida.** Se puede desplegar a producción a cualquier hora; la ventana de 20:00 a 07:00 de Lima queda suspendida hasta que el dueño diga explícitamente que vuelve. La regla de la ventana se conserva en `AGENTS.md` §3 regla 1 como suspendida, para que volver a ella sea cambiar una línea. Siguen en pie D-460 (OK por nombre para migración, `--execute --confirm-production` y borrar una rama de Neon), sin migraciones en sesiones desatendidas y todo a `main` por PR. |
 
 ---
 
