@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { decimalStringSchema } from '../decimal';
+import { decimalStringSchema, toDecimal } from '../decimal';
 import { reasonSchema } from './coil';
 import { idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
@@ -254,6 +254,16 @@ export const createPurchaseSchema = z
         code: z.ZodIssueCode.custom,
         path: ['creditDays'],
         message: 'Una compra al crédito necesita días de crédito',
+      });
+    }
+    // cc33 N1: mismo criterio que la bobina (`updateCoilSchema`). Un TC ajeno en una compra en
+    // soles multiplicaba en la recepción el costo de bobinas y productos —y de ahí el promedio,
+    // el landed cost, el saldo en soles y el estado de cuenta— por un número que nadie veía.
+    if (d.currency === 'PEN' && d.exchangeRate !== undefined && !toDecimal(d.exchangeRate).eq(1)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['exchangeRate'],
+        message: 'Una compra en soles va con tipo de cambio 1',
       });
     }
     if (d.type === PurchaseType.SERVICE && !d.serviceKind) {

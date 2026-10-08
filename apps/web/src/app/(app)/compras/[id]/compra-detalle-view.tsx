@@ -995,7 +995,12 @@ function PaymentForm({
           date: values.date,
           amount: values.amount,
           currency: values.currency,
-          exchangeRate: values.exchangeRate?.trim() ? values.exchangeRate.trim() : undefined,
+          // cc33 N1: el TC solo viaja en un pago de otra moneda que la compra; en la misma
+          // moneda el campo está escondido y un valor viejo no tiene que llegar al API.
+          exchangeRate:
+            values.currency !== currency && values.exchangeRate?.trim()
+              ? values.exchangeRate.trim()
+              : undefined,
           method: values.method,
           reference: values.reference?.trim() ? values.reference.trim() : undefined,
           idempotencyKey: paymentKey.current(),
@@ -1078,7 +1083,13 @@ function PaymentForm({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Moneda</FormLabel>
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={field.value}
+                    onValueChange={(value) => {
+                      field.onChange(value);
+                      if (value === currency) form.setValue('exchangeRate', '');
+                    }}
+                  >
                     <FormControl>
                       <SelectTrigger className="w-full">
                         <SelectValue />
