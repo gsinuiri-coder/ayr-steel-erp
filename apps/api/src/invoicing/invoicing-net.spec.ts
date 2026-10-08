@@ -581,6 +581,46 @@ describe('orderProgress y la reválida al emitir usan la misma función — D-34
       );
     });
 
+    describe('cc33 N4: borrador de solo líneas libres', () => {
+      async function reassertFree(order: { status: string; customerId: string }) {
+        const service = Object.create(InvoicingService.prototype) as {
+          assertStillAvailable: Assert;
+        };
+        const tx = {
+          salesOrder: {
+            findUnique: jest.fn().mockResolvedValue({ seq: 7, ...order }),
+          },
+          salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
+          fiscalDocumentItem: fakeClient([]).fiscalDocumentItem,
+        };
+        return service.assertStillAvailable(tx, {
+          id: 'draft-1',
+          docType: FiscalDocType.FACTURA,
+          salesOrderId: 'o-1',
+          customerId: 'c-1',
+          items: [{ qty: D('1'), salesOrderItemId: null, affectedItemId: null }],
+        });
+      }
+
+      it('sobre un pedido anulado se rechaza al registrar o emitir', async () => {
+        await expect(reassertFree({ status: 'CANCELLED', customerId: 'c-1' })).rejects.toThrow(
+          'El pedido PED-000007 está anulado',
+        );
+      });
+
+      it('sobre un pedido de otro cliente se rechaza al registrar o emitir', async () => {
+        await expect(reassertFree({ status: 'CONFIRMED', customerId: 'c-2' })).rejects.toThrow(
+          'es de otro cliente',
+        );
+      });
+
+      it('sobre un pedido vivo del mismo cliente pasa', async () => {
+        await expect(
+          reassertFree({ status: 'CONFIRMED', customerId: 'c-1' }),
+        ).resolves.toBeUndefined();
+      });
+    });
+
     it('con la NC anulada, el cupo sigue cerrado', async () => {
       await expect(
         reassert([invoice(), creditNote('40', FORTY, FiscalDocumentStatus.VOIDED)], '1'),
