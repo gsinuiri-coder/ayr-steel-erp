@@ -10,6 +10,7 @@ import {
   freeLine,
   invoiceBody,
   setupOrderScenario,
+  validRuc,
 } from '../helpers/invoicing';
 import { createDirectOrder, setupCoilStock } from '../helpers/sales';
 
@@ -102,7 +103,10 @@ test.describe('cc33 — comprobante y pedido', () => {
 
   test('N4: solo líneas libres sobre un pedido anulado o de otro cliente se rechaza', async () => {
     const scenario = await setupOrderScenario(api, { coilKg: '300' });
-    const other = await createInvoiceableCustomer(api);
+    // Un RUC propio: sin él, el helper reusa el RUC facturable de la corrida (la CI lo define)
+    // y el «otro» cliente sería el mismo del pedido.
+    const other = await createInvoiceableCustomer(api, { docNumber: validRuc() });
+    expect(other.id).not.toBe(scenario.customer.id);
 
     // Pedido de otro cliente.
     const foreignCustomer = await api.post('/api/invoicing/documents', {
