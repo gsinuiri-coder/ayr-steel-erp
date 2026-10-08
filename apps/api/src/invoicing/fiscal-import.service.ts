@@ -30,6 +30,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { invoicedByOrderItem } from './invoicing-net';
 import { paperTotalDifference, planOrderLines } from './reactivate-order-lines';
 import { lockDocuments } from '../inventory/document-locks';
+import { draftCreditNoteBlock } from './credit-note-guards';
 
 /**
  * La anulación **interna** de un comprobante que el ERP no emitió electrónicamente
@@ -136,6 +137,10 @@ export class FiscalImportService {
             .join(', ')}): anúlalas primero`,
         );
       }
+      // cc33 N3: una nota en borrador también bloquea, nombrándola (como D-383 con los borradores
+      // del pedido): registrada después, quedaría viva sobre un comprobante anulado.
+      const draftBlock = await draftCreditNoteBlock(tx, id, 'antes de anularlo');
+      if (draftBlock) throw new BadRequestException(draftBlock);
 
       const updated = await tx.fiscalDocument.update({
         where: { id },
