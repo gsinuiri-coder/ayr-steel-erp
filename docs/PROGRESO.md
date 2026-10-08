@@ -2,6 +2,29 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-08 — cc33: correcciones de API (D-534..D-538, PR #138–#141 en prod)
+
+Cuatro cortes de API (compras, comprobantes y notas de crédito), sin migraciones y sin reparar datos.
+Detalle en `docs/handoff/ventana-cc33.md`; UAT en `docs/uat/cc33.md`.
+
+- **En producción (Cloud Run), con smoke verde en el API y en los dos dominios web, y sin 5xx/409
+  en los logs:**
+  - corte 1, N1 (TC 1 en soles): 00099-fpd, `c17a8fc5`;
+  - corte 2, N2/N4 (alcance y pedido del comprobante): 00100-2hv, `6826e826`;
+  - corte 3, N3 (NC en borrador y afectado): 00101-lvh, `9da3a058`;
+  - corte 4, N5/B8/ceros/N8: 00102-69b, `df0e0da7`.
+- **Diagnóstico de datos históricos (solo lectura, sin reparar):** 0 compras ni pagos en soles con
+  TC ≠ 1; 0 comprobantes de un vendedor sobre un pedido ajeno; 1 comprobante con pedido anulado
+  (FFA1-00001321, manual, ya anulado: 0 vivos); 0 NC sobre facturas muertas; 0 choques por ceros
+  (9 de las 26 compras vivas tienen ceros a la izquierda y se quedan así); 0 fechas inexistentes
+  detectables. Impacto en soles: S/ 0.
+- **Registro de riesgo (toca datos):**
+  - la baja ante SUNAT con una NC que entra durante la llamada al PSE (D-536, riesgo aceptado);
+  - el choque de números contra datos viejos con ceros sin bloqueo (D-538);
+  - `lockWithAffected` en `registerManual`/`assignInTx` (par C10 en `lock-order.db-spec.ts`).
+- **Infraestructura:** `dashboards.db-spec` falló por conteo de consultas (±1) en 4 corridas de CI y
+  pasó al relanzar el job.
+
 ## 2026-10-07 — Ventana cc32: reportes y documentos (D-502..D-532, PR #132–#135 en prod)
 
 Cuatro cortes, todos solo `apps/web`, sin API ni migraciones. Detalle en `docs/handoff/ventana-cc32.md`;
