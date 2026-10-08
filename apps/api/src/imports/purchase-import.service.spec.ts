@@ -359,4 +359,28 @@ describe('PurchaseImportService.preview (D-351)', () => {
     });
     expect(s.prisma.$transaction).not.toHaveBeenCalled();
   });
+
+  it('cc34: avisa si el mismo comprobante aparece dos veces en el archivo, con y sin ceros', async () => {
+    const s = setup();
+    const csv = [
+      'TIPO DE COMPRA,LÍNEA DE NEGOCIO,TIPO DE COMPROBANTE,SERIE-NÚMERO,FECHA DE EMISIÓN,RUC PROVEEDOR,MONEDA,CONDICIÓN DE PAGO,DESCRIPCIÓN,CANTIDAD,PRECIO UNITARIO SIN IGV',
+      'Gasto,Servicios,Factura,F001-00012,20/09/2026,20100000001,PEN,Contado,Luz,1,100',
+      'Gasto,Servicios,Factura,F001-12,20/09/2026,20100000001,PEN,Contado,Agua,1,50',
+      'Gasto,Servicios,Factura,F001-13,20/09/2026,20100000001,PEN,Contado,Gas,1,20',
+    ].join('\n');
+    const preview = await s.service.preview('compras.csv', Buffer.from(csv, 'utf8'));
+    expect(preview.documents).toHaveLength(3);
+    const [zeros, plain, other] = preview.documents;
+    expect(zeros!.issues).toEqual([
+      expect.objectContaining({
+        severity: 'warning',
+        field: 'document',
+        message: expect.stringContaining('también como F001-12'),
+      }),
+    ]);
+    expect(plain!.issues).toEqual([
+      expect.objectContaining({ message: expect.stringContaining('también como F001-00012') }),
+    ]);
+    expect(other!.issues).toEqual([]);
+  });
 });

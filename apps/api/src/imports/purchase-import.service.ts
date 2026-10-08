@@ -17,6 +17,7 @@ import {
   businessToday,
   currencyOf,
   MAX_PADRON_LOOKUPS,
+  normalizePurchaseNumber,
   PADRON_LOOKUP_CONCURRENCY,
   Role,
   suggestSupplierCode,
@@ -103,6 +104,25 @@ export class PurchaseImportService {
     // en todos sus comprobantes, que no choque con los del maestro ni con los de otro RUC nuevo.
     const taken = new Set(ctx.takenSupplierCodes);
     const suggested = new Map<string, string>();
+    // cc34 (pendiente de cc33, D-543): el mismo papel escrito dos veces en el archivo, con y sin
+    // ceros a la izquierda (`F001-00012` y `F001-12`), son dos comprobantes para la vista previa
+    // —las filas se agrupan por lo tipeado— y el segundo choca con el primero al confirmar.
+    // Se avisa en los dos, nombrando al otro, sin cambiar cómo se agrupan las filas.
+    const byPaper = new Map<string, PurchaseImportDocumentInput[]>();
+    for (const doc of documents) {
+      const paper = `${doc.supplierRuc.trim()}|${doc.docType.trim().toUpperCase()}|${doc.series.toUpperCase()}|${normalizePurchaseNumber(doc.number)}`;
+      byPaper.set(paper, [...(byPaper.get(paper) ?? []), doc]);
+    }
+    const twins = new Map<PurchaseImportDocumentInput, string[]>();
+    for (const group of byPaper.values()) {
+      if (group.length < 2) continue;
+      for (const doc of group) {
+        twins.set(
+          doc,
+          group.filter((o) => o !== doc).map((o) => `${o.series.toUpperCase()}-${o.number}`),
+        );
+      }
+    }
     return documents.map((doc) => {
       let withCode = doc;
       const extra: PurchaseImportIssueDto[] = (fileIssues.get(doc.key) ?? []).map((message) => ({
@@ -110,6 +130,14 @@ export class PurchaseImportService {
         field: 'document',
         message,
       }));
+      const others = twins.get(doc);
+      if (others !== undefined) {
+        extra.push({
+          severity: 'warning',
+          field: 'document',
+          message: `Este comprobante aparece en el archivo también como ${others.join(', ')} (el mismo número sin ceros a la izquierda): al confirmar, el segundo choca con el primero. Escríbelo igual en todas sus filas`,
+        });
+      }
       const name = doc.supplierId === null ? ctx.padron.get(doc.supplierRuc) : undefined;
       if (name !== undefined && !ctx.suppliersByRuc.has(doc.supplierRuc)) {
         // El primer comprobante del RUC fija el código; los siguientes lo heredan.

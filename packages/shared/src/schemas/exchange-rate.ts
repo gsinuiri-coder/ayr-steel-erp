@@ -1,10 +1,16 @@
 import { z } from 'zod';
 import { CURRENCIES, EXCHANGE_RATE_SOURCES } from '../enums';
 import { decimalStringSchema } from '../decimal';
+import { isCalendarDate } from './operation';
 
+// cc34 (pendiente de cc33): además del formato, que el día exista (`2026-09-31` no).
 const isoDateSchema = z
   .string({ required_error: 'La fecha es obligatoria' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)');
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato de fecha inválido (YYYY-MM-DD)')
+  .refine(
+    (v) => !/^\d{4}-\d{2}-\d{2}$/.test(v) || isCalendarDate(v),
+    'Esa fecha no existe en el calendario',
+  );
 
 /**
  * Tipo de cambio del día (D-029/P-06): caché de la consulta a apis.net.pe, o
