@@ -36,7 +36,14 @@ function declared(
   return new Map(
     entries.map(([doc, product, d]) => [
       declaredKey(doc, product),
-      { qty: '0', costPen: '0', untraceable: false, ...d },
+      {
+        qty: '0',
+        costPen: '0',
+        untraceable: false,
+        // Por omisión todo lo despachado salió con kardex, o nada si se marcó sin salida.
+        costedQty: d.untraceable === true ? '0' : (d.qty ?? '0'),
+        ...d,
+      },
     ]),
   );
 }
@@ -108,6 +115,35 @@ describe('assembleSalesByProduct (cc24, D-417)', () => {
     );
     expect(out.products.rows).toEqual([]);
     expect(out.products.untraceable).toMatchObject([{ reason: 'SIN_SALIDA_KARDEX' }]);
+  });
+
+  it('cc34 N7: despachos mezclados, se traza solo lo que salió con kardex', () => {
+    const out = assembleSalesByProduct(
+      [line({})],
+      declared([
+        ['d1', 'p1', { qty: '10', costedQty: '5', costPen: '160.0000', untraceable: true }],
+      ]),
+    );
+    expect(out.products.rows).toMatchObject([
+      { sku: 'UPVC-01', qty: '5.000', salesPen: '250.0000', costPen: '160.0000' },
+    ]);
+    expect(out.products.untraceable).toMatchObject([
+      { reason: 'SIN_SALIDA_KARDEX', qty: '5.000', salesPen: '250.0000' },
+    ]);
+  });
+
+  it('cc34 N7: con parte sin despachar y parte sin kardex, cada resto con su motivo', () => {
+    const out = assembleSalesByProduct(
+      [line({})],
+      declared([
+        ['d1', 'p1', { qty: '6', costedQty: '4', costPen: '120.0000', untraceable: true }],
+      ]),
+    );
+    expect(out.products.rows).toMatchObject([{ qty: '4.000', salesPen: '200.0000' }]);
+    expect(out.products.untraceable.map((u) => [u.reason, u.qty, u.salesPen]).sort()).toEqual([
+      ['DESPACHO_PARCIAL', '4.000', '200.0000'],
+      ['SIN_SALIDA_KARDEX', '2.000', '100.0000'],
+    ]);
   });
 
   it('la nota de crédito resta venta como no trazable', () => {

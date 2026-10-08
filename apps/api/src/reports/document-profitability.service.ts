@@ -16,6 +16,7 @@ import { SalesByMaterialService } from './sales-by-material.service';
 interface DeclaredRow {
   sales_order_item_id: string;
   dispatched_qty: Prisma.Decimal;
+  costed_qty: Prisma.Decimal;
   cost_pen: Prisma.Decimal;
   without_movement: boolean;
   dispatch_seqs: number[] | null;
@@ -77,6 +78,7 @@ export class DocumentProfitabilityService {
           d.sales_order_item_id,
           {
             dispatchedQty: d.dispatched_qty.toString(),
+            costedQty: d.costed_qty.toString(),
             costPen: d.cost_pen.toString(),
             withoutMovement: d.without_movement,
             dispatchSeqs: [...(d.dispatch_seqs ?? [])].sort((a, b) => a - b),
@@ -93,12 +95,16 @@ export class DocumentProfitabilityService {
    * Las salidas de kardex (`SALE`) de los despachos **declarados** del comprobante
    * (`Dispatch.invoiceId`, D-205/D-213), por línea de pedido: lo despachado vigente y su costo,
    * neto de reversas (la reversa es un `IN` con el mismo `refId` que resta, como D-242).
+   * cc34 (N7): `costed_qty` es lo despachado vigente que salió **con** movimiento: el costo es de
+   * esa cantidad, no de todo lo despachado.
    */
   private declaredSales(documentId: string): Promise<DeclaredRow[]> {
     return this.prisma.$queryRaw<DeclaredRow[]>`
       SELECT
         di."sales_order_item_id",
         COALESCE(SUM(CASE WHEN d."status" = 'ISSUED' THEN di."qty" ELSE 0 END), 0) AS "dispatched_qty",
+        COALESCE(SUM(CASE WHEN d."status" = 'ISSUED' AND di."movement_id" IS NOT NULL THEN di."qty" ELSE 0 END), 0)
+          AS "costed_qty",
         COALESCE(SUM(mv."cost"), 0) AS "cost_pen",
         COALESCE(BOOL_OR(d."status" = 'ISSUED' AND di."movement_id" IS NULL), false) AS "without_movement",
         ARRAY_AGG(DISTINCT d."seq") FILTER (WHERE d."status" = 'ISSUED') AS "dispatch_seqs"

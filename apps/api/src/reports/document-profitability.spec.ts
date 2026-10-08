@@ -37,6 +37,8 @@ interface RowSeed {
   sku?: string | null;
   lineCode?: string;
   lengthMm?: string;
+  /** Motivo de la NC (catálogo 09); por omisión, un descuento por ítem (solo reduce venta). */
+  creditReason?: string;
 }
 
 function row(s: RowSeed): DocumentLineRow {
@@ -77,6 +79,7 @@ function row(s: RowSeed): DocumentLineRow {
     piece_weight_kg: null,
     in_engine: engine,
     is_credit: credit,
+    credit_reason: credit ? (s.creditReason ?? 'DESCUENTO_ITEM') : null,
     customer_name: 'CLIENTE SAC',
   };
 }
@@ -244,7 +247,13 @@ describe('assembleDocumentProfitability (C06)', () => {
       declared: new Map([
         [
           'soi-9',
-          { dispatchedQty: '10', costPen: '320', withoutMovement: false, dispatchSeqs: [18] },
+          {
+            dispatchedQty: '10',
+            costedQty: '10',
+            costPen: '320',
+            withoutMovement: false,
+            dispatchSeqs: [18],
+          },
         ],
       ]),
       hasDeclaredDispatch: true,
@@ -285,7 +294,13 @@ describe('assembleDocumentProfitability (C06)', () => {
       declared: new Map([
         [
           'soi-9',
-          { dispatchedQty: '4', costPen: '128', withoutMovement: false, dispatchSeqs: [18] },
+          {
+            dispatchedQty: '4',
+            costedQty: '4',
+            costPen: '128',
+            withoutMovement: false,
+            dispatchSeqs: [18],
+          },
         ],
       ]),
       hasDeclaredDispatch: true,
@@ -340,7 +355,16 @@ describe('assembleDocumentProfitability (C06)', () => {
       ],
       engine: engineFacts({}),
       declared: new Map([
-        ['soi-8', { dispatchedQty: '2', costPen: '0', withoutMovement: true, dispatchSeqs: [3] }],
+        [
+          'soi-8',
+          {
+            dispatchedQty: '2',
+            costedQty: '0',
+            costPen: '0',
+            withoutMovement: true,
+            dispatchSeqs: [3],
+          },
+        ],
       ]),
       hasDeclaredDispatch: true,
     });
@@ -426,6 +450,249 @@ describe('assembleDocumentProfitability (C06)', () => {
       expect.objectContaining({ status: 'NO_COST', salesPen: '-50.0000', costPen: '0.0000' }),
     );
     expect(doc.credited).toBeNull();
+  });
+
+  describe('cc34 N6: una NC por anulación o devolución reduce la cantidad facturada', () => {
+    // Factura de 10 und por S/ 1000; se despacharon 5 con costo S/ 400; NC por las 5 no
+    // entregadas, S/ 500.
+    const invoiceWithCredit = (creditReason: string) =>
+      assembleDocumentProfitability({
+        document: HEADER,
+        rows: [
+          row({
+            engine: false,
+            sku: 'UPVC-1',
+            unit: 'NIU',
+            orderItem: 'soi-9',
+            qty: '10',
+            subtotal: '1000',
+          }),
+          row({
+            credit: true,
+            engine: false,
+            sku: 'UPVC-1',
+            unit: 'NIU',
+            orderItem: 'soi-9',
+            qty: '5',
+            subtotal: '500',
+            creditReason,
+          }),
+        ],
+        engine: engineFacts({}),
+        declared: new Map([
+          [
+            'soi-9',
+            {
+              dispatchedQty: '5',
+              costedQty: '5',
+              costPen: '400',
+              withoutMovement: false,
+              dispatchSeqs: [18],
+            },
+          ],
+        ]),
+        hasDeclaredDispatch: true,
+      });
+
+    it.each(['ANULACION_OPERACION', 'ANULACION_ERROR_RUC', 'DEVOLUCION_TOTAL', 'DEVOLUCION_ITEM'])(
+      '%s: el neto da 500 / 400 / 100',
+      (reason) => {
+        const doc = invoiceWithCredit(reason);
+        expect(doc.net).toEqual(
+          expect.objectContaining({
+            salesPen: '500.0000',
+            costPen: '400.0000',
+            profitPen: '100.0000',
+          }),
+        );
+        // Lo facturado neto (5) está despachado entero: la línea se costea completa.
+        expect(doc.lines[0]).toEqual(
+          expect.objectContaining({
+            status: 'COMPLETE',
+            note: 'Neto de 5.000 acreditado por nota de crédito (anulación o devolución)',
+          }),
+        );
+      },
+    );
+
+    it.each(['DESCUENTO_GLOBAL', 'DESCUENTO_ITEM', 'CORRECCION_DESCRIPCION', 'OTROS_AJUSTES'])(
+      '%s: solo reduce la venta, como antes',
+      (reason) => {
+        const doc = invoiceWithCredit(reason);
+        expect(doc.lines[0]).toEqual(
+          expect.objectContaining({ status: 'PARTIAL', salesPen: '500.0000' }),
+        );
+        expect(doc.net).toEqual(
+          expect.objectContaining({ salesPen: '0.0000', costPen: '400.0000' }),
+        );
+      },
+    );
+  });
+
+  describe('cc34 N6 (revisión, P1): la parte acreditada cuenta aunque la línea no tenga costo', () => {
+    const upvc = (over: Partial<RowSeed>) =>
+      row({ engine: false, sku: 'UPVC-1', unit: 'NIU', qty: '10', subtotal: '1000', ...over });
+
+    it('factura anulada entera con NC 01 antes de despachar: el neto da 0, no −1000', () => {
+      const doc = assembleDocumentProfitability({
+        document: HEADER,
+        rows: [
+          upvc({ orderItem: 'soi-9' }),
+          upvc({ credit: true, orderItem: 'soi-9', creditReason: 'ANULACION_OPERACION' }),
+        ],
+        engine: engineFacts({}),
+        declared: new Map(),
+        hasDeclaredDispatch: false,
+      });
+      expect(doc.lines[0]).toEqual(
+        expect.objectContaining({
+          status: 'COMPLETE',
+          costPen: '0.0000',
+          note: 'Todo 10.000 acreditado por nota de crédito (anulación o devolución): sin costo',
+        }),
+      );
+      expect(doc.net).toEqual(
+        expect.objectContaining({ salesPen: '0.0000', costPen: '0.0000', profitPen: '0.0000' }),
+      );
+    });
+
+    it('dos líneas: A despachada con costo, B sin despachar y con NC 07: 500 / 400 / 100', () => {
+      const doc = assembleDocumentProfitability({
+        document: HEADER,
+        rows: [
+          upvc({ line: 1, orderItem: 'soi-a', qty: '5', subtotal: '500' }),
+          upvc({ line: 2, orderItem: 'soi-b', qty: '5', subtotal: '500' }),
+          upvc({
+            credit: true,
+            orderItem: 'soi-b',
+            qty: '5',
+            subtotal: '500',
+            creditReason: 'DEVOLUCION_ITEM',
+          }),
+        ],
+        engine: engineFacts({}),
+        declared: new Map([
+          [
+            'soi-a',
+            {
+              dispatchedQty: '5',
+              costedQty: '5',
+              costPen: '400',
+              withoutMovement: false,
+              dispatchSeqs: [18],
+            },
+          ],
+        ]),
+        hasDeclaredDispatch: true,
+      });
+      expect(doc.net).toEqual(
+        expect.objectContaining({
+          salesPen: '500.0000',
+          costPen: '400.0000',
+          profitPen: '100.0000',
+        }),
+      );
+    });
+
+    it('NC parcial sin despacho: la parte acreditada entra y el resto sigue sin costo aún', () => {
+      const doc = assembleDocumentProfitability({
+        document: HEADER,
+        rows: [
+          upvc({ orderItem: 'soi-9' }),
+          upvc({
+            credit: true,
+            orderItem: 'soi-9',
+            qty: '4',
+            subtotal: '400',
+            creditReason: 'ANULACION_OPERACION',
+          }),
+        ],
+        engine: engineFacts({}),
+        declared: new Map(),
+        hasDeclaredDispatch: false,
+      });
+      expect(doc.lines[0]).toEqual(
+        expect.objectContaining({
+          status: 'NO_COST_YET',
+          salesPen: '400.0000',
+          uncostedSalesPen: '600.0000',
+        }),
+      );
+      expect(doc.net!.salesPen).toBe('0.0000');
+    });
+  });
+
+  it('cc34 N7 (revisión, P2-3): un despacho de más sin kardex no deja la línea a medias', () => {
+    const doc = assembleDocumentProfitability({
+      document: HEADER,
+      rows: [
+        row({
+          engine: false,
+          sku: 'UPVC-1',
+          unit: 'NIU',
+          orderItem: 'soi-9',
+          qty: '10',
+          subtotal: '500',
+        }),
+      ],
+      engine: engineFacts({}),
+      declared: new Map([
+        [
+          'soi-9',
+          {
+            dispatchedQty: '14',
+            costedQty: '10',
+            costPen: '320',
+            withoutMovement: true,
+            dispatchSeqs: [18, 19],
+          },
+        ],
+      ]),
+      hasDeclaredDispatch: true,
+    });
+    expect(doc.lines[0]).toEqual(
+      expect.objectContaining({ status: 'COMPLETE', salesPen: '500.0000', costPen: '320.0000' }),
+    );
+  });
+
+  it('cc34 N7: 10 unidades con 5 costeadas no salen COMPLETE; el resto queda sin costo', () => {
+    const doc = assembleDocumentProfitability({
+      document: HEADER,
+      rows: [
+        row({
+          engine: false,
+          sku: 'UPVC-1',
+          unit: 'NIU',
+          orderItem: 'soi-9',
+          qty: '10',
+          subtotal: '500',
+        }),
+      ],
+      engine: engineFacts({}),
+      declared: new Map([
+        [
+          'soi-9',
+          // Dos despachos: uno de 5 con salida de kardex (S/ 160) y otro de 5 sin salida (D-278).
+          {
+            dispatchedQty: '10',
+            costedQty: '5',
+            costPen: '160',
+            withoutMovement: true,
+            dispatchSeqs: [18, 19],
+          },
+        ],
+      ]),
+      hasDeclaredDispatch: true,
+    });
+    expect(doc.lines[0]).toEqual(
+      expect.objectContaining({
+        status: 'PARTIAL',
+        salesPen: '250.0000',
+        costPen: '160.0000',
+        uncostedSalesPen: '250.0000',
+        note: 'Despachado 10.000 de 10.000; 5.000 sin salida de kardex (D-278): sin costo',
+      }),
+    );
   });
 
   it('un comprobante que no es venta viva no calcula nada', () => {
@@ -545,6 +812,7 @@ describe('DocumentProfitabilityService (C06)', () => {
         {
           sales_order_item_id: 'soi-9',
           dispatched_qty: d('10'),
+          costed_qty: d('10'),
           cost_pen: d('320'),
           without_movement: false,
           dispatch_seqs: [18, 4],

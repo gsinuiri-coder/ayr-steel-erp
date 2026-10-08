@@ -51,6 +51,7 @@ interface DeclaredRow {
   qty: Prisma.Decimal;
   cost_pen: Prisma.Decimal;
   untraceable: boolean;
+  costed_qty: Prisma.Decimal;
 }
 
 /** Los mismos estados «ya es una venta» que usa «Ventas y margen» (`LIVE_STATUSES` allá). */
@@ -304,7 +305,8 @@ export class SalesByMaterialService {
         fdi."sales_order_item_id" AS "own_order_item_id",
         blp."code"::text AS "line_code",
         COALESCE(${IN_ENGINE}, false) AS "in_engine",
-        (fd."id" <> ${documentId}::uuid) AS "is_credit"
+        (fd."id" <> ${documentId}::uuid) AS "is_credit",
+        fd."credit_note_reason"::text AS "credit_reason"
       FROM "fiscal_document_items" fdi
       LEFT JOIN "products" p ON p."id" = fdi."product_id"
       ${LINE_JOINS}
@@ -338,7 +340,12 @@ export class SalesByMaterialService {
     const declaredMap = new Map<string, DeclaredDispatch>(
       declared.map((d) => [
         declaredKey(d.invoice_id, d.product_id),
-        { qty: d.qty.toString(), costPen: d.cost_pen.toString(), untraceable: d.untraceable },
+        {
+          qty: d.qty.toString(),
+          costPen: d.cost_pen.toString(),
+          untraceable: d.untraceable,
+          costedQty: d.costed_qty.toString(),
+        },
       ]),
     );
     const assembly = assembleSalesByProduct(lines.map(toProductLine), declaredMap);
@@ -414,7 +421,10 @@ export class SalesByMaterialService {
         SELECT d."invoice_id", di."product_id",
           SUM(di."qty") AS "qty",
           BOOL_OR(di."movement_id" IS NULL AND bl."inventory_strategy"::text <> 'NOOP')
-            AS "untraceable"
+            AS "untraceable",
+          SUM(di."qty") FILTER (
+            WHERE di."movement_id" IS NOT NULL OR bl."inventory_strategy"::text = 'NOOP'
+          ) AS "costed_qty"
         FROM "dispatch_items" di
         JOIN "dispatches" d ON d."id" = di."dispatch_id"
         JOIN "products" p ON p."id" = di."product_id"
@@ -436,7 +446,8 @@ export class SalesByMaterialService {
         COALESCE(q."product_id", c."product_id") AS "product_id",
         COALESCE(q."qty", 0) AS "qty",
         COALESCE(c."cost_pen", 0) AS "cost_pen",
-        COALESCE(q."untraceable", false) AS "untraceable"
+        COALESCE(q."untraceable", false) AS "untraceable",
+        COALESCE(q."costed_qty", 0) AS "costed_qty"
       FROM qty q
       FULL JOIN cost c ON c."invoice_id" = q."invoice_id" AND c."product_id" = q."product_id"
     `;
@@ -654,6 +665,8 @@ export interface DocumentLineRow extends Omit<LineRow, 'sku' | 'unit'> {
   line_code: string | null;
   in_engine: boolean;
   is_credit: boolean;
+  /** cc34 (N6): el motivo de la NC (catálogo 09); `null` en las líneas del propio comprobante. */
+  credit_reason: string | null;
 }
 
 export function toInvoiceLine(r: LineRow): InvoiceLine {
