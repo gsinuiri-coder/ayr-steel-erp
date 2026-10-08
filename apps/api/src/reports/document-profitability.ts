@@ -248,25 +248,57 @@ function dispatchLine(
   }
   const orderItem = row.own_order_item_id ?? row.sales_order_item_id;
   if (orderItem === null) return none('UNTRACEABLE', SALES_MATERIAL_UNTRACEABLE_LABELS.SIN_PEDIDO);
+
+  const qty = toDecimal(row.qty.toString());
+  const sales = toDecimal(row.subtotal_pen.toString());
+  const invoicedTotal = invoicedByItem.get(orderItem) ?? qty;
+  // cc34 (N6): lo que las NC por anulación o devolución quitaron de esa línea de pedido (D-540).
+  const credited = Decimal.min(creditedByItem.get(orderItem) ?? ZERO, invoicedTotal);
+  const creditedNote = `${toFixedString(credited, 'KG')} acreditado por nota de crédito (anulación o devolución)`;
+  /**
+   * Revisión de cc34 (P1): una línea sin nada costeable todavía igual tiene **la parte que la NC
+   * quitó**, y esa parte entra con su venta y costo 0 para que la NC no reste sola en el neto. Una
+   * factura anulada entera antes de despachar da 0 en el neto, no −venta.
+   */
+  const pending = (status: DocumentProfitLineStatus, note: string): LineResult => {
+    if (!credited.gt(0) || invoicedTotal.lte(0)) return none(status, note);
+    const share = credited.div(invoicedTotal);
+    const sum: Sum = {
+      acc: { ...emptyAcc(), sales: sales.times(share), qty: qty.times(share), unit: row.unit },
+      kg: false,
+      meters: false,
+      any: true,
+    };
+    const whole = share.gte(ONE);
+    return {
+      engine: false,
+      sum,
+      dto: finish(row, sum, {
+        costBasis: 'DISPATCH_SALE',
+        costBasisDetail: null,
+        status: whole ? 'COMPLETE' : status,
+        note: whole ? `Todo ${creditedNote}: sin costo` : `${note}; ${creditedNote}`,
+      }),
+    };
+  };
+
   if (!input.hasDeclaredDispatch) {
-    return none('NO_COST_YET', 'Sin despacho declarado en este comprobante (D-205)');
+    return pending('NO_COST_YET', 'Sin despacho declarado en este comprobante (D-205)');
   }
   const sale = input.declared.get(orderItem);
   const dispatched = sale === undefined ? ZERO : toDecimal(sale.dispatchedQty);
   if (sale === undefined || dispatched.lte(0)) {
-    return none('NO_COST_YET', 'El despacho declarado no incluye esta línea todavía');
+    return pending('NO_COST_YET', 'El despacho declarado no incluye esta línea todavía');
   }
   const cost = toDecimal(sale.costPen);
-  if (sale.withoutMovement && cost.isZero()) {
-    return none('NO_COST', 'Entregado antes del inventario inicial: sin salida de kardex (D-278)');
-  }
-
-  const qty = toDecimal(row.qty.toString());
-  const invoicedTotal = invoicedByItem.get(orderItem) ?? qty;
-  // cc34 (N6): lo que las NC por anulación o devolución quitaron de esa línea de pedido (D-540).
-  const credited = creditedByItem.get(orderItem) ?? ZERO;
   // cc34 (N7): solo lo despachado **con** salida de kardex se costea (D-541).
   const costed = Decimal.min(toDecimal(sale.costedQty), dispatched);
+  if (sale.withoutMovement && costed.isZero()) {
+    return pending(
+      'NO_COST',
+      'Entregado antes del inventario inicial: sin salida de kardex (D-278)',
+    );
+  }
   // La venta que se traza: la fracción de lo facturado que cubren lo costeado y lo acreditado
   // (una NC que quita unidades deja esas unidades fuera de lo que falta costear). Sin NC es la
   // fracción de siempre, repartida igual en cada línea que comparta la línea de pedido.
@@ -277,7 +309,6 @@ function dispatchLine(
   const tracedQty = invoicedTotal.lte(0)
     ? ZERO
     : Decimal.min(costed, invoicedTotal).times(qty).div(invoicedTotal);
-  const sales = toDecimal(row.subtotal_pen.toString());
   const meters = metersOf({
     kind: null,
     unit: row.unit ?? '',
@@ -299,10 +330,13 @@ function dispatchLine(
     meters: meters !== null,
     any: true,
   };
-  const withoutKardex = dispatched.minus(costed);
-  const partial = ratio.lt(ONE) || withoutKardex.gt(0);
   const netInvoiced = Decimal.max(invoicedTotal.minus(credited), ZERO);
+  // Lo despachado sin kardex que **haría falta** costear: lo que pasa de lo facturado neto no
+  // cuenta (revisión de cc34, P2-3: un despacho de más no deja la línea a medias).
+  const withoutKardex = Decimal.max(Decimal.min(dispatched, netInvoiced).minus(costed), ZERO);
+  const partial = ratio.lt(ONE) || withoutKardex.gt(0);
   const progress = `Despachado ${toFixedString(dispatched, 'KG')} de ${toFixedString(netInvoiced, 'KG')}`;
+  const creditSuffix = credited.gt(0) ? `; ${creditedNote}` : '';
   return {
     engine: false,
     sum,
@@ -311,10 +345,12 @@ function dispatchLine(
       costBasisDetail: sale.dispatchSeqs.map((s) => dispatchCode(s)).join(', '),
       status: partial ? 'PARTIAL' : 'COMPLETE',
       note: !partial
-        ? null
+        ? credited.gt(0)
+          ? `Neto de ${creditedNote}`
+          : null
         : withoutKardex.gt(0)
-          ? `${progress}; ${toFixedString(withoutKardex, 'KG')} sin salida de kardex (D-278): sin costo`
-          : `${progress}: el resto, sin costo aún`,
+          ? `${progress}; ${toFixedString(withoutKardex, 'KG')} sin salida de kardex (D-278): sin costo${creditSuffix}`
+          : `${progress}: el resto, sin costo aún${creditSuffix}`,
     }),
   };
 }

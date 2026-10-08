@@ -506,7 +506,12 @@ describe('assembleDocumentProfitability (C06)', () => {
           }),
         );
         // Lo facturado neto (5) está despachado entero: la línea se costea completa.
-        expect(doc.lines[0]).toEqual(expect.objectContaining({ status: 'COMPLETE', note: null }));
+        expect(doc.lines[0]).toEqual(
+          expect.objectContaining({
+            status: 'COMPLETE',
+            note: 'Neto de 5.000 acreditado por nota de crédito (anulación o devolución)',
+          }),
+        );
       },
     );
 
@@ -521,6 +526,132 @@ describe('assembleDocumentProfitability (C06)', () => {
           expect.objectContaining({ salesPen: '0.0000', costPen: '400.0000' }),
         );
       },
+    );
+  });
+
+  describe('cc34 N6 (revisión, P1): la parte acreditada cuenta aunque la línea no tenga costo', () => {
+    const upvc = (over: Partial<RowSeed>) =>
+      row({ engine: false, sku: 'UPVC-1', unit: 'NIU', qty: '10', subtotal: '1000', ...over });
+
+    it('factura anulada entera con NC 01 antes de despachar: el neto da 0, no −1000', () => {
+      const doc = assembleDocumentProfitability({
+        document: HEADER,
+        rows: [
+          upvc({ orderItem: 'soi-9' }),
+          upvc({ credit: true, orderItem: 'soi-9', creditReason: 'ANULACION_OPERACION' }),
+        ],
+        engine: engineFacts({}),
+        declared: new Map(),
+        hasDeclaredDispatch: false,
+      });
+      expect(doc.lines[0]).toEqual(
+        expect.objectContaining({
+          status: 'COMPLETE',
+          costPen: '0.0000',
+          note: 'Todo 10.000 acreditado por nota de crédito (anulación o devolución): sin costo',
+        }),
+      );
+      expect(doc.net).toEqual(
+        expect.objectContaining({ salesPen: '0.0000', costPen: '0.0000', profitPen: '0.0000' }),
+      );
+    });
+
+    it('dos líneas: A despachada con costo, B sin despachar y con NC 07: 500 / 400 / 100', () => {
+      const doc = assembleDocumentProfitability({
+        document: HEADER,
+        rows: [
+          upvc({ line: 1, orderItem: 'soi-a', qty: '5', subtotal: '500' }),
+          upvc({ line: 2, orderItem: 'soi-b', qty: '5', subtotal: '500' }),
+          upvc({
+            credit: true,
+            orderItem: 'soi-b',
+            qty: '5',
+            subtotal: '500',
+            creditReason: 'DEVOLUCION_ITEM',
+          }),
+        ],
+        engine: engineFacts({}),
+        declared: new Map([
+          [
+            'soi-a',
+            {
+              dispatchedQty: '5',
+              costedQty: '5',
+              costPen: '400',
+              withoutMovement: false,
+              dispatchSeqs: [18],
+            },
+          ],
+        ]),
+        hasDeclaredDispatch: true,
+      });
+      expect(doc.net).toEqual(
+        expect.objectContaining({
+          salesPen: '500.0000',
+          costPen: '400.0000',
+          profitPen: '100.0000',
+        }),
+      );
+    });
+
+    it('NC parcial sin despacho: la parte acreditada entra y el resto sigue sin costo aún', () => {
+      const doc = assembleDocumentProfitability({
+        document: HEADER,
+        rows: [
+          upvc({ orderItem: 'soi-9' }),
+          upvc({
+            credit: true,
+            orderItem: 'soi-9',
+            qty: '4',
+            subtotal: '400',
+            creditReason: 'ANULACION_OPERACION',
+          }),
+        ],
+        engine: engineFacts({}),
+        declared: new Map(),
+        hasDeclaredDispatch: false,
+      });
+      expect(doc.lines[0]).toEqual(
+        expect.objectContaining({
+          status: 'NO_COST_YET',
+          salesPen: '400.0000',
+          uncostedSalesPen: '600.0000',
+        }),
+      );
+      expect(doc.net!.salesPen).toBe('0.0000');
+    });
+  });
+
+  it('cc34 N7 (revisión, P2-3): un despacho de más sin kardex no deja la línea a medias', () => {
+    const doc = assembleDocumentProfitability({
+      document: HEADER,
+      rows: [
+        row({
+          engine: false,
+          sku: 'UPVC-1',
+          unit: 'NIU',
+          orderItem: 'soi-9',
+          qty: '10',
+          subtotal: '500',
+        }),
+      ],
+      engine: engineFacts({}),
+      declared: new Map([
+        [
+          'soi-9',
+          {
+            dispatchedQty: '14',
+            costedQty: '10',
+            costPen: '320',
+            withoutMovement: true,
+            dispatchSeqs: [18, 19],
+          },
+        ],
+      ]),
+      hasDeclaredDispatch: true,
+    });
+    expect(doc.lines[0]).toEqual(
+      expect.objectContaining({ status: 'COMPLETE', salesPen: '500.0000', costPen: '320.0000' }),
     );
   });
 
