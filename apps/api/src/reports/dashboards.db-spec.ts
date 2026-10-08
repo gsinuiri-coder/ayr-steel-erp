@@ -48,23 +48,69 @@ const ADMIN_CEILING = 60;
 const PLANT_FIXED_CEILING = 45;
 const PLANT_PAGE_CEILING = 12;
 
+/**
+ * cc34 — además de contar, se guarda **qué** sentencia salió. `dashboards.db-spec` falló seis veces
+ * en la CI con el Panel una consulta por debajo de sus reportes (24/25, 15/16) y nunca en local,
+ * ni con los datos de la CI (25 consultas, 15 repeticiones) ni con 16 Paneles en paralelo; los
+ * eventos tampoco llegaban tarde. Comparar el multiconjunto de sentencias es más estricto que el
+ * conteo y, si vuelve a fallar, el mensaje dice cuál sobra o falta.
+ */
 class CountingPrisma extends PrismaService {
-  count = 0;
+  readonly statements: string[] = [];
   constructor() {
     super({ log: [{ emit: 'event', level: 'query' }] });
-    (this as unknown as { $on: (e: 'query', cb: () => void) => void }).$on('query', () => {
-      this.count += 1;
-    });
+    (this as unknown as { $on: (e: 'query', cb: (e: { query: string }) => void) => void }).$on(
+      'query',
+      (e) => {
+        this.statements.push(e.query.replace(/\s+/g, ' ').trim());
+      },
+    );
   }
 }
 
 let moduleRef: TestingModule;
 let prisma: CountingPrisma;
 
-async function measure(run: () => Promise<unknown>): Promise<number> {
-  const before = prisma.count;
+let fences = 0;
+
+/**
+ * Las sentencias que mandó `run`, **hasta una consulta marcadora**.
+ *
+ * Revisión de cc34 (causa probable de la variación): Prisma 6 entrega el evento `query` y el
+ * resultado de la consulta por caminos distintos, sin orden entre ellos. Medido uno por uno, un
+ * evento tardío cae en la ventana siguiente y la suma no cambia; el Panel se mide último y en
+ * paralelo, y el evento de su última consulta podía llegar después de cerrar la lista: el Panel
+ * contaba una de menos, siempre una de menos (24/25, 15/16) y solo en la CI. Los eventos sí salen en
+ * orden entre ellos, así que se manda una consulta marcadora y se corta la lista cuando aparece:
+ * para entonces llegaron todos los anteriores. La igualdad exacta que se exige no cambia.
+ */
+async function measure(run: () => Promise<unknown>): Promise<string[]> {
+  const before = prisma.statements.length;
   await run();
-  return prisma.count - before;
+  fences += 1;
+  const marker = `measure_fence_${String(fences)}`;
+  // Constante armada por el test (sin datos del usuario): `$queryRawUnsafe` no expone nada.
+  await prisma.$queryRawUnsafe(`SELECT 1 AS ${marker}`);
+  for (let waited = 0; ; waited += 10) {
+    const at = prisma.statements.indexOf(`SELECT 1 AS ${marker}`, before);
+    if (at >= 0) return prisma.statements.slice(before, at);
+    if (waited > 10_000) throw new Error(`No llegó el evento de la consulta marcadora ${marker}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** Lo que difiere entre dos multiconjuntos de sentencias: «n en a → m en b: sentencia». */
+function statementDiff(a: readonly string[], b: readonly string[]): string[] {
+  const tally = (xs: readonly string[]) => {
+    const m = new Map<string, number>();
+    for (const x of xs) m.set(x, (m.get(x) ?? 0) + 1);
+    return m;
+  };
+  const ta = tally(a);
+  const tb = tally(b);
+  return [...new Set([...ta.keys(), ...tb.keys()])]
+    .filter((k) => (ta.get(k) ?? 0) !== (tb.get(k) ?? 0))
+    .map((k) => `${String(ta.get(k) ?? 0)} → ${String(tb.get(k) ?? 0)}: ${k.slice(0, 300)}`);
 }
 
 beforeAll(async () => {
@@ -90,18 +136,21 @@ it('el Panel del administrador cuesta lo mismo que sus reportes, sin consultas p
   const waste = moduleRef.get(CoilWasteService);
 
   // Uno por uno: medidas en paralelo se contarían las consultas de las otras.
-  let reports =
-    (await measure(() => sales.salesMargin(current))) +
-    (await measure(() => sales.salesMargin(previous))) +
-    (await measure(() => aging.report({}))) +
-    (await measure(() => valuation.valuation({})));
+  const reports = [
+    ...(await measure(() => sales.salesMargin(current))),
+    ...(await measure(() => sales.salesMargin(previous))),
+    ...(await measure(() => aging.report({}))),
+    ...(await measure(() => valuation.valuation({}))),
+  ];
   for (const businessLine of COIL_REPORT_LINES) {
-    reports += await measure(() => waste.report({ ...current, businessLine }));
+    reports.push(...(await measure(() => waste.report({ ...current, businessLine }))));
   }
 
   const panel = await measure(() => moduleRef.get(AdminDashboardService).dashboard(today));
-  expect(panel).toBe(reports);
-  expect(panel).toBeLessThanOrEqual(ADMIN_CEILING);
+  // Las mismas sentencias, las mismas veces (reportes → Panel).
+  expect(statementDiff(reports, panel)).toEqual([]);
+  expect(panel.length).toBe(reports.length);
+  expect(panel.length).toBeLessThanOrEqual(ADMIN_CEILING);
 });
 
 it('el Panel de planta cuesta lo mismo que sus lecturas, sin consultas propias', async () => {
@@ -118,25 +167,25 @@ it('el Panel de planta cuesta lo mismo que sus lecturas, sin consultas propias',
   };
   const waste = moduleRef.get(CoilWasteService);
 
-  let reads =
-    (await measure(() => moduleRef.get(RoofingProductionService).queue(actor))) +
-    (await measure(() =>
+  const reads = [
+    ...(await measure(() => moduleRef.get(RoofingProductionService).queue(actor))),
+    ...(await measure(() =>
       moduleRef.get(ProductionService).findAll({ status: ['DRAFT', 'IN_PROGRESS'] }),
-    )) +
-    0;
+    )),
+  ];
   for (const range of [{ from: today, to: today }, week]) {
     for (const businessLine of COIL_REPORT_LINES) {
-      reads += await measure(() => waste.report({ ...range, businessLine }));
+      reads.push(...(await measure(() => waste.report({ ...range, businessLine }))));
     }
   }
 
   // Las bobinas, por las mismas páginas que recorre el Panel.
   const coils = moduleRef.get(CoilsService);
-  let coilReads = 0;
+  const coilReads: string[] = [];
   let pages = 0;
   for (let page = 1, seen = 0; ; page += 1) {
     let res: Awaited<ReturnType<CoilsService['findAll']>> | undefined;
-    coilReads += await measure(async () => {
+    const pageReads = await measure(async () => {
       res = await coils.findAll({
         status: ['OPEN'],
         kind: 'COIL',
@@ -145,13 +194,15 @@ it('el Panel de planta cuesta lo mismo que sus lecturas, sin consultas propias',
         pageSize: 200,
       });
     });
+    coilReads.push(...pageReads);
     pages += 1;
     seen += res?.items.length ?? 0;
     if (seen >= (res?.total ?? 0) || (res?.items.length ?? 0) === 0) break;
   }
 
   const panel = await measure(() => moduleRef.get(PlantDashboardService).dashboard(actor, today));
-  expect(panel).toBe(reads + coilReads);
-  expect(reads).toBeLessThanOrEqual(PLANT_FIXED_CEILING);
-  expect(coilReads).toBeLessThanOrEqual(PLANT_PAGE_CEILING * pages);
+  expect(statementDiff([...reads, ...coilReads], panel)).toEqual([]);
+  expect(panel.length).toBe(reads.length + coilReads.length);
+  expect(reads.length).toBeLessThanOrEqual(PLANT_FIXED_CEILING);
+  expect(coilReads.length).toBeLessThanOrEqual(PLANT_PAGE_CEILING * pages);
 });
