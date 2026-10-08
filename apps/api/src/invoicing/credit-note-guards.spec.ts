@@ -219,9 +219,12 @@ describe('anular o dar de baja con una NC en borrador (cc33 N3)', () => {
       $queryRaw: jest.fn().mockResolvedValue([{ id: 'inv-1' }]),
       customerPayment: { count: jest.fn().mockResolvedValue(0) },
       fiscalDocument: {
-        count: jest.fn().mockResolvedValue(liveNotes),
+        // cc34: antes del PSE la baja se marca en trámite con el comprobante aceptado y sin notas;
+        // lo que «entró durante la llamada» aparece recién en la transacción final.
+        findUnique: jest.fn().mockResolvedValue({ status: FiscalDocumentStatus.ACCEPTED }),
+        count: jest.fn().mockResolvedValueOnce(0).mockResolvedValue(liveNotes),
         // Un borrador que entró durante la llamada al PSE: ya no corta la baja.
-        findMany: jest.fn().mockResolvedValue([DRAFT_NOTE]),
+        findMany: jest.fn().mockResolvedValueOnce([]).mockResolvedValue([DRAFT_NOTE]),
         updateMany,
       },
     };
@@ -254,7 +257,10 @@ describe('anular o dar de baja con una NC en borrador (cc33 N3)', () => {
     await expect(service.voidDocument(ACTOR, 'inv-1', 'Prueba')).rejects.toThrow(
       'Consultar al PSE',
     );
-    expect(updateMany).not.toHaveBeenCalled();
+    // cc34: la marca de trámite sí se escribió antes del PSE; la baja definitiva, no.
+    expect(updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'VOIDED' }) }),
+    );
   });
 
   it('un borrador tardío no impide registrar la baja que SUNAT ya aceptó', async () => {

@@ -60,12 +60,22 @@ export async function draftCreditNoteBlock(
  * archivado (una reimportación solo archiva importados, que no admiten nota de crédito); acá se
  * mira también, en el único momento en que la nota pasa a existir.
  */
+/** cc34: cómo se nombra una factura con la baja en trámite ante SUNAT (`VOID_PENDING`). */
+export const VOID_IN_PROGRESS = 'tiene la baja en trámite ante SUNAT';
+
 export function assertAffectedStillCreditable(affected: {
   number: string | null;
   status: Status;
   archivedAt: Date | null;
 }): void {
   if (affected.status === FiscalDocumentStatus.ACCEPTED && affected.archivedAt === null) return;
+  if (affected.status === FiscalDocumentStatus.VOID_PENDING && affected.archivedAt === null) {
+    // cc34 (D-536 de fondo): mientras la baja está en trámite la nota no se descarta —si SUNAT
+    // rechaza la baja, la factura vuelve a estar aceptada y la nota sirve—, solo espera.
+    throw new ConflictException(
+      `${affected.number ?? 'El comprobante afectado'} ${VOID_IN_PROGRESS}: espera a que SUNAT la confirme o la rechace antes de registrar o emitir esta nota de crédito`,
+    );
+  }
   const why =
     affected.archivedAt !== null
       ? 'fue reemplazado por una reimportación'
