@@ -58,7 +58,8 @@ test('D-351 — cuatro tipos → preview → corregir → confirmar → recibir 
   const newRuc = evenRuc();
   const [y, m, d] = businessToday().split('-');
   const today = `${d}/${m}/${y}`;
-  const n = String(Date.now()).slice(-6);
+  // Empieza en 9: un número que empieza con 0 se guarda sin el cero (D-538).
+  const n = `9${String(Date.now()).slice(-5)}`;
 
   const header = { issueDate: today, currency: 'PEN', paymentTerms: 'Contado', igvRate: '18' };
   const file = csvOf([

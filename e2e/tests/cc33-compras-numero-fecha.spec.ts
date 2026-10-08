@@ -89,7 +89,7 @@ test.describe('cc33 — número y fechas de una compra', () => {
     const supplier = await createSupplier(api);
     for (const issueDate of ['2026-02-31', '2026-09-31', '2026-08-32']) {
       const rejected = await api.post('/api/purchases', {
-        data: body(supplier.id, { number: String(Date.now()).slice(-7), issueDate }),
+        data: body(supplier.id, { number: `9${String(Date.now()).slice(-6)}`, issueDate }),
       });
       expect(rejected.status(), issueDate).toBe(400);
       expect(await rejected.text()).toContain('no existe en el calendario');
@@ -98,7 +98,7 @@ test.describe('cc33 — número y fechas de una compra', () => {
     const purchase = await postJson<PurchaseDto>(
       api,
       '/api/purchases',
-      body(supplier.id, { number: String(Date.now()).slice(-7) }),
+      body(supplier.id, { number: `9${String(Date.now()).slice(-6)}` }),
     );
     toCancel.push(purchase.id);
     const payment = await api.post(`/api/purchases/${purchase.id}/payments`, {

@@ -16,7 +16,8 @@ test('D-353 — recibir dos compras en borrador de una vez', async ({ page, base
   const api = await adminApi(baseURL!);
   const supplier = await createSupplier(api);
   const product = await createSellableProduct(api, { lineCode: 'trading' });
-  const n = String(Date.now()).slice(-7);
+  // Empieza en 9: un número que empieza con 0 se guarda sin el cero (D-538).
+  const n = `9${String(Date.now()).slice(-6)}`;
   const purchase = (number: string) =>
     postJson<{ id: string }>(api, '/api/purchases', {
       supplierId: supplier.id,

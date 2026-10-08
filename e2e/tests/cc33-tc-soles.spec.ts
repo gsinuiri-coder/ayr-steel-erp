@@ -33,7 +33,8 @@ interface CoilDto {
 }
 
 function uniqueNumber(): string {
-  return String(Date.now()).slice(-9);
+  // Empieza en 9: un número que empieza con 0 se guarda sin el cero (D-538).
+  return `9${String(Date.now()).slice(-8)}`;
 }
 
 test.describe('cc33 N1 — TC de una compra en soles', () => {
