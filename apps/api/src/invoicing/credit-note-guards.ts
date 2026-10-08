@@ -63,6 +63,27 @@ export async function draftCreditNoteBlock(
 /** cc34: cómo se nombra una factura con la baja en trámite ante SUNAT (`VOID_PENDING`). */
 export const VOID_IN_PROGRESS = 'tiene la baja en trámite ante SUNAT';
 
+/**
+ * cc34 (D-542): las acciones de auditoría de una baja. La última dice si la marca de trámite tiene
+ * resultado: `REQUESTED` sin otra después es una llamada que todavía habla con el PSE o que se cayó.
+ * `DONE` es la acción de siempre (anterior a cc34).
+ */
+export const VOID_AUDIT = {
+  REQUESTED: 'invoicing.document.void-requested',
+  RELEASED: 'invoicing.document.void-released',
+  CONFLICT: 'invoicing.document.void-conflict',
+  DONE: 'invoicing.document.void',
+} as const;
+
+/**
+ * Cuánto puede durar una llamada de baja: el tope de la llamada al PSE (60 s) con holgura. Pasado
+ * eso, una marca sin resultado es huérfana y la baja se puede reintentar.
+ */
+export const VOID_IN_FLIGHT_MS = 5 * 60_000;
+
+export const VOID_IN_FLIGHT_MESSAGE =
+  'La baja se está comunicando al PSE en este momento: espera un minuto y usa «Consultar al PSE»';
+
 export function assertAffectedStillCreditable(affected: {
   number: string | null;
   status: Status;
