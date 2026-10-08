@@ -50,3 +50,5 @@ pnpm-debug.log*
 # commitea, y además rompen `pnpm format:check`).
 /e2e-report.json
 /subset.json
+# capturas y registros del servidor MCP de Playwright (sesiones de agente)
+.playwright-mcp/
