@@ -87,6 +87,11 @@ test.describe('cc33 N1 — TC de una compra en soles', () => {
       method: 'CASH',
     });
     expect(paid.payments[0]).toMatchObject({ currency: 'PEN', exchangeRate: '1.0000' });
+    // Una compra con pago vigente no se anula: el pago se anula primero para que la limpieza
+    // del `afterAll` no falle en silencio.
+    await postJson(api, `/api/purchases/${purchase.id}/payments/${paid.payments[0]!.id}/reverse`, {
+      reason: 'Limpieza del E2E cc33',
+    });
   });
 
   test('pantalla: pasar de dólares a soles limpia el TC y la bobina entra al costo del subtotal', async ({
@@ -128,6 +133,7 @@ test.describe('cc33 N1 — TC de una compra en soles', () => {
     await expect(page.getByText('Compra registrada')).toBeVisible();
     await page.waitForURL(/\/compras\/[0-9a-f-]{36}$/);
     const purchaseId = page.url().split('/').pop() ?? '';
+    toCancel.push(purchaseId);
 
     const draft = await getJson<PurchaseDto>(api, `/api/purchases/${purchaseId}`);
     expect(draft).toMatchObject({ currency: 'PEN', exchangeRate: '1.0000' });

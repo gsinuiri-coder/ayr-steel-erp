@@ -33,10 +33,12 @@ function issuesOf(input: Record<string, unknown>): string[] {
 describe('createPurchaseSchema — TC en soles (cc33 N1)', () => {
   it('rechaza una compra en soles con TC distinto de 1', () => {
     expect(issuesOf({ ...BASE, exchangeRate: '3.75' })).toContain('exchangeRate');
+    expect(issuesOf({ ...BASE, exchangeRate: '0.9999' })).toContain('exchangeRate');
   });
 
   it('acepta soles con TC 1 o sin TC, y dólares con cualquier TC', () => {
     expect(issuesOf({ ...BASE, exchangeRate: '1' })).toEqual([]);
+    expect(issuesOf({ ...BASE, exchangeRate: '1.0000' })).toEqual([]);
     expect(issuesOf({ ...BASE })).toEqual([]);
     expect(issuesOf({ ...BASE, currency: 'USD', exchangeRate: '3.75' })).toEqual([]);
   });

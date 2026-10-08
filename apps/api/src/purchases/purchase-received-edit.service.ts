@@ -41,7 +41,7 @@ import {
   rawMaterialCoilsForAttributes,
 } from '../sales/raw-material';
 import { reservedByItem } from '../sales/reserved-ledger';
-import { computeDueDate, receptionCost } from './purchase-math';
+import { assertPenRateIsOne, computeDueDate, receptionCost } from './purchase-math';
 import { editedLineAmounts, impliedIgvRatePct, purchaseTotalsOf } from './purchase-draft-edit';
 import {
   blockedSummary,
@@ -351,6 +351,7 @@ export class ReceivedPurchaseEditService {
           : 'La compra está anulada',
       );
     }
+    assertPenRateIsOne(purchase);
     const livePayments = await tx.supplierPayment.count({
       where: { purchaseId: id, reversedAt: null },
     });

@@ -83,6 +83,7 @@ import {
   purchaseBalance,
   startOfDayUtc,
   toPurchaseCurrency,
+  assertPenRateIsOne,
 } from './purchase-math';
 import { purchaseOrderBy } from '../common/list-orderings';
 import {
@@ -562,6 +563,7 @@ export class PurchasesService {
     purchase: Purchase,
     lines: readonly { subtotal: string | Decimal; igv: string | Decimal }[],
   ): Promise<{ total: Decimal }> {
+    assertPenRateIsOne(purchase);
     const totals = purchaseTotalsOf(lines, purchase.exchangeRate.toString());
     await tx.purchase.update({
       where: { id: purchase.id },
@@ -601,6 +603,7 @@ export class PurchasesService {
     if (purchase.status === PurchaseStatus.RECEIVED) {
       throw new BadRequestException('La compra ya fue recibida');
     }
+    assertPenRateIsOne(purchase);
 
     await this.prisma.$transaction(
       async (tx) => {

@@ -65,7 +65,9 @@ async function penWithRate(tx: Tx) {
   const rows = purchases.map((p) => {
     const rate = dec(p.exchangeRate);
     const totalPenOver = dec(p.totalPen).minus(dec(p.total));
-    totalOverPen = totalOverPen.plus(totalPenOver);
+    // Solo las recibidas pesan en saldos y reportes: un borrador no tocó el kardex y una anulada
+    // dejó de contar. Los borradores se cuentan aparte (son los que la guarda de D-534 frena).
+    if (p.status === 'RECEIVED') totalOverPen = totalOverPen.plus(totalPenOver);
     const own = movements.filter((m) => m.refId === p.id);
     // Neto de la compra (entradas menos reversas): un reemplazo o una anulación no cuentan doble.
     const kardexIn = own.reduce(
@@ -122,7 +124,14 @@ async function penWithRate(tx: Tx) {
   });
   return {
     count: rows.length,
+    byStatus: Object.fromEntries(
+      ['DRAFT', 'RECEIVED', 'CANCELLED'].map((st) => [
+        st,
+        rows.filter((r) => r.status === st).length,
+      ]),
+    ),
     coilCount: rows.reduce((a, r) => a + r.coils.length, 0),
+    note: 'kardexOverstatedPen es lo que entró de más al kardex (tope del impacto), no lo que sigue en stock; las bobinas hijas de un partido heredan coil.exchangeRate y no se listan aparte.',
     totalPenOverstatedPen: fmt(totalOverPen),
     kardexOverstatedPen: fmt(kardexOverPen),
     purchases: rows,
@@ -357,8 +366,9 @@ async function leadingZeroCollisions(tx: Tx) {
 }
 
 async function datesVersusAudit(tx: Tx) {
-  // Pagos: la auditoría `purchases.payment` guarda la fecha de operación como se resolvió
-  // (`after.operationDate`, D-124) — es el texto que llegó en el body.
+  // Pagos: la auditoría `purchases.payment` guarda la fecha de operación ya resuelta
+  // (`after.operationDate`, D-124), que es el texto del body una vez validado: lo que se compara es
+  // ese texto contra la columna `date`. Un día inexistente que el schema dejó pasar aparece acá.
   const paymentAudits = await tx.auditLog.findMany({
     where: { action: 'purchases.payment', entity: 'supplier_payments' },
     select: { entityId: true, after: true, at: true },
@@ -424,11 +434,7 @@ async function datesVersusAudit(tx: Tx) {
   for (const a of importAudits) walk(a.after);
 
   // Alta de compra: `purchases.create` no guarda la fecha de emisión, así que lo escrito no se
-  // puede comparar. Lo único observable es una fecha de emisión que cae día 1 o 2, que es donde
-  // aterriza un 29..31 inexistente: se cuenta como señal, no como hallazgo.
-  const firstDays = await tx.purchase.count({
-    where: { status: { not: 'CANCELLED' } },
-  });
+  // puede comparar con lo guardado.
   return {
     payments: {
       audited: paymentAudits.length,
@@ -442,7 +448,6 @@ async function datesVersusAudit(tx: Tx) {
       note: 'Se buscan claves *date* con valor YYYY-MM-DD inexistente en el JSON de la auditoría del lote.',
     },
     purchaseCreate: {
-      livePurchases: firstDays,
       detectable: false,
       note: 'purchases.create no guarda la fecha de emisión escrita: no se puede comparar con lo guardado.',
     },
