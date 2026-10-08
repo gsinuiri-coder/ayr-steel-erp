@@ -85,7 +85,8 @@ test('D-359 — el total del papel manda al importar, al editar y al recibir', a
     kind: 'PREPINTADO',
     colorId: color.id,
   });
-  const n = String(Date.now()).slice(-6);
+  // Empieza en 9: un número que empieza con 0 se guarda sin el cero (D-538).
+  const n = `9${String(Date.now()).slice(-5)}`;
   const header = {
     docType: 'Factura',
     issueDate: '12/08/2026',
