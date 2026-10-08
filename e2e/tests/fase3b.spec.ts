@@ -94,7 +94,9 @@ interface BalanceDto {
 // ---------------------------------------------------------------------------
 
 function uniqueDocumentNumber(): string {
-  return String(Date.now()).slice(-9);
+  // cc33 (D-538): un número que empieza con 0 se guarda sin el cero.
+  const nine = String(Date.now()).slice(-9);
+  return nine.startsWith('0') ? `9${nine.slice(1)}` : nine;
 }
 
 function randomLetters(length: number): string {

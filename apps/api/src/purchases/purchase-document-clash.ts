@@ -30,12 +30,12 @@ export async function assertNoLiveDocumentClash(
       status: { not: PurchaseStatus.CANCELLED },
       ...(doc.excludeId ? { id: { not: doc.excludeId } } : {}),
     },
-    select: { series: true, number: true },
+    select: { number: true },
   });
-  const clash = candidates.find((p) => normalizePurchaseNumber(p.number) === target);
-  if (clash) {
+  // El mensaje es el mismo de siempre (D-132): quien lo lee o lo compara no cambia.
+  if (candidates.some((p) => normalizePurchaseNumber(p.number) === target)) {
     throw new ConflictException(
-      `Ese comprobante ya está registrado para este proveedor en una compra vigente (${clash.series}-${clash.number})`,
+      'Ese comprobante ya está registrado para este proveedor en una compra vigente',
     );
   }
 }

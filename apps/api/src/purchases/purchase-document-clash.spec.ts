@@ -18,7 +18,7 @@ describe('assertNoLiveDocumentClash', () => {
       ConflictException,
     );
     await expect(assertNoLiveDocumentClash(tx as never, { ...DOC, number: '12' })).rejects.toThrow(
-      '(F001-00012)',
+      /^Ese comprobante ya está registrado para este proveedor en una compra vigente$/,
     );
   });
 

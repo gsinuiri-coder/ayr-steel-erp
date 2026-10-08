@@ -49,7 +49,8 @@ test.describe('cc33 — número y fechas de una compra', () => {
 
   test('ceros a la izquierda: se guarda sin ellos y el duplicado se rechaza', async () => {
     const supplier = await createSupplier(api);
-    const seed = String(Date.now()).slice(-6);
+    // Empieza en 9: un sufijo del reloj puede empezar con ceros, y esos también se quitan.
+    const seed = `9${String(Date.now()).slice(-5)}`;
     const first = await postJson<PurchaseDto>(
       api,
       '/api/purchases',
