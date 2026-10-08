@@ -2799,7 +2799,7 @@ export class InvoicingService {
           where: { id, status: FiscalDocumentStatus.VOID_PENDING, voidRequestedAt: requestedAt },
           data: {
             providerTicket: result.ticket,
-            providerResponse: (result.raw ?? {}),
+            providerResponse: result.raw ?? {},
           },
         });
         await this.audit.write(tx, {
