@@ -1882,8 +1882,10 @@ export class InvoicingService {
     document: {
       id: string;
       docType: FiscalDocType;
-      salesOrderId?: string | null;
-      customerId?: string;
+      // Obligatorios a propósito (cc33, revisión P2): un llamador que los recortara con un
+      // `select` apagaría en silencio la comprobación del pedido.
+      salesOrderId: string | null;
+      customerId: string;
       items: {
         qty: Prisma.Decimal;
         salesOrderItemId: string | null;
