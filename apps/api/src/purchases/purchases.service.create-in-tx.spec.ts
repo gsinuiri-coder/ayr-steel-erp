@@ -139,6 +139,74 @@ describe('PurchasesService.resolveExchangeRate (D-351)', () => {
     const pen = await svc.resolveExchangeRate({ issueDate: '2026-09-20', currency: 'PEN' });
     expect(pen.rate.toFixed(0)).toBe('1');
   });
+
+  it('cc33 N1: en soles el TC es 1 aunque el input traiga otro', async () => {
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    const pen = await svc.resolveExchangeRate({
+      exchangeRate: '3.75',
+      issueDate: '2026-09-20',
+      currency: 'PEN',
+    });
+    expect(pen).toEqual({ rate: new Decimal(1), source: ExchangeRateSource.MANUAL });
+  });
+});
+
+describe('PurchasesService.createInTx — compra en soles (cc33 N1)', () => {
+  it('guarda TC 1 y totalPen igual al total aunque le llegue otro TC', async () => {
+    const tx = txWith();
+    await service().createInTx(tx as never, ACTOR, COIL_INPUT, {
+      rate: new Decimal('3.75'),
+      source: ExchangeRateSource.MANUAL,
+    });
+    const data = (tx.purchase.create.mock.calls[0] as [{ data: Record<string, unknown> }])[0].data;
+    expect(data.exchangeRate).toBe('1.0000');
+    // 1000 kg × 3 = 3000 + IGV 18 % = 3540: la recepción costea con este mismo TC.
+    expect(data.total).toBe('3540.0000');
+    expect(data.totalPen).toBe('3540.0000');
+  });
+});
+
+describe('PurchasesService.addPayment — pago en soles de una compra en soles (cc33 N1)', () => {
+  it('guarda TC 1 aunque el body traiga un TC viejo', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 'pay-1',
+      amount: new Prisma.Decimal('100'),
+      currency: 'PEN',
+      method: 'TRANSFER',
+    });
+    const purchase = {
+      id: 'pu-1',
+      status: 'RECEIVED',
+      currency: 'PEN',
+      total: new Prisma.Decimal('3540'),
+      payments: [],
+    };
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      purchase: { findUniqueOrThrow: jest.fn().mockResolvedValue(purchase) },
+      supplierPayment: { create },
+    };
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    Object.assign(svc, {
+      operationDate: { resolve: () => '2026-09-27' },
+      audit: { write: jest.fn().mockResolvedValue(undefined) },
+      prisma: {
+        purchase: { findUnique: jest.fn().mockResolvedValue(purchase) },
+        $transaction: (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+      },
+    });
+    jest.spyOn(svc, 'findOne').mockResolvedValue({} as never);
+    await svc.addPayment(ACTOR, 'pu-1', {
+      date: '2026-09-27',
+      amount: '100',
+      currency: 'PEN',
+      exchangeRate: '3.75',
+      method: 'TRANSFER',
+    } as never);
+    expect(
+      (create.mock.calls[0] as [{ data: { exchangeRate: string } }])[0].data.exchangeRate,
+    ).toBe('1.0000');
+  });
 });
 
 describe('PurchasesService.cancel — onlyDraft (D-351, deshacer lote)', () => {
@@ -273,5 +341,88 @@ describe('PurchasesService.receive — saldos por clave antes del primer ingreso
         { businessLineId: 'bl-1', itemType: 'PRODUCT', itemId: 'prod-a', unit: 'NIU' },
       ],
     });
+  });
+});
+
+describe('PurchasesService.receive — compra en soles con TC grabado ≠ 1 (cc33 N1, D-534)', () => {
+  it('se rechaza con 409 antes de abrir la transacción', async () => {
+    const transaction = jest.fn();
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    Object.assign(svc, {
+      operationDate: { resolve: () => '2026-09-27' },
+      prisma: {
+        purchase: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'pu-1',
+            status: 'DRAFT',
+            currency: 'PEN',
+            exchangeRate: new Prisma.Decimal('3.75'),
+            items: [],
+          }),
+        },
+        $transaction: transaction,
+      },
+    });
+    await expect(svc.receive(ACTOR, 'pu-1')).rejects.toBeInstanceOf(ConflictException);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('cc33 N1 — en dólares el TC sigue siendo el que llega', () => {
+  it('createInTx en USD guarda el TC resuelto', async () => {
+    const tx = txWith();
+    await service().createInTx(
+      tx as never,
+      ACTOR,
+      { ...COIL_INPUT, currency: 'USD' },
+      {
+        rate: new Decimal('3.75'),
+        source: ExchangeRateSource.MANUAL,
+      },
+    );
+    const data = (tx.purchase.create.mock.calls[0] as [{ data: Record<string, unknown> }])[0].data;
+    expect(data.exchangeRate).toBe('3.7500');
+    expect(data.totalPen).toBe('13275.0000');
+  });
+
+  it('un pago en dólares de una compra en soles guarda el TC del body', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 'pay-1',
+      amount: new Prisma.Decimal('10'),
+      currency: 'USD',
+      method: 'TRANSFER',
+    });
+    const purchase = {
+      id: 'pu-1',
+      status: 'RECEIVED',
+      currency: 'PEN',
+      total: new Prisma.Decimal('3540'),
+      payments: [],
+    };
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    Object.assign(svc, {
+      operationDate: { resolve: () => '2026-09-27' },
+      audit: { write: jest.fn().mockResolvedValue(undefined) },
+      prisma: {
+        purchase: { findUnique: jest.fn().mockResolvedValue(purchase) },
+        $transaction: (fn: (t: unknown) => Promise<unknown>) =>
+          fn({
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            purchase: { findUniqueOrThrow: jest.fn().mockResolvedValue(purchase) },
+            supplierPayment: { create },
+          }),
+      },
+    });
+    jest.spyOn(svc, 'findOne').mockResolvedValue({} as never);
+    await svc.addPayment(ACTOR, 'pu-1', {
+      date: '2026-09-27',
+      amount: '10',
+      currency: 'USD',
+      exchangeRate: '3.75',
+      method: 'TRANSFER',
+    } as never);
+    expect(
+      (create.mock.calls[0] as [{ data: { exchangeRate: string } }])[0].data.exchangeRate,
+    ).toBe('3.7500');
   });
 });

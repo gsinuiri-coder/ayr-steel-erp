@@ -60,6 +60,7 @@
     "fix:purchase-received-dates": "node scripts/fix-purchase-received-dates.mjs",
     "inspect:undispatched-invoices": "node scripts/inspect-undispatched-invoices.mjs",
     "inspect:cancelled-purchase-coils": "node scripts/inspect-cancelled-purchase-coils.mjs",
+    "inspect:cc33": "node scripts/inspect-cc33.mjs",
     "restore:cancelled-coils": "node scripts/restore-cancelled-coils.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },

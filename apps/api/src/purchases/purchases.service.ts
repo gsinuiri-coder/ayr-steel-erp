@@ -83,6 +83,7 @@ import {
   purchaseBalance,
   startOfDayUtc,
   toPurchaseCurrency,
+  assertPenRateIsOne,
 } from './purchase-math';
 import { purchaseOrderBy } from '../common/list-orderings';
 import {
@@ -189,6 +190,12 @@ export class PurchasesService {
   resolveExchangeRate(
     input: Pick<CreatePurchaseInput, 'exchangeRate' | 'issueDate' | 'currency'>,
   ): Promise<{ rate: Decimal; source: ExchangeRateSource }> {
+    // cc33 N1: en soles el TC es 1 siempre, antes de mirar el del input. El formulario escondía
+    // el campo al pasar a soles pero seguía mandando el último TC escrito, y la recepción lo
+    // multiplicaba en el costo de cada bobina y producto.
+    if (input.currency === Currency.PEN) {
+      return Promise.resolve({ rate: new Decimal(1), source: ExchangeRateSource.MANUAL });
+    }
     if (input.exchangeRate) {
       return Promise.resolve({
         rate: toDecimal(input.exchangeRate),
@@ -240,7 +247,12 @@ export class PurchasesService {
     await this.assertLandedCostLinkIsValid(tx, actor, input, businessLine.id);
     await this.assertCuttingOrderLinkIsValid(tx, actor, input, businessLine.id);
 
-    const { rate, source } = exchange;
+    // cc33 N1: la misma regla que `resolveExchangeRate`, por si un llamador resolvió el TC por
+    // su cuenta: una compra en soles nunca guarda otro TC que 1.
+    const { rate, source } =
+      input.currency === Currency.PEN
+        ? { rate: new Decimal(1), source: ExchangeRateSource.MANUAL }
+        : exchange;
     const totals = computeTotals(input, options.paperAmounts);
     const dueDate = computeDueDate(input);
 
@@ -551,6 +563,7 @@ export class PurchasesService {
     purchase: Purchase,
     lines: readonly { subtotal: string | Decimal; igv: string | Decimal }[],
   ): Promise<{ total: Decimal }> {
+    assertPenRateIsOne(purchase);
     const totals = purchaseTotalsOf(lines, purchase.exchangeRate.toString());
     await tx.purchase.update({
       where: { id: purchase.id },
@@ -590,6 +603,7 @@ export class PurchasesService {
     if (purchase.status === PurchaseStatus.RECEIVED) {
       throw new BadRequestException('La compra ya fue recibida');
     }
+    assertPenRateIsOne(purchase);
 
     await this.prisma.$transaction(
       async (tx) => {
@@ -1273,9 +1287,14 @@ export class PurchasesService {
     // juego, no el de la moneda del pago: pagar S/ contra una factura en USD sin este
     // ajuste resolvería un TC de 1.0000 y cancelaría el saldo con la cifra equivocada.
     const rateCurrency = input.currency === Currency.PEN ? purchase.currency : input.currency;
-    const rate = input.exchangeRate
-      ? toDecimal(input.exchangeRate)
-      : (await this.rateFor(paymentDate, rateCurrency)).rate;
+    // cc33 N1: pago en soles de una compra en soles → TC 1, aunque el body traiga otro (el
+    // formulario lo escondía sin limpiarlo). Solo un pago cruzado de moneda usa el TC del input.
+    const rate =
+      rateCurrency === Currency.PEN
+        ? new Decimal(1)
+        : input.exchangeRate
+          ? toDecimal(input.exchangeRate)
+          : (await this.rateFor(paymentDate, rateCurrency)).rate;
 
     const applied = toPurchaseCurrency(
       toDecimal(input.amount),

@@ -688,7 +688,13 @@ export function PurchaseForm({
               name="currency"
               render={({ field }) => (
                 <FormFieldCell span={4} label="Moneda">
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={field.value}
+                    onValueChange={(value) => {
+                      field.onChange(value);
+                      if (value === 'PEN') form.setValue('exchangeRate', '');
+                    }}
+                  >
                     <FormControl>
                       <SelectTrigger className="w-full">
                         <SelectValue />
@@ -1181,7 +1187,11 @@ function toApiBody(values: PurchaseFormValues): Record<string, unknown> {
     number: values.number,
     issueDate: values.issueDate,
     currency: values.currency,
-    exchangeRate: values.exchangeRate?.trim() ? values.exchangeRate.trim() : undefined,
+    // cc33 N1: una compra en soles no lleva TC (el API la guarda con 1 y rechaza otro).
+    exchangeRate:
+      values.currency !== 'PEN' && values.exchangeRate?.trim()
+        ? values.exchangeRate.trim()
+        : undefined,
     igvRate: values.igvRate,
     paymentTerms: values.paymentTerms,
     // El superRefine ya garantizó que sea un entero de 1 a 365 cuando hay crédito.

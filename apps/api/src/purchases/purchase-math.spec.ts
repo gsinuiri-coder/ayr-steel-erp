@@ -1,6 +1,7 @@
 import { Currency } from '@prisma/client';
 import { Decimal, type CreatePurchaseInput } from '@ayr/shared';
 import {
+  assertPenRateIsOne,
   computeDueDate,
   computeTotals,
   paidAmount,
@@ -187,5 +188,22 @@ describe('purchaseBalance con pagos anulados (Sesión M-2, cierra D-039)', () =>
     ];
     expect(purchaseBalance(purchasePen, payments).toFixed(4)).toBe('20000.0000');
     expect(paidAmount(purchasePen, payments).toFixed(4)).toBe('5016.0000');
+  });
+});
+
+describe('assertPenRateIsOne (cc33 N1, D-534)', () => {
+  it('rechaza una compra en soles grabada con TC distinto de 1', () => {
+    expect(() => {
+      assertPenRateIsOne({ currency: Currency.PEN, exchangeRate: new Decimal('3.75') });
+    }).toThrow('tipo de cambio 3.7500');
+  });
+
+  it('deja pasar soles con TC 1 y dólares con cualquier TC', () => {
+    expect(() => {
+      assertPenRateIsOne({ currency: Currency.PEN, exchangeRate: '1.0000' });
+    }).not.toThrow();
+    expect(() => {
+      assertPenRateIsOne({ currency: Currency.USD, exchangeRate: new Decimal('3.75') });
+    }).not.toThrow();
   });
 });

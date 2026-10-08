@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Currency, type CoilStatus, type Prisma } from '@prisma/client';
 import { cents, Decimal, money, toDecimal, type CreatePurchaseInput } from '@ayr/shared';
 
@@ -18,6 +18,23 @@ export interface PurchaseTotals {
   subtotal: Decimal;
   igv: Decimal;
   total: Decimal;
+}
+
+/**
+ * cc33 N1 (D-534): una compra en soles que quedó grabada con TC ≠ 1 —antes del arreglo— no se
+ * recibe ni se recalcula: cada uno de esos caminos multiplica por el TC guardado y propagaría el
+ * error al kardex. No se corrige sola (no se reparan datos); se rechaza con el motivo a la vista.
+ */
+export function assertPenRateIsOne(purchase: {
+  currency: Currency;
+  exchangeRate: Prisma.Decimal | Decimal | string;
+}): void {
+  if (purchase.currency !== Currency.PEN) return;
+  const rate = toDecimal(purchase.exchangeRate.toString());
+  if (rate.eq(1)) return;
+  throw new ConflictException(
+    `Esta compra en soles quedó grabada con tipo de cambio ${rate.toFixed(4)}: no se recibe ni se recalcula hasta corregirla. Avisa al administrador.`,
+  );
 }
 
 /** Lo mínimo de una compra que necesita el cálculo de saldo. */
