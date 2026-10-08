@@ -64,7 +64,14 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { fiscalDocumentListWhere } from './fiscal-document-where';
 import { assertSellerAccess } from '../auth/seller-scope';
-import { assertAffectedStillCreditable, draftCreditNoteBlock } from './credit-note-guards';
+import {
+  assertAffectedStillCreditable,
+  draftCreditNoteBlock,
+  VOID_AUDIT,
+  VOID_IN_FLIGHT_MESSAGE,
+  VOID_IN_FLIGHT_MS,
+  VOID_IN_PROGRESS,
+} from './credit-note-guards';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { ENV, type Env } from '../config/env';
@@ -990,6 +997,13 @@ export class InvoicingService {
       }
       if (affected.docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
         throw new BadRequestException('Una guía de remisión no se acredita: se da de baja');
+      }
+      if (affected.status === FiscalDocumentStatus.VOID_PENDING) {
+        // cc34 (D-536 de fondo): la baja ya salió hacia SUNAT; acreditar ahora dejaría una NC sobre
+        // una factura que SUNAT puede estar anulando.
+        throw new BadRequestException(
+          `${affected.number ?? 'El comprobante'} ${VOID_IN_PROGRESS}: espera a que SUNAT la confirme o la rechace antes de emitir una nota de crédito`,
+        );
       }
       if (affected.status !== FiscalDocumentStatus.ACCEPTED) {
         throw new BadRequestException(
@@ -2477,6 +2491,12 @@ export class InvoicingService {
     // definición, uno que SUNAT aceptó— y el documento se daría por anulado sin que SUNAT
     // lo anulara: la cuenta por cobrar desaparecía mientras el comprobante seguía vigente.
     if (document.status === FiscalDocumentStatus.VOID_PENDING) {
+      // cc34 (revisiones del corte 3): mientras la llamada que abrió la baja siga hablando con el PSE
+      // no se consulta. Un «rechazo» de una baja que todavía no llegó devolvía la factura a aceptada
+      // y la llamada original ya no podía registrar la baja que SUNAT sí recibió.
+      if ((await this.voidMarkState(this.prisma, id, document.voidRequestedAt)) === 'IN_FLIGHT') {
+        throw new BadRequestException(VOID_IN_FLIGHT_MESSAGE);
+      }
       const voidResult = await this.provider.queryVoidStatus(command);
       if (voidResult.outcome === 'ACCEPTED') {
         const updated = await this.prisma.fiscalDocument.updateMany({
@@ -2599,7 +2619,21 @@ export class InvoicingService {
     if (document.status === FiscalDocumentStatus.VOIDED) {
       throw new ConflictException('El comprobante ya está anulado');
     }
-    if (document.status !== FiscalDocumentStatus.ACCEPTED) {
+    // cc34 (revisiones del corte 3): una baja en trámite solo se reintenta si su marca quedó
+    // **huérfana** —la llamada que la abrió no dejó resultado (el proceso se cayó a mitad)— y ya es
+    // vieja. Si la baja se está comunicando o ya se comunicó, se consulta al PSE.
+    let retryingOrphan = false;
+    if (document.status === FiscalDocumentStatus.VOID_PENDING) {
+      const mark = await this.voidMarkState(this.prisma, id, document.voidRequestedAt);
+      if (mark !== 'ORPHAN') {
+        throw new BadRequestException(
+          mark === 'IN_FLIGHT'
+            ? VOID_IN_FLIGHT_MESSAGE
+            : 'La baja ya está en trámite ante SUNAT: usa «Consultar al PSE» para saber si la aceptó',
+        );
+      }
+      retryingOrphan = true;
+    } else if (document.status !== FiscalDocumentStatus.ACCEPTED) {
       throw new BadRequestException(
         `Solo se da de baja un comprobante aceptado; este está ${document.status}`,
       );
@@ -2642,6 +2676,93 @@ export class InvoicingService {
       );
     }
 
+    // cc34 (arreglo de fondo de D-536, D-542): **la baja queda en trámite antes de hablar con el
+    // PSE**, en su propia transacción y con la fila bloqueada. Mientras esté `VOID_PENDING` no se
+    // crea, registra ni envía una nota de crédito sobre la factura (`createCreditNote`,
+    // `assertAffectedStillCreditable`): ya no puede entrar una NC mientras SUNAT procesa la baja.
+    const requestedAt = new Date();
+    const fromStatus = retryingOrphan
+      ? FiscalDocumentStatus.VOID_PENDING
+      : FiscalDocumentStatus.ACCEPTED;
+    await this.prisma.$transaction(async (tx) => {
+      await lockDocuments(tx, { fiscalDocuments: [id] });
+      const live = await tx.fiscalDocument.findUnique({
+        where: { id },
+        select: { status: true, voidRequestedAt: true },
+      });
+      if (
+        live?.status !== fromStatus ||
+        (retryingOrphan && live.voidRequestedAt?.getTime() !== document.voidRequestedAt?.getTime())
+      ) {
+        throw new ConflictException('El comprobante cambió de estado mientras se daba de baja');
+      }
+      if ((await tx.customerPayment.count({ where: { documentId: id, reversedAt: null } })) > 0) {
+        throw new BadRequestException(
+          'El comprobante tiene cobros vigentes: revierte los cobros antes de darlo de baja',
+        );
+      }
+      const notes = await tx.fiscalDocument.count({
+        where: { affectedDocumentId: id, status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
+      });
+      if (notes > 0) {
+        throw new BadRequestException(
+          'El comprobante ya tiene nota de crédito: su saldo ya está ajustado',
+        );
+      }
+      const lateDraft = await draftCreditNoteBlock(tx, id, 'antes de darlo de baja');
+      if (lateDraft) throw new BadRequestException(lateDraft);
+      const marked = await tx.fiscalDocument.updateMany({
+        where: {
+          id,
+          status: fromStatus,
+          ...(retryingOrphan ? { voidRequestedAt: document.voidRequestedAt } : {}),
+        },
+        data: {
+          status: FiscalDocumentStatus.VOID_PENDING,
+          voidRequestedAt: requestedAt,
+          voidedById: actor.id,
+        },
+      });
+      if (marked.count !== 1) {
+        throw new ConflictException('El comprobante cambió de estado mientras se daba de baja');
+      }
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: VOID_AUDIT.REQUESTED,
+        entity: 'fiscal_documents',
+        entityId: id,
+        before: { status: fromStatus, number: document.number },
+        after: { status: FiscalDocumentStatus.VOID_PENDING, reason, retryingOrphan },
+      });
+    });
+
+    // Si la baja no llegó a SUNAT, la marca se quita y la factura vuelve a estar aceptada. Solo si
+    // sigue puesta la marca **de esta llamada**: nunca se pisa un estado que otro camino escribió.
+    const release = async (outcome: string): Promise<boolean> =>
+      this.prisma.$transaction(async (tx) => {
+        await lockDocuments(tx, { fiscalDocuments: [id] });
+        const released = await tx.fiscalDocument.updateMany({
+          where: { id, status: FiscalDocumentStatus.VOID_PENDING, voidRequestedAt: requestedAt },
+          data: {
+            status: FiscalDocumentStatus.ACCEPTED,
+            voidRequestedAt: retryingOrphan ? null : document.voidRequestedAt,
+            voidedById: retryingOrphan ? null : document.voidedById,
+          },
+        });
+        if (released.count !== 1) return false;
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: VOID_AUDIT.RELEASED,
+          entity: 'fiscal_documents',
+          entityId: id,
+          before: { status: FiscalDocumentStatus.VOID_PENDING },
+          after: { status: FiscalDocumentStatus.ACCEPTED, outcome },
+        });
+        return true;
+      });
+    const notReleased =
+      'El comprobante cambió de estado mientras se comunicaba la baja: usa «Consultar al PSE» para ver dónde quedó';
+
     const result = await this.callProvider(() =>
       this.provider.voidDocument({
         docType: document.docType,
@@ -2652,26 +2773,51 @@ export class InvoicingService {
     );
 
     if (result.outcome === 'ERROR') {
+      // Decisión del dueño (cc34): si la llamada falla, la marca se quita. Como antes de cc34, el
+      // mensaje avisa que la baja pudo llegar igual (D-542, riesgo aceptado).
+      if (!(await release('ERROR'))) throw new ConflictException(notReleased);
       throw new ConflictException(
         `No se pudo comunicar la baja al PSE: ${result.message ?? 'sin detalle'}. El comprobante sigue vigente; vuelve a intentarlo, o usa «Consultar al PSE» si sospechas que la baja sí llegó.`,
       );
     }
     if (result.outcome === 'REJECTED') {
+      if (!(await release('REJECTED'))) throw new ConflictException(notReleased);
       throw new BadRequestException(`El PSE rechazó la baja: ${result.message ?? 'sin detalle'}`);
     }
 
     const now = new Date();
-    await this.prisma.$transaction(async (tx) => {
+    const conflict = await this.prisma.$transaction(async (tx): Promise<string | null> => {
       // Los guardrails se revalidan **con la fila bloqueada**: entre la comprobación de
       // arriba y esta escritura pasó una llamada al PSE de hasta un minuto, y en esa
-      // ventana alguien pudo registrar un cobro o emitir una nota de crédito.
+      // ventana alguien pudo registrar un cobro (la marca de trámite no los frena) o, con un
+      // registro anterior a cc34, emitir una nota de crédito.
       await lockDocuments(tx, { fiscalDocuments: [id] });
+      // cc34 (revisiones): un conflicto ya no deshace lo que el PSE contestó. La baja quedó en
+      // trámite con su ticket y su respuesta, y la auditoría lo dice; se cierra consultando al PSE.
+      const keepPending = async (message: string): Promise<string> => {
+        await tx.fiscalDocument.updateMany({
+          where: { id, status: FiscalDocumentStatus.VOID_PENDING, voidRequestedAt: requestedAt },
+          data: {
+            providerTicket: result.ticket,
+            providerResponse: result.raw ?? {},
+          },
+        });
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: VOID_AUDIT.CONFLICT,
+          entity: 'fiscal_documents',
+          entityId: id,
+          before: { status: FiscalDocumentStatus.VOID_PENDING, number: document.number },
+          after: { outcome: result.outcome, reason, conflict: message },
+        });
+        return message;
+      };
       const livePayments = await tx.customerPayment.count({
         where: { documentId: id, reversedAt: null },
       });
       if (livePayments > 0) {
-        throw new ConflictException(
-          'Se registró un cobro mientras se comunicaba la baja: revierte el cobro y vuelve a intentarlo',
+        return keepPending(
+          'Se registró un cobro mientras se comunicaba la baja: la baja quedó en trámite ante SUNAT. Revierte el cobro y usa «Consultar al PSE» para cerrarla',
         );
       }
       // cc33 N3: el comentario de arriba promete también las notas de crédito, y solo se contaban
@@ -2688,28 +2834,27 @@ export class InvoicingService {
         },
       });
       if (liveNotes > 0) {
-        throw new ConflictException(
+        return keepPending(
           'Se emitió una nota de crédito mientras se comunicaba la baja: la baja ya se comunicó al PSE pero no se registró acá. Usa «Consultar al PSE» y revisa la nota de crédito',
         );
       }
 
+      // La baja sale del trámite que esta misma llamada abrió (`voidRequestedAt`).
       const updated = await tx.fiscalDocument.updateMany({
-        where: { id, status: FiscalDocumentStatus.ACCEPTED },
+        where: { id, status: FiscalDocumentStatus.VOID_PENDING, voidRequestedAt: requestedAt },
         data:
           result.outcome === 'ACCEPTED'
             ? {
                 status: FiscalDocumentStatus.VOIDED,
                 voidedAt: now,
                 voidedById: actor.id,
-                voidRequestedAt: now,
                 providerTicket: result.ticket,
                 providerResponse: (result.raw ?? {}) as Prisma.InputJsonValue,
               }
             : {
                 // `PENDING`: hay ticket y SUNAT todavía no confirmó. Marcarlo anulado acá
-                // sería declarar por SUNAT algo que SUNAT no dijo.
+                // sería declarar por SUNAT algo que SUNAT no dijo: sigue en trámite.
                 status: FiscalDocumentStatus.VOID_PENDING,
-                voidRequestedAt: now,
                 voidedById: actor.id,
                 providerTicket: result.ticket,
                 providerResponse: (result.raw ?? {}) as Prisma.InputJsonValue,
@@ -2722,15 +2867,44 @@ export class InvoicingService {
       }
       await this.audit.write(tx, {
         actorId: actor.id,
-        action: 'invoicing.document.void',
+        action: VOID_AUDIT.DONE,
         entity: 'fiscal_documents',
         entityId: id,
-        before: { status: FiscalDocumentStatus.ACCEPTED, number: document.number },
+        before: { status: FiscalDocumentStatus.VOID_PENDING, number: document.number },
         after: { outcome: result.outcome, reason },
       });
+      return null;
     });
+    if (conflict !== null) throw new ConflictException(conflict);
 
     return this.findOne(id);
+  }
+
+  /**
+   * cc34 (D-542): en qué quedó la marca de una baja en trámite, leído de la auditoría de las bajas.
+   * - `COMMUNICATED`: la última llamada dejó resultado (o es un trámite anterior a cc34): se
+   *   resuelve consultando al PSE.
+   * - `IN_FLIGHT`: la llamada que la abrió todavía puede estar hablando con el PSE.
+   * - `ORPHAN`: la llamada que la abrió no dejó resultado y ya pasó su tiempo (el proceso se cayó
+   *   a mitad): la baja se puede reintentar.
+   */
+  private async voidMarkState(
+    client: Prisma.TransactionClient | PrismaService,
+    id: string,
+    voidRequestedAt: Date | null,
+  ): Promise<'COMMUNICATED' | 'IN_FLIGHT' | 'ORPHAN'> {
+    const last = await client.auditLog.findFirst({
+      where: {
+        entity: 'fiscal_documents',
+        entityId: id,
+        action: { in: Object.values(VOID_AUDIT) },
+      },
+      orderBy: { at: 'desc' },
+      select: { action: true },
+    });
+    if (last?.action !== VOID_AUDIT.REQUESTED) return 'COMMUNICATED';
+    const age = Date.now() - (voidRequestedAt?.getTime() ?? 0);
+    return age < VOID_IN_FLIGHT_MS ? 'IN_FLIGHT' : 'ORPHAN';
   }
 
   // -------------------------------------------------------------------------
