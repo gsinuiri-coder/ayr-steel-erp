@@ -119,10 +119,10 @@ import {
   roofingCloseAdjustmentPen,
   roofingCloseScrap,
   roofingCost,
-  reportsOutKg,
   roofingTheoreticalKg,
   type CoilGeometry,
 } from './roofing-math';
+import { allocateRoofingScrap } from './roofing-scrap';
 
 /**
  * Producción de coberturas metálicas contra pedido (RF-30..RF-33; D-082..D-091).
@@ -2171,57 +2171,40 @@ export class RoofingProductionService {
         include: { reversals: { select: { id: true } } },
       }),
     );
-    const outByReport = reportsOutKg(
-      reports.map((r) => ({ id: r.id, theoreticalKg: toDecimal(r.theoreticalKg.toString()) })),
-      coilOuts.map((m) => ({ refId: m.refId, qty: toDecimal(m.qty.toString()) })),
-    );
-    const outKgOf = (reportId: string) => outByReport.get(reportId) ?? new Decimal(0);
-    const reportedKg = reports.reduce((acc, r) => acc.plus(outKgOf(r.id)), new Decimal(0));
-    const remainingKg = rows.reduce(
-      (acc, r) =>
-        acc.plus(
-          Decimal.max(
-            toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
-            new Decimal(0),
-          ),
+    // D-146: cuando planta declaró kilos **reporte a reporte**, el cierre los usa como valor por
+    // defecto en vez de asumir merma cero; `input.consumedKg` (el total escrito al cerrar) manda
+    // siempre. D-089: lo declarado no baja de lo que las planchas ya sacaron ni pasa lo montado.
+    // cc34 (B1): el despunte de cada bobina sale de sus propios partes —la bobina de cada parte es
+    // la de su salida de kardex— y un total escrito se reparte en proporción a lo reportado de
+    // cada bobina viva (`allocateRoofingScrap`). Con una sola bobina, lo de siempre.
+    const scrapPlan = allocateRoofingScrap({
+      rows: rows.map((r) => ({
+        consumptionId: r.id,
+        coilId: r.coilId,
+        coilCode: r.coil.code,
+        remainingKg: Decimal.max(
+          toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
+          new Decimal(0),
         ),
-      new Decimal(0),
-    );
-    // D-146: cuando planta declaró kilos **reporte a reporte**, el cierre los usa como
-    // valor por defecto en vez de asumir merma cero. Sin esto, la cifra que el encargado
-    // se tomó el trabajo de anotar quedaba de adorno: cerrar sin `consumedKg` la
-    // contradecía en silencio y el despunte real desaparecía. Lo explícito sigue
-    // mandando: `input.consumedKg` gana siempre.
-    //
-    // El piso es `reportedKg` porque lo declarado por reporte se topa contra el kilo
-    // teórico del **plan**, no contra el de sus propios largos: puede quedar por debajo
-    // de lo que las planchas ya representan, y ese material salió de verdad (D-089).
-    const declaredByReportsKg = reports.some((r) => r.consumedKg !== null)
-      ? Decimal.max(
-          reports.reduce(
-            (acc, r) =>
-              acc.plus(r.consumedKg === null ? outKgOf(r.id) : toDecimal(r.consumedKg.toString())),
-            new Decimal(0),
-          ),
-          reportedKg,
-        )
-      : reportedKg;
-    const declaredKg = input.consumedKg ? toDecimal(input.consumedKg) : declaredByReportsKg;
-
-    // D-089: lo declarado no puede ser menos que lo que las planchas ya representan (el
-    // material salió de verdad), ni más de lo que la orden tenía montado.
-    if (declaredKg.lt(reportedKg)) {
-      throw new BadRequestException(
-        `Las planchas reportadas ya consumieron ${reportedKg.toFixed(3)} kg: no se puede declarar un consumo de ${declaredKg.toFixed(3)} kg`,
-      );
-    }
-    if (declaredKg.gt(reportedKg.plus(remainingKg))) {
-      throw new BadRequestException(
-        `La orden tiene ${reportedKg.plus(remainingKg).toFixed(3)} kg montados y se declaran ${declaredKg.toFixed(3)} kg consumidos: monta más material o corrige la cifra`,
-      );
-    }
-
-    const { scrapKg, scrapRatio } = roofingCloseScrap({ declaredKg, reportedKg, remainingKg });
+      })),
+      reports: reports.map((r) => ({
+        id: r.id,
+        declaredKg: r.consumedKg === null ? null : toDecimal(r.consumedKg.toString()),
+        theoreticalKg: toDecimal(r.theoreticalKg.toString()),
+      })),
+      outs: coilOuts.flatMap((m) =>
+        m.refId === null
+          ? []
+          : [{ reportId: m.refId, coilId: m.itemId, kg: toDecimal(m.qty.toString()) }],
+      ),
+      explicitTotalKg: input.consumedKg ? toDecimal(input.consumedKg) : null,
+    });
+    const { reportedKg, declaredKg } = scrapPlan;
+    const { scrapKg, scrapRatio } = roofingCloseScrap({
+      declaredKg,
+      reportedKg,
+      remainingKg: new Decimal(0),
+    });
     if (!input.reason && scrapRatio.gt(MAX_SCRAP_RATIO_WITHOUT_REASON)) {
       throw new BadRequestException(
         `El cierre deja ${scrapKg.toFixed(3)} kg de despunte sobre ${declaredKg.toFixed(3)} kg consumidos (${scrapRatio.times(100).toFixed(1)} %): explica el motivo para cerrar con esa merma`,
@@ -2276,18 +2259,7 @@ export class RoofingProductionService {
         // pedido prometía. No hay rollo "ajeno" del que descontar por error.
         await consumeReservationQty(tx, order.reservationId, scrapKg);
       }
-      const allocations = allocateStripKg(
-        rows.map((r) => ({
-          consumptionId: r.id,
-          coilId: r.coilId,
-          coilCode: r.coil.code,
-          remainingKg: Decimal.max(
-            toDecimal(r.assignedKg.toString()).minus(toDecimal(r.consumedKg.toString())),
-            new Decimal(0),
-          ),
-        })),
-        scrapKg,
-      );
+      const { allocations } = scrapPlan;
       await lockCloseSet(allocations.map((a) => a.coilId));
       // Fuera del bucle: es la misma para todas las asignaciones y adentro sería una
       // consulta por rollo dentro de una transacción con presupuesto acotado.
