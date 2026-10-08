@@ -509,9 +509,25 @@ export class InvoicingService {
     if (input.salesOrderId) {
       const locked = await tx.salesOrder.findUnique({
         where: { id: input.salesOrderId },
-        select: { totalPen: true },
+        select: { totalPen: true, sellerId: true, status: true, seq: true, customerId: true },
       });
       if (!locked) throw new NotFoundException('Pedido no encontrado');
+      // cc33 N2: el alcance del vendedor se mira **antes de escribir**, con la fila ya bloqueada.
+      // Antes se miraba después, en `findOne`: el vendedor de otro pedido recibía 404, pero el
+      // borrador, el enlace del despacho y la clave de idempotencia ya estaban confirmados, y ese
+      // borrador ajeno bloqueaba facturar, editar y anular el pedido.
+      assertSellerAccess(actor, locked.sellerId, 'Pedido');
+      // cc33 N4: estado y cliente se validan en la cabecera. `resolveLines` lo hacía solo por
+      // línea de pedido, así que un comprobante de líneas libres pasaba sobre un pedido anulado
+      // o de otro cliente.
+      if (locked.status === 'CANCELLED') {
+        throw new BadRequestException(
+          `El pedido ${salesOrderCode(locked.seq)} está anulado: no se puede facturar`,
+        );
+      }
+      if (locked.customerId !== input.customerId) {
+        throw new BadRequestException('El comprobante y el pedido son de clientes distintos');
+      }
       orderTotalPen = locked.totalPen.toString();
     }
 
@@ -1866,6 +1882,8 @@ export class InvoicingService {
     document: {
       id: string;
       docType: FiscalDocType;
+      salesOrderId?: string | null;
+      customerId?: string;
       items: {
         qty: Prisma.Decimal;
         salesOrderItemId: string | null;
@@ -1919,6 +1937,25 @@ export class InvoicingService {
       return;
     }
 
+    // cc33 N4: estado y cliente del pedido **antes** de la salida temprana. Un borrador de solo
+    // líneas libres no tiene ids de línea de pedido, y salía acá sin mirar si el pedido se anuló
+    // o es de otro cliente.
+    if (document.salesOrderId) {
+      const order = await tx.salesOrder.findUnique({
+        where: { id: document.salesOrderId },
+        select: { seq: true, status: true, customerId: true },
+      });
+      if (order?.status === 'CANCELLED') {
+        throw new ConflictException(
+          `El pedido ${salesOrderCode(order.seq)} está anulado: este borrador ya no se registra ni se emite. Descártalo`,
+        );
+      }
+      if (order && order.customerId !== document.customerId) {
+        throw new ConflictException(
+          `El pedido ${salesOrderCode(order.seq)} es de otro cliente: este borrador ya no se registra ni se emite. Descártalo`,
+        );
+      }
+    }
     const ids = document.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []));
     if (ids.length === 0) return;
     const orderItems = await tx.salesOrderItem.findMany({
