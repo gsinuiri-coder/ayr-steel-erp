@@ -2675,8 +2675,11 @@ export class InvoicingService {
         );
       }
       // cc33 N3: el comentario de arriba promete también las notas de crédito, y solo se contaban
-      // los cobros. Una nota viva o un borrador que entró mientras se hablaba con el PSE cortan
-      // igual que un cobro.
+      // los cobros. Una nota **viva** que entró mientras se hablaba con el PSE corta igual que un
+      // cobro (D-536: la baja ya se comunicó; se resuelve consultando al PSE). Un **borrador**
+      // tardío no corta: con el comprobante dado de baja ya no se registra ni se emite
+      // (`assertAffectedStillCreditable`), y rechazar acá dejaría al ERP sin la baja que SUNAT ya
+      // aceptó (revisiones de cc33, corte 3).
       const liveNotes = await tx.fiscalDocument.count({
         where: {
           affectedDocumentId: id,
@@ -2686,11 +2689,9 @@ export class InvoicingService {
       });
       if (liveNotes > 0) {
         throw new ConflictException(
-          'Se emitió una nota de crédito mientras se comunicaba la baja: el saldo ya está ajustado',
+          'Se emitió una nota de crédito mientras se comunicaba la baja: la baja ya se comunicó al PSE pero no se registró acá. Usa «Consultar al PSE» y revisa la nota de crédito',
         );
       }
-      const lateDraft = await draftCreditNoteBlock(tx, id, 'antes de darlo de baja');
-      if (lateDraft) throw new ConflictException(lateDraft);
 
       const updated = await tx.fiscalDocument.updateMany({
         where: { id, status: FiscalDocumentStatus.ACCEPTED },

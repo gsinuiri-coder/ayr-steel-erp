@@ -5,7 +5,7 @@ import {
   type FiscalDocumentStatus as Status,
   type Prisma,
 } from '@prisma/client';
-import { businessToday, toDecimal } from '@ayr/shared';
+import { toDecimal } from '@ayr/shared';
 
 /**
  * cc33 N3 — las notas de crédito y su comprobante afectado.
@@ -17,9 +17,9 @@ import { businessToday, toDecimal } from '@ayr/shared';
  * afectado aceptado y vigente.
  */
 
-/** El día de negocio (Lima) de un instante, como `03/10/2026`. */
-function dayLabel(at: Date): string {
-  const [y, m, d] = businessToday(at).split('-');
+/** Una fecha de emisión (`DATE`, medianoche UTC) como `03/10/2026`. */
+function dayLabel(day: Date): string {
+  const [y, m, d] = day.toISOString().slice(0, 10).split('-');
   return `${d ?? ''}/${m ?? ''}/${y ?? ''}`;
 }
 
@@ -41,23 +41,24 @@ export async function draftCreditNoteBlock(
       status: FiscalDocumentStatus.DRAFT,
       archivedAt: null,
     },
-    select: { createdAt: true, totalPen: true },
+    select: { issueDate: true, totalPen: true },
     orderBy: { createdAt: 'asc' },
   });
   if (drafts.length === 0) return null;
   const named = drafts
     .map(
       (n) =>
-        `nota de crédito del ${dayLabel(n.createdAt)} por S/ ${toDecimal(n.totalPen.toString()).toFixed(2)}`,
+        `nota de crédito del ${dayLabel(n.issueDate)} por S/ ${toDecimal(n.totalPen.toString()).toFixed(2)}`,
     )
     .join('; ');
-  return `El comprobante tiene ${drafts.length === 1 ? 'una nota de crédito en borrador' : `${String(drafts.length)} notas de crédito en borrador`}: elimina primero ${drafts.length === 1 ? 'el borrador' : 'los borradores'} (${named}) ${action}`;
+  return `El comprobante tiene ${drafts.length === 1 ? 'una nota de crédito en borrador' : `${String(drafts.length)} notas de crédito en borrador`}: descarta primero ${drafts.length === 1 ? 'el borrador' : 'los borradores'} (${named}) ${action}`;
 }
 
 /**
  * Registrar o emitir una nota de crédito exige su afectado **aceptado y vigente**, leído con las
- * dos filas ya bloqueadas. Es la misma condición con la que `createCreditNote` deja crear el
- * borrador, repetida en el único momento en que la nota pasa a existir.
+ * dos filas ya bloqueadas. `createCreditNote` exige lo mismo para crear el borrador salvo el
+ * archivado (una reimportación solo archiva importados, que no admiten nota de crédito); acá se
+ * mira también, en el único momento en que la nota pasa a existir.
  */
 export function assertAffectedStillCreditable(affected: {
   number: string | null;

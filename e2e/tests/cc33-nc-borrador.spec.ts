@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import type { FiscalDocumentDto } from '@ayr/shared';
+import { toDecimal, type FiscalDocumentDto } from '@ayr/shared';
 import { adminApi, postJson } from '../helpers/api';
 import {
   annulImported,
@@ -59,7 +59,7 @@ test.describe('cc33 N3 — nota de crédito en borrador', () => {
     expect(blocked.status()).toBe(400);
     const message = await blocked.text();
     expect(message).toContain('una nota de crédito en borrador');
-    expect(message).toContain(`por S/ ${Number(note.totalPen).toFixed(2)}`);
+    expect(message).toContain(`por S/ ${toDecimal(note.totalPen).toFixed(2)}`);
     expect((await getDocument(api, invoice.id)).status).toBe('ACCEPTED');
 
     // Descartado el borrador, la anulación pasa.

@@ -27,7 +27,7 @@ const ACTOR: RequestUser = {
 };
 
 const DRAFT_NOTE = {
-  createdAt: new Date('2026-10-08T15:00:00.000Z'),
+  issueDate: new Date('2026-10-08T00:00:00.000Z'),
   totalPen: new Prisma.Decimal('118'),
 };
 
@@ -61,7 +61,7 @@ describe('draftCreditNoteBlock', () => {
   it('nombra cada borrador con su fecha y su importe', async () => {
     const tx = { fiscalDocument: { findMany: jest.fn().mockResolvedValue([DRAFT_NOTE]) } };
     await expect(draftCreditNoteBlock(tx as never, 'inv-1', 'antes de anularlo')).resolves.toBe(
-      'El comprobante tiene una nota de crédito en borrador: elimina primero el borrador (nota de crédito del 08/10/2026 por S/ 118.00) antes de anularlo',
+      'El comprobante tiene una nota de crédito en borrador: descarta primero el borrador (nota de crédito del 08/10/2026 por S/ 118.00) antes de anularlo',
     );
   });
 
@@ -204,5 +204,64 @@ describe('anular o dar de baja con una NC en borrador (cc33 N3)', () => {
       invoicing(prisma, pse).voidDocument(ACTOR, 'inv-1', 'Prueba'),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(pse.voidDocument).not.toHaveBeenCalled();
+  });
+
+  /** La baja hasta la transacción final, con el PSE que la acepta y `liveNotes` notas vivas. */
+  function voidAfterPse(liveNotes: number) {
+    const pse = provider();
+    (pse.voidDocument as jest.Mock).mockResolvedValue({
+      outcome: 'ACCEPTED',
+      ticket: 't-1',
+      raw: {},
+    });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 'inv-1' }]),
+      customerPayment: { count: jest.fn().mockResolvedValue(0) },
+      fiscalDocument: {
+        count: jest.fn().mockResolvedValue(liveNotes),
+        // Un borrador que entró durante la llamada al PSE: ya no corta la baja.
+        findMany: jest.fn().mockResolvedValue([DRAFT_NOTE]),
+        updateMany,
+      },
+    };
+    const prisma = {
+      fiscalDocument: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'inv-1',
+          number: 'F001-00000009',
+          docType: FiscalDocType.FACTURA,
+          origin: FiscalDocumentOrigin.ISSUED_HERE,
+          status: FiscalDocumentStatus.ACCEPTED,
+          issueDate: new Date(),
+          correlative: 9,
+          seriesRef: { series: 'F001' },
+          payments: [],
+          creditNotes: [],
+        }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      invoicingSetting: { findFirst: jest.fn().mockResolvedValue({ providerOffline: false }) },
+      $transaction: (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    };
+    const service = invoicing(prisma, pse);
+    jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
+    return { service, updateMany };
+  }
+
+  it('dentro de la transacción, una nota viva que entró durante la llamada al PSE da 409', async () => {
+    const { service, updateMany } = voidAfterPse(1);
+    await expect(service.voidDocument(ACTOR, 'inv-1', 'Prueba')).rejects.toThrow(
+      'Consultar al PSE',
+    );
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it('un borrador tardío no impide registrar la baja que SUNAT ya aceptó', async () => {
+    const { service, updateMany } = voidAfterPse(0);
+    await service.voidDocument(ACTOR, 'inv-1', 'Prueba');
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'VOIDED' }) }),
+    );
   });
 });

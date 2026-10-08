@@ -1559,7 +1559,8 @@ describe('cc33 — N3: registrar una NC manual × anular su factura (contra la b
           }),
         () => fiscalImport.annulExternal(admin, invoice.id, 'cc33 anular'),
       ];
-      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+      // Sin invertir el orden: `alwaysRejected` cuenta por posición, y la anulación es la 1.
+      await race(tally, `iteración ${i}`, ops);
       const after = await prisma.fiscalDocument.findUniqueOrThrow({
         where: { id: invoice.id },
         select: { status: true },
@@ -1567,6 +1568,50 @@ describe('cc33 — N3: registrar una NC manual × anular su factura (contra la b
       expect(after.status).toBe('ACCEPTED');
     }
     expectClean(tally, 'C10 registrar NC × anular factura', [1]);
+  });
+
+  it('C10b: con la factura ya anulada, registrar su NC en borrador da 409 (parte b, contra la base)', async () => {
+    const p = await tradingProduct();
+    await productPurchase([p]);
+    const order = await directOrder([{ productId: p, qty: '5' }]);
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId,
+        salesOrderId: order.id,
+        issueDate: businessToday(),
+        items: order.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+      }),
+    );
+    const invoice = await invoicing.registerManual(admin, draft.id, {
+      series: 'F933',
+      correlative: (correlative += 1),
+    });
+    const note = await invoicing.createCreditNote(
+      admin,
+      invoice.id,
+      createCreditNoteSchema.parse({ reason: 'ANULACION_OPERACION', issueDate: businessToday() }),
+    );
+    // Fixture: la factura anulada con el borrador ya creado, el estado que dejaba un borrador
+    // anterior a cc33 (la anulación ya no lo permite). Solo estado, como la anulación real.
+    await prisma.fiscalDocument.update({
+      where: { id: invoice.id },
+      data: {
+        status: 'ANNULLED',
+        annulledAt: new Date(),
+        annulledById: admin.id,
+        annulReason: 'cc33 fixture',
+      },
+    });
+    await expect(
+      invoicing.registerManual(admin, note.id, { series: 'F934', correlative: (correlative += 1) }),
+    ).rejects.toThrow('anulado: esta nota de crédito ya no se registra ni se emite');
+    const after = await prisma.fiscalDocument.findUniqueOrThrow({
+      where: { id: note.id },
+      select: { status: true },
+    });
+    expect(after.status).toBe('DRAFT');
   });
 });
 
