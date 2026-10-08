@@ -666,6 +666,7 @@ describe('SalesByMaterialService — por producto (cc24, D-417)', () => {
           qty: d('10'),
           cost_pen: d('320.0000'),
           untraceable: false,
+          costed_qty: d('10'),
         },
       ],
     });

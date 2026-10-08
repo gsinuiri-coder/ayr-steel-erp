@@ -33,10 +33,27 @@ import { toInvoiceLine, type DocumentLineRow, type EngineFacts } from './sales-b
 const ZERO = new Decimal(0);
 const ONE = new Decimal(1);
 
+/**
+ * cc34 (N6, D-540): los motivos de NC (catálogo 09 de SUNAT) que **quitan unidades** de lo
+ * facturado: la anulación de la operación o por error en el RUC y las devoluciones. El descuento
+ * global o por ítem, la corrección de la descripción y los otros ajustes solo restan venta.
+ */
+export const QTY_REDUCING_CREDIT_REASONS: ReadonlySet<string> = new Set([
+  'ANULACION_OPERACION',
+  'ANULACION_ERROR_RUC',
+  'DEVOLUCION_TOTAL',
+  'DEVOLUCION_ITEM',
+]);
+
 /** Lo despachado y costeado de una línea de pedido en los despachos **declarados** del comprobante. */
 export interface DeclaredSale {
   /** Cantidad despachada neta (despachos vigentes), en unidad de venta. */
   dispatchedQty: string;
+  /**
+   * cc34 (N7): la parte de `dispatchedQty` que salió **con** movimiento de kardex. Solo esa
+   * cantidad se costea; lo despachado sin salida (D-278) queda sin costo.
+   */
+  costedQty: string;
   /** Costo de las salidas `SALE`, neto de reversas. */
   costPen: string;
   /** Alguna línea despachada vigente sin salida de kardex (lo entregado antes del inventario inicial, D-278). */
@@ -214,6 +231,7 @@ function dispatchLine(
   row: DocumentLineRow,
   input: AssembleProfitabilityInput,
   invoicedByItem: Map<string, Decimal>,
+  creditedByItem: Map<string, Decimal>,
 ): LineResult {
   const none = (status: DocumentProfitLineStatus, note: string): LineResult => ({
     engine: false,
@@ -245,10 +263,20 @@ function dispatchLine(
 
   const qty = toDecimal(row.qty.toString());
   const invoicedTotal = invoicedByItem.get(orderItem) ?? qty;
-  // Lo que se costea de la línea: todo, si lo despachado cubre lo facturado de la línea de
-  // pedido en este comprobante; si no, la misma fracción en cada línea que la comparta.
-  const ratio = invoicedTotal.lte(0) ? ZERO : Decimal.min(ONE, dispatched.div(invoicedTotal));
-  const tracedQty = qty.times(ratio);
+  // cc34 (N6): lo que las NC por anulación o devolución quitaron de esa línea de pedido (D-540).
+  const credited = creditedByItem.get(orderItem) ?? ZERO;
+  // cc34 (N7): solo lo despachado **con** salida de kardex se costea (D-541).
+  const costed = Decimal.min(toDecimal(sale.costedQty), dispatched);
+  // La venta que se traza: la fracción de lo facturado que cubren lo costeado y lo acreditado
+  // (una NC que quita unidades deja esas unidades fuera de lo que falta costear). Sin NC es la
+  // fracción de siempre, repartida igual en cada línea que comparta la línea de pedido.
+  const ratio = invoicedTotal.lte(0)
+    ? ZERO
+    : Decimal.min(ONE, costed.plus(credited).div(invoicedTotal));
+  // Las unidades que se costean: lo costeado, hasta lo facturado, en la parte de esta línea.
+  const tracedQty = invoicedTotal.lte(0)
+    ? ZERO
+    : Decimal.min(costed, invoicedTotal).times(qty).div(invoicedTotal);
   const sales = toDecimal(row.subtotal_pen.toString());
   const meters = metersOf({
     kind: null,
@@ -262,8 +290,8 @@ function dispatchLine(
       ...emptyAcc(),
       meters: meters ?? ZERO,
       sales: sales.times(ratio),
-      // La salida sale al promedio del ítem (D-028): cada unidad despachada cuesta lo mismo.
-      cost: cost.times(tracedQty).div(dispatched),
+      // La salida sale al promedio del ítem (D-028): cada unidad costeada cuesta lo mismo.
+      cost: costed.isZero() ? ZERO : cost.times(tracedQty).div(costed),
       qty: tracedQty,
       unit: row.unit,
     },
@@ -271,7 +299,10 @@ function dispatchLine(
     meters: meters !== null,
     any: true,
   };
-  const partial = ratio.lt(ONE);
+  const withoutKardex = dispatched.minus(costed);
+  const partial = ratio.lt(ONE) || withoutKardex.gt(0);
+  const netInvoiced = Decimal.max(invoicedTotal.minus(credited), ZERO);
+  const progress = `Despachado ${toFixedString(dispatched, 'KG')} de ${toFixedString(netInvoiced, 'KG')}`;
   return {
     engine: false,
     sum,
@@ -279,9 +310,11 @@ function dispatchLine(
       costBasis: 'DISPATCH_SALE',
       costBasisDetail: sale.dispatchSeqs.map((s) => dispatchCode(s)).join(', '),
       status: partial ? 'PARTIAL' : 'COMPLETE',
-      note: partial
-        ? `Despachado ${toFixedString(dispatched, 'KG')} de ${toFixedString(invoicedTotal, 'KG')}: el resto, sin costo aún`
-        : null,
+      note: !partial
+        ? null
+        : withoutKardex.gt(0)
+          ? `${progress}; ${toFixedString(withoutKardex, 'KG')} sin salida de kardex (D-278): sin costo`
+          : `${progress}: el resto, sin costo aún`,
     }),
   };
 }
@@ -328,6 +361,18 @@ export function assembleDocumentProfitability(
     if (r.in_engine || item === null) continue;
     invoicedByItem.set(item, (invoicedByItem.get(item) ?? ZERO).plus(toDecimal(r.qty.toString())));
   }
+  // cc34 (N6, D-540): las NC por anulación o devolución **quitan unidades** de su línea de pedido
+  // (su cantidad viene con signo negativo); las de descuento y demás ajustes solo restan venta.
+  const creditedByItem = new Map<string, Decimal>();
+  for (const r of input.rows) {
+    const item = r.own_order_item_id ?? r.sales_order_item_id;
+    if (!r.is_credit || r.in_engine || item === null) continue;
+    if (r.credit_reason === null || !QTY_REDUCING_CREDIT_REASONS.has(r.credit_reason)) continue;
+    creditedByItem.set(
+      item,
+      (creditedByItem.get(item) ?? ZERO).plus(toDecimal(r.qty.toString()).abs()),
+    );
+  }
 
   // Una nota de crédito vista por sí misma no tiene despacho propio: sus líneas fuera del
   // motor van como las acreditadas de su comprobante.
@@ -337,7 +382,7 @@ export function assembleDocumentProfitability(
       ? engineLine(row, input.engine, usageByLine)
       : isCreditNote
         ? creditLine(row)
-        : dispatchLine(row, input, invoicedByItem),
+        : dispatchLine(row, input, invoicedByItem, creditedByItem),
   );
   const creditResults = credit.map((row): LineResult =>
     row.in_engine ? engineLine(row, input.engine, usageByLine) : creditLine(row),

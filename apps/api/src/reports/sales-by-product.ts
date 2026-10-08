@@ -47,6 +47,11 @@ export interface DeclaredDispatch {
   costPen: string;
   /** D-285: algún ítem vigente salió sin movimiento de kardex. */
   untraceable: boolean;
+  /**
+   * cc34 (N7, D-541): la parte de `qty` que salió **con** movimiento de kardex (o de un producto sin
+   * inventario). Solo esa se traza; el resto va a «No trazable» como `SIN_SALIDA_KARDEX`.
+   */
+  costedQty: string;
 }
 
 export const declaredKey = (documentId: string, productId: string): string =>
@@ -134,31 +139,47 @@ export function assembleSalesByProduct(
 
   for (const [key, g] of groups) {
     const facts = declared.get(key);
-    if (facts?.untraceable === true) {
+    const dispatched = facts === undefined ? ZERO : toDecimal(facts.qty);
+    // cc34 (N7): solo lo que salió con kardex se costea.
+    const costed = facts === undefined ? ZERO : Decimal.min(toDecimal(facts.costedQty), dispatched);
+    if (facts?.untraceable === true && costed.lte(0)) {
       pushUntraceable(g.first, 'SIN_SALIDA_KARDEX', g.qty, g.sales);
       continue;
     }
-    const dispatched = facts === undefined ? ZERO : toDecimal(facts.qty);
     if (facts === undefined || dispatched.lte(0) || g.qty.lte(0)) {
       pushUntraceable(g.first, 'SIN_DESPACHO_DECLARADO', g.qty, g.sales);
       continue;
     }
-    // Se traza lo despachado, hasta lo facturado. Si se despachó de más contra el comprobante,
-    // le toca a lo facturado su parte del costo de esa salida (la misma regla de D-354).
-    const fraction = Decimal.min(ONE, dispatched.div(g.qty));
-    const costShare = dispatched.gt(g.qty) ? g.qty.div(dispatched) : ONE;
+    // Se traza lo costeado, hasta lo facturado. Si se despachó de más contra el comprobante, le
+    // toca a lo facturado su parte del costo de esa salida (la misma regla de D-354).
+    const tracedQty = Decimal.min(costed, g.qty);
+    const fraction = tracedQty.div(g.qty);
+    const costShare = costed.gt(g.qty) ? g.qty.div(costed) : ONE;
     const cost = toDecimal(facts.costPen).times(costShare);
     // La parte trazada se redondea a la escala de dinero y la no trazable es el resto exacto:
     // así filas + no trazable suman la venta de la línea sin la diferencia de 0,0001 que deja
     // redondear las dos mitades por separado (autorrevisión de cc24, P3).
     const tracedSales = toDecimal(toFixedString(g.sales.times(fraction), 'MONEY'));
     if (fraction.lt(ONE)) {
-      pushUntraceable(
-        g.first,
-        'DESPACHO_PARCIAL',
-        g.qty.times(ONE.minus(fraction)),
-        g.sales.minus(tracedSales),
-      );
+      // Lo que falta trazar tiene dos motivos posibles: lo que no se despachó y lo despachado sin
+      // salida de kardex (D-285).
+      const undispatched = Decimal.max(g.qty.minus(dispatched), ZERO);
+      const withoutKardex = g.qty.minus(tracedQty).minus(undispatched);
+      const restSales = g.sales.minus(tracedSales);
+      const undispatchedSales = withoutKardex.gt(0)
+        ? toDecimal(toFixedString(g.sales.times(undispatched).div(g.qty), 'MONEY'))
+        : restSales;
+      if (undispatched.gt(0)) {
+        pushUntraceable(g.first, 'DESPACHO_PARCIAL', undispatched, undispatchedSales);
+      }
+      if (withoutKardex.gt(0)) {
+        pushUntraceable(
+          g.first,
+          'SIN_SALIDA_KARDEX',
+          withoutKardex,
+          restSales.minus(undispatched.gt(0) ? undispatchedSales : ZERO),
+        );
+      }
     }
     const row = rows.get(g.first.sku) ?? {
       sku: g.first.sku,
@@ -169,7 +190,7 @@ export function assembleSalesByProduct(
       cost: ZERO,
       lineCount: 0,
     };
-    row.qty = row.qty.plus(g.qty.times(fraction));
+    row.qty = row.qty.plus(tracedQty);
     row.sales = row.sales.plus(tracedSales);
     row.cost = row.cost.plus(cost);
     row.lineCount += g.count;
