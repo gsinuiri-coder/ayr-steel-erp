@@ -21,10 +21,18 @@ export const operationDateSchema = z
   // `Date`: `2026-02-31` rueda al 2 de marzo (y el ida y vuelta la delata), mientras que
   // `2026-08-32` o `2026-13-01` dan `Invalid Date`, y ahí `toISOString()` **lanza**
   // `RangeError` — dentro de un `refine` eso es un 500, no el 400 que corresponde.
-  .refine((v) => {
-    const parsed = toDateOnly(v);
-    return !Number.isNaN(parsed.getTime()) && fromDateOnly(parsed) === v;
-  }, 'Esa fecha no existe en el calendario');
+  .refine(isCalendarDate, 'Esa fecha no existe en el calendario');
+
+/**
+ * `YYYY-MM-DD` que existe en el calendario: el ida y vuelta por `Date` delata `2026-02-31` (rueda
+ * al 3 de marzo) y el `isNaN` corta `2026-08-32` o `2026-13-01` antes de que `toISOString()`
+ * lance. La usan `operationDateSchema` y, desde cc33 (N5), las fechas de compras.
+ */
+export function isCalendarDate(v: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const parsed = toDateOnly(v);
+  return !Number.isNaN(parsed.getTime()) && fromDateOnly(parsed) === v;
+}
 
 /**
  * Piso de la carga histórica. Nada se retrofecha antes de esta fecha: por debajo de ella no

@@ -116,6 +116,7 @@ function makeTx(opts: {
     purchase: {
       findUnique: jest.fn().mockResolvedValue(purchase),
       findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn((args: unknown) => {
         updates.push({ model: 'purchase', args });
         return Promise.resolve({});
@@ -636,7 +637,8 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
 
   it('comprobante duplicado: 409', async () => {
     const { tx } = makeTx({});
-    tx.purchase.findFirst.mockResolvedValue({ id: 'otra' });
+    // cc33: el choque se busca entre las vivas de la serie y se compara sin ceros (`00124` = `124`).
+    tx.purchase.findMany.mockResolvedValue([{ series: 'F001', number: '00124' }]);
     withTx(tx);
     await expect(
       service.commit(ADMIN, 'p-1', { header: { number: '124' }, reason: 'x' }),

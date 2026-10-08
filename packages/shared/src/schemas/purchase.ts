@@ -21,12 +21,16 @@ import {
   UNITS,
 } from '../enums';
 import { idempotencyFields } from './idempotency';
-import { backdatableFields } from './operation';
+import { backdatableFields, isCalendarDate } from './operation';
 
 /** Fecha en formato ISO corto (YYYY-MM-DD), que es como viajan las fechas de negocio. */
 export const isoDateSchema = z
   .string({ required_error: 'La fecha es obligatoria' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)');
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
+  // cc33 N5: el regex dejaba pasar `2026-09-31`, que se guardaba como el 1 de octubre. La misma
+  // comprobación de calendario que `operationDateSchema`. Solo en compras: las fechas de ventas y
+  // comprobantes tienen su propia tolerancia de emisión, deliberada.
+  .refine(isCalendarDate, 'Esa fecha no existe en el calendario');
 
 export const seriesSchema = z
   .string({ required_error: 'La serie es obligatoria' })
@@ -34,10 +38,34 @@ export const seriesSchema = z
   .toUpperCase()
   .regex(/^[A-Z0-9]{1,10}$/, 'Serie inválida (ej: F001)');
 
+/**
+ * B8 (cc33, decisión del dueño): el número de una compra admite letras, dígitos, guion y barra, en
+ * mayúsculas, hasta 20 caracteres. Hay proveedores que numeran así (`A-123`, `2026/45`). Es la
+ * **única** definición: el schema, el formulario, el importador y `splitDocumentNumber` la usan.
+ * La numeración fiscal propia del ERP no la usa.
+ */
+// Al menos una letra o un dígito: `-` o `//` solos no son un número (revisión de cc33, P2-1).
+export const PURCHASE_NUMBER_PATTERN = /^(?=.*[A-Z0-9])[A-Z0-9/-]{1,20}$/;
+export const PURCHASE_NUMBER_MESSAGE =
+  'El número admite letras, dígitos, guion y barra, hasta 20 caracteres';
+
+/**
+ * Ceros a la izquierda (cc33, decisión del dueño): `F001-00012` y `F001-12` son el mismo papel, y
+ * el índice único los comparaba como texto. Se guarda sin ellos (`00012` → `12`, `000` → `0`) y el
+ * chequeo de choque compara así. D-538: solo cuando el número es **todo dígitos**; un número con
+ * letras, guion o barra (`0A12`, `007/1`) es como lo escribió el proveedor y no se toca.
+ */
+export function normalizePurchaseNumber(raw: string): string {
+  const v = raw.trim().toUpperCase();
+  return /^\d+$/.test(v) ? v.replace(/^0+(?=\d)/, '') : v;
+}
+
 export const documentNumberSchema = z
   .string({ required_error: 'El número es obligatorio' })
   .trim()
-  .regex(/^[0-9]{1,20}$/, 'El número solo admite dígitos');
+  .toUpperCase()
+  .regex(PURCHASE_NUMBER_PATTERN, PURCHASE_NUMBER_MESSAGE)
+  .transform(normalizePurchaseNumber);
 
 // --------------------------------------------------------------------------
 // DTOs

@@ -117,6 +117,7 @@ describe('receivablesXlsx — columnas y celdas', () => {
       balancePen: '250.5000',
       overduePen: '0.0000',
       nextDueDate: null,
+      creditWithoutDueCount: 0,
     };
     const book = XLSX.read(receivablesXlsx([row], Role.ADMINISTRADOR, '2026-10-06').buffer, {
       type: 'buffer',
@@ -131,5 +132,23 @@ describe('receivablesXlsx — columnas y celdas', () => {
       'Saldo (S/)',
     ]);
     expect(grid[1]).toEqual(['Cliente', '20123456789', 3, 'Contado', 0, 250.5]);
+  });
+
+  it('D-537 (cc33 N8): un crédito sin vencimiento se rotula como tal, no como contado', () => {
+    const row: ReceivableSummaryDto = {
+      customerId: '00000000-0000-4000-8000-000000000001',
+      customerName: 'Cliente',
+      customerDocNumber: '20123456789',
+      documentCount: 1,
+      balancePen: '100.0000',
+      overduePen: '0.0000',
+      nextDueDate: null,
+      creditWithoutDueCount: 1,
+    };
+    const book = XLSX.read(receivablesXlsx([row], Role.ADMINISTRADOR, '2026-10-06').buffer, {
+      type: 'buffer',
+    });
+    const grid = XLSX.utils.sheet_to_json<unknown[]>(book.Sheets['Por cliente']!, { header: 1 });
+    expect(grid[1]?.[3]).toBe('Crédito sin vencimiento');
   });
 });

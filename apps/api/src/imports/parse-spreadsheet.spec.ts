@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { getField, parseSpreadsheet, rawToString } from './parse-spreadsheet';
+import { getField, parseCalendarDate, parseSpreadsheet, rawToString } from './parse-spreadsheet';
 
 /**
  * Lectura de planillas (RF-52). Las dos cosas que ya rompieron una importación entera en
@@ -67,5 +67,19 @@ describe('la fecha de un csv no se reinterpreta (D-152)', () => {
     const csv = 'F. EMISIÓN,CANTIDAD\n03/08/2026,10\n';
     const rows = parseSpreadsheet(Buffer.from(csv, 'utf8'));
     expect(rows[0]?.['F. EMISIÓN']).toBe('03/08/2026');
+  });
+});
+
+describe('parseCalendarDate — también la fecha ya en ISO (cc33 N5)', () => {
+  it.each([['2026-02-31'], ['2026-09-31'], ['2026-08-32'], ['31/09/2026']])(
+    '%s no existe: null',
+    (value) => {
+      expect(parseCalendarDate(value)).toBeNull();
+    },
+  );
+
+  it('una fecha que existe sale en ISO, venga como venga', () => {
+    expect(parseCalendarDate('2026-09-30')).toBe('2026-09-30');
+    expect(parseCalendarDate('3/8/2026')).toBe('2026-08-03');
   });
 });

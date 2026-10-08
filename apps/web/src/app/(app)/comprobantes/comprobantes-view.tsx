@@ -16,6 +16,7 @@ import {
   type FiscalDocumentListItemDto,
   type PaginatedResult,
   type FiscalDocumentQuery,
+  noDueDateLabel,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { listXlsxHref } from '@/lib/list-export';
@@ -423,7 +424,7 @@ export function ComprobantesView() {
                       {formatDate(d.dueDate)}
                     </span>
                   ) : (
-                    <span className="text-muted-foreground">Contado</span>
+                    <span className="text-muted-foreground">{noDueDateLabel(d.paymentTerms)}</span>
                   )}
                 </TableCell>
                 <TableCell className="hidden md:table-cell">

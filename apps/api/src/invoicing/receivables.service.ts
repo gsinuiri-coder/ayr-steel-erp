@@ -300,6 +300,7 @@ export class ReceivablesService {
         balancePen: '0.0000',
         overduePen: '0.0000',
         nextDueDate: null,
+        creditWithoutDueCount: 0,
       };
 
       current.documentCount += 1;
@@ -310,6 +311,7 @@ export class ReceivablesService {
       if (dueDate !== null && (current.nextDueDate === null || dueDate < current.nextDueDate)) {
         current.nextDueDate = dueDate;
       }
+      if (dueDate === null && doc.paymentTerms === 'CREDITO') current.creditWithoutDueCount += 1;
       byCustomer.set(doc.customerId, current);
     }
 

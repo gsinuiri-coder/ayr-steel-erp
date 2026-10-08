@@ -6,6 +6,9 @@ import {
   commercialColorToken,
   currencyOf,
   Decimal,
+  isCalendarDate,
+  normalizePurchaseNumber,
+  PURCHASE_NUMBER_PATTERN,
   cents,
   money,
   MAX_PURCHASE_IMPORT_LINES,
@@ -116,7 +119,7 @@ export function livePurchaseKey(
 ): string {
   // El número sin ceros a la izquierda: `F001-00012` y `F001-12` son el mismo papel del proveedor
   // (autorrevisión, P2), aunque el índice único de D-132 los compare como texto.
-  return `${supplierId}|${docType}|${series.toUpperCase()}|${number.replace(/^0+(?=\d)/, '')}`;
+  return `${supplierId}|${docType}|${series.toUpperCase()}|${normalizePurchaseNumber(number)}`;
 }
 
 const DEFAULT_IGV = '18';
@@ -156,14 +159,18 @@ export function validateDocument(
       `«${doc.docType}» no se importa: solo factura o boleta (una nota necesita el comprobante que ajusta)`,
     );
   }
-  if (!/^[A-Z0-9]{1,10}$/.test(doc.series.toUpperCase()) || !/^\d{1,20}$/.test(doc.number)) {
+  if (
+    !/^[A-Z0-9]{1,10}$/.test(doc.series.toUpperCase()) ||
+    !PURCHASE_NUMBER_PATTERN.test(doc.number.trim().toUpperCase())
+  ) {
     error(
       'document',
       `«${doc.series}${doc.number ? `-${doc.number}` : ''}» no es una serie-número (ej.: F001-00012345)`,
     );
   }
 
-  const issueDate = /^\d{4}-\d{2}-\d{2}$/.test(doc.issueDate) ? doc.issueDate : null;
+  // cc33 N5: la grilla edita la fecha ya en ISO; el formato solo dejaba pasar `2026-09-31`.
+  const issueDate = isCalendarDate(doc.issueDate) ? doc.issueDate : null;
   if (issueDate === null) {
     error('issueDate', `«${doc.issueDate}» no es una fecha: usa DD/MM/AAAA`);
   } else if (issueDate > ctx.today) {

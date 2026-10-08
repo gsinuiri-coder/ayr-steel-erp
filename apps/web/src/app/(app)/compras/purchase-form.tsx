@@ -35,6 +35,8 @@ import {
   type SupplierDto,
   FINISH_FIELD_LABEL,
   finishLabels,
+  PURCHASE_NUMBER_MESSAGE,
+  PURCHASE_NUMBER_PATTERN,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { fetchAllForPicker } from '@/lib/fetch-all-for-picker';
@@ -87,10 +89,8 @@ const baseFormSchema = z.object({
     .trim()
     .toUpperCase()
     .regex(/^[A-Z0-9]{1,10}$/, 'Escribe la serie: hasta 10 letras o números, como F001'),
-  number: z
-    .string()
-    .trim()
-    .regex(/^[0-9]{1,20}$/, 'Escribe el número del comprobante, solo con dígitos'),
+  // B8 (cc33): letras, dígitos, guion y barra, hasta 20; el API lo guarda sin ceros a la izquierda.
+  number: z.string().trim().toUpperCase().regex(PURCHASE_NUMBER_PATTERN, PURCHASE_NUMBER_MESSAGE),
   issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Elige la fecha de emisión'),
   currency: z.enum(CURRENCIES),
   exchangeRate: z.string().trim().optional(),

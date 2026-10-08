@@ -71,7 +71,7 @@ function txWith(opts: { supplierActive?: boolean; createError?: unknown } = {}) 
         },
       ]),
     },
-    purchase: { create },
+    purchase: { create, findMany: jest.fn().mockResolvedValue([]) },
   };
 }
 

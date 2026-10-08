@@ -138,7 +138,9 @@ interface ProductDto {
 /** Correlativo de comprobante único: dos corridas seguidas no chocan contra el índice
  *  único (proveedor, tipo, serie, número), que no se resetea fuera de CI. */
 function uniqueDocumentNumber(): string {
-  return String(Date.now()).slice(-9);
+  // cc33 (D-538): un número que empieza con 0 se guarda sin el cero.
+  const nine = String(Date.now()).slice(-9);
+  return nine.startsWith('0') ? `9${nine.slice(1)}` : nine;
 }
 
 /** Letras mayúsculas al azar: los códigos de proveedor (RF-13) no admiten dígitos. */

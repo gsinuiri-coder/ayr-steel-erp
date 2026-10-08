@@ -24,6 +24,8 @@ import {
   UNIT_LABELS,
   type Currency,
   type PurchaseDto,
+  PURCHASE_NUMBER_MESSAGE,
+  PURCHASE_NUMBER_PATTERN,
 } from '@ayr/shared';
 import { CrumbLabel } from '@/components/breadcrumb';
 import { PURCHASE_TONE } from '@/components/status-tone';
@@ -792,7 +794,7 @@ function DocumentNumberDialog({
   }, [open, series, number]);
 
   const seriesOk = /^[A-Za-z0-9]{1,10}$/.test(nextSeries.trim());
-  const numberOk = /^[0-9]{1,20}$/.test(nextNumber.trim());
+  const numberOk = PURCHASE_NUMBER_PATTERN.test(nextNumber.trim().toUpperCase());
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -825,7 +827,7 @@ function DocumentNumberDialog({
                 setNextNumber(e.target.value);
               }}
             />
-            {!numberOk && <p className="text-xs text-destructive">El número solo admite dígitos</p>}
+            {!numberOk && <p className="text-xs text-destructive">{PURCHASE_NUMBER_MESSAGE}</p>}
           </div>
         </div>
         <DialogFooter>

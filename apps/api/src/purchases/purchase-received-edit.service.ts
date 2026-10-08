@@ -22,7 +22,9 @@ import {
   type EditReceivedPurchaseInput,
   type ReceivedEditPlanDto,
   type ReceivedPurchaseItemEdit,
+  normalizePurchaseNumber,
 } from '@ayr/shared';
+import { assertNoLiveDocumentClash } from './purchase-document-clash';
 import { AuditService } from '../audit/audit.service';
 import { claimIdempotencyKey } from '../common/idempotency';
 import type { RequestUser } from '../auth/auth.types';
@@ -1377,29 +1379,22 @@ export class ReceivedPurchaseEditService {
     const supplierId = header.supplierId ?? purchase.supplierId;
     const docType = header.docType ?? purchase.docType;
     const series = header.series ?? purchase.series;
-    const number = header.number ?? purchase.number;
+    // cc33: un número corregido se guarda sin ceros a la izquierda y choca así.
+    const number =
+      header.number === undefined ? purchase.number : normalizePurchaseNumber(header.number);
     const identityChanges =
       supplierId !== purchase.supplierId ||
       docType !== purchase.docType ||
       series !== purchase.series ||
       number !== purchase.number;
     if (identityChanges) {
-      const clash = await tx.purchase.findFirst({
-        where: {
-          supplierId,
-          docType,
-          series,
-          number,
-          status: { not: PurchaseStatus.CANCELLED },
-          id: { not: purchase.id },
-        },
-        select: { id: true },
+      await assertNoLiveDocumentClash(tx, {
+        supplierId,
+        docType,
+        series,
+        number,
+        excludeId: purchase.id,
       });
-      if (clash) {
-        throw new ConflictException(
-          'Ese comprobante ya está registrado para este proveedor en una compra vigente',
-        );
-      }
       if (supplierId !== purchase.supplierId) {
         data.supplier = { connect: { id: supplierId } };
         // Las bobinas de la compra son del proveedor de la compra. Su código no se regenera:

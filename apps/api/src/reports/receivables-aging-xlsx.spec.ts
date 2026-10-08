@@ -115,6 +115,18 @@ describe('receivablesAgingXlsx', () => {
     expect(rows[1]?.[4]).toBe('PED-000123');
   });
 
+  it('D-537 (cc33 N8): un CREDITO sin vencimiento dice «Crédito sin vencimiento», no «Contado»', () => {
+    const [customer] = REPORT.customers;
+    const [first] = customer?.documents ?? [];
+    if (!customer || !first) throw new Error('fixture');
+    const report: ReceivablesAgingDto = {
+      ...REPORT,
+      customers: [{ ...customer, documents: [{ ...first, paymentTerms: 'CREDITO' }] }],
+    };
+    const rows = rowsOf(receivablesAgingXlsx(report).buffer, 'Comprobantes').slice(1);
+    expect(rows[0]?.[7]).toBe('Crédito sin vencimiento');
+  });
+
   it('con vendedor, la fila de total lo nombra', () => {
     const rows = rowsOf(
       receivablesAgingXlsx({ ...REPORT, sellerId: SELLER }).buffer,

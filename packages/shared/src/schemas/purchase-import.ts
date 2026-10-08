@@ -9,6 +9,7 @@ import {
 import { toDecimal } from '../decimal';
 import { idempotencyFields } from './idempotency';
 import { supplierCodeSchema } from './supplier';
+import { PURCHASE_NUMBER_PATTERN } from './purchase';
 
 /**
  * **Importador de compras (D-351).** Mismo esquema que el de cotizaciones (D-152): dos pasos
@@ -354,8 +355,10 @@ export function normalizeIgvRate(raw: string): string | null {
 /** `F001-00012345` → `{ series: 'F001', number: '00012345' }`. */
 export function splitDocumentNumber(raw: string): { series: string; number: string } | null {
   const v = raw.trim().toUpperCase().replace(/\s/g, '');
-  const match = /^([A-Z0-9]{1,10})-(\d{1,20})$/.exec(v);
-  if (!match?.[1] || !match[2]) return null;
+  // B8 (cc33): la serie no lleva guion, así que el primero separa; el resto es el número, con el
+  // formato de `PURCHASE_NUMBER_PATTERN` (letras, dígitos, guion y barra).
+  const match = /^([A-Z0-9]{1,10})-(.+)$/.exec(v);
+  if (!match?.[1] || !match[2] || !PURCHASE_NUMBER_PATTERN.test(match[2])) return null;
   return { series: match[1], number: match[2] };
 }
 
