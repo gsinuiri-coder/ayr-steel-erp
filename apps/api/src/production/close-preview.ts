@@ -16,7 +16,7 @@ import { lockOrder } from './production-shared';
  * «Ejecutar y cerrar», «Reportar y cerrar» y «Cerrar sin reportar más» mueven kardex, sueltan
  * despunte o merma y pueden terminar bobinas, todo en un clic. Antes de ese clic planta ve un
  * resumen, y el resumen no puede salir de una cuenta aparte: el reparto entre bobinas
- * (`allocateStripKg`), el tope por lo montado (D-246), la tolerancia (D-388/D-389) y la
+ * (`allocateRoofingScrap`, cc34), el tope por lo montado (D-246), la tolerancia (D-388/D-389) y la
  * terminación automática (D-360) viven en el código del cierre, y una copia se separaría.
  *
  * Así que la vista previa corre **la misma acción** (`run`) dentro de una transacción, lee el
