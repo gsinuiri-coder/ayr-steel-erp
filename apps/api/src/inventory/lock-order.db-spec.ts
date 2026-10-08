@@ -14,6 +14,7 @@ import {
   createCuttingOrderSchema,
   createCoilScrapSchema,
   createCoilSplitSchema,
+  createCreditNoteSchema,
   createProductionOrderSchema,
   consumeStripSchema,
   reportPiecesSchema,
@@ -44,6 +45,7 @@ import { CustomersService } from '../customers/customers.service';
 import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { DispatchesService } from '../invoicing/dispatches.service';
+import { FiscalImportService } from '../invoicing/fiscal-import.service';
 import { InvoicingService } from '../invoicing/invoicing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { COMMIT_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
@@ -1502,6 +1504,69 @@ describe('cc30 — corte 2: cotización, comprobante y despacho (contra la base)
       await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
     }
     expectClean(tally, 'C8 borrador con despacho × revertir despacho');
+  });
+});
+
+/**
+ * cc33 N3: registrar una nota de crédito manual ahora bloquea la nota **y su afectado** en una sola
+ * llamada a la puerta; anular el afectado bloquea el afectado. La anulación sale siempre rechazada
+ * (o hay un borrador o ya hay una nota viva): lo que se exige es que nunca haya deadlock y que la
+ * factura no quede anulada con una nota viva encima.
+ */
+describe('cc33 — N3: registrar una NC manual × anular su factura (contra la base)', () => {
+  let invoicing: InvoicingService;
+  let fiscalImport: FiscalImportService;
+  let correlative = Math.floor(Math.random() * 50_000) + 10_000;
+
+  beforeAll(() => {
+    invoicing = moduleRef.get(InvoicingService);
+    fiscalImport = moduleRef.get(FiscalImportService);
+  });
+
+  it('C10: sin deadlock y sin nota viva sobre una factura anulada', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const p = await tradingProduct();
+      await productPurchase([p]);
+      const order = await directOrder([{ productId: p, qty: '5' }]);
+      const draft = await invoicing.create(
+        admin,
+        createInvoiceSchema.parse({
+          docType: 'FACTURA',
+          customerId,
+          salesOrderId: order.id,
+          issueDate: businessToday(),
+          items: order.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+        }),
+      );
+      const invoice = await invoicing.registerManual(admin, draft.id, {
+        series: 'F933',
+        correlative: (correlative += 1),
+      });
+      const note = await invoicing.createCreditNote(
+        admin,
+        invoice.id,
+        createCreditNoteSchema.parse({
+          reason: 'ANULACION_OPERACION',
+          issueDate: businessToday(),
+        }),
+      );
+      const ops = [
+        () =>
+          invoicing.registerManual(admin, note.id, {
+            series: 'F934',
+            correlative: (correlative += 1),
+          }),
+        () => fiscalImport.annulExternal(admin, invoice.id, 'cc33 anular'),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+      const after = await prisma.fiscalDocument.findUniqueOrThrow({
+        where: { id: invoice.id },
+        select: { status: true },
+      });
+      expect(after.status).toBe('ACCEPTED');
+    }
+    expectClean(tally, 'C10 registrar NC × anular factura', [1]);
   });
 });
 

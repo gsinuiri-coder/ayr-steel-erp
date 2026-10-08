@@ -64,6 +64,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { fiscalDocumentListWhere } from './fiscal-document-where';
 import { assertSellerAccess } from '../auth/seller-scope';
+import { assertAffectedStillCreditable, draftCreditNoteBlock } from './credit-note-guards';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { ENV, type Env } from '../config/env';
@@ -1202,13 +1203,15 @@ export class InvoicingService {
     await this.assertOwnership(actor, id, 'registrarlo como manual');
 
     await this.prisma.$transaction(async (tx) => {
-      const rows = (await lockDocuments(tx, { fiscalDocuments: [id] })).fiscalDocuments;
+      const rows = await this.lockWithAffected(tx, id);
       if (rows.length === 0) throw new NotFoundException('Comprobante no encontrado');
       const document = await tx.fiscalDocument.findUniqueOrThrow({
         where: { id },
         include: {
           items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
-          affectedDocument: { select: { origin: true, number: true } },
+          affectedDocument: {
+            select: { origin: true, number: true, status: true, archivedAt: true },
+          },
         },
       });
 
@@ -1233,6 +1236,9 @@ export class InvoicingService {
           `${document.affectedDocument.number ?? 'El comprobante afectado'} no es manual: su nota de crédito se emite, no se registra a mano`,
         );
       }
+      // cc33 N3: el afectado, ya bloqueado junto con la nota, tiene que seguir aceptado y vigente.
+      if (document.affectedDocument !== null)
+        assertAffectedStillCreditable(document.affectedDocument);
 
       // El mismo último control que `send`: dos borradores sobre la misma línea pasan los dos
       // la validación de creación, y este es el punto en el que todavía se puede decir que no.
@@ -1782,6 +1788,22 @@ export class InvoicingService {
     assertSellerAccess(actor, ownerId, 'Comprobante');
   }
 
+  /**
+   * cc33 N3: bloquea el documento y, si es una nota de crédito, su afectado, **en una sola llamada**
+   * a la puerta: los dos son comprobantes y `lockDocuments` los toma por id ascendente (regla 17,
+   * D-471). El afectado se lee antes sin bloquear: `affected_document_id` no cambia nunca.
+   */
+  private async lockWithAffected(tx: Prisma.TransactionClient, id: string): Promise<string[]> {
+    const head = await tx.fiscalDocument.findUnique({
+      where: { id },
+      select: { affectedDocumentId: true },
+    });
+    const ids = head?.affectedDocumentId ? [id, head.affectedDocumentId] : [id];
+    return (await lockDocuments(tx, { fiscalDocuments: ids })).fiscalDocuments.filter(
+      (locked) => locked === id,
+    );
+  }
+
   /** Fase 1: correlativo y estado `ISSUED`, en su propia transacción. */
   private async assign(actor: RequestUser, id: string): Promise<void> {
     await this.prisma.$transaction((tx) => this.assignInTx(tx, actor, id));
@@ -1797,7 +1819,7 @@ export class InvoicingService {
    * `send`. Lo que cambia es cuánto abarca esa primera transacción, no su orden.
    */
   async assignInTx(tx: Prisma.TransactionClient, actor: RequestUser, id: string): Promise<void> {
-    await lockDocuments(tx, { fiscalDocuments: [id] });
+    await this.lockWithAffected(tx, id);
     const found = await tx.fiscalDocument.findUnique({
       where: { id },
       select: { id: true, status: true, docType: true },
@@ -1816,7 +1838,9 @@ export class InvoicingService {
       where: { id },
       include: {
         items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
-        affectedDocument: { select: { docType: true, origin: true, number: true } },
+        affectedDocument: {
+          select: { docType: true, origin: true, number: true, status: true, archivedAt: true },
+        },
       },
     });
     if (document.items.length === 0 && document.docType !== FiscalDocType.GUIA_REMISION_REMITENTE) {
@@ -1830,6 +1854,9 @@ export class InvoicingService {
         `${document.affectedDocument.number ?? 'El comprobante afectado'} es manual: su nota de crédito se registra manual, no se emite`,
       );
     }
+    // cc33 N3: el afectado, ya bloqueado junto con la nota, tiene que seguir aceptado y vigente.
+    if (document.affectedDocument !== null)
+      assertAffectedStillCreditable(document.affectedDocument);
 
     // **Revalidar antes de tomar el correlativo.** Los topes de "cuánto queda por
     // facturar" y "cuánto queda por acreditar" se comprueban al crear el borrador, pero
@@ -2587,6 +2614,9 @@ export class InvoicingService {
         `El comprobante ya tiene nota de crédito (${document.creditNotes.map((n) => n.number ?? 'borrador').join(', ')}): su saldo ya está ajustado`,
       );
     }
+    // cc33 N3: un borrador de nota de crédito también bloquea la baja, nombrándolo.
+    const draftBlock = await draftCreditNoteBlock(this.prisma, id, 'antes de darlo de baja');
+    if (draftBlock) throw new BadRequestException(draftBlock);
 
     const path = voidPathFor(
       document.docType,
@@ -2644,6 +2674,23 @@ export class InvoicingService {
           'Se registró un cobro mientras se comunicaba la baja: revierte el cobro y vuelve a intentarlo',
         );
       }
+      // cc33 N3: el comentario de arriba promete también las notas de crédito, y solo se contaban
+      // los cobros. Una nota viva o un borrador que entró mientras se hablaba con el PSE cortan
+      // igual que un cobro.
+      const liveNotes = await tx.fiscalDocument.count({
+        where: {
+          affectedDocumentId: id,
+          status: { in: LIVE_DOCUMENT_STATUSES },
+          archivedAt: null,
+        },
+      });
+      if (liveNotes > 0) {
+        throw new ConflictException(
+          'Se emitió una nota de crédito mientras se comunicaba la baja: el saldo ya está ajustado',
+        );
+      }
+      const lateDraft = await draftCreditNoteBlock(tx, id, 'antes de darlo de baja');
+      if (lateDraft) throw new ConflictException(lateDraft);
 
       const updated = await tx.fiscalDocument.updateMany({
         where: { id, status: FiscalDocumentStatus.ACCEPTED },
