@@ -3,7 +3,7 @@
  * `READ ONLY`, sin modo execute y sin reparar nada. Imprime un JSON en stdout (para guardarlo en
  * `local-data/cc34/diagnostico/`) y un resumen en stderr.
  *
- * Toma las órdenes de coberturas y accesorios **cerradas** con despunte y dos o más bobinas
+ * Toma las órdenes de coberturas y accesorios **cerradas** con dos o más bobinas
  * soltadas por el cierre, y compara el SCRAP que cada bobina recibió de verdad contra el que daría
  * la regla nueva (`allocateRoofingScrap`), con la diferencia en kg y en soles por orden.
  *
@@ -44,7 +44,9 @@ const live = (ms: Movement[]) =>
 
 async function scrapByCoil(tx: Tx) {
   const orders = await tx.productionOrder.findMany({
-    where: { kind: 'ROOFING', status: 'CLOSED', scrapKg: { gt: 0 } },
+    // Autorrevisión de cc34 (P2-3): también las cerradas sin despunte: la compensación vieja entre
+    // bobinas pudo dejarlo en 0 donde la regla nueva lo saca.
+    where: { kind: 'ROOFING', status: 'CLOSED' },
     select: {
       id: true,
       seq: true,
@@ -159,22 +161,43 @@ async function scrapByCoil(tx: Tx) {
     const consumed = dec(order.consumedKg);
     const explicit = !consumed.equals(oldByReports);
 
-    let wouldBe: Map<string, Decimal>;
-    let error: string | null = null;
-    try {
-      const plan = allocateRoofingScrap({
-        rows: scrapRows,
-        reports: reportInputs,
-        outs,
-        explicitTotalKg: explicit ? consumed : null,
-      });
-      wouldBe = new Map();
-      for (const a of plan.allocations) {
-        wouldBe.set(a.coilId, (wouldBe.get(a.coilId) ?? ZERO).plus(a.kg));
+    const planByCoil = (explicitTotalKg: Decimal | null) => {
+      try {
+        const plan = allocateRoofingScrap({
+          rows: scrapRows,
+          reports: reportInputs,
+          outs,
+          explicitTotalKg,
+        });
+        const byCoil = new Map<string, Decimal>();
+        for (const a of plan.allocations) {
+          byCoil.set(a.coilId, (byCoil.get(a.coilId) ?? ZERO).plus(a.kg));
+        }
+        return { byCoil, error: null };
+      } catch (e) {
+        return {
+          byCoil: new Map<string, Decimal>(),
+          error: e instanceof Error ? e.message : String(e),
+        };
       }
-    } catch (e) {
-      wouldBe = new Map();
-      error = e instanceof Error ? e.message : String(e);
+    };
+    const chosen = planByCoil(explicit ? consumed : null);
+    const wouldBe = chosen.byCoil;
+    const error = chosen.error;
+    // Autorrevisión de cc34 (P2-4): si el total escrito coincide con lo que daban los partes, el
+    // cierre pudo ser cualquiera de los dos. Se calcula también el otro y, si reparte distinto, la
+    // orden se marca ambigua con las dos cifras.
+    let ambiguousTotalWritten: Record<string, string> | null = null;
+    if (!explicit && reports.some((r) => r.consumedKg !== null)) {
+      const other = planByCoil(consumed);
+      const same =
+        other.error === null &&
+        coilIds.every((c) => (other.byCoil.get(c) ?? ZERO).equals(wouldBe.get(c) ?? ZERO));
+      if (!same) {
+        ambiguousTotalWritten = Object.fromEntries(
+          coilIds.map((c) => [c, (other.byCoil.get(c) ?? ZERO).toFixed(3)]),
+        );
+      }
     }
 
     const coils = coilIds.map((coilId) => {
@@ -224,17 +247,20 @@ async function scrapByCoil(tx: Tx) {
       movedPen: orderMovedPen.toFixed(2),
       netPen: orderNetPen.toFixed(2),
       newRuleError: error,
+      ambiguousTotalWritten,
     });
   }
 
   return {
-    closedWithScrap: orders.length,
+    closed: orders.length,
+    closedWithScrap: orders.filter((o) => dec(o.scrapKg).gt(0)).length,
     multiCoil,
     ordersWithDifference,
+    ambiguousOrders: results.filter((r) => r.ambiguousTotalWritten !== null).length,
     movedKg: movedKg.toFixed(3),
     movedPen: movedPen.toFixed(2),
     netPen: netPen.toFixed(2),
-    note: 'movedKg/movedPen: kilos y soles que la regla nueva cambia de bobina (suma de las diferencias positivas). netPen: cambio neto del costo del despunte de la orden (≠ 0 solo si las bobinas tenían costos distintos). El tipo de cierre se infiere (ver encabezado del CLI).',
+    note: 'movedKg/movedPen: kilos y soles que la regla nueva cambia de bobina o agrega (suma de las diferencias positivas). netPen: cambio neto del costo del despunte de la orden (≠ 0 si las bobinas tenían costos distintos o si cambia el total). ambiguousTotalWritten: el reparto si el cierre hubiera sido un total escrito igual a lo declarado. El tipo de cierre se infiere (ver encabezado del CLI).',
     orders: results,
   };
 }
@@ -267,8 +293,8 @@ async function main(): Promise<void> {
     console.error(`Rama ${branch}; foto ${report.takenAt}; transacción READ ONLY`);
     const s = report.scrapByCoil;
     console.error(
-      `B1. Cerradas con despunte: ${s.closedWithScrap}; con 2+ bobinas: ${s.multiCoil}; ` +
-        `con diferencia: ${s.ordersWithDifference} (${s.movedKg} kg cambian de bobina, S/ ${s.movedPen}; neto S/ ${s.netPen})`,
+      `B1. Cerradas: ${s.closed} (con despunte ${s.closedWithScrap}); con 2+ bobinas: ${s.multiCoil}; ` +
+        `con diferencia: ${s.ordersWithDifference}, ambiguas ${s.ambiguousOrders} (${s.movedKg} kg cambian de bobina, S/ ${s.movedPen}; neto S/ ${s.netPen})`,
     );
   } finally {
     await db.$disconnect();

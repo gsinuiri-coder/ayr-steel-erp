@@ -211,6 +211,43 @@ describe('allocateRoofingScrap (cc34 B1: el despunte de cada bobina sale de sus 
     expect(byCoil(result)).toEqual({ A: '0.333', B: '0.667' });
   });
 
+  it('con cuatro bobinas y pocos gramos, ninguna cuota sale negativa y lo repartido es el despunte', () => {
+    const rows = ['A', 'B', 'C', 'D'].map((id) => ({
+      consumptionId: `r${id}`,
+      coilId: id,
+      coilCode: `BOB-${id}`,
+      remainingKg: d('50'),
+    }));
+    const result = allocateRoofingScrap({
+      rows,
+      reports: [{ id: 'p1', declaredKg: null }],
+      outs: [
+        { reportId: 'p1', coilId: 'A', kg: d('1000') },
+        { reportId: 'p1', coilId: 'B', kg: d('1000') },
+        { reportId: 'p1', coilId: 'C', kg: d('1000') },
+        { reportId: 'p1', coilId: 'D', kg: d('0.001') },
+      ],
+      // Redondear al medio daba 0.002 a A, B y C y −0.001 a D: 0.006 al kardex contra 0.005.
+      explicitTotalKg: d('3000.006'),
+    });
+    expect(result.scrapKg.toFixed(3)).toBe('0.005');
+    expect(result.allocations.every((a) => a.kg.gt(0))).toBe(true);
+    const sum = result.allocations.reduce((acc, a) => acc.plus(a.kg), new Decimal(0));
+    expect(sum.toFixed(3)).toBe('0.005');
+    expect(byCoil(result)).toEqual({ A: '0.003', B: '0.001', C: '0.001' });
+  });
+
+  it('un total escrito sin nada reportado en las bobinas vivas va en orden de montaje', () => {
+    const result = allocateRoofingScrap(
+      twoCoils({
+        reports: [{ id: 'p1', declaredKg: null }],
+        outs: [{ reportId: 'p1', coilId: 'X', kg: d('100') }],
+        explicitTotalKg: d('110'),
+      }),
+    );
+    expect(byCoil(result)).toEqual({ A: '10.000' });
+  });
+
   it('sin exceso no hay asignaciones', () => {
     const result = allocateRoofingScrap(
       twoCoils({

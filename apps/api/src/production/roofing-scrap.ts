@@ -79,8 +79,10 @@ function addTo(map: Map<string, Decimal>, key: string, kg: Decimal): void {
 }
 
 /**
- * Reparte `totalKg` entre las claves en proporción a `weights`, redondeado a kilos (3 decimales).
- * La última clave con peso se lleva el resto, así la suma cierra exacta.
+ * Reparte `totalKg` entre las claves en proporción a `weights`, en gramos (3 decimales). Cada
+ * cuota se **trunca** hacia cero y el resto va a la clave de más peso (la primera, si empatan):
+ * así la suma cierra exacta y ninguna cuota cambia de signo por el redondeo (revisión de cc34:
+ * redondear al medio y darle el resto a la última dejaba esa cuota negativa con 4 bobinas).
  */
 function splitProportionally(
   totalKg: Decimal,
@@ -90,15 +92,19 @@ function splitProportionally(
   const weightSum = sum(keys.map((k) => weights.get(k) ?? ZERO));
   const shares = new Map<string, Decimal>();
   if (keys.length === 0 || weightSum.lte(0)) return shares;
-  let assigned = ZERO;
-  keys.forEach((key, i) => {
-    const share =
-      i === keys.length - 1
-        ? totalKg.minus(assigned)
-        : roundTo(totalKg.times(weights.get(key) ?? ZERO).div(weightSum), 'KG');
-    shares.set(key, share);
-    assigned = assigned.plus(share);
-  });
+  let heaviest = keys[0] ?? '';
+  for (const key of keys) {
+    shares.set(
+      key,
+      totalKg
+        .times(weights.get(key) ?? ZERO)
+        .div(weightSum)
+        .toDecimalPlaces(3, Decimal.ROUND_DOWN),
+    );
+    if ((weights.get(key) ?? ZERO).gt(weights.get(heaviest) ?? ZERO)) heaviest = key;
+  }
+  const rest = totalKg.minus(sum(shares.values()));
+  shares.set(heaviest, (shares.get(heaviest) ?? ZERO).plus(rest));
   return shares;
 }
 
@@ -216,6 +222,14 @@ export function allocateRoofingScrap(input: RoofingScrapInput): RoofingScrapResu
       kg,
     });
     pendingByCoil.set(row.coilId, pending.minus(kg));
+  }
+
+  // Red: lo que sale al kardex es exactamente el despunte que la orden y la reserva registran.
+  const allocatedKg = sum(allocations.map((a) => a.kg));
+  if (!allocatedKg.equals(scrapKg) || allocations.some((a) => a.kg.lte(0))) {
+    throw new BadRequestException(
+      `El reparto del despunte entre las bobinas no cierra (${allocatedKg.toFixed(3)} de ${scrapKg.toFixed(3)} kg)`,
+    );
   }
 
   return { reportedKg, declaredKg, scrapKg, allocations };
