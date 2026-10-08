@@ -119,6 +119,85 @@ test.describe('D-192 — montar varias bobinas', () => {
     }
   });
 
+  test('cc34 B1: el despunte declarado en la segunda bobina sale de ella, también al reabrir y volver a cerrar', async ({
+    baseURL,
+  }) => {
+    const api = await adminApi(baseURL!);
+    const scenario = await setupRoofingScenario(api, { weightKg: '100' });
+    const second = await buyRoofingCoil(api, {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      weightKg: '100',
+    });
+    const customer = await createCustomer(api);
+    const { quotation, order } = await quoteAndOrderLines(api, {
+      customerId: customer.id,
+      lines: [{ productId: scenario.product.id, rows: pieces([4, 10]) }],
+    });
+    const opId = order.reservations[0]!.productionOrderId!;
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id, second.coil.id],
+      purchaseIds: [scenario.purchaseId, second.purchaseId],
+      productionOrderIds: [opId],
+      orderIds: [order.id],
+      quotationIds: [quotation.id],
+    };
+
+    try {
+      // La primera se monta antes, en su propia llamada (montadas juntas comparten el instante y el
+      // orden de montaje queda al azar): con la regla vieja, el despunte salía de ella.
+      await postJson(api, `/api/production/roofing/${opId}/coils`, {
+        coilIds: [scenario.coil.id],
+      });
+      await postJson(api, `/api/production/roofing/${opId}/coils`, {
+        coilIds: [second.coil.id],
+      });
+      const drafts = `/api/production/roofing/${opId}/drafts`;
+      await postJson(api, drafts, { coilId: scenario.coil.id, pieces: pieces([4, 5]) }); // 80.8
+      // La segunda declara 90 kg sobre 80.8 de teórico: 9.2 kg de despunte, suyos.
+      await postJson(api, drafts, {
+        coilId: second.coil.id,
+        pieces: pieces([4, 5]),
+        consumedKg: '90',
+      });
+      const closed = await postJson<ProductionOrderDto>(api, `${drafts}/commit`, {
+        close: true,
+        idempotencyKey: randomUUID(),
+      });
+      expect(closed.status).toBe('CLOSED');
+      expect(closed.scrapKg).toBe('9.200');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('19.200');
+      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('10.000');
+
+      // Reabrir devuelve cada despunte a su bobina, y volver a cerrar deja lo mismo.
+      const reopened = await postJson<ProductionOrderDto>(
+        api,
+        `/api/production/roofing/${opId}/reopen`,
+        { reason: 'E2E cc34: reabrir y volver a cerrar' },
+      );
+      expect(reopened.status).toBe('IN_PROGRESS');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('19.200');
+      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('19.200');
+      const again = await postJson<ProductionOrderDto>(
+        api,
+        `/api/production/roofing/${opId}/close`,
+        {},
+      );
+      expect(again.status).toBe('CLOSED');
+      expect(again.scrapKg).toBe('9.200');
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('19.200');
+      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('10.000');
+    } finally {
+      await purgeRoofingTrail(api, trail);
+      await api.dispose();
+    }
+  });
+
   test('por pantalla: peso inicial en el modal, dos bobinas elegidas con casillas, filas en el workspace y bajar una sola', async ({
     page,
     baseURL,
