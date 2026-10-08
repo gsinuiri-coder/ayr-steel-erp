@@ -71,11 +71,32 @@ class CountingPrisma extends PrismaService {
 let moduleRef: TestingModule;
 let prisma: CountingPrisma;
 
-/** Las sentencias que mandó `run`. */
+let fences = 0;
+
+/**
+ * Las sentencias que mandó `run`, **hasta una consulta marcadora**.
+ *
+ * Revisión de cc34 (causa probable de la variación): Prisma 6 entrega el evento `query` y el
+ * resultado de la consulta por caminos distintos, sin orden entre ellos. Medido uno por uno, un
+ * evento tardío cae en la ventana siguiente y la suma no cambia; el Panel se mide último y en
+ * paralelo, y el evento de su última consulta podía llegar después de cerrar la lista: el Panel
+ * contaba una de menos, siempre una de menos (24/25, 15/16) y solo en la CI. Los eventos sí salen en
+ * orden entre ellos, así que se manda una consulta marcadora y se corta la lista cuando aparece:
+ * para entonces llegaron todos los anteriores. La igualdad exacta que se exige no cambia.
+ */
 async function measure(run: () => Promise<unknown>): Promise<string[]> {
   const before = prisma.statements.length;
   await run();
-  return prisma.statements.slice(before);
+  fences += 1;
+  const marker = `measure_fence_${String(fences)}`;
+  // Constante armada por el test (sin datos del usuario): `$queryRawUnsafe` no expone nada.
+  await prisma.$queryRawUnsafe(`SELECT 1 AS ${marker}`);
+  for (let waited = 0; ; waited += 10) {
+    const at = prisma.statements.indexOf(`SELECT 1 AS ${marker}`, before);
+    if (at >= 0) return prisma.statements.slice(before, at);
+    if (waited > 10_000) throw new Error(`No llegó el evento de la consulta marcadora ${marker}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 /** Lo que difiere entre dos multiconjuntos de sentencias: «n en a → m en b: sentencia». */

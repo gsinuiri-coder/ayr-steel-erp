@@ -19,6 +19,7 @@ import {
   MAX_PADRON_LOOKUPS,
   normalizePurchaseNumber,
   PADRON_LOOKUP_CONCURRENCY,
+  purchaseDocTypeOf,
   Role,
   suggestSupplierCode,
   type ConfirmPurchaseImportInput,
@@ -110,7 +111,10 @@ export class PurchaseImportService {
     // Se avisa en los dos, nombrando al otro, sin cambiar cómo se agrupan las filas.
     const byPaper = new Map<string, PurchaseImportDocumentInput[]>();
     for (const doc of documents) {
-      const paper = `${doc.supplierRuc.trim()}|${doc.docType.trim().toUpperCase()}|${doc.series.toUpperCase()}|${normalizePurchaseNumber(doc.number)}`;
+      // Mismo criterio que el agrupado de filas (`documentKeyOf`): «Factura», «FACTURA» y «01» son el mismo tipo.
+      const docType = purchaseDocTypeOf(doc.docType) ?? doc.docType.trim().toUpperCase();
+      const owner = doc.supplierId ?? doc.supplierRuc.trim();
+      const paper = `${owner}|${docType}|${doc.series.trim().toUpperCase()}|${normalizePurchaseNumber(doc.number)}`;
       byPaper.set(paper, [...(byPaper.get(paper) ?? []), doc]);
     }
     const twins = new Map<PurchaseImportDocumentInput, string[]>();
@@ -135,7 +139,7 @@ export class PurchaseImportService {
         extra.push({
           severity: 'warning',
           field: 'document',
-          message: `Este comprobante aparece en el archivo también como ${others.join(', ')} (el mismo número sin ceros a la izquierda): al confirmar, el segundo choca con el primero. Escríbelo igual en todas sus filas`,
+          message: `Este comprobante aparece en el archivo también como ${others.join(', ')} (el mismo papel: proveedor, tipo, serie y número sin ceros a la izquierda). Al confirmar choca con el otro y, como la importación es todo o nada, no entra ninguno: escríbelo igual en todas sus filas`,
         });
       }
       const name = doc.supplierId === null ? ctx.padron.get(doc.supplierRuc) : undefined;

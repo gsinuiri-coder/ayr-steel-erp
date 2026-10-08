@@ -1,0 +1,50 @@
+# cc34 corte 4 — revisión de segundo modelo
+
+Modelo: Claude Sonnet 5.5 (contexto limpio, solo lectura). Commits: `41977d4f` (fecha del TC, estado de cuenta, importador) y `928bfba7` (`dashboards.db-spec`). Corrí `jest src/imports src/exchange-rates`: 11 suites pasan, 252 tests, 0 fallos. No corrí nada contra bases ni E2E.
+
+## Hallazgos
+
+### P1 — Causa del 24/25 y 15/16 sin encontrar; el commit `928bfba7` no corrige nada
+
+`apps/api/src/reports/dashboards.db-spec.ts` (todo el diff). El encargo era hallar la causa y corregirla. El commit solo cambia la forma de medir (multiconjunto de sentencias en vez de conteo). Si vuelve a fallar en CI, el mensaje dirá qué sentencia falta. Eso sirve para diagnosticar, pero el test sigue rojo en CI. Hay que decir en el handoff que la causa sigue abierta y no marcar el punto como resuelto.
+
+Esto es lo que descarté leyendo el código, para no repetir el camino:
+
+- **Panel de administrador.** `apps/api/src/reports/admin-dashboard.service.ts:36-45` lanza en un `Promise.all` los mismos reportes que el test mide uno por uno. No hay consultas propias ni condicionales, y no depende del reloj. `receivables-aging.service.ts:33` y `inventory-valuation.service.ts:293` llaman a `businessToday()`, pero solo para armar el DTO, no para decidir consultas.
+- **Ramas condicionales de consultas.** Las que hay dependen solo de los datos: `sales-margin.service.ts:122-133` (rango vacío), `coil-waste.service.ts:~72` (sin `coilIds`) y `reportIds`/`orderIds` vacíos. Con los mismos datos dan el mismo número en secuencial y en concurrente.
+- **Planificadores y jobs.** `quotation-expiry.job.ts` e `invoicing-send.job.ts` salen en `onModuleInit` si `JOBS_ENABLED` es falso. El spec lo fuerza, aunque lo asigna después de los `import`; conviene confirmar que `ENV` se lee al compilar el módulo y no al importar. Una consulta de fondo se habría contado en el primer reporte, pero el patrón «el Panel una por debajo» aparece también en el segundo test, que no es la primera medición. Por eso no explica el síntoma.
+- **Eventos `query` tardíos.** Esta es la hipótesis más cercana, pero por sí sola no da una diferencia constante de -1. En Prisma 6.19 con el motor de biblioteca los eventos llegan por un callback asíncrono y pueden llegar tras resolverse la promesa. En la medición secuencial, el evento tardío del último reporte cae en la rebanada del Panel (+1). El último del Panel se pierde (-1). Con retardo sistemático el resultado queda igual; con retardo esporádico habría fallos en ambos sentidos. Se vieron seis fallos, todos de -1 y ninguno de +1, así que o el retardo es asimétrico o la causa es otra.
+- **Dedupe de Prisma.** Solo agrupa `findUnique`, y esos servicios no los usan en estas rutas.
+
+Hipótesis sin descartar, en orden de utilidad para el siguiente paso (sin acceso a la base de CI no pude comprobarlas):
+
+1. **Datos que cambian entre las dos mediciones.** Los `db-spec` corren con `--runInBand`, pero el Panel se mide segundos después que los reportes y los datos de CI son los de otros specs. Si algo lo anula o lo expira entre ambas lecturas, la rama condicional de `coil-waste` (sin `coilIds`, 1 consulta contra 2-4) o la de `sales-margin` (6 contra 1 consulta) cambiaría. Como los fallos son siempre de -1, el candidato es el reporte que tiene datos en la primera pasada y ya no en la segunda. Propuesta: en el fallo, volcar `rows.length` de `documents`, `coilIds` y `reportIds` por reporte y repetir una segunda medición de reportes tras el Panel. Si los reportes dan 25 y luego 24, son los datos; si dan 25 siempre, es el Panel.
+2. **Medir el Panel dos veces en el mismo test** (y los reportes también). Si la segunda vez da lo mismo que los reportes, la primera tuvo un efecto de arranque en frío o un evento tardío; si da -1 las dos veces, es estructural.
+3. **Esperar a que se vacíe la cola de eventos antes de cortar.** Por ejemplo `await new Promise(r => setImmediate(r))` en `measure`, antes de leer `statements.length`. Es una mitigación barata; si el fallo desaparece, confirma el retardo del evento. La nota del commit dice «los eventos de Prisma no llegan tarde», pero solo lo comprobó en local, que no tiene la carga de la CI.
+
+### P2 — La detección de gemelos usa el tipo de comprobante crudo, no el normalizado
+
+`apps/api/src/imports/purchase-import.service.ts:~114`: `doc.docType.trim().toUpperCase()`. La clave de agrupado (`documentKeyOf`, `purchase-import-parse.ts:68`) usa `purchaseDocTypeOf`, que también acepta `01` y `Boleta de venta`, y pliega acentos. Escenario: una fila con `Factura F001-00012` y otra con `01 F001-12` del mismo RUC son el mismo papel con dos claves distintas, y con la regla actual no se avisa. Propuesta: `purchaseDocTypeOf(doc.docType) ?? doc.docType.trim().toUpperCase()`, igual que la clave. Es raro en la práctica y el aviso es solo informativo, por eso P2.
+
+### P3 — Detalles menores
+
+- `purchase-import.service.spec.ts` (test nuevo): no cubre un grupo de tres variantes (`00012`, `12`, `0012`), donde el mensaje debería nombrar a las otras dos; ni el caso con otro RUC o tipo, que no debe avisar. La lógica lo soporta, pero falta fijarlo.
+- `packages/shared/src/schemas/exchange-rate.ts:9-12`: la segunda condición `!regex.test(v) || isCalendarDate(v)` es redundante con la primera regla, ya que `isCalendarDate` repite el regex. Está bien para no duplicar el mensaje; solo es verbosidad. Además, la validación acepta años como `0000` y `0001`. Para un TC es inocuo.
+- `e2e/tests/cc34-estado-cuenta-credito.spec.ts`: el stub intercepta `**/api/purchases/suppliers/<id>/statement`; si la web llamara al API en otro origen sin el prefijo `/api`, el glob no coincidiría y el test fallaría en CI, no en revisión. Conviene ejecutarlo localmente antes del merge. El regex `(?!-CR)` de la fila al contado depende de que `documentLabel` vaya al final del texto de la fila; hoy funciona.
+
+## Verificado sin hallazgos
+
+- **Fecha del TC** (`exchange-rate.ts`): `isCalendarDate` hace el ida y vuelta por `Date`, así que `2026-02-31`, `2026-08-32` y `2026-13-01` se rechazan, y `2028-02-29` pasa. No hay import circular (`operation.ts` solo importa `business-date`). El mensaje de formato se conserva y no se duplica con el de calendario. El spec cubre consulta y alta manual. `isoDateSchema` del TC es local a ese archivo; el homónimo de `invoicing.ts:181` es otro y no se tocó.
+- **Estado de cuenta del proveedor** (`estado-cuenta-view.tsx:145`): `noDueDateLabel` ya existe en `enums.ts:322` y devuelve «Crédito sin vencimiento» solo para `CREDITO`. `p.paymentTerms` viene en el DTO (`toListDto`). `overdueDays` es `null` si no hay `dueDate`, que es el caso. El filtro de saldo > 0 deja pasar la fila de prueba del E2E.
+- **Importador** (`purchase-import.service.ts`): la agrupación usa RUC, tipo, serie en mayúsculas y número normalizado (solo dígitos, sin ceros a la izquierda, igual que `normalizePurchaseNumber` al confirmar). No cambia el agrupado de filas (`key` intacta). Es `warning`, no `error`, y el mensaje nombra al otro. Sin falsos positivos: los documentos que no se pueden separar en serie y número tienen número vacío y la misma serie solo si tienen la misma clave. La comparación por referencia de objeto (`o !== doc`) es correcta. La prueba nueva ejercita los tres casos (con ceros, sin ceros, tercero distinto).
+- **`dashboards.db-spec.ts`**: `statementDiff` compara multiconjuntos, y las aserciones por longitud y techo se conservan. El espacio en blanco se normaliza antes de comparar, y los parámetros de Prisma no están en `e.query`, así que no se introducen diferencias espurias. El cambio no relaja el test; lo endurece.
+
+## Qué se hizo con cada hallazgo
+
+| Hallazgo                          | Resolución                                                                                                                                                                                                                                                                                            |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1 causa no encontrada            | Atendido: consulta marcadora al final de cada medición (propuesta de la autorrevisión); la medición ya no depende del orden entre el evento `query` y el resultado. Causa probable y compatible con «siempre −1, solo en CI»; no reproducida en local. `statementDiff` queda como red de diagnóstico. |
+| P2 tipo de comprobante crudo      | Corregido (`purchaseDocTypeOf`), con test.                                                                                                                                                                                                                                                            |
+| P3 tests del grupo / otro RUC     | Agregado el de otro RUC y «01» frente a «Factura».                                                                                                                                                                                                                                                    |
+| P3 `refine` redundante / año 0000 | Sin cambio: la condición evita un segundo mensaje sobre un formato ya inválido; el año 0000 queda igual que `operationDateSchema`.                                                                                                                                                                    |
+| P3 glob del E2E                   | Corrido en local: verde.                                                                                                                                                                                                                                                                              |

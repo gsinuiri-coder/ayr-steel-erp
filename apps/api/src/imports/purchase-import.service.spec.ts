@@ -383,4 +383,19 @@ describe('PurchaseImportService.preview (D-351)', () => {
     ]);
     expect(other!.issues).toEqual([]);
   });
+
+  it('cc34 (revisión): «01» y «Factura» son el mismo tipo; otro RUC no es el mismo papel', async () => {
+    const s = setup();
+    const csv = [
+      'TIPO DE COMPRA,LÍNEA DE NEGOCIO,TIPO DE COMPROBANTE,SERIE-NÚMERO,FECHA DE EMISIÓN,RUC PROVEEDOR,MONEDA,CONDICIÓN DE PAGO,DESCRIPCIÓN,CANTIDAD,PRECIO UNITARIO SIN IGV',
+      'Gasto,Servicios,01,F001-00012,20/09/2026,20100000001,PEN,Contado,Luz,1,100',
+      'Gasto,Servicios,Factura,F001-12,20/09/2026,20100000001,PEN,Contado,Agua,1,50',
+      'Gasto,Servicios,Factura,F001-012,20/09/2026,20100000002,PEN,Contado,Gas,1,20',
+    ].join('\n');
+    const preview = await s.service.preview('compras.csv', Buffer.from(csv, 'utf8'));
+    const warned = preview.documents.map((d) =>
+      d.issues.some((i) => i.message.includes('aparece en el archivo también como')),
+    );
+    expect(warned).toEqual([true, true, false]);
+  });
 });
