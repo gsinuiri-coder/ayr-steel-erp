@@ -2,6 +2,24 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-07 — Ventana cc32: reportes y documentos (D-502..D-532, PR #132–#135 en prod)
+
+Cuatro cortes, todos solo `apps/web`, sin API ni migraciones. Detalle en `docs/handoff/ventana-cc32.md`;
+UAT en `docs/uat/cc32.md`.
+
+- **En producción (Vercel), verificados sin errores de consola:**
+  - corte 0, cierre de cc31: `40302513`, 6919096855;
+  - corte 1, plantilla de reportes y Ventas y margen: `176cc21a`, 6921311739;
+  - corte 2, los otros seis reportes: `a61992bf`, 6923732035;
+  - corte 3, imprimir, guía del despacho y Mostrador: `8a072c58`, 6923787336.
+- **D-480..D-501 ratificadas por el dueño** (pasan a firmes en §0.2). D-502..D-532 provisionales.
+- **Excel que faltan** y datos que el API no entrega: lista en el handoff, para una pieza de API.
+- **Registro de riesgo:** sin piezas que toquen el kardex ni los datos. El riesgo funcional está en
+  la impresión (`lib/print.ts`, iframe con el PDF del API: `print()` real sin prueba automática) y
+  en el refresco global de la campana tras cada mutación (`app/providers.tsx`).
+- **Infraestructura:** la E2E de la CI tardó 36 min con un tope de 40 en el #134 (una corrida se
+  canceló por tiempo y se relanzó).
+
 ## 2026-10-07 — Ventana cc31: mejoras de UX (D-480..D-501, PR #124–#129 en prod)
 
 Seis cortes, todos solo `apps/web`, sin API ni migraciones. Detalle en `docs/handoff/ventana-cc31.md`;

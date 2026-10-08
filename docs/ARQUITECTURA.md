@@ -500,6 +500,37 @@
 | D-499 | 2026-10-07 (cc31, corte 6, PR #129; ratificada por el dueño el 2026-10-07) | el «+» del último largo pasa a «Agregar largo» debajo del bloque. |
 | D-500 | 2026-10-07 (cc31, corte 6, PR #129; ratificada por el dueño el 2026-10-07) | el foco pasa a la cantidad al elegir producto solo si nadie lo tomó (evita cortar lo que se está escribiendo). |
 | D-501 | 2026-10-07 (cc31, corte 6, PR #129; ratificada por el dueño el 2026-10-07) | sin «Esta línea no tiene productos activos.» antes de elegir línea de negocio. |
+| D-502 | 2026-10-07 (cc32, corte 1; **provisional**) | el pie de Ventas y margen suma las filas de la tabla (incluidas, con la búsqueda); su margen incluye la venta sin costo de esos pedidos; margen % del pie con 2 decimales. |
+| D-503 | 2026-10-07 (cc32, corte 1; **provisional**) | el detalle del pedido conserva costo, margen y % por comprobante. |
+| D-504 | 2026-10-07 (cc32, corte 1; **provisional**) | las secciones de excluidos y «Totales por línea» siguen debajo de la tabla. |
+| D-505 | 2026-10-07 (cc32, corte 1; **provisional**) | el aviso de costo parcial va a «Cómo se calcula» y como matiz de la cifra Margen. |
+| D-506 | 2026-10-07 (cc32, corte 1; **provisional**) | el orden ascendente no se escribe en la URL; con una sola fecha, la otra sale del mes en curso. |
+| D-507 | 2026-10-07 (cc32, corte 1; **provisional**) | la columna Vendedor sigue oculta por debajo de `lg`. |
+| D-508 | 2026-10-07 (cc32, corte 1; **provisional**) | (reemplazada por D-518). |
+| D-509 | 2026-10-07 (cc32, corte 2; **provisional**) | Ventas por material usa `from`/`to` (el API ya los exigía; `range` era solo de la web). |
+| D-510 | 2026-10-07 (cc32, corte 2; **provisional**) | el mes de Bobinas siempre en `?mes=`; sin mes, el del periodo recordado. |
+| D-511 | 2026-10-07 (cc32, corte 2; **provisional**) | Producción pasa el subtotal por pedido a «Ver por» Orden / Pedido. |
+| D-512 | 2026-10-07 (cc32, corte 2; **provisional**) | los subtotales por tipo de Ventas por material, en tabla aparte con cifras del API. |
+| D-513 | 2026-10-07 (cc32, corte 2; **provisional**) | total al pie: sin búsqueda, el del API; con búsqueda, recalculado con Decimal y las fórmulas del API. |
+| D-514 | 2026-10-07 (cc32, corte 2; **provisional**) | avisos de datos (sin teórico, sin reporte de planta) en «Cómo se calcula» con una pista corta a la vista. |
+| D-515 | 2026-10-07 (cc32, corte 2; **provisional**) | en CxC el detalle es una subtabla; tramos en cero como «0.00». |
+| D-516 | 2026-10-07 (cc32, corte 2; **provisional**) | donde las unidades se mezclan, la unidad va en la celda. |
+| D-517 | 2026-10-07 (cc32, corte 2; **provisional**) | en Bobinas, el subtotal al pie solo con filas. |
+| D-518 | 2026-10-07 (cc32, corte 1; **provisional**) | un solo criterio de conteo (pedidos; las ventas sin pedido se nombran aparte). |
+| D-519 | 2026-10-07 (cc32, corte 3; **provisional**) | imprimir se habilita solo con el documento ACCEPTED (guía y Mostrador). |
+| D-520 | 2026-10-07 (cc32, corte 3; **provisional**) | «Descargar PDF de la guía» solo con ACCEPTED; en Mostrador el enlace se oculta si no está aceptado. |
+| D-521 | 2026-10-07 (cc32, corte 3; **provisional**) | en la cotización el principal no cambia. |
+| D-522 | 2026-10-07 (cc32, corte 3; **provisional**) | «Descargar hoja de planta» se conserva junto a «Imprimir hoja de planta». |
+| D-523 | 2026-10-07 (cc32, corte 3; **provisional**) | en Mostrador el foco pasa a «Nueva venta» ya al pedir la impresión. |
+| D-524 | 2026-10-07 (cc32, corte 3; **provisional**) | el respaldo de imprimir es abrir el PDF en una pestaña nueva. |
+| D-525 | 2026-10-07 (cc32, corte 2; **provisional**) | un enlace con `range=` se traduce una vez y `range` sale de la URL. |
+| D-526 | 2026-10-07 (cc32, corte 2; **provisional**) | si falla Bobinas, «Abiertas» no se pinta (un solo error). |
+| D-527 | 2026-10-07 (cc32, corte 2; **provisional**) | el contador de Bobinas dice «X de Y bobinas» con búsqueda. |
+| D-528 | 2026-10-07 (cc32, corte 3; **provisional**) | con la guía en camino, el principal es «Ver la guía». |
+| D-529 | 2026-10-07 (cc32, corte 3; **provisional**) | el respaldo es asíncrono con tope de 4 s. |
+| D-530 | 2026-10-07 (cc32, corte 3; **provisional**) | el 404 «sin archivo» dice que el documento no tiene PDF guardado. |
+| D-531 | 2026-10-07 (cc32, corte 3; **provisional**) | «Preparando la impresión…» solo desde «Más opciones». |
+| D-532 | 2026-10-07 (cc32, corte 3; **provisional**) | una impresión que reemplaza a otra cancela la anterior sin aviso. |
 
 ---
 
