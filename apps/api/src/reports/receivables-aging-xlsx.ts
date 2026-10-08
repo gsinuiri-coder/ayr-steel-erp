@@ -3,6 +3,7 @@ import {
   AGING_BUCKET_LABELS,
   FISCAL_DOC_TYPE_LABELS,
   type ReceivablesAgingDto,
+  noDueDateLabel,
 } from '@ayr/shared';
 import { build, num, type Sheet } from './reports-xlsx';
 
@@ -73,8 +74,9 @@ export function receivablesAgingXlsx(report: ReceivablesAgingDto): {
         d.salesOrderCode,
         d.sellerName,
         d.issueDate,
-        // D-428: al contado vence al emitir; la columna lo dice en vez de repetir la fecha.
-        d.dueDate ?? 'Contado',
+        // D-428: al contado vence al emitir; la columna lo dice en vez de repetir la fecha. D-537:
+        // un crédito sin vencimiento se rotula como tal, no como contado.
+        d.dueDate ?? noDueDateLabel(d.paymentTerms),
         d.daysOverdue,
         AGING_BUCKET_LABELS[d.bucket],
         num(d.totalPen),

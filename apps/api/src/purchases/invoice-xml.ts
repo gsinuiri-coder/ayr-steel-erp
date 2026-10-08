@@ -1,6 +1,14 @@
 import { BadRequestException } from '@nestjs/common';
 import { XMLParser } from 'fast-xml-parser';
-import { Currency, Decimal, toDecimal, toFixedString, type PurchaseDocType } from '@ayr/shared';
+import {
+  Currency,
+  Decimal,
+  normalizePurchaseNumber,
+  PURCHASE_NUMBER_PATTERN,
+  toDecimal,
+  toFixedString,
+  type PurchaseDocType,
+} from '@ayr/shared';
 
 /**
  * Parseo del XML UBL 2.1 de la factura electrónica del proveedor (RF-11).
@@ -356,13 +364,15 @@ function decimalOr(value: string, fallback: Decimal): Decimal {
 
 /** `F001-00000123` → serie `F001`, número `123` (sin ceros a la izquierda). */
 function splitDocumentId(id: string): { series: string; number: string } {
-  const [series, ...rest] = id.split('-');
-  const number = rest.join('-').replace(/\D/g, '');
-  if (!series || !number) {
+  const [series, ...rest] = id.trim().split('-');
+  // B8 (cc33): el número ya no se «limpia» borrando lo que no es dígito —`F001-A12` daba `12`,
+  // otro comprobante—. Si no tiene el formato de un número de compra, el XML se rechaza.
+  const raw = rest.join('-').toUpperCase();
+  if (!series || !PURCHASE_NUMBER_PATTERN.test(raw)) {
     throw new BadRequestException(`El XML no trae una serie-número válida (leído: "${id}")`);
   }
   // Sin pasar por `Number`: un correlativo de más de 15 dígitos perdería precisión.
-  return { series: series.toUpperCase(), number: number.replace(/^0+/, '') || '0' };
+  return { series: series.toUpperCase(), number: normalizePurchaseNumber(raw) };
 }
 
 function daysBetween(fromIso: string, toIso: string): number | null {

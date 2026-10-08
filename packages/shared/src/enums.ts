@@ -313,6 +313,16 @@ export const PAYMENT_TERMS_LABELS: Record<PaymentTerms, string> = {
   CREDITO: 'Crédito',
 };
 
+/**
+ * D-537 (cc33, N8): qué se muestra en la columna de vencimiento de un documento **sin**
+ * vencimiento. Al contado es «Contado»; un CREDITO sin vencimiento antes decía también «Contado»
+ * y no lo es. Solo cambia el rótulo: la antigüedad sigue midiéndose como dice D-428.
+ */
+export const CREDIT_WITHOUT_DUE_LABEL = 'Crédito sin vencimiento';
+export function noDueDateLabel(paymentTerms: PaymentTerms): string {
+  return paymentTerms === PaymentTerms.CREDITO ? CREDIT_WITHOUT_DUE_LABEL : 'Contado';
+}
+
 /** Estado de una compra (D-030). */
 export const PurchaseStatus = {
   DRAFT: 'DRAFT',

@@ -230,6 +230,10 @@ describe('validateDocument — fecha (D-124, dato del papel)', () => {
     ['2026-07-31', /anterior al 2026-08-01/],
     ['20/09/2026', /no es una fecha: usa DD\/MM\/AAAA/],
     ['45901', /no es una fecha/],
+    // cc33 N5: con el formato correcto y un día que no existe (la grilla edita en ISO).
+    ['2026-02-31', /no es una fecha/],
+    ['2026-09-31', /no es una fecha/],
+    ['2026-08-32', /no es una fecha/],
   ])('%s se rechaza', (issueDate, message) => {
     expect(errors(validateDocument(doc({ issueDate }), ctx()))[0]).toMatch(message);
   });
@@ -698,5 +702,31 @@ describe('D-359 — precio del papel con pocos decimales y el importe', () => {
       ctx(),
     );
     expect(errors(r).join(' ')).toMatch(/no cuadra con cantidad × precio/);
+  });
+});
+
+describe('validateDocument — número del comprobante (cc33 B8 y ceros)', () => {
+  it('acepta letras, guion y barra', () => {
+    const r = validateDocument(doc({ number: 'a-12/3' }), ctx());
+    expect(errors(r)).toEqual([]);
+  });
+
+  it.each([[''], ['123456789012345678901'], ['12.5']])('«%s» se rechaza', (number) => {
+    expect(errors(validateDocument(doc({ number }), ctx()))[0]).toMatch(/no es una serie-número/);
+  });
+
+  it('el duplicado se compara sin ceros a la izquierda', () => {
+    const r = validateDocument(
+      doc({ number: '12345' }),
+      ctx({
+        livePurchases: new Map([
+          [
+            livePurchaseKey('sup-1', 'FACTURA', 'F001', '00012345'),
+            { issueDate: '2026-09-20', status: 'RECEIVED' },
+          ],
+        ]),
+      }),
+    );
+    expect(errors(r)[0]).toMatch(/Ya registrada/);
   });
 });

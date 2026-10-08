@@ -1,4 +1,4 @@
-import type { ReceivableSummaryDto, Role } from '@ayr/shared';
+import { CREDIT_WITHOUT_DUE_LABEL, type ReceivableSummaryDto, type Role } from '@ayr/shared';
 import { listXlsx, type ListColumn } from '../common/list-xlsx';
 import { num } from '../reports/reports-xlsx';
 
@@ -15,8 +15,13 @@ export const RECEIVABLE_LIST_COLUMNS: readonly ListColumn<ReceivableSummaryDto>[
   { header: 'Cliente', width: 36, cell: (r) => r.customerName },
   { header: 'Documento', width: 14, cell: (r) => r.customerDocNumber },
   { header: 'Comprobantes', width: 12, cell: (r) => r.documentCount },
-  // Como la pantalla: sin vencimiento con saldo, todo es al contado.
-  { header: 'Vencimiento más próximo', width: 14, cell: (r) => r.nextDueDate ?? 'Contado' },
+  // Como la pantalla (D-537): sin vencimiento, «Crédito sin vencimiento» si alguno es a crédito.
+  {
+    header: 'Vencimiento más próximo',
+    width: 14,
+    cell: (r) =>
+      r.nextDueDate ?? (r.creditWithoutDueCount > 0 ? CREDIT_WITHOUT_DUE_LABEL : 'Contado'),
+  },
   {
     header: 'Vencido (S/)',
     width: 14,

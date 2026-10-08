@@ -135,4 +135,27 @@ describe('parseInvoiceXml (RF-11, UBL 2.1)', () => {
       expect(() => parseInvoiceXml(Buffer.from(eur, 'utf8'))).toThrow(/Moneda EUR/);
     });
   });
+
+  describe('número del comprobante (cc33 B8)', () => {
+    const withId = (id: string) =>
+      Buffer.from(
+        readFileSync(join(__dirname, '__fixtures__', 'factura-pen-contado.xml'), 'utf8').replace(
+          '<cbc:ID>F001-1523</cbc:ID>',
+          `<cbc:ID>${id}</cbc:ID>`,
+        ),
+        'utf8',
+      );
+
+    it('lee un número alfanumérico tal cual, sin ceros a la izquierda', () => {
+      expect(parseInvoiceXml(withId('F001-00A-15/2'))).toMatchObject({
+        series: 'F001',
+        number: 'A-15/2',
+      });
+    });
+
+    it('rechaza un número que no puede leer en vez de quitarle lo que no es dígito', () => {
+      expect(() => parseInvoiceXml(withId('F001-15.23'))).toThrow(/serie-número válida/);
+      expect(() => parseInvoiceXml(withId('F001-'))).toThrow(/serie-número válida/);
+    });
+  });
 });

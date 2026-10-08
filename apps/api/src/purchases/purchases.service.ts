@@ -51,7 +51,9 @@ import {
   type UpdatePurchaseItemInput,
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
+  normalizePurchaseNumber,
 } from '@ayr/shared';
+import { assertNoLiveDocumentClash } from './purchase-document-clash';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
@@ -247,6 +249,16 @@ export class PurchasesService {
     await this.assertLandedCostLinkIsValid(tx, actor, input, businessLine.id);
     await this.assertCuttingOrderLinkIsValid(tx, actor, input, businessLine.id);
 
+    // cc33 (ceros a la izquierda): el número se guarda sin ceros y el choque se busca así, contra
+    // las vivas que todavía los tengan. El índice único sigue siendo la red ante dos altas a la vez.
+    const number = normalizePurchaseNumber(input.number);
+    await assertNoLiveDocumentClash(tx, {
+      supplierId: input.supplierId,
+      docType: input.docType,
+      series: input.series,
+      number,
+    });
+
     // cc33 N1: la misma regla que `resolveExchangeRate`, por si un llamador resolvió el TC por
     // su cuenta: una compra en soles nunca guarda otro TC que 1.
     const { rate, source } =
@@ -264,7 +276,7 @@ export class PurchasesService {
           type: input.type,
           docType: input.docType,
           series: input.series,
-          number: input.number,
+          number,
           issueDate: new Date(`${input.issueDate}T00:00:00.000Z`),
           currency: input.currency,
           exchangeRate: toFixedString(rate, 'RATE'),
@@ -372,32 +384,24 @@ export class PurchasesService {
         'La compra está anulada: su número ya no ocupa lugar y no hay nada que corregir',
       );
     }
-    if (purchase.series === input.series && purchase.number === input.number) {
+    // cc33: el número corregido se guarda sin ceros a la izquierda y choca así.
+    const number = normalizePurchaseNumber(input.number);
+    if (purchase.series === input.series && purchase.number === number) {
       return this.findOne(id);
-    }
-
-    const clash = await this.prisma.purchase.findFirst({
-      where: {
-        supplierId: purchase.supplierId,
-        docType: purchase.docType,
-        series: input.series,
-        number: input.number,
-        status: { not: PurchaseStatus.CANCELLED },
-        id: { not: id },
-      },
-      select: { id: true },
-    });
-    if (clash) {
-      throw new ConflictException(
-        'Ese comprobante ya está registrado para este proveedor en una compra vigente',
-      );
     }
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        await assertNoLiveDocumentClash(tx, {
+          supplierId: purchase.supplierId,
+          docType: purchase.docType,
+          series: input.series,
+          number,
+          excludeId: id,
+        });
         await tx.purchase.update({
           where: { id },
-          data: { series: input.series, number: input.number },
+          data: { series: input.series, number },
         });
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -405,7 +409,7 @@ export class PurchasesService {
           entity: 'purchases',
           entityId: id,
           before: { document: `${purchase.series}-${purchase.number}` },
-          after: { document: `${input.series}-${input.number}` },
+          after: { document: `${input.series}-${number}` },
         });
       });
     } catch (err) {

@@ -25,6 +25,8 @@ import {
   type ReceivedPurchaseHeaderEdit,
   type ReceivedPurchaseItemEdit,
   type SupplierDto,
+  PURCHASE_NUMBER_MESSAGE,
+  PURCHASE_NUMBER_PATTERN,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
@@ -181,11 +183,11 @@ export function EditReceivedPurchaseDialog({
   const errors: string[] = [];
   const headerEdit: ReceivedPurchaseHeaderEdit = {};
   const series = header.series.trim().toUpperCase();
-  const number = header.number.trim();
+  const number = header.number.trim().toUpperCase();
   // cc15: serie y número se validan solo si cambian. Un dato viejo fuera del formato actual no
   // tiene que bloquear la corrección de un precio.
   const seriesOk = series === p.series || /^[A-Z0-9]{1,10}$/.test(series);
-  const numberOk = number === p.number || /^[0-9]{1,20}$/.test(number);
+  const numberOk = number === p.number || PURCHASE_NUMBER_PATTERN.test(number);
   const issueDateOk = /^\d{4}-\d{2}-\d{2}$/.test(header.issueDate);
   const creditDaysText = header.creditDays.trim();
   const creditDaysOk =
@@ -195,7 +197,7 @@ export function EditReceivedPurchaseDialog({
       Number.parseInt(creditDaysText, 10) <= 365);
   const notes = header.notes.trim();
   if (!seriesOk) errors.push('Serie inválida (ej: F001)');
-  if (!numberOk) errors.push('El número solo admite dígitos');
+  if (!numberOk) errors.push(PURCHASE_NUMBER_MESSAGE);
   if (!issueDateOk) errors.push('Fecha de emisión inválida');
   if (!creditDaysOk) errors.push('Días de crédito: un entero entre 1 y 365');
   if (notes.length > 500) errors.push('Observaciones: máximo 500 caracteres');

@@ -11,6 +11,8 @@ import {
   type PaginatedResult,
   type ReceivableSummaryDto,
   type ReceivableTotalsDto,
+  CREDIT_WITHOUT_DUE_LABEL,
+  noDueDateLabel,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { listXlsxHref } from '@/lib/list-export';
@@ -307,7 +309,9 @@ export function CobranzasView() {
                       {r.nextDueDate ? (
                         formatDate(r.nextDueDate)
                       ) : (
-                        <span className="text-muted-foreground">Contado</span>
+                        <span className="text-muted-foreground">
+                          {r.creditWithoutDueCount > 0 ? CREDIT_WITHOUT_DUE_LABEL : 'Contado'}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
@@ -451,7 +455,9 @@ export function CobranzasView() {
                           {formatDate(d.dueDate)}
                         </span>
                       ) : (
-                        <span className="text-muted-foreground">Contado</span>
+                        <span className="text-muted-foreground">
+                          {noDueDateLabel(d.paymentTerms)}
+                        </span>
                       )}
                       {d.isOverdue && (
                         <Badge variant="outline" className="ml-2">

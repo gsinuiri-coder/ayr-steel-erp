@@ -1297,8 +1297,13 @@ export const receivableSummarySchema = z.object({
   documentCount: z.number().int(),
   balancePen: z.string(),
   overduePen: z.string(),
-  /** Vencimiento más próximo con saldo; null si todo es al contado sin vencer. */
+  /** Vencimiento más próximo con saldo; null si ninguno de sus comprobantes tiene vencimiento. */
   nextDueDate: z.string().nullable(),
+  /**
+   * D-537 (cc33): comprobantes con saldo a crédito **sin** vencimiento. Con `nextDueDate` nulo,
+   * decide el rótulo: «Crédito sin vencimiento» si hay alguno, «Contado» si no.
+   */
+  creditWithoutDueCount: z.number().int(),
 });
 export type ReceivableSummaryDto = z.infer<typeof receivableSummarySchema>;
 

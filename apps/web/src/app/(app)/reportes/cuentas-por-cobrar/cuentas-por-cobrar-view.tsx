@@ -14,6 +14,7 @@ import {
   type Decimal,
   type ReceivablesAgingCustomerDto,
   type ReceivablesAgingDto,
+  CREDIT_WITHOUT_DUE_LABEL,
 } from '@ayr/shared';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { HeaderActions } from '@/components/header-actions';
@@ -343,7 +344,13 @@ function DocumentRows({ customer }: { customer: ReceivablesAgingCustomerDto }) {
                 <TableCell>{formatDate(d.issueDate)}</TableCell>
                 <TableCell>
                   {d.dueDate === null ? (
-                    <span title="Al contado vence el día de su emisión">Contado</span>
+                    d.paymentTerms === 'CREDITO' ? (
+                      <span title="A crédito sin fecha de vencimiento: se mide desde su emisión">
+                        {CREDIT_WITHOUT_DUE_LABEL}
+                      </span>
+                    ) : (
+                      <span title="Al contado vence el día de su emisión">Contado</span>
+                    )
                   ) : (
                     formatDate(d.dueDate)
                   )}

@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { isCalendarDate } from '@ayr/shared';
 import * as XLSX from 'xlsx';
 
 /** Firma ZIP ("PK"): así arranca un .xlsx real. Un .csv es texto plano. */
@@ -137,12 +138,14 @@ export function getField(raw: Record<string, unknown>, column: ImportColumn): st
  */
 export function parseCalendarDate(value: string): string | null {
   const trimmed = value.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  // cc33 N5: la fecha ya en ISO también se comprueba contra el calendario. Antes salía tal cual y
+  // `2026-09-31` llegaba a guardarse como el 1 de octubre (cotizaciones, inventario inicial y
+  // compras).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return isCalendarDate(trimmed) ? trimmed : null;
   const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
   if (!match) return null;
   const [, day = '', month = '', year = ''] = match;
   const iso = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   // `2026-02-31` pasa el patrón y no existe: se comprueba contra el calendario real.
-  const date = new Date(`${iso}T00:00:00.000Z`);
-  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== iso ? null : iso;
+  return isCalendarDate(iso) ? iso : null;
 }
