@@ -146,11 +146,12 @@ describe('parseInvoiceXml (RF-11, UBL 2.1)', () => {
         'utf8',
       );
 
-    it('lee un número alfanumérico tal cual, sin ceros a la izquierda', () => {
-      expect(parseInvoiceXml(withId('F001-00A-15/2'))).toMatchObject({
+    it('lee un número alfanumérico tal cual; a uno de solo dígitos le quita los ceros', () => {
+      expect(parseInvoiceXml(withId('F001-0A-15/2'))).toMatchObject({
         series: 'F001',
-        number: 'A-15/2',
+        number: '0A-15/2',
       });
+      expect(parseInvoiceXml(withId('F001-00001523'))).toMatchObject({ number: '1523' });
     });
 
     it('rechaza un número que no puede leer en vez de quitarle lo que no es dígito', () => {

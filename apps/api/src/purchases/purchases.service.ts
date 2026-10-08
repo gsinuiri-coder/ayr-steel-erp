@@ -1460,6 +1460,14 @@ export class PurchasesService {
         ? {
             OR: [
               { number: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
+              // cc33: las compras nuevas se guardan sin ceros a la izquierda; quien busca con el
+              // número del papel (`00012345`) tiene que encontrarlas igual.
+              {
+                number: {
+                  contains: normalizePurchaseNumber(query.search),
+                  mode: Prisma.QueryMode.insensitive,
+                },
+              },
               { series: { contains: query.search, mode: Prisma.QueryMode.insensitive } },
               {
                 supplier: {

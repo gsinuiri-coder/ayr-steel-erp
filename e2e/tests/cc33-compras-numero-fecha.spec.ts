@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import type { PurchaseDto } from '@ayr/shared';
-import { adminApi, createSupplier, postJson } from '../helpers/api';
+import { adminApi, createSupplier, getItems, postJson } from '../helpers/api';
 import { today } from '../helpers/production';
 
 /**
@@ -57,8 +57,13 @@ test.describe('cc33 — número y fechas de una compra', () => {
     );
     toCancel.push(first.id);
     expect(first.number).toBe(seed);
+    // Quien busca con el número del papel, ceros incluidos, la encuentra igual.
+    const found = await getItems<{ id: string }>(api, `/api/purchases?search=000${seed}`);
+    expect(found.map((p) => p.id)).toContain(first.id);
 
-    const duplicate = await api.post('/api/purchases', { data: body(supplier.id, { number: seed }) });
+    const duplicate = await api.post('/api/purchases', {
+      data: body(supplier.id, { number: seed }),
+    });
     expect(duplicate.status()).toBe(409);
     expect(await duplicate.text()).toContain('ya está registrado');
   });
@@ -99,5 +104,6 @@ test.describe('cc33 — número y fechas de una compra', () => {
       data: { date: '2026-09-31', amount: '1', currency: 'PEN', method: 'CASH' },
     });
     expect(payment.status()).toBe(400);
+    expect(await payment.text()).toContain('no existe en el calendario');
   });
 });

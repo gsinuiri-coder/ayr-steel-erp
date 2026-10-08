@@ -44,20 +44,20 @@ export const seriesSchema = z
  * **única** definición: el schema, el formulario, el importador y `splitDocumentNumber` la usan.
  * La numeración fiscal propia del ERP no la usa.
  */
-export const PURCHASE_NUMBER_PATTERN = /^[A-Z0-9/-]{1,20}$/;
+// Al menos una letra o un dígito: `-` o `//` solos no son un número (revisión de cc33, P2-1).
+export const PURCHASE_NUMBER_PATTERN = /^(?=.*[A-Z0-9])[A-Z0-9/-]{1,20}$/;
 export const PURCHASE_NUMBER_MESSAGE =
   'El número admite letras, dígitos, guion y barra, hasta 20 caracteres';
 
 /**
  * Ceros a la izquierda (cc33, decisión del dueño): `F001-00012` y `F001-12` son el mismo papel, y
- * el índice único los comparaba como texto. Se guarda sin ellos (`00012` → `12`, `000` → `0`;
- * un cero delante de un guion o una barra se conserva) y el chequeo de choque compara así.
+ * el índice único los comparaba como texto. Se guarda sin ellos (`00012` → `12`, `000` → `0`) y el
+ * chequeo de choque compara así. D-538: solo cuando el número es **todo dígitos**; un número con
+ * letras, guion o barra (`0A12`, `007/1`) es como lo escribió el proveedor y no se toca.
  */
 export function normalizePurchaseNumber(raw: string): string {
-  return raw
-    .trim()
-    .toUpperCase()
-    .replace(/^0+(?=[A-Z0-9])/, '');
+  const v = raw.trim().toUpperCase();
+  return /^\d+$/.test(v) ? v.replace(/^0+(?=\d)/, '') : v;
 }
 
 export const documentNumberSchema = z

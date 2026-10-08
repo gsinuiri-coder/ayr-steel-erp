@@ -4,6 +4,7 @@ import {
   FISCAL_DOCUMENT_STATUS_LABELS,
   type FiscalDocumentListItemDto,
   type Role,
+  noDueDateLabel,
 } from '@ayr/shared';
 import { listXlsx, type ListColumn } from '../common/list-xlsx';
 import { num } from '../reports/reports-xlsx';
@@ -28,7 +29,8 @@ export const FISCAL_DOCUMENT_LIST_COLUMNS: readonly ListColumn<FiscalDocumentLis
   { header: 'Cliente', width: 36, cell: (d) => d.customerName },
   { header: 'Documento', width: 14, cell: (d) => d.customerDocNumber },
   { header: 'Emisión', width: 12, cell: (d) => d.issueDate },
-  { header: 'Vencimiento', width: 12, cell: (d) => d.dueDate ?? 'Contado' },
+  // D-537 (cc33 N8): como la pantalla, un crédito sin vencimiento no es «Contado».
+  { header: 'Vencimiento', width: 12, cell: (d) => d.dueDate ?? noDueDateLabel(d.paymentTerms) },
   { header: 'Vencido', width: 9, cell: (d) => (d.isOverdue ? 'Sí' : '') },
   { header: 'Despacho', width: 22, cell: dispatchCell },
   {

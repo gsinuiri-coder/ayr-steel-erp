@@ -86,3 +86,18 @@ describe('splitDocumentNumber (cc33 B8)', () => {
     expect(splitDocumentNumber('F001-')).toBeNull();
   });
 });
+
+describe('número de compra — revisiones de cc33 (P2-1, D-538)', () => {
+  it('sin ninguna letra ni dígito no es un número', () => {
+    for (const number of ['-', '//', '---']) {
+      expect(documentNumberSchema.safeParse(number).success).toBe(false);
+    }
+  });
+
+  it('los ceros se quitan solo si el número es todo dígitos', () => {
+    expect(documentNumberSchema.parse('0A12')).toBe('0A12');
+    expect(documentNumberSchema.parse('007/1')).toBe('007/1');
+    expect(documentNumberSchema.parse('00-5')).toBe('00-5');
+    expect(documentNumberSchema.parse('000123')).toBe('123');
+  });
+});
