@@ -329,7 +329,7 @@ async function quoteCatalog(
   const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
     customerId,
     issueDate: today(),
-    items: lines.map((l) => ({ productId: l.productId, qty: l.qty, unitPricePen: '30' })),
+    items: lines.map((l) => ({ productId: l.productId, qty: l.qty, unitPricePen: '200' })),
   });
   const order = await postJson<{ id: string; code: string }>(
     api,
