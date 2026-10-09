@@ -2071,7 +2071,9 @@ Esto cierra D-545 por ahora.
 texto. **En el accesorio, pasarse de los metros de la orden dejaba de solo avisar (D-343) y se
 rechaza**: con D-573 una orden de accesorio que pasara sus metros no podría cerrarse nunca. En el
 commit, el error lleva su fila («Fila N: Excede el plan…») y la pantalla lo muestra en el bloque de
-esa bobina.
+esa bobina. **«Ajustar el plan» exige los mismos metros también en la plancha de catálogo** (D-545 la
+dejaba libre): si no, bajar el plan sería un cierre corto (D-577) y subirlo, producir de más. El
+exceso se mide con 3 decimales, como el cierre. Lo pidieron la autorrevisión y el segundo modelo.
 
 ### D-575 — El bloque que se llena solo no se registra sin confirmar
 
