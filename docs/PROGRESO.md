@@ -2,6 +2,27 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-08 — cc34: despunte por bobina, rentabilidad y baja en trámite (D-539..D-544, PR #143–#146 en prod)
+
+Cuatro cortes, sin migraciones y sin reparar datos. D-534..D-538 ratificadas por el dueño. Detalle en
+`docs/handoff/ventana-cc34.md`; UAT en `docs/uat/cc34.md`.
+
+- **En producción (Cloud Run), con smoke verde en el API y en los dos dominios web, y sin 5xx/409
+  en los logs:**
+  - corte 1, B1 (despunte por bobina): 00103-8q8, `68962de9`;
+  - corte 2, N6/N7 (rentabilidad): 00104-xm4, `858d2879`;
+  - corte 3, baja en trámite: 00105-xwf, `3092e833`;
+  - corte 4, pendientes de cc33 y `dashboards.db-spec`: 00106-xp4, `7b26c262`.
+- **Diagnóstico de datos históricos (solo lectura, sin reparar):** 71 OP de coberturas cerradas;
+  con la regla nueva, 2 cambian de bobina: OP 62 (224.966 kg, S/ 613.12) y OP 64 (196.472 kg,
+  S/ 518.75), neto S/ 0. 12 ambiguas por total escrito.
+- **Registro de riesgo (toca datos):**
+  - el reparto del despunte entre bobinas al cerrar y reabrir (`allocateRoofingScrap`, D-539);
+  - la marca `VOID_PENDING` antes de llamar al PSE (D-542): cobros permitidos durante la baja y
+    liberación en timeout.
+- **Infraestructura:** `dashboards.db-spec` dejó de fallar con la consulta marcadora (tres corridas
+  seguidas en verde).
+
 ## 2026-10-08 — cc33: correcciones de API (D-534..D-538, PR #138–#141 en prod)
 
 Cuatro cortes de API (compras, comprobantes y notas de crédito), sin migraciones y sin reparar datos.
