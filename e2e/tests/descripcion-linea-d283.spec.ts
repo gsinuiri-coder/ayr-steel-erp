@@ -44,6 +44,8 @@ test.describe('D-283 — descripción por línea', () => {
 
       await loginAsAdmin(page);
       await page.goto(`/cotizaciones/${quotation.id}/editar`);
+      // cc36: la descripción para el cliente vive en el panel de la línea, que se abre con «⋯».
+      await page.getByRole('button', { name: 'Detalle de la línea 1' }).click({ timeout: 60_000 });
       const field = page.getByLabel('Descripción de la línea 1');
       // Autocompletada con el nombre del producto.
       await expect(field).toHaveValue(product.name, { timeout: 60_000 });

@@ -204,7 +204,7 @@ test.describe('D-155/D-159/D-160 + cc35 — el espacio de producción con el mod
       await tabA.click();
       await expect(tabA).toContainText('Sin bobina');
       await expect(tabB).toContainText('Sin bobina');
-      // cc35 (D-550): el avance del pedido va en el subtítulo.
+      // cc35 (D-558): el avance del pedido va en el subtítulo.
       await expect(page.getByText('0 de 2 órdenes cubiertas')).toBeVisible();
 
       const panelA = page.getByRole('tabpanel', { name: codeA });

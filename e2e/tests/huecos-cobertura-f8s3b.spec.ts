@@ -496,7 +496,7 @@ test.describe('F8-S3b — huecos de cobertura', () => {
         timeout: 60_000,
       });
       await expect(
-        // cc35 (D-550): el avance del pedido va en el subtítulo de la cabecera.
+        // cc35 (D-558): el avance del pedido va en el subtítulo de la cabecera.
         page.getByText('· 40.000 m de 70.000 m reportados'),
       ).toBeVisible();
     } finally {

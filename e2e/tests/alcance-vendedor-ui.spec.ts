@@ -47,9 +47,6 @@ test.describe('Alcance de Vendedor (UI)', () => {
       customer.docNumber,
     );
 
-    await page.getByLabel('Línea de negocio de la línea 1').click();
-    await page.getByRole('option', { name: 'Coberturas Aluzinc', exact: true }).click();
-
     await page.getByRole('button', { name: 'Producto de la línea 1' }).click();
 
     await page.getByPlaceholder(/Escribe el SKU/i).fill(testSku);

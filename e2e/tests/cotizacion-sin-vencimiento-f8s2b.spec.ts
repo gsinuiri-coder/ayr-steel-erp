@@ -67,7 +67,7 @@ test.describe('F8-S2b/M3 — vigencia de una cotización sin vencimiento', () =>
     try {
       await loginAsAdmin(page);
       await page.goto(`/cotizaciones/${quotation.id}/editar`);
-      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('11.8000', {
+      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('11.80', {
         timeout: 30_000,
       });
 

@@ -41,6 +41,16 @@ export function mmToMeters(lengthMm: string): string {
   return toDecimal(lengthMm).div(1000).toFixed(3);
 }
 
+/**
+ * cc36: milímetros → metros para **mostrar en un campo**, con la regla de cc31 (2 decimales; el
+ * tercero solo si no es cero): 4200.00 → «4.20», 4205.00 → «4.205». Vuelve a los mismos
+ * milímetros con `metersToMm`, así que no cambia lo que viaja al API.
+ */
+export function mmToMetersShort(lengthMm: string): string {
+  const meters = toDecimal(lengthMm).div(1000);
+  return meters.times(1000).mod(10).isZero() ? meters.toFixed(2) : meters.toFixed(3);
+}
+
 const MIN_M = MIN_PIECE_LENGTH_MM / 1000;
 const MAX_M = MAX_PIECE_LENGTH_MM / 1000;
 

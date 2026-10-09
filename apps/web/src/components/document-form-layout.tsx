@@ -16,12 +16,37 @@ import { FormGrid, StickyActionBar, type MissingField } from '@/components/form'
  * Solo presentación: ningún componente de acá guarda estado ni decide nada del documento.
  */
 
-export function DocumentFormHeader({ title, children }: { title: string; children?: ReactNode }) {
+export function DocumentFormHeader({
+  title,
+  children,
+  actions,
+}: {
+  title: string;
+  children?: ReactNode;
+  /** cc36: lo que va arriba a la derecha de la página (p. ej. «Stock disponible»). */
+  actions?: ReactNode;
+}) {
   return (
-    <div>
-      <h1 className="text-xl font-semibold">{title}</h1>
-      {children && <p className="text-xs text-muted-foreground">{children}</p>}
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 className="text-xl font-semibold">{title}</h1>
+        {children && <p className="text-xs text-muted-foreground">{children}</p>}
+      </div>
+      {actions}
     </div>
+  );
+}
+
+/**
+ * cc36 (reemplaza a D-496 en la cotización y el pedido): los datos del documento como en el
+ * tablero Main, **sin título visible** —el nombre queda para el lector de pantalla— y en una sola
+ * fila de la grilla de 12: cliente en 5, emisión y vigencia en 2 y observaciones en el resto.
+ */
+export function DocumentFieldsRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section aria-label={label} className="rounded-lg border p-3">
+      <FormGrid className="gap-y-3">{children}</FormGrid>
+    </section>
   );
 }
 
@@ -52,7 +77,17 @@ export function DocumentSection({
  * 4 → 12. Las proporciones son las de siempre (D-284); lo que cambia es la base de 12, que es la
  * misma de todos los formularios (D-293).
  */
-const SPAN = { 1: 'col-span-3', 2: 'col-span-6', 3: 'col-span-9', 4: 'col-span-12' } as const;
+const SPAN = {
+  1: 'col-span-3',
+  2: 'col-span-6',
+  3: 'col-span-9',
+  4: 'col-span-12',
+  // cc36: los anchos del tablero Main, en columnas de la grilla de 12 (`DocumentFieldsRow`).
+  c2: 'col-span-2',
+  c3: 'col-span-3',
+  c5: 'col-span-5',
+  c7: 'col-span-7',
+} as const;
 
 /**
  * Un campo de la grilla: rótulo arriba, control, y a lo sumo un renglón de ayuda debajo.

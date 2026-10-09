@@ -215,8 +215,6 @@ test.describe('F8-S4/M0 — deudas de integridad', () => {
     await expect(page.getByRole('heading', { name: `Agregar ítems a ${order.code}` })).toBeVisible({
       timeout: 60_000,
     });
-    await page.getByLabel('Línea de negocio de la línea 1').click();
-    await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
     await chooseProductWithStock(page, page.getByLabel('Producto de la línea 1'), s.product.sku);
     await page.getByLabel('Planchas del largo 1 de la línea 1').fill('1');
     await page.getByLabel('Largo 1 de la línea 1 en metros').fill('10');
