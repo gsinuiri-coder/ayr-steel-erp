@@ -1,7 +1,12 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
 import { confirmFilmOpen, openQueuedOrder } from '../helpers/ui';
-import { balanceOf, today, type ProductionOrderDto } from '../helpers/production';
+import {
+  balanceOf,
+  optionalBalanceOf,
+  today,
+  type ProductionOrderDto,
+} from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
   buyRoofingCoil,
@@ -130,10 +135,18 @@ async function waitSaved(panel: Locator): Promise<void> {
   await expect(panel.getByText('Todo lo escrito está guardado')).toBeVisible({ timeout: 30_000 });
 }
 
-/** «Registrar y cerrar»: «Qué va a pasar» y su confirmación. */
+/**
+ * «Registrar y cerrar»: «Qué va a pasar» y su confirmación. cc38 (D-575): con un bloque llenado
+ * solo, primero se marca «Confirmo que salieron».
+ */
 async function registerAndClose(panel: Locator, code: string): Promise<Locator> {
   await panel.getByRole('button', { name: `Registrar y cerrar ${code}` }).click();
+  const ask = panel.getByTestId('confirmar-llenado-solo');
   const preview = panel.getByTestId('que-va-a-pasar');
+  await expect(ask.or(preview)).toBeVisible({ timeout: 60_000 });
+  if (await ask.isVisible()) {
+    await ask.getByRole('checkbox', { name: 'Confirmo que salieron' }).click();
+  }
   await expect(preview).toContainText(`${code} queda cerrada`, { timeout: 60_000 });
   return preview;
 }
@@ -243,7 +256,8 @@ test.describe('D-155/D-159/D-160 + cc35 — el espacio de producción con el mod
 
       // --- El tope del plan (D-146) avisa en el bloque ---
       await qtyA.fill('11'); // 44 m sobre un plan de 40
-      await expect(blockA.getByRole('alert')).toContainText('tiene un plan de 40.000 m', {
+      // cc38 (D-574): el texto nombra cuánto se pasa.
+      await expect(blockA.getByRole('alert')).toContainText('Excede el plan en 4.000 m', {
         timeout: 30_000,
       });
       // Media plancha no existe.
@@ -308,20 +322,28 @@ test.describe('D-155/D-159/D-160 + cc35 — el espacio de producción con el mod
       await blockB.getByLabel(/kg consumidos de/).fill('130');
       await expect(blockB.getByText('Despunte 8.800 kg')).toBeVisible();
       await waitSaved(panelB);
-      const preview = await registerAndClose(panelB, codeB);
-      await expect(preview).toContainText(`8.800 kg de ${second.coil.code}`);
-      await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
-
-      // Cerrada, la orden sale de la lista de abiertas.
-      await expect(tabs.getByRole('tab')).toHaveCount(1, { timeout: 60_000 });
-      await expect(page.getByText('1 de 1 orden cubierta')).toBeVisible();
+      // cc38 (D-573, D-577): con 30 de 36 m la orden no se cierra; queda en proceso con lo que se
+      // registra, y el despunte cae recién al cerrarla.
+      await expect(panelB.getByTestId('aviso-cierre')).toContainText(
+        'Para cerrar falta registrar 6.00 m',
+      );
+      await expect(
+        panelB.getByRole('button', { name: `Registrar y cerrar ${codeB}` }),
+      ).toBeDisabled();
+      await panelB.getByRole('button', { name: `Registrar producción de ${codeB}` }).click();
+      await expect
+        .poll(async () => (await optionalBalanceOf(api, 'PRODUCT', other.id))?.qty ?? null, {
+          timeout: 60_000,
+        })
+        .toBe('30.000');
 
       // --- El kardex confirma lo que la pantalla dijo ---
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('40.000');
       // 30 m, no 36: los 6 que faltaban no se produjeron y nadie los inventó.
       expect((await balanceOf(api, 'PRODUCT', other.id)).qty).toBe('30.000');
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1838.400');
-      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('1870.000');
+      // 121.2 kg teóricos; los 8.8 de despunte salen al cerrar, no al registrar.
+      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('1878.800');
       const reportA = await lastActiveReport(api, created.created[0]!.orderId);
       expect(reportA.consumedKg).toBe('900.000');
       expect(reportA.rawMaterialWarning).toContain('Consumo declarado 900.000 kg');
@@ -402,11 +424,22 @@ test.describe('D-155/D-159/D-160 + cc35 — el espacio de producción con el mod
       await expect(block.getByText('37.800 m · teórico 152.712 kg')).toBeVisible();
       await waitSaved(panel);
 
-      const preview = await registerAndClose(panel, op.code);
-      await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
-      await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible({
-        timeout: 60_000,
-      });
+      // cc38 (D-573): 37.8 de 40 m no cierra; se registra y la orden queda en proceso.
+      await expect(panel.getByTestId('aviso-cierre')).toContainText(
+        'Para cerrar falta registrar 2.20 m',
+      );
+      await expect(
+        panel.getByRole('button', { name: `Registrar y cerrar ${op.code}` }),
+      ).toBeDisabled();
+      await panel.getByRole('button', { name: `Registrar producción de ${op.code}` }).click();
+      await expect
+        .poll(
+          async () => (await optionalBalanceOf(api, 'PRODUCT', scenario.product.id))?.qty ?? null,
+          {
+            timeout: 60_000,
+          },
+        )
+        .toBe('37.800');
 
       // El kardex sale por los largos de verdad: 37.8 m de producto y 151.2 kg de bobina.
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('37.800');
