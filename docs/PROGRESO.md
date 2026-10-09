@@ -2,6 +2,37 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-09 — cc38: la OP se cierra solo con el plan completo (D-573..D-579, PR #157 en prod)
+
+Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc38.md`; UAT en
+`docs/uat/cc38.md`; revisión del segundo modelo en `docs/revision/cc38-segundo-modelo.md`.
+
+- **En producción:**
+  - API: `00109-h97` (`git-sha=a7e17ef4`), 100 % del tráfico;
+  - web: `main` `b0e73415`;
+  - smoke en verde en el API y en los dos dominios; 0 respuestas ≥ 400 en los logs de la revisión.
+- **Vuelta atrás:** llevar el tráfico a `00108-d8t` y revertir el merge de #157.
+- **Diagnóstico previo, solo lectura** (`pnpm inspect:cc38`): 0 OP de coberturas abiertas (71
+  cerradas, 1 anulada), así que la regla nueva no traba ninguna.
+- **Cambia para el dueño:**
+  - no se cierra una OP con el plan incompleto, ni se registra más que el plan;
+  - «Ajustar el plan» exige los mismos metros también en la plancha de catálogo;
+  - el accesorio que pasa los metros del pedido se rechaza (antes avisaba);
+  - el bloque llenado solo no se registra sin confirmar;
+  - «und» sin decimales en toda la app (D-579).
+- **Registro de riesgo (toca kardex y datos):**
+  - `assertPlanComplete` en `closeInTx`, la puerta de todos los cierres de coberturas;
+  - el tope de exceso a 3 decimales (`roofingPlanOverrun`) en reporte, borrador y commit;
+  - el bloque llenado solo, que entra al borrador solo al confirmarse (`produce-blocks.tsx` y
+    `produce-accessory.tsx`);
+  - `planNeedsExactMeters` y `updatePlan` con mismos metros en catálogo.
+- **Pendiente de decisión del dueño:**
+  - cierre corto o reducción del pedido (D-577);
+  - una OP cerrada antes de cc38 con el plan incompleto, si se reabre, no vuelve a cerrar;
+  - el PDF de la cotización sigue con el código de unidad.
+- **Infraestructura (no producto):** `auth.service.spec` pasó los 5 s una vez con la máquina cargada;
+  solo pasa.
+
 ## 2026-10-09 — cc37: limpieza y líneas de la cotización (D-570..D-572, PR #154 en prod)
 
 Corte 0 de limpieza (autorizado por el dueño) y corte 1 solo `apps/web`, sin API ni migraciones.
