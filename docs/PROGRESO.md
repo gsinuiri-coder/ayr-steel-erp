@@ -2,6 +2,17 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-09 — demo-cc38: demo lista para probar cc38, y «und» en el PDF de la cotización (PR #159)
+
+- **Demo:** rama `demo` de Neon restablecida desde `production` y con las migraciones de `main`
+  (autorizado por el dueño solo para demo). Corre en 127.0.0.1:3100/3101 desde el checkout
+  principal con `main` y las salidas externas apagadas (R2, PSE/Nubefact y jobs). Seis OP de prueba
+  (plancha, a medida y accesorio, nuevas y a medio camino) y dos bobinas galvanizadas para la orden
+  de corte de drywall, todo por la API. La guía con los números vive fuera del repo
+  (`local-data/demo-cc38/GUIA.md`). Production no se tocó.
+- **«und» en el PDF de la cotización (D-579):** decisión del dueño; y ratificó los dos cambios de
+  cc38 (accesorio que pasa sus metros y plan de plancha de catálogo, `DECISIONES.md`).
+
 ## 2026-10-09 — cc38: la OP se cierra solo con el plan completo (D-573..D-579, PR #157 en prod)
 
 Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc38.md`; UAT en
