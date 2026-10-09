@@ -118,7 +118,8 @@ test.describe('cc35 — modelo M, bobina por bobina', () => {
       const b = block(panel, s.second.code);
 
       // Sin nada escrito, la segunda (la última montada) lleva todo lo que falta.
-      await expect(b.getByText(/Llenada sola con lo que faltaba/)).toBeVisible();
+      // cc38 (D-575): queda marcado como llenado solo y sin confirmar.
+      await expect(b.getByText('Llenado solo · sin confirmar')).toBeVisible();
       await expect(b.getByLabel(/Largo del corte 1 de/)).toHaveValue('4.00');
       await expect(b.getByLabel(/Planchas del corte 1 de/)).toHaveValue('10');
       await expect(panel.getByTestId('cuadre-plan')).toContainText('10 de 10 planchas');
@@ -162,6 +163,11 @@ test.describe('cc35 — modelo M, bobina por bobina', () => {
       await waitSaved(panel);
 
       await panel.getByRole('button', { name: `Registrar y cerrar ${s.opCode}` }).click();
+      // cc38 (D-575): el bloque llenado solo se confirma en «Qué va a pasar».
+      await panel
+        .getByTestId('confirmar-llenado-solo')
+        .getByRole('checkbox', { name: 'Confirmo que salieron' })
+        .click();
       const preview = panel.getByTestId('que-va-a-pasar');
       await expect(preview).toContainText(`5.360 kg de ${s.first.code}`, { timeout: 60_000 });
       await expect(preview).toContainText(`${s.opCode} queda cerrada`);
@@ -196,15 +202,21 @@ test.describe('cc35 — modelo M, bobina por bobina', () => {
       await a.getByLabel(/Planchas del corte 1 de/).fill('4');
       await waitSaved(panel);
 
-      // Por debajo cambia el estado: un reporte directo de 1 × 4 m deja sin lugar al último bloque.
+      // Por debajo cambia el estado: un reporte directo de 7 × 4 m deja de más al bloque escrito.
+      // cc38 (D-575): el último, llenado solo, no viaja en el commit; el error va en su bloque.
       await postJson(api, `/api/production/roofing/${s.opId}/report`, {
         coilId: s.first.id,
-        pieces: pieces([4, 1]),
+        pieces: pieces([4, 7]),
       });
       await panel.getByRole('button', { name: `Registrar producción de ${s.opCode}` }).click();
       const b = block(panel, s.second.code);
-      await expect(b.getByRole('alert')).toContainText(/plan/, { timeout: 60_000 });
-      await expect(a.getByRole('alert')).toHaveCount(0);
+      await expect(a.getByRole('alert')).toContainText(
+        'Excede el plan en 4.000 m · ajusta el plan',
+        {
+          timeout: 60_000,
+        },
+      );
+      await expect(b.getByRole('alert')).toHaveCount(0);
     } finally {
       await purgeRoofingTrail(api, s.trail);
     }
@@ -221,6 +233,9 @@ test.describe('cc35 — modelo M, bobina por bobina', () => {
       await expect(b.getByTestId('tolerance-override')).toBeVisible();
       await expect(block(panel, s.first.code).getByTestId('tolerance-override')).toHaveCount(0);
 
+      // cc38 (D-575): el bloque llenado solo se confirma antes de registrarlo.
+      await b.getByRole('button', { name: /^Sí, salió así/ }).click();
+      await waitSaved(panel);
       // Sin la casilla no se registra; con ella, sí.
       await panel.getByRole('button', { name: `Registrar producción de ${s.opCode}` }).click();
       await b.getByRole('checkbox', { name: /Confirmar la bobina 2/ }).check();
@@ -327,6 +342,11 @@ test.describe('cc35 — modelo M de un accesorio (ESPEC §2, D-559)', () => {
       );
 
       await again.getByRole('button', { name: `Registrar y cerrar ${op.code}` }).click();
+      // cc38 (D-575): el bloque llenado solo se confirma en «Qué va a pasar».
+      await again
+        .getByTestId('confirmar-llenado-solo')
+        .getByRole('checkbox', { name: 'Confirmo que salieron' })
+        .click();
       const preview = again.getByTestId('que-va-a-pasar');
       await expect(preview).toContainText(`${op.code} queda cerrada`, { timeout: 60_000 });
       await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
