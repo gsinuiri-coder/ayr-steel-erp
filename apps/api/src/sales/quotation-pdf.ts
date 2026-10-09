@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { cents } from '@ayr/shared';
+import { unitSymbol } from '../common/unit-symbol';
 
 /**
  * PDF de la cotización (D-068). Plantilla simple y deliberadamente austera: encabezado con
@@ -178,7 +179,8 @@ export function buildQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
         width: COLS.qty.width,
         align: 'right',
       });
-      doc.text(item.unit, MARGIN + COLS.unit.x, y, { width: COLS.unit.width });
+      // D-579: la cotización no es un documento SUNAT; el papel muestra «und», no «NIU».
+      doc.text(unitSymbol(item.unit), MARGIN + COLS.unit.x, y, { width: COLS.unit.width });
       doc.text(formatMoney(item.unitPricePen), MARGIN + COLS.price.x, y, {
         width: COLS.price.width,
         align: 'right',
