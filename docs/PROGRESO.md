@@ -2,6 +2,22 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-09 — cc37: limpieza y líneas de la cotización (D-570..D-572, PR #154 en prod)
+
+Corte 0 de limpieza (autorizado por el dueño) y corte 1 solo `apps/web`, sin API ni migraciones.
+Detalle en `docs/handoff/ventana-cc37.md`; UAT en `docs/uat/cc37.md`.
+
+- **En producción (Vercel), `main` `6e2a9052`.** El API no cambió. Smoke de solo lectura en verde en
+  los dos dominios; pasada visual con admin efímero (borrado), 0 documentos guardados.
+- **Vuelta atrás:** promover en Vercel `ayr-steel-erp-ogsrwujwt` (`main` `30469936`) o revertir el
+  merge de #154.
+- **JSON enviado al API:** idéntico antes y después en seis casos de los cuatro usos.
+- **Limpieza:** `delete_branch_on_merge` activo; 26 ramas remotas mergeadas de cc31 a cc36 borradas;
+  carpeta de cc36 borrada. Regla D-572: la limpieza la hace el agente.
+- **Registro de riesgo (toca lo que se envía):** `QuietDecimalInput` con `minDecimals` 0 en cantidad y
+  planchas (D-571, sobre D-554): muestra «10» y devuelve el valor sembrado si lo escrito vuelve a
+  ser lo mostrado.
+
 ## 2026-10-09 — cc35: producir una OP con el modelo M y scroll único en listas (D-545..D-549, D-558, D-559, PR #148, #149, #151, #153 en prod)
 
 Cuatro cortes, sin migraciones y sin SQL contra producción. D-539..D-544 ratificadas por el dueño.

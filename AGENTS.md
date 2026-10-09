@@ -111,8 +111,11 @@ Reglas de convivencia, sin excepción:
    (regla 5) y borrar una rama de Neon (además en `deny`). **El agente no empuja directo a
    `main`: todo entra por PR** (también el cierre de docs), por decisión del dueño (cc28).
    Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, el push directo a `main` (`git push origin main`, `AYR_OWNER_PUSH=1 git push`, D-476), borrar ramas de Neon,
-   `e2e:prod`, `prod-reset-go-live` y leer `.env*`. Una rama remota ya mergeada se borra con
-   `gh api -X DELETE …/git/refs/heads/<rama>`, nunca con `git push --delete`. Siguen en pie las
+   `e2e:prod`, `prod-reset-go-live` y leer `.env*`. **D-572: la prohibición de ramas queda en el
+   push forzado y en borrar `main`.** Las ramas de PR se borran solas al hacer merge
+   (`delete_branch_on_merge` activo en el repo); una rama remota suelta de una pieza cerrada, ya
+   mergeada y sin PR abierto, la borra el agente con `gh api -X DELETE …/git/refs/heads/<rama>`,
+   nunca con `git push --delete`, y nunca la de otra sesión en curso. Siguen en pie las
    reglas duras que no son de confirmación: **la ventana de 20:00 a 07:00 de Lima está suspendida
    (D-533)**: se puede desplegar a producción a cualquier hora hasta que el dueño diga
    explícitamente que vuelve. Cuando vuelva, rige otra vez esta regla: la ventana corre entre las
@@ -331,7 +334,11 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
   permiso de escritura, se avisa una vez y se sigue con lo que se pueda.
 - **Conventional commits en español**: `feat(sales): …`, `fix(catalog): …`, `docs(progreso): …`.
 - Commits chicos y temáticos; el handoff lista la secuencia al cierre.
-- Al cerrar el worktree: eliminarlo junto con la rama local. La rama remota la borra el dueño.
+- **Toda la limpieza de una pieza la hace el agente (D-572):** el worktree y su carpeta (primero se
+  cierran los procesos que la usan; después `git worktree remove --force` o `git worktree prune`, y
+  si la carpeta sigue, se borra), las ramas locales, las bases locales y los procesos. Las ramas
+  remotas de PR se borran solas al hacer merge. Nunca se toca lo de otra sesión en curso. Solo se le
+  deja algo al dueño si de verdad no se puede hacer, explicando por qué (comando y mensaje exactos).
 - **Antes de borrar un worktree, copiar su `local-data/` al checkout principal y verificar la
   copia** (mismos archivos y mismos tamaños, p. ej. comparando los listados de ambos lados). Un
   worktree nace con `local-data/` vacía y lo que guarda ahí —planes de dry-run, fotos de
