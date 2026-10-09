@@ -462,7 +462,7 @@ test.describe('cc38 — la pantalla (D-575, D-576)', () => {
       orderIds: [order.id],
       quotationIds: [quotation.id],
     };
-    const medida = await aMedida(api, 2);
+    let medida: Awaited<ReturnType<typeof aMedida>> | undefined;
     try {
       await mountCoil(api, opId, { coilId: scenario.coil.id });
       await mountCoil(api, opId, { coilId: extra.coil.id });
@@ -485,6 +485,7 @@ test.describe('cc38 — la pantalla (D-575, D-576)', () => {
       ]);
 
       // A medida: lo mismo en la primera bobina.
+      medida = await aMedida(api, 2);
       const [m1] = medida.coils as [{ id: string; code: string }];
       // La sesión ya está abierta: se navega directo, sin volver a entrar.
       await page.goto(`/planta?pedido=${medida.orderId}`);
@@ -498,7 +499,7 @@ test.describe('cc38 — la pantalla (D-575, D-576)', () => {
       await waitSaved(mPanel);
     } finally {
       await purgeRoofingTrail(api, catalogTrail);
-      await purgeRoofingTrail(api, medida.trail);
+      if (medida) await purgeRoofingTrail(api, medida.trail);
     }
   });
 

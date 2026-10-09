@@ -26,6 +26,7 @@ import type { PieceRow } from '@/lib/pieces';
 import {
   blockFigures,
   byLength,
+  catalogQtyPatch,
   catalogRows,
   coilOfRowError,
   editRow,
@@ -1026,7 +1027,7 @@ function BlockCard({
                   setRow(
                     i,
                     catalog
-                      ? { lengthM: fixedLength ?? '', qty: e.target.value }
+                      ? catalogQtyPatch(fixedLength ?? '', e.target.value)
                       : { qty: e.target.value },
                   );
                 }}

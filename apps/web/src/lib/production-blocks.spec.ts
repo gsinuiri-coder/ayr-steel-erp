@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { blockPayload } from './block-drafts';
 import {
   blockFigures,
+  catalogQtyPatch,
   catalogRows,
   coilOfRowError,
   editRow,
@@ -137,7 +138,7 @@ describe('plancha de catálogo con 3 bobinas — se escribe en todas (hotfix de 
   const remaining = [p('4', 40)];
   /** Lo que la pantalla hace con una tecla: la fila del bloque, editada. */
   const type = (rows: { lengthM: string; qty: string }[], qty: string) =>
-    editRow(catalogRows(rows), 0, { lengthM: '4.00', qty });
+    editRow(catalogRows(rows), 0, catalogQtyPatch('4.00', qty));
 
   it('un bloque sin borrador tiene su única fila, vacía, y no cuenta como contenido', () => {
     expect(catalogRows([])).toEqual([{ lengthM: '', qty: '' }]);
@@ -169,6 +170,15 @@ describe('plancha de catálogo con 3 bobinas — se escribe en todas (hotfix de 
     expect(fillFromRemaining(remaining, [pieces(first), pieces(second)])).toEqual([
       { lineNumber: 1, lengthMm: '4000.00', qty: 11 },
     ]);
+  });
+
+  it('borrar las unidades deja el bloque vacío, no en error', () => {
+    const cleared = type([{ lengthM: '4.00', qty: '15' }], '');
+    expect(cleared).toEqual([{ lengthM: '', qty: '' }]);
+    expect(blockPayload({ rows: cleared, consumedKg: '' })).toMatchObject({
+      ok: true,
+      empty: true,
+    });
   });
 
   it('una fila con borrador se conserva y no se duplica', () => {

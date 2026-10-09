@@ -223,7 +223,16 @@ const EMPTY_PIECE_ROW: PieceRow = { lengthM: '', qty: '' };
  * perdía (hotfix de cc38). La fila vacía no es contenido: `blockPayload` la descarta.
  */
 export function catalogRows(rows: readonly PieceRow[]): PieceRow[] {
-  return rows.length > 0 ? rows.slice(0, 1) : [EMPTY_PIECE_ROW];
+  return rows.length > 0 ? [...rows] : [EMPTY_PIECE_ROW];
+}
+
+/**
+ * Lo que una tecla en «Unidades» de una plancha de catálogo deja en la fila: el largo fijo con las
+ * unidades, o la fila vacía si se borraron (el largo fijo solo no es contenido: así el bloque queda
+ * vacío y se borra su borrador, en vez de quedar con un error de cantidad).
+ */
+export function catalogQtyPatch(fixedLength: string, qty: string): PieceRow {
+  return qty.trim() === '' ? { lengthM: '', qty } : { lengthM: fixedLength, qty };
 }
 
 /**
