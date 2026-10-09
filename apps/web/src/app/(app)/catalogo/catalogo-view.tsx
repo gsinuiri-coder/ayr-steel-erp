@@ -248,7 +248,7 @@ export function CatalogoView() {
                 )}
               </div>
               <div className="rounded-lg border">
-                <Table>
+                <Table list>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
                       <SortableTableHead

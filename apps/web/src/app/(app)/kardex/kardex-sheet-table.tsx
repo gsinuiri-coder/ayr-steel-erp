@@ -65,7 +65,7 @@ export function KardexSheetTable({
   const group = 'border-l text-center';
   return (
     <div className="overflow-x-auto" data-testid="kardex-sheet">
-      <Table>
+      <Table list>
         <TableHeader>
           <TableRow>
             <SortableTableHead
