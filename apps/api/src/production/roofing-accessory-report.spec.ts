@@ -231,18 +231,49 @@ describe('reportInTx de una orden de accesorio (D-343)', () => {
     ).rejects.toThrow(/no es un accesorio: detalla los largos/);
   });
 
-  it('pasarse de los metros encargados avisa y no bloquea', async () => {
-    const { service, tx, created, auditWrites } = build({
+  // cc38 (D-573, D-574): antes avisaba y no bloqueaba; con el cierre exacto, pasarse dejaría la
+  // orden sin poder cerrarse nunca, así que se rechaza sin escribir nada.
+  it('pasarse de los metros encargados es un 400 con el texto de D-574 y no escribe nada', async () => {
+    const { service, tx, created, movements } = build({
       roofingKind: RoofingProductKind.ACCESORIO,
       orderedMl: '20',
       reportedMl: '10',
     });
     // 10 ya reportados + 25 = 35 m contra 20 encargados.
+    await expect(
+      service.reportInTx(tx, ACTOR, 'o-1', { meters: '25.000' }, '2026-09-26'),
+    ).rejects.toThrow('Excede el plan en 15.000 m · ajusta el plan');
+    expect(created).toHaveLength(0);
+    expect(movements).toHaveLength(0);
+  });
+
+  it('cc38 (D-574): una cobertura a medida que pasaría su plan es un 400 con el texto exacto', async () => {
+    const { service, tx, rawTx, created, movements } = build({
+      roofingKind: RoofingProductKind.A_MEDIDA,
+    });
+    // Plan 2 × 3 m = 6 m; el reporte trae 3 × 3 m = 9 m.
+    rawTx.productionOrderItem.findMany.mockResolvedValue([{ lengthMm: D('3000.00'), qty: 2 }]);
+    await expect(
+      service.reportInTx(
+        tx,
+        ACTOR,
+        'o-1',
+        { pieces: [{ lengthMm: '3000.00', qty: 3 }] },
+        '2026-10-09',
+      ),
+    ).rejects.toThrow('Excede el plan en 3.000 m · ajusta el plan');
+    expect(created).toHaveLength(0);
+    expect(movements).toHaveLength(0);
+  });
+
+  it('llegar justo a los metros encargados entra', async () => {
+    const { service, tx, created } = build({
+      roofingKind: RoofingProductKind.ACCESORIO,
+      orderedMl: '35',
+      reportedMl: '10',
+    });
     await service.reportInTx(tx, ACTOR, 'o-1', { meters: '25.000' }, '2026-09-26');
     expect(created).toHaveLength(1);
-    const audit = auditWrites[0]?.after as { rawMaterialWarning?: string };
-    expect(audit.rawMaterialWarning).toMatch(/35\.000 m de bobina y el pedido encargó 20\.000 m/);
-    expect(audit.rawMaterialWarning).toMatch(/rindió más de lo planeado/);
   });
 
   it('dentro de lo encargado no hay aviso de rendimiento', async () => {

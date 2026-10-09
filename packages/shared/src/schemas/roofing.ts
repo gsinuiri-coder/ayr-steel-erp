@@ -398,6 +398,34 @@ export function roofingPlanOverrun(
 }
 
 /**
+ * D-573/D-574 (cc38): una orden se cierra solo con el plan completo y nunca registra más que él.
+ * Compara los **metros totales** registrados contra los del plan con tres decimales; no exige cada
+ * largo por separado. En un accesorio, el «plan» son los metros que encargó la línea del pedido.
+ *
+ * `missing` > 0 ⇒ no se puede cerrar; `excess` > 0 ⇒ ya se pasó del plan. Nunca los dos.
+ */
+export function roofingPlanGap(
+  planMeters: Decimal | string,
+  registeredMeters: Decimal | string,
+): { missing: Decimal; excess: Decimal } {
+  const diff = roundTo(toDecimal(planMeters), 'KG').minus(roundTo(toDecimal(registeredMeters), 'KG'));
+  return {
+    missing: Decimal.max(diff, new Decimal(0)),
+    excess: Decimal.max(diff.negated(), new Decimal(0)),
+  };
+}
+
+/** D-573: el rechazo de todo camino de cierre con el plan incompleto. */
+export function closeShortfallMessage(missingMeters: Decimal | string): string {
+  return `Para cerrar falta registrar ${toDecimal(missingMeters).toFixed(3)} m del plan`;
+}
+
+/** D-574: el rechazo de un reporte, una fila del borrador o un commit que pasaría el plan. */
+export function planExcessMessage(excessMeters: Decimal | string): string {
+  return `Excede el plan en ${toDecimal(excessMeters).toFixed(3)} m · ajusta el plan`;
+}
+
+/**
  * Cuántas planchas de cada largo del plan quedan por reportar (D-146).
  *
  * Se compara **por largo**: el plan es editable y los reportes son libres, así que un largo

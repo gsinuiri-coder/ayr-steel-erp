@@ -62,6 +62,7 @@
     "inspect:cancelled-purchase-coils": "node scripts/inspect-cancelled-purchase-coils.mjs",
     "inspect:cc33": "node scripts/inspect-cc33.mjs",
     "inspect:cc34": "node scripts/inspect-cc34.mjs",
+    "inspect:cc38": "node scripts/inspect-cc38.mjs",
     "restore:cancelled-coils": "node scripts/restore-cancelled-coils.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },

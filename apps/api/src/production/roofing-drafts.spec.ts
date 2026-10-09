@@ -42,7 +42,8 @@ describe('checkDraftRows (D-191)', () => {
       { coilId: 'c1', pieces: [{ lengthMm: '4000.00', qty: 2 }] }, // 36 + 8 = 44 > 40
     ]);
     expect(result).toMatchObject({ ok: false, rowNumber: 2 });
-    if (!result.ok) expect(result.message).toMatch(/quedan 4\.000 m y esta fila suma 8\.000 m/);
+    // cc38 (D-574): 44 contra 40.
+    if (!result.ok) expect(result.message).toBe('Excede el plan en 4.000 m · ajusta el plan');
   });
 
   it('los kilos de una bobina se acumulan entre filas', () => {

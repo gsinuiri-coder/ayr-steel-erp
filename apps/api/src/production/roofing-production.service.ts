@@ -34,6 +34,9 @@ import {
   productionOrderCode,
   remainingPlanPieces,
   roofingConsumptionDeviation,
+  closeShortfallMessage,
+  planExcessMessage,
+  roofingPlanGap,
   roofingPlanOverrun,
   roofingPlanProgress,
   salesOrderCode,
@@ -125,6 +128,7 @@ import {
   type CoilGeometry,
 } from './roofing-math';
 import { allocateRoofingScrap } from './roofing-scrap';
+import { sumReportedMeters } from './reported-meters';
 
 /**
  * Producción de coberturas metálicas contra pedido (RF-30..RF-33; D-082..D-091).
@@ -1174,16 +1178,11 @@ export class RoofingProductionService {
     const reportedPieces = liveReportRows.flatMap((r) => r.piecesDetail.map(toPieceLike));
     const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
     const newMeters = piecesMeters(pieces);
+    // cc38 (D-574): el rechazo nombra cuánto se pasa; el detalle de plan y reportado ya está en
+    // la pantalla, que muestra la barra de avance.
     const overrun = roofingPlanOverrun(progress, newMeters);
     if (overrun.gt(0)) {
-      throw new BadRequestException(
-        `${productionOrderCode(order.seq)} tiene un plan de ${progress.planMeters.toFixed(3)} m y ` +
-          `${progress.reportedMeters.toFixed(3)} m ya reportados: ` +
-          (progress.remainingMeters.isZero()
-            ? 'el plan ya está cubierto y este reporte no entra. '
-            : `quedan ${progress.remainingMeters.toFixed(3)} m y este reporte suma ${newMeters.toFixed(3)} m. `) +
-          'Si lo que salió no es lo del plan, ajusta primero el plan de corte (RF-31).',
-      );
+      throw new BadRequestException(planExcessMessage(overrun));
     }
 
     // D-146, segunda mitad, **corregida por D-154**: los kilos que planta declara para este
@@ -1210,26 +1209,18 @@ export class RoofingProductionService {
       if (note !== null) deviation.push(note);
     }
 
-    // D-343: un accesorio no tiene plan de largos que lo tope, y lo que el pedido encargó son
-    // **metros**: pasarse **avisa y no bloquea** —rendir más o menos de lo planeado es lo normal
-    // en un accesorio, y el aviso queda en la fila del reporte y en la auditoría—. No es un tope
-    // duro como el de D-146: ese existe para que un plan de largos no se desborde sin ajustarlo.
+    // D-343 → cc38 (D-573, D-574): un accesorio no tiene plan de largos; su plan son los **metros**
+    // que encargó la línea del pedido. Hasta cc38 pasarse solo avisaba; con D-573 la orden se
+    // cierra solo con esos metros exactos, así que un reporte que los pasa dejaría la orden sin
+    // poder cerrarse nunca: se rechaza igual que en una cobertura con plan.
     if (accessory && order.reservationId) {
-      const reservation = await tx.reservation.findUniqueOrThrow({
-        where: { id: order.reservationId },
-        select: { salesOrderItem: { select: { qty: true } } },
-      });
-      const orderedMl = toDecimal(reservation.salesOrderItem.qty.toString());
+      const orderedMl = await accessoryOrderedMeters(tx, order.reservationId);
       const reportedBeforeMl = liveReportRows.reduce(
         (acc, r) => (r.metersM === null ? acc : acc.plus(toDecimal(r.metersM.toString()))),
         new Decimal(0),
       );
-      const totalMl = reportedBeforeMl.plus(newMeters);
-      if (totalMl.gt(orderedMl)) {
-        deviation.push(
-          `Los reportes suman ${totalMl.toFixed(3)} m de bobina y el pedido encargó ${orderedMl.toFixed(3)} m: rindió más de lo planeado.`,
-        );
-      }
+      const { excess } = roofingPlanGap(orderedMl, reportedBeforeMl.plus(newMeters));
+      if (excess.gt(0)) throw new BadRequestException(planExcessMessage(excess));
     }
 
     // D-345 (P2 de 03b): los kilos que el pedido reservó y el piso de precio de un accesorio salen
@@ -2168,6 +2159,12 @@ export class RoofingProductionService {
         'La orden no tiene planchas reportadas: anúlala para liberar la bobina en vez de cerrarla',
       );
     }
+
+    // cc38 (D-573): la orden se cierra solo con el plan completo. Es la puerta común de los tres
+    // caminos de cierre —close, report-and-close y el commit del borrador con close=true— y de sus
+    // vistas previas; corre después de los reportes de la misma transacción, así que lo que se
+    // registra en ese mismo acto ya cuenta.
+    await this.assertPlanComplete(tx, order, reports);
 
     const rows = await tx.productionOrderConsumption.findMany({
       where: { productionOrderId: orderId, releasedAt: null },
@@ -3235,6 +3232,50 @@ export class RoofingProductionService {
     });
   }
 
+  /**
+   * cc38 (D-573): los metros registrados por los reportes vigentes son iguales a los del plan, con
+   * tres decimales. Cobertura a medida y plancha: el plan de corte (en una plancha, planchas ×
+   * largo fijo). Accesorio: los metros que encargó la línea del pedido. Sin plan no hay contra qué
+   * comparar: solo lo alcanzan órdenes anteriores a D-146, y ninguna está abierta (diagnóstico de
+   * cc38), así que se rechaza en vez de cerrar a ciegas.
+   */
+  private async assertPlanComplete(
+    tx: Prisma.TransactionClient,
+    order: LockedOrder,
+    reports: readonly { id: string }[],
+  ): Promise<void> {
+    const [product, planRows, reportRows] = await Promise.all([
+      tx.product.findUniqueOrThrow({
+        where: { id: order.productId },
+        select: { roofingKind: true },
+      }),
+      tx.productionOrderItem.findMany({
+        where: { productionOrderId: order.id },
+        select: { lengthMm: true, qty: true },
+      }),
+      tx.productionReport.findMany({
+        where: { id: { in: reports.map((r) => r.id) } },
+        select: { metersM: true, piecesDetail: { select: { lengthMm: true, qty: true } } },
+      }),
+    ]);
+    const accessory = isAccessory(product);
+    if (accessory ? order.reservationId === null : planRows.length === 0) {
+      throw new BadRequestException(
+        `${productionOrderCode(order.seq)} no tiene plan contra el que comprobar que está completa: no se puede cerrar`,
+      );
+    }
+    const planMeters =
+      accessory && order.reservationId !== null
+        ? await accessoryOrderedMeters(tx, order.reservationId)
+        : piecesMeters(planRows.map(toPieceLike));
+    const { missing, excess } = roofingPlanGap(
+      planMeters,
+      sumReportedMeters(reportRows) ?? new Decimal(0),
+    );
+    if (missing.gt(0)) throw new BadRequestException(closeShortfallMessage(missing));
+    if (excess.gt(0)) throw new BadRequestException(planExcessMessage(excess));
+  }
+
   /** La tolerancia de D-086, con el override de entorno que documenta esa decisión. */
   thicknessToleranceMm(): string {
     return roofingToleranceMm(this.env);
@@ -3260,6 +3301,18 @@ function dedupeWarnings(warnings: readonly RawMaterialShortfall[]): RawMaterialS
 function toWarningDto(shortfall: RawMaterialShortfall): RawMaterialWarningDto {
   const { specId: _specId, ...dto } = shortfall;
   return dto;
+}
+
+/** D-343: el «plan» de un accesorio son los metros que encargó la línea del pedido. */
+async function accessoryOrderedMeters(
+  tx: Prisma.TransactionClient,
+  reservationId: string,
+): Promise<Decimal> {
+  const reservation = await tx.reservation.findUniqueOrThrow({
+    where: { id: reservationId },
+    select: { salesOrderItem: { select: { qty: true } } },
+  });
+  return toDecimal(reservation.salesOrderItem.qty.toString());
 }
 
 /** Fila persistida de largos → la forma mínima que la aritmética compartida necesita. */
