@@ -61,7 +61,14 @@ test.describe('cc27 — formularios largos a 1366 × 768', () => {
     await page.goto('/cotizaciones/nueva');
     const add = page.getByRole('button', { name: 'Agregar línea', exact: true });
     await expect(add).toBeVisible({ timeout: 60_000 });
-    for (let i = 0; i < 4; i += 1) await add.click();
+    // cc36: las filas vacías son más bajas (sin desplegable de línea de negocio): hacen falta más
+    // para que el formulario supere el alto de la ventana.
+    for (let i = 0; i < 8; i += 1) {
+      await add.click();
+      // cc36: «Agregar línea» abre el buscador de productos de la fila nueva.
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).toBeHidden();
+    }
     // El formulario ya es más alto que la ventana: sin la barra fija, el botón quedaba abajo.
     expect(
       await page.evaluate(() => document.querySelector('main')?.scrollHeight ?? 0),

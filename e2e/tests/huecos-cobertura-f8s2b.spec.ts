@@ -169,14 +169,12 @@ test.describe('F8-S2b — huecos de cobertura', () => {
         customer.docNumber,
       );
 
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: LINE_LABEL[lineCode], exact: true }).click();
-
       await page.getByLabel('Producto de la línea 1').click();
       const dialog = page.getByRole('dialog');
-      // cc31 (corte 6): el título dice la línea del documento; la línea de negocio es el filtro
-      // marcado.
+      // cc31 (corte 6): el título dice la línea del documento. cc36: la línea de negocio se elige
+      // con su chip dentro del buscador, y queda marcada.
       await expect(dialog.getByText('Elegir producto · línea 1')).toBeVisible();
+      await dialog.getByRole('button', { name: LINE_LABEL[lineCode], exact: true }).click();
       await expect(
         dialog.getByRole('button', { name: LINE_LABEL[lineCode], exact: true }),
       ).toHaveAttribute('aria-pressed', 'true');
@@ -219,11 +217,11 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       `${customer.name} — ${customer.docNumber}`,
       customer.docNumber,
     );
-    await page.getByLabel('Línea de negocio de la línea 1').click();
-    await page.getByRole('option', { name: LINE_LABEL.roofing, exact: true }).click();
 
     await page.getByLabel('Producto de la línea 1').click();
     const dialog = page.getByRole('dialog');
+    // cc36: la línea de negocio se elige con su chip dentro del buscador.
+    await dialog.getByRole('button', { name: LINE_LABEL.roofing, exact: true }).click();
 
     // Sin filtrar, los dos conviven en la lista (RF-S3/M1: vacío muestra los primeros
     // resultados sin escribir nada, ya no "el total de la línea" — el conteo que se lee acá

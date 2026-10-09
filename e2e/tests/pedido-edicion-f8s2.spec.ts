@@ -405,8 +405,6 @@ test.describe('F8-S2 — edición del pedido confirmado (D-187)', () => {
 
       // Coberturas exige cotización (RF-31), pero este pedido ya nació de una: la línea de
       // negocio tiene que ofrecerse igual.
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
       // D-188: el campo de producto abre el picker con stock, no un desplegable de opciones.
       await chooseProductWithStock(page, page.getByLabel('Producto de la línea 1'), s.product.sku);
       await page.getByLabel('Planchas del largo 1 de la línea 1').fill('1');

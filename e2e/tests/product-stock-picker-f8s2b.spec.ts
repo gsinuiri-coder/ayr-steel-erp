@@ -94,8 +94,6 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
       );
       // La cotización nueva ya nace con una línea vacía: no hace falta "Agregar línea" para
       // la primera.
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
 
       await page.getByLabel('Producto de la línea 1').click();
       const dialog = page.getByRole('dialog');
@@ -132,7 +130,8 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
       // La línea también avisa, y sigue sin bloquear: se cotiza igual.
       await page.getByLabel('Planchas del largo 1 de la línea 1').fill('1');
       await page.getByLabel('Largo 1 de la línea 1 en metros').fill('5');
-      await expect(page.getByText(/no alcanza/)).toBeVisible();
+      // cc36: una sola línea de estado bajo el producto, «Reserva X kg · falta Y kg».
+      await expect(page.getByRole('button', { name: /^Reserva .* · falta / })).toBeVisible();
       await page.getByLabel('Precio unitario de la línea 1').fill('60');
 
       const created = page.waitForResponse(
@@ -162,8 +161,6 @@ test.describe('F8-S2b/M1 — picker de producto con stock', () => {
         `${customer.name} — ${customer.docNumber}`,
         customer.docNumber,
       );
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
 
       const field = page.getByLabel('Producto de la línea 1');
       await field.click();

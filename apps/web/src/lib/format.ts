@@ -263,3 +263,15 @@ export function queueAgeLabel(createdAtIso: string): string {
 export function isPositiveDecimal(value: string): boolean {
   return /^\d+(\.\d+)?$/.test(value.trim()) && new Decimal(value.trim()).gt(0);
 }
+
+/**
+ * cc36: un decimal **ya escrito** con al menos 2 decimales y sin ceros de más («35.4000» →
+ * «35.40», «12.000» → «12.00», «9.8333» queda igual). Solo para mostrar en un campo que no se está
+ * editando: no pierde ninguna cifra significativa y lo que se guarda no cambia. Lo que no es un
+ * número positivo se devuelve tal cual.
+ */
+export function displayDecimal(value: string): string {
+  if (!isPositiveDecimal(value)) return value;
+  const d = new Decimal(value.trim());
+  return d.toFixed(Math.max(2, d.decimalPlaces()));
+}

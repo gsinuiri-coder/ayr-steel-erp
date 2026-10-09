@@ -127,7 +127,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       // el catálogo: guardar antes pierde los largos (ver el test del defecto más abajo).
       await waitForCatalog(page);
       const price = page.getByLabel('Precio unitario de la línea 1');
-      await expect(price).toHaveValue('70.8000');
+      await expect(price).toHaveValue('70.80');
       // 76.70 con IGV son 65.0000 sin IGV.
       await price.fill('76.70');
       await page.getByRole('button', { name: 'Guardar cambios' }).click();
@@ -148,7 +148,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       // valor tiene que ir y volver por el precio con IGV sin moverse un centavo.
       await (await headerAction(page, 'Editar')).click();
       await waitForCatalog(page);
-      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('76.7000');
+      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('76.70');
       await page.getByRole('button', { name: 'Guardar cambios' }).click();
       await expect(page).toHaveURL(new RegExp(`/cotizaciones/${quotation.id}$`), {
         timeout: 30_000,
@@ -213,7 +213,7 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       });
       await page.goto(`/cotizaciones/${quotation.id}/editar`);
       const price = page.getByLabel('Precio unitario de la línea 1');
-      await expect(price).toHaveValue('70.8000', { timeout: 60_000 });
+      await expect(price).toHaveValue('70.80', { timeout: 60_000 });
       await price.fill('76.70');
 
       const put = page.waitForResponse(
