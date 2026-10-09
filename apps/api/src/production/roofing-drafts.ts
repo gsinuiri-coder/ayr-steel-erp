@@ -125,7 +125,7 @@ export function checkDraftRows(
           (progress.remainingMeters.isZero()
             ? 'el plan ya está cubierto y esta fila no entra. '
             : `quedan ${progress.remainingMeters.toFixed(3)} m y esta fila suma ${meters.toFixed(3)} m. `) +
-          'Si de verdad hay que producir más, ajusta primero el plan de corte (RF-31).',
+          'Si lo que salió no es lo del plan, ajusta primero el plan de corte (RF-31).',
       );
     }
 

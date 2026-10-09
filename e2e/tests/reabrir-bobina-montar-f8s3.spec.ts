@@ -180,15 +180,17 @@ test.describe('D-193 — reabrir una bobina terminada para montarla', () => {
       // F8-S3c/M1: la orden ya es un chip desde que se entra; abrirla la selecciona.
       await openQueuedOrder(page, op.code);
       const panel = page.getByRole('tabpanel', { name: op.code });
-      await panel.getByRole('button', { name: `Buscar una bobina para ${op.code}` }).click();
+      await panel.getByRole('button', { name: `Montar bobinas en ${op.code}` }).click();
       const modal = page.getByRole('dialog');
 
       // La cerrada no se mezcla con las libres.
       await modal.getByLabel('Filtrar opciones').fill(closed.coil.code);
       await expect(
-        modal.getByRole('button', { name: `Montar ${closed.coil.code}`, exact: true }),
+        modal.getByRole('checkbox', { name: `Elegir ${closed.coil.code}`, exact: true }),
       ).toHaveCount(0);
-      await modal.getByRole('button', { name: /Ver bobinas terminadas/ }).click();
+      await modal
+        .getByRole('button', { name: /Ver las \d+ bobinas terminadas, para reabrir/ })
+        .click();
       const closedTable = modal.getByRole('table', { name: 'Bobinas terminadas' });
       const row = closedTable.getByRole('row').filter({ hasText: closed.coil.code });
       await expect(row).toContainText('−100.000 kg');

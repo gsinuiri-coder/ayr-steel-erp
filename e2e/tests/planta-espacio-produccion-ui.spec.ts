@@ -99,13 +99,14 @@ async function loginAsAdmin(page: Page) {
  * candidatas haya en la base cuando corra.
  */
 async function mountFromModal(page: Page, orderCode: string, coilCode: string): Promise<void> {
-  await page.getByRole('button', { name: `Buscar una bobina para ${orderCode}` }).click();
+  await page.getByRole('button', { name: `Montar bobinas en ${orderCode}` }).click();
   const modal = page.getByRole('dialog');
-  await expect(modal.getByText(`Bobinas para ${orderCode}`)).toBeVisible();
+  await expect(modal.getByText(`Montar bobinas en ${orderCode}`)).toBeVisible();
   await modal.getByLabel('Filtrar opciones').fill(coilCode);
   // D-328: la bobina del escenario nace sellada y montarla pide confirmar que se abre; una que
   // ya se abrió (montada antes en otra orden y bajada, o compartida) se monta directo.
-  await modal.getByRole('button', { name: `Montar ${coilCode}`, exact: true }).click();
+  await modal.getByRole('checkbox', { name: `Elegir ${coilCode}`, exact: true }).click();
+  await modal.getByRole('button', { name: `Montar la bobina elegida en ${orderCode}` }).click();
   // No se decide antes de hacer clic: la lista del selector se refresca y puede traer un instante
   // el film de la consulta anterior. Se espera a lo que pasa: el paso de confirmación o el cierre.
   const step = modal.getByTestId('film-open-step');
@@ -224,17 +225,20 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // ---------------------------------------------------------------------
       // Las dos bobinas del escenario sirven para esta orden (mismo acabado, color y espesor),
       // así que el modal tiene dos filas y el filtro es el que deja una sola.
-      await panelA.getByRole('button', { name: `Buscar una bobina para ${codeA}` }).click();
+      await panelA.getByRole('button', { name: `Montar bobinas en ${codeA}` }).click();
       const modal = page.getByRole('dialog');
-      await expect(modal.getByText(`Bobinas para ${codeA}`)).toBeVisible();
-      await expect(modal.getByRole('button', { name: `Montar ${second.coil.code}` })).toBeVisible();
+      await expect(modal.getByText(`Montar bobinas en ${codeA}`)).toBeVisible();
+      await expect(
+        modal.getByRole('checkbox', { name: `Elegir ${second.coil.code}` }),
+      ).toBeVisible();
       await modal.getByLabel('Filtrar opciones').fill(scenario.coil.code);
-      await expect(modal.getByRole('button', { name: `Montar ${second.coil.code}` })).toHaveCount(
+      await expect(modal.getByRole('checkbox', { name: `Elegir ${second.coil.code}` })).toHaveCount(
         0,
       );
       await modal
-        .getByRole('button', { name: `Montar ${scenario.coil.code}`, exact: true })
+        .getByRole('checkbox', { name: `Elegir ${scenario.coil.code}`, exact: true })
         .click();
+      await modal.getByRole('button', { name: `Montar la bobina elegida en ${codeA}` }).click();
       await confirmFilmOpen(modal);
       await expect(modal).toHaveCount(0);
 
@@ -528,22 +532,35 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
         panel.getByRole('button', { name: `Agregar al borrador de ${op.code}` }),
       ).toBeDisabled();
 
-      // --- El plan, editado desde el propio panel ---
+      // --- El plan, en su diálogo (cc35): mismos metros, ni más ni menos ---
       await panel.getByRole('button', { name: `Ajustar el plan de corte de ${op.code}` }).click();
+      const planDialog = page.getByRole('dialog', { name: `Ajustar el plan de ${op.code}` });
       // Llega con el plan vigente adentro, no en blanco: corregir es editar, no transcribir.
-      const planLength = panel.locator(`#plan-${op.orderId}-largo-0`);
-      const planQty = panel.locator(`#plan-${op.orderId}-cant-0`);
-      await expect(planLength).toHaveValue('4.000');
+      const planLength = planDialog.getByLabel('Largo 1 del plan en metros');
+      const planQty = planDialog.getByLabel('Planchas del largo 1 del plan');
+      await expect(planLength).toHaveValue('4.00');
       await expect(planQty).toHaveValue('10');
       await planLength.fill('4.20');
       await planQty.fill('9');
-      await panel.getByRole('button', { name: 'Guardar plan' }).click();
+      // 37.8 de 40 m: no cuadra, y «Guardar el plan» se queda y lo dice.
+      await expect(planDialog.getByTestId('plan-cuadre')).toContainText('Faltan 2.200 m');
+      await planDialog.getByRole('button', { name: 'Guardar el plan' }).click();
+      await expect(planDialog.getByRole('alert')).toContainText('faltan 2.200 m');
+      await planDialog.getByRole('button', { name: '+ Agregar largo' }).click();
+      await planDialog.getByLabel('Largo 2 del plan en metros').fill('2.20');
+      await planDialog.getByLabel('Planchas del largo 2 del plan').fill('1');
+      await expect(planDialog.getByTestId('plan-cuadre')).toContainText('Cuadra ✓');
+      await expect(planDialog.getByText('Se agrega 2.20 m × 1.')).toBeVisible();
+      await planDialog.getByRole('button', { name: 'Guardar el plan' }).click();
+      await expect(planDialog).toHaveCount(0);
 
-      await expect(panel.getByText('Faltan 9 × 4.20 m')).toBeVisible();
-      await expect(panel.getByText('(37.800 m)')).toBeVisible();
+      await expect(panel.getByText('Faltan 9 × 4.20 m, 1 × 2.20 m')).toBeVisible();
+      await expect(panel.getByText('(40.000 m)')).toBeVisible();
       // El editor del reporte se sembró **del plan nuevo**: lo que había era el viejo.
       await expect(panel.getByLabel('Largo 1 en metros')).toHaveValue('4.200');
       await expect(panel.getByLabel('Planchas del largo 1')).toHaveValue('9');
+      // Lo que salió fueron las 9 de 4.20: la de 2.20 queda sin producir.
+      await panel.getByRole('button', { name: 'Quitar el largo de la fila 2' }).click();
       await expect(panel.getByText(/9 × 4\.20 m · 37\.800 m · 152\.712 kg teóricos/)).toBeVisible();
 
       await panel.getByRole('button', { name: `Agregar al borrador de ${op.code}` }).click();
@@ -659,12 +676,14 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
 
       // --- El plan, en planchas: el largo no se pregunta (D-118) ---
       await panel.getByRole('button', { name: `Ajustar el plan de corte de ${op.code}` }).click();
-      const planSheets = panel.getByLabel(`Planchas del plan de ${op.code}`);
+      const planDialog = page.getByRole('dialog', { name: `Ajustar el plan de ${op.code}` });
+      const planSheets = planDialog.getByLabel('Planchas del largo 1 del plan');
       await expect(planSheets).toHaveValue('5');
-      // No hay editor de largos en esta forma: el único campo es la cantidad.
-      await expect(panel.locator(`#plan-${op.id}-largo-0`)).toHaveCount(0);
+      // El largo lo trae el SKU: no se edita. Y en una plancha el total puede cambiar (D-545).
+      await expect(planDialog.getByLabel('Largo 1 del plan en metros')).toBeDisabled();
       await planSheets.fill('6');
-      await panel.getByRole('button', { name: 'Guardar plan' }).click();
+      await planDialog.getByRole('button', { name: 'Guardar el plan' }).click();
+      await expect(planDialog).toHaveCount(0);
       // Por "Faltan …" y por los metros: el desglose suelto está también en la tarjeta del
       // plan, y buscarlo por sí solo encuentra los dos.
       await expect(panel.getByText('Faltan 6 × 4.00 m')).toBeVisible();
