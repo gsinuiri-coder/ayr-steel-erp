@@ -422,6 +422,98 @@ export function remainingPlanPieces(
   });
 }
 
+// --------------------------------------------------------------------------
+// cc35 — ajustar el plan: mismos metros y nada por debajo de lo reportado
+// --------------------------------------------------------------------------
+
+/**
+ * cc35 (ESPEC §3): cuántas planchas de cada línea del plan ya se reportaron. Es la otra cara de
+ * `remainingPlanPieces`: la línea `i` del resultado corresponde a la línea `i` del plan. Un largo
+ * reportado que el plan no tiene no cuenta en ninguna línea.
+ */
+export function reportedPlanPieces(
+  planItems: readonly PieceLike[],
+  reportedPieces: readonly PieceLike[],
+): number[] {
+  const remaining = remainingPlanPieces(planItems, reportedPieces);
+  return planItems.map((item, i) => item.qty - (remaining[i]?.qty ?? 0));
+}
+
+export type RoofingPlanAdjustmentCheck =
+  | { ok: true; planMeters: Decimal; originalMeters: Decimal }
+  | {
+      ok: false;
+      /** `'meters'`: el total no cuadra; `'reported'`: un largo baja de lo ya reportado. */
+      kind: 'meters' | 'reported';
+      message: string;
+      planMeters: Decimal;
+      originalMeters: Decimal;
+    };
+
+/**
+ * cc35 (ESPEC §3, D-545/D-546): ¿se puede guardar este plan en lugar del vigente?
+ *
+ * - **Ningún largo baja de las planchas ya reportadas** de ese largo en el plan vigente, ni se
+ *   quita. Vale para toda orden con plan.
+ * - **Mismos metros:** con `exactMeters` (cobertura a medida, `detailsLengths`), el plan nuevo
+ *   suma exactamente los metros del vigente, ni más ni menos. Lo pidió el dueño: lo que se ajusta
+ *   es cómo se corta lo que el pedido compró, no cuánto. Un plan vigente vacío (órdenes viejas)
+ *   no tiene metros que respetar.
+ *
+ * La misma función la usan la pantalla (franja verde o roja) y el API (400): una regla, una copia.
+ */
+export function checkRoofingPlanAdjustment(input: {
+  current: readonly PieceLike[];
+  next: readonly PieceLike[];
+  reported: readonly PieceLike[];
+  exactMeters: boolean;
+}): RoofingPlanAdjustmentCheck {
+  const planMeters = piecesMeters(input.next);
+  const originalMeters = piecesMeters(input.current);
+  const reported = reportedPlanPieces(input.current, input.reported);
+  const floor = new Map<string, number>();
+  input.current.forEach((item, i) => {
+    const key = toDecimal(item.lengthMm).toFixed(2);
+    floor.set(key, (floor.get(key) ?? 0) + (reported[i] ?? 0));
+  });
+  const planned = new Map<string, number>();
+  for (const item of input.next) {
+    const key = toDecimal(item.lengthMm).toFixed(2);
+    planned.set(key, (planned.get(key) ?? 0) + item.qty);
+  }
+  for (const [key, already] of floor) {
+    if (already <= 0) continue;
+    const qty = planned.get(key) ?? 0;
+    if (qty < already) {
+      const length = toDecimal(key).div(1000).toFixed(2);
+      return {
+        ok: false,
+        kind: 'reported',
+        message:
+          qty === 0
+            ? `El largo de ${length} m ya tiene ${String(already)} planchas reportadas: no se puede quitar del plan`
+            : `El largo de ${length} m ya tiene ${String(already)} planchas reportadas: no puede quedar con ${String(qty)}`,
+        planMeters,
+        originalMeters,
+      };
+    }
+  }
+  if (input.exactMeters && input.current.length > 0 && !planMeters.equals(originalMeters)) {
+    const diff = planMeters.minus(originalMeters);
+    return {
+      ok: false,
+      kind: 'meters',
+      message:
+        `El plan nuevo suma ${planMeters.toFixed(3)} m y el original ${originalMeters.toFixed(3)} m: ` +
+        `${diff.gt(0) ? 'sobran' : 'faltan'} ${diff.abs().toFixed(3)} m. ` +
+        'El total tiene que dar los mismos metros, ni más ni menos.',
+      planMeters,
+      originalMeters,
+    };
+  }
+  return { ok: true, planMeters, originalMeters };
+}
+
 export type PlanMetersSplit =
   { ok: true; pieces: (PieceLike & { qty: number })[] } | { ok: false; reason: string };
 
