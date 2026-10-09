@@ -2,6 +2,30 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-09 — cc35: producir una OP con el modelo M y scroll único en listas (D-545..D-549, D-558, D-559, PR #148, #149, #151, #153 en prod)
+
+Cuatro cortes, sin migraciones y sin SQL contra producción. D-539..D-544 ratificadas por el dueño.
+Detalle en `docs/handoff/ventana-cc35.md`; UAT en `docs/uat/cc35.md`.
+
+- **En producción, con smoke verde en el API y en los dos dominios web, y sin 5xx/409 en los logs:**
+  - corte 1, scroll único en las listas (solo web): `main` `b947aecb`;
+  - corte 2, «Ajustar el plan» con mismos metros (también en el API) y «Montar bobinas»: 00107-sjv,
+    `main` `2d01e075`;
+  - corte 3, modelo M para a medida y plancha de catálogo (vista previa con despunte por bobina):
+    00108-d8t, `main` `8dedff4a`;
+  - corte 4, modelo M del accesorio (solo web): `main` `30469936`.
+- **Registro de riesgo (toca datos):**
+  - el guardado automático de los bloques en el borrador de la orden (`lib/block-drafts.ts`,
+    `use-block-drafts.tsx`) y su commit (todo o nada);
+  - el accesorio registra un parte por bloque desde lo guardado en el navegador (D-559): no es todo
+    o nada entre bloques;
+  - `PUT /production/roofing/:id/plan` ahora rechaza un plan a medida que no suma los mismos metros
+    y un largo por debajo de lo reportado (D-545, D-546).
+- **Infraestructura local (no producto):** con `next dev`, el paso por `/cambiar-contrasena` y la
+  ruta de editar cotización tardan más de lo que esperan dos E2E; en la CI pasan. `lock-order.db-spec`
+  falló por tiempos con la máquina cargada (casos distintos en cada corrida, ninguno de esta pieza). cc36 corrió en
+  paralelo en 3000/3001: los E2E de cc35 usaron 3300/3301/3302 con una configuración local.
+
 ## 2026-10-09 — cc36: formulario de cotización y menú al diseño aprobado (D-550..D-557, PR #150 en prod)
 
 Solo `apps/web`: sin API, sin migraciones y sin cambiar cálculos ni lo que se envía al API. Detalle
