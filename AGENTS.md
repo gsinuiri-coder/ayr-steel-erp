@@ -325,6 +325,10 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
 
 - Rama por ventana: `rf-s4`, `chore/agents`, `hotfix-401`… siempre desde `origin/main`.
 - Worktree por sesión: `git worktree add ../ayr-<corto> <rama>` (nombre corto, §3.5).
+- **Sin `/add-dir` por worktree (D-544).** La carpeta `C:\Users\User\Documents\workspace\ayr` está
+  autorizada de forma permanente en `.claude/settings.local.json` (`additionalDirectories`): un
+  worktree creado dentro de ella se usa sin pedirle al dueño el `/add-dir`. Si aun así falta el
+  permiso de escritura, se avisa una vez y se sigue con lo que se pueda.
 - **Conventional commits en español**: `feat(sales): …`, `fix(catalog): …`, `docs(progreso): …`.
 - Commits chicos y temáticos; el handoff lista la secuencia al cierre.
 - Al cerrar el worktree: eliminarlo junto con la rama local. La rama remota la borra el dueño.
