@@ -52,6 +52,7 @@ export function CoilPicker({
   options,
   mountedCount,
   remainingMeters,
+  productName,
   loading,
   failed,
   pending,
@@ -65,6 +66,8 @@ export function CoilPicker({
   mountedCount: number;
   /** cc35: lo que falta cortar de la orden, para el encabezado del modal. */
   remainingMeters?: string | undefined;
+  /** cc35: el nombre del producto («Cobertura TR4 Aluzinc 0.30 mm Rojo») para el encabezado. */
+  productName?: string | undefined;
   loading: boolean;
   failed: boolean;
   pending: boolean;
@@ -154,6 +157,10 @@ export function CoilPicker({
   const chosenKg = chosen.reduce((acc, c) => acc.plus(c.availableKg), new Decimal(0));
   const chosenMeters = chosen.reduce((acc, c) => acc.plus(c.estimatedMeters), new Decimal(0));
   const chosenSealed = chosen.filter((c) => c.film === 'SEALED');
+  /** Marcadas que la búsqueda deja fuera: no se montan (no se monta lo que nadie está mirando). */
+  const hiddenSelected = openOptions.filter(
+    (c) => selected.has(c.coilId) && !visibleSelected.includes(c.coilId),
+  ).length;
   // Kilos por metro de la spec, de la primera bobina con rinde: solo para decir cuánto falta.
   const sample = openOptions.find((c) => new Decimal(c.estimatedMeters).gt(0));
   const remainingKg =
@@ -253,7 +260,7 @@ export function CoilPicker({
                   {remainingKg !== null && (
                     <> · ≈ {formatQtyAsIs(remainingKg.toFixed(3), 'kg')}</>
                   )}{' '}
-                  de {productSku}.{' '}
+                  de {productName ?? productSku}.{' '}
                 </>
               )}
               Marca una o más.
@@ -470,6 +477,16 @@ export function CoilPicker({
                       </>
                     )}
                   </>
+                )}
+                {hiddenSelected > 0 && (
+                  <span className="text-tone-warning-foreground">
+                    {' '}
+                    ·{' '}
+                    {hiddenSelected === 1
+                      ? '1 marcada queda'
+                      : `${String(hiddenSelected)} marcadas quedan`}{' '}
+                    fuera de la búsqueda y no se monta{hiddenSelected === 1 ? '' : 'n'}
+                  </span>
                 )}
               </p>
               <div className="flex gap-2">

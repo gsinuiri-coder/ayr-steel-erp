@@ -538,7 +538,7 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       // Llega con el plan vigente adentro, no en blanco: corregir es editar, no transcribir.
       const planLength = planDialog.getByLabel('Largo 1 del plan en metros');
       const planQty = planDialog.getByLabel('Planchas del largo 1 del plan');
-      await expect(planLength).toHaveValue('4.000');
+      await expect(planLength).toHaveValue('4.00');
       await expect(planQty).toHaveValue('10');
       await planLength.fill('4.20');
       await planQty.fill('9');

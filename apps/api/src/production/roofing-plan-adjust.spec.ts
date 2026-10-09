@@ -74,7 +74,7 @@ describe('checkRoofingPlanAdjustment', () => {
     const check = checkRoofingPlanAdjustment({ current, next, reported, exactMeters: false });
     expect(check.ok).toBe(false);
     if (check.ok) return;
-    expect(check.message).toMatch(/6\.00 m ya tiene 1 planchas reportadas: no se puede quitar/);
+    expect(check.message).toMatch(/6\.00 m ya tiene 1 plancha reportada: no se puede quitar/);
   });
 
   it('un largo reportado que el plan no tiene no pone piso', () => {

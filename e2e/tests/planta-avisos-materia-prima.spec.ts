@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi } from '../helpers/api';
-import { balanceOf, putJson, type ProductionOrderDto } from '../helpers/production';
+import { adminApi, postJson } from '../helpers/api';
+import { balanceOf, putJson, today, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
   buyRoofingCoil,
@@ -215,7 +215,9 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
      *   la orden de la línea 1 amplía su plan a 100 ML y rola 404 kg de la bobina B
      *     → físico 396, prometido a terceros 505, faltan 109
      */
-    const scenario = await setupRoofingScenario(api, { weightKg: '300' });
+    // cc35 (D-545): a medida el plan ya no crece (mismos metros); rolar de más solo se puede en una
+    // plancha de catálogo, que ajusta su cantidad. Planchas de 5 m: las mismas cuentas en kg.
+    const scenario = await setupRoofingScenario(api, { weightKg: '300', pieceLengthMm: '5000' });
     const big = await buyRoofingCoil(api, {
       supplierId: scenario.supplier.id,
       finishId: scenario.finish.id,
@@ -236,20 +238,15 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
     };
 
     try {
-      const foreign = await quoteAndOrder(api, {
-        customerId: customer.id,
-        productId: scenario.product.id,
-        rows: pieces([5, 25]), // 125 ML = 505 kg, de otro pedido
-      });
+      const foreign = await quoteCatalog(api, customer.id, [
+        { productId: scenario.product.id, qty: '25' }, // 25 × 5 m = 125 ML = 505 kg, de otro pedido
+      ]);
       // El nuestro, con **dos líneas** de 10 ML: la primera es la que se pasa de rosca y la
       // segunda es la que después monta con el pool ya corto.
-      const mine = await quoteAndOrderLines(api, {
-        customerId: customer.id,
-        lines: [
-          { productId: scenario.product.id, rows: pieces([5, 2]) },
-          { productId: scenario.product.id, rows: pieces([5, 2]) },
-        ],
-      });
+      const mine = await quoteCatalog(api, customer.id, [
+        { productId: scenario.product.id, qty: '2' },
+        { productId: scenario.product.id, qty: '2' },
+      ]);
       trail.orderIds = [foreign.order.id, mine.order.id];
       trail.quotationIds = [foreign.quotation.id, mine.quotation.id];
 
@@ -265,7 +262,7 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
       const mountedFirst = await mountCoil(api, first.id, { coilId: big.coil.id });
       expect(mountedFirst.rawMaterialWarnings ?? []).toEqual([]);
 
-      // El techo se midió más grande: planta amplía el plan de 10 ML a 100 ML. Cambiar el plan
+      // Hace falta más: planta amplía el plan de 2 a 20 planchas (10 ML a 100 ML). Cambiar el plan
       // no toca ni el kardex ni la reserva (D-084) — el pedido sigue prometiendo sus 40.4 kg.
       await putJson<ProductionOrderDto>(api, `/api/production/roofing/${first.id}/plan`, {
         items: pieces([5, 20]),
@@ -315,10 +312,29 @@ test.describe('D-154 — el faltante del agregado avisa y no bloquea', () => {
 
       // Y el kardex del rollo recién montado sigue intacto: montar es custodia, no consumo.
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('300.000');
-      // El producto entró por los 100 m que de verdad se rolaron (D-083).
-      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('100.000');
+      // El producto entró por las 20 planchas (100 m) que de verdad se rolaron (D-083).
+      expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('20.000');
     } finally {
       await purgeRoofingTrail(api, trail);
     }
   });
 });
+
+/** cc35: un pedido de planchas de catálogo (cantidad en unidades, sin desglose de largos). */
+async function quoteCatalog(
+  api: APIRequestContext,
+  customerId: string,
+  lines: { productId: string; qty: string }[],
+) {
+  const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
+    customerId,
+    issueDate: today(),
+    items: lines.map((l) => ({ productId: l.productId, qty: l.qty, unitPricePen: '30' })),
+  });
+  const order = await postJson<{ id: string; code: string }>(
+    api,
+    `/api/sales/quotations/${quotation.id}/confirm`,
+    {},
+  );
+  return { quotation, order };
+}

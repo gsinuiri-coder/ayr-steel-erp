@@ -1155,7 +1155,8 @@ export class RoofingProductionService {
     // con un rollo entero encima podía reportar 300 ML sin que nada se quejara, y esos metros
     // de más nacían reservados a nombre del pedido (D-088) o entraban como stock que nadie
     // encargó. El plan dejó de ser solo una intención para esto: cambiar lo que hay que
-    // producir es `updatePlan`, no reportar de más.
+    // producir es `updatePlan`, no reportar de más. cc35 (D-545): a medida, `updatePlan` reparte los
+    // mismos metros; producir más que el pedido solo se puede en una plancha de catálogo.
     const planRows = await tx.productionOrderItem.findMany({
       where: { productionOrderId: orderId },
       orderBy: { lineNumber: 'asc' },
@@ -1181,7 +1182,7 @@ export class RoofingProductionService {
           (progress.remainingMeters.isZero()
             ? 'el plan ya está cubierto y este reporte no entra. '
             : `quedan ${progress.remainingMeters.toFixed(3)} m y este reporte suma ${newMeters.toFixed(3)} m. `) +
-          'Si de verdad hay que producir más, ajusta primero el plan de corte (RF-31).',
+          'Si lo que salió no es lo del plan, ajusta primero el plan de corte (RF-31).',
       );
     }
 

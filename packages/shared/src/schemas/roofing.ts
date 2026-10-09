@@ -486,13 +486,14 @@ export function checkRoofingPlanAdjustment(input: {
     const qty = planned.get(key) ?? 0;
     if (qty < already) {
       const length = toDecimal(key).div(1000).toFixed(2);
+      const done = already === 1 ? '1 plancha reportada' : `${String(already)} planchas reportadas`;
       return {
         ok: false,
         kind: 'reported',
         message:
           qty === 0
-            ? `El largo de ${length} m ya tiene ${String(already)} planchas reportadas: no se puede quitar del plan`
-            : `El largo de ${length} m ya tiene ${String(already)} planchas reportadas: no puede quedar con ${String(qty)}`,
+            ? `El largo de ${length} m ya tiene ${done}: no se puede quitar del plan`
+            : `El largo de ${length} m ya tiene ${done}: no puede quedar con ${String(qty)}`,
         planMeters,
         originalMeters,
       };

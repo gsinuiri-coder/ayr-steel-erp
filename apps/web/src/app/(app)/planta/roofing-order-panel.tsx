@@ -723,6 +723,7 @@ export function RoofingOrderPanel({
               failed={options.isError}
               mountedCount={liveCoils.length}
               remainingMeters={order.remainingMeters}
+              productName={order.productName}
               pending={mount.isPending}
               onMount={(coilIds, reopen) => {
                 mount.mutate({ coilIds, ...(reopen ? { reopen } : {}) });
@@ -1479,7 +1480,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       error:
         `Del plan quedan ${available.toFixed(3)} m` +
         (othersMeters.gt(0) ? ` descontando el borrador` : '') +
-        ` y esto suma ${meters.toFixed(3)} m: ajusta el plan de corte si de verdad hay que producir más.`,
+        ` y esto suma ${meters.toFixed(3)} m: si lo que salió no es lo del plan, ajusta el plan de corte.`,
     };
   }
 

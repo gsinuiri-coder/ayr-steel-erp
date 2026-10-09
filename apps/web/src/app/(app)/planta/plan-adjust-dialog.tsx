@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   checkRoofingPlanAdjustment,
+  piecesTheoreticalKg,
   piecesMeters,
   toDecimal,
   Unit,
@@ -72,6 +73,17 @@ export function planNeedsExactMeters(order: RoofingBatchOrderDto): boolean {
   return order.productUnit === Unit.MTR && !order.isAccessory;
 }
 
+/** El largo en metros como lo escribe planta: «6.00», y «4.205» solo si hace falta el milímetro. */
+function lengthLabel(lengthMm: string): string {
+  const m = mmToMeters(lengthMm);
+  return m.endsWith('0') ? m.slice(0, -1) : m;
+}
+
+/** Una fila del diálogo: `locked` si vino del plan con planchas ya reportadas. */
+interface PlanRow extends PieceRow {
+  locked: boolean;
+}
+
 function keyOf(lengthM: string): string | null {
   const raw = lengthM.trim();
   if (!/^\d+(\.\d{1,3})?$/.test(raw)) return null;
@@ -126,25 +138,33 @@ export function PlanAdjustDialog({
   const fixedLengthMm = order.productUnit === Unit.MTR ? null : order.productLengthMm;
   const exact = planNeedsExactMeters(order);
   const reported = reportedByLength(order);
-  const [rows, setRows] = useState<PieceRow[]>([]);
+  const [rows, setRows] = useState<PlanRow[]>([]);
   const [attempted, setAttempted] = useState(false);
 
   // Cada vez que se abre, parte del plan vigente.
   useEffect(() => {
     if (!open) return;
-    const base: PieceRow[] =
+    // Una fila del plan con planchas reportadas queda fija de origen (no por lo que se escribe).
+    const locked = (lengthMm: string) => (reported.get(toDecimal(lengthMm).toFixed(2)) ?? 0) > 0;
+    const base: PlanRow[] =
       fixedLengthMm !== null
         ? [
             {
-              lengthM: mmToMeters(fixedLengthMm),
+              lengthM: lengthLabel(fixedLengthMm),
               qty: String(order.planItems.reduce((acc, p) => acc + p.qty, 0) || ''),
+              locked: locked(fixedLengthMm),
             },
           ]
-        : order.planItems.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) }));
+        : order.planItems.map((p) => ({
+            lengthM: lengthLabel(p.lengthMm),
+            qty: String(p.qty),
+            locked: locked(p.lengthMm),
+          }));
+    if (base.length === 0) base.push({ lengthM: '', qty: '', locked: false });
     setRows(
       addLengthM === undefined || fixedLengthMm !== null
         ? base
-        : [...base, { lengthM: addLengthM, qty: '' }],
+        : [...base, { lengthM: addLengthM, qty: '', locked: false }],
     );
     setAttempted(false);
     // Solo al abrir: mientras está abierto, las filas son del usuario.
@@ -162,6 +182,8 @@ export function PlanAdjustDialog({
   const planMeters = parsed.ok ? piecesMeters(parsed.pieces) : null;
   const originalMeters = piecesMeters(order.planItems);
   const valid = parsed.ok && check?.ok === true;
+  /** Sin plan vigente no hay metros que respetar: la franja no dice «de 0.000 m». */
+  const exactBand = exact && order.planItems.length > 0;
 
   const save = useMutation({
     mutationFn: (pieces: RoofingPieceDto[]) =>
@@ -177,11 +199,20 @@ export function PlanAdjustDialog({
     onError: (err) => toast.error(errorMessage(err, 'No se pudo guardar el plan')),
   });
 
-  const set = (i: number, patch: Partial<PieceRow>) => {
+  const set = (i: number, patch: Partial<PlanRow>) => {
     setRows((prev) => prev.map((r, j) => (i === j ? { ...r, ...patch } : r)));
   };
 
   const summary = parsed.ok ? summarize(order.planItems, parsed.pieces) : null;
+  // El teórico, con la geometría de la primera bobina montada (sin bobina no hay de dónde sacarlo).
+  const coil = order.coils[0];
+  const theoretical =
+    coil === undefined || !parsed.ok
+      ? null
+      : {
+          before: piecesTheoreticalKg(coil, order.planItems),
+          after: piecesTheoreticalKg(coil, parsed.pieces),
+        };
   const diff = planMeters === null ? null : planMeters.minus(originalMeters);
 
   return (
@@ -191,7 +222,7 @@ export function PlanAdjustDialog({
           <DialogTitle>Ajustar el plan de {order.code}</DialogTitle>
           <DialogDescription>
             {fixedLengthMm !== null
-              ? `Plancha de catálogo de ${mmToMeters(fixedLengthMm)} m: solo cambia la cantidad. Lo ya reportado no se puede bajar.`
+              ? `Plancha de catálogo de ${lengthLabel(fixedLengthMm)} m: solo cambia la cantidad. Lo ya reportado no se puede bajar.`
               : 'Cambia largos o planchas de lo que falta cortar. El total tiene que dar los mismos metros del plan original, ni más ni menos. Lo ya reportado no se puede bajar.'}
           </DialogDescription>
         </DialogHeader>
@@ -212,7 +243,7 @@ export function PlanAdjustDialog({
             <TableBody>
               {rows.map((row, i) => {
                 const key = keyOf(row.lengthM);
-                const done = key === null ? 0 : (reported.get(key) ?? 0);
+                const done = !row.locked || key === null ? 0 : (reported.get(key) ?? 0);
                 const qty = /^\d+$/.test(row.qty.trim()) ? Number(row.qty.trim()) : null;
                 const below = done > 0 && qty !== null && qty < done;
                 const meters =
@@ -291,7 +322,7 @@ export function PlanAdjustDialog({
                 size="sm"
                 className="px-0"
                 onClick={() => {
-                  setRows((prev) => [...prev, { lengthM: '', qty: '' }]);
+                  setRows((prev) => [...prev, { lengthM: '', qty: '', locked: false }]);
                 }}
               >
                 + Agregar largo
@@ -321,13 +352,13 @@ export function PlanAdjustDialog({
               Metros del plan{' '}
               <span className="font-semibold tabular-nums">
                 {planMeters?.toFixed(3)}
-                {exact && ` de ${originalMeters.toFixed(3)} m`}
+                {exactBand && ` de ${originalMeters.toFixed(3)} m`}
               </span>{' '}
-              {exact ? 'del original' : `m (antes ${originalMeters.toFixed(3)} m)`}
+              {exactBand ? 'del original' : `m (antes ${originalMeters.toFixed(3)} m)`}
             </span>
             <span className="font-semibold">
               {valid
-                ? exact
+                ? exactBand
                   ? 'Cuadra ✓'
                   : 'Se puede guardar'
                 : check?.ok === false && check.kind === 'meters' && diff !== null
@@ -353,6 +384,14 @@ export function PlanAdjustDialog({
                   {line}
                 </p>
               ))
+            )}
+            {theoretical !== null && (
+              <p className="text-sm">
+                Teórico {theoretical.after.toFixed(3)} kg
+                {theoretical.after.equals(theoretical.before)
+                  ? ', sin cambio.'
+                  : ` (antes ${theoretical.before.toFixed(3)} kg).`}
+              </p>
             )}
           </div>
         )}
