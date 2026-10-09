@@ -12,7 +12,6 @@ import {
   type DraftCall,
 } from '@/lib/block-drafts';
 import { errorMessage } from '@/lib/notify';
-import { newIdempotencyKey } from '@/lib/use-idempotency-key';
 
 /**
  * cc35 (ESPEC §1): el guardado automático de los bloques del modelo M en el borrador de la orden
@@ -34,6 +33,16 @@ export interface BlockSaveState {
 }
 
 const SAVE_DELAY_MS = 700;
+
+/**
+ * Una clave de idempotencia nueva. `randomUUID` solo existe en contexto seguro (HTTPS o
+ * localhost); por la IP de la red local se arma con `getRandomValues`, que está siempre.
+ */
+export function newDraftKey(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 const call: DraftCall = (path, init) => api<RoofingReportDraftDto[]>(path, init);
 
@@ -78,7 +87,7 @@ export function useBlockDrafts(
           keyFor: (fingerprint) => {
             let key = keys.current.get(fingerprint);
             if (key === undefined) {
-              key = newIdempotencyKey();
+              key = newDraftKey();
               keys.current.set(fingerprint, key);
             }
             return key;
