@@ -1,6 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
-import { confirmFilmOpen, confirmPlantClose, openQueuedOrder } from '../helpers/ui';
+import { confirmFilmOpen, openQueuedOrder } from '../helpers/ui';
 import { balanceOf, today, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -19,6 +19,10 @@ import {
 
 /**
  * El espacio de producción **por pantalla**: `/planta`, con y sin pedido (D-155, D-159, D-160).
+ *
+ * cc35: «Producir una OP» pasó al **modelo M** —un bloque por bobina, guardado solo en el
+ * borrador, «Registrar producción» y «Registrar y cerrar» con «Qué va a pasar»—. Los cuatro
+ * escenarios y sus cuentas de kardex se conservan; lo que cambió es cómo se escriben.
  *
  * Sucesor de `planta-producir-ui.spec.ts`, y el cambio de nombre no es cosmético: hasta D-160
  * había **dos** pantallas para producir —`/planta` (la terminal, una orden por vez, que montaba
@@ -117,16 +121,30 @@ async function mountFromModal(page: Page, orderCode: string, coilCode: string): 
   await expect(modal).toHaveCount(0);
 }
 
-test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
-  test('siembra el reporte con el plan que falta, deja borrar una línea, corta en el tope del plan, avisa de la desviación de kg sin bloquear, guarda orden por orden y cierra la que se quedó sin bobina', async ({
+/** El bloque de una bobina en el modelo M (cc35). */
+function blockOf(panel: Locator, coilCode: string): Locator {
+  return panel.getByTestId(`bloque-${coilCode}`);
+}
+
+async function waitSaved(panel: Locator): Promise<void> {
+  await expect(panel.getByText('Todo lo escrito está guardado')).toBeVisible({ timeout: 30_000 });
+}
+
+/** «Registrar y cerrar»: «Qué va a pasar» y su confirmación. */
+async function registerAndClose(panel: Locator, code: string): Promise<Locator> {
+  await panel.getByRole('button', { name: `Registrar y cerrar ${code}` }).click();
+  const preview = panel.getByTestId('que-va-a-pasar');
+  await expect(preview).toContainText(`${code} queda cerrada`, { timeout: 60_000 });
+  return preview;
+}
+
+test.describe('D-155/D-159/D-160 + cc35 — el espacio de producción con el modelo M', () => {
+  test('cada orden con su bobina: el último bloque trae lo que falta, el tope del plan y la desviación avisan en el bloque, lo escrito sobrevive a recargar, se registra orden por orden y se cierra la que se quedó sin bobina', async ({
     page,
     baseURL,
   }) => {
     const api = await adminApi(baseURL!);
     const scenario = await setupRoofingScenario(api, { weightKg: '2000' });
-    // Segunda cobertura a medida del mismo acabado y color (la línea 2 del pedido) y una
-    // segunda bobina: acá cada orden rola de la suya. Que **dos órdenes compartan un rollo**
-    // es el último test de este archivo, y es otra cosa.
     const { product: other } = await createRoofingProduct(api, {
       finishId: scenario.finish.id,
       colorId: scenario.color.id,
@@ -151,11 +169,6 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
     };
 
     try {
-      // ---------------------------------------------------------------------
-      // 1. El escenario, por API: un pedido de dos líneas con sus dos órdenes.
-      // ---------------------------------------------------------------------
-      // La línea A lleva un solo largo y la B **dos**: es la que permite borrar una línea
-      // sembrada sin quedarse sin nada que reportar.
       const planA = pieces([4, 10]);
       const planB = pieces([6, 5], [3, 2]);
       expect(metersOf(planA)).toBe('40.000');
@@ -169,30 +182,19 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       });
       trail.quotationIds = [quotation.id];
       trail.orderIds = [order.id];
-
-      // D-148: las dos órdenes de una vez, que es lo que el botón "Producir (2)" del detalle
-      // del pedido hace antes de mandar a esta pantalla.
       const created = await roofingOrdersFromSalesOrder(api, order.id);
       expect(created.created).toHaveLength(2);
       trail.productionOrderIds = created.created.map((c) => c.orderId);
       const codeA = created.created[0]!.code;
       const codeB = created.created[1]!.code;
 
-      // ---------------------------------------------------------------------
-      // 2. La pantalla: una pestaña por orden, las dos sin bobina.
-      // ---------------------------------------------------------------------
       await loginAsAdmin(page);
-      // La ruta vieja sigue viva como redirección y **conserva el `?pedido=`**: el detalle del
-      // pedido y el de la orden apuntaban ahí, y cualquiera pudo dejarla guardada.
+      // La ruta vieja sigue viva como redirección y conserva el `?pedido=`.
       await page.goto(`/planta/producir?pedido=${order.id}`);
-      // Mismo motivo que en el login: esta ruta se compila en el primer visitante.
       await expect(page.getByRole('heading', { name: `Producir ${order.code}` })).toBeVisible({
         timeout: 60_000,
       });
       await expect(page).toHaveURL(new RegExp(`/planta\\?pedido=${order.id}$`));
-
-      // F8-S3c/M1: las dos, iniciadas o no, ya son chips desde que se entra; abrirlas solo
-      // las selecciona.
       await openQueuedOrder(page, codeA);
       await openQueuedOrder(page, codeB);
       const tabs = page.getByRole('tablist', { name: 'Órdenes del pedido' });
@@ -202,32 +204,15 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await tabA.click();
       await expect(tabA).toContainText('Sin bobina');
       await expect(tabB).toContainText('Sin bobina');
+      // cc35 (D-550): el avance del pedido va en el subtítulo.
+      await expect(page.getByText('0 de 2 órdenes cubiertas')).toBeVisible();
 
-      const progress = page.getByRole('progressbar', { name: 'Órdenes reportadas' });
-      await expect(page.getByText('0 de 2 órdenes con su plan cubierto')).toBeVisible();
-      await expect(progress).toHaveAttribute('aria-valuenow', '0');
-      await expect(progress).toHaveAttribute('aria-valuemax', '2');
-
-      // La primera pestaña se elige sola. Su panel dice lo que el plan pide y lo que falta.
-      // El panel se nombra por su pestaña (`aria-labelledby`), así que el nombre accesible es
-      // el texto del botón: el código de la orden alcanza para identificarlo.
       const panelA = page.getByRole('tabpanel', { name: codeA });
-      await expect(panelA.getByText('Faltan 10 × 4.00 m')).toBeVisible();
-      // Sin bobina montada **no hay editor**: reportar exige material (D-086), y ofrecer las
-      // filas antes de tenerlo era invitar a transcribir algo que no se puede guardar.
-      await expect(panelA.getByLabel('Largo 1 en metros')).toHaveCount(0);
-      await expect(
-        panelA.getByText('Monta una bobina y las líneas del plan que falta aparecen aquí'),
-      ).toBeVisible();
+      await expect(panelA.getByText('La orden no tiene ninguna bobina montada')).toBeVisible();
 
-      // ---------------------------------------------------------------------
-      // 3. Montar desde el modal de búsqueda (D-159), con su filtro.
-      // ---------------------------------------------------------------------
-      // Las dos bobinas del escenario sirven para esta orden (mismo acabado, color y espesor),
-      // así que el modal tiene dos filas y el filtro es el que deja una sola.
+      // --- Montar desde el modal, con su búsqueda ---
       await panelA.getByRole('button', { name: `Montar bobinas en ${codeA}` }).click();
       const modal = page.getByRole('dialog');
-      await expect(modal.getByText(`Montar bobinas en ${codeA}`)).toBeVisible();
       await expect(
         modal.getByRole('checkbox', { name: `Elegir ${second.coil.code}` }),
       ).toBeVisible();
@@ -241,216 +226,102 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await modal.getByRole('button', { name: `Montar la bobina elegida en ${codeA}` }).click();
       await confirmFilmOpen(modal);
       await expect(modal).toHaveCount(0);
-
       await expect(tabA).toContainText('Lista');
-      // La bobina montada queda a la vista con su botón de bajarla mientras no haya rolado.
-      await expect(
-        panelA.getByRole('button', { name: `Bajar la bobina ${scenario.coil.code} de ${codeA}` }),
-      ).toBeEnabled();
 
-      // ---------------------------------------------------------------------
-      // 4. D-159: el editor llega **sembrado** con lo que el plan todavía debe.
-      // ---------------------------------------------------------------------
-      const lengthA = panelA.getByLabel('Largo 1 en metros');
-      const qtyA = panelA.getByLabel('Planchas del largo 1');
-      await expect(lengthA).toHaveValue('4.000');
+      // --- El bloque de la única bobina llega lleno con lo que falta ---
+      const blockA = blockOf(panelA, scenario.coil.code);
+      const qtyA = blockA.getByLabel(/Planchas del corte 1 de/);
+      await expect(blockA.getByLabel(/Largo del corte 1 de/)).toHaveValue('4.00');
       await expect(qtyA).toHaveValue('10');
-      // Y como cubre exactamente lo que falta, la pantalla lo dice y ofrece cerrar de una vez.
-      await expect(panelA.getByText('Con esta fila el borrador cubre el plan')).toBeVisible();
-      await expect(
-        panelA.getByText(/10 × 4\.00 m · 40\.000 m · 161\.600 kg teóricos/),
-      ).toBeVisible();
+      await expect(blockA.getByText('40.000 m · teórico 161.600 kg')).toBeVisible();
+      await expect(panelA.getByTestId('cuadre-plan')).toContainText('10 de 10 planchas');
+      // El largo se elige de la lista del plan.
+      await expect(blockA.getByLabel(/Largo del corte 1 de/).locator('option')).toHaveText([
+        'Elige el largo…',
+        '4.00 m',
+      ]);
 
-      // ---------------------------------------------------------------------
-      // 5. El tope del plan (D-146) sigue siendo duro y se aplica en la pantalla.
-      // ---------------------------------------------------------------------
-      // D-191: lo tipeado va primero al **borrador** de la orden; ejecutarlo es otro botón.
-      const saveA = panelA.getByRole('button', { name: `Agregar al borrador de ${codeA}` });
+      // --- El tope del plan (D-146) avisa en el bloque ---
       await qtyA.fill('11'); // 44 m sobre un plan de 40
-      await expect(
-        panelA.getByText(/Del plan quedan 40\.000 m y esto suma 44\.000 m/),
-      ).toBeVisible();
-      await expect(saveA).toBeDisabled();
-      // Sin filas en el borrador todavía no hay nada que ejecutar.
-      await expect(
-        panelA.getByRole('button', { name: `Ejecutar el borrador de ${codeA}` }),
-      ).toHaveCount(0);
-
-      // Una fila con largo y sin cantidad tampoco pasa, y el editor lo dice **por fila**: el
-      // operario necesita saber cuál de las cinco líneas es la que le falta (`lib/pieces.ts`).
-      await qtyA.fill('');
-      await expect(
-        panelA.getByText('Fila 1: la cantidad de planchas es un entero mayor a cero.'),
-      ).toBeVisible();
-      await expect(saveA).toBeDisabled();
-
-      await qtyA.fill('10');
-      await expect(saveA).toBeEnabled();
-
-      // ---------------------------------------------------------------------
-      // 6. D-154: el kg declarado muy por encima del teórico **avisa y deja guardar**.
-      // ---------------------------------------------------------------------
-      await panelA.getByLabel(`Kilos consumidos de ${codeA}`).fill('900');
-      await expect(panelA.getByText(/⚠ Consumo declarado 900\.000 kg/)).toBeVisible();
-      // **Lo que cambió con D-154:** hasta esa decisión el API devolvía 400 y el dato de planta
-      // había que falsearlo para poder guardarlo. Ahora entra y queda anotado.
-      await expect(saveA).toBeEnabled();
-      await saveA.click();
-
-      // La fila queda en el borrador y **nada se movió todavía**: ni kardex ni reportes.
-      const draftTableA = panelA.getByRole('table', { name: `Borrador de ${codeA}` });
-      await expect(draftTableA.getByRole('row').filter({ hasText: '10 × 4.00 m' })).toContainText(
-        '900.000',
-      );
-      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
-      await expect(tabA).toContainText('Lista');
-
-      // El borrador es **server-side**: sobrevive a recargar la pantalla.
-      await page.reload();
-      await expect(page.getByRole('heading', { name: `Producir ${order.code}` })).toBeVisible({
-        timeout: 60_000,
+      await expect(blockA.getByRole('alert')).toContainText('tiene un plan de 40.000 m', {
+        timeout: 30_000,
       });
-      await expect(draftTableA.getByRole('row').filter({ hasText: '10 × 4.00 m' })).toBeVisible();
-      // Qué pestaña queda activa es estado de la pantalla, no del servidor: tras recargar, la
-      // primera se elige sola otra vez. La hermana —todavía sin iniciar— sigue siendo un chip.
+      // Media plancha no existe.
+      await qtyA.fill('2.5');
+      await expect(blockA.getByRole('alert')).toContainText(
+        'la cantidad de planchas es un entero mayor a cero',
+      );
+      await qtyA.fill('10');
+
+      // --- D-154: el kg declarado muy por encima del teórico avisa y deja guardar ---
+      await blockA.getByLabel(/kg consumidos de/).fill('900');
+      await expect(blockA.getByText(/⚠ Consumo declarado 900\.000 kg/)).toBeVisible();
+      await waitSaved(panelA);
+      await expect(blockA.getByRole('alert')).toHaveCount(0);
+      expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
+
+      // El borrador es server-side: sobrevive a recargar.
+      await page.reload();
+      await openQueuedOrder(page, codeA);
+      await expect(
+        blockOf(page.getByRole('tabpanel', { name: codeA }), scenario.coil.code).getByLabel(
+          /kg consumidos de/,
+        ),
+      ).toHaveValue('900.000', { timeout: 60_000 });
       await openQueuedOrder(page, codeB);
       await tabA.click();
 
-      // Se ejecuta **sin** cerrar a propósito: es el reporte parcial, y deja la orden abierta
-      // con su bobina montada para comprobar abajo que la pestaña hermana no se tocó.
-      await panelA.getByRole('button', { name: `Ejecutar el borrador de ${codeA}` }).click();
-
-      // ---------------------------------------------------------------------
-      // 7. Guardado por orden: la pestaña queda reportada y el progreso avanza.
-      // ---------------------------------------------------------------------
-      await expect(tabA).toContainText('Reportada');
-      await expect(page.getByText('1 de 2 órdenes con su plan cubierto')).toBeVisible();
-      await expect(progress).toHaveAttribute('aria-valuenow', '1');
-      await expect(panelA.getByText('El plan ya está cubierto.')).toBeVisible();
-      // El editor se vuelve a sembrar de lo que falta, que ahora es nada: una fila en blanco.
-      await expect(lengthA).toHaveValue('');
-      // Y con kilos ya reportados aparece el cierre suelto, que **no** exige que quede algo
-      // por reportar: la orden ya produjo y hay que poder cerrarla sin inventar largos.
-      await expect(
-        panelA.getByRole('button', { name: `Cerrar ${codeA} sin reportar más` }),
-      ).toBeVisible();
-      // Y el ⚠ **sigue a la vista** con el campo de kilos ya limpio: es justo cuando la
-      // desviación pasó de ser algo que se estaba tipeando a un hecho registrado, y
-      // desaparecer ahí era perderla de vista en el único momento en que importa.
-      await expect(panelA.getByText(/⚠ Consumo declarado 900\.000 kg/)).toBeVisible();
-      // La otra pestaña no se tocó: cada orden se guarda por su cuenta.
+      // Registrar **sin** cerrar: la orden queda abierta con su bobina montada.
+      await panelA.getByRole('button', { name: `Registrar producción de ${codeA}` }).click();
+      await expect(tabA).toContainText('Reportada', { timeout: 60_000 });
+      await expect(page.getByText('1 de 2 órdenes cubiertas')).toBeVisible();
+      await expect(blockA.getByText(/ya registrado 161\.600 kg/)).toBeVisible();
+      // La otra pestaña no se tocó: cada orden se registra por su cuenta.
       await expect(tabB).toContainText('Sin bobina');
 
-      // ---------------------------------------------------------------------
-      // 8. La segunda orden: montar, bajar por error, volver a montar.
-      // ---------------------------------------------------------------------
+      // --- La segunda orden: montar, bajar por error, volver a montar ---
       await tabB.click();
       const panelB = page.getByRole('tabpanel', { name: codeB });
-      await expect(panelB.getByText('Faltan 5 × 6.00 m, 2 × 3.00 m')).toBeVisible();
-
       await mountFromModal(page, codeB, second.coil.code);
       await expect(tabB).toContainText('Lista');
-
-      // Bajarla mientras no roló nada (D-155: la pestaña conoce la asignación, no solo la
-      // bobina) devuelve la orden a "Sin bobina", y con ella se va el editor sembrado.
-      await panelB
+      const blockB = blockOf(panelB, second.coil.code);
+      await blockB
         .getByRole('button', { name: `Bajar la bobina ${second.coil.code} de ${codeB}` })
         .click();
       await expect(tabB).toContainText('Sin bobina');
-      await expect(panelB.getByLabel('Largo 1 en metros')).toHaveCount(0);
-
+      await expect(blockB).toHaveCount(0);
       await mountFromModal(page, codeB, second.coil.code);
       await expect(tabB).toContainText('Lista');
 
-      // ---------------------------------------------------------------------
-      // 9. D-159: **borrar una línea sembrada** antes de guardar.
-      // ---------------------------------------------------------------------
-      // El plan pide dos largos y de la roladora salió solo el primero. Quitar la fila que no
-      // salió es la operación normal de quien roló la mitad, no una corrección rara.
-      await expect(panelB.getByLabel('Largo 1 en metros')).toHaveValue('6.000');
-      await expect(panelB.getByLabel('Planchas del largo 1')).toHaveValue('5');
-      await expect(panelB.getByLabel('Largo 2 en metros')).toHaveValue('3.000');
-      await expect(panelB.getByLabel('Planchas del largo 2')).toHaveValue('2');
+      // --- La bobina se acabó: de la roladora salió solo el primer largo ---
+      await expect(blockB.getByLabel(/Largo del corte 1 de/)).toHaveValue('6.00');
+      await expect(blockB.getByLabel(/Planchas del corte 1 de/)).toHaveValue('5');
+      await expect(blockB.getByLabel(/Largo del corte 2 de/)).toHaveValue('3.00');
+      await blockB.getByRole('button', { name: /Quitar el corte 2 de/ }).click();
+      await expect(blockB.getByText('30.000 m · teórico 121.200 kg')).toBeVisible();
+      await expect(panelB.getByTestId('cuadre-plan')).toContainText('5 de 7 planchas');
+      // Con su fila en el borrador, la bobina ya no se baja.
+      await waitSaved(panelB);
+      await expect(blockB.getByRole('button', { name: /Bajar la bobina/ })).toHaveCount(0);
 
-      await panelB.getByRole('button', { name: 'Quitar el largo de la fila 2' }).click();
-      await expect(panelB.getByLabel('Largo 2 en metros')).toHaveCount(0);
-      await expect(
-        panelB.getByText(/5 × 6\.00 m · 30\.000 m · 121\.200 kg teóricos/),
-      ).toBeVisible();
-      // 30 de 36: esto **no** cubre el plan, así que la pantalla no promete cerrarlo.
-      await expect(panelB.getByText('Con esta fila el borrador cubre el plan')).toHaveCount(0);
+      // D-089 por bobina (cc34): 130 kg consumidos sobre 121.2 teóricos ⇒ 8.8 kg de despunte.
+      await blockB.getByLabel(/kg consumidos de/).fill('130');
+      await expect(blockB.getByText('Despunte 8.800 kg')).toBeVisible();
+      await waitSaved(panelB);
+      const preview = await registerAndClose(panelB, codeB);
+      await expect(preview).toContainText(`8.800 kg de ${second.coil.code}`);
+      await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
 
-      await panelB.getByRole('button', { name: `Agregar al borrador de ${codeB}` }).click();
-      // Con una fila en el borrador no se puede bajar la bobina de la que sale.
-      await expect(
-        panelB.getByRole('button', { name: `Bajar la bobina ${second.coil.code} de ${codeB}` }),
-      ).toBeDisabled();
-      await panelB.getByRole('button', { name: `Ejecutar el borrador de ${codeB}` }).click();
-      await expect(panelB.getByText('Faltan 2 × 3.00 m')).toBeVisible();
-      await expect(tabB).toContainText('Lista');
-      await expect(progress).toHaveAttribute('aria-valuenow', '1');
+      // Cerrada, la orden sale de la lista de abiertas.
+      await expect(tabs.getByRole('tab')).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByText('1 de 1 orden cubierta')).toBeVisible();
 
-      // ---------------------------------------------------------------------
-      // 10. **La bobina se acabó**: cerrar sin reportar los 6 m que faltan.
-      // ---------------------------------------------------------------------
-      // El editor vuelve a sembrarse con lo que el plan todavía debe —listo por si de verdad
-      // se rola—, pero la corrida terminó: el rollo se acabó a los 30 de 36 m.
-      await expect(panelB.getByLabel('Largo 1 en metros')).toHaveValue('3.000');
-      await expect(panelB.getByLabel('Planchas del largo 1')).toHaveValue('2');
-
-      // Con kilos reportados el cierre suelto existe **aunque el plan no esté cubierto**, y lo
-      // dice en el propio botón. Atado a "plan cubierto", la única salida era bajar el plan a
-      // mano hasta que diera cero o reportar 6 m que nadie produjo.
-      const closeB = panelB.getByRole('button', {
-        name: `Cerrar ${codeB} sin reportar más`,
-      });
-      await expect(closeB).toContainText('(la bobina se acabó)');
-
-      // D-089: los kilos que la bobina consumió **en toda la corrida**. Sin ellos el cierre
-      // asume despunte cero; con 130 sobre los 120 teóricos, los 10 de diferencia salen del
-      // inventario como despunte (10/130 = 7.7 %, por debajo del umbral que exige motivo).
-      const closeKgB = panelB.getByLabel(`Kilos consumidos al cerrar ${codeB}`);
-      await closeKgB.fill('100');
-      await expect(panelB.getByText(/Las planchas ya consumieron 121\.200 kg/)).toBeVisible();
-      await expect(closeB).toBeDisabled();
-
-      // **Cada cierre valida contra su propio piso, y este es el caso que lo prueba.** El
-      // editor sigue sembrado con las dos planchas que faltan (24.24 kg), pero este botón no
-      // las manda: su piso son los 121.2 kg ya reportados, no 145.44. Con un solo piso —el de la
-      // versión con reporte— declarar los 130 kg que la bobina de verdad consumió apagaba el
-      // botón, y el caso que el botón vino a resolver quedaba sin salida.
-      await closeKgB.fill('130');
-      await expect(panelB.getByLabel('Largo 1 en metros')).toHaveValue('3.000');
-      await expect(panelB.getByText('Despunte al cerrar: 8.800 kg.')).toBeVisible();
-      await expect(closeB).toBeEnabled();
-
-      // Y la ✕ de la **única** fila vacía el editor en vez de estar apagada: sin eso había que
-      // borrar el largo y la cantidad campo por campo.
-      const dropRow = panelB.getByRole('button', { name: 'Quitar el largo de la fila 1' });
-      await expect(dropRow).toBeEnabled();
-      await dropRow.click();
-      await expect(panelB.getByLabel('Largo 1 en metros')).toHaveValue('');
-      await expect(panelB.getByLabel('Planchas del largo 1')).toHaveValue('');
-
-      await closeB.click();
-      await confirmPlantClose(page, 'Cerrar la orden');
-
-      // Cerrada, la orden sale de la lista de abiertas: queda la pestaña de la que sigue viva.
-      await expect(tabs.getByRole('tab')).toHaveCount(1);
-      await expect(page.getByText('1 de 1 orden con su plan cubierto')).toBeVisible();
-
-      // ---------------------------------------------------------------------
-      // 11. Y el kardex confirma que lo que la pantalla dice se escribió de verdad.
-      // ---------------------------------------------------------------------
+      // --- El kardex confirma lo que la pantalla dijo ---
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('40.000');
       // 30 m, no 36: los 6 que faltaban no se produjeron y nadie los inventó.
       expect((await balanceOf(api, 'PRODUCT', other.id)).qty).toBe('30.000');
-      // Las bobinas salieron por el kilo **teórico** (4 kg/m), no por los 900 declarados:
-      // 40 m × 4 en la primera; en la segunda, 30 m × 4 más los 10 kg de despunte del cierre.
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1838.400');
       expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('1870.000');
-
-      // Y el kg declarado quedó guardado con su aviso (D-146 + D-154).
       const reportA = await lastActiveReport(api, created.created[0]!.orderId);
       expect(reportA.consumedKg).toBe('900.000');
       expect(reportA.rawMaterialWarning).toContain('Consumo declarado 900.000 kg');
@@ -460,25 +331,10 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
     }
   });
 
-  test('el plan de corte de una cobertura a medida se ajusta desde el panel, y el tope del reporte se mueve con él', async ({
+  test('el plan de corte de una cobertura a medida se ajusta en su diálogo con los mismos metros, y el bloque se vuelve a llenar con el plan nuevo', async ({
     page,
     baseURL,
   }) => {
-    /**
-     * D-159: **el techo se mide en obra**. El plan que la cotización copió sale del papel, y
-     * cuando el largo real es otro hay que corregirlo antes de rolar. Hasta esta sesión eso
-     * obligaba a irse a la terminal —la otra mitad del flujo que esta pantalla vino a juntar—,
-     * y el plan es además el tope duro de lo que se puede reportar (D-146): sin poder editarlo
-     * acá, la única salida era reportar largos que no son los que salieron.
-     *
-     * Lo que el caso comprueba es justamente el encadenado: el plan cambia, el editor del
-     * reporte se **vuelve a sembrar** del plan nuevo, y lo que antes el tope rechazaba ahora
-     * entra al kardex con los largos de verdad.
-     *
-     * Ojo con la ambigüedad: con el plan en edición hay **dos** editores de largos a la vista
-     * —el del plan y el del reporte— y sus `aria-label` son los mismos. Se los distingue por el
-     * `id`, que lleva el prefijo de cada uno (`plan-…` / `reporte-…`).
-     */
     const api = await adminApi(baseURL!);
     const scenario = await setupRoofingScenario(api, { weightKg: '2000' });
     const customer = await createCustomer(api);
@@ -512,37 +368,19 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       });
       await openQueuedOrder(page, op.code);
       const panel = page.getByRole('tabpanel', { name: op.code });
-      // Por "Faltan …" y por los metros entre paréntesis, y no por el desglose suelto: ese
-      // texto aparece dos veces —en la tarjeta del plan y en la línea de lo que falta— y una
-      // búsqueda por él sola es ambigua.
-      await expect(panel.getByText('Faltan 10 × 4.00 m')).toBeVisible();
-      await expect(panel.getByText('(40.000 m)')).toBeVisible();
-
       await mountFromModal(page, op.code, scenario.coil.code);
-      await expect(panel.getByLabel('Largo 1 en metros')).toHaveValue('4.000');
+      const block = blockOf(panel, scenario.coil.code);
+      await expect(block.getByLabel(/Planchas del corte 1 de/)).toHaveValue('10');
 
-      // Con el plan de 40 m, 9 planchas de 4.20 (37.800 m) entran; **10** de 4.20 (42 m) no.
-      // Se comprueba primero el rechazo para que quede claro que el tope no se aflojó: lo que
-      // lo mueve es cambiar el plan, no reportar por encima.
-      await panel.getByLabel('Largo 1 en metros').fill('4.20');
-      await expect(
-        panel.getByText(/Del plan quedan 40\.000 m y esto suma 42\.000 m/),
-      ).toBeVisible();
-      await expect(
-        panel.getByRole('button', { name: `Agregar al borrador de ${op.code}` }),
-      ).toBeDisabled();
-
-      // --- El plan, en su diálogo (cc35): mismos metros, ni más ni menos ---
+      // --- El plan, en su diálogo: mismos metros, ni más ni menos ---
       await panel.getByRole('button', { name: `Ajustar el plan de corte de ${op.code}` }).click();
       const planDialog = page.getByRole('dialog', { name: `Ajustar el plan de ${op.code}` });
-      // Llega con el plan vigente adentro, no en blanco: corregir es editar, no transcribir.
       const planLength = planDialog.getByLabel('Largo 1 del plan en metros');
       const planQty = planDialog.getByLabel('Planchas del largo 1 del plan');
       await expect(planLength).toHaveValue('4.00');
       await expect(planQty).toHaveValue('10');
       await planLength.fill('4.20');
       await planQty.fill('9');
-      // 37.8 de 40 m: no cuadra, y «Guardar el plan» se queda y lo dice.
       await expect(planDialog.getByTestId('plan-cuadre')).toContainText('Faltan 2.200 m');
       await planDialog.getByRole('button', { name: 'Guardar el plan' }).click();
       await expect(planDialog.getByRole('alert')).toContainText('faltan 2.200 m');
@@ -554,19 +392,21 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await planDialog.getByRole('button', { name: 'Guardar el plan' }).click();
       await expect(planDialog).toHaveCount(0);
 
-      await expect(panel.getByText('Faltan 9 × 4.20 m, 1 × 2.20 m')).toBeVisible();
-      await expect(panel.getByText('(40.000 m)')).toBeVisible();
-      // El editor del reporte se sembró **del plan nuevo**: lo que había era el viejo.
-      await expect(panel.getByLabel('Largo 1 en metros')).toHaveValue('4.200');
-      await expect(panel.getByLabel('Planchas del largo 1')).toHaveValue('9');
-      // Lo que salió fueron las 9 de 4.20: la de 2.20 queda sin producir.
-      await panel.getByRole('button', { name: 'Quitar el largo de la fila 2' }).click();
-      await expect(panel.getByText(/9 × 4\.20 m · 37\.800 m · 152\.712 kg teóricos/)).toBeVisible();
+      // El bloque se vuelve a llenar con el plan nuevo; salieron solo las 9 de 4.20.
+      await expect(block.getByLabel(/Largo del corte 1 de/)).toHaveValue('4.20', {
+        timeout: 30_000,
+      });
+      await expect(block.getByLabel(/Planchas del corte 1 de/)).toHaveValue('9');
+      await expect(block.getByLabel(/Largo del corte 2 de/)).toHaveValue('2.20');
+      await block.getByRole('button', { name: /Quitar el corte 2 de/ }).click();
+      await expect(block.getByText('37.800 m · teórico 152.712 kg')).toBeVisible();
+      await waitSaved(panel);
 
-      await panel.getByRole('button', { name: `Agregar al borrador de ${op.code}` }).click();
-      await panel.getByRole('button', { name: `Ejecutar el borrador y cerrar ${op.code}` }).click();
-      await confirmPlantClose(page, 'Ejecutar y cerrar');
-      await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible();
+      const preview = await registerAndClose(panel, op.code);
+      await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
+      await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible({
+        timeout: 60_000,
+      });
 
       // El kardex sale por los largos de verdad: 37.8 m de producto y 151.2 kg de bobina.
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('37.800');
@@ -577,30 +417,10 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
     }
   });
 
-  test('una corrida de planchas ajusta su plan en planchas y captura los largos, y son las planchas tipeadas las que entran al kardex', async ({
+  test('una corrida de planchas de catálogo ajusta su cantidad y su bloque captura unidades, y son esas planchas las que entran al kardex', async ({
     page,
     baseURL,
   }) => {
-    /**
-     * D-118 + D-159: una **plancha de catálogo** tiene el largo en el SKU, así que su plan se
-     * ajusta pidiendo **solo la cantidad**. Ofrecer el editor de largos completo sería un campo
-     * cuya única respuesta correcta el sistema ya conoce, y aceptar otro largo dejaría el plan
-     * diciendo algo que el catálogo contradice.
-     *
-     * Lo que se comprueba después no es el texto sino el **saldo**: la conversión planchas→ML
-     * es el punto ciego de toda la pantalla —si estuviera mal, reportar 3 planchas entraría al
-     * kardex y al costo con otra cantidad y nadie se enteraría—, así que 3 planchas de 4 m
-     * tienen que dejar 3 `NIU` en el producto y 48 kg menos en la bobina.
-     *
-     * **De dónde nace la orden cambió con D-171, y el resto del caso no.** Se llamaba «corrida
-     * a stock» porque bajo D-140 una plancha se producía sin pedido detrás (`productId` +
-     * `targetPieces`); esa ruta dejó de existir y ahora la OP nace de la reserva del pedido,
-     * igual que cualquier otra cobertura. El plan de arranque sigue siendo el mismo —el largo
-     * del SKU repetido hasta la cantidad pedida, 5 × 4.00 m— porque lo deriva la misma función.
-     *
-     * Se sigue entrando a `/planta` **sin** `?pedido=`: lo que este caso mira es el panel de una
-     * orden encontrada en la lista de todas las abiertas, no el espacio de un pedido.
-     */
     const api = await adminApi(baseURL!);
     // Plancha de catálogo de 4 m (`NIU`, largo fijo en el SKU) y una bobina de 2 000 kg.
     const scenario = await setupRoofingScenario(api, {
@@ -622,8 +442,6 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
 
     try {
       expect(scenario.product.unit).toBe('NIU');
-      // D-171: cinco planchas cotizadas y confirmadas. El valor por metro (D-161) es holgado
-      // respecto del piso de D-163: el material de una plancha son 16.16 kg a S/ 5.
       const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
         customerId: customer.id,
         issueDate: today(),
@@ -636,97 +454,59 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
         {},
       );
       trail.orderIds = [salesOrder.id];
-
       const reservation = (await reservationsOf(api, salesOrder.id)).find(
         (r) => r.status === 'ACTIVE',
       )!;
-      expect(reservation.itemType).toBe('RAW_MATERIAL');
       const op = await roofingOrder(api, reservation.id);
       trail.productionOrderIds = [op.id];
-      // El plan es el largo del SKU repetido hasta la cantidad pedida: 5 × 4.00 m = 20 ML.
       expect(op.items).toEqual([{ lineNumber: 1, lengthMm: '4000.00', qty: 5 }]);
 
       await loginAsAdmin(page);
-      // F8-S3b/M2: `/planta` lista pedidos; la tarjeta del pedido lleva a su producción.
       await page.goto('/planta');
       await expect(page.getByRole('heading', { name: 'Producción', exact: true })).toBeVisible({
         timeout: 60_000,
       });
       await page.getByRole('link', { name: `Producir ${op.salesOrderCode!}`, exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/planta\\?pedido=${salesOrder.id}$`));
-
-      // Por encima de `MAX_ORDER_TABS` el selector deja de ser pestañas y pasa a lista lateral:
-      // los botones pierden `role="tab"` a propósito (una lista no cumple la navegación por
-      // flechas que la semántica de pestañas promete) y el panel pierde con ellos su
-      // `role="tabpanel"`. Se los busca entonces por contenedor y por id, que no cambian entre
-      // los dos modos.
-      //
-      // F8-S3c/M1: sin cola separada, la orden —iniciada o no— ya está entre los chips desde
-      // que se entra; un clic en su chip la abre en el workspace.
       const picker = page.locator('[aria-label="Órdenes del pedido"]');
       const tab = picker.locator('button').filter({ hasText: op.code });
-      await expect(tab).toHaveCount(1);
       await tab.click();
       const panel = page.locator(`#panel-${op.id}`);
-
-      // Sin bobina no se reporta; se monta desde la propia pestaña, igual que contra pedido.
       await expect(tab).toContainText('Sin bobina');
       await mountFromModal(page, op.code, scenario.coil.code);
       await expect(tab).toContainText('Lista');
 
-      // --- El plan, en planchas: el largo no se pregunta (D-118) ---
+      // --- El plan, en planchas: el largo no se pregunta (D-118); la cantidad es libre (D-545) ---
       await panel.getByRole('button', { name: `Ajustar el plan de corte de ${op.code}` }).click();
       const planDialog = page.getByRole('dialog', { name: `Ajustar el plan de ${op.code}` });
       const planSheets = planDialog.getByLabel('Planchas del largo 1 del plan');
       await expect(planSheets).toHaveValue('5');
-      // El largo lo trae el SKU: no se edita. Y en una plancha el total puede cambiar (D-545).
       await expect(planDialog.getByLabel('Largo 1 del plan en metros')).toBeDisabled();
       await planSheets.fill('6');
       await planDialog.getByRole('button', { name: 'Guardar el plan' }).click();
       await expect(planDialog).toHaveCount(0);
-      // Por "Faltan …" y por los metros: el desglose suelto está también en la tarjeta del
-      // plan, y buscarlo por sí solo encuentra los dos.
-      await expect(panel.getByText('Faltan 6 × 4.00 m')).toBeVisible();
-      await expect(panel.getByText('(24.000 m)')).toBeVisible();
 
-      // --- El reporte, sembrado del plan nuevo y recortado a lo que de verdad salió ---
-      const sheets = panel.getByLabel('Planchas del largo 1');
-      await expect(panel.getByLabel('Largo 1 en metros')).toHaveValue('4.000');
-      await expect(sheets).toHaveValue('6');
+      // --- Un solo largo por orden: el bloque lleva una fila, con las unidades ---
+      const block = blockOf(panel, scenario.coil.code);
+      await expect(block.getByText('Plancha 4.00 m')).toBeVisible();
+      const units = block.getByLabel(/Unidades del corte 1 de/);
+      await expect(units).toHaveValue('6', { timeout: 30_000 });
+      await expect(panel.getByTestId('cuadre-plan')).toContainText('6 de 6 und');
+      // 3 planchas de 4 m = 12 ML ⇒ 48.48 kg teóricos con el 1 % de D-165.
+      await units.fill('3');
+      await expect(block.getByText('12.000 m · teórico 48.480 kg')).toBeVisible();
+      await waitSaved(panel);
+      await panel.getByRole('button', { name: `Registrar producción de ${op.code}` }).click();
+      await expect(block.getByText(/ya registrado 48\.480 kg/)).toBeVisible({ timeout: 60_000 });
 
-      // Media plancha no existe: la cantidad va entera.
-      const save = panel.getByRole('button', { name: `Agregar al borrador de ${op.code}` });
-      await sheets.fill('2.5');
-      await expect(
-        panel.getByText(/la cantidad de planchas es un entero mayor a cero/),
-      ).toBeVisible();
-      await expect(save).toBeDisabled();
-
-      // 3 planchas de 4 m = 12 ML ⇒ 48.48 kg teóricos con el 1 % de D-165. Es la conversión que
-      // el kardex confirma.
-      await sheets.fill('3');
-      await expect(panel.getByText(/3 × 4\.00 m · 12\.000 m · 48\.480 kg teóricos/)).toBeVisible();
-      await expect(save).toBeEnabled();
-      await save.click();
-      await panel.getByRole('button', { name: `Ejecutar el borrador de ${op.code}` }).click();
-
-      // Quedan 3 planchas del plan ampliado: la orden sigue abierta y lo dice.
-      await expect(panel.getByText('Faltan 3 × 4.00 m')).toBeVisible();
-
-      // ---------------------------------------------------------------------
       // Lo que de verdad protege este caso: el saldo, no el texto.
-      // ---------------------------------------------------------------------
       const product = await balanceOf(api, 'PRODUCT', scenario.product.id);
-      // **3 planchas, no 12 (los metros) ni 1 (la línea del plan).** Y en `NIU`: una plancha
-      // de catálogo no entra al kardex en metros.
       expect(product.qty).toBe('3.000');
       expect(product.unit).toBe('NIU');
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1951.520');
-
       const report = await lastActiveReport(api, op.id);
       expect(report.pieces).toBe(3);
       expect(report.theoreticalKg).toBe('48.480');
-      // D-083: el producto se cuenta en piezas, así que el reporte no lleva metros.
       expect(report.metersM).toBeNull();
     } finally {
       await purgeRoofingTrail(api, trail);
@@ -734,30 +514,11 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
     }
   });
 
-  test('dos órdenes del mismo pedido rolan del MISMO rollo: la primera cierra con «Ejecutar y cerrar» y la segunda lo monta sin salir de la pantalla', async ({
+  test('dos órdenes del mismo pedido rolan del MISMO rollo: la primera se registra y cierra, y la segunda lo monta sin salir de la pantalla', async ({
     page,
     baseURL,
   }) => {
-    /**
-     * **El caso que justifica que «Guardar y cerrar» exista** (D-159).
-     *
-     * Un pedido de coberturas genera una OP por línea (D-084/D-148) y en la planta real las
-     * dos se rolan **del mismo rollo**: se monta, se rola la primera, se cambia el plan de la
-     * roladora y se sigue con la segunda. Eso era imposible hasta esta sesión —
-     * `assertStripsNotAssigned` rechazaba la bobina mientras la orden 1 siguiera abierta con
-     * ella montada— y el cierre vivía en **otra** pantalla, así que el operario tenía que
-     * irse al detalle de la orden, cerrarla ahí y volver. Con el cierre en el mismo botón que
-     * el reporte, y en una sola transacción, la bobina queda libre en el acto y la hermana la
-     * monta sin moverse de la pestaña de al lado.
-     *
-     * Aritmética a mano: 1 000 mm × 0.50 mm y densidad 8.0 ⇒ 4 kg por metro lineal.
-     *   línea 1: 10 × 4.00 m = 40 m → 160 kg
-     *   línea 2:  5 × 6.00 m = 30 m → 120 kg
-     *   la bobina de 2 000 kg tiene que terminar en 2 000 − 280 = 1 720 kg.
-     */
     const api = await adminApi(baseURL!);
-    // **Una sola bobina**, y bien holgada: lo que se prueba es que las dos órdenes la usen,
-    // no que el material alcance justo.
     const scenario = await setupRoofingScenario(api, { weightKg: '2000' });
     const { product: other } = await createRoofingProduct(api, {
       finishId: scenario.finish.id,
@@ -787,7 +548,6 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       trail.quotationIds = [quotation.id];
       trail.orderIds = [order.id];
       const created = await roofingOrdersFromSalesOrder(api, order.id);
-      expect(created.created).toHaveLength(2);
       trail.productionOrderIds = created.created.map((c) => c.orderId);
       const codeA = created.created[0]!.code;
       const codeB = created.created[1]!.code;
@@ -800,53 +560,36 @@ test.describe('D-155/D-159/D-160 — el espacio de producción', () => {
       await openQueuedOrder(page, codeA);
       await openQueuedOrder(page, codeB);
       const tabs = page.getByRole('tablist', { name: 'Órdenes del pedido' });
-      await expect(tabs.getByRole('tab')).toHaveCount(2);
       await tabs.getByRole('tab').filter({ hasText: codeA }).click();
 
-      // --- Orden 1: montar, y cerrar en el mismo acto que el reporte ---
+      // --- Orden 1: montar, registrar y cerrar en el mismo acto ---
       const panelA = page.getByRole('tabpanel', { name: codeA });
       await mountFromModal(page, codeA, scenario.coil.code);
-      await expect(panelA.getByLabel('Largo 1 en metros')).toHaveValue('4.000');
-      await expect(panelA.getByLabel('Planchas del largo 1')).toHaveValue('10');
-      await expect(panelA.getByText('Con esta fila el borrador cubre el plan')).toBeVisible();
-      await panelA.getByRole('button', { name: `Agregar al borrador de ${codeA}` }).click();
-      await panelA.getByRole('button', { name: `Ejecutar el borrador y cerrar ${codeA}` }).click();
-      await confirmPlantClose(page, 'Ejecutar y cerrar');
+      await expect(
+        blockOf(panelA, scenario.coil.code).getByLabel(/Planchas del corte 1 de/),
+      ).toHaveValue('10');
+      const previewA = await registerAndClose(panelA, codeA);
+      await previewA.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
 
       // La orden cerrada sale de la lista y la hermana queda sola y seleccionada.
-      await expect(tabs.getByRole('tab')).toHaveCount(1);
+      await expect(tabs.getByRole('tab')).toHaveCount(1, { timeout: 60_000 });
       const panelB = page.getByRole('tabpanel', { name: codeB });
-      await expect(panelB.getByText('Faltan 5 × 6.00 m')).toBeVisible();
 
-      // --- Orden 2: **la misma bobina**, sin salir de la pantalla ---
-      // Antes de D-159 esto era un 400: la bobina seguía asignada a la orden 1, que solo se
-      // liberaba cerrándola desde otra pantalla.
+      // --- Orden 2: la misma bobina, con lo que quedó del rollo ---
       await mountFromModal(page, codeB, scenario.coil.code);
-      await expect(
-        panelB.getByRole('button', { name: `Bajar la bobina ${scenario.coil.code} de ${codeB}` }),
-      ).toBeVisible();
-      // Y llega con **lo que quedó del rollo**, no con los 2 000 originales: la primera orden
-      // ya se llevó sus 161.6 kg (40 m × 4.04 kg/m, D-165).
-      await expect(panelB.getByText('pendiente 1,838.400 kg')).toBeVisible();
+      const blockB = blockOf(panelB, scenario.coil.code);
+      await expect(blockB.getByText(/saldo 1,838\.400 kg/)).toBeVisible();
+      await expect(blockB.getByLabel(/Planchas del corte 1 de/)).toHaveValue('5');
+      await expect(blockB.getByText('30.000 m · teórico 121.200 kg')).toBeVisible();
+      const previewB = await registerAndClose(panelB, codeB);
+      await previewB.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
+      await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible({
+        timeout: 60_000,
+      });
 
-      await expect(panelB.getByLabel('Largo 1 en metros')).toHaveValue('6.000');
-      await expect(panelB.getByLabel('Planchas del largo 1')).toHaveValue('5');
-      await expect(
-        panelB.getByText(/5 × 6\.00 m · 30\.000 m · 121\.200 kg teóricos/),
-      ).toBeVisible();
-      await panelB.getByRole('button', { name: `Agregar al borrador de ${codeB}` }).click();
-      await panelB.getByRole('button', { name: `Ejecutar el borrador y cerrar ${codeB}` }).click();
-      await confirmPlantClose(page, 'Ejecutar y cerrar');
-
-      // Sin órdenes abiertas, el pedido lo dice en vez de dejar el panel en blanco.
-      await expect(page.getByText('Este pedido no tiene órdenes abiertas')).toBeVisible();
-
-      // ---------------------------------------------------------------------
-      // El kardex de las dos: es lo único que prueba que el rollo se usó dos veces.
-      // ---------------------------------------------------------------------
       expect((await balanceOf(api, 'PRODUCT', scenario.product.id)).qty).toBe('40.000');
       expect((await balanceOf(api, 'PRODUCT', other.id)).qty).toBe('30.000');
-      // 2 000 − 160 − 120: los dos consumos salieron de la **misma** bobina.
+      // 2 000 − 161.6 − 121.2: los dos consumos salieron de la misma bobina.
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1717.200');
     } finally {
       await purgeRoofingTrail(api, trail);

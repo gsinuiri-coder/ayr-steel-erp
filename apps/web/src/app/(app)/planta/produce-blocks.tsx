@@ -17,6 +17,8 @@ import {
   type RoofingBatchCoilDto,
   type RoofingBatchOrderDto,
   type RoofingPieceDto,
+  type RoofingReportDraftDto,
+  BACKDATE_OUT_OF_ORDER,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatQtyAsIs } from '@/lib/format';
@@ -24,6 +26,7 @@ import { errorMessage, toast } from '@/lib/notify';
 import { mmToMeters, type PieceRow } from '@/lib/pieces';
 import {
   blockFigures,
+  byLength,
   coilOfRowError,
   fillFromRemaining,
   planSquare,
@@ -130,7 +133,31 @@ export function ProduceBlocks({
   const invalidate = useCallback(() => {
     invalidateProduction(queryClient, order.orderId);
   }, [queryClient, order.orderId]);
-  const drafts = useBlockDrafts(order, invalidate);
+  /**
+   * Guardar un bloque no toca el kardex: la pantalla toma el borrador que devolvió el API en su
+   * caché, sin volver a pedir todas las órdenes (revisión de cc35: cada pausa refrescaba todo).
+   */
+  const onSaved = useCallback(
+    (list: RoofingReportDraftDto[]) => {
+      queryClient.setQueriesData<RoofingBatchOrderDto[]>({ queryKey: ['roofing-batch'] }, (old) =>
+        old?.map((o) =>
+          o.orderId === order.orderId
+            ? {
+                ...o,
+                drafts: list,
+                draftMeters: sum(list.map((d) => toDecimal(d.meters))).toFixed(3),
+              }
+            : o,
+        ),
+      );
+    },
+    [queryClient, order.orderId],
+  );
+  const drafts = useBlockDrafts(order, onSaved);
+  /** Último bloque vaciado a mano: no se vuelve a llenar solo hasta que se escriba en él. */
+  const [emptied, setEmptied] = useState<ReadonlySet<string>>(new Set());
+  /** Guardando lo pendiente antes de registrar: los botones no aceptan otro clic. */
+  const [starting, setStarting] = useState(false);
   const catalog = order.productUnit !== Unit.MTR && order.productLengthMm !== null;
 
   const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
@@ -166,7 +193,13 @@ export function ProduceBlocks({
         new Decimal(0),
       );
       return {
-        rows: rowsOf(rows.flatMap((d) => d.pieces)),
+        // Un borrador viejo con dos filas de la misma bobina se suma por largo (D-548).
+        rows: rowsOf(
+          [...byLength(rows.flatMap((d) => d.pieces))].map(([lengthMm, qty]) => ({
+            lengthMm,
+            qty,
+          })),
+        ),
         consumedKg: rows.some((d) => d.consumedKg !== null) ? kg.toFixed(3) : '',
       };
     };
@@ -181,7 +214,7 @@ export function ProduceBlocks({
     return coils.map((coil, i) => {
       const last = i === coils.length - 1;
       const content = contentOf(coil.coilId);
-      const derived = last && content === null;
+      const derived = last && content === null && !emptied.has(coil.coilId);
       const rows = derived
         ? rowsOf(fillFromRemaining(order.remainingPieces, others))
         : (content?.rows ?? []);
@@ -200,7 +233,7 @@ export function ProduceBlocks({
         parseError: payload.ok ? null : payload.reason,
       };
     });
-  }, [order.coils, order.drafts, order.remainingPieces, drafts.edits, catalog]);
+  }, [order.coils, order.drafts, order.remainingPieces, drafts.edits, catalog, emptied]);
 
   const lastBlock = blocks[blocks.length - 1];
 
@@ -212,6 +245,13 @@ export function ProduceBlocks({
     setCommitError(null);
     setExpanded((prev) => ({ ...prev, [block.coil.coilId]: true }));
     if (block.last || lastBlock === undefined) {
+      const payload = blockPayload(next);
+      setEmptied((prev) => {
+        const out = new Set(prev);
+        if (payload.ok && payload.empty) out.add(block.coil.coilId);
+        else out.delete(block.coil.coilId);
+        return out;
+      });
       drafts.edit(block.coil.coilId, next);
       return;
     }
@@ -280,12 +320,22 @@ export function ProduceBlocks({
       ...(toleranceOverrides.length > 0 ? { toleranceOverrides } : {}),
       operationDate,
       confirmBackdate: backdate.current || undefined,
-      idempotencyKey: submitKey.current(close ? 'close' : 'commit'),
+      // D-182: la clave va atada a lo que se registra, no solo a si cierra.
+      idempotencyKey: submitKey.current(
+        JSON.stringify({
+          close,
+          rows: drafts.latestDrafts().map((d) => [d.id, d.meters, d.consumedKg]),
+          toleranceOverrides,
+        }),
+      ),
     };
   };
 
   /** Un rechazo del registro: en el bloque de su fila, o arriba. */
   const onError = (err: unknown) => {
+    // D-124: la retro-fecha la atiende su diálogo (`useBackdateConfirm`), no es un error del bloque.
+    if (err instanceof ApiError && err.code === BACKDATE_OUT_OF_ORDER) return;
+    setPreview(null);
     const message = errorMessage(err, 'No se pudo registrar la producción');
     if (err instanceof ApiError && /motivo/i.test(err.message) && closing.current) {
       if (err.code !== TOLERANCE_OVERRIDE_REQUIRED) {
@@ -367,11 +417,21 @@ export function ProduceBlocks({
       toast.warning('No hay nada escrito para registrar.');
       return;
     }
-    if (!(await persistAll())) return;
+    setStarting(true);
+    try {
+      if (!(await persistAll())) return;
+    } finally {
+      setStarting(false);
+    }
     void run.attempt();
   };
 
-  const busy = commit.isPending || previewClose.isPending || refreshing || releasing;
+  /**
+   * Los campos solo se apagan mientras se registra o con «Qué va a pasar» a la vista (lo que se
+   * confirma es lo que el resumen dijo). Un refresco de la lista no los apaga: se perdían teclas.
+   */
+  const locked = commit.isPending || previewClose.isPending || preview !== null || releasing;
+  const busy = locked || starting || refreshing;
 
   // ---------------------------------------------------------------------------
   // Pantalla
@@ -481,7 +541,7 @@ export function ProduceBlocks({
                 block={b}
                 order={order}
                 catalog={catalog}
-                busy={busy}
+                busy={locked}
                 attempted={attempted}
                 saveState={drafts.states[b.coil.coilId]}
                 commitError={commitError?.coilId === b.coil.coilId ? commitError.message : null}
@@ -553,6 +613,7 @@ export function ProduceBlocks({
 
       {preview !== null && (
         <ClosePreviewBlock
+          key={JSON.stringify(preview)}
           order={order}
           preview={preview}
           pending={commit.isPending}
@@ -652,7 +713,7 @@ export function ProduceBlocks({
 // Piezas
 // ---------------------------------------------------------------------------
 
-function BandHeader({ title, children }: { title: string; children?: React.ReactNode }) {
+export function BandHeader({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
     <div className="flex min-h-9 items-center justify-between gap-3 rounded-lg bg-muted px-3">
       <h3 className="text-sm font-semibold">{title}</h3>
@@ -661,7 +722,7 @@ function BandHeader({ title, children }: { title: string; children?: React.React
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+export function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid">
       <span className="text-xs text-muted-foreground">{label}</span>
@@ -748,7 +809,12 @@ function BlockCard({
             {figures.terminated ? 'se terminó' : 'sigue montada'}
           </span>
           {onFold && (
-            <Button variant="link" size="sm" onClick={onFold}>
+            <Button
+              variant="link"
+              size="sm"
+              aria-label={`Plegar la bobina ${coil.coilCode}`}
+              onClick={onFold}
+            >
               Plegar
             </Button>
           )}
@@ -943,7 +1009,7 @@ function BlockCard({
  * real en una transacción que se deshace (D-453). Despunte por bobina (cc34), qué bobinas se
  * terminan y con cuánto vuelven las demás, y que la orden queda cerrada.
  */
-function ClosePreviewBlock({
+export function ClosePreviewBlock({
   order,
   preview,
   pending,
@@ -956,10 +1022,20 @@ function ClosePreviewBlock({
   onBack: () => void;
   onConfirm: () => void;
 }) {
+  /**
+   * Un doble clic llega antes de que React repinte `pending`: la guarda va por ref. Cada vista
+   * previa es una instancia nueva (`key`), así que tras un error se puede confirmar otra vez.
+   */
   const fired = useRef(false);
   const withScrap = preview.coils.filter((c) => toDecimal(c.scrapKg ?? '0').gt(0));
   const terminated = preview.coils.filter((c) => c.terminated);
   const back = preview.coils.filter((c) => !c.terminated);
+  // cc29 (D-469): con más del 10 % de lo montado como despunte, la pregunta de si el material
+  // sigue en el almacén para otra OP (la traía el diálogo de D-453; no se pierde).
+  const mountedKg = sum(order.coils.map((c) => toDecimal(c.consumedKg).plus(c.remainingKg)));
+  const highScrap =
+    mountedKg.gt(0) &&
+    toDecimal(preview.scrapKg).gt(mountedKg.times(MAX_SCRAP_RATIO_WITHOUT_REASON));
   return (
     <section
       aria-label="Qué va a pasar"
@@ -995,6 +1071,18 @@ function ClosePreviewBlock({
       {preview.warnings.map((line) => (
         <p key={line}>⚠ {line}</p>
       ))}
+      {highScrap && (
+        <p
+          role="alert"
+          data-testid="aviso-sigue-en-almacen"
+          className="rounded-md border border-tone-warning-foreground/30 bg-tone-warning p-2"
+        >
+          <span className="font-medium">¿Sigue en el almacén para otra OP?</span> El despunte pasa
+          del {String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} % de lo montado (
+          {formatQtyAsIs(mountedKg.toFixed(3), 'kg')}). Si el material está entero, vuelve y declara
+          menos kilos consumidos en la bobina: lo que no se consume vuelve al almacén.
+        </p>
+      )}
       <p className="font-medium">{order.code} queda cerrada.</p>
       <div className="mt-1 flex justify-end gap-2">
         <Button variant="outline" autoFocus onClick={onBack} disabled={pending}>

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials } from '../helpers/api';
+import { headerAction } from '../helpers/ui';
 import { createCustomer, isoDaysFromToday, setOrderPriority } from '../helpers/sales';
 import {
   createRoofingProduct,
@@ -145,7 +146,8 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       expect(bOp.priority).toBe(true);
       expect(bOp.priorityReason).toBe('Obra con grúa alquilada');
 
-      await page.getByRole('link', { name: 'Todos los pedidos' }).click();
+      // cc35 (D-550): «Todos los pedidos» vive en «Más opciones» de la cabecera.
+      await (await headerAction(page, 'Todos los pedidos')).click();
       await expect(linkOf(b.order.code)).toBeVisible();
       await expect
         .poll(
@@ -191,7 +193,8 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       await chipOf(firstCode).click();
       const panel = page.locator(`#panel-${first!}`);
       await expect(panel.getByText(firstCode, { exact: true })).toBeVisible();
-      await expect(panel.getByText('Faltan 10 × 4.00 m')).toBeVisible();
+      // cc35 (modelo M): la banda «Plan y avance» dice lo que falta.
+      await expect(panel.getByText('Plan y avance')).toBeVisible();
 
       // D-326: «Órdenes de producción» volvió al menú (grupo Planta) y `/produccion` redirige al
       // historial, que es vista propia.

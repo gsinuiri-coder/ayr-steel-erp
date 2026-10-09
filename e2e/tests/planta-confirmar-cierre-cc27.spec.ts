@@ -194,35 +194,28 @@ test.describe('cc27 / UX26-03 — confirmar «Ejecutar y cerrar»', () => {
     await login(page, supervisor.email, ROLE_PASSWORD);
     await page.goto(`/planta?op=${order.id}`);
     const panel = page.locator(`#panel-${order.id}`);
-    const executeAndClose = panel.getByRole('button', {
-      name: `Ejecutar el borrador y cerrar ${order.code}`,
-    });
+    // cc35 (modelo M): «Registrar y cerrar» muestra «Qué va a pasar» en la pantalla.
+    const executeAndClose = panel.getByRole('button', { name: `Registrar y cerrar ${order.code}` });
     await expect(executeAndClose).toBeEnabled({ timeout: 60_000 });
 
     // --- 1. El resumen, y «Volver» ---
     await executeAndClose.click();
-    const dialog = page
-      .getByRole('dialog')
-      .filter({ has: page.getByRole('table', { name: 'Consumo por bobina' }) });
-    await expect(dialog).toBeVisible({ timeout: 60_000 });
-    await expect(dialog).toContainText(order.code);
-    const back = dialog.getByRole('button', { name: 'Volver', exact: true });
+    const preview = panel.getByTestId('que-va-a-pasar');
+    await expect(preview).toBeVisible({ timeout: 60_000 });
+    await expect(preview).toContainText(`${order.code} queda cerrada`);
+    const back = preview.getByRole('button', { name: 'Volver', exact: true });
     await expect(back).toBeFocused();
-    const row = dialog.getByRole('row', { name: new RegExp(coilCode) });
-    const cells = row.getByRole('cell');
-    await expect(cells.nth(1)).toHaveText('4,184.000 kg');
-    const consumed = kgOf(await cells.nth(2).innerText());
-    const after = kgOf(await cells.nth(3).innerText());
-    expect(Number(consumed)).toBeGreaterThan(0);
-    await expect(cells.nth(4)).toHaveText('Vuelve al almacén');
-    await expect(dialog).toContainText('Bobinas que quedan terminadas: ninguna');
-    // cc29 (M3): cuánto vuelve al almacén, el saldo que le queda a la bobina; sin despunte alto,
-    // sin la pregunta de si sigue en el almacén.
-    expect(kgOf(await dialog.getByTestId('vuelve-al-almacen').innerText())).toBe(after);
-    await expect(dialog.getByTestId('aviso-sigue-en-almacen')).toHaveCount(0);
+    const backText = await preview
+      .getByText(new RegExp(`${coilCode} vuelve al almacén con`))
+      .innerText();
+    const after = kgOf(/vuelve al almacén con ([\d,]+\.\d+) kg/.exec(backText)?.[1] ?? '');
+    expect(Number(after)).toBeGreaterThan(0);
+    expect(Number(after)).toBeLessThan(4184);
+    // Sin despunte alto, sin la pregunta de si sigue en el almacén (cc29, D-469).
+    await expect(preview.getByTestId('aviso-sigue-en-almacen')).toHaveCount(0);
 
     await back.click();
-    await expect(dialog).toBeHidden();
+    await expect(preview).toBeHidden();
     // La vista previa no escribió nada.
     expect((await balanceOf(api, 'COIL', coilId)).qty).toBe(coilBefore);
     expect((await getJson<CoilState>(api, `/api/coils/${coilId}`)).status).toBe('OPEN');
@@ -234,19 +227,16 @@ test.describe('cc27 / UX26-03 — confirmar «Ejecutar y cerrar»', () => {
 
     // --- 2. Confirmar con doble clic: una sola ejecución ---
     await executeAndClose.click();
-    await expect(dialog).toBeVisible({ timeout: 60_000 });
-    await dialog.getByRole('button', { name: 'Ejecutar y cerrar', exact: true }).dblclick();
-    await expect(page.getByText(`${order.code}: borrador ejecutado y orden cerrada`)).toBeVisible({
-      timeout: 60_000,
-    });
-    await expect(dialog).toBeHidden();
+    await expect(preview).toBeVisible({ timeout: 60_000 });
+    await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).dblclick();
+    await expect(
+      page.getByText(`${order.code}: producción registrada y orden cerrada`),
+    ).toBeVisible({ timeout: 60_000 });
 
     const closed = await getJson<OrderDto>(api, `/api/production/${order.id}`);
     expect(closed.status).toBe('CLOSED');
     expect(closed.reports.filter((r) => r.status === 'ACTIVE')).toHaveLength(1);
     // Lo que el resumen dijo es lo que el kardex registró.
-    const coilAfter = (await balanceOf(api, 'COIL', coilId)).qty;
-    expect(coilAfter).toBe(Number(after).toFixed(3));
-    expect((Number(coilBefore) - Number(coilAfter)).toFixed(3)).toBe(Number(consumed).toFixed(3));
+    expect((await balanceOf(api, 'COIL', coilId)).qty).toBe(Number(after).toFixed(3));
   });
 });

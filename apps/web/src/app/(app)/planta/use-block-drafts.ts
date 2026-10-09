@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/notify';
 import { parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { piecesMeters } from '@ayr/shared';
+import { coilOfRowError, withoutRowPrefix } from '@/lib/production-blocks';
 
 /**
  * cc35 (ESPEC §1): **lo que se escribe en los bloques se guarda solo en el borrador de la orden**
@@ -74,7 +75,14 @@ function newKey(): string {
 
 const SAVE_DELAY_MS = 700;
 
-export function useBlockDrafts(order: RoofingBatchOrderDto, onSaved: () => void) {
+/**
+ * `onSaved` recibe la lista del borrador que devolvió el API: quien llama la escribe en la caché
+ * de la pantalla, sin volver a pedir todo (revisión de cc35).
+ */
+export function useBlockDrafts(
+  order: RoofingBatchOrderDto,
+  onSaved: (list: RoofingReportDraftDto[]) => void,
+) {
   const [edits, setEdits] = useState<Record<string, BlockEdit>>({});
   const [states, setStates] = useState<Record<string, BlockSaveState>>({});
   /** El borrador que devolvió el último guardado: más nuevo que `order.drafts` hasta el refetch. */
@@ -141,7 +149,12 @@ export function useBlockDrafts(order: RoofingBatchOrderDto, onSaved: () => void)
             });
           }
         }
-        if (list !== null) latest.current = list;
+        if (list !== null) {
+          latest.current = list;
+          // La caché de la pantalla pasa a tener este borrador antes de soltar la edición: el
+          // bloque nunca vuelve a leer el borrador viejo.
+          onSaved(list);
+        }
         // Si no se volvió a escribir mientras se guardaba, el bloque ya se lee del borrador.
         if ((versions.current.get(coilId) ?? 0) === version) {
           setEdits((prev) =>
@@ -149,12 +162,20 @@ export function useBlockDrafts(order: RoofingBatchOrderDto, onSaved: () => void)
           );
         }
         setStates((s) => ({ ...s, [coilId]: { saving: false, error: null } }));
-        onSaved();
         return true;
       } catch (err) {
-        setStates((s) => ({
-          ...s,
-          [coilId]: { saving: false, error: errorMessage(err, 'No se pudo guardar la bobina') },
+        const message = errorMessage(err, 'No se pudo guardar la bobina');
+        // «Fila N: …» nombra otra fila del borrador (el estado cambió por debajo): va a su bloque.
+        const other = coilOfRowError(message, latest.current);
+        setStates((prev) => ({
+          ...prev,
+          [coilId]: {
+            saving: false,
+            error: other === null || other === coilId ? withoutRowPrefix(message) : null,
+          },
+          ...(other === null || other === coilId
+            ? {}
+            : { [other]: { saving: false, error: withoutRowPrefix(message) } }),
         }));
         return false;
       }
@@ -215,8 +236,15 @@ export function useBlockDrafts(order: RoofingBatchOrderDto, onSaved: () => void)
       for (const timer of timers.current.values()) clearTimeout(timer);
       timers.current.clear();
       let ok = true;
-      for (const coilId of orderOf) {
-        if (editsRef.current[coilId] === undefined) continue;
+      // Primero lo que baja: el tope del plan (D-146) mide todo el borrador.
+      const growth = (coilId: string) =>
+        toDecimal(editMeters(editsRef.current[coilId])).minus(
+          piecesMeters(draftsOf(coilId).flatMap((d) => d.pieces)),
+        );
+      const dirty = orderOf
+        .filter((coilId) => editsRef.current[coilId] !== undefined)
+        .sort((a, b) => growth(a).comparedTo(growth(b)));
+      for (const coilId of dirty) {
         ok = (await enqueue(coilId)) && ok;
       }
       await queue.current;

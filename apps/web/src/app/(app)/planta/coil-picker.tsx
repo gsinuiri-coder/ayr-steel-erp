@@ -365,7 +365,7 @@ export function CoilPicker({
                             ? 'Ninguna bobina coincide con esa búsqueda.'
                             : closedOptions.length > 0
                               ? 'No hay bobinas libres de esta spec: mira las terminadas.'
-                              : `No hay bobinas libres del color comercial y el espesor de ${productSku} (±${String(ROOFING_THICKNESS_TOLERANCE_MM)} mm). Una bobina en corte tercerizado, montada en otra orden o prometida a otro pedido tampoco aparece aquí.`}
+                              : `No hay bobinas libres del color comercial y el espesor de ${productSku} (±${ROOFING_THICKNESS_TOLERANCE_MM} mm). Una bobina en corte tercerizado, montada en otra orden o prometida a otro pedido tampoco aparece aquí.`}
                         </TableCell>
                       </TableRow>
                     )}
