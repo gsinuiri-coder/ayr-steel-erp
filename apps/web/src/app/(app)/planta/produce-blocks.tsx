@@ -4,7 +4,6 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Decimal,
-  describePieces,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   piecesCount,
   piecesTheoreticalKg,
@@ -96,6 +95,17 @@ function rowsOf(pieces: readonly { lengthMm: string; qty: number }[]): PieceRow[
 function lengthLabel(lengthMm: string): string {
   const m = mmToMeters(lengthMm);
   return m.endsWith('0') ? m.slice(0, -1) : m;
+}
+
+/** «6.00 m × 10, 5.20 m × 3»: los cortes de una bobina plegada, como los nombra planta. */
+function cutsLabel(pieces: readonly { lengthMm: string; qty: number }[]): string {
+  return pieces.map((p) => `${lengthLabel(p.lengthMm)} m × ${String(p.qty)}`).join(', ');
+}
+
+/** Los metros de un corte escrito, o vacío si todavía no se puede contar. */
+function rowMeters(lengthM: string, qty: string): string {
+  if (!/^\d+(\.\d{1,3})?$/.test(lengthM.trim()) || !/^\d+$/.test(qty.trim())) return '';
+  return `${toDecimal(lengthM.trim()).times(qty.trim()).toFixed(3)} m`;
 }
 
 /** Siempre queda un renglón vacío al final para el corte siguiente. */
@@ -493,12 +503,12 @@ export function ProduceBlocks({
             {foldedBlocks.map((b) => (
               <div
                 key={b.coil.coilId}
-                className="grid grid-cols-[2rem_minmax(0,14rem)_minmax(0,1fr)_auto_auto_auto_auto_auto] items-center gap-3 px-3 py-2 text-sm tabular-nums"
+                className="grid grid-cols-[2rem_auto_minmax(0,1fr)_auto_auto_auto_auto_auto] items-center gap-3 px-3 py-2 text-sm tabular-nums"
                 data-testid={`bloque-plegado-${b.coil.coilCode}`}
               >
                 <span className="text-muted-foreground">{b.index}</span>
-                <span className="truncate font-mono">{b.coil.coilCode}</span>
-                <span className="truncate">{describePieces(b.pieces) || '—'}</span>
+                <span className="font-mono">{b.coil.coilCode}</span>
+                <span className="truncate">{cutsLabel(b.pieces) || '—'}</span>
                 <span>{b.figures.meters.toFixed(3)} m</span>
                 <span>consumió {b.figures.outKg.plus(b.figures.scrapKg).toFixed(3)} kg</span>
                 <span>despunte {b.figures.scrapKg.toFixed(3)}</span>
@@ -520,6 +530,13 @@ export function ProduceBlocks({
             Una bobina terminada se pliega a una línea. «Abrir» la despliega para corregirla.
           </p>
         </section>
+      )}
+
+      {catalog && (
+        <p className="text-xs text-muted-foreground">
+          Una plancha de catálogo tiene un solo largo: cada bobina lleva una sola fila, con
+          unidades.
+        </p>
       )}
 
       <section className="grid gap-2" aria-label={`Bobinas de ${order.code}`}>
@@ -616,6 +633,11 @@ export function ProduceBlocks({
           key={JSON.stringify(preview)}
           order={order}
           preview={preview}
+          covered={
+            order.planItems.length > 0
+              ? `Plan cubierto: ${String(square.covered)} de ${String(square.planned)} ${catalog ? 'und' : 'planchas'}.`
+              : undefined
+          }
           pending={commit.isPending}
           onBack={() => {
             reason.current = null;
@@ -839,16 +861,17 @@ function BlockCard({
       )}
 
       <div className="overflow-hidden rounded-lg border">
-        <div className="grid grid-cols-[minmax(0,1fr)_7.5rem_2rem] items-center gap-2 bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
+        <div className="grid grid-cols-[minmax(0,1fr)_7.5rem_5.5rem_2rem] items-center gap-2 bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
           <span>{catalog ? 'Producto' : 'Largo'}</span>
           <span className="text-right">{catalog ? 'Unidades' : 'Planchas'}</span>
+          <span className="text-right">Metros</span>
           <span />
         </div>
         {(catalog ? [block.rows[0] ?? { lengthM: fixedLength ?? '', qty: '' }] : block.rows).map(
           (row, i) => (
             <div
               key={i}
-              className="grid grid-cols-[minmax(0,1fr)_7.5rem_2rem] items-center gap-2 border-t px-2.5 py-1.5"
+              className="grid grid-cols-[minmax(0,1fr)_7.5rem_5.5rem_2rem] items-center gap-2 border-t px-2.5 py-1.5"
             >
               {catalog ? (
                 <span className="font-semibold">Plancha {fixedLength} m</span>
@@ -892,6 +915,9 @@ function BlockCard({
                   {catalog ? 'und' : 'pl'}
                 </span>
               </div>
+              <span className="text-right text-sm tabular-nums text-muted-foreground">
+                {rowMeters(catalog ? (fixedLength ?? '') : row.lengthM, row.qty)}
+              </span>
               {!catalog && (row.lengthM !== '' || row.qty !== '') ? (
                 <Button
                   variant="ghost"
@@ -1015,12 +1041,15 @@ export function ClosePreviewBlock({
   pending,
   onBack,
   onConfirm,
+  covered,
 }: {
   order: RoofingBatchOrderDto;
   preview: PlantClosePreviewDto;
   pending: boolean;
   onBack: () => void;
   onConfirm: () => void;
+  /** «Plan cubierto: N de M planchas» (accesorio: metros); sin plan, nada. */
+  covered?: string | undefined;
 }) {
   /**
    * Un doble clic llega antes de que React repinte `pending`: la guarda va por ref. Cada vista
@@ -1083,7 +1112,10 @@ export function ClosePreviewBlock({
           menos kilos consumidos en la bobina: lo que no se consume vuelve al almacén.
         </p>
       )}
-      <p className="font-medium">{order.code} queda cerrada.</p>
+      <p className="font-medium">
+        {covered !== undefined && <>{covered} </>}
+        {order.code} queda cerrada.
+      </p>
       <div className="mt-1 flex justify-end gap-2">
         <Button variant="outline" autoFocus onClick={onBack} disabled={pending}>
           Volver
