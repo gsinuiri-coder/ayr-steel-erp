@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
 
@@ -33,6 +34,7 @@ function useHorizontalOverflow(ref: React.RefObject<HTMLDivElement | null>): boo
 
 /** Alto mínimo de las filas de una lista: con una ventana muy baja, la página vuelve a desplazarse. */
 const LIST_MIN_HEIGHT_PX = 240;
+const LIST_TABLE_SELECTOR = "[data-slot='table'][data-density='list']";
 
 /**
  * cc35 (ESPEC §5): **una lista tiene una sola barra.** El alto de la tabla es el que deja libre la
@@ -41,8 +43,12 @@ const LIST_MIN_HEIGHT_PX = 240;
  * cuánto ocupaban los filtros de cada lista, y con filtros en dos renglones la página también
  * scrolleaba: dos barras.
  *
- * Se mide sin tope (alto natural) y se fija lo que entra, en el mismo cuadro: no hay parpadeo. Se
- * vuelve a medir cuando cambia el tamaño de la ventana, de la tabla o de la página.
+ * Se mide sin tope (alto natural) y se fija lo que entra, en el mismo cuadro: no hay parpadeo, y
+ * la posición del desplazamiento se conserva (quitar el tope la ponía en cero). Se vuelve a medir
+ * cuando cambia el tamaño de la ventana, de la tabla o de la página.
+ *
+ * D-547: con **dos o más listas** en la misma pantalla (inventario valorizado, por ejemplo) no se
+ * reparte la ventana: las tablas crecen y se desplaza la página, como en un detalle.
  */
 function useFillViewport(ref: React.RefObject<HTMLDivElement | null>, enabled: boolean): void {
   React.useLayoutEffect(() => {
@@ -50,14 +56,20 @@ function useFillViewport(ref: React.RefObject<HTMLDivElement | null>, enabled: b
     if (!enabled || !el) return;
     let frame = 0;
     const fit = () => {
+      if (document.querySelectorAll(LIST_TABLE_SELECTOR).length > 1) {
+        el.style.maxHeight = 'none';
+        return;
+      }
+      const scrollTop = el.scrollTop;
       el.style.maxHeight = 'none';
       const doc = document.scrollingElement ?? document.documentElement;
       const rect = el.getBoundingClientRect();
       const top = rect.top + window.scrollY;
       // Lo que la página tiene debajo de la tabla (paginación, el margen del marco).
       const below = doc.scrollHeight - (rect.bottom + window.scrollY);
-      const room = Math.floor(window.innerHeight - top - Math.max(below, 0));
+      const room = Math.floor(doc.clientHeight - top - Math.max(below, 0));
       el.style.maxHeight = `${String(Math.max(room, LIST_MIN_HEIGHT_PX))}px`;
+      el.scrollTop = scrollTop;
     };
     const schedule = () => {
       cancelAnimationFrame(frame);
@@ -137,58 +149,86 @@ function Table({
  */
 function StickyHorizontalScroll({ target }: { target: React.RefObject<HTMLDivElement | null> }) {
   const barRef = React.useRef<HTMLDivElement>(null);
-  const [box, setBox] = React.useState<{ left: number; width: number; inner: number } | null>(null);
+  const [box, setBox] = React.useState<Box | null>(null);
   React.useEffect(() => {
     const el = target.current;
-    const bar = barRef.current;
-    if (!el || !bar) return;
-    let syncing = false;
+    // Dentro de un diálogo o una hoja lateral la ventana no es la referencia: no se repite.
+    if (!el || el.closest('[role="dialog"]')) return;
+    let frame = 0;
     const measure = () => {
       const rect = el.getBoundingClientRect();
-      const below = rect.top < window.innerHeight - 24 && rect.bottom > window.innerHeight;
-      setBox(below ? { left: rect.left, width: rect.width, inner: el.scrollWidth } : null);
+      // Una barra de acciones fija al pie (formularios, cc31) queda debajo de esta.
+      const actions = document.querySelector('[data-slot="sticky-action-bar"]');
+      const bottom = actions
+        ? Math.max(window.innerHeight - actions.getBoundingClientRect().top, 0)
+        : 0;
+      const edge = window.innerHeight - bottom;
+      const next =
+        rect.top < edge - 24 && rect.bottom > edge
+          ? { left: rect.left, width: rect.width, inner: el.scrollWidth, bottom }
+          : null;
+      setBox((prev) => (sameBox(prev, next) ? prev : next));
     };
-    const follow = (from: HTMLElement, to: HTMLElement) => () => {
-      if (syncing) return;
-      syncing = true;
-      to.scrollLeft = from.scrollLeft;
-      syncing = false;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
     };
-    const fromTable = follow(el, bar);
-    const fromBar = follow(bar, el);
+    const fromTable = () => {
+      const bar = barRef.current;
+      if (bar && bar.scrollLeft !== el.scrollLeft) bar.scrollLeft = el.scrollLeft;
+    };
     measure();
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(schedule);
     observer.observe(el);
-    window.addEventListener('scroll', measure, { passive: true, capture: true });
-    window.addEventListener('resize', measure);
+    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    window.addEventListener('scroll', schedule, { passive: true, capture: true });
+    window.addEventListener('resize', schedule);
     el.addEventListener('scroll', fromTable, { passive: true });
-    bar.addEventListener('scroll', fromBar, { passive: true });
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener('scroll', measure, { capture: true });
-      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', schedule, { capture: true });
+      window.removeEventListener('resize', schedule);
       el.removeEventListener('scroll', fromTable);
-      bar.removeEventListener('scroll', fromBar);
     };
   }, [target]);
   React.useLayoutEffect(() => {
     const el = target.current;
-    if (box !== null && el && barRef.current) barRef.current.scrollLeft = el.scrollLeft;
+    const bar = barRef.current;
+    if (box !== null && el && bar) bar.scrollLeft = el.scrollLeft;
   }, [box, target]);
-  return (
+  if (box === null) return null;
+  return createPortal(
     <div
       ref={barRef}
       data-slot="table-sticky-scroll"
       aria-hidden="true"
-      className={cn(
-        'fixed bottom-0 z-20 overflow-x-auto bg-background/90',
-        box === null && 'invisible',
-      )}
-      style={box === null ? { left: 0, width: 0 } : { left: box.left, width: box.width }}
+      tabIndex={-1}
+      className="fixed z-20 overflow-x-auto bg-background/90"
+      style={{ left: box.left, width: box.width, bottom: box.bottom }}
+      onScroll={(e) => {
+        const el = target.current;
+        if (el && el.scrollLeft !== e.currentTarget.scrollLeft) {
+          el.scrollLeft = e.currentTarget.scrollLeft;
+        }
+      }}
     >
-      <div style={{ width: box?.inner ?? 0, height: 1 }} />
-    </div>
+      <div style={{ width: box.inner, height: 1 }} />
+    </div>,
+    document.body,
   );
+}
+
+interface Box {
+  left: number;
+  width: number;
+  inner: number;
+  bottom: number;
+}
+
+function sameBox(a: Box | null, b: Box | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.left === b.left && a.width === b.width && a.inner === b.inner && a.bottom === b.bottom;
 }
 
 function TableHeader({ className, ...props }: React.ComponentProps<'thead'>) {

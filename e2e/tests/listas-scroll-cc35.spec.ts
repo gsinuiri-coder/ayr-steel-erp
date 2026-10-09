@@ -49,20 +49,34 @@ test('una lista larga tiene una sola barra y el pie queda visible', async ({ pag
   const viewport = page.viewportSize()!;
   const footer = container.locator('tfoot');
   const pager = page.getByText(/^Mostrando \d+–\d+ de \d+$/);
+  await expect(footer).toHaveCount(1);
+  await expect(pager).toBeVisible();
   for (const el of [footer, pager]) {
-    const box = await el.boundingBox();
+    const box = await el.boundingBox({ timeout: 5_000 });
     expect(box).not.toBeNull();
     expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height + 1);
   }
 
-  // Al bajar hasta el final de las filas, la cabecera sigue arriba y el título no se movió.
-  const title = page.getByRole('heading', { level: 1 });
-  const titleBefore = (await title.boundingBox())!.y;
+  // Al bajar hasta el final de las filas, la cabecera sigue arriba y la página no se movió.
   await container.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
   });
+  const scrolled = await container.evaluate((el) => el.scrollTop);
+  expect(scrolled).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
   const head = await container.locator('thead').boundingBox();
   const box = await container.boundingBox();
   expect(Math.abs(head!.y - box!.y)).toBeLessThanOrEqual(2);
-  expect((await title.boundingBox())!.y).toBe(titleBefore);
+
+  // Volver a medir (la ventana cambia de tamaño) no devuelve la lista al principio.
+  await page.setViewportSize({ width: 1366, height: 620 });
+  await expect.poll(() => container.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const doc = document.scrollingElement ?? document.documentElement;
+        return doc.scrollHeight - window.innerHeight;
+      }),
+    )
+    .toBeLessThanOrEqual(1);
 });
