@@ -14,6 +14,10 @@ export interface AccessoryEdit {
   meters: string;
   pieces: string;
   consumedKg: string;
+  /** D-182: la clave de idempotencia del parte de este bloque, mientras no se registre. */
+  key?: string;
+  /** Su parte ya respondió: no se vuelve a mandar (se suelta al releer la orden). */
+  sent?: boolean;
 }
 
 export const EMPTY_ACCESSORY_EDIT: AccessoryEdit = { meters: '', pieces: '', consumedKg: '' };

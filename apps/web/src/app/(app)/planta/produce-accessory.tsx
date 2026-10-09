@@ -57,6 +57,18 @@ const STORAGE_PREFIX = 'ayr:cc35:accesorio:';
 function loadEdits(orderId: string): Record<string, AccessoryEdit> {
   try {
     const raw = window.localStorage.getItem(STORAGE_PREFIX + orderId);
+    const stored = raw === null ? {} : (JSON.parse(raw) as Record<string, AccessoryEdit>);
+    // Un bloque que ya se registró (su parte respondió) no vuelve: la orden releída ya lo trae.
+    return Object.fromEntries(Object.entries(stored).filter(([, e]) => e.sent !== true));
+  } catch {
+    return {};
+  }
+}
+
+/** Lo guardado tal cual, con los bloques ya registrados. */
+function loadEditsRaw(orderId: string): Record<string, AccessoryEdit> {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_PREFIX + orderId);
     return raw === null ? {} : (JSON.parse(raw) as Record<string, AccessoryEdit>);
   } catch {
     return {};
@@ -113,8 +125,6 @@ export function ProduceAccessory({
   const reason = useRef<string | null>(null);
   const closing = useRef(false);
   const backdate = useRef(false);
-  /** Una clave por contenido de bloque: un reintento del mismo parte no lo duplica (D-182). */
-  const keys = useRef(new Map<string, string>());
   const [sending, setSending] = useState(false);
 
   const coils = order.coils;
@@ -133,18 +143,24 @@ export function ProduceAccessory({
     return { coil, index: i + 1, last, derived, edit: shown, check: accessoryBlock(coil, shown) };
   });
 
+  /** Escribir en un bloque cambia su contenido: su clave de idempotencia deja de valer. */
   const setEdit = (coilId: string, next: AccessoryEdit) => {
     setErrors((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== coilId)));
-    setEdits((prev) => ({ ...prev, [coilId]: next }));
+    const { key: _old, ...rest } = next;
+    setEdits((prev) => ({ ...prev, [coilId]: rest }));
   };
 
-  const keyFor = (body: object) => {
-    const fingerprint = JSON.stringify(body);
-    let key = keys.current.get(fingerprint);
-    if (key === undefined) {
-      key = newDraftKey();
-      keys.current.set(fingerprint, key);
-    }
+  /**
+   * D-182: la clave de idempotencia de un parte vive **con lo escrito** (en el navegador, D-559):
+   * un reintento —también tras recargar, si la respuesta se perdió— no duplica el parte, y un parte
+   * nuevo con las mismas cifras (después de registrar el anterior) lleva otra.
+   */
+  const keyFor = (b: (typeof blocks)[number]): string => {
+    if (b.edit.key !== undefined) return b.edit.key;
+    const key = newDraftKey();
+    const next = { ...edits, [b.coil.coilId]: { ...b.edit, key } };
+    saveEdits(order.orderId, next);
+    setEdits(next);
     return key;
   };
 
@@ -162,21 +178,36 @@ export function ProduceAccessory({
       confirmBackdate: backdate.current || undefined,
       ...extra,
     };
-    return { ...body, idempotencyKey: keyFor(body) };
+    return { ...body, idempotencyKey: keyFor(b) };
+  };
+
+  /** Un bloque cuyo parte ya respondió: queda marcado (y guardado) hasta releer la orden. */
+  const markSent = (coilId: string, edit: AccessoryEdit) => {
+    const stored = loadEditsRaw(order.orderId);
+    stored[coilId] = { ...edit, sent: true };
+    saveEdits(order.orderId, stored);
+    setEdits((prev) => ({ ...prev, [coilId]: { ...edit, sent: true } }));
   };
 
   /** Manda en orden los partes de `list`; para en el primero que el API rechaza. */
   const sendReports = async (list: typeof blocks): Promise<boolean> => {
     const sent: string[] = [];
     let ok = true;
+    let lastResponse: ProductionOrderDto | null = null;
     for (const b of list) {
-      if (b.check.meters === null) continue;
+      if (b.check.meters === null || b.edit.sent === true) continue;
       try {
-        await api<ProductionOrderDto>(`/production/roofing/${order.orderId}/report`, {
-          method: 'POST',
-          body: bodyOf(b),
-        });
+        lastResponse = await api<ProductionOrderDto>(
+          `/production/roofing/${order.orderId}/report`,
+          {
+            method: 'POST',
+            body: bodyOf(b),
+          },
+        );
         sent.push(b.coil.coilId);
+        // Marcado en el almacenamiento en el acto: un F5 o un cambio de orden a mitad de la serie
+        // no lo vuelve a mandar.
+        markSent(b.coil.coilId, b.edit);
       } catch (err) {
         if (err instanceof ApiError && err.code === 'BACKDATE_OUT_OF_ORDER' && sent.length === 0) {
           throw err;
@@ -197,6 +228,8 @@ export function ProduceAccessory({
       setEdits((prev) =>
         Object.fromEntries(Object.entries(prev).filter(([id]) => !sent.includes(id))),
       );
+      // D-154: los avisos del agregado que devolvió el último parte.
+      onUpdated(lastResponse);
     }
     return ok;
   };
@@ -274,7 +307,6 @@ export function ProduceAccessory({
       }
       if (await sendReports(blocks)) {
         toast.success(`${order.code}: producción registrada`);
-        onUpdated(null);
       }
       invalidate();
     } finally {
@@ -382,19 +414,20 @@ export function ProduceAccessory({
                       >
                         {figures.terminated ? 'se terminó' : 'sigue montada'}
                       </span>
-                      {toDecimal(b.coil.consumedKg).isZero() && b.edit.meters.trim() === '' && (
-                        <Button
-                          variant="link"
-                          size="sm"
-                          aria-label={`Bajar la bobina ${b.coil.coilCode} de ${order.code}`}
-                          disabled={busy}
-                          onClick={() => {
-                            releaseCoil(b.coil.consumptionId);
-                          }}
-                        >
-                          Bajar
-                        </Button>
-                      )}
+                      {toDecimal(b.coil.consumedKg).isZero() &&
+                        (b.derived || b.edit.meters.trim() === '') && (
+                          <Button
+                            variant="link"
+                            size="sm"
+                            aria-label={`Bajar la bobina ${b.coil.coilCode} de ${order.code}`}
+                            disabled={busy}
+                            onClick={() => {
+                              releaseCoil(b.coil.consumptionId);
+                            }}
+                          >
+                            Bajar
+                          </Button>
+                        )}
                     </div>
                   </div>
                   {b.derived && b.edit.meters !== '' && (
