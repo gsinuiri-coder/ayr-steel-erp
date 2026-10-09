@@ -20,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -229,7 +230,7 @@ export function CoilPicker({
           {formatQtyAsIs(c.availableKg, 'kg')}
         </TableCell>
         <TableCell className="text-right tabular-nums text-muted-foreground">
-          ≈ {formatQtyAsIs(c.estimatedMeters, 'm')}
+          ≈ {formatQtyAsIs(new Decimal(c.estimatedMeters).toFixed(1), 'm')}
         </TableCell>
       </TableRow>
     );
@@ -325,15 +326,22 @@ export function CoilPicker({
             />
           ) : (
             <div className="grid gap-3">
-              <Input
-                autoFocus
-                aria-label="Filtrar opciones"
-                placeholder="Buscar por código, color o espesor"
-                value={filter}
-                onChange={(e) => {
-                  setFilter(e.target.value);
-                }}
-              />
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <Input
+                  autoFocus
+                  aria-label="Filtrar opciones"
+                  placeholder="Buscar por código, color o espesor"
+                  className="pl-8"
+                  value={filter}
+                  onChange={(e) => {
+                    setFilter(e.target.value);
+                  }}
+                />
+              </div>
               <div className="max-h-96 overflow-auto rounded-lg border">
                 <Table aria-label={`Bobinas para ${orderCode}`}>
                   <TableHeader className="sticky top-0 z-10 bg-background">
