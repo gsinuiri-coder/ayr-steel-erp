@@ -205,6 +205,13 @@
 [data-slot='section'][data-counted] [data-slot='table'] > tbody > tr > td {
   height: 34px;
 }
+/* cc35: la cabecera de una lista queda fija arriba mientras se desplazan las filas. */
+[data-slot='table'][data-density='list'] > thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--background);
+}
 /* El pie de una lista (cuántas filas y la suma) queda a la vista, como la cabecera. */
 [data-slot='table'][data-density='list'] > tfoot {
   position: sticky;

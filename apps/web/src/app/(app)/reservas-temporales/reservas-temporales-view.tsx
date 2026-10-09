@@ -83,7 +83,7 @@ export function ReservasTemporalesView() {
         </Alert>
       ) : (
         <div className="rounded-lg border">
-          <Table>
+          <Table list>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <SortHead sort={sort} onSort={toggleSort} k="quotation">
