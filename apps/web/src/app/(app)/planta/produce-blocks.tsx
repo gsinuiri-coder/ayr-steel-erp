@@ -26,7 +26,9 @@ import type { PieceRow } from '@/lib/pieces';
 import {
   blockFigures,
   byLength,
+  catalogRows,
   coilOfRowError,
+  editRow,
   fillFromRemaining,
   planSquare,
   withoutRowPrefix,
@@ -245,7 +247,7 @@ export function ProduceBlocks({
         coil,
         index: i + 1,
         last,
-        rows: catalog ? rows : withTrailingRow(rows),
+        rows: catalog ? catalogRows(rows) : withTrailingRow(rows),
         consumedKg,
         derived,
         pieces,
@@ -871,11 +873,7 @@ function BlockCard({
   const planLengths = [...new Set(order.planItems.map((p) => lengthLabel(p.lengthMm)))];
   const label = `la bobina ${String(block.index)} (${coil.coilCode})`;
   const setRow = (i: number, patch: Partial<PieceRow>) => {
-    const rows = block.rows.map((r, j) => (i === j ? { ...r, ...patch } : r));
-    onEdit({
-      rows: rows.filter((r, j) => j === i || r.lengthM.trim() !== '' || r.qty.trim() !== ''),
-      consumedKg: block.consumedKg,
-    });
+    onEdit({ rows: editRow(block.rows, i, patch), consumedKg: block.consumedKg });
   };
   const fixedLength = catalog ? lengthLabel(order.productLengthMm ?? '0') : null;
   const error = commitError ?? saveState?.error ?? block.parseError ?? figures.error;
@@ -990,78 +988,76 @@ function BlockCard({
           <span className="text-right">Metros</span>
           <span />
         </div>
-        {(catalog ? [block.rows[0] ?? { lengthM: fixedLength ?? '', qty: '' }] : block.rows).map(
-          (row, i) => (
-            <div
-              key={i}
-              className="grid grid-cols-[minmax(0,1fr)_7.5rem_5.5rem_2rem] items-center gap-2 border-t px-2.5 py-1.5"
-            >
-              {catalog ? (
-                <span className="font-semibold">Plancha {fixedLength} m</span>
-              ) : (
-                <select
-                  aria-label={`Largo del corte ${String(i + 1)} de ${label}`}
-                  className="h-8 rounded-md border bg-background px-2 text-sm font-semibold tabular-nums"
-                  disabled={busy}
-                  value={row.lengthM}
-                  onChange={(e) => {
-                    setRow(i, { lengthM: e.target.value });
-                  }}
-                >
-                  <option value="">Elige el largo…</option>
-                  {[...new Set([...planLengths, ...(row.lengthM ? [row.lengthM] : [])])].map(
-                    (length) => (
-                      <option key={length} value={length}>
-                        {length} m
-                      </option>
-                    ),
-                  )}
-                </select>
-              )}
-              <div className="relative">
-                <Input
-                  aria-label={`${catalog ? 'Unidades' : 'Planchas'} del corte ${String(i + 1)} de ${label}`}
-                  inputMode="numeric"
-                  className="h-8 pr-8 text-right tabular-nums"
-                  disabled={busy}
-                  value={row.qty}
-                  onChange={(e) => {
-                    setRow(
-                      i,
-                      catalog
-                        ? { lengthM: fixedLength ?? '', qty: e.target.value }
-                        : { qty: e.target.value },
-                    );
-                  }}
-                />
-                <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-xs text-muted-foreground">
-                  {catalog ? 'und' : 'pl'}
-                </span>
-              </div>
-              <span className="text-right text-sm tabular-nums text-muted-foreground">
-                {rowMeters(catalog ? (fixedLength ?? '') : row.lengthM, row.qty)}
+        {block.rows.map((row, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[minmax(0,1fr)_7.5rem_5.5rem_2rem] items-center gap-2 border-t px-2.5 py-1.5"
+          >
+            {catalog ? (
+              <span className="font-semibold">Plancha {fixedLength} m</span>
+            ) : (
+              <select
+                aria-label={`Largo del corte ${String(i + 1)} de ${label}`}
+                className="h-8 rounded-md border bg-background px-2 text-sm font-semibold tabular-nums"
+                disabled={busy}
+                value={row.lengthM}
+                onChange={(e) => {
+                  setRow(i, { lengthM: e.target.value });
+                }}
+              >
+                <option value="">Elige el largo…</option>
+                {[...new Set([...planLengths, ...(row.lengthM ? [row.lengthM] : [])])].map(
+                  (length) => (
+                    <option key={length} value={length}>
+                      {length} m
+                    </option>
+                  ),
+                )}
+              </select>
+            )}
+            <div className="relative">
+              <Input
+                aria-label={`${catalog ? 'Unidades' : 'Planchas'} del corte ${String(i + 1)} de ${label}`}
+                inputMode="numeric"
+                className="h-8 pr-8 text-right tabular-nums"
+                disabled={busy}
+                value={row.qty}
+                onChange={(e) => {
+                  setRow(
+                    i,
+                    catalog
+                      ? { lengthM: fixedLength ?? '', qty: e.target.value }
+                      : { qty: e.target.value },
+                  );
+                }}
+              />
+              <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-xs text-muted-foreground">
+                {catalog ? 'und' : 'pl'}
               </span>
-              {!catalog && (row.lengthM !== '' || row.qty !== '') ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Quitar el corte ${String(i + 1)} de ${label}`}
-                  disabled={busy}
-                  onClick={() => {
-                    onEdit({
-                      rows: block.rows.filter((_, j) => j !== i),
-                      consumedKg: block.consumedKg,
-                    });
-                  }}
-                >
-                  ✕
-                </Button>
-              ) : (
-                <span />
-              )}
             </div>
-          ),
-        )}
+            <span className="text-right text-sm tabular-nums text-muted-foreground">
+              {rowMeters(catalog ? (fixedLength ?? '') : row.lengthM, row.qty)}
+            </span>
+            {!catalog && (row.lengthM !== '' || row.qty !== '') ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Quitar el corte ${String(i + 1)} de ${label}`}
+                disabled={busy}
+                onClick={() => {
+                  onEdit({
+                    rows: block.rows.filter((_, j) => j !== i),
+                    consumedKg: block.consumedKg,
+                  });
+                }}
+              >
+                ✕
+              </Button>
+            ) : (
+              <span />
+            )}
+          </div>
+        ))}
       </div>
       {!catalog && (
         <Button

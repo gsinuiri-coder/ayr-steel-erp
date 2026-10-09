@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { blockPayload } from './block-drafts';
 import {
   blockFigures,
+  catalogRows,
   coilOfRowError,
+  editRow,
   fillFromRemaining,
   planSquare,
   withoutRowPrefix,
@@ -126,5 +129,50 @@ describe('planSquare — la franja de cuadre', () => {
     expect(planSquare(plan, plan, [[p('6.00', 10), p('5.20', 8), p('1.00', 1)]]).complete).toBe(
       false,
     );
+  });
+});
+
+describe('plancha de catálogo con 3 bobinas — se escribe en todas (hotfix de cc38)', () => {
+  // Plan: 40 planchas de 4.00 m. Las bobinas 1 y 2 no tienen borrador; la 3 es la última.
+  const remaining = [p('4', 40)];
+  /** Lo que la pantalla hace con una tecla: la fila del bloque, editada. */
+  const type = (rows: { lengthM: string; qty: string }[], qty: string) =>
+    editRow(catalogRows(rows), 0, { lengthM: '4.00', qty });
+
+  it('un bloque sin borrador tiene su única fila, vacía, y no cuenta como contenido', () => {
+    expect(catalogRows([])).toEqual([{ lengthM: '', qty: '' }]);
+    expect(blockPayload({ rows: catalogRows([]), consumedKg: '' })).toEqual({
+      ok: true,
+      pieces: [],
+      consumedKg: null,
+      empty: true,
+    });
+  });
+
+  it('antes se perdía: editar la lista vacía no deja nada', () => {
+    expect(editRow([], 0, { lengthM: '4.00', qty: '15' })).toEqual([]);
+  });
+
+  it('escribir unidades en la bobina 1 y en la 2 queda; la 3 sigue llenándose sola con lo que falta', () => {
+    const first = type([], '15');
+    const second = type([], '14');
+    expect(first).toEqual([{ lengthM: '4.00', qty: '15' }]);
+    expect(second).toEqual([{ lengthM: '4.00', qty: '14' }]);
+    const pieces = (rows: { lengthM: string; qty: string }[]) => {
+      const payload = blockPayload({ rows, consumedKg: '' });
+      if (!payload.ok) throw new Error(payload.reason);
+      return payload.pieces;
+    };
+    expect(pieces(first)).toEqual([{ lineNumber: 1, lengthMm: '4000.00', qty: 15 }]);
+    expect(pieces(second)).toEqual([{ lineNumber: 1, lengthMm: '4000.00', qty: 14 }]);
+    // La tercera, sin escribir: lo que falta del plan menos las otras dos (D-575: sin confirmar).
+    expect(fillFromRemaining(remaining, [pieces(first), pieces(second)])).toEqual([
+      { lineNumber: 1, lengthMm: '4000.00', qty: 11 },
+    ]);
+  });
+
+  it('una fila con borrador se conserva y no se duplica', () => {
+    expect(catalogRows([{ lengthM: '4.00', qty: '8' }])).toEqual([{ lengthM: '4.00', qty: '8' }]);
+    expect(type([{ lengthM: '4.00', qty: '8' }], '9')).toEqual([{ lengthM: '4.00', qty: '9' }]);
   });
 });
