@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import { canonicalAccessorySku } from '@ayr/shared';
 import { adminApi, adminCredentials, getJson, postJson } from '../helpers/api';
-import { balanceOf, movementsOf, type ProductionOrderDto } from '../helpers/production';
+import { balanceOf, movementsOf, today, type ProductionOrderDto } from '../helpers/production';
 import { createCustomer } from '../helpers/sales';
 import {
   buyRoofingCoil,
@@ -8,6 +9,7 @@ import {
   pieces,
   purgeRoofingTrail,
   quoteAndOrderLines,
+  reservationsOf,
   setupRoofingScenario,
 } from '../helpers/roofing';
 import { openQueuedOrder } from '../helpers/ui';
@@ -229,6 +231,118 @@ test.describe('cc35 — modelo M, bobina por bobina', () => {
         .toBe('0.000');
     } finally {
       await purgeRoofingTrail(api, s.trail);
+    }
+  });
+});
+
+test.describe('cc35 — modelo M de un accesorio (ESPEC §2, D-559)', () => {
+  let api: APIRequestContext;
+  test.beforeAll(async ({ baseURL }) => {
+    api = await adminApi(baseURL!);
+  });
+  test.afterAll(async () => {
+    await api.dispose();
+  });
+
+  test('sin plan de corte: metros por bobina, el último se llena con lo que falta, sobrevive a recargar y cada bobina saca lo suyo', async ({
+    page,
+  }) => {
+    // Bobina 1 de 30 kg (≈ 7.4 m) y bobina 2 de 1 000 kg; el pedido encarga 20 m (80.8 kg).
+    const s = await setupRoofingScenario(api, { weightKg: '30' });
+    const second = await buyRoofingCoil(api, {
+      supplierId: s.supplier.id,
+      finishId: s.finish.id,
+      colorId: s.color.id,
+      weightKg: '1000',
+    });
+    const customer = await createCustomer(api);
+    const accessory = await postJson<{ id: string }>(api, '/api/catalog', {
+      businessLineId: s.product.businessLineId,
+      sku: canonicalAccessorySku(s.product.thicknessMm ?? '0.50', s.color.code),
+      name: 'Accesorio E2E cc35',
+      unit: 'MTR',
+      source: 'MANUFACTURED',
+      listPricePen: '30',
+      finishId: s.product.finishId,
+      colorId: s.product.colorId,
+      thicknessMm: s.product.thicknessMm,
+      widthMm: s.product.widthMm,
+      roofingKind: 'ACCESORIO',
+    });
+    const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
+      customerId: customer.id,
+      issueDate: today(),
+      items: [{ productId: accessory.id, qty: '20.000', unitPricePen: '60' }],
+    });
+    const order = await postJson<{ id: string }>(
+      api,
+      `/api/sales/quotations/${quotation.id}/confirm`,
+      {},
+    );
+    const opId = (await reservationsOf(api, order.id)).find(
+      (r) => r.productionOrderId,
+    )?.productionOrderId;
+    expect(opId, 'confirmar no dejó la OP en cola').toBeTruthy();
+    await mountCoil(api, opId!, { coilId: s.coil.id });
+    await mountCoil(api, opId!, { coilId: second.coil.id });
+    const op = await getJson<ProductionOrderDto>(api, `/api/production/${opId!}`);
+    const trail: Parameters<typeof purgeRoofingTrail>[1] = {
+      supplierId: s.supplier.id,
+      finishId: s.finish.id,
+      colorId: s.color.id,
+      productIds: [s.product.id, accessory.id],
+      coilIds: [s.coil.id, second.coil.id],
+      purchaseIds: [s.purchaseId, second.purchaseId],
+      productionOrderIds: [opId!],
+      orderIds: [order.id],
+      quotationIds: [quotation.id],
+    };
+    try {
+      await loginAsAdmin(page);
+      await page.goto(`/planta?pedido=${order.id}`);
+      await openQueuedOrder(page, op.code);
+      const panel = page.locator(`#panel-${opId!}`);
+      // Sin plan de corte: banda «Avance» y sin «Ajustar el plan».
+      await expect(panel.getByText('Avance', { exact: true })).toBeVisible({ timeout: 60_000 });
+      await expect(panel.getByRole('button', { name: /Ajustar el plan/ })).toHaveCount(0);
+
+      const a = block(panel, s.coil.code);
+      const b = block(panel, second.coil.code);
+      await expect(b.getByLabel(/Metros de la bobina 2/)).toHaveValue('20.000');
+      await a.getByLabel(/Metros de la bobina 1/).fill('7');
+      await a.getByLabel(/Piezas de la bobina 1/).fill('2');
+      await a.getByLabel(/kg consumidos de la bobina 1/).fill('30');
+      await expect(b.getByLabel(/Metros de la bobina 2/)).toHaveValue('13.000');
+      await expect(a.getByText('Despunte 1.720 kg')).toBeVisible();
+
+      // Lo escrito sobrevive a un refresco (D-559: en el navegador).
+      await page.reload();
+      await openQueuedOrder(page, op.code);
+      const again = page.locator(`#panel-${opId!}`);
+      await expect(block(again, s.coil.code).getByLabel(/Metros de la bobina 1/)).toHaveValue('7', {
+        timeout: 60_000,
+      });
+      await expect(block(again, second.coil.code).getByLabel(/Metros de la bobina 2/)).toHaveValue(
+        '13.000',
+      );
+
+      await again.getByRole('button', { name: `Registrar y cerrar ${op.code}` }).click();
+      const preview = again.getByTestId('que-va-a-pasar');
+      await expect(preview).toContainText(`${op.code} queda cerrada`, { timeout: 60_000 });
+      await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
+      await expect
+        .poll(
+          async () => (await getJson<ProductionOrderDto>(api, `/api/production/${opId!}`)).status,
+          { timeout: 60_000 },
+        )
+        .toBe('CLOSED');
+
+      // Bobina 1: 7 m × 4.04 = 28.28 kg + 1.72 de despunte = 30. Bobina 2: 13 m = 52.52 kg.
+      expect((await balanceOf(api, 'COIL', s.coil.id)).qty).toBe('0.000');
+      expect((await balanceOf(api, 'COIL', second.coil.id)).qty).toBe('947.480');
+      expect((await balanceOf(api, 'PRODUCT', accessory.id)).qty).toBe('20.000');
+    } finally {
+      await purgeRoofingTrail(api, trail);
     }
   });
 });

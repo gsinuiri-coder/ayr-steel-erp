@@ -43,12 +43,10 @@ import { PedidoList } from './pedido-list';
 import { PedidoPriorityControl } from './pedido-priority';
 import { plantaHref } from './planta-links';
 import {
-  EMPTY_DRAFT,
   NO_NOTES,
   RoofingOrderPanel,
   StateBadge,
   stateOf,
-  type OrderDraft,
   type SavedNotes,
 } from './roofing-order-panel';
 
@@ -410,7 +408,6 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
    * local, saltar a otra orden para verificar de qué bobina salió algo y volver borraba lo
    * transcripto sin ningún aviso.
    */
-  const [drafts, setDrafts] = useState<Record<string, OrderDraft>>({});
   const [saved, setSaved] = useState<Record<string, SavedNotes>>({});
 
   const router = useRouter();
@@ -623,16 +620,9 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
                 order={active.roofing}
                 asList={asList}
                 refreshing={refreshing}
-                draft={drafts[active.orderId] ?? EMPTY_DRAFT}
                 notes={saved[active.orderId] ?? NO_NOTES}
                 operationDate={operationDate}
                 onOperationDate={setOperationDate}
-                onDraft={(patch) => {
-                  setDrafts((prev) => ({
-                    ...prev,
-                    [active.orderId]: { ...EMPTY_DRAFT, ...prev[active.orderId], ...patch },
-                  }));
-                }}
                 onNotes={(next) => {
                   setSaved((prev) => ({ ...prev, [active.orderId]: next }));
                 }}
