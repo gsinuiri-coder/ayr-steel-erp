@@ -20,9 +20,9 @@ import {
   BACKDATE_OUT_OF_ORDER,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatQtyAsIs } from '@/lib/format';
+import { formatKg, formatMeters, formatQtyAsIs } from '@/lib/format';
 import { errorMessage, toast } from '@/lib/notify';
-import { mmToMeters, type PieceRow } from '@/lib/pieces';
+import type { PieceRow } from '@/lib/pieces';
 import {
   blockFigures,
   byLength,
@@ -40,6 +40,7 @@ import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { PlanAdjustDialog } from './plan-adjust-dialog';
 import {
@@ -48,8 +49,17 @@ import {
   ToleranceOverrideRow,
   type ToleranceOverrideState,
 } from './tolerance-override';
-import { blockPayload, editMeters, type BlockEdit } from '@/lib/block-drafts';
+import { blockPayload, type BlockEdit } from '@/lib/block-drafts';
+import { planProgress } from '@/lib/plan-progress';
 import { useBlockDrafts } from './use-block-drafts';
+import {
+  CloseButton,
+  CloseHint,
+  CoilStatusBadge,
+  cutsLabel,
+  lengthLabel,
+  PlanProgressBar,
+} from './plan-progress-view';
 
 /**
  * cc35 (ESPEC §1 y §2) — **producir una OP con el modelo M**: bobina por bobina, en el orden en que
@@ -92,17 +102,6 @@ function rowsOf(pieces: readonly { lengthMm: string; qty: number }[]): PieceRow[
   return pieces.map((p) => ({ lengthM: lengthLabel(p.lengthMm), qty: String(p.qty) }));
 }
 
-/** «6.00», y «4.205» solo si hace falta el milímetro. */
-function lengthLabel(lengthMm: string): string {
-  const m = mmToMeters(lengthMm);
-  return m.endsWith('0') ? m.slice(0, -1) : m;
-}
-
-/** «6.00 m × 10, 5.20 m × 3»: los cortes de una bobina plegada, como los nombra planta. */
-function cutsLabel(pieces: readonly { lengthMm: string; qty: number }[]): string {
-  return pieces.map((p) => `${lengthLabel(p.lengthMm)} m × ${String(p.qty)}`).join(', ');
-}
-
 /** Los metros de un corte escrito, o vacío si todavía no se puede contar. */
 function rowMeters(lengthM: string, qty: string): string {
   if (!/^\d+(\.\d{1,3})?$/.test(lengthM.trim()) || !/^\d+$/.test(qty.trim())) return '';
@@ -110,6 +109,12 @@ function rowMeters(lengthM: string, qty: string): string {
 }
 
 /** Siempre queda un renglón vacío al final para el corte siguiente. */
+/** «16 planchas que se llenaron solas en la bobina XSY-…» (D-575, «Qué va a pasar»). */
+function autoLabel(block: Block): string {
+  const count = block.pieces.reduce((acc, p) => acc + p.qty, 0);
+  return `${String(count)} ${count === 1 ? 'plancha que se llenó sola' : 'planchas que se llenaron solas'} en la bobina ${block.coil.coilCode}`;
+}
+
 function withTrailingRow(rows: PieceRow[]): PieceRow[] {
   const last = rows[rows.length - 1];
   if (last?.lengthM.trim() !== '' || last.qty.trim() !== '') {
@@ -181,6 +186,10 @@ export function ProduceBlocks({
   const [attempted, setAttempted] = useState(false);
   const [preview, setPreview] = useState<PlantClosePreviewDto | null>(null);
   const [askingReason, setAskingReason] = useState(false);
+  /** D-575: «Qué va a pasar» esperando que se confirme el bloque llenado solo (su descripción). */
+  const [askingAuto, setAskingAuto] = useState<string | null>(null);
+  /** El bloque llenado solo que se confirmó desde «Qué va a pasar» (para nombrarlo ahí). */
+  const [autoIncluded, setAutoIncluded] = useState<string | null>(null);
   const [planOpen, setPlanOpen] = useState<{ addLengthM?: string } | null>(null);
   const reason = useRef<string | null>(null);
   const closing = useRef(false);
@@ -246,16 +255,19 @@ export function ProduceBlocks({
     });
   }, [order.coils, order.drafts, order.remainingPieces, drafts.edits, catalog, emptied]);
 
-  const lastBlock = blocks[blocks.length - 1];
+  /** D-575: el bloque llenado solo y sin confirmar no viaja en ningún commit. */
+  const autoBlock = blocks.find((b) => b.derived && b.pieces.length > 0);
 
   /**
-   * Escribir en un bloque. Si no es el último, el último se vuelve a llenar con lo que falta; si el
-   * último ya estaba guardado, se guarda primero cuando baja (el tope del plan mide todo el borrador).
+   * Escribir en un bloque lo deja confirmado (D-575): si es el último, deja de llenarse solo. El
+   * último sin confirmar se vuelve a llenar con lo que falta cada vez que cambia otro bloque; uno
+   * ya confirmado no se toca (lo escribió o lo confirmó el supervisor), y si con el cambio el
+   * borrador pasa el plan, el API lo rechaza en el bloque que se está escribiendo (D-574).
    */
   const editBlock = (block: Block, next: BlockEdit) => {
     setCommitError(null);
     setExpanded((prev) => ({ ...prev, [block.coil.coilId]: true }));
-    if (block.last || lastBlock === undefined) {
+    if (block.last) {
       const payload = blockPayload(next);
       setEmptied((prev) => {
         const out = new Set(prev);
@@ -263,59 +275,55 @@ export function ProduceBlocks({
         else out.delete(block.coil.coilId);
         return out;
       });
-      drafts.edit(block.coil.coilId, next);
-      return;
     }
-    const others = blocks
-      .filter((b) => !b.last)
-      .map((b) => {
-        if (b.coil.coilId !== block.coil.coilId) return b.pieces;
-        const payload = blockPayload(next);
-        return payload.ok ? payload.pieces : b.pieces;
-      });
-    const lastRows = rowsOf(fillFromRemaining(order.remainingPieces, others));
-    const lastSaved = order.drafts.some((d) => d.coilId === lastBlock.coil.coilId);
-    const lastTouched = drafts.edits[lastBlock.coil.coilId] !== undefined;
-    if (!lastSaved && !lastTouched) {
-      drafts.edit(block.coil.coilId, next);
-      return;
-    }
-    const lastNext = { rows: lastRows, consumedKg: lastBlock.consumedKg };
-    const shrinks = toDecimal(editMeters(lastNext)).lt(toDecimal(lastBlock.figures.meters));
-    if (shrinks) {
-      drafts.edit(lastBlock.coil.coilId, lastNext, { immediate: true });
-      drafts.edit(block.coil.coilId, next);
-    } else {
-      drafts.edit(block.coil.coilId, next);
-      drafts.edit(lastBlock.coil.coilId, lastNext);
-    }
+    drafts.edit(block.coil.coilId, next);
+  };
+
+  /** «Sí, salió así»: el bloque llenado solo pasa al borrador tal como se ve (D-575). */
+  const confirmAuto = async (): Promise<boolean> => {
+    if (autoBlock === undefined) return true;
+    drafts.edit(
+      autoBlock.coil.coilId,
+      {
+        rows: autoBlock.rows.filter((r) => r.lengthM.trim() !== '' || r.qty.trim() !== ''),
+        consumedKg: autoBlock.consumedKg,
+      },
+      { immediate: true },
+    );
+    return drafts.flush([autoBlock.coil.coilId]);
+  };
+
+  /** «Vaciar»: el bloque llenado solo queda vacío y no se vuelve a llenar hasta escribir en él. */
+  const clearAuto = () => {
+    if (autoBlock === undefined) return;
+    setEmptied((prev) => new Set(prev).add(autoBlock.coil.coilId));
   };
 
   // ---------------------------------------------------------------------------
   // Registrar
   // ---------------------------------------------------------------------------
 
-  const excessBlocks = blocks.filter((b) => b.figures.excess !== null && b.pieces.length > 0);
+  const registrable = blocks.filter((b) => !b.derived);
+  const excessBlocks = registrable.filter((b) => b.figures.excess !== null && b.pieces.length > 0);
   const overridesReady = excessBlocks.every(
     (b) => overrideInput(overrides[b.coil.coilId], b.figures.excess) !== null,
   );
-  const blocking = blocks.find((b) => b.parseError !== null || b.figures.error !== null);
-  const hasContent = blocks.some((b) => b.pieces.length > 0);
+  const blocking = registrable.find((b) => b.parseError !== null || b.figures.error !== null);
+  const hasContent = registrable.some((b) => b.pieces.length > 0) || order.drafts.length > 0;
+  const progress = planProgress({
+    planMeters: order.planMeters,
+    reportedMeters: order.reportedMeters,
+    plan: {
+      items: order.planItems,
+      remainingPieces: order.remainingPieces,
+      reportedPieces: order.reportedPieces,
+    },
+    draft: registrable.flatMap((b) => b.pieces),
+    auto: autoBlock?.pieces ?? [],
+  });
 
-  /** Guarda lo pendiente y, si el último bloque se llenó solo, lo deja en el borrador. */
-  const persistAll = async (): Promise<boolean> => {
-    const ok = await drafts.flush(blocks.map((b) => b.coil.coilId));
-    if (!ok) return false;
-    if (lastBlock?.derived && lastBlock.pieces.length > 0) {
-      drafts.edit(
-        lastBlock.coil.coilId,
-        { rows: lastBlock.rows, consumedKg: lastBlock.consumedKg },
-        { immediate: true },
-      );
-      return drafts.flush([lastBlock.coil.coilId]);
-    }
-    return true;
-  };
+  /** Guarda lo pendiente de los bloques confirmados (el llenado solo se queda en la pantalla). */
+  const persistAll = (): Promise<boolean> => drafts.flush(registrable.map((b) => b.coil.coilId));
 
   const submitKey = useIdempotencyKey();
   const body = (close: boolean) => {
@@ -428,12 +436,36 @@ export function ProduceBlocks({
       toast.warning('No hay nada escrito para registrar.');
       return;
     }
+    // D-573: la pantalla no deja cerrar con el plan incompleto (el API tampoco).
+    if (close && !progress.canClose) return;
     setStarting(true);
     try {
       if (!(await persistAll())) return;
     } finally {
       setStarting(false);
     }
+    // D-575: con un bloque llenado solo, «Qué va a pasar» pide confirmarlo antes de calcular.
+    if (close && autoBlock !== undefined) {
+      setAskingAuto(autoLabel(autoBlock));
+      return;
+    }
+    void run.attempt();
+  };
+
+  /** La casilla «Confirmo que salieron»: confirma el bloque y calcula «Qué va a pasar». */
+  const confirmAutoAndPreview = async () => {
+    const label = askingAuto;
+    setStarting(true);
+    try {
+      if (!(await confirmAuto())) {
+        setAskingAuto(null);
+        return;
+      }
+    } finally {
+      setStarting(false);
+    }
+    setAskingAuto(null);
+    setAutoIncluded(label);
     void run.attempt();
   };
 
@@ -441,7 +473,12 @@ export function ProduceBlocks({
    * Los campos solo se apagan mientras se registra o con «Qué va a pasar» a la vista (lo que se
    * confirma es lo que el resumen dijo). Un refresco de la lista no los apaga: se perdían teclas.
    */
-  const locked = commit.isPending || previewClose.isPending || preview !== null || releasing;
+  const locked =
+    commit.isPending ||
+    previewClose.isPending ||
+    preview !== null ||
+    askingAuto !== null ||
+    releasing;
   const busy = locked || starting || refreshing;
 
   // ---------------------------------------------------------------------------
@@ -477,61 +514,26 @@ export function ProduceBlocks({
             Ajustar el plan
           </Button>
         </BandHeader>
-        <div className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg bg-muted/60 px-4 py-2.5">
-          <Stat
-            label="Plan"
-            value={
-              catalog
-                ? `Plancha ${lengthLabel(order.productLengthMm ?? '0')} m · ${String(piecesCount(order.planItems))} und`
-                : `${String(order.planItems.length)} ${order.planItems.length === 1 ? 'largo' : 'largos'} · ${String(piecesCount(order.planItems))} planchas`
-            }
+        <div className="grid gap-2.5 px-1">
+          <div className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg bg-muted/60 px-4 py-2.5">
+            <Stat
+              label="Plan"
+              value={
+                catalog
+                  ? `Plancha ${lengthLabel(order.productLengthMm ?? '0')} m · ${String(piecesCount(order.planItems))} und`
+                  : `${String(order.planItems.length)} ${order.planItems.length === 1 ? 'largo' : 'largos'} · ${String(piecesCount(order.planItems))} planchas`
+              }
+            />
+            <Stat label="Metros del plan" value={formatMeters(order.planMeters)} />
+            <Stat label="Teórico del plan" value={planKg === null ? '—' : formatKg(planKg)} />
+          </div>
+          <PlanProgressBar
+            view={progress}
+            unitWord={catalog ? 'und' : 'planchas'}
+            label={`Avance de ${order.code}`}
           />
-          <Stat label="Metros del plan" value={`${order.planMeters} m`} />
-          <Stat label="Reportado" value={`${order.reportedMeters} m`} />
-          <Stat label="Falta" value={`${order.remainingMeters} m`} />
-          <Stat
-            label="Teórico del plan"
-            value={planKg === null ? '—' : `${planKg.toFixed(3)} kg`}
-          />
-          <Stat label="Bobinas usadas" value={String(order.coils.length)} />
         </div>
       </section>
-
-      {foldedBlocks.length > 0 && (
-        <section className="grid gap-2" aria-label="Bobinas terminadas">
-          <BandHeader title={`Bobinas terminadas · ${String(foldedBlocks.length)}`} />
-          <div className="divide-y rounded-lg border">
-            {foldedBlocks.map((b) => (
-              <div
-                key={b.coil.coilId}
-                className="grid grid-cols-[2rem_auto_minmax(0,1fr)_auto_auto_auto_auto_auto] items-center gap-3 px-3 py-2 text-sm tabular-nums"
-                data-testid={`bloque-plegado-${b.coil.coilCode}`}
-              >
-                <span className="text-muted-foreground">{b.index}</span>
-                <span className="font-mono">{b.coil.coilCode}</span>
-                <span className="truncate">{cutsLabel(b.pieces) || '—'}</span>
-                <span>{b.figures.meters.toFixed(3)} m</span>
-                <span>consumió {b.figures.outKg.plus(b.figures.scrapKg).toFixed(3)} kg</span>
-                <span>despunte {b.figures.scrapKg.toFixed(3)}</span>
-                <span className="font-medium text-tone-warning-foreground">se terminó</span>
-                <Button
-                  variant="link"
-                  size="sm"
-                  aria-label={`Abrir la bobina ${b.coil.coilCode}`}
-                  onClick={() => {
-                    setExpanded((prev) => ({ ...prev, [b.coil.coilId]: true }));
-                  }}
-                >
-                  Abrir ▸
-                </Button>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Una bobina terminada se pliega a una línea. «Abrir» la despliega para corregirla.
-          </p>
-        </section>
-      )}
 
       {catalog && (
         <p className="text-xs text-muted-foreground">
@@ -541,58 +543,106 @@ export function ProduceBlocks({
       )}
 
       <section className="grid gap-2" aria-label={`Bobinas de ${order.code}`}>
-        <BandHeader
-          title={foldedBlocks.length > 0 ? 'Bobina en uso' : 'En el orden en que se usaron'}
-        >
-          {mountButton}
-        </BandHeader>
+        <BandHeader title={`Bobinas · ${String(blocks.length)}`}>{mountButton}</BandHeader>
         {blocks.length === 0 ? (
           <p className="px-1 text-sm text-muted-foreground">
             La orden no tiene ninguna bobina montada: monta una y lo que falta del plan aparece acá,
             listo para ajustar.
           </p>
         ) : (
-          <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-            {openBlocks.map((b) => (
-              <BlockCard
-                key={b.coil.coilId}
-                block={b}
-                order={order}
-                catalog={catalog}
-                busy={locked}
-                attempted={attempted}
-                saveState={drafts.states[b.coil.coilId]}
-                commitError={commitError?.coilId === b.coil.coilId ? commitError.message : null}
-                override={overrides[b.coil.coilId] ?? EMPTY_OVERRIDE}
-                onOverride={(next) => {
-                  setOverrides((prev) => ({ ...prev, [b.coil.coilId]: next }));
-                }}
-                onEdit={(next) => {
-                  editBlock(b, next);
-                }}
-                onBlur={() => {
-                  drafts.flushOne(b.coil.coilId);
-                }}
-                onOtherLength={() => {
-                  setPlanOpen({ addLengthM: '' });
-                }}
-                onFold={
-                  blocks.length > 1 && !b.last && b.figures.terminated
-                    ? () => {
-                        setExpanded((prev) => ({ ...prev, [b.coil.coilId]: false }));
-                      }
-                    : undefined
-                }
-                onRelease={
-                  toDecimal(b.coil.consumedKg).isZero() &&
-                  !order.drafts.some((d) => d.coilId === b.coil.coilId)
-                    ? () => {
-                        releaseCoil(b.coil.consumptionId);
-                      }
-                    : undefined
-                }
-              />
-            ))}
+          <div className="grid gap-3 px-1">
+            {foldedBlocks.length > 0 && (
+              <div className="divide-y rounded-lg border" aria-label="Bobinas terminadas">
+                {foldedBlocks.map((b) => {
+                  const inDraft = !b.derived && b.pieces.length > 0;
+                  const shown = inDraft ? b.pieces : b.coil.reportedPieces;
+                  return (
+                    <div
+                      key={b.coil.coilId}
+                      className="grid grid-cols-[1.5rem_auto_minmax(0,1fr)_auto_auto_auto] items-center gap-3.5 px-3 py-2 text-sm tabular-nums"
+                      data-testid={`bloque-plegado-${b.coil.coilCode}`}
+                    >
+                      <span className="text-muted-foreground">{b.index}</span>
+                      <span className="font-mono text-xs">{b.coil.coilCode}</span>
+                      <span className="truncate">{cutsLabel(shown) || '—'}</span>
+                      <span className="text-right">
+                        {formatMeters(inDraft ? b.figures.meters : b.coil.reportedMeters)}
+                      </span>
+                      <CoilStatusBadge
+                        inDraft={inDraft}
+                        registered={toDecimal(b.coil.reportedMeters).gt(0)}
+                      />
+                      <Button
+                        variant="link"
+                        size="sm"
+                        aria-label={`Abrir la bobina ${b.coil.coilCode}`}
+                        onClick={() => {
+                          setExpanded((prev) => ({ ...prev, [b.coil.coilId]: true }));
+                        }}
+                      >
+                        Abrir ▸
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {openBlocks.length > 0 && (
+              <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                {openBlocks.map((b) => (
+                  <BlockCard
+                    key={b.coil.coilId}
+                    block={b}
+                    order={order}
+                    catalog={catalog}
+                    busy={locked}
+                    attempted={attempted}
+                    saveState={drafts.states[b.coil.coilId]}
+                    commitError={commitError?.coilId === b.coil.coilId ? commitError.message : null}
+                    override={overrides[b.coil.coilId] ?? EMPTY_OVERRIDE}
+                    onOverride={(next) => {
+                      setOverrides((prev) => ({ ...prev, [b.coil.coilId]: next }));
+                    }}
+                    onEdit={(next) => {
+                      editBlock(b, next);
+                    }}
+                    onBlur={() => {
+                      drafts.flushOne(b.coil.coilId);
+                    }}
+                    onOtherLength={() => {
+                      setPlanOpen({ addLengthM: '' });
+                    }}
+                    onConfirmAuto={
+                      b === autoBlock
+                        ? () => {
+                            void confirmAuto();
+                          }
+                        : undefined
+                    }
+                    onClearAuto={b === autoBlock ? clearAuto : undefined}
+                    onFold={
+                      blocks.length > 1 && !b.last && b.figures.terminated
+                        ? () => {
+                            setExpanded((prev) => ({ ...prev, [b.coil.coilId]: false }));
+                          }
+                        : undefined
+                    }
+                    onRelease={
+                      toDecimal(b.coil.consumedKg).isZero() &&
+                      !order.drafts.some((d) => d.coilId === b.coil.coilId)
+                        ? () => {
+                            releaseCoil(b.coil.consumptionId);
+                          }
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              El borrador se guarda solo y se puede registrar por partes con «Registrar producción».
+              Lo registrado ya no se edita desde aquí.
+            </p>
           </div>
         )}
       </section>
@@ -629,11 +679,25 @@ export function ProduceBlocks({
         </p>
       )}
 
+      {askingAuto !== null && (
+        <AutoConfirmBlock
+          label={askingAuto}
+          pending={starting}
+          onConfirm={() => {
+            void confirmAutoAndPreview();
+          }}
+          onBack={() => {
+            setAskingAuto(null);
+          }}
+        />
+      )}
+
       {preview !== null && (
         <ClosePreviewBlock
           key={JSON.stringify(preview)}
           order={order}
           preview={preview}
+          autoIncluded={autoIncluded}
           covered={
             order.planItems.length > 0
               ? `Plan cubierto: ${String(square.covered)} de ${String(square.planned)} ${catalog ? 'und' : 'planchas'}.`
@@ -642,6 +706,7 @@ export function ProduceBlocks({
           pending={commit.isPending}
           onBack={() => {
             reason.current = null;
+            setAutoIncluded(null);
             setPreview(null);
           }}
           onConfirm={() => {
@@ -654,37 +719,38 @@ export function ProduceBlocks({
         data-slot="sticky-action-bar"
         className="sticky bottom-0 z-20 -mx-4 flex flex-wrap items-center justify-end gap-2 border-t bg-background px-4 py-3"
       >
-        <OperationDateField value={operationDate} onChange={onOperationDate} />
-        <span className="mr-auto text-xs text-muted-foreground" aria-live="polite">
-          {Object.values(drafts.states).some((s) => s.saving)
-            ? 'Guardando…'
-            : Object.keys(drafts.edits).length > 0
-              ? 'Sin guardar todavía'
-              : 'Todo lo escrito está guardado'}
+        <span className="mr-auto grid gap-0.5">
+          <CloseHint view={progress} unitWord={catalog ? 'und' : 'planchas'} />
+          <span className="text-xs text-muted-foreground" aria-live="polite">
+            {Object.values(drafts.states).some((s) => s.saving)
+              ? 'Guardando…'
+              : Object.keys(drafts.edits).length > 0
+                ? 'Sin guardar todavía'
+                : 'Todo lo escrito está guardado'}
+          </span>
         </span>
+        <OperationDateField value={operationDate} onChange={onOperationDate} />
         <Button
-          variant="outline"
+          variant={progress.canClose ? 'outline' : 'default'}
           aria-label={`Registrar producción de ${order.code}`}
           pending={commit.isPending && !closing.current}
           pendingText="Registrando…"
-          disabled={busy}
+          disabled={busy || !hasContent}
           onClick={() => {
             void start(false);
           }}
         >
           Registrar producción
         </Button>
-        <Button
-          aria-label={`Registrar y cerrar ${order.code}`}
+        <CloseButton
+          view={progress}
+          code={order.code}
           pending={previewClose.isPending}
-          pendingText="Calculando…"
-          disabled={busy}
+          busy={busy}
           onClick={() => {
             void start(true);
           }}
-        >
-          Registrar y cerrar
-        </Button>
+        />
       </div>
 
       <PlanAdjustDialog
@@ -767,6 +833,8 @@ function BlockCard({
   onEdit,
   onBlur,
   onOtherLength,
+  onConfirmAuto,
+  onClearAuto,
   onFold,
   onRelease,
 }: {
@@ -782,6 +850,10 @@ function BlockCard({
   onEdit: (next: BlockEdit) => void;
   onBlur: () => void;
   onOtherLength: () => void;
+  /** D-575: el bloque se llenó solo y no se confirmó: «Sí, salió así». */
+  onConfirmAuto: (() => void) | undefined;
+  /** D-575: «Vaciar» el bloque llenado solo. */
+  onClearAuto: (() => void) | undefined;
   onFold: (() => void) | undefined;
   onRelease: (() => void) | undefined;
 }) {
@@ -799,13 +871,16 @@ function BlockCard({
   const error = commitError ?? saveState?.error ?? block.parseError ?? figures.error;
   const missingOverride =
     figures.excess !== null && overrideInput(override, figures.excess) === null;
+  const auto = onConfirmAuto !== undefined;
 
   return (
     <div
       id={`bloque-${coil.coilId}`}
       data-testid={`bloque-${coil.coilCode}`}
+      data-auto={auto ? 'sin-confirmar' : undefined}
       className={cn(
         'grid content-start gap-2.5 rounded-xl border p-3.5',
+        auto && 'border-dashed border-tone-warning-foreground bg-tone-warning/40',
         error !== null && 'border-destructive/50',
       )}
       onBlur={(e) => {
@@ -822,7 +897,17 @@ function BlockCard({
           </div>
           <div className="font-mono font-semibold">{coil.coilCode}</div>
         </div>
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+          {auto ? (
+            <span className="font-semibold text-tone-warning-foreground">
+              Llenado solo · sin confirmar
+            </span>
+          ) : (
+            <CoilStatusBadge
+              inDraft={block.pieces.length > 0}
+              registered={toDecimal(coil.reportedMeters).gt(0)}
+            />
+          )}
           <span
             className={cn(
               'font-semibold',
@@ -854,11 +939,38 @@ function BlockCard({
           )}
         </div>
       </div>
-      {block.derived && block.rows.some((r) => r.qty.trim() !== '') && (
-        <p className="text-xs text-primary">
-          Llenada sola con lo que faltaba
-          {block.index > 1 ? ' después de las bobinas anteriores' : ''}.
+      {coil.reportedPieces.length > 0 && (
+        <p className="text-xs text-muted-foreground tabular-nums">
+          Registrado: {cutsLabel(coil.reportedPieces)} · {formatMeters(coil.reportedMeters)}
         </p>
+      )}
+      {auto && (
+        <div className="grid gap-1.5" data-testid="bloque-llenado-solo">
+          <p className="text-muted-foreground tabular-nums">
+            {cutsLabel(block.pieces).replaceAll(', ', ' · ')} = {formatMeters(figures.meters)}, lo
+            que falta del plan
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={`Sí, salió así en ${label}`}
+              disabled={busy}
+              onClick={onConfirmAuto}
+            >
+              Sí, salió así
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={`Vaciar ${label}`}
+              disabled={busy}
+              onClick={onClearAuto}
+            >
+              Vaciar
+            </Button>
+          </div>
+        </div>
       )}
 
       <div className="overflow-hidden rounded-lg border">
@@ -1043,6 +1155,7 @@ export function ClosePreviewBlock({
   onBack,
   onConfirm,
   covered,
+  autoIncluded = null,
 }: {
   order: RoofingBatchOrderDto;
   preview: PlantClosePreviewDto;
@@ -1051,6 +1164,8 @@ export function ClosePreviewBlock({
   onConfirm: () => void;
   /** «Plan cubierto: N de M planchas» (accesorio: metros); sin plan, nada. */
   covered?: string | undefined;
+  /** D-575: el bloque llenado solo que se confirmó con la casilla (su descripción). */
+  autoIncluded?: string | null;
 }) {
   /**
    * Un doble clic llega antes de que React repinte `pending`: la guarda va por ref. Cada vista
@@ -1073,6 +1188,15 @@ export function ClosePreviewBlock({
       className="grid gap-1.5 rounded-lg bg-muted px-4 py-3 text-sm"
     >
       <h3 className="font-semibold">Qué va a pasar</h3>
+      {autoIncluded !== null && (
+        <p>
+          <b>Incluye {autoIncluded}</b> ·{' '}
+          <span className="inline-flex items-center gap-2 align-middle">
+            <Checkbox checked disabled aria-label="Confirmo que salieron" />
+            Confirmo que salieron
+          </span>
+        </p>
+      )}
       <p>
         Despunte {formatQtyAsIs(preview.scrapKg, 'kg')}
         {withScrap.length > 0 &&
@@ -1115,7 +1239,7 @@ export function ClosePreviewBlock({
       )}
       <p className="font-medium">
         {covered !== undefined && <>{covered} </>}
-        {order.code} queda cerrada.
+        {order.code} queda cerrada con el plan completo.
       </p>
       <div className="mt-1 flex justify-end gap-2">
         <Button variant="outline" autoFocus onClick={onBack} disabled={pending}>
@@ -1131,6 +1255,55 @@ export function ClosePreviewBlock({
           }}
         >
           Confirmar: registrar y cerrar
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * D-575 (tablero `CerrarBarra`): «Registrar y cerrar» con un bloque llenado solo y sin confirmar
+ * pide confirmarlo en «Qué va a pasar». La casilla lo pasa al borrador y recién entonces el API
+ * calcula el resumen: sin confirmar, el bloque no entra a ningún commit ni a la vista previa.
+ */
+export function AutoConfirmBlock({
+  label,
+  pending,
+  onConfirm,
+  onBack,
+}: {
+  label: string;
+  pending: boolean;
+  onConfirm: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <section
+      aria-label="Qué va a pasar"
+      data-testid="confirmar-llenado-solo"
+      className="grid gap-1.5 rounded-lg bg-muted px-4 py-3 text-sm"
+    >
+      <h3 className="font-semibold">Qué va a pasar</h3>
+      <p>
+        <b>Incluye {label}</b> ·{' '}
+        <label className="inline-flex items-center gap-2 align-middle">
+          <Checkbox
+            checked={false}
+            disabled={pending}
+            aria-label="Confirmo que salieron"
+            onCheckedChange={(checked) => {
+              if (checked === true) onConfirm();
+            }}
+          />
+          Confirmo que salieron
+        </label>
+      </p>
+      <p className="text-muted-foreground">
+        Al confirmarlas se calcula el despunte de cada bobina y con cuánto vuelve al almacén.
+      </p>
+      <div className="mt-1 flex justify-end">
+        <Button variant="outline" autoFocus onClick={onBack} disabled={pending}>
+          Volver
         </Button>
       </div>
     </section>

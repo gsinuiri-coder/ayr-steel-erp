@@ -52,6 +52,7 @@ import {
   type CreateRoofingOrdersFromSalesOrderInput,
   type MountRoofingCoilInput,
   type PieceLike,
+  type RoofingPieceDto,
   type PlantClosePreviewDto,
   type ProductionOrderDto,
   type ProductionQueueEntryDto,
@@ -1592,6 +1593,7 @@ export class RoofingProductionService {
         reports: {
           where: { status: ProductionReportStatus.ACTIVE },
           select: {
+            id: true,
             theoreticalKg: true,
             consumedKg: true,
             metersM: true,
@@ -1618,6 +1620,32 @@ export class RoofingProductionService {
       orderBy: { seq: 'asc' },
       take: 500,
     });
+
+    // cc38 (D-576): de qué bobina salió cada parte vigente, para que cada bobina muestre lo que ya
+    // tiene registrado. Un parte sale de un solo rollo; su bobina es la de su salida de kardex
+    // (cc34). Una sola consulta para todo el lote.
+    const reportIds = orders.flatMap((o) => o.reports.map((r) => r.id));
+    const coilOfReport = new Map(
+      reportIds.length === 0
+        ? []
+        : liveMovements(
+            await this.prisma.inventoryMovement.findMany({
+              where: {
+                refType: 'PRODUCTION',
+                refId: { in: reportIds },
+                itemType: 'COIL',
+                type: 'OUT',
+              },
+              select: {
+                id: true,
+                refId: true,
+                itemId: true,
+                reversalOfId: true,
+                reversals: { select: { id: true } },
+              },
+            }),
+          ).map((m) => [m.refId, m.itemId]),
+    );
 
     const rows = orders.map((order): RoofingBatchOrderDto => {
       const planPieces = order.items.map(toPieceLike);
@@ -1710,7 +1738,9 @@ export class RoofingProductionService {
             toDecimal(c.assignedKg.toString()).minus(toDecimal(c.consumedKg.toString())),
             'KG',
           ),
+          ...registeredByCoil(order.reports.filter((r) => coilOfReport.get(r.id) === c.coilId)),
         })),
+        reportedPieces: piecesCount(reportedPieces),
         drafts,
         draftMeters: drafts
           .reduce((acc, d) => acc.plus(toDecimal(d.meters)), new Decimal(0))
@@ -3301,6 +3331,29 @@ function dedupeWarnings(warnings: readonly RawMaterialShortfall[]): RawMaterialS
 function toWarningDto(shortfall: RawMaterialShortfall): RawMaterialWarningDto {
   const { specId: _specId, ...dto } = shortfall;
   return dto;
+}
+
+/**
+ * cc38 (D-576): lo que una bobina ya tiene registrado en la orden —sus largos sumados por largo, en
+ * orden de largo, y sus metros (en un accesorio, los metros de bobina de sus partes)—.
+ */
+function registeredByCoil(
+  reports: readonly {
+    metersM: Prisma.Decimal | null;
+    piecesDetail: readonly { lengthMm: Prisma.Decimal; qty: number }[];
+  }[],
+): { reportedPieces: RoofingPieceDto[]; reportedMeters: string } {
+  const byLength = new Map<string, number>();
+  for (const piece of reports.flatMap((r) => r.piecesDetail)) {
+    const key = piece.lengthMm.toFixed(2);
+    byLength.set(key, (byLength.get(key) ?? 0) + piece.qty);
+  }
+  return {
+    reportedPieces: [...byLength]
+      .sort(([a], [b]) => toDecimal(b).comparedTo(toDecimal(a)))
+      .map(([lengthMm, qty], i) => ({ lineNumber: i + 1, lengthMm, qty })),
+    reportedMeters: (sumReportedMeters(reports) ?? new Decimal(0)).toFixed(3),
+  };
 }
 
 /** D-343: el «plan» de un accesorio son los metros que encargó la línea del pedido. */

@@ -1084,6 +1084,13 @@ export const roofingBatchCoilSchema = z.object({
   /** Kilos ya rolados de esa asignación: por encima de cero la bobina ya no se puede bajar. */
   consumedKg: z.string(),
   remainingKg: z.string(),
+  /**
+   * cc38 (D-576): lo que esta bobina ya tiene registrado en la orden (partes vigentes cuya salida de
+   * kardex es de esta bobina): sus largos sumados por largo y sus metros. Un accesorio no deja
+   * largos: solo metros.
+   */
+  reportedPieces: z.array(roofingPieceSchema),
+  reportedMeters: z.string(),
 });
 export type RoofingBatchCoilDto = z.infer<typeof roofingBatchCoilSchema>;
 
@@ -1141,6 +1148,8 @@ export const roofingBatchOrderSchema = z.object({
   /** Kilos teóricos que las planchas reportadas consumieron. */
   reportedKg: z.string(),
   coils: z.array(roofingBatchCoilSchema),
+  /** cc38 (D-576): planchas de los reportes vigentes (cero en un accesorio). */
+  reportedPieces: z.number().int(),
   /** D-191: el borrador de reportes de la orden, en orden de ejecución. */
   drafts: z.array(roofingReportDraftSchema),
   /** D-191: metros del borrador, que ya ocupan plan aunque no se hayan ejecutado. */
