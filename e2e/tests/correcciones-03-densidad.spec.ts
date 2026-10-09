@@ -140,7 +140,8 @@ test('densidad: filas por pantalla y cajas anidadas', async ({ page, baseURL }) 
 
     // Umbrales del estilo compacto (D-294). cc31 (especificación aprobada, §5): las listas con el
     // estándar nuevo (`<Table list>`) llevan filas de 38 px; las demás siguen en el compacto.
-    const STANDARD_LISTS = ['lista /cotizaciones', 'lista /pedidos'];
+    // cc35 (D-547): bobinas pasó al modo lista.
+    const STANDARD_LISTS = ['lista /cotizaciones', 'lista /pedidos', 'lista /bobinas?tab=todas'];
     const lists = Object.entries(report).filter(([k]) => k.startsWith('lista '));
     for (const [name, value] of lists) {
       const m = value as ListMetrics;
