@@ -20,6 +20,8 @@ import {
   finishRal,
   describePieces,
   isAccessory,
+  checkRoofingPlanAdjustment,
+  detailsLengths,
   isOverdue,
   queueSemaphore,
   fromDateOnly,
@@ -492,7 +494,7 @@ export class RoofingProductionService {
       // que pide el pedido son sus metros.
       const planned = await tx.product.findUniqueOrThrow({
         where: { id: order.productId },
-        select: { roofingKind: true },
+        select: { roofingKind: true, unit: true },
       });
       if (isAccessory(planned)) {
         throw new BadRequestException(
@@ -531,6 +533,21 @@ export class RoofingProductionService {
         where: { productionOrderId: orderId },
         orderBy: { lineNumber: 'asc' },
       });
+
+      // cc35 (ESPEC §3, D-545/D-546): ningún largo baja de lo ya reportado y, a medida, el plan
+      // nuevo suma exactamente los metros del vigente. La misma regla que pinta la pantalla.
+      const reportedNow = await tx.productionReport.findMany({
+        where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
+        select: { piecesDetail: { select: { lengthMm: true, qty: true } } },
+      });
+      const adjustment = checkRoofingPlanAdjustment({
+        current: before.map(toPieceLike),
+        next: input.items.map((p) => ({ lengthMm: toFixedString(p.lengthMm, 'MM'), qty: p.qty })),
+        reported: reportedNow.flatMap((r) => r.piecesDetail.map(toPieceLike)),
+        exactMeters: detailsLengths(planned),
+      });
+      if (!adjustment.ok) throw new BadRequestException(adjustment.message);
+
       await tx.productionOrderItem.deleteMany({ where: { productionOrderId: orderId } });
       await tx.productionOrderItem.createMany({
         data: input.items.map((p, i) => ({
@@ -1138,7 +1155,8 @@ export class RoofingProductionService {
     // con un rollo entero encima podía reportar 300 ML sin que nada se quejara, y esos metros
     // de más nacían reservados a nombre del pedido (D-088) o entraban como stock que nadie
     // encargó. El plan dejó de ser solo una intención para esto: cambiar lo que hay que
-    // producir es `updatePlan`, no reportar de más.
+    // producir es `updatePlan`, no reportar de más. cc35 (D-545): a medida, `updatePlan` reparte los
+    // mismos metros; producir más que el pedido solo se puede en una plancha de catálogo.
     const planRows = await tx.productionOrderItem.findMany({
       where: { productionOrderId: orderId },
       orderBy: { lineNumber: 'asc' },
@@ -1164,7 +1182,7 @@ export class RoofingProductionService {
           (progress.remainingMeters.isZero()
             ? 'el plan ya está cubierto y este reporte no entra. '
             : `quedan ${progress.remainingMeters.toFixed(3)} m y este reporte suma ${newMeters.toFixed(3)} m. `) +
-          'Si de verdad hay que producir más, ajusta primero el plan de corte (RF-31).',
+          'Si lo que salió no es lo del plan, ajusta primero el plan de corte (RF-31).',
       );
     }
 

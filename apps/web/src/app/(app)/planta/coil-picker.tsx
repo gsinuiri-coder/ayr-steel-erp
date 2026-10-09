@@ -8,7 +8,6 @@ import {
   type RoofingCoilOptionDto,
 } from '@ayr/shared';
 import { formatQtyAsIs } from '@/lib/format';
-import { ColorSwatch } from '@/components/colors/color-swatch';
 import { FilmOpenNotice } from '@/components/film-open-notice';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -52,6 +52,8 @@ export function CoilPicker({
   productSku,
   options,
   mountedCount,
+  remainingMeters,
+  productName,
   loading,
   failed,
   pending,
@@ -63,6 +65,10 @@ export function CoilPicker({
   options: readonly RoofingCoilOptionDto[];
   /** Bobinas ya montadas en la orden: el tope de `MAX_ORDER_STRIPS` cuenta las dos. */
   mountedCount: number;
+  /** cc35: lo que falta cortar de la orden, para el encabezado del modal. */
+  remainingMeters?: string | undefined;
+  /** cc35: el nombre del producto («Cobertura TR4 Aluzinc 0.30 mm Rojo») para el encabezado. */
+  productName?: string | undefined;
   loading: boolean;
   failed: boolean;
   pending: boolean;
@@ -148,30 +154,117 @@ export function CoilPicker({
     setOpen(false);
   };
 
+  const chosen = openOptions.filter((c) => visibleSelected.includes(c.coilId));
+  const chosenKg = chosen.reduce((acc, c) => acc.plus(c.availableKg), new Decimal(0));
+  const chosenMeters = chosen.reduce((acc, c) => acc.plus(c.estimatedMeters), new Decimal(0));
+  const chosenSealed = chosen.filter((c) => c.film === 'SEALED');
+  /** Marcadas que la búsqueda deja fuera: no se montan (no se monta lo que nadie está mirando). */
+  const hiddenSelected = openOptions.filter(
+    (c) => selected.has(c.coilId) && !visibleSelected.includes(c.coilId),
+  ).length;
+  // Kilos por metro de la spec, de la primera bobina con rinde: solo para decir cuánto falta.
+  const sample = openOptions.find((c) => new Decimal(c.estimatedMeters).gt(0));
+  const remainingKg =
+    remainingMeters === undefined || sample === undefined
+      ? null
+      : new Decimal(remainingMeters).times(sample.availableKg).div(sample.estimatedMeters);
+  const exact = matches.filter((c) => c.exactFinish);
+  const others = matches.filter((c) => !c.exactFinish);
+  const toggle = (coilId: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(coilId);
+      else next.delete(coilId);
+      return next;
+    });
+  };
+  const groupRow = (label: string) => (
+    <TableRow className="bg-muted/50 hover:bg-muted/50">
+      <TableCell colSpan={7} className="text-xs font-medium text-muted-foreground">
+        {label}
+      </TableCell>
+    </TableRow>
+  );
+  const coilRow = (c: RoofingCoilOptionDto) => {
+    const checked = selected.has(c.coilId);
+    const used = Decimal.max(new Decimal(c.weightKg).minus(c.availableKg), new Decimal(0));
+    return (
+      <TableRow
+        key={c.coilId}
+        data-state={checked ? 'selected' : undefined}
+        className="cursor-pointer"
+        onClick={() => {
+          toggle(c.coilId, !checked);
+        }}
+      >
+        <TableCell
+          onClick={(e) => {
+            e.stopPropagation();
+          }}
+        >
+          <Checkbox
+            aria-label={`Elegir ${c.code}`}
+            checked={checked}
+            onCheckedChange={(value) => {
+              toggle(c.coilId, value === true);
+            }}
+          />
+        </TableCell>
+        <TableCell>
+          <div className="font-mono font-medium">{c.code}</div>
+          <div className="whitespace-nowrap text-xs text-muted-foreground">
+            {new Decimal(c.thicknessMm).toString()} mm · {c.colorName ?? 'Sin color'} ·{' '}
+            {c.ral === null ? 'Sin RAL' : `RAL ${c.ral}`} · {new Decimal(c.widthMm).toString()} mm
+          </div>
+        </TableCell>
+        <TableCell>
+          <Badge variant={c.film === 'SEALED' ? 'outline' : 'progress'}>
+            {c.film === 'SEALED' ? 'Sellada' : 'Abierta'}
+          </Badge>
+        </TableCell>
+        <TableCell className="text-right tabular-nums">{formatQtyAsIs(c.weightKg, 'kg')}</TableCell>
+        <TableCell className="text-right tabular-nums text-muted-foreground">
+          {formatQtyAsIs(used.toFixed(3), 'kg')}
+        </TableCell>
+        <TableCell className="text-right font-semibold tabular-nums">
+          {formatQtyAsIs(c.availableKg, 'kg')}
+        </TableCell>
+        <TableCell className="text-right tabular-nums text-muted-foreground">
+          ≈ {formatQtyAsIs(new Decimal(c.estimatedMeters).toFixed(1), 'm')}
+        </TableCell>
+      </TableRow>
+    );
+  };
+
   return (
     <>
       <Button
         type="button"
+        variant="outline"
         className="justify-self-start"
-        aria-label={`Buscar una bobina para ${orderCode}`}
+        aria-label={`Montar bobinas en ${orderCode}`}
         disabled={disabled || pending}
         onClick={() => {
           setOpen(true);
         }}
       >
-        Buscar y montar bobinas ({openOptions.length})
+        Montar bobinas
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        {/* cc27 (UX26-05, D-456): a 1366 la tabla medía 1046 px en 862 y «Montar» quedaba fuera. */}
-        <DialogContent className="sm:max-w-6xl">
+        <DialogContent className="sm:max-w-4xl">
           <DialogHeader>
-            <DialogTitle>Bobinas para {orderCode}</DialogTitle>
+            <DialogTitle>Montar bobinas en {orderCode}</DialogTitle>
             <DialogDescription>
-              {openOptions.length} bobinas libres del espesor y el color comercial de {productSku}.{' '}
-              {openOptions.some((c) => c.exactFinish)
-                ? 'Arriba van las del mismo acabado (RAL) que el producto; las demás también se pueden montar. '
-                : 'Ninguna es del mismo acabado (RAL) que el producto; todas se pueden montar. '}
-              Monta una con su botón, o elige varias y móntalas juntas.
+              {remainingMeters !== undefined && (
+                <>
+                  Falta cortar {formatQtyAsIs(remainingMeters, 'm')}
+                  {remainingKg !== null && (
+                    <> · ≈ {formatQtyAsIs(remainingKg.toFixed(3), 'kg')}</>
+                  )}{' '}
+                  de {productName ?? productSku}.{' '}
+                </>
+              )}
+              Marca una o más.
             </DialogDescription>
           </DialogHeader>
           {filmStep !== null ? (
@@ -233,106 +326,53 @@ export function CoilPicker({
             />
           ) : (
             <div className="grid gap-3">
-              <Input
-                autoFocus
-                aria-label="Filtrar opciones"
-                placeholder="Filtra por código, color, RAL o kilos…"
-                value={filter}
-                onChange={(e) => {
-                  setFilter(e.target.value);
-                }}
-              />
-              <p className="text-xs text-muted-foreground">
-                {matches.length} de {openOptions.length} bobinas
-                {selected.size > 0 && <> · {selected.size} elegidas</>}
-              </p>
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <Input
+                  autoFocus
+                  aria-label="Filtrar opciones"
+                  placeholder="Buscar por código, color o espesor"
+                  className="pl-8"
+                  value={filter}
+                  onChange={(e) => {
+                    setFilter(e.target.value);
+                  }}
+                />
+              </div>
               <div className="max-h-96 overflow-auto rounded-lg border">
-                <Table>
+                <Table aria-label={`Bobinas para ${orderCode}`}>
                   <TableHeader className="sticky top-0 z-10 bg-background">
                     <TableRow>
                       <TableHead className="w-10">
                         <span className="sr-only">Elegir</span>
                       </TableHead>
                       <TableHead>Bobina</TableHead>
-                      <TableHead>Espesor</TableHead>
-                      <TableHead>Color</TableHead>
-                      <TableHead>Acabado (RAL)</TableHead>
-                      <TableHead className="text-right">Peso inicial</TableHead>
-                      <TableHead className="text-right">kg disponibles</TableHead>
-                      <TableHead className="w-28 text-right">Montar</TableHead>
+                      <TableHead>Estado</TableHead>
+                      <TableHead className="text-right">kg inicial</TableHead>
+                      <TableHead className="text-right">kg consumido</TableHead>
+                      <TableHead className="text-right">Saldo</TableHead>
+                      <TableHead className="text-right">Rinde (m)</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {matches.map((c) => (
-                      <TableRow
-                        key={c.coilId}
-                        data-state={selected.has(c.coilId) ? 'selected' : undefined}
-                      >
-                        <TableCell>
-                          <Checkbox
-                            aria-label={`Elegir ${c.code}`}
-                            checked={selected.has(c.coilId)}
-                            onCheckedChange={(checked) => {
-                              setSelected((prev) => {
-                                const next = new Set(prev);
-                                if (checked === true) next.add(c.coilId);
-                                else next.delete(c.coilId);
-                                return next;
-                              });
-                            }}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-mono font-medium">
-                            {c.code}{' '}
-                            <Badge variant={c.film === 'SEALED' ? 'outline' : 'progress'}>
-                              {c.film === 'SEALED' ? 'Sellada' : 'Abierta'}
-                            </Badge>
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            alcanza para {c.estimatedMeters} m
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm">{c.thicknessMm} mm</TableCell>
-                        <TableCell>
-                          <ColorSwatch
-                            color={
-                              c.colorName && c.colorHex
-                                ? { name: c.colorName, hexColor: c.colorHex }
-                                : null
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <FinishCell coil={c} />
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatQtyAsIs(c.weightKg, 'kg')}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatQtyAsIs(c.availableKg, 'kg')}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            aria-label={`Montar ${c.code}`}
-                            disabled={pending || room === 0}
-                            onClick={() => {
-                              mount([c.coilId]);
-                            }}
-                          >
-                            Montar
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {exact.length > 0 && groupRow('Del mismo acabado que el producto')}
+                    {exact.map(coilRow)}
+                    {others.length > 0 &&
+                      groupRow(
+                        exact.length > 0
+                          ? 'Otro acabado del mismo color · también se puede montar'
+                          : 'Del mismo color, otro acabado · se puede montar',
+                      )}
+                    {others.map(coilRow)}
                     {matches.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center text-muted-foreground">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground">
                           {openOptions.length === 0
                             ? 'No hay bobinas libres de esta spec: mira las terminadas.'
-                            : 'Ninguna bobina coincide con ese texto.'}
+                            : 'Ninguna bobina coincide con esa búsqueda.'}
                         </TableCell>
                       </TableRow>
                     )}
@@ -347,14 +387,16 @@ export function CoilPicker({
               {closedOptions.length > 0 && (
                 <div className="grid gap-2">
                   <Button
-                    variant="ghost"
-                    className="justify-self-start"
+                    variant="link"
+                    className="justify-self-start px-0"
                     aria-expanded={showClosed}
                     onClick={() => {
                       setShowClosed((v) => !v);
                     }}
                   >
-                    {showClosed ? 'Ocultar' : 'Ver'} bobinas terminadas ({closedOptions.length})
+                    {showClosed
+                      ? 'Ocultar las bobinas terminadas'
+                      : `Ver las ${String(closedOptions.length)} bobinas terminadas, para reabrir`}
                   </Button>
                   {showClosed && (
                     <div className="max-h-60 overflow-auto rounded-lg border">
@@ -419,30 +461,71 @@ export function CoilPicker({
             </div>
           )}
           {reopening === null && filmStep === null && (
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setOpen(false);
-                }}
-              >
-                Cancelar
-              </Button>
-              <Button
-                aria-label={
-                  visibleSelected.length === 1
-                    ? `Montar la bobina elegida en ${orderCode}`
-                    : `Montar las ${String(visibleSelected.length)} bobinas elegidas en ${orderCode}`
-                }
-                disabled={visibleSelected.length === 0 || overLimit || pending}
-                onClick={() => {
-                  mount(visibleSelected);
-                }}
-              >
-                {visibleSelected.length === 1
-                  ? 'Montar la elegida'
-                  : `Montar las ${String(visibleSelected.length)} elegidas`}
-              </Button>
+            <DialogFooter className="items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground" data-testid="montar-resumen">
+                {visibleSelected.length === 0 ? (
+                  'Ninguna elegida'
+                ) : (
+                  <>
+                    <span className="font-semibold text-foreground">
+                      {visibleSelected.length === 1
+                        ? '1 elegida'
+                        : `${String(visibleSelected.length)} elegidas`}
+                    </span>{' '}
+                    · {formatQtyAsIs(chosenKg.toFixed(3), 'kg')} · ≈{' '}
+                    {formatQtyAsIs(chosenMeters.toFixed(1), 'm')}
+                    {chosenSealed.length > 0 && (
+                      <>
+                        {' '}
+                        · {chosenSealed.length === 1 ? 'la' : 'las'}{' '}
+                        {chosenSealed.map((c) => c.code).join(', ')}{' '}
+                        {chosenSealed.length === 1
+                          ? 'está sellada: se abre al montarla'
+                          : 'están selladas: se abren al montarlas'}
+                      </>
+                    )}
+                  </>
+                )}
+                {hiddenSelected > 0 && (
+                  <span className="text-tone-warning-foreground">
+                    {' '}
+                    ·{' '}
+                    {hiddenSelected === 1
+                      ? '1 marcada queda'
+                      : `${String(hiddenSelected)} marcadas quedan`}{' '}
+                    fuera de la búsqueda y no se monta{hiddenSelected === 1 ? '' : 'n'}
+                  </span>
+                )}
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOpen(false);
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  aria-label={
+                    visibleSelected.length === 0
+                      ? `Montar en ${orderCode}`
+                      : visibleSelected.length === 1
+                        ? `Montar la bobina elegida en ${orderCode}`
+                        : `Montar las ${String(visibleSelected.length)} bobinas elegidas en ${orderCode}`
+                  }
+                  disabled={visibleSelected.length === 0 || overLimit || pending}
+                  onClick={() => {
+                    mount(visibleSelected);
+                  }}
+                >
+                  {visibleSelected.length === 0
+                    ? 'Montar'
+                    : visibleSelected.length === 1
+                      ? 'Montar la bobina'
+                      : `Montar las ${String(visibleSelected.length)}`}
+                </Button>
+              </div>
             </DialogFooter>
           )}
         </DialogContent>

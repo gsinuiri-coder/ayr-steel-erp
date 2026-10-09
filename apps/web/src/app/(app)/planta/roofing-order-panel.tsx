@@ -59,6 +59,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { AccessoryReportCard } from './accessory-report-card';
+import { PlanAdjustDialog } from './plan-adjust-dialog';
 import { CoilPicker } from './coil-picker';
 import { RowActions } from '@/components/row-actions';
 import {
@@ -99,8 +100,6 @@ export interface OrderDraft {
   /** D-089: kilos que la bobina consumió en **toda** la corrida; de acá sale el despunte. */
   closeKg: string;
   coilId: string;
-  /** Filas del plan de corte mientras se edita. `null` = no se está editando. */
-  planRows: PieceRow[] | null;
   /** D-191: la fila del borrador que el editor está corrigiendo. `null` = se agrega una nueva. */
   editingDraftId: string | null;
 }
@@ -110,7 +109,6 @@ export const EMPTY_DRAFT: OrderDraft = {
   consumedKg: '',
   closeKg: '',
   coilId: '',
-  planRows: null,
   editingDraftId: null,
 };
 
@@ -269,20 +267,6 @@ export function RoofingOrderPanel({
       invalidate();
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo bajar la bobina')),
-  });
-
-  const savePlan = useMutation({
-    mutationFn: (pieces: RoofingPieceDto[]) =>
-      api<ProductionOrderDto>(`/production/roofing/${order.orderId}/plan`, {
-        method: 'PUT',
-        body: { items: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) },
-      }),
-    onSuccess: () => {
-      toast.success('Plan de corte actualizado');
-      onDraft({ planRows: null, rows: null, consumedKg: '', editingDraftId: null });
-      invalidate();
-    },
-    onError: (err) => toast.error(errorMessage(err, 'No se pudo guardar el plan')),
   });
 
   const resolved = resolveDraft(order, draft);
@@ -541,7 +525,6 @@ export function RoofingOrderPanel({
     previewCloseOnly.isPending ||
     saveDraft.isPending ||
     removeDraft.isPending ||
-    savePlan.isPending ||
     mount.isPending ||
     release.isPending ||
     refreshing;
@@ -646,13 +629,10 @@ export function RoofingOrderPanel({
       {!order.isAccessory && (
         <PlanCard
           order={order}
-          rows={draft.planRows}
-          pending={savePlan.isPending}
-          onRows={(planRows) => {
-            onDraft({ planRows });
-          }}
-          onSave={(pieces) => {
-            savePlan.mutate(pieces);
+          onSaved={() => {
+            // D-159: el editor del reporte se vuelve a sembrar del plan nuevo.
+            onDraft({ rows: null, consumedKg: '', editingDraftId: null });
+            invalidate();
           }}
         />
       )}
@@ -742,6 +722,8 @@ export function RoofingOrderPanel({
               loading={options.isPending}
               failed={options.isError}
               mountedCount={liveCoils.length}
+              remainingMeters={order.remainingMeters}
+              productName={order.productName}
               pending={mount.isPending}
               onMount={(coilIds, reopen) => {
                 mount.mutate({ coilIds, ...(reopen ? { reopen } : {}) });
@@ -1185,45 +1167,8 @@ export function RoofingOrderPanel({
 // El plan de corte, editable desde acá (D-159)
 // ---------------------------------------------------------------------------
 
-function PlanCard({
-  order,
-  rows,
-  pending,
-  onRows,
-  onSave,
-}: {
-  order: RoofingBatchOrderDto;
-  rows: PieceRow[] | null;
-  pending: boolean;
-  onRows: (rows: PieceRow[] | null) => void;
-  onSave: (pieces: RoofingPieceDto[]) => void;
-}) {
-  /**
-   * D-118/D-159: en una plancha de catálogo el largo **no se elige**, lo trae el SKU. El
-   * supervisor solo dice cuántas, y el editor de largos completo sería un campo de más cuya
-   * única respuesta correcta ya está en la base.
-   */
-  const fixedLengthMm = order.productUnit === Unit.MTR ? null : order.productLengthMm;
-  const editing = rows !== null;
-  const parsed = rows === null ? null : parsePieceRows(rows);
-
-  const startEditing = () => {
-    if (fixedLengthMm !== null) {
-      onRows([
-        {
-          lengthM: mmToMeters(fixedLengthMm),
-          qty: String(order.planItems.reduce((acc, p) => acc + p.qty, 0) || ''),
-        },
-      ]);
-      return;
-    }
-    onRows(
-      order.planItems.length === 0
-        ? [EMPTY_PIECE_ROW]
-        : order.planItems.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) })),
-    );
-  };
-
+function PlanCard({ order, onSaved }: { order: RoofingBatchOrderDto; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -1231,8 +1176,8 @@ function PlanCard({
           Plan de corte
           <InfoPopover label="Sobre el plan de corte">
             El plan es una intención: lo que mueve inventario son los largos que reportes. Es
-            también el tope de lo que se puede reportar, así que si de verdad hay que producir más,
-            se cambia aquí.
+            también el tope de lo que se puede reportar. A medida, ajustarlo reparte de otra forma
+            los mismos metros del pedido.
           </InfoPopover>
         </CardTitle>
       </CardHeader>
@@ -1247,67 +1192,17 @@ function PlanCard({
             <span className="text-sm text-muted-foreground">({order.planMeters} m)</span>
           </p>
         )}
-
-        {!editing && (
-          <Button
-            variant="outline"
-            className="justify-self-start"
-            aria-label={`Ajustar el plan de corte de ${order.code}`}
-            onClick={startEditing}
-          >
-            Ajustar el plan
-          </Button>
-        )}
-
-        {editing && rows !== null && (
-          <div className="grid gap-3 rounded-lg border p-3">
-            {fixedLengthMm === null ? (
-              <LengthEditor
-                rows={rows}
-                idPrefix={`plan-${order.orderId}`}
-                disabled={pending}
-                onChange={onRows}
-              />
-            ) : (
-              <div className="grid max-w-xs gap-1.5">
-                <Label htmlFor={`plan-planchas-${order.orderId}`}>
-                  Planchas de {mmToMeters(fixedLengthMm)} m
-                </Label>
-                <Input
-                  id={`plan-planchas-${order.orderId}`}
-                  aria-label={`Planchas del plan de ${order.code}`}
-                  inputMode="numeric"
-                  disabled={pending}
-                  value={rows[0]?.qty ?? ''}
-                  onChange={(e) => {
-                    onRows([{ lengthM: mmToMeters(fixedLengthMm), qty: e.target.value }]);
-                  }}
-                />
-              </div>
-            )}
-            {parsed !== null && !parsed.ok && (
-              <p className="text-sm text-destructive">{parsed.reason}</p>
-            )}
-            <div className="flex gap-2">
-              <Button
-                disabled={parsed === null || !parsed.ok || pending}
-                onClick={() => {
-                  if (parsed?.ok) onSave(parsed.pieces);
-                }}
-              >
-                {pending ? 'Guardando…' : 'Guardar plan'}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  onRows(null);
-                }}
-              >
-                Cancelar
-              </Button>
-            </div>
-          </div>
-        )}
+        <Button
+          variant="outline"
+          className="justify-self-start"
+          aria-label={`Ajustar el plan de corte de ${order.code}`}
+          onClick={() => {
+            setOpen(true);
+          }}
+        >
+          Ajustar el plan
+        </Button>
+        <PlanAdjustDialog order={order} open={open} onOpenChange={setOpen} onSaved={onSaved} />
       </CardContent>
     </Card>
   );
@@ -1585,7 +1480,7 @@ function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedD
       error:
         `Del plan quedan ${available.toFixed(3)} m` +
         (othersMeters.gt(0) ? ` descontando el borrador` : '') +
-        ` y esto suma ${meters.toFixed(3)} m: ajusta el plan de corte si de verdad hay que producir más.`,
+        ` y esto suma ${meters.toFixed(3)} m: si lo que salió no es lo del plan, ajusta el plan de corte.`,
     };
   }
 

@@ -239,17 +239,29 @@ test.describe('D-192 — montar varias bobinas', () => {
       await openQueuedOrder(page, op.code);
       const panel = page.getByRole('tabpanel', { name: op.code });
 
-      await panel.getByRole('button', { name: `Buscar una bobina para ${op.code}` }).click();
+      await panel.getByRole('button', { name: `Montar bobinas en ${op.code}` }).click();
       const modal = page.getByRole('dialog');
-      await expect(modal.getByText(`Bobinas para ${op.code}`)).toBeVisible();
-      await expect(modal.getByRole('columnheader', { name: 'Peso inicial' })).toBeVisible();
+      await expect(modal.getByText(`Montar bobinas en ${op.code}`)).toBeVisible();
+      // cc35 (ESPEC §4): kg inicial, kg consumido, saldo y rinde, por bobina.
+      for (const name of ['kg inicial', 'kg consumido', 'Saldo', 'Rinde (m)']) {
+        await expect(modal.getByRole('columnheader', { name, exact: true })).toBeVisible();
+      }
       const rowA = modal.getByRole('row').filter({ hasText: scenario.coil.code });
       const rowB = modal.getByRole('row').filter({ hasText: second.coil.code });
       await expect(rowA).toContainText('1,500.000 kg');
       await expect(rowB).toContainText('1,200.000 kg');
 
-      await modal.getByRole('checkbox', { name: `Elegir ${scenario.coil.code}` }).click();
+      // cc35: la búsqueda filtra y la selección sobrevive a la búsqueda; se marcan varias.
+      await modal.getByLabel('Filtrar opciones').fill(second.coil.code);
+      await expect(
+        modal.getByRole('checkbox', { name: `Elegir ${scenario.coil.code}` }),
+      ).toHaveCount(0);
       await modal.getByRole('checkbox', { name: `Elegir ${second.coil.code}` }).click();
+      await modal.getByLabel('Filtrar opciones').fill('');
+      await modal.getByRole('row').filter({ hasText: scenario.coil.code }).click();
+      await expect(modal.getByTestId('montar-resumen')).toContainText('2 elegidas');
+      await expect(modal.getByTestId('montar-resumen')).toContainText('2,700.000 kg');
+      await expect(modal.getByTestId('montar-resumen')).toContainText('se abren al montarlas');
       await modal
         .getByRole('button', { name: `Montar las 2 bobinas elegidas en ${op.code}` })
         .click();
