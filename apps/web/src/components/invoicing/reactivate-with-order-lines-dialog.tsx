@@ -14,7 +14,7 @@ import {
   type ReactivationSideDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
-import { formatMoney, formatTimestampDate } from '@/lib/format';
+import { formatMoney, formatTimestampDate, formatUnitQty } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -108,7 +108,7 @@ export function Side({
                 )}
               </TableCell>
               <TableCell className="text-right tabular-nums">
-                {toDecimal(l.qty).toString()} {l.unit}
+                {formatUnitQty(l.qty, l.unit)}
               </TableCell>
               <TableCell className="text-right tabular-nums">{formatMoney(l.totalPen)}</TableCell>
             </TableRow>

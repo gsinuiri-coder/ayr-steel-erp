@@ -22,7 +22,8 @@
     "prisma/inspect-cancelled-purchase-coils-cli.ts",
     "prisma/restore-cancelled-coils-cli.ts",
     "prisma/inspect-cc33-cli.ts",
-    "prisma/inspect-cc34-cli.ts"
+    "prisma/inspect-cc34-cli.ts",
+    "prisma/inspect-cc38-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

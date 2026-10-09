@@ -155,9 +155,13 @@ test.describe('F8-S3 — huecos de cobertura', () => {
 
       await panel.getByRole('button', { name: `Registrar producción de ${opCode}` }).click();
       // «Fila 2: …» se muestra en el bloque de su bobina, sin el número de fila.
-      await expect(block.getByRole('alert')).toContainText(`${opCode} tiene un plan de 40.000 m`, {
-        timeout: 60_000,
-      });
+      // cc38 (D-574): 8 + 20 + 20 = 48 contra 40.
+      await expect(block.getByRole('alert')).toContainText(
+        'Excede el plan en 8.000 m · ajusta el plan',
+        {
+          timeout: 60_000,
+        },
+      );
 
       // El borrador sigue entero en el servidor; nada se grabó.
       expect(await getJson<DraftDto[]>(api, draftsPath(opId))).toHaveLength(2);

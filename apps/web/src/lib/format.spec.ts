@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Decimal } from '@ayr/shared';
 import {
-  formatSalesQty,
-  salesUnitSymbol,
+  formatUnits,
+  unitSymbol,
   displayDecimal,
   formatDateTime,
   formatKg,
@@ -42,7 +42,7 @@ describe('formato de cifras', () => {
   it('formatQty aplica la regla por unidad y deja las demás como vienen', () => {
     expect(formatQty('4500.000', 'kg')).toBe('4,500.00 kg');
     expect(formatQty('20.000', 'm')).toBe('20.00 m');
-    expect(formatQty('20.000', 'u')).toBe('20.000 u');
+    expect(formatQty('20.000', 'und')).toBe('20 und');
     expect(formatQty('1220.00', 'mm')).toBe('1,220.00 mm');
     expect(formatQty('3500')).toBe('3,500');
   });
@@ -50,7 +50,7 @@ describe('formato de cifras', () => {
   it('formatUnitQty traduce la unidad SUNAT antes de formatear', () => {
     expect(formatUnitQty('89.606', 'KGM')).toBe('89.61 kg');
     expect(formatUnitQty('24.600', 'MTR')).toBe('24.60 m');
-    expect(formatUnitQty('10', 'NIU')).toBe('10 u');
+    expect(formatUnitQty('10', 'NIU')).toBe('10 und');
   });
 
   it('formatQtyAsIs conserva la escala para planta y bobina', () => {
@@ -105,17 +105,26 @@ describe('decimal de un campo que no se edita (cc36)', () => {
   });
 });
 
-describe('cantidades del formulario de venta (cc37)', () => {
+describe('«und» en toda la app (D-579; antes solo el formulario de venta, cc37)', () => {
   it('unidades sin decimales de más y con «und»; kilos y metros con la regla de cc31', () => {
-    expect(formatSalesQty('1120.000', 'NIU')).toBe('1,120 und');
-    expect(formatSalesQty('10.000', 'NIU')).toBe('10 und');
-    expect(formatSalesQty('2.500', 'NIU')).toBe('2.5 und');
-    expect(formatSalesQty('5410.270', 'KGM')).toBe('5,410.27 kg');
-    expect(formatSalesQty('12.000', 'MTR')).toBe('12.00 m');
-    expect(formatSalesQty('150.000', 'NIU', false)).toBe('150');
-    expect(formatSalesQty('abc', 'NIU')).toBe('abc und');
-    expect(salesUnitSymbol('NIU')).toBe('und');
-    expect(salesUnitSymbol('KGM')).toBe('kg');
+    expect(formatUnitQty('1120.000', 'NIU')).toBe('1,120 und');
+    expect(formatUnitQty('10.000', 'NIU')).toBe('10 und');
+    expect(formatUnitQty('2.500', 'NIU')).toBe('2.5 und');
+    expect(formatUnitQty(new Decimal('150.5'), 'NIU')).toBe('150.5 und');
+    expect(formatUnitQty('5410.270', 'KGM')).toBe('5,410.27 kg');
+    expect(formatUnitQty('12.000', 'MTR')).toBe('12.00 m');
+    expect(formatUnitQty('150.000', 'NIU', false)).toBe('150');
+    expect(formatUnitQty('5410.270', 'KGM', false)).toBe('5,410.27');
+    expect(formatUnitQty('abc', 'NIU')).toBe('abc und');
+    expect(formatUnitQty('3.000', 'ZZ')).toBe('3.000');
+    expect(unitSymbol('NIU')).toBe('und');
+    expect(unitSymbol('KGM')).toBe('kg');
+    expect(unitSymbol('XYZ')).toBe('XYZ');
+    expect(formatUnits('1200.000')).toBe('1,200 und');
+    expect(formatUnits('7', null)).toBe('7');
+    expect(formatQty('10.000', 'und')).toBe('10 und');
+    expect(formatQtyAsIs('10.000', 'und')).toBe('10 und');
+    expect(formatQtyAsIs('10.000', 'kg')).toBe('10.000 kg');
     expect(displayDecimal('10.000', 0)).toBe('10');
   });
 });

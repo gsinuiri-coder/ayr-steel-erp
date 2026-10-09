@@ -128,7 +128,8 @@ describe('salesByMaterialXlsx (D-354)', () => {
     expect(first[col('Precio/ML venta (S/)')]).toBe(30);
     expect(first[col('Costo/ML (S/)')]).toBe(6);
     expect(first[col('Ganancia/ML (S/)')]).toBe(24);
-    expect(first[col('Unidad')]).toBe('MTR');
+    // D-579: la unidad se muestra con su abreviatura (`MTR` → «m», `NIU` → «und»).
+    expect(first[col('Unidad')]).toBe('m');
     expect(first[col('Costo prom./unidad (S/)')]).toBe(6);
     const total = main.find((r) => r[0] === 'Total')!;
     for (const name of [

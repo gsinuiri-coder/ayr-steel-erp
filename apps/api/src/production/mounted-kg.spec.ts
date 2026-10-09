@@ -170,7 +170,8 @@ describe('checkDraftRows con el tope de D-246', () => {
       { coilId: 'c1', pieces: realPieces, consumedKg: '4010.000' },
     ]);
     expect(result).toMatchObject({ ok: false, rowNumber: 1 });
-    if (!result.ok) expect(result.message).toMatch(/ajusta primero el plan de corte/);
+    // cc38 (D-574): 253 planchas de 6 m contra un plan de 250.
+    if (!result.ok) expect(result.message).toBe('Excede el plan en 18.000 m · ajusta el plan');
   });
 });
 

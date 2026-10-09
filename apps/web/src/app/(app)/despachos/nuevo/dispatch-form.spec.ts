@@ -21,7 +21,7 @@ describe('cc31 — formulario de nuevo despacho', () => {
       ['NIU', '20'],
       ['MTR', '12.6'],
     ]);
-    expect(formatUnitSums(sums)).toBe('20 u y 12.60 m');
+    expect(formatUnitSums(sums)).toBe('20 und y 12.60 m');
   });
 
   it('enumera con «y»', () => {
@@ -41,7 +41,7 @@ describe('cc31 — formulario de nuevo despacho', () => {
   it('la cantidad vacía no es error; la que pasa lo pendiente sí', () => {
     expect(qtyError('', '12', 'NIU')).toBeNull();
     expect(qtyError('12', '12', 'NIU')).toBeNull();
-    expect(qtyError('14', '12', 'NIU')).toBe('Quedan 12 u por despachar.');
+    expect(qtyError('14', '12', 'NIU')).toBe('Quedan 12 und por despachar.');
     expect(qtyError('0', '12', 'NIU')).toBe(
       'Escribe una cantidad mayor que cero, con punto decimal.',
     );

@@ -1,3 +1,4 @@
+import { unitSymbol } from '../common/unit-symbol';
 import { BadRequestException } from '@nestjs/common';
 import { InventoryItemType, type Prisma } from '@prisma/client';
 import {
@@ -182,7 +183,11 @@ export async function computePriceFloorOutcomes(
     out.set(candidate.at, {
       minValuePen,
       minPricePen: minTypeablePrice(minValuePen, basisValuePen, toUnitValue(candidate.basis)),
-      priceUnitLabel: candidate.basis.kind === 'PER_METER' ? 'metro' : candidate.basis.unitLabel,
+      // D-579: la unidad se nombra como en pantalla («und», no «NIU»); ZZ y lo desconocido, tal cual.
+      priceUnitLabel:
+        candidate.basis.kind === 'PER_METER'
+          ? 'metro'
+          : unitSymbol(candidate.basis.unitLabel) || candidate.basis.unitLabel,
       costPen,
       minMarginPct,
     });

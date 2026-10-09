@@ -195,6 +195,7 @@ import {
   type RawMaterialSpecRef,
 } from './raw-material';
 import { lockDocuments } from '../inventory/document-locks';
+import { UNITS_SYMBOL } from '../common/unit-symbol';
 
 function toDateOnly(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
@@ -3632,8 +3633,12 @@ export class SalesOrdersService {
           lineNumber: item.lineNumber,
           productSku: product.sku,
           productName: product.name,
-          quantity: toDecimal(item.qty.toString()).toFixed(item.unit === Unit.MTR ? 3 : 0),
-          unitLabel: item.unit === Unit.MTR ? 'm' : 'u',
+          // D-579: las unidades sin decimales de más («10 und»; «2.5 und» si hay fracción).
+          quantity:
+            item.unit === Unit.MTR
+              ? toDecimal(item.qty.toString()).toFixed(3)
+              : toDecimal(item.qty.toString()).toFixed(),
+          unitLabel: item.unit === Unit.MTR ? 'm' : UNITS_SYMBOL,
           pieces: pieces.length === 0 ? '—' : describePieces(pieces),
           measures,
         };

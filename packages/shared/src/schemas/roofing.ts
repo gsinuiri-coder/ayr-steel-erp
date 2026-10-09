@@ -394,7 +394,40 @@ export function roofingPlanOverrun(
   newMeters: Decimal | string,
 ): Decimal {
   if (!progress.hasPlan) return new Decimal(0);
-  return progress.reportedMeters.plus(toDecimal(newMeters)).minus(progress.planMeters);
+  // cc38 (D-574): con tres decimales, la misma escala con que el cierre compara (D-573). Un
+  // largo con milímetros fraccionarios daba metros de cinco decimales y un «Excede … 0.000 m».
+  return roofingPlanGap(progress.planMeters, progress.reportedMeters.plus(toDecimal(newMeters)))
+    .excess;
+}
+
+/**
+ * D-573/D-574 (cc38): una orden se cierra solo con el plan completo y nunca registra más que él.
+ * Compara los **metros totales** registrados contra los del plan con tres decimales; no exige cada
+ * largo por separado. En un accesorio, el «plan» son los metros que encargó la línea del pedido.
+ *
+ * `missing` > 0 ⇒ no se puede cerrar; `excess` > 0 ⇒ ya se pasó del plan. Nunca los dos.
+ */
+export function roofingPlanGap(
+  planMeters: Decimal | string,
+  registeredMeters: Decimal | string,
+): { missing: Decimal; excess: Decimal } {
+  const diff = roundTo(toDecimal(planMeters), 'KG').minus(
+    roundTo(toDecimal(registeredMeters), 'KG'),
+  );
+  return {
+    missing: Decimal.max(diff, new Decimal(0)),
+    excess: Decimal.max(diff.negated(), new Decimal(0)),
+  };
+}
+
+/** D-573: el rechazo de todo camino de cierre con el plan incompleto. */
+export function closeShortfallMessage(missingMeters: Decimal | string): string {
+  return `Para cerrar falta registrar ${toDecimal(missingMeters).toFixed(3)} m del plan`;
+}
+
+/** D-574: el rechazo de un reporte, una fila del borrador o un commit que pasaría el plan. */
+export function planExcessMessage(excessMeters: Decimal | string): string {
+  return `Excede el plan en ${toDecimal(excessMeters).toFixed(3)} m · ajusta el plan`;
 }
 
 /**
@@ -1056,6 +1089,13 @@ export const roofingBatchCoilSchema = z.object({
   /** Kilos ya rolados de esa asignación: por encima de cero la bobina ya no se puede bajar. */
   consumedKg: z.string(),
   remainingKg: z.string(),
+  /**
+   * cc38 (D-576): lo que esta bobina ya tiene registrado en la orden (partes vigentes cuya salida de
+   * kardex es de esta bobina): sus largos sumados por largo y sus metros. Un accesorio no deja
+   * largos: solo metros.
+   */
+  reportedPieces: z.array(roofingPieceSchema),
+  reportedMeters: z.string(),
 });
 export type RoofingBatchCoilDto = z.infer<typeof roofingBatchCoilSchema>;
 
@@ -1113,6 +1153,8 @@ export const roofingBatchOrderSchema = z.object({
   /** Kilos teóricos que las planchas reportadas consumieron. */
   reportedKg: z.string(),
   coils: z.array(roofingBatchCoilSchema),
+  /** cc38 (D-576): planchas de los reportes vigentes (cero en un accesorio). */
+  reportedPieces: z.number().int(),
   /** D-191: el borrador de reportes de la orden, en orden de ejecución. */
   drafts: z.array(roofingReportDraftSchema),
   /** D-191: metros del borrador, que ya ocupan plan aunque no se hayan ejecutado. */

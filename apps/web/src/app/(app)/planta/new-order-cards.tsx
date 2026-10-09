@@ -13,7 +13,7 @@ import {
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { drywallProfilesOf } from '@/lib/drywall-profiles';
-import { formatDate, formatQtyAsIs } from '@/lib/format';
+import { formatDate, formatQtyAsIs, unitSymbol } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { OperationDateField } from '@/components/operation-date-field';
 import {
@@ -264,7 +264,8 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
               <SelectContent>
                 {productReservations.map((r) => (
                   <SelectItem key={r.id} value={r.id}>
-                    {r.salesOrderCode} — {r.customerName} — {r.itemLabel} ({r.qty} {r.unit})
+                    {r.salesOrderCode} — {r.customerName} — {r.itemLabel} (
+                    {formatQtyAsIs(r.qty, unitSymbol(r.unit))})
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -43,7 +43,7 @@ import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
 import { FilterChip } from '@/components/filter-chip';
-import { formatKg } from '@/lib/format';
+import { formatKg, unitSymbol } from '@/lib/format';
 
 /** El color solo tiene sentido donde hay material prepintado: coberturas (D-085). */
 function usesColor(lineCode: BusinessLine): boolean {
@@ -356,7 +356,7 @@ export function CatalogoView() {
                               : ROOFING_PRODUCT_KIND_LABELS[p.roofingKind]}
                           </TableCell>
                         )}
-                        <TableCell>{p.unit}</TableCell>
+                        <TableCell>{unitSymbol(p.unit) || p.unit}</TableCell>
                         <TableCell>{PRODUCT_SOURCE_LABELS[p.source]}</TableCell>
                         <TableCell>
                           {p.isActive ? (

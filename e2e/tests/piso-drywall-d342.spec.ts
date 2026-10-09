@@ -59,7 +59,7 @@ test.describe('D-342/D-344 — piso de drywall desde el SKU', () => {
     const compatible = await floorOf(scenario.product.id);
     expect(compatible.noFloorReason).toBeNull();
     expect(Number(compatible.minPricePen)).toBeGreaterThan(0);
-    expect(compatible.priceUnitLabel).toBe('NIU');
+    expect(compatible.priceUnitLabel).toBe('und');
 
     // Otro perfil, con el SKU completo pero que pide un fleje de 700 mm del que no hay ninguno.
     const noStrips = await createCatalogProduct(api, { pieceWeightKg: '2.000', widthMm: '700' });

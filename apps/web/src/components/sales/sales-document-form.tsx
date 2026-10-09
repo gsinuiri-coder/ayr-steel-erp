@@ -84,7 +84,7 @@ import {
   customerLabel,
   displayDecimal,
   formatAmount,
-  formatSalesQty,
+  formatUnitQty,
   formatDate,
   formatKg,
   formatKgPrecise,
@@ -93,7 +93,7 @@ import {
   formatQty,
   isPositiveDecimal,
   todayIso,
-  salesUnitSymbol,
+  unitSymbol,
 } from '@/lib/format';
 import { listPriceWithIgv } from '@/lib/list-price';
 import { type MissingField } from '@/components/form';
@@ -1123,7 +1123,7 @@ export function SalesDocumentForm({
         return {
           error:
             `${at}: el precio está por debajo del mínimo. El mínimo de ${product?.sku ?? 'este producto'} es ` +
-            `${formatMoney(stock.minPricePen, 'PEN', 2)} por ${perMeter ? 'metro' : product?.unit === 'NIU' ? 'unidad' : salesUnitSymbol(product?.unit ?? '')} (con IGV). ` +
+            `${formatMoney(stock.minPricePen, 'PEN', 2)} por ${perMeter ? 'metro' : product?.unit === 'NIU' ? 'unidad' : unitSymbol(product?.unit ?? '')} (con IGV). ` +
             'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes, tipo de cambio y reservas.',
         };
       }
@@ -1666,13 +1666,13 @@ function LineRow({
   const lineNumber = index + 1;
   const accessory = product !== undefined && isAccessory(product);
   // cc31 (corte 6): la unidad va dentro del campo, no en un renglón suelto debajo.
-  const qtyUnit = l.kind === 'BOBINA' ? 'kg' : product ? salesUnitSymbol(product.unit) : '';
+  const qtyUnit = l.kind === 'BOBINA' ? 'kg' : product ? unitSymbol(product.unit) : '';
   const priceUnit = perMeter
     ? '/m'
     : l.kind === 'BOBINA'
       ? '/kg'
-      : product && salesUnitSymbol(product.unit) !== ''
-        ? `/${salesUnitSymbol(product.unit)}`
+      : product && unitSymbol(product.unit) !== ''
+        ? `/${unitSymbol(product.unit)}`
         : '';
   // cc36: «línea de negocio · subtipo» bajo el producto, como en Main.
   const meta = [
@@ -2311,7 +2311,7 @@ function LineStatusChip({
           </dl>
         ) : need.kind === 'stock' ? (
           <p className="tabular-nums">
-            Sale de stock: hay {formatSalesQty(need.available, need.unit)} disponibles (ya descuenta
+            Sale de stock: hay {formatUnitQty(need.available, need.unit)} disponibles (ya descuenta
             lo reservado).
           </p>
         ) : (
@@ -2486,7 +2486,7 @@ function PriceFloorHint({
   // Con el importe sin IGV cargado, el campo no es un precio: el mínimo dice su unidad y que es
   // con IGV, y la lista no se muestra (se leería como un importe).
   const byAmount = l.amountMode === 'AMOUNT';
-  const symbol = l.kind === 'BOBINA' ? 'kg' : product ? salesUnitSymbol(product.unit) : '';
+  const symbol = l.kind === 'BOBINA' ? 'kg' : product ? unitSymbol(product.unit) : '';
   const unit =
     (byFixedLength(product) && l.pricePerPiece ? ' /m' : '') +
     (byAmount ? `${symbol === '' ? '' : ` /${symbol}`} con IGV` : '');
@@ -2776,10 +2776,10 @@ function MaterialCommitment({
       <h2 className="text-sm font-medium">{title}</h2>
       <div className="grid max-w-2xl grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 gap-y-1.5 text-sm">
         {rows.map((row) => {
-          // cc37: unidades sin decimales de más, kilos a 2 decimales (`formatSalesQty`).
+          // cc37: unidades sin decimales de más, kilos a 2 decimales (`formatUnitQty`).
           const code = row.unit === 'kg' ? 'KGM' : row.unit;
-          const unit = salesUnitSymbol(code);
-          const qty = (value: Decimal) => formatSalesQty(value, code, false);
+          const unit = unitSymbol(code);
+          const qty = (value: Decimal) => formatUnitQty(value, code, false);
           return (
             <Fragment key={row.key}>
               <span className="min-w-0 truncate">
@@ -2897,7 +2897,7 @@ function StockPanelSheet({
                         ? `${formatQty(row.rawMaterialAvailableKg, 'kg')} de materia prima disponibles`
                         : row.kgPerMeter !== null
                           ? 'No se pudo calcular la materia prima de este SKU'
-                          : `${formatSalesQty(row.availableQty, row.unit)} disponibles`}
+                          : `${formatUnitQty(row.availableQty, row.unit)} disponibles`}
                   </p>
                 </li>
               ))}

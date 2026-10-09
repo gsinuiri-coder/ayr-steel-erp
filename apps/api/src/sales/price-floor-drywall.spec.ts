@@ -443,7 +443,7 @@ describe('CatalogService.priceFloor y el marcador «sin piso» (D-342/D-344)', (
     ]);
     const floor = await service.priceFloor('perfil-1');
     // 2 kg × S/ 5 = 10.00 → ÷ 0.90 × 1.18 = 13.1111, y el mínimo tipeable sube al 13.12 que sí llega al piso (D-163).
-    expect(floor).toEqual({ minPricePen: '13.12', priceUnitLabel: 'NIU', noFloorReason: null });
+    expect(floor).toEqual({ minPricePen: '13.12', priceUnitLabel: 'und', noFloorReason: null });
   });
 
   it('un producto que no es perfil de drywall no cambia: costo del kardex y sin motivo', async () => {

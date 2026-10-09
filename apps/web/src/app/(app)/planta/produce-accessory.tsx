@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  Decimal,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   sum,
   toDecimal,
@@ -18,7 +19,8 @@ import {
   type AccessoryEdit,
 } from '@/lib/accessory-blocks';
 import { api, ApiError } from '@/lib/api';
-import { formatQtyAsIs } from '@/lib/format';
+import { formatKg, formatMeters, formatQtyAsIs } from '@/lib/format';
+import { planProgress } from '@/lib/plan-progress';
 import { errorMessage, toast } from '@/lib/notify';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
@@ -29,7 +31,8 @@ import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { BandHeader, ClosePreviewBlock, Stat } from './produce-blocks';
+import { AutoConfirmBlock, BandHeader, ClosePreviewBlock, Stat } from './produce-blocks';
+import { CloseButton, CloseHint, CoilStatusBadge, PlanProgressBar } from './plan-progress-view';
 import { newDraftKey } from './use-block-drafts';
 import {
   EMPTY_OVERRIDE,
@@ -142,6 +145,25 @@ export function ProduceAccessory({
       : (edit ?? EMPTY_ACCESSORY_EDIT);
     return { coil, index: i + 1, last, derived, edit: shown, check: accessoryBlock(coil, shown) };
   });
+  /** D-575: el último bloque llenado solo y sin confirmar: no se registra hasta confirmarlo. */
+  const autoBlock = blocks.find((b) => b.derived && b.check.meters !== null);
+  const registrable = blocks.filter((b) => !b.derived);
+  const progress = planProgress({
+    planMeters: order.planMeters,
+    reportedMeters: order.reportedMeters,
+    plan: null,
+    draft: sum(registrable.map((b) => b.check.meters ?? new Decimal(0))),
+    auto: autoBlock?.check.meters ?? new Decimal(0),
+  });
+  /** D-575 (tablero `CerrarBarra`): «Qué va a pasar» esperando la casilla del bloque llenado solo. */
+  const [askingAuto, setAskingAuto] = useState<string | null>(null);
+  const [autoIncluded, setAutoIncluded] = useState<string | null>(null);
+  const autoLabel = (b: (typeof blocks)[number]) =>
+    `${formatMeters(b.check.meters ?? '0')} que se llenaron solos en la bobina ${b.coil.coilCode}`;
+  /** «Sí, salió así»: lo llenado pasa a ser lo escrito (y se guarda en el navegador, D-559). */
+  const confirmAuto = () => {
+    if (autoBlock !== undefined) setEdit(autoBlock.coil.coilId, autoBlock.edit);
+  };
 
   /** Escribir en un bloque cambia su contenido: su clave de idempotencia deja de valer. */
   const setEdit = (coilId: string, next: AccessoryEdit) => {
@@ -305,7 +327,8 @@ export function ProduceAccessory({
         await previewClose.mutateAsync();
         return;
       }
-      if (await sendReports(blocks)) {
+      // D-575: el bloque llenado solo y sin confirmar no se manda.
+      if (await sendReports(registrable)) {
         toast.success(`${order.code}: producción registrada`);
       }
       invalidate();
@@ -314,22 +337,42 @@ export function ProduceAccessory({
     }
   });
 
-  const pendingOverride = blocks.find(
+  const pendingOverride = registrable.find(
     (b) =>
       b.check.figures.excess !== null &&
       overrideInput(overrides[b.coil.coilId], b.check.figures.excess) === null,
   );
-  const blocking = blocks.find((b) => b.check.error !== null);
+  const blocking = registrable.find((b) => b.check.error !== null);
 
   const start = (shouldClose: boolean) => {
     setAttempted(true);
     closing.current = shouldClose;
     reason.current = null;
     if (blocking !== undefined || pendingOverride !== undefined) return;
-    if (!shouldClose && blocks.every((b) => b.check.meters === null)) {
+    if (!shouldClose && registrable.every((b) => b.check.meters === null)) {
       toast.warning('No hay nada escrito para registrar.');
       return;
     }
+    // D-573: con los metros de la orden incompletos no se cierra (el API tampoco deja).
+    if (shouldClose && !progress.canClose) return;
+    // D-575: «Qué va a pasar» pide confirmar el bloque llenado solo antes de calcular.
+    if (shouldClose && autoBlock !== undefined && autoBlock.check.figures.excess !== null) {
+      toast.warning(
+        'El bloque llenado solo pasa lo montado: confírmalo con «Sí, salió así» y marca la tolerancia.',
+      );
+      return;
+    }
+    if (shouldClose && autoBlock !== undefined) {
+      setAskingAuto(autoLabel(autoBlock));
+      return;
+    }
+    void run.attempt();
+  };
+
+  const confirmAutoAndPreview = () => {
+    confirmAuto();
+    setAutoIncluded(askingAuto);
+    setAskingAuto(null);
     void run.attempt();
   };
 
@@ -339,6 +382,7 @@ export function ProduceAccessory({
     previewClose.isPending ||
     close.isPending ||
     preview !== null ||
+    askingAuto !== null ||
     refreshing ||
     releasing;
   const ordered = toDecimal(order.planMeters);
@@ -356,15 +400,15 @@ export function ProduceAccessory({
     <div className="grid gap-4">
       <section className="grid gap-2" aria-label={`Avance de ${order.code}`}>
         <BandHeader title="Avance" />
-        <div className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg bg-muted/60 px-4 py-2.5">
-          <Stat label="Pedido" value={`${order.productName} · ${order.planMeters} m`} />
-          <Stat label="Registrado" value={`${order.reportedMeters} m`} />
-          <Stat label="Falta" value={`${order.remainingMeters} m`} />
-          <Stat
-            label="Teórico"
-            value={theoretical === null ? '—' : `${theoretical.toFixed(3)} kg`}
-          />
-          <Stat label="Bobinas usadas" value={String(coils.length)} />
+        <div className="grid gap-2.5 px-1">
+          <div className="flex flex-wrap gap-x-8 gap-y-2 rounded-lg bg-muted/60 px-4 py-2.5">
+            <Stat
+              label="Pedido"
+              value={`${order.productName} · ${formatMeters(order.planMeters)}`}
+            />
+            <Stat label="Teórico" value={theoretical === null ? '—' : formatKg(theoretical)} />
+          </div>
+          <PlanProgressBar view={progress} label={`Avance de ${order.code}`} />
         </div>
         <p className="text-xs text-muted-foreground">
           Un accesorio no tiene plan de corte: se escriben directo los metros que salieron de cada
@@ -373,7 +417,7 @@ export function ProduceAccessory({
       </section>
 
       <section className="grid gap-2" aria-label={`Bobinas de ${order.code}`}>
-        <BandHeader title="En el orden en que se usaron">{mountButton}</BandHeader>
+        <BandHeader title={`Bobinas · ${String(blocks.length)}`}>{mountButton}</BandHeader>
         {blocks.length === 0 ? (
           <p className="px-1 text-sm text-muted-foreground">
             La orden no tiene ninguna bobina montada: monta una y lo que falta del pedido aparece
@@ -386,12 +430,15 @@ export function ProduceAccessory({
               const label = `la bobina ${String(b.index)} (${b.coil.coilCode})`;
               const error = errors[b.coil.coilId] ?? b.check.error;
               const override = overrides[b.coil.coilId] ?? EMPTY_OVERRIDE;
+              const auto = b === autoBlock;
               return (
                 <div
                   key={b.coil.coilId}
                   data-testid={`bloque-${b.coil.coilCode}`}
+                  data-auto={auto ? 'sin-confirmar' : undefined}
                   className={cn(
                     'grid content-start gap-2.5 rounded-xl border p-3.5',
+                    auto && 'border-dashed border-tone-warning-foreground bg-tone-warning/40',
                     error !== null && 'border-destructive/50',
                   )}
                 >
@@ -405,7 +452,17 @@ export function ProduceAccessory({
                       </div>
                       <div className="font-mono font-semibold">{b.coil.coilCode}</div>
                     </div>
-                    <div className="flex items-center gap-2 text-xs">
+                    <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+                      {auto ? (
+                        <span className="font-semibold text-tone-warning-foreground">
+                          Llenado solo · sin confirmar
+                        </span>
+                      ) : (
+                        <CoilStatusBadge
+                          inDraft={!b.derived && b.check.meters !== null}
+                          registered={toDecimal(b.coil.reportedMeters).gt(0)}
+                        />
+                      )}
                       <span
                         className={cn(
                           'font-semibold',
@@ -430,8 +487,39 @@ export function ProduceAccessory({
                         )}
                     </div>
                   </div>
-                  {b.derived && b.edit.meters !== '' && (
-                    <p className="text-xs text-primary">Llenada sola con lo que faltaba.</p>
+                  {toDecimal(b.coil.reportedMeters).gt(0) && (
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      Registrado: {formatMeters(b.coil.reportedMeters)} de bobina
+                    </p>
+                  )}
+                  {auto && (
+                    <div className="grid gap-1.5" data-testid="bloque-llenado-solo">
+                      <p className="text-muted-foreground tabular-nums">
+                        {formatMeters(b.check.meters ?? '0')}, lo que falta del pedido
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-label={`Sí, salió así en ${label}`}
+                          disabled={busy}
+                          onClick={confirmAuto}
+                        >
+                          Sí, salió así
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          aria-label={`Vaciar ${label}`}
+                          disabled={busy}
+                          onClick={() => {
+                            setEdit(b.coil.coilId, EMPTY_ACCESSORY_EDIT);
+                          }}
+                        >
+                          Vaciar
+                        </Button>
+                      </div>
+                    </div>
                   )}
                   <div className="overflow-hidden rounded-lg border">
                     <div className="grid grid-cols-2 gap-2 bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">
@@ -568,14 +656,27 @@ export function ProduceAccessory({
         </div>
       )}
 
+      {askingAuto !== null && (
+        <AutoConfirmBlock
+          label={askingAuto}
+          pending={sending}
+          onConfirm={confirmAutoAndPreview}
+          onBack={() => {
+            setAskingAuto(null);
+          }}
+        />
+      )}
+
       {preview !== null && (
         <ClosePreviewBlock
           key={JSON.stringify(preview)}
           order={order}
           preview={preview}
+          autoIncluded={autoIncluded}
           pending={close.isPending}
           onBack={() => {
             reason.current = null;
+            setAutoIncluded(null);
             setPreview(null);
           }}
           onConfirm={() => {
@@ -588,33 +689,34 @@ export function ProduceAccessory({
         data-slot="sticky-action-bar"
         className="sticky bottom-0 z-20 -mx-4 flex flex-wrap items-center justify-end gap-2 border-t bg-background px-4 py-3"
       >
-        <OperationDateField value={operationDate} onChange={onOperationDate} />
-        <span className="mr-auto text-xs text-muted-foreground">
-          Lo escrito se guarda en este navegador hasta registrarlo.
+        <span className="mr-auto grid gap-0.5">
+          <CloseHint view={progress} />
+          <span className="text-xs text-muted-foreground">
+            Lo escrito se guarda en este navegador hasta registrarlo.
+          </span>
         </span>
+        <OperationDateField value={operationDate} onChange={onOperationDate} />
         <Button
-          variant="outline"
+          variant={progress.canClose ? 'outline' : 'default'}
           aria-label={`Registrar producción de ${order.code}`}
           pending={sending && !closing.current}
           pendingText="Registrando…"
-          disabled={busy}
+          disabled={busy || registrable.every((b) => b.check.meters === null)}
           onClick={() => {
             start(false);
           }}
         >
           Registrar producción
         </Button>
-        <Button
-          aria-label={`Registrar y cerrar ${order.code}`}
+        <CloseButton
+          view={progress}
+          code={order.code}
           pending={previewClose.isPending}
-          pendingText="Calculando…"
-          disabled={busy}
+          busy={busy}
           onClick={() => {
             start(true);
           }}
-        >
-          Registrar y cerrar
-        </Button>
+        />
       </div>
 
       <ReasonDialog

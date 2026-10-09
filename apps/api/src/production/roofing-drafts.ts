@@ -3,7 +3,7 @@ import {
   Decimal,
   mountedKgForReport,
   piecesMeters,
-  productionOrderCode,
+  planExcessMessage,
   roofingPlanOverrun,
   roofingPlanProgress,
   toDecimal,
@@ -92,7 +92,6 @@ export function checkDraftRows(
   state: DraftCheckState,
   rows: readonly DraftRowLike[],
 ): DraftCheckResult {
-  const code = productionOrderCode(state.orderSeq);
   const usedKg = new Map<string, Decimal>();
   let draftMeters = new Decimal(0);
   const checks: DraftRowCheck[] = [];
@@ -117,17 +116,10 @@ export function checkDraftRows(
     // D-146 con el borrador adentro: lo que ya ocupan las filas anteriores cuenta como si
     // estuviera reportado, porque al ejecutar lo va a estar.
     const meters = piecesMeters(row.pieces);
+    // cc38 (D-574): el texto nombra cuánto se pasa lo registrado más el borrador.
     const progress = roofingPlanProgress(state.planPieces, state.reportedMeters.plus(draftMeters));
-    if (roofingPlanOverrun(progress, meters).gt(0)) {
-      return fail(
-        `${code} tiene un plan de ${progress.planMeters.toFixed(3)} m; entre lo reportado ` +
-          `(${state.reportedMeters.toFixed(3)} m) y el borrador (${draftMeters.toFixed(3)} m) ` +
-          (progress.remainingMeters.isZero()
-            ? 'el plan ya está cubierto y esta fila no entra. '
-            : `quedan ${progress.remainingMeters.toFixed(3)} m y esta fila suma ${meters.toFixed(3)} m. `) +
-          'Si lo que salió no es lo del plan, ajusta primero el plan de corte (RF-31).',
-      );
-    }
+    const overrun = roofingPlanOverrun(progress, meters);
+    if (overrun.gt(0)) return fail(planExcessMessage(overrun));
 
     const theoreticalKg = roofingTheoreticalKg(coil.geometry, row.pieces);
     const alreadyKg = usedKg.get(coil.coilId) ?? new Decimal(0);

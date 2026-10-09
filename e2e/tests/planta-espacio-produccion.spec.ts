@@ -112,8 +112,8 @@ test.describe('D-146/D-155 — tope del plan y guardado por orden', () => {
         pieces: pieces([4, 3]),
       });
       expect(rejected.status).toBe(400);
-      expect(rejected.message).toContain('40.000');
-      expect(rejected.message).toContain('quedan 8.000 m');
+      // cc38 (D-574): el texto nombra cuánto se pasa.
+      expect(rejected.message).toBe('Excede el plan en 4.000 m · ajusta el plan');
 
       // El rechazo no dejó rastro: la bobina sigue con los 32 × 4 kg del primer reporte.
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('1870.720');
@@ -127,7 +127,7 @@ test.describe('D-146/D-155 — tope del plan y guardado por orden', () => {
       const covered = await postExpectingError(api, `/api/production/roofing/${op.id}/report`, {
         pieces: pieces([4, 1]),
       });
-      expect(covered.message).toContain('el plan ya está cubierto');
+      expect(covered.message).toBe('Excede el plan en 4.000 m · ajusta el plan');
     } finally {
       await purgeRoofingTrail(api, trail);
     }

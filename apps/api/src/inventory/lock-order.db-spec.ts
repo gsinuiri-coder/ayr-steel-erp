@@ -1179,8 +1179,10 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
         roofingKind: 'A_MEDIDA',
       }),
     );
-    const first = await roofingCoil(thicknessMm);
-    // 900 m de un metro de ancho pasan los 2000 kg de la bobina: se confirma con faltante.
+    // cc38 (D-573): el cierre exige el plan completo, así que el plan tiene que poder reportarse
+    // entero. El faltante sale de confirmar **sin material** del agregado (antes: 900 m que no
+    // entraban en la bobina); la bobina se compra después, se monta y rola los 6 m del plan. La
+    // producción no toca `shortfall_qty`: completar sigue teniendo qué completar.
     const quotation = await quotations.create(
       admin,
       createQuotationSchema.parse({
@@ -1189,9 +1191,9 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
         items: [
           {
             productId: product.id,
-            qty: '900.000',
+            qty: '6.000',
             unitPricePen: (100 + 200 * Number(thicknessMm)).toFixed(2),
-            pieces: [{ lengthMm: '3000.00', qty: 300 }],
+            pieces: [{ lengthMm: '3000.00', qty: 2 }],
           },
         ],
       }),
@@ -1202,6 +1204,7 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
     });
     const raw = order.reservations.find((r) => r.itemType === 'RAW_MATERIAL');
     if (!raw?.productionOrderId) throw new Error('La confirmación no dejó la OP de coberturas');
+    const first = await roofingCoil(thicknessMm);
     await mount(raw.productionOrderId, first.coilId);
     await report(raw.productionOrderId);
     // Material nuevo del mismo agregado: completar la reserva tiene de dónde tomar.

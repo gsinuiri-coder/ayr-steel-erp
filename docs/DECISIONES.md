@@ -2028,3 +2028,118 @@ dónde parte.
 **La OP importada arranca hoy, no el día del comprobante.** La corrida empieza ahora aunque
 la factura sea de hace un mes; retrofecharla haría aparecer producción en un mes en el que la
 roladora no giró (D-124).
+
+## D-573..D-579 — cc38: la OP se cierra solo con el plan completo (2026-10-09)
+
+Aprobadas por el dueño el 2026-10-09 (especificación de cc38, tableros `ProducirAvance` y
+`CerrarBarra`). Siguen a cc35 (modelo M). Quien usa la pantalla es el supervisor de planta.
+
+**El problema.** Con el modelo M de cc35, «Registrar y cerrar» sin haber escrito nada registraba
+el último bloque, que se llena solo con lo que falta del plan: producción fantasma. Vaciar ese
+bloque era manual y no avisaba nada (con planchas, imposible). Y el API dejaba cerrar una OP con
+al menos un reporte aunque faltara plan.
+
+### D-573 — La OP se cierra solo con el plan completo
+
+- Completo significa que los **metros totales** registrados (lo ya registrado más lo que se
+  registra en ese mismo commit) son iguales a los metros del plan, comparados con 3 decimales.
+- No se exige cada largo por separado.
+- Planchas: metros = planchas × largo fijo, así que equivale a completar las planchas del plan.
+- Accesorio (no tiene plan): los metros registrados deben ser iguales a los metros de la orden.
+- La regla vive en la **API**. Todo camino de cierre (close, report-and-close, commit del
+  borrador con close=true) la aplica dentro de la transacción y rechaza con: «Para cerrar falta
+  registrar X m del plan».
+- La pantalla además desactiva el botón. La pantalla sola no basta.
+
+**Cómo quedó (cc38).** La regla vive en `RoofingProductionService.closeInTx`, la puerta común de
+los tres caminos y de sus vistas previas (`assertPlanComplete`); corre después de los reportes de
+la misma transacción, así que lo que se registra en ese acto cuenta. X va con 3 decimales en el
+mensaje del API (la escala con que se compara). Una orden sin plan (solo anteriores a D-146; el
+diagnóstico de cc38 no encontró ninguna abierta) se rechaza en vez de cerrarse a ciegas. Un total
+ya por encima del plan tampoco cierra: se rechaza con el texto de D-574.
+
+### D-574 — No se registra más que el plan
+
+Esto cierra D-545 por ahora.
+
+- Un reporte, una fila del borrador o un commit que dejaría lo registrado (más el borrador, en el
+  caso del borrador) por encima del plan se rechaza con: «Excede el plan en X m · ajusta el plan».
+- «Ajustar el plan» sigue exigiendo el mismo total de metros. La sobreproducción queda para una
+  decisión futura.
+
+**Cómo quedó (cc38).** El tope de D-146 ya existía en el reporte y en el borrador; cambió el
+texto. **En el accesorio, pasarse de los metros de la orden dejaba de solo avisar (D-343) y se
+rechaza**: con D-573 una orden de accesorio que pasara sus metros no podría cerrarse nunca. En el
+commit, el error lleva su fila («Fila N: Excede el plan…») y la pantalla lo muestra en el bloque de
+esa bobina. **«Ajustar el plan» exige los mismos metros también en la plancha de catálogo** (D-545 la
+dejaba libre): si no, bajar el plan sería un cierre corto (D-577) y subirlo, producir de más. El
+exceso se mide con 3 decimales, como el cierre. Lo pidieron la autorrevisión y el segundo modelo.
+
+### D-575 — El bloque que se llena solo no se registra sin confirmar
+
+- El último bloque se sigue llenando solo con lo que falta, pero queda marcado como «Llenado
+  solo · sin confirmar» (borde punteado ámbar), con «Sí, salió así» y «Vaciar».
+- Mientras no se confirme, ese bloque **no entra** a «Registrar producción» ni a «Registrar y
+  cerrar».
+- Si el supervisor edita un valor del bloque, este cuenta como confirmado.
+- El estado «confirmado» viaja con la fila del borrador; usa un campo existente si hay uno. Si
+  hace falta una columna nueva, para: es una migración y necesita el OK del dueño por nombre.
+- Alternativa sin migración: el bloque autollenado vive solo en la pantalla y se guarda en el
+  borrador recién al confirmarse. Elige esta si basta.
+
+**Cómo quedó (cc38).** Sin migración: se eligió la alternativa. El borrador no tiene un campo de
+«confirmado»; el bloque llenado solo vive en la pantalla y se guarda en el borrador (o, en el
+accesorio, en el navegador, D-559) recién con «Sí, salió así», con la casilla «Confirmo que
+salieron» de «Qué va a pasar» o al escribir en él. **Consecuencia sobre D-548:** un último bloque
+ya confirmado no se vuelve a llenar solo cuando cambia otro bloque (lo confirmó el supervisor); si
+el cambio deja el borrador por encima del plan, el API lo rechaza en el bloque que se escribe.
+Con un bloque sin confirmar, «Registrar y cerrar» abre primero «Qué va a pasar» con la casilla; al
+marcarla el bloque pasa al borrador y recién entonces el API calcula el despunte.
+
+### D-576 — Se ve el avance: registrado, en borrador y falta
+
+- Barra de la orden en tres tramos: Registrado (sólido), En borrador sin registrar (rayado), Falta
+  (gris). Cada tramo lleva metros, y planchas cuando aplica. A la derecha va el total del plan.
+- Cada bobina muestra una etiqueta: «Registrado» o «En borrador · sin registrar».
+- Lo registrado ya no se edita desde los bloques.
+- Barra inferior mientras falte plan: texto ámbar «Para cerrar falta registrar X m», con el
+  detalle por largo cuando se pueda calcular sin valores negativos, y «La orden se cierra solo con
+  el plan completo»; «Registrar producción» siempre activo si hay algo registrable; «Registrar y
+  cerrar» desactivado, con el motivo en un tooltip.
+- Cuando registrado más borrador confirmado completa el plan, «Registrar y cerrar» se activa y
+  abre el «Qué va a pasar» de cc35 con la casilla de confirmación del bloque autollenado.
+- Las cifras usan 2 decimales en pantalla, como el estándar de listas y formularios.
+
+**Cómo quedó (cc38).** «Falta» no cuenta el bloque llenado solo (no está en el borrador); para
+habilitar «Registrar y cerrar» sí se cuenta, y la barra inferior dice «Con el bloque confirmado, el
+plan queda completo» (tablero `CerrarBarra`). El API suma a `GET /production/roofing/batch` lo
+registrado por bobina (`reportedPieces`, `reportedMeters`, por la salida de kardex de cada parte) y
+las planchas registradas de la orden, en una sola consulta más para todo el lote.
+
+### D-577 — El cliente reduce el pedido
+
+No hay cierre corto por ahora. Si la OP no tiene nada registrado, se anula y se rehace (el flujo
+actual). Si ya tiene algo registrado, queda «En proceso» hasta que se decida el cierre corto en una
+pieza futura (los tableros «Cerrar con lo producido» y «Reducir el pedido» quedan como no
+aprobados). No se construyó nada de esto en cc38.
+
+### D-578 — Las OPs ya cerradas no se tocan
+
+Aunque se hayan cerrado con el plan incompleto.
+
+### D-579 — «und» en toda la app
+
+- Las cantidades en unidades se muestran como «und», sin decimales, en todas las pantallas,
+  listas, PDFs internos y Excel.
+- Los códigos SUNAT (NIU, etc.) en los comprobantes y en el XML no cambian.
+- Se unifican las variantes en pantalla («unid.», «UND», «NIU» visible, «pza», etc.) a través de la
+  utilidad de formato existente.
+
+**Cómo quedó (cc38).** En el web, `unitSymbol` da «und» para `NIU` y `formatUnits` muestra las
+unidades sin ceros de más (una fracción real se ve); reemplaza a `salesUnitSymbol` y
+`formatSalesQty` de cc37 (D-571). En el API, `common/unit-symbol.ts` hace lo mismo para los Excel
+(inventario, ventas por material, hoja de kardex, resumen de producción) y el PDF de planta del
+pedido. Sin cambiar: lo que va al PSE y al XML, el comprobante manual y el selector de unidad de
+compras (envían el código), la tabla 6 de SUNAT del kardex PEPS y las entradas del importador.
+**Queda para el dueño:** el PDF de la cotización (documento para el cliente) sigue mostrando el
+código de la unidad.

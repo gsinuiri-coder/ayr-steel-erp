@@ -8,6 +8,7 @@ import {
   type SalesMaterialFiguresDto,
   type SalesMaterialKind,
 } from '@ayr/shared';
+import { unitSymbol } from '../common/unit-symbol';
 import { build, num, type Sheet } from './reports-xlsx';
 
 /**
@@ -56,7 +57,7 @@ function figureCells(f: SalesMaterialFiguresDto): (number | string | null)[] {
     orDash(f.costPerMeterPen),
     orDash(f.marginPerMeterPen),
     orDash(f.qty),
-    f.unit ?? DASH,
+    f.unit === null ? DASH : unitSymbol(f.unit),
     orDash(f.costPerUnitPen),
   ];
 }
