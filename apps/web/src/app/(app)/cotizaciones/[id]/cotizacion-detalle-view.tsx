@@ -323,7 +323,8 @@ export function CotizacionDetalleView({ id }: { id: string }) {
               ) : (
                 <>
                   : no tiene una bobina asignada, así que no se puede confirmar. Edita la cotización
-                  y quita la línea y elige la bobina con «Bobina completa (venta directa)».
+                  y quita la línea y elige la bobina con el chip «Bobina completa» del buscador de
+                  productos.
                 </>
               )}
             </AlertDescription>

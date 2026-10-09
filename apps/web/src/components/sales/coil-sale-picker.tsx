@@ -42,6 +42,7 @@ export function CoilSalePickerDialog({
   quotationId,
   selectedCoilId,
   onSelect,
+  onSwitchToProduct,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -51,6 +52,11 @@ export function CoilSalePickerDialog({
   quotationId: string | null;
   selectedCoilId: string;
   onSelect: (coilId: string) => void;
+  /**
+   * cc36: sin el desplegable de línea de negocio en la fila, esta es la vuelta de una venta de
+   * bobina a un producto: cierra y abre el buscador de productos.
+   */
+  onSwitchToProduct?: () => void;
 }) {
   const [filter, setFilter] = useState('');
   // Mismo criterio que el modal de productos (D-156): el filtro no sobrevive al cierre.
@@ -185,6 +191,22 @@ export function CoilSalePickerDialog({
                 ))}
               </ul>
             </section>
+          )}
+          {onSwitchToProduct && (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-xs"
+                onClick={() => {
+                  onOpenChange(false);
+                  onSwitchToProduct();
+                }}
+              >
+                Vender un producto en su lugar
+              </Button>
+            </div>
           )}
           {unavailable.isError && (
             <p className="text-xs text-destructive">

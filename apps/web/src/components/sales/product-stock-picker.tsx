@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
+  BUSINESS_LINE_LABELS,
   SEARCH_RESULT_LIMIT,
   sellsByFixedLength,
   toDecimal,
@@ -137,6 +138,9 @@ export function RawMaterialPoolList({ rows }: { rows: RawMaterialStockDto[] }) {
   );
 }
 
+/** cc36: el chip «Todas» del selector (sin filtro de línea de negocio). */
+const ALL_LINES = 'ALL';
+
 /** Una línea de negocio que el selector ofrece como filtro (las que admite el documento). */
 export interface PickerBusinessLine {
   code: BusinessLine;
@@ -184,13 +188,17 @@ export function ProductStockPickerDialog({
   selectedProductId,
   onSelect,
   onPicked,
+  onChooseCoil,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** cc31: el número de la línea del documento que se está llenando («línea 3»). */
   lineNumber: number;
-  /** La línea de negocio de la fila: el filtro con el que abre. */
-  businessLine: BusinessLine;
+  /**
+   * La línea de negocio de la fila: el filtro con el que abre. cc36: vacía —una fila nueva— abre en
+   * «Todas», como el tablero Selector; la línea se elige aquí y no en un desplegable de la fila.
+   */
+  businessLine: BusinessLine | '';
   /**
    * cc31 (corte 6): las líneas de negocio que el documento admite, como filtros. Elegir un
    * producto de otra línea cambia la línea de la fila (`onSelect` la devuelve).
@@ -200,9 +208,14 @@ export function ProductStockPickerDialog({
   onSelect: (productId: string, businessLine: BusinessLine) => void;
   /** cc31: después de elegir y cerrar, a dónde va el foco (la cantidad de la línea). */
   onPicked?: () => void;
+  /**
+   * cc36: el chip «Bobina completa» del tablero Selector. Cierra este buscador y la fila pasa a
+   * vender una bobina entera (D-116), que se elige en su propio diálogo (D-282).
+   */
+  onChooseCoil?: () => void;
 }) {
   const [filter, setFilter] = useState('');
-  const [line, setLine] = useState<BusinessLine>(businessLine);
+  const [line, setLine] = useState<BusinessLine | typeof ALL_LINES>(businessLine || ALL_LINES);
   const debouncedFilter = useDebounced(filter, 250);
   const trimmed = debouncedFilter.trim();
   // RF-S3/cierre: vacío no es "por debajo del mínimo" (ver el mismo ajuste en
@@ -220,7 +233,7 @@ export function ProductStockPickerDialog({
   useEffect(() => {
     if (open) {
       setFilter('');
-      setLine(businessLine);
+      setLine(businessLine || ALL_LINES);
       picked.current = false;
     }
   }, [open, businessLine]);
@@ -232,11 +245,17 @@ export function ProductStockPickerDialog({
     queryKey: ['catalog-search', line, trimmed],
     queryFn: () =>
       api<ProductDto[]>(
-        `/catalog/search?${new URLSearchParams({ q: trimmed, businessLine: line }).toString()}`,
+        `/catalog/search?${new URLSearchParams({
+          q: trimmed,
+          ...(line === ALL_LINES ? {} : { businessLine: line }),
+        }).toString()}`,
       ),
     enabled: open && !belowMinChars,
   });
-  const matches = productsSearch.data ?? [];
+  // cc36: con «Todas», solo las líneas que el documento admite (un pedido directo no ofrece las
+  // que exigen cotización, D-065): el servidor busca en todas y aquí se descarta el resto.
+  const allowed = new Set(businessLines.map((b) => b.code));
+  const matches = (productsSearch.data ?? []).filter((p) => allowed.has(p.businessLineCode));
   // El disponible se pide para lo que la búsqueda de HOY muestra, no para la línea entera:
   // así el tope de 50 de `/sales/stock-panel` nunca se pisa. `SEARCH_RESULT_LIMIT` (20) ya
   // es menor que ese tope, así que no hace falta recortar de nuevo.
@@ -247,7 +266,7 @@ export function ProductStockPickerDialog({
     queryFn: () =>
       api<StockPanelDto>(
         `/sales/stock-panel?${new URLSearchParams({
-          businessLine: line,
+          ...(line === ALL_LINES ? {} : { businessLine: line }),
           productIds: stockIds.join(','),
         }).toString()}`,
       ),
@@ -256,11 +275,15 @@ export function ProductStockPickerDialog({
   const stockByProductId = new Map((stockPanel.data?.products ?? []).map((p) => [p.productId, p]));
   // Heurística, no un conteo exacto: si el servidor devolvió el tope, es probable que haya
   // más SKU sin mostrar — no hay forma barata de saber cuántos sin una segunda consulta.
-  const mayHaveMore = matches.length === SEARCH_RESULT_LIMIT;
+  // cc36: sobre lo que devolvió el servidor, antes de descartar las líneas que el documento no
+  // admite — si no, el aviso desaparecía justo cuando el descarte dejaba la lista corta.
+  const mayHaveMore = (productsSearch.data?.length ?? 0) === SEARCH_RESULT_LIMIT;
+  const hiddenByLine = (productsSearch.data?.length ?? 0) - matches.length;
 
-  function choose(productId: string): void {
+  function choose(product: ProductDto): void {
     picked.current = true;
-    onSelect(productId, line);
+    // cc36: la línea es la del producto, no la del chip: con «Todas» no hay otra que tomar.
+    onSelect(product.id, product.businessLineCode);
     onOpenChange(false);
   }
 
@@ -315,7 +338,7 @@ export function ProductStockPickerDialog({
               aria-label="Línea de negocio"
               className="flex flex-wrap items-center gap-1.5"
             >
-              {businessLines.map((b) => (
+              {[{ code: ALL_LINES, label: 'Todas' } as const, ...businessLines].map((b) => (
                 <Button
                   key={b.code}
                   type="button"
@@ -329,6 +352,19 @@ export function ProductStockPickerDialog({
                   {b.label}
                 </Button>
               ))}
+              {onChooseCoil && (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onChooseCoil();
+                  }}
+                >
+                  Bobina completa
+                </Button>
+              )}
             </div>
             <p className="ml-auto text-xs text-muted-foreground">
               {asyncSearchStatus({
@@ -337,6 +373,8 @@ export function ProductStockPickerDialog({
                 count: matches.length,
                 mayHaveMore,
               })}
+              {hiddenByLine > 0 &&
+                ' · algunos son de líneas que este documento no admite: filtra por línea para ver más'}
             </p>
           </div>
           {/* F8-S3b/M1: sin scroll horizontal. Tabla de ancho fijo y celdas que parten línea —
@@ -347,7 +385,8 @@ export function ProductStockPickerDialog({
               <TableHeader className="sticky top-0 z-10 bg-background">
                 <TableRow>
                   <TableHead>Producto</TableHead>
-                  <TableHead className="w-[32%]">Disponible</TableHead>
+                  <TableHead className="w-36">Línea</TableHead>
+                  <TableHead className="w-[26%]">Disponible</TableHead>
                   <TableHead className="w-28 text-right">Lista con IGV</TableHead>
                   <TableHead className="w-24 text-right">
                     <span className="sr-only">Elegir</span>
@@ -369,12 +408,12 @@ export function ProductStockPickerDialog({
                       aria-label={`Elegir ${p.sku}`}
                       className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                       onClick={() => {
-                        choose(p.id);
+                        choose(p);
                       }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
-                          choose(p.id);
+                          choose(p);
                         } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                           event.preventDefault();
                           focusRow(event.currentTarget, event.key === 'ArrowDown' ? 1 : -1);
@@ -382,11 +421,14 @@ export function ProductStockPickerDialog({
                       }}
                     >
                       <TableCell className="whitespace-normal break-words">
-                        <div className="font-medium">{p.sku}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {p.name}
+                        <div className="font-medium">{p.name}</div>
+                        <div className="font-mono text-xs text-muted-foreground">
+                          {p.sku}
                           {kind && ` · ${kind}`}
                         </div>
+                      </TableCell>
+                      <TableCell className="text-xs whitespace-normal">
+                        {BUSINESS_LINE_LABELS[p.businessLineCode]}
                       </TableCell>
                       <TableCell className="text-xs whitespace-normal break-words">
                         <span
@@ -407,7 +449,7 @@ export function ProductStockPickerDialog({
                           aria-label={`Elegir ${p.sku}`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            choose(p.id);
+                            choose(p);
                           }}
                         >
                           Elegir
@@ -418,7 +460,7 @@ export function ProductStockPickerDialog({
                 })}
                 {matches.length === 0 && !belowMinChars && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground">
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
                       {productsSearch.isFetching
                         ? 'Buscando…'
                         : 'Ningún producto coincide con ese texto.'}
