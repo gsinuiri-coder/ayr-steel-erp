@@ -68,7 +68,7 @@ test.describe('Alcance de Vendedor (UI)', () => {
     await page.getByRole('row', { name: new RegExp(`Elegir ${testSku}`, 'i') }).click();
 
     // Verificamos que se haya agregado a la tabla de líneas (la tabla principal del diálogo o página)
-    await expect(page.locator('table').last()).toContainText(testSku);
+    await expect(page.getByRole('table', { name: 'Líneas' })).toContainText(testSku);
   });
 
   test('Dashboard del vendedor tiene sus cards y oculta los de admin', async ({

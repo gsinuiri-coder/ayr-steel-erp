@@ -270,8 +270,35 @@ export function isPositiveDecimal(value: string): boolean {
  * editando: no pierde ninguna cifra significativa y lo que se guarda no cambia. Lo que no es un
  * número positivo se devuelve tal cual.
  */
-export function displayDecimal(value: string): string {
+export function displayDecimal(value: string, minDecimals = 2): string {
   if (!isPositiveDecimal(value)) return value;
   const d = new Decimal(value.trim());
-  return d.toFixed(Math.max(2, d.decimalPlaces()));
+  return d.toFixed(Math.max(minDecimals, d.decimalPlaces()));
+}
+
+/**
+ * cc37: la abreviatura de una unidad **en el formulario de venta** (tablero LineasB): «und» para
+ * las unidades (`NIU`) y el símbolo de siempre para el resto. El resto de la app sigue con
+ * `unitSymbol` («u») hasta que se decida unificarlo.
+ */
+export function salesUnitSymbol(unit: string): string {
+  return unit === 'NIU' ? 'und' : unitSymbol(unit);
+}
+
+/**
+ * cc37: una cantidad con su unidad para los textos de estado y disponibilidad del formulario de
+ * venta: unidades sin decimales de más («1,120 und», «2.5 und» si hay fracción), kilos y metros con
+ * la regla de cc31 (2 decimales).
+ */
+export function formatSalesQty(value: string | Decimal, unit: string, showUnit = true): string {
+  const symbol = showUnit ? salesUnitSymbol(unit) : '';
+  if (salesUnitSymbol(unit) === 'kg') return formatKg(value, symbol);
+  if (salesUnitSymbol(unit) === 'm') return formatMeters(value, symbol);
+  let parsed: Decimal;
+  try {
+    parsed = new Decimal(typeof value === 'string' ? value.trim() : value);
+  } catch {
+    return withUnit(typeof value === 'string' ? value : value.toString(), symbol);
+  }
+  return withUnit(formatNumber(parsed, parsed.decimalPlaces()), symbol);
 }

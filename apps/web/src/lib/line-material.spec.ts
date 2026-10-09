@@ -99,13 +99,13 @@ describe('lo que compromete una línea (cc36)', () => {
     ).toEqual({ text: 'Sin dato de materia prima', tone: 'warning' });
     expect(
       lineStatus(lineNeed({ kind: 'PRODUCT', qty: '150', product: perfil, stock: unitStock })),
-    ).toEqual({ text: 'De stock · hay 420.000 u', tone: 'ok' });
+    ).toEqual({ text: 'De stock · hay 420 und', tone: 'ok' });
     expect(
       lineStatus(lineNeed({ kind: 'PRODUCT', qty: '500', product: perfil, stock: unitStock })),
-    ).toEqual({ text: 'De stock · falta 80.000 u', tone: 'short' });
+    ).toEqual({ text: 'De stock · falta 80 und', tone: 'short' });
     expect(
       lineStatus(lineNeed({ kind: 'PRODUCT', qty: '', product: perfil, stock: unitStock })),
-    ).toEqual({ text: 'De stock · hay 420.000 u', tone: 'neutral' });
+    ).toEqual({ text: 'De stock · hay 420 und', tone: 'neutral' });
     expect(lineStatus({ kind: 'service' })).toEqual({
       text: 'Servicio · sin inventario',
       tone: 'neutral',

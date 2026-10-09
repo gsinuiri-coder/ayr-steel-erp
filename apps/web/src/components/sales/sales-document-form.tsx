@@ -84,6 +84,7 @@ import {
   customerLabel,
   displayDecimal,
   formatAmount,
+  formatSalesQty,
   formatDate,
   formatKg,
   formatKgPrecise,
@@ -92,7 +93,7 @@ import {
   formatQty,
   isPositiveDecimal,
   todayIso,
-  unitSymbol,
+  salesUnitSymbol,
 } from '@/lib/format';
 import { listPriceWithIgv } from '@/lib/list-price';
 import { type MissingField } from '@/components/form';
@@ -119,14 +120,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 
 /**
  * Formulario de cotización y de pedido directo (D-065). Es el mismo formulario porque un
@@ -225,6 +218,14 @@ interface LineDraft {
    */
   piecesHint?: string;
 }
+
+/**
+ * cc37 (tablero LineasB): las columnas de las líneas —número, producto, cantidad, precio, importe y
+ * acciones—, las mismas en el encabezado y en cada tarjeta. Todo arranca arriba, a la altura del
+ * selector de producto, y las ayudas van debajo de su propio campo.
+ */
+const LINE_GRID =
+  'grid grid-cols-[2.25rem_minmax(0,1fr)_9.5rem_10rem_8.5rem_4.25rem] items-start gap-x-3.5';
 
 /** D-255: lo que la línea guardada tenía, para reconocer que nadie la tocó. */
 interface StoredLine {
@@ -1122,7 +1123,7 @@ export function SalesDocumentForm({
         return {
           error:
             `${at}: el precio está por debajo del mínimo. El mínimo de ${product?.sku ?? 'este producto'} es ` +
-            `${formatMoney(stock.minPricePen, 'PEN', 2)} por ${perMeter ? 'metro' : unitSymbol(product?.unit ?? '')} (con IGV). ` +
+            `${formatMoney(stock.minPricePen, 'PEN', 2)} por ${perMeter ? 'metro' : product?.unit === 'NIU' ? 'unidad' : salesUnitSymbol(product?.unit ?? '')} (con IGV). ` +
             'Súbelo, o cambia el margen mínimo de esa línea de negocio en Administración → Márgenes, tipo de cambio y reservas.',
         };
       }
@@ -1432,92 +1433,95 @@ export function SalesDocumentForm({
         </span>
       </h2>
 
-      <div className="rounded-lg border">
-        {/*
-          `min-w`: las celdas llevan un renglón de ayuda debajo de cada campo; sin un ancho mínimo,
-          en una pantalla angosta las columnas se comprimen hasta que esos renglones pintan encima
-          de la vecina. Con el mínimo, el contenedor desplaza en lugar de aplastar.
-        */}
-        <Table className="min-w-[62rem] table-fixed">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10 text-right">#</TableHead>
-              <TableHead>Producto</TableHead>
-              {/* Los numéricos alineados a la derecha, como en el resto de la app. */}
-              <TableHead className="w-[11rem] text-right">Cantidad</TableHead>
-              {/*
-                D-162: se tipea el **precio** (con IGV); el importe sin IGV va debajo del
-                importe con IGV.
-              */}
-              <TableHead className="w-[12rem] text-right">Precio con IGV</TableHead>
-              <TableHead className="w-[9rem] text-right">Importe con IGV</TableHead>
-              <TableHead className="w-[5rem]">
-                <span className="sr-only">Acciones</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {lines.flatMap((l, index) => (
-              <LineRow
-                key={l.key}
-                line={l}
-                index={index}
-                businessLines={businessLines.data}
-                pickerLines={pickerLines}
-                productById={productById}
-                sellableCoils={sellableCoils.data}
-                sellableCoilsLoaded={sellableCoils.isSuccess}
-                stock={l.productId === '' ? undefined : stockByProductId.get(l.productId)}
-                pricing={pricingOf(l)}
-                imported={imported}
-                quotationId={initial?.id ?? null}
-                canRemove={lines.length > 1}
-                autoOpenPicker={l.key === pickerFor}
-                onPatch={(patch) => {
-                  patchLine(l.key, patch);
-                }}
-                onSetKind={(kind) => {
-                  setLineKind(l.key, kind);
-                }}
-                onChooseProduct={(productId) => {
-                  chooseProduct(l.key, productId);
-                }}
-                onChooseSaleCoil={(coilId) => {
-                  chooseSaleCoil(l.key, coilId);
-                }}
-                onConvertToCoil={(coilId) => {
-                  convertToCoil(l.key, coilId);
-                }}
-                onPatchPieces={(rows) => {
-                  patchPieces(l.key, rows);
-                }}
-                onRemove={() => {
-                  setLines((current) => current.filter((x) => x.key !== l.key));
-                }}
-              />
-            ))}
-            {/* cc36: «Agregar línea» como última fila de la tabla, como en Main. */}
-            <TableRow className="hover:bg-transparent">
-              <TableCell colSpan={6} className="whitespace-normal">
-                <div className="flex items-center gap-3">
-                  <Button
-                    variant="outline"
-                    disabled={lines.length >= MAX_SALES_ITEMS}
-                    onClick={addLine}
-                  >
-                    <Plus aria-hidden />
-                    Agregar línea
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    {lines.length >= MAX_SALES_ITEMS
-                      ? `Un documento lleva hasta ${String(MAX_SALES_ITEMS)} líneas.`
-                      : 'Abre el buscador de productos; al elegir, el cursor queda en la cantidad'}
-                  </span>
-                </div>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+      {/*
+        cc37 (tablero LineasB): una tarjeta por línea sobre una misma grilla de columnas, con el
+        encabezado arriba y sin caja. Son `div` con los roles de tabla, para que el lector de
+        pantalla siga leyendo filas y columnas. `min-w`: en una ventana angosta el contenedor
+        desplaza en vez de aplastar las columnas.
+      */}
+      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <div role="table" aria-label="Líneas" className="grid min-w-[62rem] gap-2.5">
+          <div
+            role="row"
+            className={cn(LINE_GRID, 'px-[13px] text-xs font-medium text-muted-foreground')}
+          >
+            <span role="columnheader">#</span>
+            <span role="columnheader">Producto</span>
+            {/* Los numéricos alineados a la derecha, como en el resto de la app. */}
+            <span role="columnheader" className="text-right">
+              Cantidad
+            </span>
+            {/* D-162: se tipea el **precio** (con IGV); el importe sin IGV va debajo. */}
+            <span role="columnheader" className="text-right">
+              Precio con IGV
+            </span>
+            <span role="columnheader" className="text-right">
+              Importe con IGV
+            </span>
+            <span role="columnheader">
+              <span className="sr-only">Acciones</span>
+            </span>
+          </div>
+          {lines.flatMap((l, index) => (
+            <LineRow
+              key={l.key}
+              line={l}
+              index={index}
+              businessLines={businessLines.data}
+              pickerLines={pickerLines}
+              productById={productById}
+              sellableCoils={sellableCoils.data}
+              sellableCoilsLoaded={sellableCoils.isSuccess}
+              stock={l.productId === '' ? undefined : stockByProductId.get(l.productId)}
+              pricing={pricingOf(l)}
+              imported={imported}
+              quotationId={initial?.id ?? null}
+              canRemove={lines.length > 1}
+              autoOpenPicker={l.key === pickerFor}
+              onPatch={(patch) => {
+                patchLine(l.key, patch);
+              }}
+              onSetKind={(kind) => {
+                setLineKind(l.key, kind);
+              }}
+              onChooseProduct={(productId) => {
+                chooseProduct(l.key, productId);
+              }}
+              onChooseSaleCoil={(coilId) => {
+                chooseSaleCoil(l.key, coilId);
+              }}
+              onConvertToCoil={(coilId) => {
+                convertToCoil(l.key, coilId);
+              }}
+              onPatchPieces={(rows) => {
+                patchPieces(l.key, rows);
+              }}
+              onRemove={() => {
+                setLines((current) => current.filter((x) => x.key !== l.key));
+              }}
+            />
+          ))}
+          {/* cc36: «Agregar línea» al final, como en Main. */}
+          <div role="row">
+            <div role="cell" aria-colspan={6}>
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  disabled={lines.length >= MAX_SALES_ITEMS}
+                  onClick={addLine}
+                >
+                  <Plus aria-hidden />
+                  Agregar línea
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {lines.length >= MAX_SALES_ITEMS
+                    ? `Un documento lleva hasta ${String(MAX_SALES_ITEMS)} líneas.`
+                    : 'Abre el buscador de productos; al elegir, el cursor queda en la cantidad'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <DocumentLinesFooter>
@@ -1662,13 +1666,13 @@ function LineRow({
   const lineNumber = index + 1;
   const accessory = product !== undefined && isAccessory(product);
   // cc31 (corte 6): la unidad va dentro del campo, no en un renglón suelto debajo.
-  const qtyUnit = l.kind === 'BOBINA' ? 'kg' : product ? unitSymbol(product.unit) : '';
+  const qtyUnit = l.kind === 'BOBINA' ? 'kg' : product ? salesUnitSymbol(product.unit) : '';
   const priceUnit = perMeter
     ? '/m'
     : l.kind === 'BOBINA'
       ? '/kg'
-      : product && unitSymbol(product.unit) !== ''
-        ? `/${unitSymbol(product.unit)}`
+      : product && salesUnitSymbol(product.unit) !== ''
+        ? `/${salesUnitSymbol(product.unit)}`
         : '';
   // cc36: «línea de negocio · subtipo» bajo el producto, como en Main.
   const meta = [
@@ -1700,490 +1704,502 @@ function LineRow({
   return (
     <>
       {/*
-        `align-top` en toda la fila: cada celda tiene una altura distinta y con el centrado por
-        defecto los campos de una misma fila quedaban a alturas distintas.
+        cc37: la tarjeta de la línea es un grupo de filas: la de los campos y, debajo, la del panel.
+        Todo arranca arriba (`items-start` de `LINE_GRID`).
       */}
-      <TableRow className="align-top hover:bg-transparent">
-        <TableCell className="pt-3.5 text-right text-xs text-muted-foreground tabular-nums">
-          {lineNumber}
-        </TableCell>
-        {/*
-          `whitespace-normal`: la celda hereda `whitespace-nowrap` del componente `Table`, pensado
-          para listados de una línea; aquí abajo hay frases que se desbordarían.
-        */}
-        <TableCell className="whitespace-normal">
-          {l.kind === 'BOBINA' ? (
-            <Button
-              id={lineFieldId(index, 'coil')}
-              type="button"
-              variant="outline"
-              className="w-full justify-start gap-2 font-normal"
-              aria-label={`Bobina a vender de la línea ${lineNumber}`}
-              onClick={() => {
-                setCoilPickerOpen(true);
-              }}
-            >
-              {saleCoil ? (
-                <>
-                  <span className="font-mono text-xs text-muted-foreground">{saleCoil.code}</span>
-                  <span className="min-w-0 flex-1 truncate text-left">
-                    {saleCoil.thicknessMm} mm · {saleCoil.finishName} ·{' '}
-                    {formatKg(saleCoil.availableQty)}
-                  </span>
-                </>
-              ) : (
-                <span className="flex-1 text-left text-muted-foreground">Elegir bobina</span>
-              )}
-              <ChevronDown aria-hidden className="text-muted-foreground" />
-            </Button>
-          ) : (
-            /*
+      <div
+        role="rowgroup"
+        aria-label={`Línea ${String(lineNumber)}`}
+        className="rounded-xl border bg-card p-3 shadow-xs"
+      >
+        <div role="row" className={LINE_GRID}>
+          <div role="cell" className="pt-1">
+            <span className="flex size-6 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums">
+              {lineNumber}
+            </span>
+          </div>
+          <div role="cell" className="min-w-0">
+            {l.kind === 'BOBINA' ? (
+              <Button
+                id={lineFieldId(index, 'coil')}
+                type="button"
+                variant="outline"
+                className="w-full justify-start gap-2 font-normal"
+                aria-label={`Bobina a vender de la línea ${lineNumber}`}
+                onClick={() => {
+                  setCoilPickerOpen(true);
+                }}
+              >
+                {saleCoil ? (
+                  <>
+                    <span className="font-mono text-xs text-muted-foreground">{saleCoil.code}</span>
+                    <span className="min-w-0 flex-1 truncate text-left">
+                      {saleCoil.thicknessMm} mm · {saleCoil.finishName} ·{' '}
+                      {formatKg(saleCoil.availableQty)}
+                    </span>
+                  </>
+                ) : (
+                  <span className="flex-1 text-left text-muted-foreground">Elegir bobina</span>
+                )}
+                <ChevronDown aria-hidden className="text-muted-foreground" />
+              </Button>
+            ) : (
+              /*
               D-188: elegir viendo el disponible. cc36: un solo selector; la línea de negocio se
               elige dentro del buscador (tablero Selector). El botón conserva su `aria-label`.
             */
-            <Button
-              id={lineFieldId(index, 'product')}
-              type="button"
-              variant="outline"
-              className="w-full justify-start gap-2 font-normal"
-              aria-label={`Producto de la línea ${lineNumber}`}
-              onClick={() => {
+              <Button
+                id={lineFieldId(index, 'product')}
+                type="button"
+                variant="outline"
+                className="w-full justify-start gap-2 font-normal"
+                aria-label={`Producto de la línea ${lineNumber}`}
+                onClick={() => {
+                  setPickerOpen(true);
+                }}
+              >
+                {product ? (
+                  <>
+                    <span className="font-mono text-xs text-muted-foreground">{product.sku}</span>
+                    <span className="min-w-0 flex-1 truncate text-left">{product.name}</span>
+                  </>
+                ) : (
+                  <span className="flex-1 text-left text-muted-foreground">Elegir producto</span>
+                )}
+                <ChevronDown aria-hidden className="text-muted-foreground" />
+              </Button>
+            )}
+            <ProductStockPickerDialog
+              open={pickerOpen}
+              onOpenChange={setPickerOpen}
+              lineNumber={lineNumber}
+              businessLine={l.businessLine}
+              businessLines={pickerLines}
+              selectedProductId={l.productId}
+              onSelect={(productId, chosenLine) => {
+                // cc31 (corte 6, D-497): el producto de otra línea de negocio cambia la línea de la
+                // fila.
+                if (chosenLine !== l.businessLine) {
+                  onPatch({
+                    businessLine: chosenLine,
+                    productId: '',
+                    pieces: [EMPTY_PIECE],
+                    qty: '',
+                    description: '',
+                    descriptionEdited: false,
+                  });
+                }
+                onChooseProduct(productId);
+              }}
+              onPicked={() => {
+                focusLineQty(index);
+              }}
+              onChooseCoil={() => {
+                // D-116/D-282: la venta de una bobina entera se elige en su propio diálogo.
+                onSetKind('BOBINA');
+                setCoilPickerOpen(true);
+              }}
+            />
+            <CoilSalePickerDialog
+              open={coilPickerOpen}
+              onOpenChange={setCoilPickerOpen}
+              coils={sellableCoils}
+              loading={!sellableCoilsLoaded}
+              quotationId={quotationId}
+              selectedCoilId={l.saleCoilId}
+              onSelect={onChooseSaleCoil}
+              onSwitchToProduct={() => {
+                if (l.kind === 'BOBINA') onSetKind('PRODUCT');
                 setPickerOpen(true);
               }}
-            >
-              {product ? (
-                <>
-                  <span className="font-mono text-xs text-muted-foreground">{product.sku}</span>
-                  <span className="min-w-0 flex-1 truncate text-left">{product.name}</span>
-                </>
-              ) : (
-                <span className="flex-1 text-left text-muted-foreground">Elegir producto</span>
-              )}
-              <ChevronDown aria-hidden className="text-muted-foreground" />
-            </Button>
-          )}
-          <ProductStockPickerDialog
-            open={pickerOpen}
-            onOpenChange={setPickerOpen}
-            lineNumber={lineNumber}
-            businessLine={l.businessLine}
-            businessLines={pickerLines}
-            selectedProductId={l.productId}
-            onSelect={(productId, chosenLine) => {
-              // cc31 (corte 6, D-497): el producto de otra línea de negocio cambia la línea de la
-              // fila.
-              if (chosenLine !== l.businessLine) {
-                onPatch({
-                  businessLine: chosenLine,
-                  productId: '',
-                  pieces: [EMPTY_PIECE],
-                  qty: '',
-                  description: '',
-                  descriptionEdited: false,
-                });
-              }
-              onChooseProduct(productId);
-            }}
-            onPicked={() => {
-              focusLineQty(index);
-            }}
-            onChooseCoil={() => {
-              // D-116/D-282: la venta de una bobina entera se elige en su propio diálogo.
-              onSetKind('BOBINA');
-              setCoilPickerOpen(true);
-            }}
-          />
-          <CoilSalePickerDialog
-            open={coilPickerOpen}
-            onOpenChange={setCoilPickerOpen}
-            coils={sellableCoils}
-            loading={!sellableCoilsLoaded}
-            quotationId={quotationId}
-            selectedCoilId={l.saleCoilId}
-            onSelect={onChooseSaleCoil}
-            onSwitchToProduct={() => {
-              if (l.kind === 'BOBINA') onSetKind('PRODUCT');
-              setPickerOpen(true);
-            }}
-          />
-          {l.kind === 'BOBINA' ? (
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-              <span className="text-muted-foreground">Bobina completa</span>
-              <span className="rounded-full bg-tone-progress px-2 py-px text-tone-progress-foreground">
-                Se cierra al despacharla
-              </span>
-              {/*
+            />
+            {l.kind === 'BOBINA' ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                <span className="text-muted-foreground">Bobina completa</span>
+                <span className="rounded-full bg-tone-progress px-2 py-px text-tone-progress-foreground">
+                  Se cierra al despacharla
+                </span>
+                {/*
                 D-170: el promedio del propio rollo, que es a lo que el kardex lo va a dar de baja:
                 el vendedor ve contra qué negocia sin despejarlo del precio mínimo.
               */}
-              {saleCoil?.avgCostPen && (
-                <span className="text-muted-foreground tabular-nums">
-                  Costo promedio {formatMoney(saleCoil.avgCostPen, 'PEN', 4)} /kg
-                </span>
-              )}
-            </div>
-          ) : (
-            (meta !== '' || status !== null) && (
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                {meta !== '' && <span className="text-muted-foreground">{meta}</span>}
-                {status !== null && need !== null && (
-                  <LineStatusChip status={status} need={need} lineNumber={lineNumber} />
+                {saleCoil?.avgCostPen && (
+                  <span className="text-muted-foreground tabular-nums">
+                    Costo promedio {formatMoney(saleCoil.avgCostPen, 'PEN', 4)} /kg
+                  </span>
                 )}
               </div>
-            )
-          )}
-          {/* D-254: la línea importada enganchada al producto de una bobina (COT-000002). */}
-          {l.kind === 'PRODUCT' &&
-            imported &&
-            isCoilSaleProduct(product) &&
-            quotationId !== null && (
-              <CoilPoolConvert
-                productId={l.productId}
-                qty={l.qty}
-                quotationId={quotationId}
-                lineIndex={index}
-                onConvert={onConvertToCoil}
+            ) : (
+              (meta !== '' || status !== null) && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                  {meta !== '' && <span className="text-muted-foreground">{meta}</span>}
+                  {status !== null && need !== null && (
+                    <LineStatusChip status={status} need={need} lineNumber={lineNumber} />
+                  )}
+                </div>
+              )
+            )}
+            {/* D-254: la línea importada enganchada al producto de una bobina (COT-000002). */}
+            {l.kind === 'PRODUCT' &&
+              imported &&
+              isCoilSaleProduct(product) &&
+              quotationId !== null && (
+                <CoilPoolConvert
+                  productId={l.productId}
+                  qty={l.qty}
+                  quotationId={quotationId}
+                  lineIndex={index}
+                  onConvert={onConvertToCoil}
+                />
+              )}
+          </div>
+          <div role="cell" className="min-w-0">
+            <QuietDecimalInput
+              quiet={qtyUnit === 'm' || qtyUnit === 'und'}
+              minDecimals={qtyUnit === 'und' ? 0 : 2}
+              id={lineFieldId(index, 'qty')}
+              unit={qtyUnit}
+              className="text-right tabular-nums"
+              inputMode="decimal"
+              aria-label={`Cantidad de la línea ${lineNumber}`}
+              // cc36: en una a medida los metros son la suma de los largos y se muestran con la
+              // regla de cc31 (12.00 m); lo que viaja sigue siendo `l.qty` sin redondear.
+              value={sellsMeters && isPositiveDecimal(l.qty) ? formatMeters(l.qty, null) : l.qty}
+              // D-083: en una línea compuesta la cantidad la manda el detalle de largos.
+              // D-116: en una venta de bobina la manda el saldo disponible.
+              // D-161: en una plancha de catálogo la manda su editor de largo fijo.
+              readOnly={sellsMeters || fixedLength || l.kind === 'BOBINA'}
+              disabled={sellsMeters || fixedLength || l.kind === 'BOBINA'}
+              onValueChange={(qty) => {
+                onPatch({ qty });
+              }}
+            />
+            {l.kind === 'BOBINA' ? (
+              <span className="mt-1 block text-right text-xs text-muted-foreground">
+                {/* D-254: la importada vende la cantidad del papel, no el rollo entero. */}
+                {imported ? 'del comprobante' : 'saldo completo'}
+              </span>
+            ) : parsedPieces !== null ? (
+              <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
+                {piecesCount(parsedPieces)} planchas en {parsedPieces.length}{' '}
+                {parsedPieces.length === 1 ? 'largo' : 'largos'}
+              </span>
+            ) : accessory ? (
+              // D-343: las piezas de un accesorio son un dato y no entran a ningún cálculo.
+              <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
+                de bobina
+                {(l.piecesHint ?? '').trim() !== '' &&
+                  ` · ${(l.piecesHint ?? '').trim()} piezas (dato)`}
+              </span>
+            ) : fixedLength && fixedLengthMm !== null && !brokenLength ? (
+              <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
+                planchas de {mmToMetersShort(fixedLengthMm)} m
+              </span>
+            ) : null}
+          </div>
+          <div role="cell" className="min-w-0">
+            {byAmount ? (
+              <QuietDecimalInput
+                quiet
+                unit=""
+                id={lineFieldId(index, 'price')}
+                className="text-right tabular-nums"
+                inputMode="decimal"
+                aria-label={`Importe sin IGV de la línea ${lineNumber}`}
+                value={l.netAmountPen}
+                onValueChange={(netAmountPen) => {
+                  onPatch({ netAmountPen });
+                }}
+              />
+            ) : (
+              <QuietDecimalInput
+                quiet
+                id={lineFieldId(index, 'price')}
+                unit={priceUnit}
+                // cc37: «/und» es más ancho que «/m»; el número no se monta sobre la unidad.
+                className={cn('text-right tabular-nums', priceUnit.length > 3 && 'pr-12')}
+                inputMode="decimal"
+                aria-label={
+                  perMeter
+                    ? `Precio por metro de la línea ${lineNumber}`
+                    : `Precio unitario de la línea ${lineNumber}`
+                }
+                value={l.pricePen}
+                onValueChange={(pricePen) => {
+                  onPatch({ pricePen });
+                }}
               />
             )}
-        </TableCell>
-        <TableCell className="whitespace-normal">
-          <QuietDecimalInput
-            quiet={qtyUnit === 'm'}
-            id={lineFieldId(index, 'qty')}
-            unit={qtyUnit}
-            className="text-right tabular-nums"
-            inputMode="decimal"
-            aria-label={`Cantidad de la línea ${lineNumber}`}
-            // cc36: en una a medida los metros son la suma de los largos y se muestran con la
-            // regla de cc31 (12.00 m); lo que viaja sigue siendo `l.qty` sin redondear.
-            value={sellsMeters && isPositiveDecimal(l.qty) ? formatMeters(l.qty, null) : l.qty}
-            // D-083: en una línea compuesta la cantidad la manda el detalle de largos.
-            // D-116: en una venta de bobina la manda el saldo disponible.
-            // D-161: en una plancha de catálogo la manda su editor de largo fijo.
-            readOnly={sellsMeters || fixedLength || l.kind === 'BOBINA'}
-            disabled={sellsMeters || fixedLength || l.kind === 'BOBINA'}
-            onValueChange={(qty) => {
-              onPatch({ qty });
-            }}
-          />
-          {l.kind === 'BOBINA' ? (
-            <span className="mt-1 block text-right text-xs text-muted-foreground">
-              {/* D-254: la importada vende la cantidad del papel, no el rollo entero. */}
-              {imported ? 'del comprobante' : 'saldo completo'}
-            </span>
-          ) : parsedPieces !== null ? (
-            <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
-              {piecesCount(parsedPieces)} planchas en {parsedPieces.length}{' '}
-              {parsedPieces.length === 1 ? 'largo' : 'largos'}
-            </span>
-          ) : accessory ? (
-            // D-343: las piezas de un accesorio son un dato y no entran a ningún cálculo.
-            <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
-              de bobina
-              {(l.piecesHint ?? '').trim() !== '' &&
-                ` · ${(l.piecesHint ?? '').trim()} piezas (dato)`}
-            </span>
-          ) : fixedLength && fixedLengthMm !== null && !brokenLength ? (
-            <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
-              planchas de {mmToMetersShort(fixedLengthMm)} m
-            </span>
-          ) : null}
-        </TableCell>
-        <TableCell className="whitespace-normal">
-          {byAmount ? (
-            <QuietDecimalInput
-              quiet
-              unit=""
-              id={lineFieldId(index, 'price')}
-              className="text-right tabular-nums"
-              inputMode="decimal"
-              aria-label={`Importe sin IGV de la línea ${lineNumber}`}
-              value={l.netAmountPen}
-              onValueChange={(netAmountPen) => {
-                onPatch({ netAmountPen });
-              }}
-            />
-          ) : (
-            <QuietDecimalInput
-              quiet
-              id={lineFieldId(index, 'price')}
-              unit={priceUnit}
-              className="text-right tabular-nums"
-              inputMode="decimal"
-              aria-label={
-                perMeter
-                  ? `Precio por metro de la línea ${lineNumber}`
-                  : `Precio unitario de la línea ${lineNumber}`
-              }
-              value={l.pricePen}
-              onValueChange={(pricePen) => {
-                onPatch({ pricePen });
-              }}
-            />
-          )}
-          {/*
+            {/*
             D-255: con el importe sin IGV cargado, el unitario es el **derivado** del importe (el
             que guarda el API). D-263: una plancha cotizada por plancha lo dice.
           */}
-          {byAmount ? (
-            <>
-              <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
-                importe de la línea, sin IGV
-                {pricing !== null && (
-                  <> · unitario {formatMoney(pricing.amounts.unitValue.toFixed(10), 'PEN', 4)}</>
-                )}
-              </span>
+            {byAmount ? (
+              <>
+                <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
+                  importe de la línea, sin IGV
+                  {pricing !== null && (
+                    <> · unitario {formatMoney(pricing.amounts.unitValue.toFixed(10), 'PEN', 4)}</>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className="mt-1 block w-full text-right text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                  onClick={() => {
+                    onPatch({ amountMode: 'PRICE' });
+                  }}
+                >
+                  Cargar precio con IGV
+                </button>
+              </>
+            ) : (
+              fixedLength &&
+              !perMeter && (
+                <span className="mt-1 block text-right text-xs text-muted-foreground">
+                  por plancha, como se cotizó
+                </span>
+              )
+            )}
+            <PriceFloorHint
+              line={l}
+              product={product}
+              stock={stock}
+              pricing={pricing}
+              coil={saleCoil}
+              imported={imported}
+              onPatch={onPatch}
+            />
+            {/*
+            D-255 (R2): en la venta de una bobina entera, que no tiene panel de línea, cargar el
+            importe sin IGV sigue debajo del precio, como antes de cc36.
+          */}
+            {l.kind === 'BOBINA' && !byAmount && (
               <button
                 type="button"
                 className="mt-1 block w-full text-right text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
                 onClick={() => {
-                  onPatch({ amountMode: 'PRICE' });
+                  onPatch({
+                    amountMode: 'AMOUNT',
+                    netAmountPen:
+                      pricing === null
+                        ? l.netAmountPen
+                        : toFixedString(pricing.amounts.subtotal, 'MONEY'),
+                  });
                 }}
               >
-                Cargar precio con IGV
+                Cargar importe sin IGV
               </button>
-            </>
-          ) : (
-            fixedLength &&
-            !perMeter && (
-              <span className="mt-1 block text-right text-xs text-muted-foreground">
-                por plancha, como se cotizó
-              </span>
-            )
-          )}
-          <PriceFloorHint
-            line={l}
-            product={product}
-            stock={stock}
-            pricing={pricing}
-            coil={saleCoil}
-            imported={imported}
-            onPatch={onPatch}
-          />
-          {/*
-            D-255 (R2): en la venta de una bobina entera, que no tiene panel de línea, cargar el
-            importe sin IGV sigue debajo del precio, como antes de cc36.
-          */}
-          {l.kind === 'BOBINA' && !byAmount && (
-            <button
-              type="button"
-              className="mt-1 block w-full text-right text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              onClick={() => {
-                onPatch({
-                  amountMode: 'AMOUNT',
-                  netAmountPen:
-                    pricing === null
-                      ? l.netAmountPen
-                      : toFixedString(pricing.amounts.subtotal, 'MONEY'),
-                });
-              }}
-            >
-              Cargar importe sin IGV
-            </button>
-          )}
-          {fixedLength && !brokenLength && fixedLengthMm !== null && !byAmount && (
-            <PricingUnitSwitch
-              line={l}
-              product={product}
-              lengthMm={fixedLengthMm}
-              pricing={pricing}
-              lineIndex={index}
-              onPatch={onPatch}
-            />
-          )}
-        </TableCell>
-        <TableCell className="text-right tabular-nums">
-          <span className="block pt-1.5 font-semibold">
-            {pricing ? formatMoney(pricing.amounts.total.toFixed(2)) : '—'}
-          </span>
-          {pricing && (
-            <span className="mt-1 block text-xs text-muted-foreground">
-              sin IGV {formatAmount(pricing.amounts.subtotal.toFixed(4), 2)}
+            )}
+            {fixedLength && !brokenLength && fixedLengthMm !== null && !byAmount && (
+              <PricingUnitSwitch
+                line={l}
+                product={product}
+                lengthMm={fixedLengthMm}
+                pricing={pricing}
+                lineIndex={index}
+                onPatch={onPatch}
+              />
+            )}
+          </div>
+          <div role="cell" className="text-right tabular-nums">
+            <span className="block pt-1.5 font-semibold">
+              {pricing ? formatMoney(pricing.amounts.total.toFixed(2)) : '—'}
             </span>
-          )}
-        </TableCell>
-        <TableCell>
-          <div className="flex justify-end gap-0.5">
-            {hasPanel && !panelRequired && (
+            {pricing && (
+              <span className="mt-1 block text-xs text-muted-foreground">
+                sin IGV {formatAmount(pricing.amounts.subtotal.toFixed(4), 2)}
+              </span>
+            )}
+          </div>
+          <div role="cell">
+            <div className="flex justify-end gap-0.5">
+              {hasPanel && !panelRequired && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground"
+                  aria-label={`Detalle de la línea ${lineNumber}`}
+                  aria-expanded={panelOpen}
+                  onClick={() => {
+                    setPanelOpen((open) => !open);
+                  }}
+                >
+                  <MoreHorizontal aria-hidden />
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 className="text-muted-foreground"
-                aria-label={`Detalle de la línea ${lineNumber}`}
-                aria-expanded={panelOpen}
-                onClick={() => {
-                  setPanelOpen((open) => !open);
-                }}
+                aria-label={`Quitar la línea ${lineNumber}`}
+                disabled={!canRemove}
+                onClick={onRemove}
               >
-                <MoreHorizontal aria-hidden />
+                <Trash2 aria-hidden />
               </Button>
-            )}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground"
-              aria-label={`Quitar la línea ${lineNumber}`}
-              disabled={!canRemove}
-              onClick={onRemove}
-            >
-              <Trash2 aria-hidden />
-            </Button>
+            </div>
           </div>
-        </TableCell>
-      </TableRow>
-      {showPanel && (
-        <TableRow className="hover:bg-transparent">
-          <TableCell />
-          <TableCell colSpan={5} className="pt-0 pb-3 whitespace-normal">
-            <div
-              role="group"
-              aria-label={`Panel de la línea ${lineNumber}`}
-              className="grid grid-cols-2 gap-5 rounded-md bg-muted p-3"
-            >
-              <div className="grid content-start gap-2">
-                {/* D-083: los largos de una cobertura a medida. */}
-                {sellsMeters && (
-                  <PieceEditor rows={l.pieces} lineIndex={index} onChange={onPatchPieces} />
-                )}
-                {/*
+        </div>
+        {showPanel && (
+          <div role="row" className={cn(LINE_GRID, 'mt-2.5')}>
+            <div role="cell" />
+            <div role="cell" aria-colspan={5} className="col-span-5">
+              <div
+                role="group"
+                aria-label={`Panel de la línea ${lineNumber}`}
+                className="grid grid-cols-2 gap-5 rounded-md bg-muted p-3"
+              >
+                <div className="grid content-start gap-2">
+                  {/* D-083: los largos de una cobertura a medida. */}
+                  {sellsMeters && (
+                    <PieceEditor rows={l.pieces} lineIndex={index} onChange={onPatchPieces} />
+                  )}
+                  {/*
                   D-161: la plancha de catálogo, espejo del plan de corte (D-159): **el largo lo
                   trae el SKU y solo la cantidad se edita**, sin filas que agregar.
                 */}
-                {fixedLength && fixedLengthMm !== null && (
-                  <div className="grid gap-2">
-                    <span className="text-xs font-medium">
-                      Planchas{' '}
-                      <span className="font-normal text-muted-foreground">
-                        · largo del catálogo
-                      </span>
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        id={`planchas-${String(index)}`}
-                        className="w-[72px] bg-background text-right tabular-nums"
-                        inputMode="numeric"
-                        placeholder="10"
-                        aria-label={`Planchas de la línea ${lineNumber}`}
-                        value={l.qty}
-                        onChange={(e) => {
-                          onPatch({ qty: e.target.value });
-                        }}
-                      />
-                      <span className="text-muted-foreground">×</span>
-                      <span className="tabular-nums">{mmToMetersShort(fixedLengthMm)} m</span>
-                      {/* D-166: con un largo imposible no se muestran metros lineales. */}
-                      {!brokenLength && (
-                        <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-                          {isPositiveDecimal(l.qty)
-                            ? `${formatMeters(fixedLengthMeters(fixedLengthMm, l.qty))} lineales`
-                            : 'Escribe cuántas planchas lleva la línea'}
+                  {fixedLength && fixedLengthMm !== null && (
+                    <div className="grid gap-2">
+                      <span className="text-xs font-medium">
+                        Planchas{' '}
+                        <span className="font-normal text-muted-foreground">
+                          · largo del catálogo
                         </span>
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {/* cc37: «10», no «10.000», mientras no se edita (D-554). */}
+                        <div className="w-[72px] shrink-0">
+                          <QuietDecimalInput
+                            quiet
+                            minDecimals={0}
+                            unit=""
+                            id={`planchas-${String(index)}`}
+                            className="bg-background pr-2.5 text-right tabular-nums"
+                            inputMode="numeric"
+                            placeholder="10"
+                            aria-label={`Planchas de la línea ${lineNumber}`}
+                            value={l.qty}
+                            onValueChange={(qty) => {
+                              onPatch({ qty });
+                            }}
+                          />
+                        </div>
+                        <span className="text-muted-foreground">×</span>
+                        <span className="tabular-nums">{mmToMetersShort(fixedLengthMm)} m</span>
+                        {/* D-166: con un largo imposible no se muestran metros lineales. */}
+                        {!brokenLength && (
+                          <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                            {isPositiveDecimal(l.qty)
+                              ? `${formatMeters(fixedLengthMeters(fixedLengthMm, l.qty))} lineales`
+                              : 'Escribe cuántas planchas lleva la línea'}
+                          </span>
+                        )}
+                      </div>
+                      {brokenLength && (
+                        <p className="text-xs text-destructive">
+                          El catálogo dice {fixedLengthMm} mm de largo, y una plancha va entre{' '}
+                          {PIECE_LENGTH_RANGE_LABEL}. Corrígelo en Catálogo: el campo va en{' '}
+                          <strong>milímetros</strong> — una plancha de 3 metros son 3000.
+                        </p>
+                      )}
+                      {/* D-161: a cuánto sale la plancha entera, que es lo que el cliente compara. */}
+                      {perMeter && unitValuePen !== null && (
+                        <p className="text-xs text-muted-foreground tabular-nums">
+                          Valor {formatMoney(unitValuePen, 'PEN', 4)} por plancha (sin IGV)
+                        </p>
                       )}
                     </div>
-                    {brokenLength && (
-                      <p className="text-xs text-destructive">
-                        El catálogo dice {fixedLengthMm} mm de largo, y una plancha va entre{' '}
-                        {PIECE_LENGTH_RANGE_LABEL}. Corrígelo en Catálogo: el campo va en{' '}
-                        <strong>milímetros</strong> — una plancha de 3 metros son 3000.
+                  )}
+                  {/* D-343: las piezas de un accesorio son solo un dato para el usuario. */}
+                  {accessory && (
+                    <div className="grid gap-2">
+                      <Label htmlFor={`piezas-${String(index)}`} className="text-xs">
+                        Piezas{' '}
+                        <span className="font-normal text-muted-foreground">
+                          · dato, no entra al cálculo
+                        </span>
+                      </Label>
+                      <Input
+                        id={`piezas-${String(index)}`}
+                        className="w-24 bg-background text-right tabular-nums"
+                        inputMode="numeric"
+                        placeholder="opcional"
+                        aria-label={`Piezas de la línea ${lineNumber} (solo información)`}
+                        value={l.piecesHint ?? ''}
+                        onChange={(e) => {
+                          onPatch({ piecesHint: e.target.value });
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        La cantidad son los metros de bobina que se van a usar.
                       </p>
-                    )}
-                    {/* D-161: a cuánto sale la plancha entera, que es lo que el cliente compara. */}
-                    {perMeter && unitValuePen !== null && (
-                      <p className="text-xs text-muted-foreground tabular-nums">
-                        Valor {formatMoney(unitValuePen, 'PEN', 4)} por plancha (sin IGV)
-                      </p>
-                    )}
-                  </div>
-                )}
-                {/* D-343: las piezas de un accesorio son solo un dato para el usuario. */}
-                {accessory && (
-                  <div className="grid gap-2">
-                    <Label htmlFor={`piezas-${String(index)}`} className="text-xs">
-                      Piezas{' '}
-                      <span className="font-normal text-muted-foreground">
-                        · dato, no entra al cálculo
-                      </span>
-                    </Label>
-                    <Input
-                      id={`piezas-${String(index)}`}
-                      className="w-24 bg-background text-right tabular-nums"
-                      inputMode="numeric"
-                      placeholder="opcional"
-                      aria-label={`Piezas de la línea ${lineNumber} (solo información)`}
-                      value={l.piecesHint ?? ''}
-                      onChange={(e) => {
-                        onPatch({ piecesHint: e.target.value });
-                      }}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      La cantidad son los metros de bobina que se van a usar.
-                    </p>
-                  </div>
-                )}
-                {/* D-255 (R2): cargar el importe de la línea en vez del precio (no en una plancha). */}
-                {!fixedLength && !byAmount && (
-                  <button
-                    type="button"
-                    className="justify-self-start text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                    onClick={() => {
-                      onPatch({
-                        amountMode: 'AMOUNT',
-                        // Arranca con el importe que la línea ya tenía, para ajustarlo.
-                        netAmountPen:
-                          pricing === null
-                            ? l.netAmountPen
-                            : toFixedString(pricing.amounts.subtotal, 'MONEY'),
-                      });
-                    }}
-                  >
-                    Cargar importe sin IGV
-                  </button>
-                )}
-              </div>
-              <div className="grid min-w-0 content-start gap-2">
-                {/* D-283: la descripción que lee el cliente; arranca con el nombre del producto. */}
-                {editsDescription && (
-                  <>
-                    <Label htmlFor={descriptionId} className="text-xs">
-                      Descripción para el cliente
-                    </Label>
-                    <Input
-                      id={descriptionId}
-                      className="bg-background"
-                      aria-label={`Descripción de la línea ${lineNumber}`}
-                      placeholder={product?.name ?? 'Descripción'}
-                      maxLength={MAX_LINE_DESCRIPTION}
-                      value={l.description}
-                      onChange={(e) => {
+                    </div>
+                  )}
+                  {/* D-255 (R2): cargar el importe de la línea en vez del precio (no en una plancha). */}
+                  {!fixedLength && !byAmount && (
+                    <button
+                      type="button"
+                      className="justify-self-start text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                      onClick={() => {
                         onPatch({
-                          description: e.target.value,
-                          descriptionEdited: true,
-                          descriptionVerbatim: false,
+                          amountMode: 'AMOUNT',
+                          // Arranca con el importe que la línea ya tenía, para ajustarlo.
+                          netAmountPen:
+                            pricing === null
+                              ? l.netAmountPen
+                              : toFixedString(pricing.amounts.subtotal, 'MONEY'),
                         });
                       }}
-                    />
+                    >
+                      Cargar importe sin IGV
+                    </button>
+                  )}
+                </div>
+                <div className="grid min-w-0 content-start gap-2">
+                  {/* D-283: la descripción que lee el cliente; arranca con el nombre del producto. */}
+                  {editsDescription && (
+                    <>
+                      <Label htmlFor={descriptionId} className="text-xs">
+                        Descripción para el cliente
+                      </Label>
+                      <Input
+                        id={descriptionId}
+                        className="bg-background"
+                        aria-label={`Descripción de la línea ${lineNumber}`}
+                        placeholder={product?.name ?? 'Descripción'}
+                        maxLength={MAX_LINE_DESCRIPTION}
+                        value={l.description}
+                        onChange={(e) => {
+                          onPatch({
+                            description: e.target.value,
+                            descriptionEdited: true,
+                            descriptionVerbatim: false,
+                          });
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground tabular-nums">
+                        {sellsMeters && parsedPieces !== null
+                          ? `En el PDF sale con sus largos: ${describePieces(parsedPieces)}`
+                          : 'Así sale en el PDF, el pedido y el comprobante'}
+                      </p>
+                    </>
+                  )}
+                  {/* D-118: kilos teóricos, informativos — peso estimado para el cliente y la guía. */}
+                  {(theoreticalKg !== null || madeToOrder) && (
                     <p className="text-xs text-muted-foreground tabular-nums">
-                      {sellsMeters && parsedPieces !== null
-                        ? `En el PDF sale con sus largos: ${describePieces(parsedPieces)}`
-                        : 'Así sale en el PDF, el pedido y el comprobante'}
+                      {theoreticalKg === null
+                        ? 'Se fabrica contra el pedido'
+                        : `Peso estimado ${formatKg(theoreticalKg)}${madeToOrder ? ' · se fabrica contra el pedido' : ''}`}
                     </p>
-                  </>
-                )}
-                {/* D-118: kilos teóricos, informativos — peso estimado para el cliente y la guía. */}
-                {(theoreticalKg !== null || madeToOrder) && (
-                  <p className="text-xs text-muted-foreground tabular-nums">
-                    {theoreticalKg === null
-                      ? 'Se fabrica contra el pedido'
-                      : `Peso estimado ${formatKg(theoreticalKg)}${madeToOrder ? ' · se fabrica contra el pedido' : ''}`}
-                  </p>
-                )}
+                  )}
+                </div>
               </div>
             </div>
-          </TableCell>
-        </TableRow>
-      )}
+          </div>
+        )}
+      </div>
     </>
   );
 }
@@ -2199,12 +2215,15 @@ function LineRow({
  */
 function QuietDecimalInput({
   quiet,
+  minDecimals = 2,
   value,
   onValueChange,
   onBlur,
   ...props
 }: Omit<ComponentProps<typeof InputWithUnit>, 'value' | 'onChange'> & {
   quiet: boolean;
+  /** cc37: decimales mínimos a la vista; 0 en unidades («10 und», no «10.000 und»). */
+  minDecimals?: number;
   value: string;
   onValueChange: (text: string) => void;
 }): ReactElement {
@@ -2216,7 +2235,7 @@ function QuietDecimalInput({
   return (
     <InputWithUnit
       {...props}
-      value={quiet && !editing ? displayDecimal(value) : value}
+      value={quiet && !editing ? displayDecimal(value, minDecimals) : value}
       onChange={(e) => {
         const from = editing ? start : value;
         if (!editing) {
@@ -2224,7 +2243,9 @@ function QuietDecimalInput({
           setStart(value);
         }
         const text = e.target.value;
-        onValueChange(quiet && from !== null && text === displayDecimal(from) ? from : text);
+        onValueChange(
+          quiet && from !== null && text === displayDecimal(from, minDecimals) ? from : text,
+        );
       }}
       onBlur={(e) => {
         setEditing(false);
@@ -2290,8 +2311,8 @@ function LineStatusChip({
           </dl>
         ) : need.kind === 'stock' ? (
           <p className="tabular-nums">
-            Sale de stock: hay {formatQty(need.available.toFixed(3), unitSymbol(need.unit))}{' '}
-            disponibles (ya descuenta lo reservado).
+            Sale de stock: hay {formatSalesQty(need.available, need.unit)} disponibles (ya descuenta
+            lo reservado).
           </p>
         ) : (
           <p>Un servicio no lleva inventario.</p>
@@ -2465,7 +2486,7 @@ function PriceFloorHint({
   // Con el importe sin IGV cargado, el campo no es un precio: el mínimo dice su unidad y que es
   // con IGV, y la lista no se muestra (se leería como un importe).
   const byAmount = l.amountMode === 'AMOUNT';
-  const symbol = l.kind === 'BOBINA' ? 'kg' : product ? unitSymbol(product.unit) : '';
+  const symbol = l.kind === 'BOBINA' ? 'kg' : product ? salesUnitSymbol(product.unit) : '';
   const unit =
     (byFixedLength(product) && l.pricePerPiece ? ' /m' : '') +
     (byAmount ? `${symbol === '' ? '' : ` /${symbol}`} con IGV` : '');
@@ -2755,9 +2776,10 @@ function MaterialCommitment({
       <h2 className="text-sm font-medium">{title}</h2>
       <div className="grid max-w-2xl grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 gap-y-1.5 text-sm">
         {rows.map((row) => {
-          const unit = row.unit === 'kg' ? 'kg' : unitSymbol(row.unit);
-          const qty = (value: Decimal) =>
-            row.unit === 'kg' ? formatKg(value, null) : formatQty(value.toFixed(3), undefined);
+          // cc37: unidades sin decimales de más, kilos a 2 decimales (`formatSalesQty`).
+          const code = row.unit === 'kg' ? 'KGM' : row.unit;
+          const unit = salesUnitSymbol(code);
+          const qty = (value: Decimal) => formatSalesQty(value, code, false);
           return (
             <Fragment key={row.key}>
               <span className="min-w-0 truncate">
@@ -2875,7 +2897,7 @@ function StockPanelSheet({
                         ? `${formatQty(row.rawMaterialAvailableKg, 'kg')} de materia prima disponibles`
                         : row.kgPerMeter !== null
                           ? 'No se pudo calcular la materia prima de este SKU'
-                          : `${formatQty(row.availableQty, unitSymbol(row.unit))} disponibles`}
+                          : `${formatSalesQty(row.availableQty, row.unit)} disponibles`}
                   </p>
                 </li>
               ))}
