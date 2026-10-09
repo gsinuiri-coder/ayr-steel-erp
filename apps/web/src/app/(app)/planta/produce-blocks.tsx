@@ -48,7 +48,8 @@ import {
   ToleranceOverrideRow,
   type ToleranceOverrideState,
 } from './tolerance-override';
-import { blockPayload, editMeters, useBlockDrafts, type BlockEdit } from './use-block-drafts';
+import { blockPayload, editMeters, type BlockEdit } from '@/lib/block-drafts';
+import { useBlockDrafts } from './use-block-drafts';
 
 /**
  * cc35 (ESPEC §1 y §2) — **producir una OP con el modelo M**: bobina por bobina, en el orden en que

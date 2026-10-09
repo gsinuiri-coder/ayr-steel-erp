@@ -33,7 +33,7 @@ export function useIdempotencyKey(): {
     lastSent.current = fingerprint;
     let key = keys.current.get(fingerprint);
     if (key === undefined) {
-      key = newKey();
+      key = newIdempotencyKey();
       keys.current.set(fingerprint, key);
     }
     return key;
@@ -48,7 +48,8 @@ export function useIdempotencyKey(): {
   return { current, settle };
 }
 
-function newKey(): string {
+/** Una clave nueva, única por intento (cc35: la usan también los guardados de planta). */
+export function newIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
