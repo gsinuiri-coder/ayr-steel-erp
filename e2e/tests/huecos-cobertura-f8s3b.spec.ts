@@ -496,7 +496,8 @@ test.describe('F8-S3b — huecos de cobertura', () => {
         timeout: 60_000,
       });
       await expect(
-        page.getByText('40.000 m de 70.000 m reportados · 2 órdenes abiertas'),
+        // cc35 (D-558): el avance del pedido va en el subtítulo de la cabecera.
+        page.getByText('· 40.000 m de 70.000 m reportados'),
       ).toBeVisible();
     } finally {
       await purgeRoofingTrail(api, s.trail);

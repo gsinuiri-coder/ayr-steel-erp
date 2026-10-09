@@ -133,7 +133,7 @@ test.describe('D-389 — accesorio fuera de tolerancia', () => {
     }
   });
 
-  test('pantalla: «Reportar y cerrar» muestra la casilla, no el diálogo del despunte, y cierra', async ({
+  test('pantalla (modelo M, cc35): la casilla aparece en el bloque de la bobina, sin ella no se registra, y con ella cierra', async ({
     page,
   }) => {
     const { op, coilId, trail } = await accessoryOrder();
@@ -141,35 +141,33 @@ test.describe('D-389 — accesorio fuera de tolerancia', () => {
       await login(page, supervisor.email, ROLE_PASSWORD);
       await page.goto(`/planta?op=${op.id}`);
       const panel = page.locator(`#panel-${op.id}`);
-      await panel.getByLabel('Metros de bobina usados').fill(METERS_OVER);
-      const reportAndClose = panel.getByRole('button', { name: `Reportar y cerrar ${op.code}` });
-      await reportAndClose.click();
+      // Un accesorio no tiene plan de corte: banda «Avance» y sin «Ajustar el plan».
+      await expect(panel.getByText('Avance', { exact: true })).toBeVisible({ timeout: 60_000 });
+      await expect(panel.getByRole('button', { name: /Ajustar el plan/ })).toHaveCount(0);
+      await panel.getByLabel(/Metros de la bobina 1/).fill(METERS_OVER);
 
       const block = panel.getByTestId('tolerance-override');
       await expect(block).toContainText('2.94 %', { timeout: 60_000 });
-      // El diálogo del despunte no se abre: el rechazo con código va antes que el «motivo».
+      const registerAndClose = panel.getByRole('button', { name: `Registrar y cerrar ${op.code}` });
+      const preview = panel.getByTestId('que-va-a-pasar');
+      // Sin la casilla no se manda nada.
+      await registerAndClose.click();
+      await expect(preview).toHaveCount(0);
       await expect(page.getByRole('dialog', { name: 'Cerrar con despunte alto' })).toHaveCount(0);
-      await expect(reportAndClose).toBeDisabled();
-      // La casilla vale para lo que se rechazó: otros kilos son otro exceso y el aviso se va;      // volver a lo rechazado lo trae de nuevo.      const kg = panel.getByLabel('kg consumido (opcional)');      await kg.fill('1000');      await expect(block).toHaveCount(0);      await kg.fill('');      await expect(block).toContainText('2.94 %');
 
       await block
-        .getByRole('checkbox', {
-          name: `Confirmar la cantidad reportada de ${op.code} fuera de tolerancia`,
-        })
+        .getByRole('checkbox', { name: /Confirmar la bobina 1 .* fuera de tolerancia/ })
         .click();
       await block
-        .getByRole('combobox', { name: `Motivo de la cantidad reportada de ${op.code}` })
+        .getByRole('combobox', { name: /Motivo de la bobina 1/ })
         .selectOption('LIGHTER_COIL');
-      await expect(reportAndClose).toBeEnabled();
-      await reportAndClose.click();
+      await registerAndClose.click();
       // cc27 (D-453): el resumen avisa de la fila fuera de tolerancia antes de cerrar.
-      await expect(page.getByRole('dialog')).toContainText('Fuera de tolerancia', {
-        timeout: 60_000,
-      });
-      await confirmPlantClose(page, 'Reportar y cerrar');
-      await expect(page.getByText(`${op.code}: reporte guardado y orden cerrada`)).toBeVisible({
-        timeout: 60_000,
-      });
+      await expect(preview).toContainText('Fuera de tolerancia', { timeout: 60_000 });
+      await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
+      await expect(page.getByText(`${op.code}: producción registrada y orden cerrada`)).toBeVisible(
+        { timeout: 60_000 },
+      );
       await expect(page.getByRole('dialog', { name: 'Cerrar con despunte alto' })).toHaveCount(0);
 
       expect(await getJson<CoilState>(api, `/api/coils/${coilId}`)).toMatchObject({
