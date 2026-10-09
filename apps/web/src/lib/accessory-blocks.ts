@@ -7,7 +7,7 @@ import { blockFigures, type BlockFigures } from './production-blocks';
  * piezas son opcionales e informativas; los kilos salen de la bobina con su kg por metro.
  *
  * El borrador de reportes (D-191) guarda largos, no metros, así que un bloque de accesorio vive en
- * el navegador hasta registrarse (D-551).
+ * el navegador hasta registrarse (D-559).
  */
 
 export interface AccessoryEdit {

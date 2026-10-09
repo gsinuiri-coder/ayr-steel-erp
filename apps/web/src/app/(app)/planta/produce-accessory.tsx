@@ -43,7 +43,7 @@ import {
  * el orden de montaje, con los metros de bobina que salieron, las piezas (opcionales, solo
  * información) y los kg consumidos (opcional). El último se llena solo con lo que falta.
  *
- * D-551: el borrador de reportes guarda largos, no metros, y llevarle metros exige una migración.
+ * D-559: el borrador de reportes guarda largos, no metros, y llevarle metros exige una migración.
  * Sin ella, lo escrito se guarda **en este navegador** (sobrevive a un refresco) y «Registrar»
  * manda un parte por bloque, en orden (`POST …/report`, como hoy). «Registrar y cerrar» manda los
  * bloques anteriores y el último junto con el cierre (`…/report-and-close`, con su vista previa).
@@ -94,14 +94,14 @@ export function ProduceAccessory({
   const invalidate = () => {
     invalidateProduction(queryClient, order.orderId);
   };
-  const [edits, setEdits] = useState<Record<string, AccessoryEdit>>({});
-  const loaded = useRef(false);
+  // Se lee al crear el estado (el panel se monta por orden y ya con los datos del API, nunca en el
+  // primer pintado del servidor): con un efecto de carga, el doble montaje de desarrollo leía el
+  // almacenamiento después de que el efecto de guardado lo vaciara.
+  const [edits, setEdits] = useState<Record<string, AccessoryEdit>>(() =>
+    typeof window === 'undefined' ? {} : loadEdits(order.orderId),
+  );
   useEffect(() => {
-    setEdits(loadEdits(order.orderId));
-    loaded.current = true;
-  }, [order.orderId]);
-  useEffect(() => {
-    if (loaded.current) saveEdits(order.orderId, edits);
+    saveEdits(order.orderId, edits);
   }, [edits, order.orderId]);
 
   const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
@@ -166,6 +166,8 @@ export function ProduceAccessory({
 
   /** Manda en orden los partes de `list`; para en el primero que el API rechaza. */
   const sendReports = async (list: typeof blocks): Promise<boolean> => {
+    const sent: string[] = [];
+    let ok = true;
     for (const b of list) {
       if (b.check.meters === null) continue;
       try {
@@ -173,20 +175,29 @@ export function ProduceAccessory({
           method: 'POST',
           body: bodyOf(b),
         });
-        setEdits((prev) =>
-          Object.fromEntries(Object.entries(prev).filter(([id]) => id !== b.coil.coilId)),
-        );
+        sent.push(b.coil.coilId);
       } catch (err) {
-        if (err instanceof ApiError && err.code === 'BACKDATE_OUT_OF_ORDER') throw err;
+        if (err instanceof ApiError && err.code === 'BACKDATE_OUT_OF_ORDER' && sent.length === 0) {
+          throw err;
+        }
         setErrors((prev) => ({
           ...prev,
           [b.coil.coilId]: errorMessage(err, 'No se pudo registrar esta bobina'),
         }));
-        invalidate();
-        return false;
+        ok = false;
+        break;
       }
     }
-    return true;
+    if (sent.length > 0) {
+      // Lo registrado se suelta recién con la orden releída: si no, el último bloque se volvía a
+      // llenar con lo que faltaba **antes** de estos partes (revisión de cc35).
+      invalidateProduction(queryClient, order.orderId);
+      await queryClient.refetchQueries({ queryKey: ['roofing-batch'] });
+      setEdits((prev) =>
+        Object.fromEntries(Object.entries(prev).filter(([id]) => !sent.includes(id))),
+      );
+    }
+    return ok;
   };
 
   const lastBlock = blocks[blocks.length - 1];
@@ -220,18 +231,24 @@ export function ProduceAccessory({
     toast.error(message);
   };
 
+  /** Lo que «Qué va a pasar» calculó: se confirma exactamente eso (D-453). */
+  const pendingClose = useRef<{ path: string; body: object } | null>(null);
   const previewClose = useMutation({
     mutationFn: () => {
-      const { path, body } = closePath();
-      return api<PlantClosePreviewDto>(`${path}/preview`, { method: 'POST', body });
+      const request = closePath();
+      pendingClose.current = request;
+      return api<PlantClosePreviewDto>(`${request.path}/preview`, {
+        method: 'POST',
+        body: request.body,
+      });
     },
     onSuccess: setPreview,
     onError: onCloseError,
   });
   const close = useMutation({
     mutationFn: () => {
-      const { path, body } = closePath();
-      return api<ProductionOrderDto>(path, { method: 'POST', body });
+      const request = pendingClose.current ?? closePath();
+      return api<ProductionOrderDto>(request.path, { method: 'POST', body: request.body });
     },
     onSuccess: (updated) => {
       toast.success(`${order.code}: producción registrada y orden cerrada`);
@@ -283,7 +300,14 @@ export function ProduceAccessory({
     void run.attempt();
   };
 
-  const busy = sending || previewClose.isPending || close.isPending || refreshing || releasing;
+  // Con «Qué va a pasar» a la vista no se edita: se confirma lo que el resumen dijo.
+  const busy =
+    sending ||
+    previewClose.isPending ||
+    close.isPending ||
+    preview !== null ||
+    refreshing ||
+    releasing;
   const ordered = toDecimal(order.planMeters);
   const typedTotal = sum(blocks.map((b) => b.check.meters ?? toDecimal('0')));
   const covered = toDecimal(order.reportedMeters).plus(typedTotal);

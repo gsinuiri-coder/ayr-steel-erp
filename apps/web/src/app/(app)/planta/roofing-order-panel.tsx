@@ -31,7 +31,7 @@ import { ProduceBlocks } from './produce-blocks';
  * **cc35 (modelo M):** se produce bobina por bobina, en el orden en que se montaron. Una
  * cobertura a medida o una plancha de catálogo escribe sus bloques en el borrador de la orden
  * (`ProduceBlocks`); un accesorio, sin plan de corte, escribe metros de bobina por bloque
- * (`ProduceAccessory`, D-551).
+ * (`ProduceAccessory`, D-559).
  *
  * Lo que **no** cambió: el tope de metros del plan sigue siendo duro (D-146) y las desviaciones del
  * kilo declarado y el faltante del agregado siguen siendo avisos (D-154).
@@ -260,7 +260,8 @@ const STATE_LABELS: Record<OrderState, string> = {
  * reportar de una que primero necesita material.
  */
 export function stateOf(order: RoofingBatchOrderDto): OrderState {
-  if (order.planItems.length === 0) return 'sin-plan';
+  // cc35: un accesorio no lleva plan de corte (D-343): no es «Sin plan».
+  if (!order.isAccessory && order.planItems.length === 0) return 'sin-plan';
   if (toDecimal(order.remainingMeters).lte(0)) return 'reportada';
   return order.coils.length === 0 ? 'sin-bobina' : 'lista';
 }

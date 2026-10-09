@@ -235,7 +235,7 @@ test.describe('cc35 — modelo M, bobina por bobina', () => {
   });
 });
 
-test.describe('cc35 — modelo M de un accesorio (ESPEC §2, D-551)', () => {
+test.describe('cc35 — modelo M de un accesorio (ESPEC §2, D-559)', () => {
   let api: APIRequestContext;
   test.beforeAll(async ({ baseURL }) => {
     api = await adminApi(baseURL!);
@@ -315,7 +315,7 @@ test.describe('cc35 — modelo M de un accesorio (ESPEC §2, D-551)', () => {
       await expect(b.getByLabel(/Metros de la bobina 2/)).toHaveValue('13.000');
       await expect(a.getByText('Despunte 1.720 kg')).toBeVisible();
 
-      // Lo escrito sobrevive a un refresco (D-551: en el navegador).
+      // Lo escrito sobrevive a un refresco (D-559: en el navegador).
       await page.reload();
       await openQueuedOrder(page, op.code);
       const again = page.locator(`#panel-${opId!}`);
