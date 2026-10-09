@@ -20,6 +20,8 @@ interface FakeState {
   status: Map<string, CoilStatus>;
   scrapKg: string | null;
   reports: { id: string; rawMaterialWarning: string | null }[];
+  /** cc35: salidas SCRAP de la orden (las viejas, de un cierre reabierto, no cuentan). */
+  scraps: { id: bigint; itemId: string; qty: string }[];
 }
 
 function fakePrisma(state: FakeState) {
@@ -41,6 +43,17 @@ function fakePrisma(state: FakeState) {
           where.id
             ? state.reports.filter((r) => !where.id!.notIn.includes(r.id))
             : state.reports.map((r) => ({ id: r.id })),
+        ),
+      ),
+    },
+    inventoryMovement: {
+      findMany: jest.fn(({ where }: { where: { id?: { notIn: bigint[] } } }) =>
+        Promise.resolve(
+          where.id
+            ? state.scraps
+                .filter((m) => !where.id!.notIn.includes(m.id))
+                .map((m) => ({ itemId: m.itemId, qty: { toString: () => m.qty } }))
+            : state.scraps.map((m) => ({ id: m.id })),
         ),
       ),
     },
@@ -87,6 +100,8 @@ describe('previewPlantClose (D-453)', () => {
       ]),
       scrapKg: null,
       reports: [{ id: 'r0', rawMaterialWarning: null }],
+      // Un despunte de un cierre anterior, reabierto: no es de esta acción.
+      scraps: [{ id: 1n, itemId: COIL_B, qty: '5.000' }],
     };
     const { prisma, result } = fakePrisma(state);
 
@@ -100,6 +115,7 @@ describe('previewPlantClose (D-453)', () => {
         state.balances.set(COIL_B, '0.000');
         state.status.set(COIL_B, CoilStatus.CLOSED);
         state.scrapKg = '12.250';
+        state.scraps.push({ id: 2n, itemId: COIL_A, qty: '12.250' });
         state.reports.push({
           id: 'r1',
           rawMaterialWarning: 'Fuera de tolerancia, confirmado con la casilla: Otro.',
@@ -121,6 +137,7 @@ describe('previewPlantClose (D-453)', () => {
           balanceBeforeKg: '1000.000',
           balanceAfterKg: '600.500',
           terminated: false,
+          scrapKg: '12.250',
         },
         {
           coilId: COIL_B,
@@ -129,6 +146,7 @@ describe('previewPlantClose (D-453)', () => {
           balanceBeforeKg: '50.000',
           balanceAfterKg: '0.000',
           terminated: true,
+          scrapKg: '0.000',
         },
       ],
       scrapKg: '12.250',
@@ -143,6 +161,7 @@ describe('previewPlantClose (D-453)', () => {
       status: new Map([[COIL_A, CoilStatus.OPEN]]),
       scrapKg: null,
       reports: [],
+      scraps: [],
     };
     const { prisma, result } = fakePrisma(state);
     await expect(

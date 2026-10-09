@@ -1,4 +1,10 @@
-import { CoilStatus, InventoryItemType, type Prisma } from '@prisma/client';
+import {
+  CoilStatus,
+  InventoryItemType,
+  InventoryMovementType,
+  InventoryRefType,
+  type Prisma,
+} from '@prisma/client';
 import {
   Decimal,
   productionOrderCode,
@@ -76,6 +82,23 @@ async function coilStates(
   );
 }
 
+function scrapWhere(orderId: string, coilIds: readonly string[]) {
+  return {
+    itemType: InventoryItemType.COIL,
+    itemId: { in: [...coilIds] },
+    refType: InventoryRefType.SCRAP,
+    refId: orderId,
+    type: InventoryMovementType.OUT,
+  };
+}
+
+function scrapOuts(tx: Prisma.TransactionClient, orderId: string, coilIds: readonly string[]) {
+  return tx.inventoryMovement.findMany({
+    where: scrapWhere(orderId, coilIds),
+    select: { id: true },
+  });
+}
+
 /**
  * Corre `run` en una transacción, resume lo que hizo con la orden y la deshace.
  *
@@ -113,11 +136,28 @@ export async function previewPlantClose(
           select: { id: true },
         });
         const before = await coilStates(tx, coilIds);
+        // cc35: el despunte por bobina sale de las salidas SCRAP que deja **esta** acción (las de
+        // un cierre anterior reabierto ya estaban y no cuentan).
+        const scrapBefore = await scrapOuts(tx, orderId, coilIds);
 
         const warnings: RawMaterialShortfall[] = [];
         await run(tx, warnings);
 
         const after = await coilStates(tx, coilIds);
+        const scrapAfter = await tx.inventoryMovement.findMany({
+          where: {
+            ...scrapWhere(orderId, coilIds),
+            id: { notIn: scrapBefore.map((m) => m.id) },
+          },
+          select: { itemId: true, qty: true },
+        });
+        const scrapByCoil = new Map<string, Decimal>();
+        for (const m of scrapAfter) {
+          scrapByCoil.set(
+            m.itemId,
+            (scrapByCoil.get(m.itemId) ?? new Decimal(0)).plus(toDecimal(m.qty.toString())),
+          );
+        }
         const closed = await tx.productionOrder.findUniqueOrThrow({
           where: { id: orderId },
           select: { scrapKg: true },
@@ -143,6 +183,7 @@ export async function previewPlantClose(
               balanceBeforeKg: toFixedString(b.balanceKg, 'KG'),
               balanceAfterKg: toFixedString(a.balanceKg, 'KG'),
               terminated: b.status === CoilStatus.OPEN && a.status === CoilStatus.CLOSED,
+              scrapKg: toFixedString(scrapByCoil.get(id) ?? new Decimal(0), 'KG'),
             },
           ];
         });

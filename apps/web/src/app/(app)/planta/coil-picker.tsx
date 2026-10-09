@@ -126,19 +126,10 @@ export function CoilPicker({
   const visibleSelected = matches.filter((c) => selected.has(c.coilId)).map((c) => c.coilId);
   const overLimit = visibleSelected.length > room;
 
-  if (loading) return <Skeleton className="h-12 w-full" />;
+  if (loading) return <Skeleton className="h-8 w-36" />;
   if (failed) {
     return (
       <p className="text-sm text-destructive">No se pudieron cargar las bobinas disponibles.</p>
-    );
-  }
-  if (openOptions.length === 0 && closedOptions.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No hay bobinas libres del color comercial y el espesor de {productSku} (±
-        {ROOFING_THICKNESS_TOLERANCE_MM} mm). Una bobina en corte tercerizado, montada en otra orden
-        o prometida a otro pedido tampoco aparece aquí.
-      </p>
     );
   }
 
@@ -370,9 +361,11 @@ export function CoilPicker({
                     {matches.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center text-muted-foreground">
-                          {openOptions.length === 0
-                            ? 'No hay bobinas libres de esta spec: mira las terminadas.'
-                            : 'Ninguna bobina coincide con esa búsqueda.'}
+                          {openOptions.length > 0
+                            ? 'Ninguna bobina coincide con esa búsqueda.'
+                            : closedOptions.length > 0
+                              ? 'No hay bobinas libres de esta spec: mira las terminadas.'
+                              : `No hay bobinas libres del color comercial y el espesor de ${productSku} (±${String(ROOFING_THICKNESS_TOLERANCE_MM)} mm). Una bobina en corte tercerizado, montada en otra orden o prometida a otro pedido tampoco aparece aquí.`}
                         </TableCell>
                       </TableRow>
                     )}

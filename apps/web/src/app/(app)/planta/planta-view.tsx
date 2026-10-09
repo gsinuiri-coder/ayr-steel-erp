@@ -24,7 +24,6 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { OVERDUE_TONE, PRIORITY_TONE } from '@/components/status-tone';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Sheet,
   SheetContent,
@@ -34,6 +33,7 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
+import { HeaderActions } from '@/components/header-actions';
 import { DrywallOrderPanel } from './drywall-order-panel';
 import { useProductionQueue } from '@/components/production-queue';
 import { OrderHistory } from '@/components/production/order-history';
@@ -529,65 +529,60 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
           salesOrderId === null ? 'Órdenes sin pedido' : `Producir ${salesOrderCode ?? 'el pedido'}`
         }
         description={
-          <>
-            {salesOrderId === null
-              ? 'Corridas a stock, sin pedido detrás. Cada orden monta su material, reporta lo suyo y se cierra por separado.'
-              : 'Todas las órdenes del pedido, iniciadas o no. Monta la bobina y reporta sin salir de aquí; cada orden se guarda por su cuenta.'}
-            {salesOrderId !== null && group?.customerName && <> · {group.customerName}</>}
-          </>
+          salesOrderId === null ? (
+            'Corridas a stock, sin pedido detrás. Cada orden monta su material, reporta lo suyo y se cierra por separado.'
+          ) : (
+            // cc35 (tablero ProducirM): el compromiso y el avance del pedido en una línea.
+            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              {group?.customerName && <span>{group.customerName} ·</span>}
+              <span>
+                compromiso{' '}
+                {group?.promisedDeliveryDate ? formatDate(group.promisedDeliveryDate) : 'sin fecha'}
+              </span>
+              {group?.overdue && <Badge variant={OVERDUE_TONE}>Vencido</Badge>}
+              {group !== null && group.prioritized > 0 && (
+                <Badge variant={PRIORITY_TONE}>
+                  {group.prioritized === group.roofing.length
+                    ? 'Prioridad'
+                    : `Prioridad en ${String(group.prioritized)} de ${String(group.roofing.length)} órdenes`}
+                </Badge>
+              )}
+              {group !== null && group.roofing.length > 0 && (
+                <span>
+                  · {formatQtyAsIs(group.reportedMeters, 'm')} de{' '}
+                  {formatQtyAsIs(group.planMeters, 'm')} reportados
+                </span>
+              )}
+              {roofingRows.length > 0 && (
+                <span>
+                  · {done} de {roofingRows.length}{' '}
+                  {roofingRows.length === 1 ? 'orden cubierta' : 'órdenes cubiertas'}
+                </span>
+              )}
+            </span>
+          )
         }
         actions={
           <>
-            <Button variant="outline" asChild>
-              <Link href="/planta">Todos los pedidos</Link>
-            </Button>
-            {salesOrderId !== null && (
-              <Button variant="outline" asChild>
-                <Link href={`/pedidos/${salesOrderId}`}>Ver pedido</Link>
-              </Button>
+            {/* La prioridad se asigna al pedido y se propaga a sus órdenes (F8-S3b/M2). */}
+            {isAdmin && salesOrderCode !== null && group !== null && (
+              <PedidoPriorityControl salesOrderCode={salesOrderCode} orders={group.roofing} />
             )}
+            <HeaderActions
+              primary={[]}
+              actions={[
+                { key: 'todos', label: 'Todos los pedidos', href: '/planta' },
+                {
+                  key: 'pedido',
+                  label: 'Ver pedido',
+                  href: `/pedidos/${salesOrderId ?? ''}`,
+                  show: salesOrderId !== null,
+                },
+              ]}
+            />
           </>
         }
       />
-
-      {group !== null && salesOrderId !== null && (
-        <Card>
-          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
-            <div className="grid gap-1 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <span>
-                  Compromiso:{' '}
-                  {group.promisedDeliveryDate
-                    ? formatDate(group.promisedDeliveryDate)
-                    : 'sin fecha'}
-                </span>
-                {group.overdue && <Badge variant={OVERDUE_TONE}>Vencido</Badge>}
-                {group.prioritized > 0 && (
-                  <Badge variant={PRIORITY_TONE}>
-                    {group.prioritized === group.roofing.length
-                      ? 'Prioridad'
-                      : `Prioridad en ${String(group.prioritized)} de ${String(group.roofing.length)} órdenes`}
-                  </Badge>
-                )}
-              </div>
-              <span className="text-muted-foreground">
-                {group.roofing.length > 0 && (
-                  <>
-                    {formatQtyAsIs(group.reportedMeters, 'm')} de{' '}
-                    {formatQtyAsIs(group.planMeters, 'm')} reportados ·{' '}
-                  </>
-                )}
-                {group.counts.total}{' '}
-                {group.counts.total === 1 ? 'orden abierta' : 'órdenes abiertas'}
-              </span>
-            </div>
-            {/* La prioridad se asigna al pedido y se propaga a sus órdenes (F8-S3b/M2). */}
-            {isAdmin && salesOrderCode !== null && (
-              <PedidoPriorityControl salesOrderCode={salesOrderCode} orders={group.roofing} />
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {pending && <Skeleton className="h-64 w-full" />}
       {failed && (
@@ -616,7 +611,6 @@ function PedidoWorkspace({ pedido, focused }: { pedido: string; focused: string 
 
       {rows.length > 0 && (
         <>
-          {roofingRows.length > 0 && <Progress done={done} total={roofingRows.length} />}
           <div
             className={
               asList ? 'grid gap-4 lg:grid-cols-[minmax(0,18rem)_1fr] lg:items-start' : 'grid gap-4'
@@ -700,33 +694,6 @@ function toDrywallRow(order: ProductionOrderListItemDto): WorkspaceOrder {
     queueNote: null,
     roofing: null,
   };
-}
-
-function Progress({ done, total }: { done: number; total: number }) {
-  const pct = total === 0 ? 0 : Math.round((done / total) * 100);
-  return (
-    <Card>
-      <CardContent className="grid gap-2 pt-6">
-        <div className="flex items-center justify-between text-sm">
-          <span className="font-medium">
-            {done} de {total}{' '}
-            {total === 1 ? 'orden con su plan cubierto' : 'órdenes con su plan cubierto'}
-          </span>
-          <span className="tabular-nums text-muted-foreground">{pct} %</span>
-        </div>
-        <div
-          className="h-2 w-full overflow-hidden rounded-full bg-muted"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={total}
-          aria-valuenow={done}
-          aria-label="Órdenes reportadas"
-        >
-          <div className="h-full bg-primary transition-all" style={{ width: `${String(pct)}%` }} />
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 /**

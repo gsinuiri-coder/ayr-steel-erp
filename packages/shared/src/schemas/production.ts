@@ -926,6 +926,11 @@ export const plantClosePreviewCoilSchema = z.object({
   balanceAfterKg: z.string(),
   /** La bobina queda terminada al cerrar (saldo en cero, D-360). */
   terminated: z.boolean(),
+  /**
+   * cc35: el despunte que el cierre saca de **esta** bobina (coberturas, cc34/D-539). Opcional para
+   * que un web nuevo lea un API viejo durante el despliegue; el API de cc35 lo manda siempre.
+   */
+  scrapKg: z.string().optional(),
 });
 export type PlantClosePreviewCoilDto = z.infer<typeof plantClosePreviewCoilSchema>;
 
