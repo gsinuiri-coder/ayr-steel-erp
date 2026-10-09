@@ -445,6 +445,16 @@ export function ProduceBlocks({
       setStarting(false);
     }
     // D-575: con un bloque llenado solo, «Qué va a pasar» pide confirmarlo antes de calcular.
+    // Si pasa lo montado más del 1 %, se confirma en el bloque: ahí va la casilla de tolerancia.
+    if (close && autoBlock !== undefined && autoBlock.figures.excess !== null) {
+      toast.warning(
+        'El bloque llenado solo pasa lo montado: confírmalo con «Sí, salió así» y marca la tolerancia.',
+      );
+      document
+        .getElementById(`bloque-${autoBlock.coil.coilId}`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
     if (close && autoBlock !== undefined) {
       setAskingAuto(autoLabel(autoBlock));
       return;

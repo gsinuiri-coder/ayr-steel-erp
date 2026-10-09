@@ -21,7 +21,6 @@ import {
   describePieces,
   isAccessory,
   checkRoofingPlanAdjustment,
-  detailsLengths,
   isOverdue,
   queueSemaphore,
   fromDateOnly,
@@ -549,7 +548,8 @@ export class RoofingProductionService {
         current: before.map(toPieceLike),
         next: input.items.map((p) => ({ lengthMm: toFixedString(p.lengthMm, 'MM'), qty: p.qty })),
         reported: reportedNow.flatMap((r) => r.piecesDetail.map(toPieceLike)),
-        exactMeters: detailsLengths(planned),
+        // cc38 (D-574): mismos metros también en la plancha de catálogo (antes, D-545, libre).
+        exactMeters: true,
       });
       if (!adjustment.ok) throw new BadRequestException(adjustment.message);
 

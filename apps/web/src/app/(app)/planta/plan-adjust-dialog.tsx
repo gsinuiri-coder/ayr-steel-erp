@@ -68,9 +68,13 @@ export function reportedByLength(order: RoofingBatchOrderDto): Map<string, numbe
   return reported;
 }
 
-/** El plan es de metros exactos: cobertura a medida (`detailsLengths`). */
+/**
+ * El plan es de metros exactos. cc38 (D-574): también la plancha de catálogo —«Ajustar el plan»
+ * sigue exigiendo el mismo total—; si no, bajar el plan sería un cierre corto (D-577) y subirlo,
+ * producir de más. El accesorio no tiene plan que ajustar.
+ */
 export function planNeedsExactMeters(order: RoofingBatchOrderDto): boolean {
-  return order.productUnit === Unit.MTR && !order.isAccessory;
+  return !order.isAccessory;
 }
 
 /** El largo en metros como lo escribe planta: «6.00», y «4.205» solo si hace falta el milímetro. */

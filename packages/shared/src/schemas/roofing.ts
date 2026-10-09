@@ -394,7 +394,10 @@ export function roofingPlanOverrun(
   newMeters: Decimal | string,
 ): Decimal {
   if (!progress.hasPlan) return new Decimal(0);
-  return progress.reportedMeters.plus(toDecimal(newMeters)).minus(progress.planMeters);
+  // cc38 (D-574): con tres decimales, la misma escala con que el cierre compara (D-573). Un
+  // largo con milímetros fraccionarios daba metros de cinco decimales y un «Excede … 0.000 m».
+  return roofingPlanGap(progress.planMeters, progress.reportedMeters.plus(toDecimal(newMeters)))
+    .excess;
 }
 
 /**

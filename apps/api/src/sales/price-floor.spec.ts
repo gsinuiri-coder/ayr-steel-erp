@@ -114,7 +114,7 @@ describe('assertPriceFloor (D-163)', () => {
   it('el mensaje dice el mínimo con IGV, el costo y el margen', async () => {
     const tx = fakeTx({ productCost: COST });
     await expect(assertPriceFloor(tx, [candidate('1.0000')], '0.05')).rejects.toThrow(
-      /precio mínimo es S\/ 22\.95 por NIU.*costo promedio S\/ 17\.50.*margen mínimo 10\.00%/s,
+      /precio mínimo es S\/ 22\.95 por und.*costo promedio S\/ 17\.50.*margen mínimo 10\.00%/s,
     );
   });
 

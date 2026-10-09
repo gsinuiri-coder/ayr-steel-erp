@@ -98,9 +98,8 @@ test.describe('D-191 — borrador de reportes por orden (API)', () => {
       // D-146 contando el borrador: 16 + 12 ya ocupan 28 de 40; 16 m más no entran.
       const overrun = await postExpectingError(api, draftsPath(opId), { pieces: pieces([4, 4]) });
       expect(overrun.status).toBe(400);
-      expect(overrun.message).toMatch(
-        /el borrador \(28\.000 m\) quedan 12\.000 m y esta fila suma 16\.000 m/,
-      );
+      // cc38 (D-574): 28 + 16 = 44 contra 40.
+      expect(overrun.message).toBe('Excede el plan en 4.000 m · ajusta el plan');
 
       // Nada se movió: ni la bobina, ni el producto, ni reportes.
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
@@ -123,7 +122,8 @@ test.describe('D-191 — borrador de reportes por orden (API)', () => {
 
       // Con el plan cubierto por el borrador, ninguna fila más entra.
       const overPlan = await postExpectingError(api, draftsPath(opId), { pieces: pieces([4, 1]) });
-      expect(overPlan.message).toMatch(/el plan ya está cubierto/);
+      // cc38 (D-574): el texto nombra cuánto se pasa.
+      expect(overPlan.message).toBe('Excede el plan en 4.000 m · ajusta el plan');
 
       // El borrador viaja en el batch de /planta, y sobrevive a otra lectura (server-side).
       const batch = await getJson<{ orderId: string; drafts: DraftDto[]; draftMeters: string }[]>(

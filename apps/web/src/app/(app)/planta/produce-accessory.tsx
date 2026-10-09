@@ -356,6 +356,12 @@ export function ProduceAccessory({
     // D-573: con los metros de la orden incompletos no se cierra (el API tampoco deja).
     if (shouldClose && !progress.canClose) return;
     // D-575: «Qué va a pasar» pide confirmar el bloque llenado solo antes de calcular.
+    if (shouldClose && autoBlock !== undefined && autoBlock.check.figures.excess !== null) {
+      toast.warning(
+        'El bloque llenado solo pasa lo montado: confírmalo con «Sí, salió así» y marca la tolerancia.',
+      );
+      return;
+    }
     if (shouldClose && autoBlock !== undefined) {
       setAskingAuto(autoLabel(autoBlock));
       return;

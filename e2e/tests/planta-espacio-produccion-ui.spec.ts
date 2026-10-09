@@ -476,7 +476,8 @@ test.describe('D-155/D-159/D-160 + cc35 — el espacio de producción con el mod
       await mountFromModal(page, op.code, scenario.coil.code);
       await expect(tab).toContainText('Lista');
 
-      // --- El plan, en planchas: el largo no se pregunta (D-118); la cantidad es libre (D-545) ---
+      // --- El plan, en planchas: el largo no se pregunta (D-118). cc38 (D-574): la cantidad ya no
+      // es libre (D-545 decía que sí): el ajuste exige los mismos metros también en catálogo. ---
       await panel.getByRole('button', { name: `Ajustar el plan de corte de ${op.code}` }).click();
       const planDialog = page.getByRole('dialog', { name: `Ajustar el plan de ${op.code}` });
       const planSheets = planDialog.getByLabel('Planchas del largo 1 del plan');
@@ -484,14 +485,16 @@ test.describe('D-155/D-159/D-160 + cc35 — el espacio de producción con el mod
       await expect(planDialog.getByLabel('Largo 1 del plan en metros')).toBeDisabled();
       await planSheets.fill('6');
       await planDialog.getByRole('button', { name: 'Guardar el plan' }).click();
+      await expect(planDialog.getByRole('alert')).toContainText('sobran 4.000 m');
+      await planDialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(planDialog).toHaveCount(0);
 
       // --- Un solo largo por orden: el bloque lleva una fila, con las unidades ---
       const block = blockOf(panel, scenario.coil.code);
       await expect(block.getByText('Plancha 4.00 m')).toBeVisible();
       const units = block.getByLabel(/Unidades del corte 1 de/);
-      await expect(units).toHaveValue('6', { timeout: 30_000 });
-      await expect(panel.getByTestId('cuadre-plan')).toContainText('6 de 6 und');
+      await expect(units).toHaveValue('5', { timeout: 30_000 });
+      await expect(panel.getByTestId('cuadre-plan')).toContainText('5 de 5 und');
       // 3 planchas de 4 m = 12 ML ⇒ 48.48 kg teóricos con el 1 % de D-165.
       await units.fill('3');
       await expect(block.getByText('12.000 m · teórico 48.480 kg')).toBeVisible();
