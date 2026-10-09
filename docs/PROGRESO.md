@@ -2,6 +2,23 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-09 — cc36: formulario de cotización y menú al diseño aprobado (D-550..D-557, PR #150 en prod)
+
+Solo `apps/web`: sin API, sin migraciones y sin cambiar cálculos ni lo que se envía al API. Detalle
+en `docs/handoff/ventana-cc36.md`; UAT en `docs/uat/cc36.md`.
+
+- **En producción (Vercel), `main` `7f145431`**, 03:34 de Lima. El API no cambió (sigue la revisión
+  de cc35). Smoke de solo lectura en verde en los dos dominios. Pasada visual en `v2.mareliac.pe` con
+  admin efímero (borrado): cabecera sin título, sin desplegable de línea, buscador en «Todas», línea
+  de negocio y estado bajo el producto, foco en la cantidad; 0 documentos guardados.
+- **Vuelta atrás:** promover en Vercel el despliegue `ayr-steel-erp-5ak8e2m0l` (`main` `2d01e075`) o
+  revertir el merge de #150.
+- **JSON enviado al API:** idéntico antes y después en seis casos de los cuatro usos.
+- **Decisiones provisionales:** D-550..D-557; D-550 reemplaza a D-496 y D-551 a D-497.
+- **Registro de riesgo (toca lo que se envía):** `QuietDecimalInput` (D-554) muestra el precio sin
+  ceros de más y devuelve el valor sembrado si lo escrito vuelve a ser lo mostrado; un cambio ahí
+  puede sacar a una línea de «intacta» (D-255) o del precio de lista (D-377).
+
 ## 2026-10-08 — cc34: despunte por bobina, rentabilidad y baja en trámite (D-539..D-544, PR #143–#146 en prod)
 
 Cuatro cortes, sin migraciones y sin reparar datos. D-534..D-538 ratificadas por el dueño. Detalle en
