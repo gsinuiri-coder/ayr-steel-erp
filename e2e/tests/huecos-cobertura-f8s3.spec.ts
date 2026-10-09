@@ -80,7 +80,7 @@ async function setupSingle(api: APIRequestContext) {
 }
 
 test.describe('F8-S3 — huecos de cobertura', () => {
-  test('borrador por pantalla: corregir una fila precarga el editor y apaga ejecutar; guardar la corrige y quitar otra la saca', async ({
+  test('modelo M: un borrador viejo con dos filas de la misma bobina se ve como un bloque y al corregirlo queda una fila (cc35)', async ({
     page,
     baseURL,
   }) => {
@@ -97,50 +97,27 @@ test.describe('F8-S3 — huecos de cobertura', () => {
         timeout: 60_000,
       });
       const panel = page.getByRole('tabpanel', { name: opCode });
-      const table = panel.getByRole('table', { name: `Borrador de ${opCode}` });
-      await expect(table.getByRole('row')).toHaveCount(3); // cabecera + 2 filas
-
-      const execute = panel.getByRole('button', { name: `Ejecutar el borrador de ${opCode}` });
-      const executeAndClose = panel.getByRole('button', {
-        name: `Ejecutar el borrador y cerrar ${opCode}`,
+      const block = panel.getByTestId(`bloque-${scenario.coil.code}`);
+      // Las dos filas son un solo bloque: 3 + 2 planchas de 4 m y los 40 kg declarados.
+      await expect(block.getByLabel(/Planchas del corte 1 de/)).toHaveValue('5', {
+        timeout: 60_000,
       });
-      await expect(execute).toBeEnabled();
-
-      // --- Corregir la fila 2: el editor llega con lo que la fila tenía ---
-      await (
-        await rowAction(page, `fila 2 de ${opCode}`, `Corregir la fila 2 de ${opCode}`)
-      ).click();
-      await expect(panel.getByLabel('Largo 1 en metros')).toHaveValue(/^4(\.0+)?$/);
-      await expect(panel.getByLabel('Planchas del largo 1')).toHaveValue('2');
-      await expect(panel.getByLabel(`Kilos consumidos de ${opCode}`)).toHaveValue(/^40(\.0+)?$/);
-      const saveRow = panel.getByRole('button', { name: `Guardar la fila 2 de ${opCode}` });
-      await expect(saveRow).toBeVisible();
+      await expect(block.getByLabel(/kg consumidos de/)).toHaveValue('40.000');
+      // Lo que se escribía en filas ya no tiene botones de borrador.
       await expect(
-        panel.getByRole('button', { name: `Agregar al borrador de ${opCode}` }),
+        panel.getByRole('button', { name: /Agregar al borrador|Ejecutar el borrador/ }),
       ).toHaveCount(0);
-      // Mientras se corrige no se ejecuta: grabaría la fila vieja.
-      await expect(execute).toBeDisabled();
-      await expect(executeAndClose).toBeDisabled();
 
-      await panel.getByLabel('Planchas del largo 1').fill('4'); // 16 m: 12 + 16 = 28 de 40
-      await saveRow.click();
-      await expect(table.getByRole('row').filter({ hasText: '4 × 4.00 m' })).toBeVisible();
-      await expect(table.getByRole('row').filter({ hasText: '2 × 4.00 m' })).toHaveCount(0);
-      await expect(saveRow).toHaveCount(0);
-      await expect(execute).toBeEnabled();
-
-      let drafts = await getJson<DraftDto[]>(api, draftsPath(opId));
-      expect(drafts.map((d) => [d.rowNumber, d.meters, d.consumedKg])).toEqual([
-        [1, '12.000', null],
-        [2, '16.000', '40.000'],
-      ]);
-
-      // --- Quitar la fila 1 ---
-      await (await rowAction(page, `fila 1 de ${opCode}`, `Quitar la fila 1 de ${opCode}`)).click();
-      await expect(table.getByRole('row')).toHaveCount(2);
-      await expect(table.getByRole('row').filter({ hasText: '3 × 4.00 m' })).toHaveCount(0);
-      drafts = await getJson<DraftDto[]>(api, draftsPath(opId));
-      expect(drafts.map((d) => [d.rowNumber, d.meters])).toEqual([[1, '16.000']]);
+      // Corregir el bloque deja una sola fila con lo nuevo.
+      await block.getByLabel(/Planchas del corte 1 de/).fill('7'); // 28 m de 40
+      await expect(panel.getByText('Todo lo escrito está guardado')).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect
+        .poll(async () =>
+          (await getJson<DraftDto[]>(api, draftsPath(opId))).map((d) => [d.meters, d.consumedKg]),
+        )
+        .toEqual([['28.000', '40.000']]);
 
       // Nada de esto tocó el kardex ni generó reportes.
       expect((await balanceOf(api, 'COIL', scenario.coil.id)).qty).toBe('2000.000');
@@ -152,7 +129,7 @@ test.describe('F8-S3 — huecos de cobertura', () => {
     }
   });
 
-  test('borrador por pantalla: si otro reporte ocupó el plan, ejecutar avisa «Fila 2:» y el borrador y el kardex quedan como estaban', async ({
+  test('modelo M: si otro reporte ocupó el plan, registrar avisa en el bloque de la bobina y el borrador y el kardex quedan como estaban (cc35)', async ({
     page,
     baseURL,
   }) => {
@@ -163,7 +140,6 @@ test.describe('F8-S3 — huecos de cobertura', () => {
       await postJson(api, draftsPath(opId), { pieces: pieces([4, 5]) }); // 20 m
       await postJson(api, draftsPath(opId), { pieces: pieces([4, 5]) }); // 20 m
       // Un reporte directo de 8 m ocupa el plan por debajo del borrador: la fila 2 ya no entra.
-      // (Achicar el plan con el borrador cargado se rechaza de entrada desde la revisión.)
       await postJson(api, `/api/production/roofing/${opId}/report`, { pieces: pieces([4, 2]) });
 
       await loginAsAdmin(page);
@@ -172,14 +148,18 @@ test.describe('F8-S3 — huecos de cobertura', () => {
         timeout: 60_000,
       });
       const panel = page.getByRole('tabpanel', { name: opCode });
-      const table = panel.getByRole('table', { name: `Borrador de ${opCode}` });
-      await expect(table.getByRole('row')).toHaveCount(3);
+      const block = panel.getByTestId(`bloque-${scenario.coil.code}`);
+      await expect(block.getByLabel(/Planchas del corte 1 de/)).toHaveValue('10', {
+        timeout: 60_000,
+      });
 
-      await panel.getByRole('button', { name: `Ejecutar el borrador de ${opCode}` }).click();
-      await expect(page.getByText(`Fila 2: ${opCode} tiene un plan de 40.000 m`)).toBeVisible();
+      await panel.getByRole('button', { name: `Registrar producción de ${opCode}` }).click();
+      // «Fila 2: …» se muestra en el bloque de su bobina, sin el número de fila.
+      await expect(block.getByRole('alert')).toContainText(`${opCode} tiene un plan de 40.000 m`, {
+        timeout: 60_000,
+      });
 
-      // El borrador sigue entero en pantalla y en el servidor; nada se grabó.
-      await expect(table.getByRole('row')).toHaveCount(3);
+      // El borrador sigue entero en el servidor; nada se grabó.
       expect(await getJson<DraftDto[]>(api, draftsPath(opId))).toHaveLength(2);
       const after = await getJson<ProductionOrderDto>(api, `/api/production/${opId}`);
       expect(after.reports).toHaveLength(1);

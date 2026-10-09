@@ -198,7 +198,7 @@ test.describe('D-192 — montar varias bobinas', () => {
     }
   });
 
-  test('por pantalla: peso inicial en el modal, dos bobinas elegidas con casillas, filas en el workspace y bajar una sola', async ({
+  test('por pantalla: el modal busca y marca dos bobinas, y el modelo M registra cada una por su bloque (cc35)', async ({
     page,
     baseURL,
   }) => {
@@ -269,38 +269,48 @@ test.describe('D-192 — montar varias bobinas', () => {
       await confirmFilmOpen(modal);
       await expect(modal).toHaveCount(0);
 
-      // Las dos, como filas.
-      await expect(panel.getByText('Bobinas montadas (2)')).toBeVisible();
-      const releaseA = panel.getByRole('button', {
-        name: `Bajar la bobina ${scenario.coil.code} de ${op.code}`,
-      });
-      const releaseB = panel.getByRole('button', {
-        name: `Bajar la bobina ${second.coil.code} de ${op.code}`,
-      });
-      await expect(releaseA).toBeEnabled();
-      await expect(releaseB).toBeEnabled();
+      // cc35 (modelo M): un bloque por bobina. Montadas en la misma operación comparten la hora,
+      // así que el test no supone cuál es la última: la que se llenó sola.
+      const blockA = panel.getByTestId(`bloque-${scenario.coil.code}`);
+      const blockB = panel.getByTestId(`bloque-${second.coil.code}`);
+      await expect(blockA).toBeVisible();
+      await expect(blockB).toBeVisible();
+      const aIsLast = (await blockA.getByText(/Llenada sola/).count()) > 0;
+      const [lastBlock, firstBlock] = aIsLast ? [blockA, blockB] : [blockB, blockA];
+      const [lastCoilId, firstCoilId] = aIsLast
+        ? [scenario.coil.id, second.coil.id]
+        : [second.coil.id, scenario.coil.id];
+      // Las dos se pueden bajar mientras no tengan nada escrito ni rolado.
+      await expect(firstBlock.getByRole('button', { name: /Bajar la bobina/ })).toBeVisible();
 
-      // Con dos montadas, el editor pide elegir de cuál sale la fila.
-      await expect(panel.getByText('Indica de qué bobina salieron.')).toBeVisible();
-      await panel
-        .getByRole('button', { name: `Reportar desde la bobina ${second.coil.code}` })
-        .click();
-      await panel.getByLabel('Planchas del largo 1').fill('3');
-      await panel.getByRole('button', { name: `Agregar al borrador de ${op.code}` }).click();
-      const draft = panel.getByRole('table', { name: `Borrador de ${op.code}` });
-      await expect(draft.getByRole('row').filter({ hasText: '3 × 4.00 m' })).toContainText(
-        second.coil.code,
+      // De la primera salieron 4 × 4 m; la última se llena con las 6 que faltan.
+      await firstBlock.getByLabel(/Largo del corte 1 de/).selectOption('4.00');
+      await firstBlock.getByLabel(/Planchas del corte 1 de/).fill('4');
+      await expect(lastBlock.getByLabel(/Planchas del corte 1 de/)).toHaveValue('6');
+      await expect(panel.getByText('Todo lo escrito está guardado')).toBeVisible({
+        timeout: 30_000,
+      });
+      // Con su fila en el borrador, ya no se baja.
+      await expect(firstBlock.getByRole('button', { name: /Bajar la bobina/ })).toHaveCount(0);
+
+      await panel.getByRole('button', { name: `Registrar y cerrar ${op.code}` }).click();
+      const preview = panel.getByTestId('que-va-a-pasar');
+      await expect(preview).toContainText(`${op.code} queda cerrada`, { timeout: 60_000 });
+      await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
+      await expect(page.getByText(`${op.code}: producción registrada y orden cerrada`)).toBeVisible(
+        {
+          timeout: 60_000,
+        },
       );
 
-      // Bajar una sola: la que no tiene filas en el borrador se baja; la otra no.
-      await expect(releaseB).toBeDisabled();
-      await releaseA.click();
-      await expect(panel.getByText('Bobina montada', { exact: true })).toBeVisible();
-      await expect(releaseB).toBeVisible();
-      const after = await getJson<ProductionOrderDto>(api, `/api/production/${opId}`);
-      expect(after.consumptions.filter((c) => c.releasedAt === null).map((c) => c.coilId)).toEqual([
-        second.coil.id,
-      ]);
+      // Cada bobina sacó lo suyo: 4 × 4 m = 64.64 kg y 6 × 4 m = 96.96 kg.
+      const startKg = (id: string) => (id === scenario.coil.id ? 1500 : 1200);
+      expect((await balanceOf(api, 'COIL', firstCoilId)).qty).toBe(
+        (startKg(firstCoilId) - 64.64).toFixed(3),
+      );
+      expect((await balanceOf(api, 'COIL', lastCoilId)).qty).toBe(
+        (startKg(lastCoilId) - 96.96).toFixed(3),
+      );
     } finally {
       await purgeRoofingTrail(api, trail);
       await api.dispose();

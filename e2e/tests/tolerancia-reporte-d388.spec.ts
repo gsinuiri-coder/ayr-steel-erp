@@ -365,18 +365,16 @@ test.describe('D-388/D-389 — fuera de tolerancia con la casilla', () => {
     await expect(block).toContainText('1.62 %');
     await expect(block).not.toContainText('administrador');
     await expect(block).not.toContainText('Diferencia mayor');
-    await expect(panel.getByRole('table', { name: `Borrador de ${order.code}` })).toContainText(
-      'Fuera de tolerancia (1.62 %)',
-    );
-    const execute = panel.getByRole('button', {
-      name: `Ejecutar el borrador y cerrar ${order.code}`,
-    });
-    await expect(execute).toBeDisabled();
+    // cc35 (modelo M): la casilla vive en el bloque de la bobina; «Registrar y cerrar» no se
+    // apaga, pero sin casilla y motivo no manda nada.
+    const execute = panel.getByRole('button', { name: `Registrar y cerrar ${order.code}` });
+    const preview = panel.getByTestId('que-va-a-pasar');
+    await execute.click();
+    await expect(preview).toHaveCount(0);
     await block
-      .getByRole('checkbox', { name: `Confirmar la fila 1 de ${order.code} fuera de tolerancia` })
+      .getByRole('checkbox', { name: /Confirmar la bobina 1 .* fuera de tolerancia/ })
       .click();
-    await expect(execute).toBeDisabled();
-    const reason = block.getByRole('combobox', { name: `Motivo de la fila 1 de ${order.code}` });
+    const reason = block.getByRole('combobox', { name: /Motivo de la bobina 1/ });
     // Solo los motivos que aplican a un exceso hacia arriba.
     await expect(reason.locator('option')).toHaveText([
       'Elige el motivo…',
@@ -384,22 +382,20 @@ test.describe('D-388/D-389 — fuera de tolerancia con la casilla', () => {
       'Otro',
     ]);
     await reason.selectOption('OTHER');
-    // «Otro» exige el texto.
-    await expect(execute).toBeDisabled();
+    // «Otro» exige el texto: sin él tampoco se manda.
+    await execute.click();
+    await expect(preview).toHaveCount(0);
     await block
-      .getByRole('textbox', { name: `Detalle del motivo de la fila 1 de ${order.code}` })
+      .getByRole('textbox', { name: /Detalle del motivo de la bobina 1/ })
       .fill('Rollo con espesor real menor');
-    await expect(execute).toBeEnabled();
     await execute.click();
     // cc27 (D-453): el resumen avisa de la fila fuera de tolerancia y de la bobina que termina.
-    await expect(page.getByRole('dialog')).toContainText('Fuera de tolerancia', {
-      timeout: 60_000,
-    });
-    await expect(page.getByRole('dialog')).toContainText('Terminada');
-    await confirmPlantClose(page, 'Ejecutar y cerrar');
-    await expect(page.getByText(`${order.code}: borrador ejecutado y orden cerrada`)).toBeVisible({
-      timeout: 60_000,
-    });
+    await expect(preview).toContainText('Fuera de tolerancia', { timeout: 60_000 });
+    await expect(preview).toContainText('Se termina');
+    await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
+    await expect(
+      page.getByText(`${order.code}: producción registrada y orden cerrada`),
+    ).toBeVisible({ timeout: 60_000 });
 
     expect(await getJson<CoilState>(api, `/api/coils/${coilId}`)).toMatchObject({
       availableKg: '0.000',

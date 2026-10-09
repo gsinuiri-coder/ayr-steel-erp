@@ -1,115 +1,64 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import {
   MAX_ORDER_STRIPS,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
-  Decimal,
-  describePieces,
   equivalentMeters,
-  piecesMeters,
-  piecesTheoreticalKg,
   Role,
-  TOLERANCE_OVERRIDE_REQUIRED,
-  roofingConsumptionDeviation,
-  mountedKgForReport,
   sum,
   toDecimal,
-  Unit,
   type PlantClosePreviewDto,
   type ProductionOrderDto,
   type RawMaterialWarningDto,
   type RoofingBatchCoilDto,
   type RoofingBatchOrderDto,
   type RoofingCoilOptionDto,
-  type RoofingPieceDto,
-  type RoofingReportDraftDto,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { formatQtyAsIs } from '@/lib/format';
-import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
 import { invalidateProduction } from '@/lib/production-queries';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
-import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { useSession } from '@/lib/session';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { OrderPriorityControl } from '@/components/production-queue';
-import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { ClosePreviewDialog } from '@/components/production/close-preview-dialog';
-import { InfoPopover } from '@/components/info-popover';
-import { OperationDateField } from '@/components/operation-date-field';
-import { LengthEditor } from '@/components/production/length-editor';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { PLANT_ORDER_STATE_TONE, PRIORITY_TONE } from '@/components/status-tone';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { AccessoryReportCard } from './accessory-report-card';
-import { PlanAdjustDialog } from './plan-adjust-dialog';
 import { CoilPicker } from './coil-picker';
-import { RowActions } from '@/components/row-actions';
-import {
-  overrideInput,
-  rowsOutOfTolerance,
-  ToleranceOverrideFields,
-  type ToleranceOverrideState,
-} from './tolerance-override';
+import { ProduceBlocks } from './produce-blocks';
 
 /**
  * El ciclo completo de **una** orden de coberturas dentro del espacio de producción
- * (D-155, rehecho por D-159 y por D-191).
+ * (D-155, rehecho por D-159, D-191 y cc35).
  *
- * - **El plan de corte se edita acá** (D-159). En una plancha de catálogo, solo la cantidad.
- * - **D-191: lo que salió se carga en un borrador y se ejecuta todo junto.** Cada fila del
- *   borrador es un reporte (bobina, largos, kg declarado) que vive en el servidor —sobrevive
- *   un refresh o un corte de luz— y se edita o se quita mientras no se ejecute. Ni el kardex
- *   ni la reserva se mueven hasta «Ejecutar», que valida todo otra vez y graba todas las filas
- *   en una sola transacción: si una falla, no entra ninguna y el error nombra la fila.
- * - **Ejecutar y cerrar** es una sola transacción, como era «Guardar y cerrar»: libera la
- *   bobina para la orden hermana en el acto.
+ * - **cc35 (modelo M):** una cobertura a medida o una plancha de catálogo se produce bobina por
+ *   bobina, en el orden en que se montaron (`ProduceBlocks`). El borrador de D-191 sigue debajo,
+ *   pero el supervisor no lo ve como tal: lo que escribe en cada bloque se guarda solo.
+ * - El accesorio (D-343) sigue reportando metros de bobina directos (`AccessoryReportCard`).
  *
- * Lo que **no** cambió: el tope de metros del plan sigue siendo duro (D-146) —y ahora cuenta lo
- * que el borrador ya ocupa— y las desviaciones del kilo declarado y el faltante del agregado
- * siguen siendo avisos (D-154).
+ * Lo que **no** cambió: el tope de metros del plan sigue siendo duro (D-146) y las desviaciones del
+ * kilo declarado y el faltante del agregado siguen siendo avisos (D-154).
  */
 
 /** Lo que se está escribiendo en una orden. Vive **en el padre**, indexado por orden. */
 export interface OrderDraft {
-  /**
-   * Filas del editor. `null` es "todavía no se sembró": el panel lo rellena con el plan
-   * faltante (si el borrador está vacío) y a partir de ahí es del usuario. Distinguir `null` de
-   * `[]` es lo que evita que borrar todas las líneas las haga reaparecer.
-   */
-  rows: PieceRow[] | null;
-  /** D-146: kilos declarados para **esta** fila. Dato de planta, no consumo. */
-  consumedKg: string;
-  /** D-089: kilos que la bobina consumió en **toda** la corrida; de acá sale el despunte. */
-  closeKg: string;
+  /** Accesorio: la bobina elegida cuando hay varias montadas. */
   coilId: string;
-  /** D-191: la fila del borrador que el editor está corrigiendo. `null` = se agrega una nueva. */
-  editingDraftId: string | null;
+  /** Accesorio, D-089: kilos que la bobina consumió en **toda** la corrida. */
+  closeKg: string;
 }
 
 export const EMPTY_DRAFT: OrderDraft = {
-  rows: null,
-  consumedKg: '',
   closeKg: '',
   coilId: '',
-  editingDraftId: null,
 };
 
 /**
@@ -126,10 +75,8 @@ export interface SavedNotes {
 export const NO_NOTES: SavedNotes = { pool: [], note: null };
 
 /**
- * F8-S3c/M3: metro lineal equivalente de lo que le queda a una bobina montada (D-116, la
- * misma cuenta que ya da `CoilDto.equivalentMeters` para el saldo entero). Presentación
- * pura: la asignación real sigue en kg, esto solo la traduce para quien piensa en metros.
- * `null` con geometría en cero (no debería pasar con datos reales).
+ * F8-S3c/M3: metro lineal equivalente de lo que le queda a una bobina montada (D-116).
+ * Presentación pura: la asignación real sigue en kg.
  */
 function equivalentMetersOf(coil: RoofingBatchCoilDto): string | null {
   return equivalentMeters(coil, coil.remainingKg)?.toFixed(3) ?? null;
@@ -149,11 +96,7 @@ export function RoofingOrderPanel({
   order: RoofingBatchOrderDto;
   /** El picker dejó de ser pestañas; el panel tiene que dejar de ser `tabpanel` con él. */
   asList: boolean;
-  /**
-   * La lista de órdenes se está refrescando. Bloquea los envíos: tras ejecutar, el `order` de
-   * esta pestaña sigue siendo el viejo hasta que llega el refetch, y el botón quedaría
-   * habilitado sobre un borrador que ya no existe.
-   */
+  /** La lista de órdenes se está refrescando: bloquea los envíos. */
   refreshing: boolean;
   draft: OrderDraft;
   notes: SavedNotes;
@@ -164,40 +107,13 @@ export function RoofingOrderPanel({
 }) {
   const queryClient = useQueryClient();
   const { user } = useSession();
-  /** D-388: la casilla y el motivo de cada fila del borrador que pasa la tolerancia del 1 %. */
-  const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
-  const outOfTolerance = rowsOutOfTolerance(order.drafts);
-  const overridesPayload = outOfTolerance.flatMap((d) => {
-    const input = overrideInput(overrides[d.id], d.outOfTolerance);
-    return input === null ? [] : [{ draftId: d.id, ...input }];
-  });
-  /** Todas las filas fuera de tolerancia tienen su casilla y su motivo completos. */
-  const overridesReady =
-    outOfTolerance.length === 0 ||
-    outOfTolerance.every((d) => overrideInput(overrides[d.id], d.outOfTolerance) !== null);
-  /** Motivo del despunte cuando el cierre lo exige (D-089). */
+  /** Motivo del despunte cuando el cierre del accesorio lo exige (D-089). */
   const [askingReason, setAskingReason] = useState(false);
-  /** Qué botón disparó la ejecución: decide si también cierra. Solo para el rótulo. */
-  const [pendingClose, setPendingClose] = useState(false);
-  /**
-   * **Los dos datos que deciden el envío van por `ref` y no por estado**: el botón los fija y
-   * dispara el envío en el mismo manejador, y un `setState` no se ve hasta el render siguiente.
-   */
-  const closeMode = useRef(false);
-  const reasonToSend = useRef<string | null>(null);
-  const lastCloseMode = useRef<boolean | null>(null);
-  /** Cuál de los dos cierres está esperando el motivo: el diálogo es uno solo. */
-  const reasonFor = useRef<'commit' | 'close-only'>('commit');
-  /**
-   * cc27 (UX26-03, D-453): el resumen del cierre que espera confirmación. Lo calcula el API
-   * (`…/preview`); «Ejecutar y cerrar» y «Cerrar sin reportar más» no mueven nada hasta que
-   * planta confirma en el diálogo.
-   */
-  const [closePreview, setClosePreview] = useState<
-    | { kind: 'commit'; preview: PlantClosePreviewDto; confirmBackdate: boolean }
-    | { kind: 'close-only'; preview: PlantClosePreviewDto; reason: string | null }
-    | null
-  >(null);
+  const [reasonToSend, setReasonToSend] = useState<string | null>(null);
+  const [closePreview, setClosePreview] = useState<{
+    preview: PlantClosePreviewDto;
+    reason: string | null;
+  } | null>(null);
 
   const invalidate = () => {
     invalidateProduction(queryClient, order.orderId);
@@ -247,8 +163,6 @@ export function RoofingOrderPanel({
           : `${String(coilIds.length)} bobinas montadas en la roladora`,
       );
       onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
-      // D-159: el editor llega relleno con lo que el plan todavía debe.
-      onDraft({ rows: null, consumedKg: '', editingDraftId: null });
       invalidate();
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo montar la bobina')),
@@ -269,166 +183,12 @@ export function RoofingOrderPanel({
     onError: (err) => toast.error(errorMessage(err, 'No se pudo bajar la bobina')),
   });
 
-  const resolved = resolveDraft(order, draft);
-  const editing = order.drafts.find((d) => d.id === draft.editingDraftId) ?? null;
-  const staleEditing = draft.editingDraftId !== null && editing === null && !refreshing;
-  useEffect(() => {
-    if (!staleEditing) return;
-    toast.warning('La fila que corregías ya no está en el borrador: se descartó la corrección.');
-    onDraft({ rows: null, consumedKg: '', editingDraftId: null });
-  }, [staleEditing, onDraft]);
-
-  // -------------------------------------------------------------------------
-  // D-191 — el borrador
-  // -------------------------------------------------------------------------
-
-  // F8-S4/M0: agregar una fila es una creación repetible (D-182). Clave propia, distinta de la
-  // del commit, y atada al contenido de la fila.
-  const addKey = useIdempotencyKey();
-  const saveDraft = useMutation({
-    // `isAdd` viaja con la mutación: `onSettled` tiene que saber qué se mandó, no qué hay en
-    // pantalla cuando vuelve la respuesta.
-    mutationFn: ({ pieces }: { pieces: RoofingPieceDto[]; isAdd: boolean }) => {
-      const body = {
-        pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
-        ...(resolved.coil ? { coilId: resolved.coil.coilId } : {}),
-        ...(draft.consumedKg.trim()
-          ? { consumedKg: toDecimal(draft.consumedKg.trim()).toFixed(3) }
-          : {}),
-      };
-      return api<RoofingReportDraftDto[]>(
-        editing === null
-          ? `/production/roofing/${order.orderId}/drafts`
-          : `/production/roofing/${order.orderId}/drafts/${editing.id}`,
-        {
-          method: editing === null ? 'POST' : 'PUT',
-          body:
-            editing === null
-              ? { ...body, idempotencyKey: addKey.current(JSON.stringify(body)) }
-              : body,
-        },
-      );
-    },
-    onSettled: (_data, error, variables) => {
-      if (variables.isAdd) addKey.settle(error ?? undefined);
-    },
-    onSuccess: () => {
-      toast.success(
-        editing === null
-          ? `${order.code}: fila agregada al borrador`
-          : `${order.code}: fila ${String(editing.rowNumber)} corregida`,
-      );
-      // D-388: una fila corregida es otro exceso: la casilla que se marcó para la anterior no
-      // vale para esta, y el administrador la vuelve a marcar si hace falta.
-      if (editing !== null) {
-        setOverrides((prev) =>
-          Object.fromEntries(Object.entries(prev).filter(([id]) => id !== editing.id)),
-        );
-      }
-      // Tras agregar, el editor queda vacío: lo que falta del plan ya lo ocupa el borrador.
-      onDraft({ rows: [EMPTY_PIECE_ROW], consumedKg: '', editingDraftId: null });
-      invalidate();
-    },
-    onError: (err) => toast.error(errorMessage(err, 'No se pudo guardar la fila')),
-  });
-
-  const removeDraft = useMutation({
-    mutationFn: (draftId: string) =>
-      api<RoofingReportDraftDto[]>(`/production/roofing/${order.orderId}/drafts/${draftId}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: (_data, draftId) => {
-      toast.success(`${order.code}: fila quitada del borrador`);
-      if (draft.editingDraftId === draftId) {
-        onDraft({ rows: null, consumedKg: '', editingDraftId: null });
-      }
-      invalidate();
-    },
-    onError: (err) => toast.error(errorMessage(err, 'No se pudo quitar la fila')),
-  });
-
-  const submitKey = useIdempotencyKey();
-  /** El cuerpo de «Ejecutar», el mismo para la vista previa del cierre (D-453) y la ejecución. */
-  const commitBody = ({
-    close,
-    reason,
-    confirmBackdate,
-  }: {
-    close: boolean;
-    reason: string | null;
-    confirmBackdate: boolean;
-  }) => ({
-    ...(close ? { close: true } : {}),
-    ...(close && reason ? { closeReason: reason } : {}),
-    // D-089: el consumo real de toda la corrida, que es de donde sale el despunte.
-    ...(close && draft.closeKg.trim()
-      ? { closeConsumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) }
-      : {}),
-    // D-388: la casilla del administrador, por fila; la API la exige y la valida.
-    ...(overridesPayload.length > 0 ? { toleranceOverrides: overridesPayload } : {}),
-    operationDate,
-    confirmBackdate: confirmBackdate || undefined,
-    idempotencyKey: submitKey.current(),
-  });
-  /** Los rechazos de «Ejecutar», los mismos si llegan en la vista previa del cierre. */
-  const onCommitError = (err: unknown) => {
-    // D-388: la fila pasó la tolerancia entre que se leyó el borrador y se ejecutó (o falta la
-    // casilla). Su mensaje habla de «motivo», así que va antes que el del despunte: se avisa y
-    // se relee el borrador para que aparezca la casilla.
-    if (err instanceof ApiError && err.code === TOLERANCE_OVERRIDE_REQUIRED) {
-      reasonToSend.current = null;
-      toast.error(err.message);
-      invalidate();
-      return;
-    }
-    // D-089: el cierre pide motivo cuando el despunte pasa del umbral, y lo decide el API.
-    if (err instanceof ApiError && /motivo/i.test(err.message) && closeMode.current) {
-      setAskingReason(true);
-      return;
-    }
-    reasonToSend.current = null;
-    toast.error(errorMessage(err, 'No se pudo ejecutar el borrador'));
-  };
-  const commit = useMutation({
-    mutationFn: (variables: { close: boolean; reason: string | null; confirmBackdate: boolean }) =>
-      api<ProductionOrderDto>(`/production/roofing/${order.orderId}/drafts/commit`, {
-        method: 'POST',
-        body: commitBody(variables),
-      }),
-    onSettled: (_data, error) => {
-      submitKey.settle(error ?? undefined);
-    },
-    onSuccess: (updated, variables) => {
-      toast.success(
-        variables.close
-          ? `${order.code}: borrador ejecutado y orden cerrada`
-          : `${order.code}: borrador ejecutado`,
-      );
-      onNotes({ pool: updated.rawMaterialWarnings ?? [], note: resolved.draftDeviation });
-      onDraft({ rows: null, consumedKg: '', closeKg: '', editingDraftId: null });
-      setOverrides({});
-      reasonToSend.current = null;
-      invalidate();
-    },
-    onError: onCommitError,
-  });
-  /** D-453: lo que «Ejecutar y cerrar» va a hacer, calculado por el API sin escribir nada. */
-  const previewCommit = useMutation({
-    mutationFn: (variables: { reason: string | null; confirmBackdate: boolean }) =>
-      api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/drafts/commit/preview`, {
-        method: 'POST',
-        body: commitBody({ close: true, ...variables }),
-      }),
-    onError: onCommitError,
-  });
-
-  /** El cuerpo del cierre suelto, el mismo para su vista previa (D-453). */
+  /** El cierre suelto del accesorio, el mismo cuerpo para su vista previa (D-453). */
   const closeOnlyBody = (reason: string | null) => ({
     ...(reason ? { reason } : {}),
     ...(draft.closeKg.trim() ? { consumedKg: toDecimal(draft.closeKg.trim()).toFixed(3) } : {}),
     operationDate,
   });
-  /** El cierre suelto: sin borrador pendiente, no queda nada que reportar. */
   const closeOnly = useMutation({
     mutationFn: (reason: string | null) =>
       api<ProductionOrderDto>(`/production/roofing/${order.orderId}/close`, {
@@ -439,7 +199,7 @@ export function RoofingOrderPanel({
       toast.success(
         `${order.code}: orden cerrada con ${formatQtyAsIs(updated.scrapKg ?? '0.000', 'kg')} de despunte`,
       );
-      reasonToSend.current = null;
+      setReasonToSend(null);
       invalidate();
     },
     onError: (err) => {
@@ -450,8 +210,6 @@ export function RoofingOrderPanel({
       toast.error(errorMessage(err, 'No se pudo cerrar la orden'));
     },
   });
-
-  /** D-453: lo que «Cerrar sin reportar más» va a hacer, calculado por el API sin escribir nada. */
   const previewCloseOnly = useMutation({
     mutationFn: (reason: string | null) =>
       api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/close/preview`, {
@@ -459,82 +217,49 @@ export function RoofingOrderPanel({
         body: closeOnlyBody(reason),
       }),
     onSuccess: (preview, reason) => {
-      setClosePreview({ kind: 'close-only', preview, reason });
+      setClosePreview({ preview, reason });
     },
     onError: (err) => {
       if (err instanceof ApiError && /motivo/i.test(err.message)) {
         setAskingReason(true);
         return;
       }
-      reasonToSend.current = null;
+      setReasonToSend(null);
       toast.error(errorMessage(err, 'No se pudo cerrar la orden'));
     },
   });
 
-  /**
-   * Ejecutar, con o sin cierre, envuelto en el diálogo de retro-fecha (D-124). Con cierre, primero
-   * la vista previa (D-453): la ejecución la dispara el diálogo de confirmación.
-   */
-  const submit = useBackdateConfirm(async (confirmBackdate) => {
-    if (closeMode.current) {
-      const preview = await previewCommit.mutateAsync({
-        reason: reasonToSend.current,
-        confirmBackdate,
-      });
-      setClosePreview({ kind: 'commit', preview, confirmBackdate });
-      return;
-    }
-    await commit.mutateAsync({
-      close: false,
-      reason: reasonToSend.current,
-      confirmBackdate,
-    });
-  });
-
-  const start = (close: boolean) => {
-    if (lastCloseMode.current !== null && lastCloseMode.current !== close) submitKey.settle();
-    lastCloseMode.current = close;
-    closeMode.current = close;
-    reasonFor.current = 'commit';
-    setPendingClose(close);
-    // El motivo se pide **antes** de mandar cuando la pantalla ya sabe que el API lo va a
-    // exigir: gastar un 400 para descubrirlo es la peor forma de enterarse.
-    if (close && resolved.needsCloseReason && reasonToSend.current === null) {
-      setAskingReason(true);
-      return;
-    }
-    void submit.attempt();
-  };
-
   const liveCoils = order.coils;
   const state = stateOf(order);
   const full = liveCoils.length >= MAX_ORDER_STRIPS;
-  const planCovered = order.planItems.length > 0 && toDecimal(order.remainingMeters).lte(0);
-  const hasDrafts = order.drafts.length > 0;
-  /**
-   * **Cerrar sin reportar más existe siempre que la orden ya haya producido algo** y el borrador
-   * esté vacío: el caso más común es la bobina que se acabó antes del plan. Con filas en el
-   * borrador el cierre va por «Ejecutar y cerrar», que las graba primero.
-   */
-  const canCloseOnly = toDecimal(order.reportedKg).gt(0) && !hasDrafts;
-  const canCloseWithCommit = hasDrafts;
+  const canCloseOnly = toDecimal(order.reportedKg).gt(0);
   const busy =
-    commit.isPending ||
     closeOnly.isPending ||
-    previewCommit.isPending ||
     previewCloseOnly.isPending ||
-    saveDraft.isPending ||
-    removeDraft.isPending ||
     mount.isPending ||
     release.isPending ||
     refreshing;
-  /**
-   * ALTO de la revisión: una fila escrita en el editor y **no agregada** no se ejecuta. Si los
-   * botones de ejecutar siguieran habilitados, «Ejecutar y cerrar» grababa el borrador sin ella,
-   * cerraba la orden y el éxito limpiaba el editor: lo que salió de la roladora quedaba sin
-   * reportar en una orden cerrada.
-   */
-  const unsavedEditor = resolved.pieces !== null || resolved.error !== null;
+
+  const mountControl = full ? (
+    <span className="text-xs text-destructive">
+      La orden ya tiene las {MAX_ORDER_STRIPS} bobinas que admite a la vez: ciérrala o baja alguna.
+    </span>
+  ) : (
+    <CoilPicker
+      orderCode={order.code}
+      productSku={order.productSku}
+      options={options.data ?? []}
+      loading={options.isPending}
+      failed={options.isError}
+      mountedCount={liveCoils.length}
+      remainingMeters={order.remainingMeters}
+      productName={order.productName}
+      pending={mount.isPending}
+      onMount={(coilIds, reopen) => {
+        mount.mutate({ coilIds, ...(reopen ? { reopen } : {}) });
+      }}
+    />
+  );
 
   return (
     // Con la forma de lista, `tabpanel` sería un huérfano: no hay ningún `tablist` que lo
@@ -545,74 +270,37 @@ export function RoofingOrderPanel({
       aria-labelledby={`tab-${order.orderId}`}
       className="grid gap-4"
     >
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-            <span className="font-mono">{order.code}</span>
-            <StateBadge state={state} />
-            <span className="font-normal text-muted-foreground">
-              {order.productSku} · {order.productName}
-              {order.salesOrderCode !== null && order.salesOrderId !== null && (
-                <>
-                  {' · '}
-                  <Link href={`/pedidos/${order.salesOrderId}`} className={LINK_CLASSNAME}>
-                    {order.salesOrderCode}
-                  </Link>
-                </>
-              )}
-              {order.customerName !== null && <> · {order.customerName}</>}
-            </span>
-            {order.priority && <Badge variant={PRIORITY_TONE}>Prioridad</Badge>}
-            {/* D-189: la prioridad es de la orden; se fija desde su propio panel. */}
-            {user.role === Role.ADMINISTRADOR && (
-              <span className="ml-auto">
-                <OrderPriorityControl
-                  orderId={order.orderId}
-                  orderCode={order.code}
-                  priority={order.priority}
-                />
-              </span>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-4">
-            <MiniStat label="ML del plan" value={`${order.planMeters} m`} />
-            <MiniStat label="ML reportado" value={`${order.reportedMeters} m`} />
-            <MiniStat
-              label="ML restante"
-              value={`${order.remainingMeters} m`}
-              tone={planCovered ? 'alert' : 'strong'}
-              hint={hasDrafts ? `${order.draftMeters} m en el borrador` : undefined}
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-mono font-semibold">{order.code}</span>
+        <StateBadge state={state} />
+        <span className="text-muted-foreground">
+          {order.productSku} · {order.productName}
+          {order.salesOrderCode !== null && order.salesOrderId !== null && (
+            <>
+              {' · '}
+              <Link href={`/pedidos/${order.salesOrderId}`} className={LINK_CLASSNAME}>
+                {order.salesOrderCode}
+              </Link>
+            </>
+          )}
+          {order.customerName !== null && <> · {order.customerName}</>}
+          {' · '}
+          <Link href={`/produccion/${order.orderId}`} className={LINK_CLASSNAME}>
+            Ver el detalle de la orden
+          </Link>
+        </span>
+        {order.priority && <Badge variant={PRIORITY_TONE}>Prioridad</Badge>}
+        {/* D-189: la prioridad es de la orden; se fija desde su propio panel. */}
+        {user.role === Role.ADMINISTRADOR && (
+          <span className="ml-auto">
+            <OrderPriorityControl
+              orderId={order.orderId}
+              orderCode={order.code}
+              priority={order.priority}
             />
-            <MiniStat
-              label="kg teórico del plan"
-              value={resolved.planKg === null ? '—' : `${resolved.planKg.toFixed(3)} kg`}
-              hint={
-                liveCoils.length === 0
-                  ? 'Monta una bobina'
-                  : resolved.coil === undefined
-                    ? 'Elige la bobina'
-                    : undefined
-              }
-            />
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {/* D-343: un accesorio no tiene plan de largos; lo que falta son metros de bobina. */}
-            {order.isAccessory
-              ? toDecimal(order.remainingMeters).gt(0)
-                ? `Faltan ${order.remainingMeters} m de bobina`
-                : 'Ya se reportaron los metros encargados.'
-              : order.remainingPieces.length > 0
-                ? `Faltan ${describePieces(order.remainingPieces)}`
-                : 'El plan ya está cubierto.'}
-            {' · '}
-            <Link href={`/produccion/${order.orderId}`} className="underline">
-              Ver el detalle de la orden
-            </Link>
-          </p>
-        </CardContent>
-      </Card>
+          </span>
+        )}
+      </div>
 
       {(notes.pool.length > 0 || notes.note !== null) && (
         <Alert>
@@ -625,586 +313,175 @@ export function RoofingOrderPanel({
         </Alert>
       )}
 
-      {/* D-343: un accesorio no tiene plan de largos que editar. */}
-      {!order.isAccessory && (
-        <PlanCard
+      {!order.isAccessory ? (
+        <ProduceBlocks
           order={order}
-          onSaved={() => {
-            // D-159: el editor del reporte se vuelve a sembrar del plan nuevo.
-            onDraft({ rows: null, consumedKg: '', editingDraftId: null });
-            invalidate();
-          }}
-        />
-      )}
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle>
-            {liveCoils.length > 1
-              ? `Bobinas montadas (${String(liveCoils.length)})`
-              : 'Bobina montada'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {liveCoils.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              La orden no tiene ninguna bobina montada: monta una para poder reportar.
-            </p>
-          )}
-          {liveCoils.map((c) => {
-            const remainingMeters = equivalentMetersOf(c);
-            return (
-              <div
-                key={c.coilId}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
-              >
-                <div>
-                  <div className="font-mono font-medium">{c.coilCode}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {c.widthMm} mm · pendiente {formatQtyAsIs(c.remainingKg, 'kg')}
-                    {/*
-                      F8-S3c/M3: kg · ≈ ML de lo que le queda a esta bobina montada (D-116),
-                      presentación pura — la asignación y el kardex siguen en kg.
-                    */}
-                    {remainingMeters !== null && <> · ≈ {formatQtyAsIs(remainingMeters, 'm')}</>}
-                  </div>
-                </div>
-                {/* S10/M3: avance de la orden mientras esta bobina está montada, solo lectura. */}
-                <div className="text-sm text-muted-foreground">
-                  {formatQtyAsIs(order.reportedMeters, 'm')} de la orden ·{' '}
-                  {formatQtyAsIs(c.consumedKg, 'kg')} consumidos de esta bobina
-                </div>
-                <div className="flex items-center gap-2">
-                  {liveCoils.length > 1 && (
-                    <Button
-                      variant={resolved.coil?.coilId === c.coilId ? 'default' : 'outline'}
-                      className="h-11"
-                      aria-label={`Reportar desde la bobina ${c.coilCode}`}
-                      onClick={() => {
-                        onDraft({ coilId: c.coilId });
-                      }}
-                    >
-                      {resolved.coil?.coilId === c.coilId ? 'Elegida' : 'Usar esta'}
-                    </Button>
-                  )}
-                  {/* Una bobina que ya roló no se baja: hay que revertir esos reportes primero
-                      (RF-33). Tampoco con filas del borrador que salen de ella (D-191). */}
-                  <Button
-                    variant="outline"
-                    className="h-11"
-                    aria-label={`Bajar la bobina ${c.coilCode} de ${order.code}`}
-                    disabled={
-                      release.isPending ||
-                      toDecimal(c.consumedKg).gt(0) ||
-                      order.drafts.some((d) => d.coilId === c.coilId)
-                    }
-                    onClick={() => {
-                      release.mutate(c.consumptionId);
-                    }}
-                  >
-                    {toDecimal(c.consumedKg).gt(0) ? 'Ya roló' : 'Bajar'}
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-
-          {full ? (
-            <p className="text-sm text-destructive">
-              La orden ya tiene las {MAX_ORDER_STRIPS} bobinas que admite a la vez: ciérrala o baja
-              alguna antes de montar otra.
-            </p>
-          ) : (
-            <CoilPicker
-              orderCode={order.code}
-              productSku={order.productSku}
-              options={options.data ?? []}
-              loading={options.isPending}
-              failed={options.isError}
-              mountedCount={liveCoils.length}
-              remainingMeters={order.remainingMeters}
-              productName={order.productName}
-              pending={mount.isPending}
-              onMount={(coilIds, reopen) => {
-                mount.mutate({ coilIds, ...(reopen ? { reopen } : {}) });
-              }}
-            />
-          )}
-        </CardContent>
-      </Card>
-
-      {order.isAccessory ? (
-        // D-343: un accesorio reporta metros de bobina directos, sin largos ni borrador.
-        <AccessoryReportCard
-          order={order}
-          coilId={draft.coilId === '' ? undefined : draft.coilId}
+          refreshing={refreshing || mount.isPending}
           operationDate={operationDate}
-          closeKg={draft.closeKg}
-          onCloseKg={(closeKg) => {
-            reasonToSend.current = null;
-            onDraft({ closeKg });
+          onOperationDate={onOperationDate}
+          onUpdated={(updated) => {
+            onNotes({ pool: updated?.rawMaterialWarnings ?? [], note: null });
           }}
-          disabled={busy}
-          canCloseOnly={canCloseOnly}
-          closing={closeOnly.isPending}
-          onCloseOnly={() => {
-            reasonFor.current = 'close-only';
-            previewCloseOnly.mutate(reasonToSend.current);
+          mountButton={mountControl}
+          releaseCoil={(consumptionId) => {
+            release.mutate(consumptionId);
           }}
-          onDone={(updated) => {
-            onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
-            onDraft({ closeKg: '' });
-            invalidate();
-          }}
+          releasing={release.isPending}
         />
       ) : (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2">
-              Reportar lo que salió
-              <InfoPopover label="Sobre el borrador de reportes">
-                Cada fila del borrador es un reporte. Queda guardado aunque cierres la pantalla, y
-                no mueve inventario hasta que lo ejecutes: ahí se graban todas las filas juntas, o
-                ninguna si alguna falla.
-              </InfoPopover>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            {liveCoils.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Monta una bobina y las líneas del plan que falta aparecen aquí, listas para ajustar.
-              </p>
-            ) : (
-              <div className="grid gap-3 rounded-lg border p-3">
-                {editing !== null && (
-                  <p className="text-sm font-medium">Corrigiendo la fila {editing.rowNumber}</p>
-                )}
-                <LengthEditor
-                  rows={draft.rows ?? seedRows(order)}
-                  idPrefix={`reporte-${order.orderId}`}
-                  disabled={busy}
-                  onChange={(rows) => {
-                    onDraft({ rows });
-                  }}
+        <>
+          <Card>
+            <CardContent className="grid gap-3 pt-4">
+              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-3">
+                <MiniStat label="ML del pedido" value={`${order.planMeters} m`} />
+                <MiniStat label="ML reportado" value={`${order.reportedMeters} m`} />
+                <MiniStat
+                  label="ML restante"
+                  value={`${order.remainingMeters} m`}
+                  tone={toDecimal(order.remainingMeters).lte(0) ? 'alert' : 'strong'}
                 />
-
-                <div className="grid gap-4 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-end">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor={`kg-${order.orderId}`} className="flex items-center gap-1.5">
-                      kg consumido (opcional)
-                      <InfoPopover label="Sobre el kg consumido">
-                        Dato de planta: el kardex sale por el kilo teórico y el consumo real se
-                        reconcilia al cerrar.
-                      </InfoPopover>
-                    </Label>
-                    <Input
-                      id={`kg-${order.orderId}`}
-                      aria-label={`Kilos consumidos de ${order.code}`}
-                      inputMode="decimal"
-                      placeholder={resolved.newKg === null ? 'opcional' : resolved.newKg.toFixed(3)}
-                      disabled={busy}
-                      value={draft.consumedKg}
-                      onChange={(e) => {
-                        onDraft({ consumedKg: e.target.value });
-                      }}
-                    />
-                  </div>
-                  <div className="grid gap-1 text-sm">
-                    {resolved.pieces && (
-                      <p className="text-muted-foreground">
-                        {describePieces(resolved.pieces)} · {resolved.meters.toFixed(3)} m
-                        {resolved.newKg !== null && <> · {resolved.newKg.toFixed(3)} kg teóricos</>}
-                      </p>
-                    )}
-                    {resolved.error !== null && (
-                      <p className="text-destructive">{resolved.error}</p>
-                    )}
-                    {resolved.yieldNote !== null && (
-                      <p role="status" className="text-sky-700 dark:text-sky-400">
-                        ℹ {resolved.yieldNote}
-                      </p>
-                    )}
-                    {resolved.deviation !== null && (
-                      <p className="text-tone-warning-foreground">⚠ {resolved.deviation}</p>
-                    )}
-                    {resolved.completesPlan && (
-                      <p className="text-muted-foreground">
-                        Con esta fila el borrador cubre el plan: agrégala y después «Ejecutar y
-                        cerrar» lo graba, cierra la orden y libera la bobina para la orden
-                        siguiente.
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  {editing !== null && (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => {
-                        onDraft({ rows: null, consumedKg: '', editingDraftId: null });
-                      }}
-                    >
-                      Cancelar corrección
-                    </Button>
-                  )}
-                  <Button
-                    variant={hasDrafts && editing === null ? 'outline' : 'default'}
-                    aria-label={
-                      editing === null
-                        ? `Agregar al borrador de ${order.code}`
-                        : `Guardar la fila ${String(editing.rowNumber)} de ${order.code}`
-                    }
-                    disabled={resolved.pieces === null || resolved.error !== null || busy}
-                    onClick={() => {
-                      if (resolved.pieces) {
-                        saveDraft.mutate({ pieces: resolved.pieces, isAdd: editing === null });
-                      }
-                    }}
-                  >
-                    {saveDraft.isPending
-                      ? 'Guardando…'
-                      : editing === null
-                        ? 'Agregar al borrador'
-                        : `Guardar fila ${String(editing.rowNumber)}`}
-                  </Button>
-                </div>
               </div>
-            )}
+              <p className="text-sm text-muted-foreground">
+                {/* D-343: un accesorio no tiene plan de largos; lo que falta son metros de bobina. */}
+                {toDecimal(order.remainingMeters).gt(0)
+                  ? `Faltan ${order.remainingMeters} m de bobina`
+                  : 'Ya se reportaron los metros encargados.'}
+              </p>
+            </CardContent>
+          </Card>
 
-            {hasDrafts && (
-              <div className="grid gap-2">
-                <p className="text-sm font-medium">
-                  Borrador de {order.code}: {order.drafts.length}{' '}
-                  {order.drafts.length === 1 ? 'fila' : 'filas'} · {order.draftMeters} m sin
-                  ejecutar
-                </p>
-                <div className="overflow-x-auto rounded-lg border">
-                  <Table aria-label={`Borrador de ${order.code}`}>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Fila</TableHead>
-                        <TableHead>Bobina</TableHead>
-                        <TableHead>Largos</TableHead>
-                        <TableHead className="text-right">m</TableHead>
-                        <TableHead className="text-right">kg teóricos</TableHead>
-                        <TableHead className="text-right">kg declarados</TableHead>
-                        <TableHead className="text-right">Acciones</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {order.drafts.map((d) => (
-                        <TableRow
-                          key={d.id}
-                          className={d.id === draft.editingDraftId ? 'bg-primary/5' : undefined}
-                        >
-                          <TableCell>{d.rowNumber}</TableCell>
-                          <TableCell className="font-mono">{d.coilCode}</TableCell>
-                          <TableCell>
-                            {describePieces(d.pieces)}
-                            {d.outOfTolerance !== null && (
-                              <Badge variant="warning" className="ml-2">
-                                Fuera de tolerancia ({d.outOfTolerance.excessPct} %)
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{d.meters}</TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {d.theoreticalKg}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {d.consumedKg ?? '—'}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <RowActions
-                              label={`fila ${String(d.rowNumber)} de ${order.code}`}
-                              primary="fix"
-                              actions={[
-                                {
-                                  key: 'fix',
-                                  label: 'Corregir',
-                                  ariaLabel: `Corregir la fila ${String(d.rowNumber)} de ${order.code}`,
-                                  disabled: busy,
-                                  onSelect: () => {
-                                    onDraft({
-                                      editingDraftId: d.id,
-                                      coilId: d.coilId,
-                                      consumedKg: d.consumedKg ?? '',
-                                      rows: d.pieces.map((p) => ({
-                                        lengthM: mmToMeters(p.lengthMm),
-                                        qty: String(p.qty),
-                                      })),
-                                    });
-                                  },
-                                },
-                                {
-                                  key: 'remove',
-                                  label: 'Quitar',
-                                  ariaLabel: `Quitar la fila ${String(d.rowNumber)} de ${order.code}`,
-                                  destructive: true,
-                                  disabled: busy,
-                                  onSelect: () => {
-                                    removeDraft.mutate(d.id);
-                                  },
-                                },
-                              ]}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            )}
-
-            {/* D-388: solo aparece si alguna fila del borrador pasa la tolerancia del 1 %. */}
-            <ToleranceOverrideFields
-              orderCode={order.code}
-              rows={outOfTolerance}
-              value={overrides}
-              disabled={busy}
-              onChange={(draftId, next) => {
-                setOverrides((prev) => ({ ...prev, [draftId]: next }));
-              }}
-            />
-
-            {/*
-            D-089: los kilos que la bobina consumió **de verdad** en toda la corrida. Es el dato
-            del que sale el despunte, y sin él el cierre asume merma cero.
-          */}
-            {(canCloseOnly || canCloseWithCommit) && (
-              <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,14rem)_1fr] sm:items-start">
-                <div className="grid gap-1.5">
-                  <Label htmlFor={`cierre-kg-${order.orderId}`}>
-                    kg que consumió la bobina (opcional)
-                  </Label>
-                  <Input
-                    id={`cierre-kg-${order.orderId}`}
-                    aria-label={`Kilos consumidos al cerrar ${order.code}`}
-                    inputMode="decimal"
-                    placeholder={resolved.closeBounds.consumedFloorKg.toFixed(3)}
-                    disabled={busy}
-                    value={draft.closeKg}
-                    onChange={(e) => {
-                      reasonToSend.current = null;
-                      onDraft({ closeKg: e.target.value });
-                    }}
-                  />
-                </div>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle>
+                {liveCoils.length > 1
+                  ? `Bobinas montadas (${String(liveCoils.length)})`
+                  : 'Bobina montada'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              {liveCoils.length === 0 && (
                 <p className="text-sm text-muted-foreground">
-                  Sin este dato el cierre usa los kilos declarados reporte a reporte (y el teórico
-                  donde no se declaró); el piso son los{' '}
-                  {formatQtyAsIs(resolved.closeBounds.consumedFloorKg.toFixed(3), 'kg')} teóricos de
-                  las planchas {hasDrafts ? 'reportadas y del borrador' : 'ya reportadas'}. Lo que
-                  pase del piso sale como despunte; el resto de la bobina vuelve al almacén.
-                  {draft.closeKg.trim() === '' && resolved.estimatedScrapKg.gt(0) && (
-                    <>
-                      {' '}
-                      Despunte estimado: {formatQtyAsIs(resolved.estimatedScrapKg.toFixed(3), 'kg')}
-                      .
-                    </>
-                  )}
-                  {resolved.closeBounds.closeKgError !== null && (
-                    <span className="text-destructive"> {resolved.closeBounds.closeKgError}</span>
-                  )}
-                  {resolved.closeBounds.scrapKg.gt(0) &&
-                    resolved.closeBounds.closeKgError === null && (
-                      <>
-                        {' '}
-                        Despunte al cerrar:{' '}
-                        {formatQtyAsIs(resolved.closeBounds.scrapKg.toFixed(3), 'kg')}.
-                      </>
-                    )}
+                  La orden no tiene ninguna bobina montada: monta una para poder reportar.
                 </p>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <OperationDateField value={operationDate} onChange={onOperationDate} />
-              {hasDrafts && (
-                <>
-                  <Button
-                    variant={resolved.draftCoversPlan ? 'outline' : 'default'}
-                    aria-label={`Ejecutar el borrador de ${order.code}`}
-                    disabled={busy || editing !== null || unsavedEditor || !overridesReady}
-                    onClick={() => {
-                      start(false);
-                    }}
-                  >
-                    {commit.isPending && !pendingClose ? 'Ejecutando…' : 'Ejecutar borrador'}
-                  </Button>
-                  <Button
-                    variant={resolved.draftCoversPlan ? 'default' : 'outline'}
-                    aria-label={`Ejecutar el borrador y cerrar ${order.code}`}
-                    disabled={
-                      busy ||
-                      editing !== null ||
-                      unsavedEditor ||
-                      !overridesReady ||
-                      resolved.closeBounds.closeKgError !== null
-                    }
-                    onClick={() => {
-                      start(true);
-                    }}
-                  >
-                    {(commit.isPending || previewCommit.isPending) && pendingClose
-                      ? 'Calculando…'
-                      : 'Ejecutar y cerrar'}
-                  </Button>
-                </>
               )}
-              {canCloseOnly && (
-                <Button
-                  variant="outline"
-                  aria-label={`Cerrar ${order.code} sin reportar más`}
-                  disabled={busy || resolved.closeBounds.closeKgError !== null}
-                  onClick={() => {
-                    reasonFor.current = 'close-only';
-                    previewCloseOnly.mutate(reasonToSend.current);
-                  }}
-                >
-                  {closeOnly.isPending || previewCloseOnly.isPending
-                    ? 'Calculando…'
-                    : `Cerrar ${order.code} sin reportar más${planCovered ? '' : ' (la bobina se acabó)'}`}
-                </Button>
-              )}
-            </div>
-            {hasDrafts && editing !== null && (
-              <p className="text-right text-xs text-muted-foreground">
-                Termina o cancela la corrección antes de ejecutar.
-              </p>
-            )}
-            {hasDrafts && editing === null && unsavedEditor && (
-              <p className="text-right text-xs text-muted-foreground">
-                Hay una fila escrita en el editor: agrégala al borrador o vacía el editor antes de
-                ejecutar.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
+              {liveCoils.map((c) => {
+                const remainingMeters = equivalentMetersOf(c);
+                return (
+                  <div
+                    key={c.coilId}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+                  >
+                    <div>
+                      <div className="font-mono font-medium">{c.coilCode}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {c.widthMm} mm · pendiente {formatQtyAsIs(c.remainingKg, 'kg')}
+                        {remainingMeters !== null && (
+                          <> · ≈ {formatQtyAsIs(remainingMeters, 'm')}</>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {formatQtyAsIs(order.reportedMeters, 'm')} de la orden ·{' '}
+                      {formatQtyAsIs(c.consumedKg, 'kg')} consumidos de esta bobina
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {liveCoils.length > 1 && (
+                        <Button
+                          variant={draft.coilId === c.coilId ? 'default' : 'outline'}
+                          className="h-11"
+                          aria-label={`Reportar desde la bobina ${c.coilCode}`}
+                          onClick={() => {
+                            onDraft({ coilId: c.coilId });
+                          }}
+                        >
+                          {draft.coilId === c.coilId ? 'Elegida' : 'Usar esta'}
+                        </Button>
+                      )}
+                      {/* Una bobina que ya roló no se baja: hay que revertir esos reportes
+                          primero (RF-33). */}
+                      <Button
+                        variant="outline"
+                        className="h-11"
+                        aria-label={`Bajar la bobina ${c.coilCode} de ${order.code}`}
+                        disabled={release.isPending || toDecimal(c.consumedKg).gt(0)}
+                        onClick={() => {
+                          release.mutate(c.consumptionId);
+                        }}
+                      >
+                        {toDecimal(c.consumedKg).gt(0) ? 'Ya roló' : 'Bajar'}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+              {mountControl}
+            </CardContent>
+          </Card>
 
-      <ReasonDialog
-        open={askingReason}
-        onOpenChange={(open) => {
-          if (!open) reasonToSend.current = null;
-          setAskingReason(open);
-        }}
-        title="Cerrar con despunte alto"
-        description={`Las planchas representan ${formatQtyAsIs(
-          resolved.closeBounds.consumedFloorKg.toFixed(3),
-          'kg',
-        )} y se declara un consumo mayor: la diferencia —más del ${String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} %— sale del inventario como despunte y su costo se reparte entre el producto bueno. ¿Sigue en el almacén para otra OP? Si el material está entero, vuelve y declara menos kilos consumidos: lo que no se consume vuelve al almacén. Si de verdad salió como despunte, explica por qué.`}
-        confirmLabel="Cerrar la orden"
-        pending={busy}
-        onConfirm={(reason: string) => {
-          reasonToSend.current = reason;
-          setAskingReason(false);
-          if (reasonFor.current === 'close-only') previewCloseOnly.mutate(reason);
-          else start(true);
-        }}
-      />
+          {/* D-343: un accesorio reporta metros de bobina directos, sin largos ni borrador. */}
+          <AccessoryReportCard
+            order={order}
+            coilId={draft.coilId === '' ? undefined : draft.coilId}
+            operationDate={operationDate}
+            closeKg={draft.closeKg}
+            onCloseKg={(closeKg) => {
+              setReasonToSend(null);
+              onDraft({ closeKg });
+            }}
+            disabled={busy}
+            canCloseOnly={canCloseOnly}
+            closing={closeOnly.isPending}
+            onCloseOnly={() => {
+              previewCloseOnly.mutate(reasonToSend);
+            }}
+            onDone={(updated) => {
+              onNotes({ pool: updated.rawMaterialWarnings ?? [], note: null });
+              onDraft({ closeKg: '' });
+              invalidate();
+            }}
+          />
 
-      <ClosePreviewDialog
-        preview={closePreview?.preview ?? null}
-        mountedKg={sum(liveCoils.map((c) => toDecimal(c.consumedKg).plus(c.remainingKg))).toFixed(
-          3,
-        )}
-        title={
-          closePreview?.kind === 'close-only'
-            ? `Cerrar ${order.code} sin reportar más`
-            : `Ejecutar el borrador y cerrar ${order.code}`
-        }
-        confirmLabel={closePreview?.kind === 'close-only' ? 'Cerrar la orden' : 'Ejecutar y cerrar'}
-        pending={commit.isPending || closeOnly.isPending}
-        onCancel={() => {
-          reasonToSend.current = null;
-          setClosePreview(null);
-        }}
-        onConfirm={() => {
-          if (closePreview === null) return;
-          const done = {
-            onSettled: () => {
+          <ReasonDialog
+            open={askingReason}
+            onOpenChange={(open) => {
+              if (!open) setReasonToSend(null);
+              setAskingReason(open);
+            }}
+            title="Cerrar con despunte alto"
+            description={`Lo declarado deja más del ${String(MAX_SCRAP_RATIO_WITHOUT_REASON * 100)} % de despunte: la diferencia sale del inventario y su costo se reparte entre el producto bueno. Si el material está entero, vuelve y declara menos kilos consumidos. Si de verdad salió como despunte, explica por qué.`}
+            confirmLabel="Cerrar la orden"
+            pending={busy}
+            onConfirm={(reason: string) => {
+              setReasonToSend(reason);
+              setAskingReason(false);
+              previewCloseOnly.mutate(reason);
+            }}
+          />
+
+          <ClosePreviewDialog
+            preview={closePreview?.preview ?? null}
+            mountedKg={sum(
+              liveCoils.map((c) => toDecimal(c.consumedKg).plus(c.remainingKg)),
+            ).toFixed(3)}
+            title={`Cerrar ${order.code} sin reportar más`}
+            confirmLabel="Cerrar la orden"
+            pending={closeOnly.isPending}
+            onCancel={() => {
+              setReasonToSend(null);
               setClosePreview(null);
-            },
-          };
-          if (closePreview.kind === 'close-only') {
-            closeOnly.mutate(closePreview.reason, done);
-          } else {
-            commit.mutate(
-              {
-                close: true,
-                reason: reasonToSend.current,
-                confirmBackdate: closePreview.confirmBackdate,
-              },
-              done,
-            );
-          }
-        }}
-      />
-
-      <BackdateConfirmDialog
-        open={submit.open}
-        onOpenChange={(open) => {
-          if (!open) {
-            reasonToSend.current = null;
-            submit.close();
-          }
-        }}
-        detail={submit.detail ?? ''}
-        pending={commit.isPending || previewCommit.isPending}
-        onConfirm={() => {
-          void submit.confirm();
-        }}
-      />
+            }}
+            onConfirm={() => {
+              if (closePreview === null) return;
+              closeOnly.mutate(closePreview.reason, {
+                onSettled: () => {
+                  setClosePreview(null);
+                },
+              });
+            }}
+          />
+        </>
+      )}
     </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// El plan de corte, editable desde acá (D-159)
-// ---------------------------------------------------------------------------
-
-function PlanCard({ order, onSaved }: { order: RoofingBatchOrderDto; onSaved: () => void }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          Plan de corte
-          <InfoPopover label="Sobre el plan de corte">
-            El plan es una intención: lo que mueve inventario son los largos que reportes. Es
-            también el tope de lo que se puede reportar. A medida, ajustarlo reparte de otra forma
-            los mismos metros del pedido.
-          </InfoPopover>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-3">
-        {order.planItems.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            La orden no tiene plan de corte: escríbelo antes de reportar.
-          </p>
-        ) : (
-          <p className="text-lg">
-            {describePieces(order.planItems)}{' '}
-            <span className="text-sm text-muted-foreground">({order.planMeters} m)</span>
-          </p>
-        )}
-        <Button
-          variant="outline"
-          className="justify-self-start"
-          aria-label={`Ajustar el plan de corte de ${order.code}`}
-          onClick={() => {
-            setOpen(true);
-          }}
-        >
-          Ajustar el plan
-        </Button>
-        <PlanAdjustDialog order={order} open={open} onOpenChange={setOpen} onSaved={onSaved} />
-      </CardContent>
-    </Card>
   );
 }
 
@@ -1270,286 +547,4 @@ export function MiniStat({
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Lo que el borrador de una pestaña resuelve, con las funciones del API
-// ---------------------------------------------------------------------------
-
-/**
- * El plan que todavía falta, como filas del editor. Con filas en el borrador el editor arranca
- * vacío: lo que falta del plan ya lo ocupan esas filas, y sembrarlo otra vez invitaba a
- * cargarlo dos veces.
- */
-function seedRows(order: RoofingBatchOrderDto): PieceRow[] {
-  if (order.drafts.length > 0 || order.remainingPieces.length === 0) return [EMPTY_PIECE_ROW];
-  return order.remainingPieces.map((p) => ({
-    lengthM: mmToMeters(p.lengthMm),
-    qty: String(p.qty),
-  }));
-}
-
-interface ResolvedDraft {
-  coil: RoofingBatchOrderDto['coils'][number] | undefined;
-  planKg: Decimal | null;
-  pieces: RoofingPieceDto[] | null;
-  meters: Decimal;
-  newKg: Decimal | null;
-  /** La fila que se escribe deja el borrador cubriendo exactamente el plan. */
-  completesPlan: boolean;
-  /** El borrador guardado ya cubre el plan: «Ejecutar y cerrar» pasa a ser la acción primaria. */
-  draftCoversPlan: boolean;
-  /** El API va a exigir motivo para el despunte de este cierre (D-089). */
-  needsCloseReason: boolean;
-  /** Despunte que el cierre sacaría con el campo vacío, estimado como lo estima el motivo. */
-  estimatedScrapKg: Decimal;
-  /**
-   * D-089: las cotas del kg declarado al cerrar. Con borrador, el piso incluye sus filas
-   * («Ejecutar y cerrar» las graba antes de cerrar); sin borrador es el cierre suelto.
-   */
-  closeBounds: CloseBounds;
-  /** Lo que el API también rechaza: el botón se apaga. */
-  error: string | null;
-  /** Lo que el API **acepta** y anota igual (D-154): se muestra y no bloquea. */
-  deviation: string | null;
-  /** D-246: el teórico pasa lo montado pero el acero ya salió; se topa y no es un error. */
-  yieldNote: string | null;
-  /** La desviación que el borrador guardado va a dejar anotada, para retenerla tras ejecutar. */
-  draftDeviation: string | null;
-}
-
-interface CloseBounds {
-  /** Lo que las planchas —reportadas y del borrador— representan: despunte cero. */
-  consumedFloorKg: Decimal;
-  /** Por qué el kg declarado no sirve. `null` cuando está vacío o dentro de las cotas. */
-  closeKgError: string | null;
-  /** Lo declarado menos el piso: lo que va a salir del inventario como despunte. */
-  scrapKg: Decimal;
-}
-
-function closeBoundsOf(
-  order: RoofingBatchOrderDto,
-  closeKg: string,
-  extraReportedKg: Decimal,
-): CloseBounds {
-  const floor = toDecimal(order.reportedKg).plus(extraReportedKg);
-  const mounted = order.coils.reduce(
-    (acc, c) => acc.plus(toDecimal(c.remainingKg)),
-    toDecimal(order.reportedKg),
-  );
-  const none = { consumedFloorKg: floor, closeKgError: null, scrapKg: new Decimal(0) };
-  const raw = closeKg.trim();
-  if (raw === '') return none;
-  if (!/^\d+(\.\d{1,3})?$/.test(raw) || toDecimal(raw).lte(0)) {
-    return { ...none, closeKgError: 'Los kilos van con hasta tres decimales y mayores a cero.' };
-  }
-  const declared = toDecimal(raw);
-  if (declared.lt(floor)) {
-    return {
-      ...none,
-      closeKgError: `Las planchas ya consumieron ${floor.toFixed(3)} kg: no se puede declarar menos.`,
-    };
-  }
-  if (declared.gt(mounted)) {
-    return {
-      ...none,
-      closeKgError: `La orden tiene ${mounted.toFixed(3)} kg montados: monta más material o corrige la cifra.`,
-    };
-  }
-  return { consumedFloorKg: floor, closeKgError: null, scrapKg: declared.minus(floor) };
-}
-
-function resolveDraft(order: RoofingBatchOrderDto, draft: OrderDraft): ResolvedDraft {
-  const coil =
-    order.coils.length === 1 ? order.coils[0] : order.coils.find((c) => c.coilId === draft.coilId);
-  const geometry =
-    coil === undefined
-      ? null
-      : { widthMm: coil.widthMm, thicknessMm: coil.thicknessMm, densityFactor: coil.densityFactor };
-  const planKg =
-    geometry === null || order.planItems.length === 0
-      ? null
-      : piecesTheoreticalKg(geometry, order.planItems);
-
-  // Las filas del borrador que **no** son la que se corrige: esas ya ocupan plan y bobina.
-  const others = order.drafts.filter((d) => d.id !== draft.editingDraftId);
-  const othersMeters = others.reduce((acc, d) => acc.plus(toDecimal(d.meters)), new Decimal(0));
-  const draftKg = order.drafts.reduce(
-    (acc, d) => acc.plus(toDecimal(d.theoreticalKg)),
-    new Decimal(0),
-  );
-  const draftDeclaredKg = order.drafts.reduce(
-    (acc, d) => acc.plus(d.consumedKg === null ? new Decimal(0) : toDecimal(d.consumedKg)),
-    new Decimal(0),
-  );
-  const available = Decimal.max(
-    toDecimal(order.remainingMeters).minus(othersMeters),
-    new Decimal(0),
-  );
-  // D-246: lo que el borrador va a **sacar** de cada bobina, topado en lo que le queda
-  // montado; el piso del cierre es eso y no su teórico.
-  const draftOutKg = order.coils.reduce(
-    (acc, c) =>
-      acc.plus(
-        Decimal.min(
-          order.drafts
-            .filter((d) => d.coilId === c.coilId)
-            .reduce((sum, d) => sum.plus(toDecimal(d.theoreticalKg)), new Decimal(0)),
-          toDecimal(c.remainingKg),
-        ),
-      ),
-    new Decimal(0),
-  );
-  const closeBounds = closeBoundsOf(order, draft.closeKg, draftOutKg);
-
-  // D-089: lo declarado menos lo que las planchas representan es el despunte, y por encima del
-  // umbral el API pide motivo. La pantalla lo **estima**; el 400 conserva su camino de vuelta.
-  const floor = closeBounds.consumedFloorKg;
-  const declared = draft.closeKg.trim()
-    ? floor.plus(closeBounds.scrapKg)
-    : Decimal.max(toDecimal(order.declaredKg).plus(draftDeclaredKg), floor);
-  const needsCloseReason =
-    declared.gt(0) &&
-    declared
-      .minus(floor)
-      .div(declared)
-      .gt(toDecimal(String(MAX_SCRAP_RATIO_WITHOUT_REASON)));
-
-  const draftDeviation =
-    planKg === null || draftDeclaredKg.isZero()
-      ? null
-      : roofingConsumptionDeviation({
-          declaredKg: draftDeclaredKg,
-          theoreticalKg: draftKg,
-          alreadyDeclaredKg: order.declaredKg,
-          planKg,
-        });
-
-  const base: ResolvedDraft = {
-    coil,
-    planKg,
-    pieces: null,
-    meters: new Decimal(0),
-    newKg: null,
-    completesPlan: false,
-    draftCoversPlan:
-      order.planItems.length > 0 &&
-      order.drafts.length > 0 &&
-      toDecimal(order.draftMeters).equals(toDecimal(order.remainingMeters)),
-    needsCloseReason,
-    estimatedScrapKg: declared.minus(floor),
-    closeBounds,
-    error: null,
-    deviation: null,
-    yieldNote: null,
-    draftDeviation,
-  };
-
-  if (order.coils.length === 0) return base;
-  const rows = draft.rows ?? seedRows(order);
-  // Editor vacío: no hay nada que agregar, y no es un error que haya que pintar en rojo.
-  if (rows.every((r) => r.lengthM.trim() === '' && r.qty.trim() === '')) return base;
-  const parsed = parsePieceRows(rows);
-  if (!parsed.ok) return { ...base, error: parsed.reason };
-  if (order.coils.length > 1 && coil === undefined) {
-    return { ...base, error: 'Indica de qué bobina salieron.' };
-  }
-
-  const pieces = parsed.pieces;
-  if (order.productUnit !== Unit.MTR && order.productLengthMm !== null) {
-    const fixed = toDecimal(order.productLengthMm);
-    const off = pieces.find((p) => !toDecimal(p.lengthMm).equals(fixed));
-    if (off) {
-      return {
-        ...base,
-        error: `${order.productSku} es una plancha de catálogo de ${mmToMeters(order.productLengthMm)} m: no admite un largo de ${mmToMeters(off.lengthMm)} m.`,
-      };
-    }
-  }
-  const meters = piecesMeters(pieces);
-  const newKg = geometry === null ? null : piecesTheoreticalKg(geometry, pieces);
-  const completesPlan = order.planItems.length > 0 && meters.equals(available);
-
-  // D-146 con el borrador adentro: lo que ya ocupan las otras filas cuenta como reportado.
-  if (order.planItems.length > 0 && meters.gt(available)) {
-    return {
-      ...base,
-      pieces,
-      meters,
-      newKg,
-      error:
-        `Del plan quedan ${available.toFixed(3)} m` +
-        (othersMeters.gt(0) ? ` descontando el borrador` : '') +
-        ` y esto suma ${meters.toFixed(3)} m: si lo que salió no es lo del plan, ajusta el plan de corte.`,
-    };
-  }
-
-  const kg = draft.consumedKg.trim();
-  if (kg !== '' && (!/^\d+(\.\d{1,3})?$/.test(kg) || toDecimal(kg).lte(0))) {
-    return {
-      ...base,
-      pieces,
-      meters,
-      newKg,
-      completesPlan,
-      error: 'Los kilos van con hasta tres decimales.',
-    };
-  }
-
-  // Los kilos de la bobina que ya toman las otras filas del borrador, también. D-246: cada
-  // fila sale topada en lo montado, así que entre todas nunca toman más que la bobina.
-  let yieldNote: string | null = null;
-  if (coil !== undefined && newKg !== null) {
-    const coilKg = toDecimal(coil.remainingKg);
-    const taken = Decimal.min(
-      others
-        .filter((d) => d.coilId === coil.coilId)
-        .reduce((acc, d) => acc.plus(toDecimal(d.theoreticalKg)), new Decimal(0)),
-      coilKg,
-    );
-    // D-246: la misma regla que el API. Si el acero ya salió (lo declarado cabe en lo
-    // montado, o el exceso entra en la tolerancia), avisa en vez de bloquear.
-    const mounted = mountedKgForReport({
-      label: coil.coilCode,
-      theoreticalKg: newKg,
-      availableKg: coilKg.minus(taken),
-      declaredKg: kg === '' ? null : kg,
-      // D-388/D-389: la fila que pasa el 1 % entra al borrador (sin tope); al ejecutar se confirma
-      // con la casilla y el motivo.
-      overrideBands: { authorized: true },
-    });
-    if (!mounted.ok) {
-      return {
-        ...base,
-        pieces,
-        meters,
-        newKg,
-        completesPlan,
-        error: taken.gt(0) ? `${mounted.message} (descontando el borrador)` : mounted.message,
-      };
-    }
-    yieldNote =
-      mounted.overridden && mounted.excess !== null
-        ? `Fuera de tolerancia: la diferencia (${mounted.excess.excessKg} kg, ` +
-          `${mounted.excess.excessPct} % del teórico) pasa el ${mounted.excess.tolerancePct} %. ` +
-          (mounted.excess.severe
-            ? `Diferencia mayor al ${mounted.excess.maxPct} %: revisa cantidad, largo y bobina antes de confirmar. `
-            : '') +
-          'Puedes agregar la fila; al ejecutar, confirma con la casilla ' +
-          'y el motivo.'
-        : mounted.note;
-  }
-
-  // D-154: la desviación del kilo declarado **avisa**, con la misma función que el API.
-  const deviation =
-    kg === '' || newKg === null
-      ? null
-      : roofingConsumptionDeviation({
-          declaredKg: kg,
-          theoreticalKg: newKg,
-          alreadyDeclaredKg: toDecimal(order.declaredKg).plus(draftDeclaredKg).toFixed(3),
-          planKg,
-        });
-
-  return { ...base, pieces, meters, newKg, completesPlan, deviation, yieldNote };
 }
