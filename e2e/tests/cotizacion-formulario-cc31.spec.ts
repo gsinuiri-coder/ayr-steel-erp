@@ -6,7 +6,8 @@ import { purgeRoofingTrail, setupRoofingScenario, type RoofingScenario } from '.
  * cc31 (corte 6): lo nuevo del formulario de cotización que ningún spec anterior cubre.
  *
  * - El selector de producto filtra por línea de negocio, y elegir un producto de otra línea
- *   cambia la línea de la fila.
+ *   cambia la línea de la fila. cc36: la línea se elige dentro del selector (sin desplegable en la
+ *   fila) y se lee bajo el producto, «línea de negocio · subtipo».
  * - Elegir con Enter deja el foco en la cantidad (en una línea a medida, las planchas del primer
  *   largo).
  * - Bajo el mínimo, «Usar X» solo escribe el mínimo en el precio; la barra inferior deja de listar
@@ -59,15 +60,17 @@ test.describe('cc31 (corte 6) — formulario de cotización', () => {
       await loginAsAdmin(page);
       await page.goto('/cotizaciones/nueva');
 
-      // La fila arranca en Drywall; el producto es de Coberturas Aluzinc.
-      const lineSelect = page.getByLabel('Línea de negocio de la línea 1');
-      await lineSelect.click();
-      await page.getByRole('option', { name: 'Drywall', exact: true }).click();
-
+      // La fila nueva abre el selector en «Todas»; se filtra por Drywall y el producto es de
+      // Coberturas Aluzinc.
       const productField = page.getByLabel('Producto de la línea 1');
       await productField.click();
       const dialog = page.getByRole('dialog', { name: /^Elegir producto · / });
       await expect(dialog.getByText('Elegir producto · línea 1')).toBeVisible();
+      await expect(dialog.getByRole('button', { name: 'Todas', exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      await dialog.getByRole('button', { name: 'Drywall', exact: true }).click();
       const roofing = dialog.getByRole('button', { name: 'Coberturas Aluzinc', exact: true });
       await roofing.click();
       await expect(roofing).toHaveAttribute('aria-pressed', 'true');
@@ -80,7 +83,9 @@ test.describe('cc31 (corte 6) — formulario de cotización', () => {
 
       await expect(dialog).toBeHidden();
       await expect(productField).toContainText(s.product.sku);
-      await expect(lineSelect).toContainText('Coberturas Aluzinc');
+      await expect(page.getByRole('cell').filter({ has: productField })).toContainText(
+        'Coberturas Aluzinc · a medida',
+      );
       const firstPieces = page.getByLabel('Planchas del largo 1 de la línea 1');
       await expect(firstPieces).toBeFocused();
 

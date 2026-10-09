@@ -90,8 +90,6 @@ test.describe('RF-S3/M1 — búsqueda server-side en selectores', () => {
       );
 
       // --- Línea de negocio y producto: mismo umbral en el picker con stock (D-188) ---
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: 'Coberturas (UPVC)', exact: true }).click();
 
       await page.getByLabel('Producto de la línea 1').click();
       const productDialog = page.getByRole('dialog');
@@ -104,7 +102,7 @@ test.describe('RF-S3/M1 — búsqueda server-side en selectores', () => {
       await chooseProductWithStock(page, page.getByLabel('Producto de la línea 1'), product.sku);
 
       await page.getByLabel('Cantidad de la línea 1').fill('2');
-      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('11.8000');
+      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('11.80');
 
       const created = page.waitForResponse(
         (r) => r.request().method() === 'POST' && r.url().includes('/api/sales/quotations'),

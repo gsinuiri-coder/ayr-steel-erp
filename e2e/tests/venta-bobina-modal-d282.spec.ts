@@ -76,8 +76,12 @@ test.describe('D-282 — modal de venta de bobina', () => {
 
       await loginAsAdmin(page);
       await page.goto('/cotizaciones/nueva');
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: 'Bobina completa (venta directa)' }).click();
+      // cc36: la venta de una bobina entera se elige con el chip «Bobina completa» del buscador.
+      await page.getByLabel('Producto de la línea 1').click();
+      await page
+        .getByRole('dialog', { name: /^Elegir producto · / })
+        .getByRole('button', { name: 'Bobina completa', exact: true })
+        .click();
 
       const dialog = page.getByRole('dialog', { name: /Elegir bobina/ });
       await expect(dialog).toBeVisible();

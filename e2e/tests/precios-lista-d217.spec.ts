@@ -271,13 +271,12 @@ test.describe('D-068 (regresión) — prellenado de precio y congelamiento en co
         // RF-S3/M1: el campo busca en el servidor contra `name`/`docNumber` por separado.
         customer.docNumber,
       );
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      await page.getByRole('option', { name: 'Coberturas (UPVC)', exact: true }).click();
 
       await chooseProductWithStock(page, page.getByLabel('Producto de la línea 1'), product.sku);
 
-      // 10.0000 de valor × 1.18 = 11.8000 con IGV, formateado a 4 decimales (D-162).
-      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('11.8000');
+      // 10.0000 de valor × 1.18 = 11.8000 con IGV (D-162); cc36: el campo lo muestra como 11.80
+      // mientras no se edita, sin cambiar lo que se guarda.
+      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('11.80');
     } finally {
       await deactivateTrail(api, { productIds: [product.id], customerIds: [customer.id] });
     }
