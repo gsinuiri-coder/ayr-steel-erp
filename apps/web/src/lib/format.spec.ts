@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Decimal } from '@ayr/shared';
 import {
+  formatSalesQty,
+  salesUnitSymbol,
   displayDecimal,
   formatDateTime,
   formatKg,
@@ -100,5 +102,20 @@ describe('decimal de un campo que no se edita (cc36)', () => {
     expect(displayDecimal('')).toBe('');
     expect(displayDecimal('abc')).toBe('abc');
     expect(displayDecimal('0')).toBe('0');
+  });
+});
+
+describe('cantidades del formulario de venta (cc37)', () => {
+  it('unidades sin decimales de más y con «und»; kilos y metros con la regla de cc31', () => {
+    expect(formatSalesQty('1120.000', 'NIU')).toBe('1,120 und');
+    expect(formatSalesQty('10.000', 'NIU')).toBe('10 und');
+    expect(formatSalesQty('2.500', 'NIU')).toBe('2.5 und');
+    expect(formatSalesQty('5410.270', 'KGM')).toBe('5,410.27 kg');
+    expect(formatSalesQty('12.000', 'MTR')).toBe('12.00 m');
+    expect(formatSalesQty('150.000', 'NIU', false)).toBe('150');
+    expect(formatSalesQty('abc', 'NIU')).toBe('abc und');
+    expect(salesUnitSymbol('NIU')).toBe('und');
+    expect(salesUnitSymbol('KGM')).toBe('kg');
+    expect(displayDecimal('10.000', 0)).toBe('10');
   });
 });
