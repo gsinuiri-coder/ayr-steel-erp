@@ -17,7 +17,9 @@ import {
   businessToday,
   currencyOf,
   MAX_PADRON_LOOKUPS,
+  normalizePurchaseNumber,
   PADRON_LOOKUP_CONCURRENCY,
+  purchaseDocTypeOf,
   Role,
   suggestSupplierCode,
   type ConfirmPurchaseImportInput,
@@ -103,6 +105,28 @@ export class PurchaseImportService {
     // en todos sus comprobantes, que no choque con los del maestro ni con los de otro RUC nuevo.
     const taken = new Set(ctx.takenSupplierCodes);
     const suggested = new Map<string, string>();
+    // cc34 (pendiente de cc33, D-543): el mismo papel escrito dos veces en el archivo, con y sin
+    // ceros a la izquierda (`F001-00012` y `F001-12`), son dos comprobantes para la vista previa
+    // —las filas se agrupan por lo tipeado— y el segundo choca con el primero al confirmar.
+    // Se avisa en los dos, nombrando al otro, sin cambiar cómo se agrupan las filas.
+    const byPaper = new Map<string, PurchaseImportDocumentInput[]>();
+    for (const doc of documents) {
+      // Mismo criterio que el agrupado de filas (`documentKeyOf`): «Factura», «FACTURA» y «01» son el mismo tipo.
+      const docType = purchaseDocTypeOf(doc.docType) ?? doc.docType.trim().toUpperCase();
+      const owner = doc.supplierId ?? doc.supplierRuc.trim();
+      const paper = `${owner}|${docType}|${doc.series.trim().toUpperCase()}|${normalizePurchaseNumber(doc.number)}`;
+      byPaper.set(paper, [...(byPaper.get(paper) ?? []), doc]);
+    }
+    const twins = new Map<PurchaseImportDocumentInput, string[]>();
+    for (const group of byPaper.values()) {
+      if (group.length < 2) continue;
+      for (const doc of group) {
+        twins.set(
+          doc,
+          group.filter((o) => o !== doc).map((o) => `${o.series.toUpperCase()}-${o.number}`),
+        );
+      }
+    }
     return documents.map((doc) => {
       let withCode = doc;
       const extra: PurchaseImportIssueDto[] = (fileIssues.get(doc.key) ?? []).map((message) => ({
@@ -110,6 +134,14 @@ export class PurchaseImportService {
         field: 'document',
         message,
       }));
+      const others = twins.get(doc);
+      if (others !== undefined) {
+        extra.push({
+          severity: 'warning',
+          field: 'document',
+          message: `Este comprobante aparece en el archivo también como ${others.join(', ')} (el mismo papel: proveedor, tipo, serie y número sin ceros a la izquierda). Al confirmar choca con el otro y, como la importación es todo o nada, no entra ninguno: escríbelo igual en todas sus filas`,
+        });
+      }
       const name = doc.supplierId === null ? ctx.padron.get(doc.supplierRuc) : undefined;
       if (name !== undefined && !ctx.suppliersByRuc.has(doc.supplierRuc)) {
         // El primer comprobante del RUC fija el código; los siguientes lo heredan.
