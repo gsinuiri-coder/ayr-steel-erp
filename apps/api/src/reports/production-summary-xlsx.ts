@@ -1,5 +1,6 @@
 import { BUSINESS_LINE_LABELS, type ProductionSummaryDto } from '@ayr/shared';
 import { assertExportable, exportWindow } from '../common/list-export';
+import { UNITS_SYMBOL } from '../common/unit-symbol';
 import { build, num, type Sheet } from './reports-xlsx';
 
 /**
@@ -58,7 +59,8 @@ export function productionSummaryXlsx(report: ProductionSummaryDto): {
           o.lineNumber,
           `${o.productSku} · ${o.productName}`,
           num(o.quantity),
-          o.quantityUnit,
+          // D-579: las piezas («pzs» en el DTO) se muestran como «und».
+          o.quantityUnit === 'pzs' ? UNITS_SYMBOL : o.quantityUnit,
           ...figures(o),
           ...costs(o),
           o.coils.map((c) => c.code).join(', '),

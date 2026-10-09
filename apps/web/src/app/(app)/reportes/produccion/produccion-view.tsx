@@ -34,7 +34,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
-import { formatAmount, formatKg, formatMeters, formatNumber } from '@/lib/format';
+import { formatAmount, formatKg, formatMeters, formatUnits } from '@/lib/format';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import { allRows, productionTotalsOf, type ProductionTotals } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
@@ -459,13 +459,10 @@ function OrderLine({ order: o }: { order: ProductionSummaryOrderDto }) {
   );
 }
 
-/** Lo producido: metros (producto en metros) o piezas. */
+/** Lo producido: metros (producto en metros) o piezas, en unidades («1,200 und», D-579). */
 function quantityText(o: ProductionSummaryOrderDto): string {
   if (o.quantityUnit === 'm') return formatMeters(o.quantity);
-  const pieces = toDecimal(o.quantity);
-  // Con separador de miles, en la escala que trae («1,200 piezas»).
-  const decimals = pieces.decimalPlaces();
-  return `${formatNumber(o.quantity, decimals)} ${pieces.eq(1) ? 'pieza' : 'piezas'}`;
+  return formatUnits(o.quantity);
 }
 
 /** Lo que cada bobina dio a la orden, alineado con las columnas de la orden. */

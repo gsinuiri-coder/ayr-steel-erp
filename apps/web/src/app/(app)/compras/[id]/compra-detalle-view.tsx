@@ -21,7 +21,6 @@ import {
   PurchaseType,
   Role,
   SERVICE_KIND_LABELS,
-  UNIT_LABELS,
   type Currency,
   type PurchaseDto,
   PURCHASE_NUMBER_MESSAGE,
@@ -31,7 +30,14 @@ import { CrumbLabel } from '@/components/breadcrumb';
 import { PURCHASE_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
 import type { ReverseArgs } from '@/lib/reverse-args';
-import { formatDate, formatMoney, formatQty, isPositiveDecimal, todayIso } from '@/lib/format';
+import {
+  formatDate,
+  formatMoney,
+  formatUnitQty,
+  isPositiveDecimal,
+  todayIso,
+  unitSymbol,
+} from '@/lib/format';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
@@ -453,9 +459,7 @@ export function CompraDetalleView({ id }: { id: string }) {
                       {item.finishCode} · {item.widthMm} × {item.thicknessMm} mm
                     </TableCell>
                   )}
-                  <TableCell className="text-right">
-                    {formatQty(item.qty, unitLabel(item.unit))}
-                  </TableCell>
+                  <TableCell className="text-right">{formatUnitQty(item.qty, item.unit)}</TableCell>
                   <TableCell className="text-right">
                     {/* P-14: el unitario a 4 decimales, la escala con la que se guarda. */}
                     {formatMoney(item.unitPrice, p.currency, 4)}
@@ -910,7 +914,7 @@ function PurchaseItemDialog({
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5">
-            <Label htmlFor="item-qty">Cantidad ({item ? unitLabel(item.unit) : ''})</Label>
+            <Label htmlFor="item-qty">Cantidad ({item ? unitSymbol(item.unit) : ''})</Label>
             <Input
               id="item-qty"
               inputMode="decimal"
@@ -1184,12 +1188,6 @@ function PaymentForm({
       </CardContent>
     </Card>
   );
-}
-
-/** Etiqueta corta de la unidad; si el API trae un código desconocido, se muestra tal cual. */
-function unitLabel(unit: string): string {
-  const known = (UNIT_LABELS as Record<string, string | undefined>)[unit];
-  return known ? (known.split(' (')[0] ?? unit) : unit;
 }
 
 function Row({ label, value }: { label: string; value: ReactNode }) {

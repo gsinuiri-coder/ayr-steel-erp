@@ -188,7 +188,7 @@ test.describe('F8-S2b — huecos de cobertura', () => {
 
       await dialog.getByLabel('Filtrar productos').fill(product.sku);
       const row = dialog.getByRole('row', { name: new RegExp(product.sku) });
-      await expect(row.getByText(/12\.\d+ u disponibles/)).toBeVisible({ timeout: 15_000 });
+      await expect(row.getByText(/12(\.\d+)? und disponibles/)).toBeVisible({ timeout: 15_000 });
 
       await dialog.getByRole('button', { name: `Elegir ${product.sku}`, exact: true }).click();
       await expect(dialog).toBeHidden();

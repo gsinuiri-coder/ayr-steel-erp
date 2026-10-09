@@ -5,7 +5,7 @@ import {
   type ProductStockDto,
   type SellableCoilDto,
 } from '@ayr/shared';
-import { formatKg, formatSalesQty, isPositiveDecimal } from '@/lib/format';
+import { formatKg, formatUnitQty, isPositiveDecimal } from '@/lib/format';
 
 /**
  * cc36: lo que una línea del formulario de venta compromete, y el bloque «Material que
@@ -84,10 +84,10 @@ export function lineStatus(need: LineNeed | null): { text: string; tone: StatusT
   if (need.kind === 'service') return { text: 'Servicio · sin inventario', tone: 'neutral' };
   if (need.kind === 'stock') {
     // cc37: unidades sin decimales de más («hay 1,120 und»).
-    const has = formatSalesQty(need.available, need.unit);
+    const has = formatUnitQty(need.available, need.unit);
     if (need.needed === null) return { text: `De stock · hay ${has}`, tone: 'neutral' };
     if (need.needed.gt(need.available)) {
-      const short = formatSalesQty(need.needed.minus(need.available), need.unit);
+      const short = formatUnitQty(need.needed.minus(need.available), need.unit);
       return { text: `De stock · falta ${short}`, tone: 'short' };
     }
     return { text: `De stock · hay ${has}`, tone: 'ok' };

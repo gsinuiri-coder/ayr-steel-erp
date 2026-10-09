@@ -22,7 +22,7 @@ import {
 } from '@ayr/shared';
 import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api, ApiError } from '@/lib/api';
-import { formatQtyAsIs } from '@/lib/format';
+import { formatQtyAsIs, formatUnits } from '@/lib/format';
 import type { ReverseArgs } from '@/lib/reverse-args';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
@@ -297,7 +297,7 @@ export function DrywallOrderPanel({
             />
             <BigStat label="Meta" value={o.targetPieces === null ? '—' : String(o.targetPieces)} />
             <BigStat label="Fleje pendiente" value={formatQtyAsIs(pendingKg.toFixed(3), 'kg')} />
-            <BigStat label="Alcanza para" value={`${String(maxPieces)} pzs`} />
+            <BigStat label="Alcanza para" value={formatUnits(String(maxPieces))} />
           </div>
           <p className="text-sm text-muted-foreground">
             <Link href={`/produccion/${o.id}`} className="underline">

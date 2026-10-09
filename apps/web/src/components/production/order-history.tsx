@@ -15,7 +15,7 @@ import {
 } from '@ayr/shared';
 import { PRODUCTION_ORDER_TONE } from '@/components/status-tone';
 import { api } from '@/lib/api';
-import { formatDate, formatQtyAsIs } from '@/lib/format';
+import { formatDate, formatQtyAsIs, formatUnits } from '@/lib/format';
 import { groupHistoryByOrder, type HistoryGroup } from '@/lib/order-history';
 import { compareBy, compareDecimalBy, useSort } from '@/lib/use-sort';
 import { URL_PAGINATION_DEFAULTS, useUrlPagination, useUrlState } from '@/lib/use-url-state';
@@ -479,8 +479,8 @@ function producedLabel(order: ProductionOrderListItemDto): string {
   }
   if (order.metersReported === null) {
     return order.targetPieces === null
-      ? `${String(order.piecesReported)} pzs`
-      : `${String(order.piecesReported)} / ${String(order.targetPieces)} pzs`;
+      ? formatUnits(String(order.piecesReported))
+      : `${formatUnits(String(order.piecesReported), null)} / ${formatUnits(String(order.targetPieces))}`;
   }
-  return `${formatQtyAsIs(order.metersReported, 'm')} · ${String(order.piecesReported)} pzs`;
+  return `${formatQtyAsIs(order.metersReported, 'm')} · ${formatUnits(String(order.piecesReported))}`;
 }

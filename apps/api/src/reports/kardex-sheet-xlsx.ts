@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { KARDEX_METHOD_LABELS, type KardexSheet } from '@ayr/shared';
+import { unitSymbol } from '../common/unit-symbol';
 import { dmy, num } from './kardex-peps-xlsx';
 
 /**
@@ -27,7 +28,7 @@ export function kardexSheetXlsx(sheet: KardexSheet): { buffer: Buffer; filename:
     ['CÓDIGO:', sheet.itemCode],
     ['MÉTODO:', KARDEX_METHOD_LABELS[sheet.method]],
     ['PERÍODO:', period],
-    ...(sheet.unit ? [['UNIDAD:', sheet.unit]] : []),
+    ...(sheet.unit ? [['UNIDAD:', unitSymbol(sheet.unit)]] : []),
     [],
   ];
   const groupRow = header.length;

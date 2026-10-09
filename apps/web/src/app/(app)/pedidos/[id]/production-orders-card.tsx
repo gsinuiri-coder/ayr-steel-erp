@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { PRODUCTION_ORDER_STATUS_LABELS, type ProductionOrderListItemDto } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { formatQty } from '@/lib/format';
+import { formatQty, formatUnits, UNITS_SYMBOL } from '@/lib/format';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
@@ -161,11 +161,14 @@ export function ProductionOrdersCard({
                     </>
                   ) : (
                     <>
-                      {o.piecesReported}
+                      {formatUnits(String(o.piecesReported), null)}
                       {o.targetPieces !== null && (
-                        <span className="text-muted-foreground"> / {o.targetPieces}</span>
+                        <span className="text-muted-foreground">
+                          {' '}
+                          / {formatUnits(String(o.targetPieces), null)}
+                        </span>
                       )}{' '}
-                      pzs
+                      {UNITS_SYMBOL}
                     </>
                   )}
                 </TableCell>

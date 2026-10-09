@@ -9,6 +9,7 @@ import {
   type InventoryValuationDto,
   type SalesMarginDto,
 } from '@ayr/shared';
+import { unitSymbol } from '../common/unit-symbol';
 
 /**
  * RF-S4a/M3 — los dos reportes en xlsx.
@@ -123,7 +124,7 @@ export function inventoryValuationXlsx(report: InventoryValuationDto): {
       p.name,
       BUSINESS_LINE_LABELS[p.businessLine],
       num(p.qty),
-      p.unit,
+      unitSymbol(p.unit),
       num(p.avgCostPen),
       num(p.totalValuePen),
     ]),

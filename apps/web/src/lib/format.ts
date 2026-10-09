@@ -69,10 +69,15 @@ export function formatMoneyOrDash(
  * El API devuelve el código (`KGM`, `NIU`…), pero en pantalla conviven con los kilos
  * que las tarjetas de bobina escriben a mano: sin este mapa, la misma magnitud se ve
  * como `KGM` en una tabla y como `kg` dos centímetros más arriba.
+ *
+ * D-579: las unidades (`NIU`) se muestran como «und» en toda la app —pantallas, listas, PDFs
+ * internos y Excel—. El código SUNAT que viaja al PSE y al XML no cambia: esto es solo la vista.
  */
+export const UNITS_SYMBOL = 'und';
+
 const UNIT_SYMBOL: Record<string, string> = {
   KGM: 'kg',
-  NIU: 'u',
+  NIU: UNITS_SYMBOL,
   MTR: 'm',
   TNE: 't',
   ZZ: '',
@@ -148,21 +153,39 @@ export function formatMeters(value: string | Decimal, unit: string | null = 'm')
 }
 
 /**
+ * D-579: unidades sin decimales de más («10 und»); si hay una fracción real, con los decimales que
+ * tenga («2.5 und»). Un texto que no es número se muestra tal cual.
+ */
+export function formatUnits(value: string | Decimal, unit: string | null = UNITS_SYMBOL): string {
+  let parsed: Decimal;
+  try {
+    parsed = new Decimal(typeof value === 'string' ? value.trim() : value);
+  } catch {
+    return withUnit(typeof value === 'string' ? value : value.toString(), unit ?? undefined);
+  }
+  return withUnit(formatNumber(parsed, parsed.decimalPlaces()), unit ?? undefined);
+}
+
+/**
  * Una cantidad con su unidad. Los kilos y los metros siguen las reglas de cc31 (`formatKg`,
- * `formatMeters`); el resto (unidades, milímetros) se muestra con la escala que trae.
+ * `formatMeters`), las unidades la de D-579 (`formatUnits`); el resto (milímetros…) se muestra
+ * con la escala que trae.
  */
 export function formatQty(value: string, unit?: string): string {
   if (unit === 'kg') return formatKg(value);
   if (unit === 'm') return formatMeters(value);
+  if (unit === UNITS_SYMBOL) return formatUnits(value);
   return formatQtyAsIs(value, unit);
 }
 
 /**
  * Una cantidad con la escala que trae (`"4500.000"` → `"4,500.000 kg"`). cc31 (D-480): la
  * usan las pantallas de planta y los diálogos de la bobina, que quedan fuera del cambio a 2
- * decimales: ahí se declaran y comparan kilos al gramo.
+ * decimales: ahí se declaran y comparan kilos al gramo. Las unidades siguen D-579 también aquí
+ * («10 und», nunca «10.000 und»).
  */
 export function formatQtyAsIs(value: string, unit?: string): string {
+  if (unit === UNITS_SYMBOL) return formatUnits(value);
   const [intPart = '0', decPart] = value.split('.');
   const body = decPart ? `${group(intPart)}.${decPart}` : group(intPart);
   return withUnit(body, unit);
@@ -170,10 +193,16 @@ export function formatQtyAsIs(value: string, unit?: string): string {
 
 /**
  * Una cantidad con la unidad SUNAT del producto (`KGM`, `MTR`, `NIU`…): kilos y metros con las
- * reglas de cc31 y las unidades sin cambio.
+ * reglas de cc31, unidades con la de D-579 («1,120 und», «2.5 und»). Con `showUnit = false` sale
+ * solo el número, con la misma regla (para una columna cuya cabecera ya dice la unidad).
  */
-export function formatUnitQty(value: string, sunatUnit: string): string {
-  return formatQty(value, unitSymbol(sunatUnit));
+export function formatUnitQty(value: string | Decimal, sunatUnit: string, showUnit = true): string {
+  const symbol = unitSymbol(sunatUnit);
+  const shown = showUnit ? symbol : null;
+  if (symbol === 'kg') return formatKg(value, shown);
+  if (symbol === 'm') return formatMeters(value, shown);
+  if (symbol === UNITS_SYMBOL) return formatUnits(value, shown);
+  return formatQtyAsIs(typeof value === 'string' ? value : value.toString(), shown ?? undefined);
 }
 
 /** `"2026-08-20"` → `"20/08/2026"`. Sin `Date` para no arrastrar zonas horarias. */
@@ -274,31 +303,4 @@ export function displayDecimal(value: string, minDecimals = 2): string {
   if (!isPositiveDecimal(value)) return value;
   const d = new Decimal(value.trim());
   return d.toFixed(Math.max(minDecimals, d.decimalPlaces()));
-}
-
-/**
- * cc37: la abreviatura de una unidad **en el formulario de venta** (tablero LineasB): «und» para
- * las unidades (`NIU`) y el símbolo de siempre para el resto. El resto de la app sigue con
- * `unitSymbol` («u») hasta que se decida unificarlo.
- */
-export function salesUnitSymbol(unit: string): string {
-  return unit === 'NIU' ? 'und' : unitSymbol(unit);
-}
-
-/**
- * cc37: una cantidad con su unidad para los textos de estado y disponibilidad del formulario de
- * venta: unidades sin decimales de más («1,120 und», «2.5 und» si hay fracción), kilos y metros con
- * la regla de cc31 (2 decimales).
- */
-export function formatSalesQty(value: string | Decimal, unit: string, showUnit = true): string {
-  const symbol = showUnit ? salesUnitSymbol(unit) : '';
-  if (salesUnitSymbol(unit) === 'kg') return formatKg(value, symbol);
-  if (salesUnitSymbol(unit) === 'm') return formatMeters(value, symbol);
-  let parsed: Decimal;
-  try {
-    parsed = new Decimal(typeof value === 'string' ? value.trim() : value);
-  } catch {
-    return withUnit(typeof value === 'string' ? value : value.toString(), symbol);
-  }
-  return withUnit(formatNumber(parsed, parsed.decimalPlaces()), symbol);
 }
