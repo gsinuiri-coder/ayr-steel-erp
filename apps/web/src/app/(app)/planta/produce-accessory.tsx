@@ -22,7 +22,7 @@ import { formatQtyAsIs } from '@/lib/format';
 import { errorMessage, toast } from '@/lib/notify';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
-import { newIdempotencyKey } from '@/lib/use-idempotency-key';
+
 import { cn } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -30,6 +30,7 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { BandHeader, ClosePreviewBlock, Stat } from './produce-blocks';
+import { newDraftKey } from './use-block-drafts';
 import {
   EMPTY_OVERRIDE,
   overrideInput,
@@ -141,7 +142,7 @@ export function ProduceAccessory({
     const fingerprint = JSON.stringify(body);
     let key = keys.current.get(fingerprint);
     if (key === undefined) {
-      key = newIdempotencyKey();
+      key = newDraftKey();
       keys.current.set(fingerprint, key);
     }
     return key;
