@@ -249,7 +249,7 @@ llamadas por la presencia de `where.id`, así que no prueba el filtro real por `
 - **P1 «Confirmar» muerto tras un error**: sin la bandera `fired`; el doble clic lo frena `pending`. Un error del registro cierra «Qué va a pasar».
 - **P1 editar con «Qué va a pasar» abierto**: los campos quedan apagados mientras el resumen está a la vista; para cambiar algo se vuelve con «Volver».
 - **P1 el último bloque no se podía vaciar**: vaciarlo a mano lo deja vacío (no se vuelve a llenar hasta que se escriba en él). Tras recargar, sin fila en el borrador, vuelve a llenarse (D-548).
-- **P1 E2E viejos**: reescritos para el modelo M `planta-espacio-produccion-ui`, `huecos-cobertura-f8s3` (dos casos de pantalla), `multi-montar-f8s3` (caso de pantalla), `planta-confirmar-cierre-cc27`, `tolerancia-reporte-d388` (caso de pantalla), `planta-cola-f8s3-ui` y `huecos-cobertura-f8s3b` (cabecera, D-550).
+- **P1 E2E viejos**: reescritos para el modelo M `planta-espacio-produccion-ui`, `huecos-cobertura-f8s3` (dos casos de pantalla), `multi-montar-f8s3` (caso de pantalla), `planta-confirmar-cierre-cc27`, `tolerancia-reporte-d388` (caso de pantalla), `planta-cola-f8s3-ui` y `huecos-cobertura-f8s3b` (cabecera, D-558).
 - **P1/P2 editar un bloque anterior rellena el último**: es la regla de la ESPEC («el último bloque se llena solo con lo que falta»); queda escrita en D-548.
 - **P2 doble clic durante el guardado previo**: los botones quedan apagados mientras se guarda lo pendiente.
 - **P2 clave de idempotencia**: atada a las filas que se registran (id, metros, kg) y a las casillas, no solo a «cerrar o no».

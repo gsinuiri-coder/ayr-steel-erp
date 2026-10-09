@@ -146,7 +146,7 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       expect(bOp.priority).toBe(true);
       expect(bOp.priorityReason).toBe('Obra con grúa alquilada');
 
-      // cc35 (D-550): «Todos los pedidos» vive en «Más opciones» de la cabecera.
+      // cc35 (D-558): «Todos los pedidos» vive en «Más opciones» de la cabecera.
       await (await headerAction(page, 'Todos los pedidos')).click();
       await expect(linkOf(b.order.code)).toBeVisible();
       await expect
