@@ -216,20 +216,15 @@ test.describe('D-166 — el largo de la plancha va en milímetros', () => {
         // RF-S3/M1: el campo busca en el servidor contra `name`/`docNumber` por separado.
         customer.docNumber,
       );
-      await page.getByRole('button', { name: /Agregar línea/i }).click();
-
-      // El selector de producto está apagado hasta que la línea tiene línea de negocio: es
-      // por línea, no del documento (D-119).
-      await page.getByLabel('Línea de negocio de la línea 1').click();
-      // D-174 (S10): el label de la línea es una decisión del dueño, no una traducción
-      // literal — "Coberturas Aluzinc" en la UI de hoy.
-      await page.getByRole('option', { name: 'Coberturas Aluzinc' }).click();
-      // D-188: el campo de producto abre el picker con stock, no un desplegable de opciones.
+      // D-188: el campo de producto abre el picker con stock (cc36: la línea de negocio se elige
+      // dentro del buscador, no en un desplegable de la fila).
       await chooseProductWithStock(page, page.getByLabel('Producto de la línea 1'), product.sku);
 
-      // **La regresión de la captura, en una línea**: el largo bloqueado tiene que traer el
-      // del SKU en metros. Antes decía 0.00 porque el catálogo tenía 3 mm.
-      await expect(page.getByLabel('Largo (m)')).toHaveValue('3.00');
+      // **La regresión de la captura, en una línea**: el largo del SKU, en metros, en el panel de
+      // la línea. Antes decía 0.00 porque el catálogo tenía 3 mm.
+      await expect(page.getByRole('group', { name: 'Panel de la línea 1' })).toContainText(
+        '3.00 m',
+      );
 
       await page.getByLabel('Planchas de la línea 1').fill('10');
       // 10 planchas × 3 m = 30 m lineales. Antes salían 0.030.

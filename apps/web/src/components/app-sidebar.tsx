@@ -28,6 +28,15 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 
+/**
+ * cc36 (tablero MenuC): la opción activa con fondo celeste, barra azul de 3 px a la izquierda y
+ * texto azul, con los tokens de `primary` en vez del `accent` gris de shadcn. La barra es una
+ * sombra interior para no correr el ícono ni el texto, y funciona igual con el menú plegado. El
+ * hover de la activa se queda azul; el de las demás sigue gris.
+ */
+const ACTIVE_ITEM =
+  'data-active:bg-primary/10 data-active:text-primary data-active:shadow-[inset_3px_0_0_var(--primary)] data-active:hover:bg-primary/15 data-active:hover:text-primary';
+
 /** `?a=b&c=d` de un `href` como pares, para comparar con la query de la pantalla. */
 function queryOf(href: string): [string, string][] {
   return [...new URLSearchParams(href.split('?')[1] ?? '').entries()];
@@ -180,6 +189,7 @@ export function AppSidebar() {
                           asChild
                           isActive={isItemActive(item, pathname, search)}
                           tooltip={item.title}
+                          className={ACTIVE_ITEM}
                         >
                           <Link href={item.href}>
                             <item.icon />

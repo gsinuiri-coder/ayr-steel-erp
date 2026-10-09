@@ -222,8 +222,8 @@ test.describe('D-263 — la plancha importada por plancha', () => {
       await page.goto(`/cotizaciones/${before.id}/editar`);
       await waitForPlanchas(page);
       // El campo dice lo que es: el precio por plancha con IGV, no «por metro».
-      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('59.0000');
-      await expect(page.getByLabel('Precio unitario de la línea 2')).toHaveValue('59.0000');
+      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('59.00');
+      await expect(page.getByLabel('Precio unitario de la línea 2')).toHaveValue('59.00');
       await expect(page.getByLabel(/Precio por metro de la línea/)).toHaveCount(0);
       await expect(page.getByText('por plancha, como se cotizó')).toHaveCount(2);
 
@@ -265,7 +265,7 @@ test.describe('D-263 — la plancha importada por plancha', () => {
       await page.getByRole('button', { name: 'Pasar a por metro' }).click();
       await expect(page.getByLabel('Precio por metro de la línea 2')).toHaveValue('16.3889');
       await page.getByRole('button', { name: 'Deshacer: volver a por plancha' }).click();
-      await expect(page.getByLabel('Precio unitario de la línea 2')).toHaveValue('59.0000');
+      await expect(page.getByLabel('Precio unitario de la línea 2')).toHaveValue('59.00');
 
       // La de 6 m: el aviso muestra antes y después, y cancelar no cambia nada.
       await page.getByRole('button', { name: 'Cotizar por metro la línea 1' }).click();
@@ -274,7 +274,7 @@ test.describe('D-263 — la plancha importada por plancha', () => {
       await expect(preview).toContainText('500.0000');
       await expect(preview).toContainText('499.9980');
       await preview.getByRole('button', { name: 'Cancelar' }).click();
-      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('59.0000');
+      await expect(page.getByLabel('Precio unitario de la línea 1')).toHaveValue('59.00');
 
       await page.getByRole('button', { name: 'Cotizar por metro la línea 1' }).click();
       await page.getByRole('button', { name: 'Pasar a por metro' }).click();

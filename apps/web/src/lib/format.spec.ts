@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Decimal } from '@ayr/shared';
 import {
+  displayDecimal,
   formatDateTime,
   formatKg,
   formatKgPrecise,
@@ -86,5 +87,18 @@ describe('lo que no es cero no se muestra como cero', () => {
     expect(formatKg('0.0004')).toBe('0.000 kg');
     expect(formatKg('0')).toBe('0.00 kg');
     expect(formatKg('0.005')).toBe('0.01 kg');
+  });
+});
+
+describe('decimal de un campo que no se edita (cc36)', () => {
+  it('al menos 2 decimales, sin ceros de más y sin perder cifras', () => {
+    expect(displayDecimal('35.4000')).toBe('35.40');
+    expect(displayDecimal('12.000')).toBe('12.00');
+    expect(displayDecimal('9.8333')).toBe('9.8333');
+    expect(displayDecimal('4.2050')).toBe('4.205');
+    expect(displayDecimal('7')).toBe('7.00');
+    expect(displayDecimal('')).toBe('');
+    expect(displayDecimal('abc')).toBe('abc');
+    expect(displayDecimal('0')).toBe('0');
   });
 });
