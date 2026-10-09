@@ -79,7 +79,8 @@ test.describe('D-389 — accesorio fuera de tolerancia', () => {
     const quotation = await postJson<{ id: string }>(api, '/api/sales/quotations', {
       customerId: customer.id,
       issueDate: today(),
-      items: [{ productId: accessory.id, qty: '260.000', unitPricePen: '60' }],
+      // cc38 (D-573): el pedido encarga los mismos metros que se registran, así la orden puede cerrar.
+      items: [{ productId: accessory.id, qty: METERS_OVER, unitPricePen: '60' }],
     });
     const order = await postJson<{ id: string }>(
       api,
@@ -144,7 +145,11 @@ test.describe('D-389 — accesorio fuera de tolerancia', () => {
       // Un accesorio no tiene plan de corte: banda «Avance» y sin «Ajustar el plan».
       await expect(panel.getByText('Avance', { exact: true })).toBeVisible({ timeout: 60_000 });
       await expect(panel.getByRole('button', { name: /Ajustar el plan/ })).toHaveCount(0);
-      await panel.getByLabel(/Metros de la bobina 1/).fill(METERS_OVER);
+      // cc38 (D-575): el bloque llega lleno con los metros del pedido y sin confirmar; se confirma.
+      await expect(panel.getByLabel(/Metros de la bobina 1/)).toHaveValue(METERS_OVER, {
+        timeout: 60_000,
+      });
+      await panel.getByRole('button', { name: /^Sí, salió así en la bobina 1/ }).click();
 
       const block = panel.getByTestId('tolerance-override');
       await expect(block).toContainText('2.94 %', { timeout: 60_000 });

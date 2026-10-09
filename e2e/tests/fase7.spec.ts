@@ -146,7 +146,7 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
     }
   });
 
-  test('cerrar con menos consumo que lo reservado libera el sobrante: el pedido no se queda en la cola para siempre', async () => {
+  test('cc38: con menos de lo planeado no se cierra (D-573); con el plan completo cierra y el pedido sale de la cola', async () => {
     const scenario = await setupRoofingScenario(api, { weightKg: '500' });
     const customer = await createCustomer(api);
     const trail: Parameters<typeof purgeRoofingTrail>[1] = {
@@ -190,6 +190,21 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       await postJson<ProductionOrderDto>(api, `/api/production/roofing/${op.id}/report`, {
         pieces: reportedRows,
       });
+      // cc38 (D-573, D-577): con 2 de 8 m la orden no se cierra —no hay cierre corto— y la reserva
+      // sigue viva: el pedido queda en proceso.
+      const short = await api.post(`/api/production/roofing/${op.id}/close`, { data: {} });
+      expect(short.status()).toBe(400);
+      expect(((await short.json()) as { message: string }).message).toBe(
+        'Para cerrar falta registrar 6.000 m del plan',
+      );
+      expect(
+        (await reservationsOf(api, order.id)).find((r) => r.id === reservation.id)?.status,
+      ).toBe('ACTIVE');
+      // Lo que falta, en otro largo: se comparan los metros totales, no cada largo.
+      const restRows = pieces([2, 3]);
+      await postJson<ProductionOrderDto>(api, `/api/production/roofing/${op.id}/report`, {
+        pieces: restRows,
+      });
       // Cierre por defecto: sin `consumedKg`, se declara exactamente lo reportado (merma cero).
       const closed = await postJson<ProductionOrderDto>(
         api,
@@ -199,18 +214,18 @@ test.describe('Fase 7 — cola de producción de coberturas', () => {
       expect(closed.status).toBe('CLOSED');
       expect(closed.scrapKg).toBe('0.000');
 
-      // Los 24 kg que sobraron de la reserva quedan RELEASED, no ACTIVE para siempre.
+      // La reserva no queda ACTIVE para siempre.
       const reservationAfter = (await reservationsOf(api, order.id)).find(
         (r) => r.id === reservation.id,
       );
-      expect(reservationAfter?.status).toBe('RELEASED');
+      expect(reservationAfter?.status).not.toBe('ACTIVE');
 
       // Y aunque el pedido quede con menos de lo prometido despachado, ya no vuelve a
       // aparecer en la cola: no hay más material que rolar contra él.
       const dispatch = await dispatchOrder(api, {
         salesOrderId: order.id,
         items: [
-          { salesOrderItemId: order.items[0]!.id, qty: metersOf(reportedRows), weightKg: '8' },
+          { salesOrderItemId: order.items[0]!.id, qty: metersOf(plannedRows), weightKg: '32' },
         ],
       });
       expect(dispatch.items[0]).toMatchObject({ itemType: 'PRODUCT', itemId: scenario.product.id });
