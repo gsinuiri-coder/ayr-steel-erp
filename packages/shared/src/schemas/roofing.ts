@@ -408,7 +408,9 @@ export function roofingPlanGap(
   planMeters: Decimal | string,
   registeredMeters: Decimal | string,
 ): { missing: Decimal; excess: Decimal } {
-  const diff = roundTo(toDecimal(planMeters), 'KG').minus(roundTo(toDecimal(registeredMeters), 'KG'));
+  const diff = roundTo(toDecimal(planMeters), 'KG').minus(
+    roundTo(toDecimal(registeredMeters), 'KG'),
+  );
   return {
     missing: Decimal.max(diff, new Decimal(0)),
     excess: Decimal.max(diff.negated(), new Decimal(0)),

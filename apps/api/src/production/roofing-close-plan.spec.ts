@@ -102,7 +102,9 @@ function harness(setup: Setup) {
     productionOrderItem: {
       findMany: jest
         .fn()
-        .mockResolvedValue((setup.plan ?? []).map((p) => ({ lengthMm: D(p.lengthMm), qty: p.qty }))),
+        .mockResolvedValue(
+          (setup.plan ?? []).map((p) => ({ lengthMm: D(p.lengthMm), qty: p.qty })),
+        ),
     },
     productionReport: {
       count: jest.fn(() => Promise.resolve(reports.length)),
@@ -228,9 +230,9 @@ describe('D-573 — los tres caminos de cierre con el plan incompleto', () => {
       reported: [{ lengthMm: '4000.00', qty: 6 }],
       drafts: [[{ lengthMm: '4000.00', qty: 2 }]],
     });
-    await expect(
-      commit.drafting.previewCommit(ACTOR, 'op-1', { close: true }),
-    ).rejects.toThrow(SHORT);
+    await expect(commit.drafting.previewCommit(ACTOR, 'op-1', { close: true })).rejects.toThrow(
+      SHORT,
+    );
     const close = harness({ plan: PLAN, reported: [{ lengthMm: '4000.00', qty: 8 }] });
     await expect(close.roofing.previewClose(ACTOR, 'op-1', {})).rejects.toThrow(SHORT);
     const rc = harness({ plan: PLAN, reported: [{ lengthMm: '4000.00', qty: 6 }] });
@@ -298,9 +300,9 @@ describe('D-573 — el plan exacto pasa la puerta', () => {
       'Para cerrar falta registrar 6.500 m del plan',
     );
     const rc = harness({ kind: 'ACCESORIO', orderedMeters: '20', reportedMeters: '13.500' });
-    await expect(
-      rc.roofing.reportAndClose(ACTOR, 'op-1', { meters: '6.500' }),
-    ).rejects.toThrow(PASSED);
+    await expect(rc.roofing.reportAndClose(ACTOR, 'op-1', { meters: '6.500' })).rejects.toThrow(
+      PASSED,
+    );
   });
 
   it('un total ya por encima del plan (dato anterior a D-574) tampoco cierra', async () => {
