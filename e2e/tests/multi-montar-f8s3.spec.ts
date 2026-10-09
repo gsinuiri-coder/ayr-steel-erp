@@ -275,7 +275,9 @@ test.describe('D-192 — montar varias bobinas', () => {
       const blockB = panel.getByTestId(`bloque-${second.coil.code}`);
       await expect(blockA).toBeVisible();
       await expect(blockB).toBeVisible();
-      const aIsLast = (await blockA.getByText(/Llenada sola/).count()) > 0;
+      // cc38 (D-575): la última es la que quedó marcada «Llenado solo · sin confirmar».
+      await expect(panel.locator('[data-auto="sin-confirmar"]')).toHaveCount(1);
+      const aIsLast = (await blockA.getAttribute('data-auto')) === 'sin-confirmar';
       const [lastBlock, firstBlock] = aIsLast ? [blockA, blockB] : [blockB, blockA];
       const [lastCoilId, firstCoilId] = aIsLast
         ? [scenario.coil.id, second.coil.id]
@@ -294,6 +296,11 @@ test.describe('D-192 — montar varias bobinas', () => {
       await expect(firstBlock.getByRole('button', { name: /Bajar la bobina/ })).toHaveCount(0);
 
       await panel.getByRole('button', { name: `Registrar y cerrar ${op.code}` }).click();
+      // cc38 (D-575): las 6 que se llenaron solas se confirman antes del resumen.
+      await panel
+        .getByTestId('confirmar-llenado-solo')
+        .getByRole('checkbox', { name: 'Confirmo que salieron' })
+        .click();
       const preview = panel.getByTestId('que-va-a-pasar');
       await expect(preview).toContainText(`${op.code} queda cerrada`, { timeout: 60_000 });
       await preview.getByRole('button', { name: 'Confirmar: registrar y cerrar' }).click();
