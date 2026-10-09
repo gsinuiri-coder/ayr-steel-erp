@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
+  noDueDateLabel,
   PURCHASE_TYPE_LABELS,
   Role,
   type SupplierStatementDto,
@@ -141,7 +142,8 @@ export function EstadoCuentaView({ supplierId }: { supplierId: string }) {
                 <TableCell className="text-right">{formatMoney(p.balancePen)}</TableCell>
                 <TableCell>
                   {p.overdueDays === null ? (
-                    <span className="text-muted-foreground">Contado</span>
+                    // cc34 (D-537): un crédito sin vencimiento no es «Contado».
+                    <span className="text-muted-foreground">{noDueDateLabel(p.paymentTerms)}</span>
                   ) : p.overdueDays > 0 ? (
                     <Badge variant={OVERDUE_TONE}>Vencida hace {p.overdueDays} d</Badge>
                   ) : p.overdueDays === 0 ? (

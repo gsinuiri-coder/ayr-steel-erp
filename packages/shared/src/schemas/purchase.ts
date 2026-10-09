@@ -182,7 +182,7 @@ export const supplierStatementSchema = z.object({
   purchases: z.array(
     purchaseListItemSchema.extend({
       balancePen: z.string(),
-      /** Días desde el vencimiento; negativo si aún no vence, null si es al contado. */
+      /** Días desde el vencimiento; negativo si aún no vence; null sin vencimiento (contado o crédito sin días). */
       overdueDays: z.number().int().nullable(),
     }),
   ),
