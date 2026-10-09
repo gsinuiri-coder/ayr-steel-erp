@@ -11,21 +11,21 @@ Base de comparación: `git show 0ee7198b:apps/web/src/components/sales/sales-doc
 
 ## Resumen
 
-| # | Sev. | Dónde | Qué |
-|---|------|-------|-----|
-| 1 | P1 | `sales-document-form.tsx:2105-2121` | Una venta de bobina ya no puede pasar a «Cargar importe sin IGV» |
-| 2 | P1 | `e2e/tests/flujo-comercial-f8s2-ui.spec.ts:130` y `:216` | Siguen esperando `70.8000`; con `QuietDecimalInput` el campo muestra `70.80` |
-| 3 | P1 | `e2e/tests/reserva-bobina-picker-f8s2b.spec.ts:110` | Espera los kilos (`150`) en el botón de la bobina; el botón nuevo ya no los lleva |
-| 4 | P2 | `product-stock-picker.tsx:257-278` | Con «Todas», el filtro por las líneas admitidas se aplica después del tope de 20: en un pedido directo la lista puede quedar corta o vacía, y «puede haber más» no aparece |
-| 5 | P2 | `sales-document-form.tsx:2167-2189` (`QuietDecimalInput`) | Lo que se ve y lo que está en el estado difieren; una edición que «vuelve» al texto visible ya no restaura el valor sembrado (D-255/D-377) |
-| 6 | P3 | `sales-document-form.tsx:1080`, `cotizaciones/[id]/cotizacion-detalle-view.tsx:326` | Los textos siguen nombrando la opción «Bobina completa (venta directa)», que ya no existe |
-| 7 | P3 | `sales-document-form.tsx:2811` | La hoja de stock sigue diciendo «Elige una línea de negocio…» |
-| 8 | P3 | `line-material.ts` + `MaterialCommitment` (`sales-document-form.tsx:2737-2741`) | El aviso de `missing` atribuye la causa al espesor, el ancho o el acabado; también sale cuando falta la spec de materia prima |
-| 9 | P3 | `sales-document-form.tsx:2056-2121` | Información y acciones que antes estaban a la vista quedan detrás de «⋯» en las líneas sin panel obligatorio |
-| 10 | P3 | `product-stock-picker.tsx:352-365` | El chip «Bobina completa» declara `aria-pressed={false}`: se anuncia como un interruptor, pero es una acción |
-| 11 | P3 | `sales-document-form.tsx:2058-2080` y `2142-2146` | El rótulo visible y el nombre accesible no coinciden (WCAG 2.5.3) |
-| 12 | P3 | `sales-document-form.tsx:1979-2010` | Dos botones de ícono (`size-8`) en una columna `w-[5rem]` con `table-fixed` y `px-2.5`: el cálculo da un desborde de unos 6 px (medirlo en el DOM) |
-| 13 | P3 | E2E `huecos-cobertura-f8s2b.spec.ts:178` | La aserción `aria-pressed` pasó a comprobar el clic recién hecho; nadie prueba ya que el buscador abre con la línea de la fila |
+| #   | Sev. | Dónde                                                                               | Qué                                                                                                                                                                        |
+| --- | ---- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | P1   | `sales-document-form.tsx:2105-2121`                                                 | Una venta de bobina ya no puede pasar a «Cargar importe sin IGV»                                                                                                           |
+| 2   | P1   | `e2e/tests/flujo-comercial-f8s2-ui.spec.ts:130` y `:216`                            | Siguen esperando `70.8000`; con `QuietDecimalInput` el campo muestra `70.80`                                                                                               |
+| 3   | P1   | `e2e/tests/reserva-bobina-picker-f8s2b.spec.ts:110`                                 | Espera los kilos (`150`) en el botón de la bobina; el botón nuevo ya no los lleva                                                                                          |
+| 4   | P2   | `product-stock-picker.tsx:257-278`                                                  | Con «Todas», el filtro por las líneas admitidas se aplica después del tope de 20: en un pedido directo la lista puede quedar corta o vacía, y «puede haber más» no aparece |
+| 5   | P2   | `sales-document-form.tsx:2167-2189` (`QuietDecimalInput`)                           | Lo que se ve y lo que está en el estado difieren; una edición que «vuelve» al texto visible ya no restaura el valor sembrado (D-255/D-377)                                 |
+| 6   | P3   | `sales-document-form.tsx:1080`, `cotizaciones/[id]/cotizacion-detalle-view.tsx:326` | Los textos siguen nombrando la opción «Bobina completa (venta directa)», que ya no existe                                                                                  |
+| 7   | P3   | `sales-document-form.tsx:2811`                                                      | La hoja de stock sigue diciendo «Elige una línea de negocio…»                                                                                                              |
+| 8   | P3   | `line-material.ts` + `MaterialCommitment` (`sales-document-form.tsx:2737-2741`)     | El aviso de `missing` atribuye la causa al espesor, el ancho o el acabado; también sale cuando falta la spec de materia prima                                              |
+| 9   | P3   | `sales-document-form.tsx:2056-2121`                                                 | Información y acciones que antes estaban a la vista quedan detrás de «⋯» en las líneas sin panel obligatorio                                                               |
+| 10  | P3   | `product-stock-picker.tsx:352-365`                                                  | El chip «Bobina completa» declara `aria-pressed={false}`: se anuncia como un interruptor, pero es una acción                                                               |
+| 11  | P3   | `sales-document-form.tsx:2058-2080` y `2142-2146`                                   | El rótulo visible y el nombre accesible no coinciden (WCAG 2.5.3)                                                                                                          |
+| 12  | P3   | `sales-document-form.tsx:1979-2010`                                                 | Dos botones de ícono (`size-8`) en una columna `w-[5rem]` con `table-fixed` y `px-2.5`: el cálculo da un desborde de unos 6 px (medirlo en el DOM)                         |
+| 13  | P3   | E2E `huecos-cobertura-f8s2b.spec.ts:178`                                            | La aserción `aria-pressed` pasó a comprobar el clic recién hecho; nadie prueba ya que el buscador abre con la línea de la fila                                             |
 
 No encontré ningún camino en que **el JSON enviado o la validación** cambien para la misma
 entrada del usuario. `validate()`, `linePricing()`, `isUntouched()`, `chooseProduct()`,
@@ -43,7 +43,7 @@ cambió.
 
 - **Dónde.** `apps/web/src/components/sales/sales-document-form.tsx:2105-2121`. El botón ahora
   vive dentro del panel de la línea, y el panel exige `hasPanel = l.kind === 'PRODUCT' && product
-  !== undefined` (línea ~1690).
+!== undefined` (línea ~1690).
 - **Antes.** En la base, el botón estaba en la celda de precio con `{!fixedLength && (...)}`. En
   una línea `BOBINA`, `product` era `undefined`, así que `fixedLength` daba `false` y el botón
   aparecía. `validate()` contempla `kind === 'BOBINA' && amountMode === 'AMOUNT'` (línea 1020), y

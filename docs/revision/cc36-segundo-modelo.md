@@ -6,12 +6,12 @@ Método: lectura del diff completo contra `0ee7198b`, lectura de las rutas del A
 
 ## Resumen
 
-| Sev. | N.º | Hallazgo |
-| ---- | --- | -------- |
-| P0 | 0 | Ninguno |
-| P1 | 1 | `prettier --check` falla en 3 specs E2E (la CI de formato fallará) |
-| P2 | 2 | Una venta de bobina nueva ya no puede pasar a «importe sin IGV»; con «Todas» el aviso «puede haber más» se pierde en pedido directo |
-| P3 | 5 | Ver abajo |
+| Sev. | N.º | Hallazgo                                                                                                                            |
+| ---- | --- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| P0   | 0   | Ninguno                                                                                                                             |
+| P1   | 1   | `prettier --check` falla en 3 specs E2E (la CI de formato fallará)                                                                  |
+| P2   | 2   | Una venta de bobina nueva ya no puede pasar a «importe sin IGV»; con «Todas» el aviso «puede haber más» se pierde en pedido directo |
+| P3   | 5   | Ver abajo                                                                                                                           |
 
 ## Lo confirmado sin hallazgo (P0)
 
