@@ -2141,5 +2141,20 @@ unidades sin ceros de más (una fracción real se ve); reemplaza a `salesUnitSym
 (inventario, ventas por material, hoja de kardex, resumen de producción) y el PDF de planta del
 pedido. Sin cambiar: lo que va al PSE y al XML, el comprobante manual y el selector de unidad de
 compras (envían el código), la tabla 6 de SUNAT del kardex PEPS y las entradas del importador.
-**Queda para el dueño:** el PDF de la cotización (documento para el cliente) sigue mostrando el
-código de la unidad.
+**El PDF de la cotización** (documento para el cliente) quedó en cc38 con el código de la unidad.
+El dueño decidió el 2026-10-09 (pieza demo-cc38) que también muestre «und»: la cotización no es un
+documento SUNAT. `quotation-pdf.ts` pasa la unidad por `unitSymbol`; el código guardado en la línea
+no cambia.
+
+### Ratificación del dueño (2026-10-09, pieza demo-cc38)
+
+El dueño ratificó los dos cambios de cc38 que la especificación no decía con todas las letras y que
+la implementación tomó por consecuencia de D-573/D-574:
+
+- **El accesorio que pasa los metros de la orden se rechaza** con «Excede el plan en X m · ajusta
+  el plan», en vez de solo avisar como hacía desde D-343.
+- **«Ajustar el plan» en una plancha de catálogo exige el mismo total de metros**, igual que en la
+  cobertura a medida desde cc35 (D-545 la dejaba libre). Se sube o se baja una plancha y la franja
+  dice «sobran / faltan X m».
+
+Las dos quedan firmes; el texto de D-574 en `ARQUITECTURA.md` §0.2 ya las describe.
