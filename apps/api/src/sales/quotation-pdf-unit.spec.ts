@@ -91,7 +91,7 @@ describe('PDF de la cotización: unidad para mostrar (D-579)', () => {
     expect(written).not.toContain('MTR');
   });
 
-  it('la cantidad en unidades va sin decimales', async () => {
+  it('la cantidad en unidades sigue sin ceros de relleno (formatQty, anterior a D-579)', async () => {
     await buildQuotationPdf(input);
     expect(written).toContain('10');
     expect(written).not.toContain('10.000');

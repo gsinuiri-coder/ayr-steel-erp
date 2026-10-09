@@ -29,7 +29,7 @@ Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-c
 - **Pendiente de decisión del dueño:**
   - cierre corto o reducción del pedido (D-577);
   - una OP cerrada antes de cc38 con el plan incompleto, si se reabre, no vuelve a cerrar;
-  - el PDF de la cotización sigue con el código de unidad.
+  - ~~el PDF de la cotización sigue con el código de unidad~~: resuelto en demo-cc38 (muestra «und»).
 - **Infraestructura (no producto):** `auth.service.spec` pasó los 5 s una vez con la máquina cargada;
   solo pasa.
 
