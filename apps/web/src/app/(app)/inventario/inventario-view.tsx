@@ -171,7 +171,7 @@ function SummaryTable({
         )}
       </CardHeader>
       <CardContent className="px-0">
-        <Table list>
+        <Table>
           <TableHeader>
             <TableRow>
               <TableHead>{keyHeader}</TableHead>
