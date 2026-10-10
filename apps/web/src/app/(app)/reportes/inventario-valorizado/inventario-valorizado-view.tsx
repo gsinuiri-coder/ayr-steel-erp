@@ -13,6 +13,8 @@ import {
   type InventoryValuationCoilGroupDto,
   type InventoryValuationDto,
   type InventoryValuationProductDto,
+  inventoryCoilGroupSearchText,
+  inventoryProductSearchText,
 } from '@ayr/shared';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { api } from '@/lib/api';
@@ -35,7 +37,7 @@ import {
   type ReportColumn,
 } from '@/components/reports/report-table';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
-import { sumDecimal } from '@/lib/report-table';
+import { sumDecimal, xlsxHref } from '@/lib/report-table';
 import { allRows } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
@@ -167,7 +169,12 @@ export function InventarioValorizadoView() {
               {
                 key: 'xlsx',
                 label: 'Descargar Excel',
-                download: `/api/reports/inventory-valuation/xlsx${line === undefined ? '' : `?businessLine=${line}`}`,
+                // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
+                download: xlsxHref(
+                  '/api/reports/inventory-valuation/xlsx',
+                  { businessLine: line },
+                  searchText,
+                ),
               },
             ]}
           />
@@ -338,7 +345,8 @@ function coilColumns(
       header: 'Línea',
       cell: (g) => BUSINESS_LINE_LABELS[g.businessLine],
       sortValue: { text: (g) => BUSINESS_LINE_LABELS[g.businessLine] },
-      searchText: (g) => BUSINESS_LINE_LABELS[g.businessLine],
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: inventoryCoilGroupSearchText,
     },
     {
       key: 'thickness',
@@ -367,11 +375,6 @@ function coilColumns(
         </>
       ),
       sortValue: { text: (g) => coilGroupLabel(g) },
-      searchText: (g) => [
-        coilGroupLabel(g),
-        ...g.finishes.flatMap((f) => [f.finishName, f.finishCode, f.ral ?? '']),
-        ...g.coils.map((c) => c.code),
-      ],
     },
     {
       key: 'count',
@@ -469,14 +472,14 @@ function productColumns(
       header: 'SKU',
       cell: (p) => <span className="font-mono">{p.sku}</span>,
       sortValue: { text: (p) => p.sku },
-      searchText: (p) => p.sku,
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: inventoryProductSearchText,
     },
     {
       key: 'name',
       header: 'Descripción',
       cell: (p) => p.name,
       sortValue: { text: (p) => p.name },
-      searchText: (p) => p.name,
     },
     {
       key: 'line',
@@ -484,7 +487,6 @@ function productColumns(
       className: 'hidden md:table-cell',
       cell: (p) => BUSINESS_LINE_LABELS[p.businessLine],
       sortValue: { text: (p) => BUSINESS_LINE_LABELS[p.businessLine] },
-      searchText: (p) => BUSINESS_LINE_LABELS[p.businessLine],
     },
     {
       // La unidad cambia de un producto a otro: va en la celda.

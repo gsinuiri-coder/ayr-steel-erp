@@ -7,12 +7,14 @@ import {
   PROFIT_SOURCES_NOTICE,
   BUSINESS_LINE_LABELS,
   FISCAL_DOC_TYPE_LABELS,
+  MARGIN_COST_STATUS_LABELS as COST_STATUS_LABELS,
   NO_COST_REPORT_LINES,
   Role,
   SALES_MARGIN_LINES,
   toDecimal,
   type BusinessLine,
   type MarginCostStatus,
+  type SalesMarginGroup,
   type SalesMarginDto,
   type SalesMarginOrderDto,
 } from '@ayr/shared';
@@ -42,12 +44,12 @@ import {
   salesMarginSearchText,
   parseSalesMarginView,
   summarizeSalesMargin,
-  type SalesMarginGroup,
   type SalesMarginView,
 } from '@/lib/sales-margin-groups';
+import { xlsxHref } from '@/lib/report-table';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
-import { LINK_CLASSNAME, cn } from '@/lib/utils';
+import { LINK_CLASSNAME, cn, customerSearchHref } from '@/lib/utils';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -143,6 +145,7 @@ export function VentasMargenView() {
         actions={
           // Descarga directa contra el API (patrón D-149), con el periodo que se ve.
           // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve, también por línea.
+          // cc40 (D-588): con la búsqueda de la pantalla, el archivo trae las mismas filas.
           valid ? (
             <HeaderActions
               primary={['xlsx']}
@@ -150,7 +153,11 @@ export function VentasMargenView() {
                 {
                   key: 'xlsx',
                   label: 'Descargar Excel',
-                  download: `/api/reports/sales-margin/xlsx?from=${period.from}&to=${period.to}${line === undefined ? '' : `&businessLine=${line}`}`,
+                  download: xlsxHref(
+                    '/api/reports/sales-margin/xlsx',
+                    { from: period.from, to: period.to, businessLine: line },
+                    searchText,
+                  ),
                 },
               ]}
             />
@@ -237,10 +244,7 @@ export function VentasMargenView() {
               columns={groupColumns(view, !noCost)}
               // Se busca en las filas y se agrupa después: cada grupo y el pie suman solo los
               // pedidos que coinciden.
-              rows={groupSalesMargin(
-                filterSalesMargin(included, searchText, (o) => COST_STATUS_LABELS[o.costStatus]),
-                view,
-              )}
+              rows={groupSalesMargin(filterSalesMargin(included, searchText), view)}
               rowKey={(g) => `g:${g.key}`}
               sort={sort}
               onSort={toggleSort}
@@ -493,6 +497,19 @@ function HowItWorksText({
   );
 }
 
+/**
+ * cc40 (D-586): el nombre del cliente enlaza a su ficha. No hay `/clientes/[id]`: la ficha es la
+ * lista de clientes con su RUC/DNI en el buscador (D-172), el dato exacto aunque dos clientes se
+ * llamen igual.
+ */
+function CustomerName({ name, docNumber }: { name: string; docNumber: string }) {
+  return (
+    <Link href={customerSearchHref(docNumber)} className={LINK_CLASSNAME}>
+      {name}
+    </Link>
+  );
+}
+
 /** El código del pedido como enlace; una venta directa sin pedido no tiene a dónde ir. */
 function OrderCode({ order }: { order: SalesMarginOrderDto }) {
   if (order.salesOrderId === null || order.orderCode === null) {
@@ -517,12 +534,12 @@ function orderColumns(cost: boolean): ReportColumn<SalesMarginOrderDto>[] {
       header: 'Pedido',
       cell: (o) => <OrderCode order={o} />,
       sortValue: { text: (o) => o.orderCode ?? '' },
-      searchText: (o) => salesMarginSearchText(o, COST_STATUS_LABELS[o.costStatus]),
+      searchText: (o) => salesMarginSearchText(o),
     },
     {
       key: 'customer',
       header: 'Cliente',
-      cell: (o) => o.customerName,
+      cell: (o) => <CustomerName name={o.customerName} docNumber={o.customerDocNumber} />,
       sortValue: { text: (o) => o.customerName },
     },
     {
@@ -650,7 +667,13 @@ function groupColumns(
     {
       key: 'label',
       header: SALES_MARGIN_VIEW_LABELS[view],
-      cell: (g) => g.label,
+      // cc40 (D-586): el cliente enlaza a su ficha (la lista con su RUC/DNI, D-172).
+      cell: (g) =>
+        g.customerDocNumber === null ? (
+          g.label
+        ) : (
+          <CustomerName name={g.label} docNumber={g.customerDocNumber} />
+        ),
       sortValue: { text: (g) => g.label },
     },
     {
@@ -808,13 +831,6 @@ function TotalsByLine({ data }: { data: SalesMarginDto }) {
     </section>
   );
 }
-
-const COST_STATUS_LABELS: Record<MarginCostStatus, string> = {
-  COMPLETO: 'Completo',
-  PARCIAL: 'Costo parcial',
-  NO_COMPARABLE: 'No comparable',
-  NO_RASTREABLE: 'Costo no rastreable',
-};
 
 function CostStatusBadge({ status }: { status: MarginCostStatus }) {
   if (status === 'COMPLETO') {

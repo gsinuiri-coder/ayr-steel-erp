@@ -15,6 +15,7 @@ import {
   type ReceivablesAgingCustomerDto,
   type ReceivablesAgingDto,
   CREDIT_WITHOUT_DUE_LABEL,
+  receivablesCustomerSearchText,
 } from '@ayr/shared';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { HeaderActions } from '@/components/header-actions';
@@ -25,6 +26,7 @@ import {
   ReportTable,
   type ReportColumn,
 } from '@/components/reports/report-table';
+import { xlsxHref } from '@/lib/report-table';
 import { api } from '@/lib/api';
 import { formatAmount, formatDate, formatMoney } from '@/lib/format';
 import { agingTotalsOf, allRows } from '@/lib/report-totals';
@@ -138,7 +140,12 @@ export function CuentasPorCobrarView() {
               {
                 key: 'xlsx',
                 label: 'Descargar Excel',
-                download: `/api/reports/receivables-aging/xlsx${sellerId ? `?sellerId=${sellerId}` : ''}`,
+                // cc40 (D-588): con la búsqueda, el Excel trae los clientes que se ven.
+                download: xlsxHref(
+                  '/api/reports/receivables-aging/xlsx',
+                  { sellerId: sellerId || undefined },
+                  searchText,
+                ),
               },
             ]}
           />
@@ -264,11 +271,8 @@ function columns(
         </span>
       ),
       sortValue: { text: (c) => c.customerName },
-      searchText: (c) => [
-        c.customerName,
-        c.customerDocNumber,
-        ...c.documents.flatMap((d) => [d.number ?? '', d.salesOrderCode ?? '', d.sellerName ?? '']),
-      ],
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: receivablesCustomerSearchText,
     },
     {
       key: 'documents',

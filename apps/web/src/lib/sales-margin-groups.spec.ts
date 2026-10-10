@@ -10,6 +10,13 @@ import {
 import { filterReportRows, marginPctOf, sumDecimal, visibleReportRows } from './report-table';
 
 /** cc32 — «Ver por» de Ventas y margen y la tabla de reporte. */
+
+/** Un uuid estable por nombre, para los fixtures. */
+function idOf(prefix: string, name: string): string {
+  let n = 0;
+  for (const ch of name) n = (n * 31 + ch.charCodeAt(0)) % 1_000_000_000;
+  return `00000000-0000-4000-8${prefix}00-${String(n).padStart(12, '0')}`;
+}
 function order(
   code: string | null,
   seller: string | null,
@@ -22,9 +29,11 @@ function order(
     salesOrderId:
       code === null ? null : `00000000-0000-4000-8000-${code.slice(-6).padStart(12, '0')}`,
     orderCode: code,
-    customerId: '00000000-0000-4000-8000-0000000000c1',
+    // Un id por nombre, como en la base: el agrupado es por id (D-586).
+    customerId: idOf('c', customer),
     customerName: customer,
-    sellerId: seller === null ? null : '00000000-0000-4000-8000-0000000000d1',
+    customerDocNumber: `201${String(customer.length).padStart(8, '0')}`,
+    sellerId: seller === null ? null : idOf('d', seller),
     sellerName: seller,
     salesPen: sales,
     costPen: cost,
@@ -88,7 +97,7 @@ describe('Ver por', () => {
     expect(marco?.marginPct).toBe('23.15');
   });
 
-  it('agrupa por cliente por su nombre', () => {
+  it('agrupa por cliente por su id', () => {
     const groups = groupSalesMargin(ORDERS, 'cliente');
     expect(groups.map((g) => [g.label, g.count])).toEqual([
       ['Constructora Los Álamos S.A.C.', 1],
@@ -121,8 +130,39 @@ describe('Ver por', () => {
       'PED-000058',
       'PED-000056',
     ]);
-    expect(filterSalesMargin(ORDERS, 'parcial', () => 'Costo parcial')).toHaveLength(ORDERS.length);
+    // El estado del costo, con la etiqueta de la pantalla: el pedido sin costo es «No comparable».
+    expect(filterSalesMargin(ORDERS, 'no comparable').map((o) => o.orderCode)).toEqual([
+      'PED-000056',
+    ]);
     expect(filterSalesMargin(ORDERS, '')).toHaveLength(ORDERS.length);
+  });
+
+  it('D-586: dos clientes con el mismo nombre son dos grupos, con su RUC para enlazar', () => {
+    const [first, second] = ORDERS;
+    if (first === undefined || second === undefined) throw new Error('fixture');
+    const twins = [
+      {
+        ...first,
+        customerName: 'Ferretería Central',
+        customerId: idOf('c', 'uno'),
+        customerDocNumber: '20111111111',
+      },
+      {
+        ...second,
+        customerName: 'Ferretería Central',
+        customerId: idOf('c', 'dos'),
+        customerDocNumber: '20222222222',
+      },
+    ];
+    const groups = groupSalesMargin(twins, 'cliente');
+    expect(groups.map((g) => [g.label, g.customerDocNumber, g.count])).toEqual([
+      ['Ferretería Central', '20111111111', 1],
+      ['Ferretería Central', '20222222222', 1],
+    ]);
+    // Por vendedor no hay RUC que enlazar.
+    expect(groupSalesMargin(twins, 'vendedor').every((g) => g.customerDocNumber === null)).toBe(
+      true,
+    );
   });
 
   it('D-518: cuenta pedidos y nombra aparte las ventas sin pedido', () => {

@@ -8,6 +8,7 @@ import {
   BusinessLine,
   COIL_REPORT_LINES,
   COIL_STATUS_LABELS,
+  coilWasteRowSearchText,
   MISSING_THEORETICAL_LABELS,
   Role,
   type CoilWasteDto,
@@ -27,6 +28,7 @@ import {
   ReportTable,
   type ReportColumn,
 } from '@/components/reports/report-table';
+import { xlsxHref } from '@/lib/report-table';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -134,7 +136,12 @@ export function MermaView() {
                 {
                   key: 'xlsx',
                   label: 'Descargar Excel',
-                  download: `/api/reports/coil-waste/xlsx?from=${period.from}&to=${period.to}&businessLine=${line}`,
+                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
+                  download: xlsxHref(
+                    '/api/reports/coil-waste/xlsx',
+                    { from: period.from, to: period.to, businessLine: line },
+                    searchText,
+                  ),
                 },
               ]}
             />
@@ -284,7 +291,8 @@ function columns(
             {r.code}
           </Link>
           <span className="text-xs text-muted-foreground">
-            {r.typeKey}
+            {/* cc40 (D-590): el nombre del acabado del API (D-582). */}
+            {r.typeKey} · {r.finishName}
             {r.colorName ? ` · ${r.colorName}` : ''} · ancho {formatQty(r.widthMm, 'mm')}
           </span>
           <ToleranceBadge row={r} />
@@ -296,19 +304,14 @@ function columns(
         </span>
       ),
       sortValue: { text: (r) => r.code },
-      searchText: (r) => [
-        r.code,
-        r.typeKey,
-        r.colorName ?? '',
-        ...r.productions.map((p) => p.productionOrderCode ?? ''),
-      ],
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: coilWasteRowSearchText,
     },
     {
       key: 'status',
       header: 'Estado',
       cell: (r) => COIL_STATUS_LABELS[r.status],
       sortValue: { text: (r) => COIL_STATUS_LABELS[r.status] },
-      searchText: (r) => COIL_STATUS_LABELS[r.status],
     },
     {
       key: 'consumed',

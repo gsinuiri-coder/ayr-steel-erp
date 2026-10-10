@@ -6,6 +6,7 @@ import { keepPreviousInScope } from '@/lib/report-query';
 import {
   BUSINESS_LINE_LABELS,
   COIL_REPORT_LINES,
+  coilMonthRowSearchText,
   coilStateLabel,
   Role,
   toDecimal,
@@ -24,7 +25,7 @@ import { ReportHeader } from '@/components/reports/report-header';
 import { MonthPicker, useReportMonth } from '@/components/reports/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
-import { filterReportRows } from '@/lib/report-table';
+import { filterReportRows, xlsxHref } from '@/lib/report-table';
 import { allRows, coilMonthTotalsOf } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
@@ -136,7 +137,12 @@ export function ReporteBobinasView() {
                 {
                   key: 'xlsx',
                   label: 'Descargar Excel',
-                  download: `/api/reports/coils/xlsx?${qs}`,
+                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
+                  download: xlsxHref(
+                    '/api/reports/coils/xlsx',
+                    { month, businessLine: line },
+                    searchText,
+                  ),
                 },
                 {
                   key: 'pdf',
@@ -361,14 +367,21 @@ function columns(
         </Link>
       ),
       sortValue: { text: (r) => r.code },
-      searchText: (r) => r.code,
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: (r) => coilMonthRowSearchText(r, film),
     },
     {
       key: 'type',
       header: 'Tipo',
       cell: (r) => r.typeKey,
       sortValue: { text: (r) => r.typeKey },
-      searchText: (r) => r.typeKey,
+    },
+    {
+      // cc40 (D-590): el nombre del acabado del API (D-582).
+      key: 'finish',
+      header: 'Acabado',
+      cell: (r) => r.finishName,
+      sortValue: { text: (r) => r.finishName },
     },
     {
       key: 'line',
@@ -382,7 +395,6 @@ function columns(
       header: 'Color',
       cell: (r) => r.colorName ?? '—',
       sortValue: { text: (r) => r.colorName ?? '' },
-      searchText: (r) => r.colorName ?? '',
     },
     {
       key: 'width',
@@ -448,7 +460,6 @@ function columns(
       header: 'Estado',
       cell: state,
       sortValue: { text: state },
-      searchText: state,
     },
   ];
 }
