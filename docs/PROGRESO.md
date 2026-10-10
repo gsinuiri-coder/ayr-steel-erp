@@ -2,6 +2,37 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-10 — cc40: Ventas y margen sin suma doble, «Ver por» por id, acabado y búsqueda al Excel (D-586..D-590, PR #163 en prod)
+
+Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc40.md`; UAT en
+`docs/uat/cc40.md`; revisión del segundo modelo en `docs/revision/cc40-segundo-modelo.md`.
+Ratificación del dueño de cc30 a cc39 (D-471, D-478, D-479, D-546..D-559, D-570, D-571,
+D-580..D-585) registrada en `DECISIONES.md` y §0.2; D-477 sigue provisional.
+
+- **En producción:**
+  - API: `00112-7jq` (`git-sha=c6f4d8e2`), 100 % del tráfico;
+  - web: `main` `131eb13a`;
+  - smoke en verde en los dos dominios; 81 respuestas en los logs de la revisión, todas 200.
+- **Vuelta atrás:** llevar el tráfico a `00111-hz7` y revertir el merge de #163.
+- **Bug (D-587):** desde RF-S4a/M3 (2026-09-22) la hoja «Por pedido» del Excel de Ventas y margen
+  ponía pedido y comprobantes en la misma columna de venta: sumarla daba el doble (en 2026, S/
+  2 636 882,58 en vez de S/ 1 318 441,29) y no había total. La pantalla y el Panel no sumaban
+  doble. Ahora una fila por pedido + total del pie, y los comprobantes en su hoja.
+- **Entra:** «Ver por» por id con enlace al cliente (D-586); la búsqueda viaja al Excel en los
+  siete reportes (D-588); «No trazable» enlaza al pedido (D-589); acabado a la vista (D-590).
+- **CxC frente al Panel:** solo redondeo. El API da la misma cifra a los dos (S/ 1 555 760,73 el
+  10/10); el Panel la muestra en soles (S/ 1 555 761). Prueba de base en
+  `report-xlsx-totals.db-spec.ts` y UAT.
+- **UAT en producción, solo lectura, con admin efímero (borrado):** 18 comprobaciones iguales.
+- **Registro de riesgo (toca cifras que lee el dueño):**
+  - `@ayr/shared/report-rows.ts`: búsqueda y totales del pie que comparten pantalla y Excel; un
+    cambio ahí mueve los dos a la vez;
+  - `report-xlsx-search.ts`: recorta el DTO antes del Excel; con búsqueda que deja todo, devuelve
+    el del API.
+- **Infraestructura (no producto):** con `next dev`, cinco E2E de reportes fallan por tiempos de
+  redirección de URL; con builds de producción pasan (31/31).
+- **Pendiente de decisión del dueño:** ratificar D-586..D-590.
+
 ## 2026-10-09 — cc39: Excel que faltaban, ids, acabado, guía y estado de cuenta del proveedor (D-580..D-585, PR #161 en prod)
 
 Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc39.md`; UAT en
@@ -24,8 +55,8 @@ Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-c
     lo detecta en la CI;
   - la merma lee las bobinas con una sentencia cruda (`coil-waste.service.ts`) para no romper el
     presupuesto del Panel de planta.
-- **Pendiente de decisión del dueño:** ratificar D-585 (formato de dos decimales solo en los Excel
-  tocados).
+- ~~**Pendiente de decisión del dueño:** ratificar D-585 (formato de dos decimales solo en los Excel
+  tocados).~~ Ratificada por el dueño (cc40).
 
 ## 2026-10-09 — demo-cc38: demo lista para probar cc38, y «und» en el PDF de la cotización (PR #159)
 
