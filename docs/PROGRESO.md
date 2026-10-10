@@ -2,6 +2,38 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-10 — cc41: el borrador del accesorio vive en el servidor (D-591, reemplaza D-559; PR #166 en prod)
+
+Una migración aditiva con OK del dueño por nombre (D-460); sin SQL contra producción. Detalle en
+`docs/handoff/ventana-cc41.md`; UAT en `docs/uat/cc41.md`; revisión del segundo modelo en
+`docs/revision/cc41-segundo-modelo.md`. D-586..D-590 ratificadas y UAT de cc40 ok.
+
+- **En producción:**
+  - respaldo `respaldo-pre-cc41-20261010` (`br-old-mountain-aeno2yqp`);
+  - migración `20261010140000_cc41_borrador_accesorio_metros` (`meters` y `pieces_count` en
+    `production_report_drafts`, dos CHECK);
+  - API: `00113-d6r` (`git-sha=8e84d734`), 100 % del tráfico;
+  - web: `main` `85519f41`;
+  - smoke en verde en los dos dominios después del API y de la web; logs de la revisión sin 5xx.
+- **Vuelta atrás:** tráfico a `00112-7jq` **y** revertir el merge de #166, juntos (la web nueva
+  manda `meters`, que el API viejo rechaza). La migración se queda: es aditiva.
+- **Entra:** el bloque de accesorio se guarda en el borrador de la orden (sobrevive a un refresco y
+  se ve desde otro equipo); «Registrar producción» y «Registrar y cerrar» ejecutan el borrador en
+  una transacción, todo o nada; lo que D-559 dejó en el navegador sube una vez al abrir la orden.
+- **Bug que se fue con D-559:** «Registrar y cerrar» registraba los bloques anteriores **antes** de
+  «Qué va a pasar» y la pantalla los contaba dos veces (captura en `local-data/cc41/capturas/`).
+- **UAT en producción, solo lectura, con admin efímero (borrado):** OP de accesorio cerrada carga,
+  su borrador responde (0 filas), el lote de `/planta` responde. 0 OP de coberturas o accesorio
+  abiertas el 10/10.
+- **Registro de riesgo (toca kardex):**
+  - `roofing-drafts.ts` (`checkDraftRows`, `mathPieces`): la validación del accesorio en el
+    borrador tiene que seguir igual a `reportInTx`;
+  - `roofing-drafts.service.ts` (`commitInTx`, `readState`): el commit del accesorio;
+  - `lib/accessory-drafts.ts` (`uploadLegacyAccessoryEdits`): la transición desde el navegador.
+- **Infraestructura (no producto):** otro proyecto del dueño ocupa el 3000 local: E2E con
+  `E2E_API_PORT=3010`. `gcloud` necesitó `gcloud auth login` (vía `cmd //c`).
+- **Pendiente de decisión del dueño:** ratificar D-591.
+
 ## 2026-10-10 — Neon: borrados los respaldos del 03/10 (OK del dueño por nombre, D-460)
 
 - **Borradas:** `respaldo-pre-cc16-20261003` (`br-late-poetry-aewbwyl6`) y
