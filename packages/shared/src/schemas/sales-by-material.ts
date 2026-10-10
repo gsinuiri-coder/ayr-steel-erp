@@ -184,6 +184,8 @@ export const salesMaterialUntraceableSchema = z.object({
   documentId: z.string().uuid(),
   documentNumber: z.string().nullable(),
   issueDate: z.string(),
+  /** cc40 (D-589): el pedido, para enlazarlo; `null` en una venta sin pedido. */
+  salesOrderId: z.string().uuid().nullable(),
   orderCode: z.string().nullable(),
   sku: z.string(),
   metersSold: z.string(),
@@ -242,6 +244,8 @@ export const salesProductUntraceableSchema = z.object({
   documentId: z.string().uuid(),
   documentNumber: z.string().nullable(),
   issueDate: z.string(),
+  /** cc40 (D-589): el pedido, para enlazarlo; `null` en una venta sin pedido. */
+  salesOrderId: z.string().uuid().nullable(),
   orderCode: z.string().nullable(),
   sku: z.string(),
   unit: z.string(),

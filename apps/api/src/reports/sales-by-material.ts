@@ -36,6 +36,8 @@ export interface InvoiceLine {
   documentNumber: string | null;
   issueDate: string;
   orderSeq: number | null;
+  /** cc40 (D-589): el pedido del comprobante, para enlazarlo desde «No trazable». */
+  orderId: string | null;
   salesOrderItemId: string | null;
   sku: string;
   /** `null` = producto de la línea sin subtipo: cuenta en el cuadre y no en las filas. */
@@ -325,6 +327,7 @@ export function traceLine(
       documentId: line.documentId,
       documentNumber: line.documentNumber,
       issueDate: line.issueDate,
+      salesOrderId: line.orderId,
       orderCode: line.orderSeq === null ? null : salesOrderCode(line.orderSeq),
       sku: line.sku,
       metersSold: toFixedString(meters.times(share), 'KG'),

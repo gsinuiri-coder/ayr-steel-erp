@@ -24,6 +24,9 @@ import {
   type SalesMaterialKind,
   type SalesMaterialRowDto,
   type SalesProductRowDto,
+  salesMaterialRowSearchText,
+  salesProductRowSearchText,
+  searchWords,
 } from '@ayr/shared';
 import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
@@ -247,7 +250,12 @@ export function VentasMaterialView() {
                 {
                   key: 'xlsx',
                   label: 'Descargar Excel',
-                  download: `/api/reports/sales-by-material/xlsx?${qs}`,
+                  // cc40 (D-588): con la búsqueda, el Excel trae las filas que se ven.
+                  download: `/api/reports/sales-by-material/xlsx?${qs}${
+                    searchWords(searchText).length === 0
+                      ? ''
+                      : `&search=${encodeURIComponent(searchText.trim().slice(0, 200))}`
+                  }`,
                 },
               ]}
             />
@@ -521,7 +529,8 @@ function materialColumns(
       header: 'Tipo',
       cell: (r) => SALES_MATERIAL_KIND_LABELS[r.kind],
       sortValue: { text: (r) => SALES_MATERIAL_KIND_LABELS[r.kind] },
-      searchText: (r) => SALES_MATERIAL_KIND_LABELS[r.kind],
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: salesMaterialRowSearchText,
     },
     {
       key: 'thickness',
@@ -529,14 +538,12 @@ function materialColumns(
       align: 'right',
       cell: (r) => r.thicknessMm,
       sortValue: { decimal: (r) => r.thicknessMm },
-      searchText: (r) => [r.thicknessMm, `${r.thicknessMm} mm`],
     },
     {
       key: 'color',
       header: 'Color',
       cell: (r) => r.colorLabel,
       sortValue: { text: (r) => r.colorLabel },
-      searchText: (r) => [r.colorLabel, ...r.coils.map((c) => c.code)],
     },
     ...figureColumns(total),
   ];
@@ -588,6 +595,16 @@ function DocumentLink({ id, number }: { id: string; number: string | null }) {
   );
 }
 
+/** cc40 (D-589): el pedido de una venta no trazable enlaza a su detalle; sin pedido, «—». */
+function OrderLink({ id, code }: { id: string | null; code: string | null }) {
+  if (id === null || code === null) return <span className="font-mono">{code ?? '—'}</span>;
+  return (
+    <Link className={cn(LINK_CLASSNAME, 'font-mono')} href={`/pedidos/${id}`}>
+      {code}
+    </Link>
+  );
+}
+
 function MaterialUntraceable({ data }: { data: SalesByMaterialDto }) {
   return (
     <section className="space-y-2">
@@ -617,8 +634,9 @@ function MaterialUntraceable({ data }: { data: SalesByMaterialDto }) {
                   <DocumentLink id={u.documentId} number={u.documentNumber} />
                 </TableCell>
                 <TableCell>{formatDate(u.issueDate)}</TableCell>
-                {/* El DTO trae el código del pedido sin su id: no se puede enlazar. */}
-                <TableCell className="font-mono">{u.orderCode ?? '—'}</TableCell>
+                <TableCell>
+                  <OrderLink id={u.salesOrderId} code={u.orderCode} />
+                </TableCell>
                 <TableCell className="font-mono">{u.sku}</TableCell>
                 <TableCell>
                   {SALES_MATERIAL_KIND_LABELS[u.kind]} {u.thicknessMm} mm {u.colorLabel}
@@ -671,14 +689,14 @@ function productColumns(products: SalesByProductDto | null): ReportColumn<SalesP
       header: 'SKU',
       cell: (r) => <span className="font-mono">{r.sku}</span>,
       sortValue: { text: (r) => r.sku },
-      searchText: (r) => r.sku,
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: salesProductRowSearchText,
     },
     {
       key: 'name',
       header: 'Producto',
       cell: (r) => r.name,
       sortValue: { text: (r) => r.name },
-      searchText: (r) => r.name,
     },
     {
       // La unidad cambia de un producto a otro: va en la celda.
@@ -756,7 +774,9 @@ function ProductUntraceable({
                   <DocumentLink id={u.documentId} number={u.documentNumber} />
                 </TableCell>
                 <TableCell>{formatDate(u.issueDate)}</TableCell>
-                <TableCell className="font-mono">{u.orderCode ?? '—'}</TableCell>
+                <TableCell>
+                  <OrderLink id={u.salesOrderId} code={u.orderCode} />
+                </TableCell>
                 <TableCell className="font-mono">{u.sku}</TableCell>
                 <TableCell>{SALES_PRODUCT_UNTRACEABLE_LABELS[u.reason]}</TableCell>
                 <TableCell className="text-right">{formatUnitQty(u.qty, u.unit)}</TableCell>
@@ -931,6 +951,7 @@ function MaterialBreakdownDialog({
                 <TableHead>Bobina</TableHead>
                 <TableHead className="text-right">Espesor real (mm)</TableHead>
                 <TableHead>Color</TableHead>
+                <TableHead>Acabado</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead className="text-right">Consumido (kg)</TableHead>
                 <TableHead className="text-right">Costo prod. (S/)</TableHead>
@@ -939,7 +960,7 @@ function MaterialBreakdownDialog({
             <TableBody>
               {coils.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-muted-foreground">
+                  <TableCell colSpan={8} className="text-muted-foreground">
                     Sin bobinas.
                   </TableCell>
                 </TableRow>
@@ -974,6 +995,7 @@ function MaterialBreakdownDialog({
                       </TableCell>
                       <TableCell className="text-right">{coil.thicknessMm}</TableCell>
                       <TableCell>{coil.colorLabel}</TableCell>
+                      <TableCell>{coil.finishName}</TableCell>
                       <TableCell>{coil.typeKey}</TableCell>
                       <TableCell className="text-right">
                         {formatKg(coil.kg, null)}
@@ -994,7 +1016,7 @@ function MaterialBreakdownDialog({
                     {open && (
                       <TableRow id={panelId} className="bg-muted/30 hover:bg-muted/30">
                         <TableCell />
-                        <TableCell colSpan={6} className="p-2">
+                        <TableCell colSpan={7} className="p-2">
                           <Table data-testid="comprobantes-bobina">
                             <TableHeader>
                               <TableRow>

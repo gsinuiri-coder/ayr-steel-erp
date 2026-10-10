@@ -3,6 +3,10 @@ import type { Response } from 'express';
 import {
   businessToday,
   coilMonthReportQuerySchema,
+  productionXlsxSearchSchema,
+  reportXlsxSearchSchema,
+  type ProductionXlsxSearch,
+  type ReportXlsxSearch,
   coilWasteQuerySchema,
   productionSummaryQuerySchema,
   type ProductionSummaryDto,
@@ -54,7 +58,20 @@ import { kardexPepsXlsx } from './kardex-peps-xlsx';
 import { KardexPepsService } from './kardex-peps.service';
 import { kardexSheetXlsx } from './kardex-sheet-xlsx';
 import { KardexSheetService } from './kardex-sheet.service';
-import { inventoryValuationXlsx, salesMarginXlsx } from './reports-xlsx';
+import {
+  inventoryValuationXlsx,
+  salesMarginXlsx,
+  searchNoteRows,
+  unsearchedNoteRows,
+} from './reports-xlsx';
+import {
+  searchCoilMonth,
+  searchCoilWaste,
+  searchInventory,
+  searchProduction,
+  searchReceivables,
+  searchSalesByMaterial,
+} from './report-xlsx-search';
 import { receivablesAgingXlsx } from './receivables-aging-xlsx';
 import { ReceivablesAgingService } from './receivables-aging.service';
 import { ReportsService } from './reports.service';
@@ -105,9 +122,16 @@ export class ReportsController {
   async coilsXlsxFile(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
+    // cc40 (D-588): la búsqueda de la pantalla; el archivo trae las mismas filas.
+    @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
-    sendXlsx(res, coilMonthXlsx(await this.reports.coilsByMonth(query, canSeeCosts(actor))));
+    const report = searchCoilMonth(
+      await this.reports.coilsByMonth(query, canSeeCosts(actor)),
+      search,
+    );
+    // Dos tablas recortadas a la vez: la nota no mezcla sus cuentas.
+    sendXlsx(res, coilMonthXlsx(report, searchNoteRows(search), unsearchedNoteRows(search)));
   }
 
   /** D-355. El PDF del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. */
@@ -164,10 +188,21 @@ export class ReportsController {
   async inventoryValuationXlsxFile(
     // cc39 (D-580): la pestaña de la línea, con el mismo esquema que la pantalla.
     @Query(new ZodValidationPipe(inventoryValuationQuerySchema)) query: InventoryValuationQuery,
+    // cc40 (D-588): la búsqueda de la pantalla; el archivo trae las mismas filas.
+    @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
-    const report = await this.inventoryValuation.valuation(query);
-    sendXlsx(res, inventoryValuationXlsx(report, query.businessLine));
+    const report = searchInventory(await this.inventoryValuation.valuation(query), search);
+    // Grupos y productos se recortan a la vez: la nota no mezcla sus cuentas.
+    sendXlsx(
+      res,
+      inventoryValuationXlsx(
+        report,
+        query.businessLine,
+        searchNoteRows(search),
+        unsearchedNoteRows(search),
+      ),
+    );
   }
 
   /** RF-S4a/M3. */
@@ -175,12 +210,14 @@ export class ReportsController {
   @Get('sales-margin/xlsx')
   async salesMarginXlsxFile(
     @Query(new ZodValidationPipe(salesMarginQuerySchema)) query: SalesMarginQuery,
+    // cc40 (D-588): la búsqueda de la pantalla; el archivo trae las mismas filas.
+    @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
     // cc39 (D-580, reemplaza a D-396 en el Excel): el Excel de la pestaña que se ve, con el mismo
     // DTO que la pantalla; sin línea, el de «Todas» de siempre.
     const report = await this.salesMargin.salesMargin(query);
-    sendXlsx(res, salesMarginXlsx(report, query.businessLine));
+    sendXlsx(res, salesMarginXlsx(report, query.businessLine, search));
   }
 
   /**
@@ -200,11 +237,16 @@ export class ReportsController {
   @Get('sales-by-material/xlsx')
   async salesByMaterialXlsxFile(
     @Query(new ZodValidationPipe(salesByMaterialQuerySchema)) query: SalesByMaterialQuery,
+    // cc40 (D-588): la búsqueda de la pantalla; el archivo trae las mismas filas.
+    @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
     // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con sus filtros; sin
     // línea, Coberturas Aluzinc, como la pantalla.
-    sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(query)));
+    const full = await this.salesByMaterial.report(query);
+    const report = searchSalesByMaterial(full, search);
+    const count = (r: SalesByMaterialDto) => r.products?.rows.length ?? r.rows.length;
+    sendXlsx(res, salesByMaterialXlsx(report, searchNoteRows(search, count(report), count(full))));
   }
 
   /**
@@ -224,9 +266,19 @@ export class ReportsController {
   @Get('receivables-aging/xlsx')
   async receivablesAgingXlsxFile(
     @Query(new ZodValidationPipe(receivablesAgingQuerySchema)) query: ReceivablesAgingQuery,
+    // cc40 (D-588): la búsqueda de la pantalla; el archivo trae las mismas filas.
+    @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
-    sendXlsx(res, receivablesAgingXlsx(await this.receivablesAging.report(query)));
+    const full = await this.receivablesAging.report(query);
+    const report = searchReceivables(full, search);
+    sendXlsx(
+      res,
+      receivablesAgingXlsx(
+        report,
+        searchNoteRows(search, report.customers.length, full.customers.length),
+      ),
+    );
   }
 
   /**
@@ -246,9 +298,16 @@ export class ReportsController {
   @Get('coil-waste/xlsx')
   async coilWasteXlsxFile(
     @Query(new ZodValidationPipe(coilWasteQuerySchema)) query: CoilWasteQuery,
+    // cc40 (D-588): la búsqueda de la pantalla; el archivo trae las mismas filas.
+    @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
-    sendXlsx(res, coilWasteXlsx(await this.coilWaste.report(query)));
+    const full = await this.coilWaste.report(query);
+    const report = searchCoilWaste(full, search);
+    sendXlsx(
+      res,
+      coilWasteXlsx(report, searchNoteRows(search, report.rows.length, full.rows.length)),
+    );
   }
 
   /**
@@ -271,13 +330,18 @@ export class ReportsController {
   async productionSummaryXlsxFile(
     @Query(new ZodValidationPipe(productionSummaryQuerySchema)) query: ProductionSummaryQuery,
     @CurrentUser() actor: RequestUser,
+    // cc40 (D-588): la búsqueda de la pantalla y su «Ver por», que decide qué se busca.
+    @Query(new ZodValidationPipe(productionXlsxSearchSchema))
+    { search = '', ver = 'orden' }: ProductionXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
+    const full = await this.productionSummary.report(query, actor.role === Role.ADMINISTRADOR);
+    const report = searchProduction(full, search, ver);
+    const count = (r: ProductionSummaryDto) =>
+      ver === 'pedido' ? r.groups.length : r.groups.reduce((n, g) => n + g.orders.length, 0);
     sendXlsx(
       res,
-      productionSummaryXlsx(
-        await this.productionSummary.report(query, actor.role === Role.ADMINISTRADOR),
-      ),
+      productionSummaryXlsx(report, searchNoteRows(search, count(report), count(full))),
     );
   }
 

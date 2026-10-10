@@ -19,6 +19,7 @@ function line(over: Partial<ProductInvoiceLine>): ProductInvoiceLine {
     docType: 'FACTURA',
     issueDate: '2026-09-10',
     orderSeq: 7,
+    orderId: '00000000-0000-4000-8000-000000000007',
     productId: 'p1',
     sku: 'UPVC-01',
     name: 'Teja UPVC',

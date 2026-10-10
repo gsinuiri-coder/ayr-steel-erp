@@ -51,6 +51,7 @@ function row(s: RowSeed): DocumentLineRow {
     doc_type: credit ? 'NOTA_CREDITO' : 'FACTURA',
     issue_date: new Date('2026-08-10T00:00:00.000Z'),
     order_seq: 7,
+    order_id: '00000000-0000-4000-8000-000000000007',
     sales_order_item_id: s.orderItem === undefined ? 'soi-1' : s.orderItem,
     own_order_item_id: s.orderItem === undefined ? 'soi-1' : s.orderItem,
     qty: credit ? d(s.qty).negated() : d(s.qty),

@@ -2158,3 +2158,18 @@ la implementación tomó por consecuencia de D-573/D-574:
   dice «sobran / faltan X m».
 
 Las dos quedan firmes; el texto de D-574 en `ARQUITECTURA.md` §0.2 ya las describe.
+
+## Ratificación del dueño (2026-10-09, pieza cc40)
+
+El dueño escribió «ratifico todo» sobre las decisiones provisionales y las de pedido suyo de las
+piezas cc30 a cc39. Quedan firmes, y su fila de `ARQUITECTURA.md` §0.2 lo dice:
+
+- cc30: D-471, D-478 y D-479 (orden de bloqueos entre documentos, ventas y compras);
+- cc35: D-546 a D-549, D-558 y D-559 (plan de la OP, scroll único, modelo M y accesorio);
+- cc36: D-550 a D-557 (formulario de cotización y menú);
+- cc37: D-570 y D-571 (una tarjeta por línea, «und» sin decimales);
+- cc39: D-580 a D-585 (Excel por pestaña, ids, `finishName`, `dispatchNoteHasPdf`, el día de Lima
+  del estado de cuenta y los dos decimales a la vista en los Excel).
+
+**D-477 no se ratificó**: sigue provisional (planta toma el pedido antes que la OP solo en los
+caminos que escriben el pedido o la reserva).

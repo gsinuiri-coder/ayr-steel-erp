@@ -14,6 +14,8 @@ import {
   type ProductionSummaryGroupDto,
   type ProductionSummaryLine,
   type ProductionSummaryOrderDto,
+  productionGroupSearchText,
+  productionOrderSearchText,
 } from '@ayr/shared';
 import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
@@ -26,6 +28,7 @@ import {
   ReportTable,
   type ReportColumn,
 } from '@/components/reports/report-table';
+import { xlsxHref } from '@/lib/report-table';
 import { Segmented } from '@/components/reports/segmented';
 import { RoleGate } from '@/components/role-gate';
 import { Stat, StatStrip } from '@/components/stat-strip';
@@ -132,7 +135,18 @@ export function ProduccionView() {
                 {
                   key: 'xlsx',
                   label: 'Descargar Excel',
-                  download: `/api/reports/production-summary/xlsx?${qs}`,
+                  // cc40 (D-588): con la búsqueda y su «Ver por», el Excel trae lo que se ve.
+                  download: xlsxHref(
+                    '/api/reports/production-summary/xlsx',
+                    {
+                      from: period.from,
+                      to: period.to,
+                      businessLine: line,
+                      // «orden» es la vista por defecto, también para el API.
+                      ver: view === 'pedido' ? view : undefined,
+                    },
+                    searchText,
+                  ),
                 },
               ]}
             />
@@ -368,14 +382,14 @@ function orderColumns(
         </Link>
       ),
       sortValue: { text: (o) => o.code },
-      searchText: (o) => [o.code, ...o.coils.map((c) => c.code)],
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: productionOrderSearchText,
     },
     {
       key: 'order',
       header: 'Pedido',
       cell: (o) => <OrderLine order={o} />,
       sortValue: { text: (o) => o.salesOrderCode ?? '' },
-      searchText: (o) => o.salesOrderCode ?? 'A stock',
     },
     {
       key: 'product',
@@ -387,7 +401,6 @@ function orderColumns(
         </span>
       ),
       sortValue: { text: (o) => o.productSku },
-      searchText: (o) => [o.productSku, o.productName],
     },
     {
       key: 'quantity',
@@ -425,10 +438,8 @@ function groupColumns(
           'Sin pedido (a stock)'
         ),
       sortValue: { text: (g) => g.salesOrderCode ?? '' },
-      searchText: (g) => [
-        g.salesOrderCode ?? 'Sin pedido (a stock)',
-        ...g.orders.flatMap((o) => [o.code, o.productSku, o.productName]),
-      ],
+      // cc40 (D-588): lo que mira el buscador, el mismo texto con el que filtra el Excel.
+      searchText: productionGroupSearchText,
     },
     {
       key: 'count',

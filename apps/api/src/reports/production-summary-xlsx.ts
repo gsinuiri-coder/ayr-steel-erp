@@ -11,7 +11,11 @@ import { build, num, type Sheet } from './reports-xlsx';
  * D-446: con más de `LIST_XLSX_MAX_ROWS` filas en una hoja, 400 «acota los filtros»; nunca un
  * archivo recortado.
  */
-export function productionSummaryXlsx(report: ProductionSummaryDto): {
+export function productionSummaryXlsx(
+  report: ProductionSummaryDto,
+  // cc40 (D-588): la búsqueda de la pantalla, al pie de la hoja por OP.
+  notes: (string | number | null)[][] = [],
+): {
   buffer: Buffer;
   filename: string;
 } {
@@ -88,6 +92,7 @@ export function productionSummaryXlsx(report: ProductionSummaryDto): {
         ...costs(report.totals),
         null,
       ],
+      ...notes,
     ],
   };
 

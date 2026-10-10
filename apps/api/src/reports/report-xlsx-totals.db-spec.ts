@@ -9,6 +9,13 @@ import {
   INVENTORY_VALUATION_LINES,
   SALES_BY_MATERIAL_LINES,
   SALES_MARGIN_LINES,
+  coilWasteRowSearchText,
+  filterBySearch,
+  groupSalesMargin,
+  inventoryProductSearchText,
+  receivablesCustomerSearchText,
+  salesMarginSearchText,
+  summarizeSalesMargin,
   toDecimal,
 } from '@ayr/shared';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
@@ -115,7 +122,7 @@ describe('Merma por bobina: el Excel de cada pestaña es la pantalla', () => {
   it.each(COIL_REPORT_LINES)('%s', async (businessLine) => {
     const query = { ...range(), businessLine };
     const screen = await controller.coilWasteReport(query);
-    const xlsx = await download((res) => controller.coilWasteXlsxFile(query, res));
+    const xlsx = await download((res) => controller.coilWasteXlsxFile(query, {}, res));
     expect(xlsx.filename).toContain(businessLine);
 
     const rows = xlsx.sheet('Merma por bobina');
@@ -153,7 +160,7 @@ describe('Ventas por material: el Excel de cada pestaña, con sus filtros, es la
   it.each(SALES_BY_MATERIAL_LINES)('%s', async (businessLine) => {
     const query = { ...range(), businessLine };
     const screen = await controller.salesByMaterialReport(query);
-    const xlsx = await download((res) => controller.salesByMaterialXlsxFile(query, res));
+    const xlsx = await download((res) => controller.salesByMaterialXlsxFile(query, {}, res));
     expect(screen.businessLine).toBe(businessLine);
 
     if (screen.products === null) {
@@ -201,7 +208,7 @@ describe('Inventario valorizado: el Excel de cada pestaña es la pantalla', () =
   it.each([undefined, ...INVENTORY_VALUATION_LINES])('%s', async (businessLine) => {
     const query = businessLine === undefined ? {} : { businessLine };
     const screen = await controller.inventoryValuationReport(query);
-    const xlsx = await download((res) => controller.inventoryValuationXlsxFile(query, res));
+    const xlsx = await download((res) => controller.inventoryValuationXlsxFile(query, {}, res));
     if (businessLine !== undefined) expect(xlsx.filename).toContain(businessLine);
 
     const total = rowStarting(
@@ -230,7 +237,7 @@ describe('Ventas y margen: el Excel de cada pestaña es la pantalla', () => {
   it.each([undefined, ...SALES_MARGIN_LINES])('%s', async (businessLine) => {
     const query = { ...range(), ...(businessLine === undefined ? {} : { businessLine }) };
     const screen = await controller.salesMarginReport(query);
-    const xlsx = await download((res) => controller.salesMarginXlsxFile(query, res));
+    const xlsx = await download((res) => controller.salesMarginXlsxFile(query, {}, res));
     if (businessLine !== undefined) expect(xlsx.filename).toContain(businessLine);
 
     const totals = xlsx.sheet('Totales');
@@ -249,9 +256,169 @@ describe('Ventas y margen: el Excel de cada pestaña es la pantalla', () => {
       expectSame(total[4], t.marginPct, 'margen %');
     }
     // Los pedidos de la hoja son los que suman en la pantalla, y los de facturación parcial, aparte.
-    const ordersIn = (name: string) =>
-      xlsx.sheet(name).filter((r, i) => i > 0 && typeof r[0] === 'string' && r[0] !== '').length;
-    expect(ordersIn('Por pedido')).toBe(screen.orders.filter((o) => o.inTotals).length);
-    expect(ordersIn('Facturación parcial')).toBe(screen.orders.filter((o) => !o.inTotals).length);
+    expect(orderRows(xlsx.sheet('Por pedido'))).toHaveLength(
+      screen.orders.filter((o) => o.inTotals).length,
+    );
+    expect(orderRows(xlsx.sheet('Facturación parcial'))).toHaveLength(
+      screen.orders.filter((o) => !o.inTotals).length,
+    );
+  });
+});
+
+/** Las filas de pedido de una hoja de «Ventas y margen»: sin cabecera, total ni notas. */
+function orderRows(rows: Cell[][]): Cell[][] {
+  return rows.filter(
+    (r, i) =>
+      i > 0 &&
+      typeof r[0] === 'string' &&
+      r[0] !== '' &&
+      !r[0].startsWith('Total') &&
+      !r[0].startsWith('Búsqueda'),
+  );
+}
+
+/**
+ * cc40 (D-587): «Por pedido» suma cada venta una vez. El total de la hoja es el pie de la tabla de
+ * la pantalla (`summarizeSalesMargin` de los pedidos que suman), es la suma de su columna de venta,
+ * es la suma de los comprobantes, y es el total de «Ver por» Vendedor y Cliente: las tres vistas,
+ * con el mismo filtro, dan lo mismo.
+ */
+describe('Ventas y margen: «Por pedido» cuadra con las otras vistas y con sus comprobantes', () => {
+  it.each([undefined, ...SALES_MARGIN_LINES])('%s', async (businessLine) => {
+    const query = { ...range(), ...(businessLine === undefined ? {} : { businessLine }) };
+    const screen = await controller.salesMarginReport(query);
+    const included = screen.orders.filter((o) => o.inTotals);
+    const xlsx = await download((res) => controller.salesMarginXlsxFile(query, {}, res));
+    const rows = xlsx.sheet('Por pedido');
+    const header = rows[0] ?? [];
+    const sales = header.indexOf('Venta sin IGV (S/)');
+    const pie = summarizeSalesMargin(included);
+    const total = rowStarting(rows, 'Total ·');
+    expectSame(total[sales], pie.sales.toFixed(), 'venta del pie');
+    // La columna de venta suma una vez: las filas de pedido dan el total, sin los comprobantes.
+    const summed = orderRows(rows).reduce(
+      (acc, r) => acc.plus(dec(r[sales]) ?? new Decimal(0)),
+      new Decimal(0),
+    );
+    expect(summed.minus(pie.sales).abs().lte(toDecimal('0.0001').times(included.length))).toBe(
+      true,
+    );
+    if (businessLine !== 'services') {
+      expectSame(total[header.indexOf('Costo (S/)')], pie.cost.toFixed(), 'costo del pie');
+      expectSame(total[header.indexOf('Margen (S/)')], pie.margin.toFixed(), 'margen del pie');
+      expectSame(total[header.indexOf('Margen %')], pie.marginPct, 'margen % del pie');
+    }
+    // «Ver por» Vendedor y Cliente: la suma de los grupos es el mismo total.
+    for (const by of ['vendedor', 'cliente'] as const) {
+      const groups = groupSalesMargin(included, by);
+      const groupSales = groups.reduce((acc, g) => acc.plus(g.sales), new Decimal(0));
+      expect({ by, sales: groupSales.toFixed() }).toEqual({ by, sales: pie.sales.toFixed() });
+      expect(groups.reduce((n, g) => n + g.count, 0)).toBe(included.length);
+    }
+    // Los comprobantes de «Por pedido», en su hoja, suman la misma venta.
+    const documents = xlsx.sheet('Comprobantes');
+    const docTotal = rowStarting(documents, 'Total ·');
+    expect(String(docTotal[0])).toContain('«Por pedido»');
+    expectSame(
+      docTotal[(documents[0] ?? []).indexOf('Venta sin IGV (S/)')],
+      pie.sales.toFixed(),
+      'venta de los comprobantes',
+    );
+  });
+});
+
+/**
+ * cc40 (D-588): con la búsqueda de la pantalla, el Excel trae las mismas filas que la pantalla
+ * filtra (el mismo texto buscable de `@ayr/shared`) y su total es el del pie con la búsqueda.
+ * La búsqueda sale de los datos: la primera palabra del primer cliente, bobina o producto.
+ */
+describe('La búsqueda de la pantalla viaja al Excel', () => {
+  const firstWord = (text: string | undefined): string | null =>
+    text?.split(/\s+/).find((w) => w.length >= 3) ?? null;
+
+  it('Ventas y margen: los pedidos que coinciden y el total del pie', async () => {
+    const query = range();
+    const screen = await controller.salesMarginReport(query);
+    const included = screen.orders.filter((o) => o.inTotals);
+    const search = firstWord(included[0]?.customerName);
+    if (search === null) return;
+    const shown = filterBySearch(included, salesMarginSearchText, search);
+    const xlsx = await download((res) => controller.salesMarginXlsxFile(query, { search }, res));
+    const rows = xlsx.sheet('Por pedido');
+    expect(orderRows(rows).map((r) => r[0])).toEqual(shown.map((o) => o.orderCode ?? 'Sin pedido'));
+    expectSame(
+      rowStarting(rows, 'Total ·')[(rows[0] ?? []).indexOf('Venta sin IGV (S/)')],
+      summarizeSalesMargin(shown).sales.toFixed(),
+      'venta con búsqueda',
+    );
+    rowStarting(rows, `Búsqueda «${search}»`);
+  });
+
+  it.each(COIL_REPORT_LINES)('Merma por bobina (%s): las bobinas que coinciden', async (line) => {
+    const query = { ...range(), businessLine: line };
+    const screen = await controller.coilWasteReport(query);
+    const search = screen.rows[0]?.code;
+    if (search === undefined) return;
+    const shown = filterBySearch(screen.rows, coilWasteRowSearchText, search);
+    const xlsx = await download((res) => controller.coilWasteXlsxFile(query, { search }, res));
+    const rows = xlsx.sheet('Merma por bobina');
+    expect(rows.slice(1, 1 + shown.length).map((r) => r[0])).toEqual(shown.map((r) => r.code));
+    expect(rowStarting(rows, 'Total ·')[0]).toBe(
+      `Total · ${String(shown.length)} ${shown.length === 1 ? 'bobina' : 'bobinas'}`,
+    );
+  });
+
+  it('Inventario valorizado: los productos que coinciden', async () => {
+    const screen = await controller.inventoryValuationReport({});
+    const search = screen.products[0]?.sku;
+    if (search === undefined) return;
+    const shown = filterBySearch(screen.products, inventoryProductSearchText, search);
+    const xlsx = await download((res) =>
+      controller.inventoryValuationXlsxFile({}, { search }, res),
+    );
+    const products = xlsx.sheet('Productos').filter((r, i) => i > 0 && r[1] !== null);
+    expect(products.map((r) => r[0])).toEqual(shown.map((p) => p.sku));
+  });
+
+  it('Cuentas por cobrar: los clientes que coinciden y su saldo', async () => {
+    const screen = await controller.receivablesAgingReport({});
+    const search = firstWord(screen.customers[0]?.customerName);
+    if (search === null) return;
+    const shown = filterBySearch(screen.customers, receivablesCustomerSearchText, search);
+    const xlsx = await download((res) => controller.receivablesAgingXlsxFile({}, { search }, res));
+    const rows = xlsx.sheet('Por cliente');
+    expect(rows.slice(1, 1 + shown.length).map((r) => r[0])).toEqual(
+      shown.map((c) => c.customerName),
+    );
+    const balance = shown.reduce((acc, c) => acc.plus(c.balancePen), new Decimal(0));
+    expectSame(
+      rowStarting(rows, 'Total al')[(rows[0] ?? []).length - 1],
+      balance.toFixed(),
+      'saldo',
+    );
+  });
+});
+
+/**
+ * cc40 (pedido del dueño, cc32): el saldo de Cuentas por cobrar y el del Panel. Los dos salen de
+ * `ReceivablesAgingService.report({})`, la misma consulta: el Panel lo muestra sin céntimos
+ * (`formatMoney(v, 'PEN', 0)`) y el reporte con dos decimales. Esta prueba fija que la cifra del API
+ * es la misma, que el total es la suma de los clientes, y que la única diferencia visible es el
+ * redondeo a soles, a lo sumo medio sol.
+ */
+describe('Cuentas por cobrar frente al Panel: la diferencia es solo redondeo', () => {
+  it('el mismo saldo en el API; el Panel lo redondea a soles', async () => {
+    const report = await controller.receivablesAgingReport({});
+    const panel = await controller.adminDashboardReport();
+    const balance = toDecimal(report.totals.balancePen);
+    expect(panel.receivables.balancePen).toBe(report.totals.balancePen);
+    expect(panel.receivables.customerCount).toBe(report.totals.customerCount);
+    expect(panel.receivables.documentCount).toBe(report.totals.documentCount);
+    const customers = report.customers.reduce((acc, c) => acc.plus(c.balancePen), new Decimal(0));
+    expect(customers.toFixed(4)).toBe(balance.toFixed(4));
+    // Lo que se ve: el reporte a dos decimales y el Panel a cero. La diferencia es el redondeo.
+    const shownReport = balance.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const shownPanel = balance.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+    expect(shownPanel.minus(shownReport).abs().lte('0.5')).toBe(true);
   });
 });

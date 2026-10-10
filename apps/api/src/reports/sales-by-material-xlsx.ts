@@ -116,7 +116,11 @@ function reconciliationRows(report: SalesByMaterialDto): (string | number | null
  * de siempre); Coberturas (UPVC) y Reventa, por producto (D-417), con sus filas y su no trazable.
  * El nombre del archivo lleva la línea fuera de Coberturas Aluzinc, que conserva el de siempre.
  */
-export function salesByMaterialXlsx(report: SalesByMaterialDto): {
+export function salesByMaterialXlsx(
+  report: SalesByMaterialDto,
+  // cc40 (D-588): la búsqueda de la pantalla, al pie de la hoja principal.
+  notes: (string | number | null)[][] = [],
+): {
   buffer: Buffer;
   filename: string;
 } {
@@ -124,11 +128,13 @@ export function salesByMaterialXlsx(report: SalesByMaterialDto): {
     report.businessLine === BusinessLine.METALLIC_ROOFING ? '' : `-${report.businessLine}`;
   const filename = `ventas-por-material-${report.from}-a-${report.to}${suffix}.xlsx`;
   const sheets =
-    report.products === null ? materialSheets(report) : productSheets(report, report.products);
+    report.products === null
+      ? materialSheets(report, notes)
+      : productSheets(report, report.products, notes);
   return { buffer: build(sheets), filename };
 }
 
-function materialSheets(report: SalesByMaterialDto): Sheet[] {
+function materialSheets(report: SalesByMaterialDto, notes: (string | number | null)[][]): Sheet[] {
   const main: Sheet = {
     name: 'Ventas por material',
     header: ['Tipo', 'Espesor (mm)', 'Color', ...FIGURE_HEADER],
@@ -153,6 +159,7 @@ function materialSheets(report: SalesByMaterialDto): Sheet[] {
     ]);
   }
   main.rows.push(['Total', null, '', ...figureCells(report.total)]);
+  main.rows.push(...notes);
   main.rows.push([]);
   main.rows.push(['Venta no trazable (S/)', num(report.untraceableSalesPen)]);
   // El cuadre por comprobante, sin filtros (ver la leyenda de la pantalla).
@@ -241,7 +248,11 @@ function materialSheets(report: SalesByMaterialDto): Sheet[] {
  * pantalla, con la unidad en su propia columna («und» sin decimales, D-579), y el total del API
  * al pie, el mismo que la pantalla muestra sin búsqueda.
  */
-function productSheets(report: SalesByMaterialDto, products: SalesByProductDto): Sheet[] {
+function productSheets(
+  report: SalesByMaterialDto,
+  products: SalesByProductDto,
+  notes: (string | number | null)[][],
+): Sheet[] {
   const main: Sheet = {
     name: 'Ventas por producto',
     header: [
@@ -279,6 +290,7 @@ function productSheets(report: SalesByMaterialDto, products: SalesByProductDto):
         null,
         null,
       ],
+      ...notes,
       [],
       ['Venta no trazable (S/)', num(report.untraceableSalesPen)],
       ...reconciliationRows(report),

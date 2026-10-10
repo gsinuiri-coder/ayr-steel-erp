@@ -1,5 +1,6 @@
 import { Reflector } from '@nestjs/core';
 import type { Response } from 'express';
+import * as XLSX from 'xlsx';
 import { Role, type CoilMonthReportDto, type SalesByMaterialDto } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
@@ -270,7 +271,7 @@ describe('ReportsController', () => {
     const { controller, reports } = build();
     reports.coilsByMonth.mockResolvedValue(COIL_MONTH);
     const res = fakeResponse();
-    await controller.coilsXlsxFile(actor(Role.SUPERVISOR_PLANTA), { month: '2026-08' }, res);
+    await controller.coilsXlsxFile(actor(Role.SUPERVISOR_PLANTA), { month: '2026-08' }, {}, res);
     expect(reports.coilsByMonth).toHaveBeenCalledWith({ month: '2026-08' }, true);
     expect(res.headers['Content-Disposition']).toBe(
       'attachment; filename="reporte-bobinas-2026-08.xlsx"',
@@ -300,7 +301,7 @@ describe('ReportsController', () => {
   it('el xlsx de inventario sale de una sola consulta y viaja como adjunto', async () => {
     const { controller, inventoryValuation } = build();
     const res = fakeResponse();
-    await controller.inventoryValuationXlsxFile({}, res);
+    await controller.inventoryValuationXlsxFile({}, {}, res);
     expect(inventoryValuation.valuation).toHaveBeenCalledTimes(1);
     expect(res.headers['Content-Type']).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -334,11 +335,11 @@ describe('ReportsController', () => {
     });
     const range = { from: '2026-09-01', to: '2026-09-30' };
 
-    await controller.inventoryValuationXlsxFile({ businessLine: 'drywall' }, fakeResponse());
+    await controller.inventoryValuationXlsxFile({ businessLine: 'drywall' }, {}, fakeResponse());
     expect(inventoryValuation.valuation).toHaveBeenLastCalledWith({ businessLine: 'drywall' });
 
     const margin = fakeResponse();
-    await controller.salesMarginXlsxFile({ ...range, businessLine: 'services' }, margin);
+    await controller.salesMarginXlsxFile({ ...range, businessLine: 'services' }, {}, margin);
     expect(salesMargin.salesMargin).toHaveBeenLastCalledWith({
       ...range,
       businessLine: 'services',
@@ -348,15 +349,115 @@ describe('ReportsController', () => {
     );
 
     const material = { ...range, businessLine: 'drywall' as const, kind: 'PERFIL' as const };
-    await controller.salesByMaterialXlsxFile(material, fakeResponse());
+    await controller.salesByMaterialXlsxFile(material, {}, fakeResponse());
     expect(salesByMaterial.report).toHaveBeenLastCalledWith(material);
 
     const waste = fakeResponse();
-    await controller.coilWasteXlsxFile({ ...range, businessLine: 'drywall' }, waste);
+    await controller.coilWasteXlsxFile({ ...range, businessLine: 'drywall' }, {}, waste);
     expect(coilWaste.report).toHaveBeenLastCalledWith({ ...range, businessLine: 'drywall' });
     expect(waste.headers['Content-Disposition']).toBe(
       'attachment; filename="merma-por-bobina-2026-09-01-a-2026-09-30-drywall.xlsx"',
     );
+  });
+
+  it('cc40 (D-588): cada Excel con buscador recibe la búsqueda y la dice al pie', async () => {
+    const t = build();
+    const zeroCoils = { openingKg: '0', weightKg: '0', closingKg: '0', closingValuePen: null };
+    t.reports.coilsByMonth.mockResolvedValue({
+      month: '2026-09',
+      businessLine: null,
+      sealed: { rows: [], totals: zeroCoils },
+      opened: { rows: [], totals: zeroCoils },
+      flow: { openingKg: '0', entriesKg: '0', exitsKg: '0', closingKg: '0' },
+      finished: { count: 0, consumedKg: '0' },
+      annulledWithOpening: { count: 0, openingKg: '0' },
+      totals: zeroCoils,
+    });
+    t.receivablesAging.report.mockResolvedValue({
+      asOf: '2026-09-30',
+      sellerId: null,
+      sellers: [],
+      customers: [],
+      totals: {
+        balancePen: '0',
+        buckets: { CURRENT: '0', D1_30: '0', D31_60: '0', D61_90: '0', OVER_90: '0' },
+        documentCount: 0,
+        customerCount: 0,
+      },
+    });
+    const figures = {
+      theoreticalKg: '0',
+      consumedKg: '0',
+      trimKg: '0',
+      wastePct: null,
+      overStandard: false,
+      materialCostPen: null,
+      trimCostPen: null,
+    };
+    t.productionSummary.report.mockResolvedValue({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      businessLine: 'metallic-roofing',
+      standardPct: '1.00',
+      withCosts: false,
+      groups: [],
+      totals: { orderCount: 0, ...figures, unattributedKg: '0' },
+    });
+    t.coilWaste.report.mockResolvedValue({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      businessLine: 'metallic-roofing',
+      standardPct: '1.00',
+      rows: [],
+      totals: {
+        coilCount: 0,
+        consumedKg: '0',
+        trimKg: '0',
+        closeAdjustmentKg: '0',
+        manualScrapKg: '0',
+        comparableCoilCount: 0,
+        comparableConsumedKg: '0',
+        theoreticalKg: '0',
+        differenceKg: '0',
+        wasteKg: '0',
+        wastePct: null,
+        overStandard: false,
+      },
+    });
+    const range = { from: '2026-09-01', to: '2026-09-30' };
+    const search = { search: 'álamos' };
+    const sheets = (res: { body: unknown }) => {
+      const book = XLSX.read(res.body, { type: 'buffer' });
+      return book.SheetNames.flatMap((n) =>
+        XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[n]!, { header: 1 }),
+      );
+    };
+    const noted = (res: { body: unknown }) =>
+      sheets(res).some((r) => typeof r[0] === 'string' && r[0].startsWith('Búsqueda «álamos»'));
+
+    const calls: [string, (res: Response) => Promise<void>][] = [
+      ['bobinas', (res) => t.controller.coilsXlsxFile(actor(Role.ADMINISTRADOR), {}, search, res)],
+      ['inventario', (res) => t.controller.inventoryValuationXlsxFile({}, search, res)],
+      ['margen', (res) => t.controller.salesMarginXlsxFile(range, search, res)],
+      ['material', (res) => t.controller.salesByMaterialXlsxFile(range, search, res)],
+      ['cxc', (res) => t.controller.receivablesAgingXlsxFile({}, search, res)],
+      ['merma', (res) => t.controller.coilWasteXlsxFile(range, search, res)],
+      [
+        'producción',
+        (res) =>
+          t.controller.productionSummaryXlsxFile(
+            range,
+            actor(Role.ADMINISTRADOR),
+            { ...search, ver: 'pedido' },
+            res,
+          ),
+      ],
+    ];
+    for (const [name, call] of calls) {
+      const res = fakeResponse();
+      await call(res);
+      expect({ name, noted: noted(res) }).toEqual({ name, noted: true });
+    }
   });
 
   it('la rentabilidad de un comprobante delega en su servicio (C06)', async () => {
@@ -370,7 +471,7 @@ describe('ReportsController', () => {
     const { controller, salesMargin } = build();
     const res = fakeResponse();
     const query = { from: '2026-08-01', to: '2026-08-31' };
-    await controller.salesMarginXlsxFile(query, res);
+    await controller.salesMarginXlsxFile(query, {}, res);
     expect(salesMargin.salesMargin).toHaveBeenCalledTimes(1);
     expect(salesMargin.salesMargin).toHaveBeenCalledWith(query);
     expect(res.headers['Content-Disposition']).toMatch(/^attachment; filename=".+\.xlsx"$/);
@@ -381,7 +482,7 @@ describe('ReportsController', () => {
     const query = { from: '2026-09-01', to: '2026-09-30', kind: 'PLANCHA' as const };
     await expect(controller.salesByMaterialReport(query)).resolves.toBe(BY_MATERIAL);
     const res = fakeResponse();
-    await controller.salesByMaterialXlsxFile(query, res);
+    await controller.salesByMaterialXlsxFile(query, {}, res);
     expect(salesByMaterial.report).toHaveBeenCalledTimes(2);
     expect(salesByMaterial.report).toHaveBeenLastCalledWith(query);
     expect(res.headers['Content-Disposition']).toBe(

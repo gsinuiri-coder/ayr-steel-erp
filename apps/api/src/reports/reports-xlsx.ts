@@ -5,10 +5,18 @@ import {
   COIL_STATUS_LABELS,
   coilGroupLabel,
   FISCAL_DOC_TYPE_LABELS,
+  filterBySearch,
+  MARGIN_COST_STATUS_LABELS,
+  salesMarginCountLabel,
+  salesMarginSearchText,
+  searchWords,
+  sumDecimal,
+  summarizeSalesMargin,
   toDecimal,
   type InventoryValuationDto,
   type InventoryValuationQuery,
   type SalesMarginDto,
+  type SalesMarginOrderDto,
   type SalesMarginQuery,
 } from '@ayr/shared';
 import { unitSymbol } from '../common/unit-symbol';
@@ -82,6 +90,10 @@ export function build(sheets: Sheet[]): Buffer {
 export function inventoryValuationXlsx(
   report: InventoryValuationDto,
   line?: InventoryValuationQuery['businessLine'],
+  // cc40 (D-588): la búsqueda de la pantalla, al pie de las dos hojas que busca, y el aviso de
+  // que «Totales» no se busca.
+  notes: (string | number | null)[][] = [],
+  unsearched: (string | number | null)[][] = [],
 ): {
   buffer: Buffer;
   filename: string;
@@ -91,15 +103,18 @@ export function inventoryValuationXlsx(
     header: ['Línea', 'Espesor (mm)', 'Color', 'Bobinas', 'Saldo (kg)', 'Costo/kg', 'Valor (S/)'],
     widths: [22, 13, 18, 9, 13, 11, 14],
     formats: [null, null, null, null, TWO_DECIMALS, null, null],
-    rows: report.coilGroups.map((g) => [
-      BUSINESS_LINE_LABELS[g.businessLine],
-      num(g.thicknessMm),
-      coilGroupLabel(g),
-      g.coilCount,
-      num(g.qtyKg),
-      num(g.avgCostPen),
-      num(g.totalValuePen),
-    ]),
+    rows: [
+      ...report.coilGroups.map((g) => [
+        BUSINESS_LINE_LABELS[g.businessLine],
+        num(g.thicknessMm),
+        coilGroupLabel(g),
+        g.coilCount,
+        num(g.qtyKg),
+        num(g.avgCostPen),
+        num(g.totalValuePen),
+      ]),
+      ...notes,
+    ],
   };
 
   const coils: Sheet = {
@@ -148,15 +163,18 @@ export function inventoryValuationXlsx(
     name: 'Productos',
     header: ['SKU', 'Descripción', 'Línea', 'Cantidad', 'Unidad', 'Costo unitario', 'Valor (S/)'],
     widths: [18, 40, 22, 12, 9, 15, 14],
-    rows: report.products.map((p) => [
-      p.sku,
-      p.name,
-      BUSINESS_LINE_LABELS[p.businessLine],
-      num(p.qty),
-      unitSymbol(p.unit),
-      num(p.avgCostPen),
-      num(p.totalValuePen),
-    ]),
+    rows: [
+      ...report.products.map((p) => [
+        p.sku,
+        p.name,
+        BUSINESS_LINE_LABELS[p.businessLine],
+        num(p.qty),
+        unitSymbol(p.unit),
+        num(p.avgCostPen),
+        num(p.totalValuePen),
+      ]),
+      ...notes,
+    ],
   };
 
   const totals: Sheet = {
@@ -176,6 +194,7 @@ export function inventoryValuationXlsx(
         num(report.totals.productValuePen),
         num(report.totals.totalValuePen),
       ],
+      ...unsearched,
     ],
   };
 
@@ -186,87 +205,190 @@ export function inventoryValuationXlsx(
 }
 
 /**
- * M2 en tres hojas: los pedidos que suman, los que no, y los totales por línea.
+ * M2: los pedidos que suman, sus comprobantes, los que no suman y los totales por línea.
  *
  * Los excluidos van en una hoja aparte y no marcados dentro de la misma, por el mismo motivo
  * que arriba: quien suma la columna de venta de la primera hoja tiene que obtener el total
  * que dice el reporte, y eso solo pasa si lo que no suma no está ahí.
  *
+ * cc40 (D-587): **una venta, una fila.** Hasta cc39 los comprobantes colgaban debajo de su pedido
+ * en la misma columna «Venta sin IGV», así que sumar la hoja «Por pedido» contaba cada venta dos
+ * veces (el pedido y sus comprobantes) y la hoja no tenía total. Ahora «Por pedido» lleva solo
+ * los pedidos y una fila de total con el mismo cálculo que el pie de la pantalla
+ * (`summarizeSalesMargin`), y los comprobantes van a su propia hoja, cada uno con su pedido.
+ *
  * cc39 (D-580): con `line`, el Excel de esa pestaña, del DTO de esa pestaña. Lleva las columnas
  * que la pantalla muestra en ella: sin «Material de OPs» (solo en «Todas»), y en una línea sin
  * costo registrado (Servicios, D-392) sin costo ni margen. Los totales son los de la pestaña.
+ *
+ * cc40 (D-588): `search` es la búsqueda de la pantalla. Recorta los pedidos que suman, como la
+ * tabla; la facturación parcial, el costo no rastreable y la franja no se buscan en la pantalla y
+ * tampoco aquí.
  */
 export function salesMarginXlsx(
   report: SalesMarginDto,
   line?: SalesMarginQuery['businessLine'],
+  search = '',
 ): { buffer: Buffer; filename: string } {
   const noCost = line !== undefined && NO_COST_REPORT_LINES.includes(line);
-  // Las once columnas de siempre y, por pestaña, cuáles se quedan.
-  const COLUMNS = [
+  const included = filterBySearch(
+    report.orders.filter((o) => o.inTotals),
+    salesMarginSearchText,
+    search,
+  );
+  const excludedOrders = report.orders.filter((o) => !o.inTotals);
+
+  // Las columnas de un pedido y, por pestaña, cuáles se quedan.
+  const ORDER_COLUMNS = [
     { header: 'Pedido', width: 14 },
     { header: 'Cliente', width: 34 },
     { header: 'Vendedor', width: 20 },
-    { header: 'Comprobante', width: 16 },
-    { header: 'Tipo', width: 14 },
+    { header: 'Comprobantes', width: 13 },
     { header: 'Venta sin IGV (S/)', width: 18 },
     { header: 'Costo (S/)', width: 14, cost: true },
     { header: 'Margen (S/)', width: 14, cost: true },
     { header: 'Margen %', width: 10, cost: true },
     { header: 'Material de OPs (S/)', width: 19, allOnly: true },
-    { header: 'Costo / Emisión', width: 16 },
+    // En una línea sin costo (Servicios) el estado del costo lo deciden otras líneas (D-412):
+    // la pantalla no lo muestra, y el Excel tampoco.
+    { header: 'Costo registrado', width: 18, cost: true },
   ];
-  const keep = COLUMNS.map((c, i) => ({ ...c, i })).filter(
-    (c) => !(c.cost === true && noCost) && !(c.allOnly === true && line !== undefined),
-  );
-  const pick = (row: (string | number | null)[]): (string | number | null)[] =>
-    keep.map((c) => row[c.i] ?? null);
+  const orderKeep = keepColumns(ORDER_COLUMNS, noCost, line);
+  const orderRow = (o: SalesMarginOrderDto): (string | number | null)[] =>
+    orderKeep.pick([
+      o.orderCode ?? 'Sin pedido',
+      o.customerName,
+      o.sellerName ?? '',
+      o.documents.length,
+      num(o.salesPen),
+      num(o.costPen),
+      num(o.marginPen),
+      num(o.marginPct),
+      num(o.opMaterialCostPen),
+      MARGIN_COST_STATUS_LABELS[o.costStatus],
+    ]);
+  const summary = summarizeSalesMargin(included);
+  const ordersSheet: Sheet = {
+    name: 'Por pedido',
+    header: orderKeep.header,
+    widths: orderKeep.widths,
+    rows: [
+      ...included.map(orderRow),
+      // El pie de la tabla de la pantalla: la venta de cada pedido una vez.
+      orderKeep.pick([
+        `Total · ${salesMarginCountLabel(summary)}`,
+        '',
+        '',
+        included.reduce((n, o) => n + o.documents.length, 0),
+        num(summary.sales.toFixed()),
+        num(summary.cost.toFixed()),
+        num(summary.margin.toFixed()),
+        num(summary.marginPct),
+        null,
+        '',
+      ]),
+      ...searchNoteRows(search, included.length, report.orders.filter((o) => o.inTotals).length),
+    ],
+  };
 
-  const rowsOf = (inTotals: boolean): (string | number | null)[][] =>
-    report.orders
-      .filter((o) => o.inTotals === inTotals)
-      .flatMap((o) => [
-        [
+  const excludedSheet: Sheet = {
+    name: 'Facturación parcial',
+    header: orderKeep.header,
+    widths: orderKeep.widths,
+    rows:
+      excludedOrders.length === 0
+        ? []
+        : [
+            ...excludedOrders.map(orderRow),
+            // Segundo modelo de cc40 (P2-1): la pantalla los lista en dos secciones, y así los
+            // totaliza la hoja, uno por estado del costo.
+            ...(['NO_COMPARABLE', 'NO_RASTREABLE'] as const).flatMap((status) => {
+              const orders = excludedOrders.filter((o) => o.costStatus === status);
+              if (orders.length === 0) return [];
+              return [
+                orderKeep.pick([
+                  `Total ${MARGIN_COST_STATUS_LABELS[status].toLowerCase()} · ${salesMarginCountLabel(summarizeSalesMargin(orders))}`,
+                  '',
+                  '',
+                  orders.reduce((n, o) => n + o.documents.length, 0),
+                  num(summarizeSalesMargin(orders).sales.toFixed()),
+                  null,
+                  null,
+                  null,
+                  null,
+                  '',
+                ]),
+              ];
+            }),
+            ...(line === undefined
+              ? [
+                  [],
+                  [
+                    `La venta de Servicios de estos pedidos no depende del costo y sí suma en «Totales» (D-412): la venta fuera de los totales es S/ ${toDecimal(report.totals.excludedSalesPen).toFixed(2)} (facturación parcial) y S/ ${toDecimal(report.totals.untraceableSalesPen).toFixed(2)} (costo no rastreable), como dice la pantalla.`,
+                  ],
+                ]
+              : []),
+          ],
+  };
+
+  // Los comprobantes, cada uno con su pedido: el detalle que la pantalla abre con la flecha.
+  const DOCUMENT_COLUMNS = [
+    { header: 'Pedido', width: 14 },
+    { header: 'Cliente', width: 34 },
+    { header: 'Comprobante', width: 16 },
+    { header: 'Tipo', width: 14 },
+    { header: 'Emisión', width: 11 },
+    { header: 'Venta sin IGV (S/)', width: 18 },
+    { header: 'Costo (S/)', width: 14, cost: true },
+    { header: 'Margen (S/)', width: 14, cost: true },
+    { header: 'Margen %', width: 10, cost: true },
+    { header: 'Hoja del pedido', width: 20 },
+  ];
+  const docKeep = keepColumns(DOCUMENT_COLUMNS, noCost, line);
+  const documentRows = (orders: readonly SalesMarginOrderDto[], sheet: string) =>
+    orders.flatMap((o) =>
+      o.documents.map((d) =>
+        docKeep.pick([
           o.orderCode ?? 'Sin pedido',
           o.customerName,
-          o.sellerName ?? '',
-          '',
-          '',
-          num(o.salesPen),
-          num(o.costPen),
-          num(o.marginPen),
-          num(o.marginPct),
-          num(o.opMaterialCostPen),
-          // En una línea sin costo (Servicios) el estado del costo lo deciden otras líneas (D-412):
-          // la pantalla no lo muestra, y el Excel tampoco.
-          noCost ? '' : COST_STATUS_LABELS[o.costStatus],
-        ],
-        // Los comprobantes cuelgan debajo con el pedido en blanco: el archivo se lee de
-        // arriba abajo y repetir el código en cada línea lo vuelve ilegible.
-        ...o.documents.map((d) => [
-          '',
-          '',
-          '',
           d.number ?? '',
           FISCAL_DOC_TYPE_LABELS[d.docType],
+          d.issueDate,
           num(d.salesPen),
           num(d.costPen),
           num(d.marginPen),
           num(d.marginPct),
-          null,
-          d.issueDate,
+          sheet,
         ]),
-      ])
-      .map(pick);
-
-  const header = keep.map((c) => c.header);
-  const widths = keep.map((c) => c.width);
-
-  const included: Sheet = { name: 'Por pedido', header, widths, rows: rowsOf(true) };
-  const excluded: Sheet = {
-    name: 'Facturación parcial',
-    header,
-    widths,
-    rows: rowsOf(false),
+      ),
+    );
+  const documentTotal = (orders: readonly SalesMarginOrderDto[], sheet: string) => {
+    const docs = orders.flatMap((o) => o.documents);
+    return docKeep.pick([
+      `Total · ${plural(docs.length, 'comprobante', 'comprobantes')} de «${sheet}»`,
+      '',
+      '',
+      '',
+      '',
+      num(sumDecimal(docs, (d) => d.salesPen).toFixed()),
+      null,
+      null,
+      null,
+      '',
+    ]);
+  };
+  const documentsSheet: Sheet = {
+    name: 'Comprobantes',
+    header: docKeep.header,
+    widths: docKeep.widths,
+    rows: [
+      ...documentRows(included, 'Por pedido'),
+      ...documentRows(excludedOrders, 'Facturación parcial'),
+      documentTotal(included, 'Por pedido'),
+      ...(excludedOrders.length === 0
+        ? []
+        : [documentTotal(excludedOrders, 'Facturación parcial')]),
+    ],
   };
 
   const stats: (string | number | null)[][] = [
@@ -343,18 +465,75 @@ export function salesMarginXlsx(
               null,
             ],
             ...stats,
+            [],
+            // Lo que la ayuda de la pantalla explica: la franja no es el pie de «Por pedido».
+            [
+              'Estas cifras son las de la franja de la pantalla. La venta incluye la de Servicios de los pedidos de «Facturación parcial» y el margen se calcula sin la venta sin costo registrado, así que pueden no coincidir con el total de «Por pedido», que suma sus filas.',
+            ],
           ],
   };
 
   return {
-    buffer: build([included, excluded, totals]),
+    buffer: build([ordersSheet, documentsSheet, excludedSheet, totals]),
     filename: `ventas-margen-${report.from}-a-${report.to}${line === undefined ? '' : `-${line}`}.xlsx`,
   };
 }
 
-const COST_STATUS_LABELS: Record<SalesMarginDto['orders'][number]['costStatus'], string> = {
-  COMPLETO: 'Completo',
-  PARCIAL: 'Costo parcial',
-  NO_COMPARABLE: 'No comparable',
-  NO_RASTREABLE: 'Costo no rastreable',
-};
+/**
+ * Las columnas que se quedan en la pestaña: sin costo en una línea sin costo registrado
+ * (Servicios) y sin las de «Todas» en la pestaña de una línea. `pick` toma una fila con todas las
+ * columnas y deja las que quedan, por su índice original: quitar columnas no corre nada.
+ */
+function keepColumns(
+  columns: readonly { header: string; width: number; cost?: boolean; allOnly?: boolean }[],
+  noCost: boolean,
+  line: SalesMarginQuery['businessLine'],
+) {
+  const keep = columns
+    .map((c, i) => ({ ...c, i }))
+    .filter((c) => !(c.cost === true && noCost) && !(c.allOnly === true && line !== undefined));
+  return {
+    header: keep.map((c) => c.header),
+    widths: keep.map((c) => c.width),
+    pick: (row: (string | number | null)[]): (string | number | null)[] =>
+      keep.map((c) => row[c.i] ?? null),
+  };
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${String(n)} ${n === 1 ? one : many}`;
+}
+
+/**
+ * cc40 (D-588): con la búsqueda de la pantalla, la hoja lo dice al pie, para que nadie tome las
+ * filas recortadas por el reporte entero. Sin búsqueda, nada.
+ */
+export function searchNoteRows(
+  search: string,
+  shown?: number,
+  total?: number,
+): (string | number | null)[][] {
+  if (searchWords(search).length === 0) return [];
+  const count =
+    shown === undefined || total === undefined
+      ? ''
+      : `: ${String(shown)} de ${String(total)} filas`;
+  return [
+    [],
+    [
+      `Búsqueda «${search.trim()}»${count}, las mismas que la pantalla. El total suma solo esas filas.`,
+    ],
+  ];
+}
+
+/**
+ * cc40 (D-588): en una hoja que la pantalla no busca (totales por línea, resumen), con búsqueda,
+ * la hoja dice que sus cifras son las de toda la pestaña.
+ */
+export function unsearchedNoteRows(search: string): (string | number | null)[][] {
+  if (searchWords(search).length === 0) return [];
+  return [
+    [],
+    [`Sin la búsqueda «${search.trim()}»: las cifras de toda la pestaña, como en la pantalla.`],
+  ];
+}

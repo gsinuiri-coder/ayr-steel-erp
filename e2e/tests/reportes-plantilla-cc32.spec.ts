@@ -31,6 +31,13 @@ function uuid(n: number): string {
   return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 }
 
+/** Un número estable por nombre, para los ids del fixture. */
+function nameKey(name: string): number {
+  let k = 0;
+  for (const ch of name) k = (k * 31 + ch.charCodeAt(0)) % 9_000;
+  return k;
+}
+
 function order(
   n: number,
   customer: string,
@@ -44,7 +51,11 @@ function order(
   return {
     salesOrderId: uuid(n),
     orderCode: `PED-E2E-00${String(n)}`,
+    // cc40 (D-586): «Ver por» agrupa por id; un id por nombre, como en la base.
+    customerId: uuid(200 + nameKey(customer)),
     customerName: customer,
+    customerDocNumber: `20${String(200 + nameKey(customer)).padStart(9, '0')}`,
+    sellerId: uuid(300 + nameKey(seller)),
     sellerName: seller,
     salesPen: sales,
     costPen: cost,
@@ -296,6 +307,47 @@ test.describe('Plantilla de reportes (cc32)', () => {
     await page.getByRole('button', { name: 'Ver detalle de Marco T.' }).click();
     await expect(page.getByTestId('detalle-pedido')).toHaveCount(2);
     await expect(page.getByTestId('detalle-pedido').first()).toContainText('PED-E2E-002');
+  });
+
+  test('cc40: «Ver por» Cliente agrupa por id y enlaza; las tres vistas suman lo mismo; el Excel lleva la búsqueda', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page);
+    // Dos clientes distintos que se llaman igual: el 2 y el 4 pasan a ser «Techos del Sur».
+    await page.route(
+      (url) => url.pathname === '/api/reports/sales-margin',
+      async (route) => {
+        const data = fixture('2026-10-01', '2026-10-07');
+        const twin = data.orders[3];
+        if (twin) data.orders[3] = { ...twin, customerName: 'Techos del Sur' };
+        await route.fulfill({ json: data });
+      },
+    );
+    await page.goto('/reportes/ventas-margen?from=2026-10-01&to=2026-10-07&ver=cliente');
+    const groups = page.getByTestId('fila-grupo');
+    // Cuatro clientes por id, aunque dos se llamen igual.
+    await expect(groups).toHaveCount(4);
+    await expect(groups.filter({ hasText: 'Techos del Sur' })).toHaveCount(2);
+    await expect(footer(page).locator('[data-column="sales"]')).toHaveText('13,768.80');
+    // El nombre enlaza a la ficha del cliente: la lista con su RUC (D-172).
+    const link = groups.first().getByRole('link', { name: 'Constructora Los Álamos' });
+    await expect(link).toHaveAttribute('href', /^\/clientes\?search=20\d{9}$/);
+
+    // Con búsqueda, Pedido, Vendedor y Cliente suman lo mismo, y el Excel la lleva.
+    await page.getByLabel('Buscar en el reporte').fill('marco');
+    await expect(page).toHaveURL(/search=marco/);
+    await expect(footer(page).locator('[data-column="sales"]')).toHaveText('8,957.62');
+    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      'href',
+      '/api/reports/sales-margin/xlsx?from=2026-10-01&to=2026-10-07&search=marco',
+    );
+    for (const view of ['Vendedor', 'Pedido']) {
+      await page
+        .getByRole('group', { name: 'Ver por' })
+        .getByRole('button', { name: view })
+        .click();
+      await expect(footer(page).locator('[data-column="sales"]')).toHaveText('8,957.62');
+    }
   });
 
   test('mientras carga otro periodo, el dato anterior se ve marcado; otra línea no lo hereda', async ({
