@@ -2,6 +2,31 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-09 — cc39: Excel que faltaban, ids, acabado, guía y estado de cuenta del proveedor (D-580..D-585, PR #161 en prod)
+
+Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc39.md`; UAT en
+`docs/uat/cc39.md`; revisión del segundo modelo en `docs/revision/cc39-segundo-modelo.md`.
+
+- **En producción:**
+  - API: `00111-hz7` (`git-sha=04472754`), 100 % del tráfico;
+  - web: `main` `afe791b6`;
+  - smoke en verde en el API y en los dos dominios; 0 respuestas 5xx en los logs de la revisión.
+- **Vuelta atrás:** llevar el tráfico a `00110-7ps` y revertir el merge de #161.
+- **Entra:** Excel de Merma por bobina (nuevo) y de Ventas por material, Inventario valorizado y
+  Ventas y margen en todas sus pestañas (D-580); `customerId`/`sellerId` (D-581); `finishName`
+  (D-582); `dispatchNoteHasPdf` (D-583); el estado de cuenta del proveedor corta el día en Lima
+  (D-584); m y kg a dos decimales a la vista en esos Excel (D-585, provisional).
+- **UAT en producción, solo lectura, con admin efímero (borrado):** 64 comparaciones de totales
+  Excel contra el JSON de la pantalla en 17 pestañas, todas iguales. Ninguna compra de proveedor con
+  saldo y vencimiento hoy: el atraso de noche lo prueban los unitarios de borde.
+- **Registro de riesgo (toca datos que lee el dueño):**
+  - las rutas de Excel por línea: si un día divergen de la pantalla, `report-xlsx-totals.db-spec`
+    lo detecta en la CI;
+  - la merma lee las bobinas con una sentencia cruda (`coil-waste.service.ts`) para no romper el
+    presupuesto del Panel de planta.
+- **Pendiente de decisión del dueño:** ratificar D-585 (formato de dos decimales solo en los Excel
+  tocados).
+
 ## 2026-10-09 — demo-cc38: demo lista para probar cc38, y «und» en el PDF de la cotización (PR #159)
 
 - **Demo:** rama `demo` de Neon restablecida desde `production` y con las migraciones de `main`
