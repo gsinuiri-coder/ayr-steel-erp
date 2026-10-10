@@ -244,8 +244,10 @@ Reglas de convivencia, sin excepción:
   `--update-labels git-sha=<sha-corto>`; un push a `main` publica el web en Vercel, no la API.
 - `pnpm smoke:prod` se corre desde un worktree en el mismo SHA desplegado: un smoke más nuevo
   que la API produce falsos rojos y uno más viejo, falsos verdes.
-- Un `migrate diff` no vacío solo se admite si coincide **exactamente** con el drift conocido en
-  `docs/PROGRESO.md`; cualquier diferencia nueva obliga a parar.
+- Un `migrate diff` no vacío solo se admite si coincide **exactamente** con el drift aprobado en
+  `apps/api/prisma/drift-esperado.sql` (D-593, clasificado en `docs/analisis/drift-schema.md`);
+  cualquier diferencia nueva obliga a parar. `pnpm check:drift` lo comprueba en la CI sobre una
+  base creada desde cero.
 - El label puede quedar detrás de commits posteriores exclusivamente documentales. Verificarlo
   con `git diff --quiet <sha-desplegado> origin/main -- apps packages Dockerfile .gcloudignore
 package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 significa
@@ -425,9 +427,10 @@ la ventana suspendida (D-533) puede ser a cualquier hora.
 | `dev`        | sintéticos            | Docker local.                                                                                                                                                                                              |
 | `ci`         | efímeros              | E2E contra Postgres de servicio en el runner; Neon `ci` solo para migraciones + smoke.                                                                                                                     |
 
-Deuda de entorno conocida: drift de schema en `production` (defaults de `operation_date` en 5
-tablas, 5 FK recreadas, 2 índices y un renombre) — `migrate diff` debe seguir coincidiendo
-exacto en cada ventana.
+Drift de schema (D-593, cc42): clasificado en `docs/analisis/drift-schema.md`. Las FK, los índices
+y el renombre se declararon en `schema.prisma`; quedan, a propósito, los defaults de
+`operation_date` en 5 tablas (`apps/api/prisma/drift-esperado.sql`) — `migrate diff` debe seguir
+coincidiendo exacto en cada ventana.
 
 ---
 

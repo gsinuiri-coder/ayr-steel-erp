@@ -8,6 +8,7 @@
 //
 // Uso: ESCENARIOS_DATABASE_URL=… pnpm seed:escenarios:test
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { ROOT } from './lib.mjs';
@@ -54,8 +55,43 @@ function runSeed(round) {
   return Object.fromEntries(ops.map((m) => [m[1], m[3]]));
 }
 
+/**
+ * Revisión cc42: entre corrida y corrida se usan los casos como lo haría el dueño, para que la
+ * segunda anule también lo que ya se probó: P2 registrada y cerrada, M2 registrado y una OP de
+ * drywall fabricada y cerrada (reabrir, revertir y anular, D-592).
+ */
+async function useCases(ops) {
+  const server = await startApi(url, apiPort(), { compile: false });
+  try {
+    const api = createClient(server.base);
+    await api.login();
+    const byCode = new Map((await api.list('/production')).map((o) => [o.code, o]));
+    const p2 = byCode.get(ops.P2);
+    const m2 = byCode.get(ops.M2);
+    await api.post(`/production/roofing/${p2.id}/drafts/commit`, {
+      close: true,
+      idempotencyKey: randomUUID(),
+    });
+    await api.post(`/production/roofing/${m2.id}/drafts/commit`, { idempotencyKey: randomUUID() });
+    const stud = (await api.list('/catalog')).find((p) => p.sku === DEMO_SKUS.stud);
+    const strip = (await api.list('/coils?status=OPEN')).find(
+      (c) => c.kind === 'STRIP' && c.availableKg !== '0.000',
+    );
+    const order = await api.post('/production', { productId: stud.id, targetPieces: 50 });
+    await api.post(`/production/${order.id}/consume`, { coilId: strip.id });
+    await api.post(`/production/${order.id}/report`, { pieces: 50, idempotencyKey: randomUUID() });
+    await api.post(`/production/${order.id}/close`, { reason: 'Prueba: el resto del fleje queda' });
+    const closed = (await api.list('/production')).filter((o) => o.status === 'CLOSED');
+    assert.equal(closed.length, 2, 'P2 y la OP de drywall quedaron cerradas');
+    return order.code;
+  } finally {
+    await server.stop();
+  }
+}
+
 const first = runSeed(1);
 console.log('Corrida 1:', JSON.stringify(first));
+const drywallOp = await useCases(first);
 const second = runSeed(2);
 console.log('Corrida 2:', JSON.stringify(second));
 for (const key of Object.keys(first)) assert.notEqual(first[key], second[key], `${key} repitió OP`);
@@ -72,7 +108,7 @@ try {
     Object.values(second).sort(),
     'Las OP DEMO vivas tienen que ser exactamente las de la última corrida',
   );
-  for (const code of Object.values(first)) {
+  for (const code of [...Object.values(first), drywallOp]) {
     assert.equal(ops.find((o) => o.code === code)?.status, 'CANCELLED', `${code} no quedó anulada`);
   }
 
@@ -95,9 +131,10 @@ try {
   assert.equal(a1Drafts[0].meters, '20.000', 'A1: 20 m en el borrador del servidor');
   assert.equal((await activeReports(byKey.A2)).length, 1, 'A2: 27 m registrados');
 
-  const orders = (await api.list('/sales/orders')).filter(
-    (o) => o.customerName === DEMO.customer.name,
+  const customer = (await api.list(`/customers?search=${DEMO.customer.docNumber}`)).find(
+    (c) => c.docNumber === DEMO.customer.docNumber,
   );
+  const orders = (await api.list('/sales/orders')).filter((o) => o.customerId === customer.id);
   assert.equal(orders.filter((o) => o.status !== 'CANCELLED').length, 6, 'seis pedidos vivos');
 
   const suppliers = await api.list('/suppliers');

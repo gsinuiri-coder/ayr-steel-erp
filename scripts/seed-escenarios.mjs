@@ -97,7 +97,16 @@ export function assertEscenariosDb(rawUrl) {
         'ayr_local_e2e la vacía la suite E2E y cualquier otra no es de la vista previa.',
     );
   }
-  return url.toString();
+  // Revisión cc42 (P1): Prisma y libpq leen parámetros como `?host=` o `?dbname=` que pisan lo
+  // que dice la URL. Solo se admite `schema=public`, y la URL se rearma desde sus partes fijas:
+  // a los hijos nunca les llega un parámetro que el guard no miró.
+  for (const [key, value] of url.searchParams) {
+    if (key !== 'schema' || value !== 'public') {
+      throw new Error(`seed:escenarios no admite el parámetro "${key}" en la URL de la base.`);
+    }
+  }
+  const port = url.port === '' ? '5432' : url.port;
+  return `postgresql://${url.username}:${url.password}@${url.hostname}:${port}/${ESCENARIOS_DB_NAME}?schema=public`;
 }
 
 export function apiPort(env = process.env) {
@@ -128,6 +137,8 @@ function apiEnv(url, port) {
     BIND_HOST: '127.0.0.1',
     WEB_ORIGIN: `http://127.0.0.1:${String(port)}`,
     THROTTLE_DISABLED: 'true',
+    // Revisión cc42: nada de padrón real desde una base local.
+    APIS_NET_PE_TOKEN: '',
     ...EXTERNAL_OUTPUTS_OFF,
   };
 }
@@ -401,8 +412,8 @@ export async function voidPrevious(api, masters) {
       failures.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
-  const isCustomer = (row) =>
-    row.customerId === masters.customer.id || row.customerName === DEMO.customer.name;
+  // Por id (el cliente DEMO se encuentra por su DNI): un «Cliente Demo» creado a mano no se toca.
+  const isCustomer = (row) => row.customerId === masters.customer.id;
   const supplierIds = new Set([masters.steelSupplier.id, masters.cuttingSupplier.id]);
   const skus = new Set(Object.values(DEMO_SKUS));
   const reason = { reason: REASON };
@@ -432,7 +443,7 @@ export async function voidPrevious(api, masters) {
   await attempt('órdenes de producción', async () => {
     const orders = (await api.list('/production'))
       .filter((o) => skus.has(o.productSku) && o.status !== 'CANCELLED')
-      .sort((a, b) => String(b.code).localeCompare(String(a.code)));
+      .sort((a, b) => opNumber(b.code) - opNumber(a.code));
     for (const o of orders) {
       await attempt(`OP ${o.code}`, async () => {
         const base = o.kind === 'ROOFING' ? `/production/roofing/${o.id}` : `/production/${o.id}`;
@@ -518,6 +529,9 @@ export async function voidPrevious(api, masters) {
 // Los casos
 // ---------------------------------------------------------------------------
 
+/** `OP-000123` → 123: el orden de creación, aunque el correlativo pase los seis dígitos. */
+const opNumber = (code) => Number(String(code).replace(/\D/g, ''));
+
 const pieces = (...rows) => rows.map(([m, qty]) => ({ lengthMm: (m * 1000).toFixed(2), qty }));
 
 export async function seedCases(api, masters) {
@@ -559,6 +573,7 @@ export async function seedCases(api, masters) {
     );
     return weights.map((w) => {
       const i = coils.findIndex((c) => Number(c.weightKg) === Number(w));
+      if (i < 0) throw new Error(`La compra ${note} no dejó la bobina de ${w} kg`);
       const [c] = coils.splice(i, 1);
       return c;
     });

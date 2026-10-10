@@ -32,8 +32,9 @@ export function driftDbUrl(env = process.env) {
   if (!LOCAL_HOSTS.has(url.hostname)) {
     throw new Error(`check:drift solo corre contra un Postgres local (host ${url.hostname}).`);
   }
-  url.pathname = `/${DRIFT_DB_NAME}`;
-  return url.toString();
+  // Revisión cc42: se rearma desde partes fijas; un `?host=` del entorno no llega a Prisma.
+  const port = url.port === '' ? '5432' : url.port;
+  return `postgresql://${url.username}:${url.password}@${url.hostname}:${port}/${DRIFT_DB_NAME}?schema=public`;
 }
 
 /** La misma URL apuntada a la base de mantenimiento `postgres`, para crear y borrar. */

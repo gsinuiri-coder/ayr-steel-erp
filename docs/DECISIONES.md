@@ -2219,3 +2219,21 @@ el servidor (las filas que hay pueden ser las que ella misma subió). Hallazgos 
 
 El dueño ratificó D-591 (cc41: el borrador del accesorio en el servidor, que reemplaza D-559). Su
 fila de `ARQUITECTURA.md` §0.2 lo dice.
+
+## D-592 a D-595 — cc42: drift de schema y `seed:escenarios` (2026-10-10)
+
+**El drift (D-593, D-594).** Desde la ventana S2 cada `migrate diff` contra `production` mostraba
+las mismas 13 diferencias, y cada ventana comprobaba que siguieran iguales sin saber de dónde
+venían. Al compararlas con una base creada desde cero con las migraciones, el SQL resultó idéntico:
+todo lo que tiene `production` lo crean las migraciones, y era `schema.prisma` el que no lo
+declaraba. Se corrigieron 8 en el schema: las FK, que las migraciones crean `ON DELETE RESTRICT`
+y Prisma habría pasado a `SET NULL` en la próxima migración generada, y los índices. Los 5 defaults
+de `operation_date` se dejan fuera a propósito (D-594). El guardián compara siempre una base
+desde cero; que `production` siga igual lo comprueba cada ventana con
+`migrations-diff.mjs --script`. La tabla completa está en `docs/analisis/drift-schema.md`.
+
+**`seed:escenarios` (D-592, D-595).** El dueño quiere tener a mano, en su `ayr_local`, los casos
+de demo-cc38 sin restablecer demo. «Borrar y recrear lo suyo» choca con el kardex append-only, y
+el dueño eligió anular por servicios (D-592). La anulación se probó también después de usar los
+casos: con P2 y A2 cerradas, M2 registrado y una OP de drywall fabricada y cerrada, la corrida
+siguiente lo anuló todo sin fallas y el saldo del perfil volvió a 0.
