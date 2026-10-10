@@ -162,6 +162,43 @@ jobs:
           path: playwright-report
           retention-days: 7
 
+  escenarios:
+    name: Escenarios de planta (seed:escenarios)
+    runs-on: ubuntu-latest
+    # D-595 (cc42): `pnpm seed:escenarios` dos veces seguidas contra una `ayr_local` del runner,
+    # verificado por la API. Va en su propio job porque el E2E ya roza su límite de tiempo.
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ayr
+          POSTGRES_PASSWORD: ayr_ci
+          POSTGRES_DB: ayr_local
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ayr -d ayr_local"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # Descartable: nace y muere con el job. El guard del script solo admite `ayr_local` local.
+      ESCENARIOS_DATABASE_URL: postgresql://ayr:ayr_ci@localhost:5432/ayr_local?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ayr/shared build
+      - run: pnpm --filter @ayr/api db:generate
+      - run: pnpm seed:escenarios:test
+
   smoke-neon:
     name: Smoke E2E y migraciones (Neon ci)
     runs-on: ubuntu-latest
