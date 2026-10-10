@@ -41,6 +41,7 @@ function order(over: Partial<SalesMarginDto['orders'][number]>): SalesMarginDto[
     orderCode: 'PED-0001',
     customerId: '00000000-0000-4000-a000-0000000000c1',
     customerName: 'Cliente',
+    customerDocNumber: '20100000001',
     sellerId: '00000000-0000-4000-a000-0000000000d1',
     sellerName: 'Vendedor',
     salesPen: '0.0000',

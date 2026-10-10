@@ -101,6 +101,7 @@ const margin: SalesMarginDto = {
       orderCode: 'PED-000012',
       customerId: '00000000-0000-4000-a000-0000000000c1',
       customerName: 'Cliente S.A.',
+      customerDocNumber: '20100000001',
       sellerId: '00000000-0000-4000-a000-0000000000d1',
       sellerName: 'Vendedor Uno',
       salesPen: '1000.0000',
@@ -130,6 +131,7 @@ const margin: SalesMarginDto = {
       orderCode: 'PED-000013',
       customerId: '00000000-0000-4000-a000-0000000000c2',
       customerName: 'Otro Cliente',
+      customerDocNumber: '20100000002',
       sellerId: null,
       sellerName: null,
       salesPen: '400.0000',
@@ -224,13 +226,20 @@ describe('reports-xlsx', () => {
       const { buffer, filename } = salesMarginXlsx(margin);
       const book = XLSX.read(buffer, { type: 'buffer' });
 
-      expect(book.SheetNames).toEqual(['Por pedido', 'Facturación parcial', 'Totales']);
+      expect(book.SheetNames).toEqual([
+        'Por pedido',
+        'Comprobantes',
+        'Facturación parcial',
+        'Totales',
+      ]);
       expect(filename).toBe('ventas-margen-2026-09-01-a-2026-09-30.xlsx');
 
       // El pedido no comparable no está en la hoja que suma: quien totalice esa columna
       // tiene que obtener el total del reporte, y eso exige que lo excluido no esté ahí.
       const included = sheetOf(buffer, 'Por pedido');
       expect(cell(included, 'A2')?.v).toBe('PED-000012');
+      // cc40 (D-587): debajo del pedido va su total, no sus comprobantes.
+      expect(cell(included, 'A3')?.v).toBe('Total · 1 pedido');
       expect(cell(included, 'A4')).toBeUndefined();
 
       const excluded = sheetOf(buffer, 'Facturación parcial');
@@ -239,14 +248,16 @@ describe('reports-xlsx', () => {
 
     it('un costo que no se puede trazar deja la celda vacía, no en cero', () => {
       const { buffer } = salesMarginXlsx(margin);
-      const sheet = sheetOf(buffer, 'Por pedido');
+      const documents = sheetOf(buffer, 'Comprobantes');
 
-      // Fila 3 = el comprobante del primer pedido; G = Costo, que va null porque su despacho
+      // Fila 2 = el comprobante del primer pedido; G = Costo, que va null porque su despacho
       // no está declarado. Vacío y cero significan cosas distintas y el archivo lo respeta.
-      expect(cell(sheet, 'G3')).toBeUndefined();
-      // El del pedido sí está.
-      expect(cell(sheet, 'G2')?.t).toBe('n');
-      expect(cell(sheet, 'G2')?.v).toBe(600);
+      expect(cell(documents, 'C2')?.v).toBe('F001-00000012');
+      expect(cell(documents, 'G2')).toBeUndefined();
+      // El del pedido sí está (F = Costo en «Por pedido»).
+      const orders = sheetOf(buffer, 'Por pedido');
+      expect(cell(orders, 'F2')?.t).toBe('n');
+      expect(cell(orders, 'F2')?.v).toBe(600);
     });
 
     it('los totales llevan el conteo de filas parciales y excluidas', () => {
@@ -323,17 +334,19 @@ describe('cc39 (D-580): el Excel de la pestaña de una línea', () => {
     const first = rowsOf(buffer, 'Por pedido')[1] ?? [];
     expect(first[header.indexOf('Venta sin IGV (S/)')]).toBe(1000);
     // El estado del costo lo deciden otras líneas (D-412): ni la pantalla ni el Excel lo muestran.
-    expect(first[header.indexOf('Costo / Emisión')] ?? '').toBe('');
+    expect(header).not.toContain('Costo registrado');
+    expect(headerOf(buffer, 'Comprobantes')).not.toContain('Costo (S/)');
     const total = rowsOf(buffer, 'Totales')[1] ?? [];
     expect(total[0]).toBe('Total Servicios (sin costo registrado)');
     expect(total[1]).toBe(1000);
     expect(total.slice(2).every((c) => c === undefined || c === null)).toBe(true);
   });
 
-  it('«Todas» no cambia: las once columnas y el archivo de siempre', () => {
+  it('«Todas»: el archivo de siempre y las diez columnas del pedido', () => {
     const { buffer, filename } = salesMarginXlsx(margin);
     expect(filename).toBe('ventas-margen-2026-09-01-a-2026-09-30.xlsx');
-    expect(headerOf(buffer, 'Por pedido')).toHaveLength(11);
+    expect(headerOf(buffer, 'Por pedido')).toHaveLength(10);
+    expect(headerOf(buffer, 'Por pedido')).toContain('Material de OPs (S/)');
   });
 
   it('inventario valorizado de una línea: el archivo la nombra; kg a dos decimales a la vista', () => {
@@ -344,5 +357,100 @@ describe('cc39 (D-580): el Excel de la pestaña de una línea', () => {
     const kg = book.Sheets['Bobinas por grupo']?.E2 as XLSX.CellObject | undefined;
     expect(kg?.t).toBe('n');
     expect(kg?.z).toBe('#,##0.00');
+  });
+});
+
+describe('cc40 (D-587, D-588): «Por pedido» suma cada venta una vez, y la búsqueda viaja', () => {
+  const rowsOf = (buffer: Buffer, name: string): unknown[][] =>
+    XLSX.utils.sheet_to_json<unknown[]>(sheetOf(buffer, name), { header: 1 });
+  const [first] = margin.orders;
+  if (first === undefined) throw new Error('fixture sin pedidos');
+  const doc = first.documents[0];
+  if (doc === undefined) throw new Error('fixture sin comprobantes');
+  // Un pedido con dos comprobantes: el caso en que la hoja de cc39 sumaba la venta dos veces.
+  const twoDocs: SalesMarginDto = {
+    ...margin,
+    orders: [
+      {
+        ...first,
+        documents: [
+          { ...doc, salesPen: '600.0000' },
+          {
+            ...doc,
+            id: '66666666-6666-4666-8666-666666666666',
+            number: 'F001-00000014',
+            salesPen: '400.0000',
+          },
+        ],
+      },
+      {
+        ...first,
+        salesOrderId: '77777777-7777-4777-8777-777777777777',
+        orderCode: 'PED-000015',
+        customerId: '00000000-0000-4000-a000-0000000000c3',
+        customerName: 'Tercer Cliente',
+        salesPen: '250.0000',
+        costPen: '100.0000',
+        marginPen: '150.0000',
+        marginPct: '60.00',
+        documents: [{ ...doc, id: '88888888-8888-4888-8888-888888888888', salesPen: '250.0000' }],
+      },
+      ...margin.orders.slice(1),
+    ],
+  };
+
+  it('la columna de venta de «Por pedido» suma una vez, y la fila de total lo dice', () => {
+    const { buffer } = salesMarginXlsx(twoDocs);
+    const rows = rowsOf(buffer, 'Por pedido');
+    const header = rows[0] ?? [];
+    const sales = header.indexOf('Venta sin IGV (S/)');
+    const orderRows = rows.slice(1).filter((r) => String(r[0]).startsWith('PED-'));
+    expect(orderRows).toHaveLength(2);
+    const summed = orderRows.reduce((acc, r) => acc + Number(r[sales]), 0);
+    expect(summed).toBe(1250);
+    const total = rows.find((r) => String(r[0]).startsWith('Total'));
+    expect(total?.[0]).toBe('Total · 2 pedidos');
+    expect(total?.[sales]).toBe(1250);
+    expect(total?.[header.indexOf('Costo (S/)')]).toBe(700);
+    expect(total?.[header.indexOf('Margen (S/)')]).toBe(550);
+    expect(total?.[header.indexOf('Margen %')]).toBe(44);
+    expect(total?.[header.indexOf('Comprobantes')]).toBe(3);
+  });
+
+  it('los comprobantes van en su hoja, con su pedido, y suman lo mismo que los pedidos', () => {
+    const { buffer } = salesMarginXlsx(twoDocs);
+    const rows = rowsOf(buffer, 'Comprobantes');
+    const header = rows[0] ?? [];
+    const docs = rows.slice(1).filter((r) => String(r[0]).startsWith('PED-'));
+    expect(docs.map((r) => [r[0], r[header.indexOf('Comprobante')]])).toEqual([
+      ['PED-000012', 'F001-00000012'],
+      ['PED-000012', 'F001-00000014'],
+      ['PED-000015', 'F001-00000012'],
+    ]);
+    const total = rows.find((r) => String(r[0]).startsWith('Total · 3 comprobantes'));
+    expect(total?.[header.indexOf('Venta sin IGV (S/)')]).toBe(1250);
+  });
+
+  it('con búsqueda, «Por pedido» trae solo los pedidos que coinciden y su total', () => {
+    const { buffer } = salesMarginXlsx(twoDocs, undefined, 'tercer');
+    const rows = rowsOf(buffer, 'Por pedido');
+    const sales = (rows[0] ?? []).indexOf('Venta sin IGV (S/)');
+    expect(
+      rows
+        .slice(1)
+        .filter((r) => String(r[0]).startsWith('PED-'))
+        .map((r) => r[0]),
+    ).toEqual(['PED-000015']);
+    expect(rows.find((r) => r[0] === 'Total · 1 pedido')?.[sales]).toBe(250);
+    expect(rows.some((r) => String(r[0]).startsWith('Búsqueda «tercer»: 1 de 2 filas'))).toBe(true);
+    // Lo que la pantalla no busca (la facturación parcial) queda entero.
+    expect(rowsOf(buffer, 'Facturación parcial')[1]?.[0]).toBe('PED-000013');
+  });
+
+  it('sin búsqueda no hay nota, y una búsqueda solo de espacios no recorta', () => {
+    const plain = rowsOf(salesMarginXlsx(twoDocs).buffer, 'Por pedido');
+    const blank = rowsOf(salesMarginXlsx(twoDocs, undefined, '   ').buffer, 'Por pedido');
+    expect(blank).toEqual(plain);
+    expect(plain.some((r) => String(r[0]).startsWith('Búsqueda'))).toBe(false);
   });
 });

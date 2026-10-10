@@ -11,8 +11,14 @@ import { build, num, type Sheet } from './reports-xlsx';
  * cc25 (D-426, M3). Cuentas por cobrar en xlsx, del **mismo DTO** que la pantalla y con el
  * mismo filtro de vendedor. Dos hojas: por cliente con sus tramos y una fila de total, y el
  * detalle por comprobante aparte, para poder ordenarlo y filtrarlo sin romper la otra.
+ *
+ * cc40 (D-588): `notes` son las filas que dicen la búsqueda de la pantalla (`searchNoteRows`),
+ * al pie de la hoja principal; el DTO ya llega recortado (`report-xlsx-search.ts`).
  */
-export function receivablesAgingXlsx(report: ReceivablesAgingDto): {
+export function receivablesAgingXlsx(
+  report: ReceivablesAgingDto,
+  notes: (string | number | null)[][] = [],
+): {
   buffer: Buffer;
   filename: string;
 } {
@@ -43,6 +49,7 @@ export function receivablesAgingXlsx(report: ReceivablesAgingDto): {
         ...AGING_BUCKETS.map((b) => num(report.totals.buckets[b])),
         num(report.totals.balancePen),
       ],
+      ...notes,
     ],
   };
 

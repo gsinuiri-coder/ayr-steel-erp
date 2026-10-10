@@ -12,8 +12,14 @@ import { build, num, type Sheet } from './reports-xlsx';
  * tabla («Selladas», «Abiertas», solo las vigentes al último día del mes) y una hoja «Resumen»
  * con los totales, las líneas de lo no listado y el cuadre inicio + altas − salidas = cierre.
  * El valor y el costo por kg solo viajan si el rol los ve (mismo enmascarado que la pantalla).
+ *
+ * cc40 (D-588): `notes` son las filas que dicen la búsqueda de la pantalla (`searchNoteRows`),
+ * al pie de la hoja principal; el DTO ya llega recortado (`report-xlsx-search.ts`).
  */
-export function coilMonthXlsx(report: CoilMonthReportDto): { buffer: Buffer; filename: string } {
+export function coilMonthXlsx(
+  report: CoilMonthReportDto,
+  notes: (string | number | null)[][] = [],
+): { buffer: Buffer; filename: string } {
   const showsCost = report.totals.closingValuePen !== null;
   const header = [
     'Código',
@@ -58,6 +64,7 @@ export function coilMonthXlsx(report: CoilMonthReportDto): { buffer: Buffer; fil
         ...(showsCost ? [null, num(s.totals.closingValuePen)] : []),
         '',
       ],
+      ...notes,
     ],
   });
 

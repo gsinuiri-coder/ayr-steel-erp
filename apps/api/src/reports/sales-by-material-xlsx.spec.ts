@@ -70,6 +70,7 @@ const REPORT: SalesByMaterialDto = {
       thicknessMm: '0.30',
       colorLabel: 'ROJO',
       reason: 'SIN_PRODUCCION',
+      salesOrderId: '00000000-0000-4000-8000-000000000007',
       documentId: '22222222-2222-2222-2222-222222222222',
       documentNumber: 'F001-9',
       issueDate: '2026-09-12',
@@ -213,6 +214,7 @@ describe('cc39 (D-580): el Excel de todas las pestañas', () => {
       untraceable: [
         {
           reason: 'SIN_DESPACHO_DECLARADO',
+          salesOrderId: null,
           documentId: '22222222-2222-2222-2222-222222222222',
           documentNumber: 'F001-10',
           issueDate: '2026-09-15',

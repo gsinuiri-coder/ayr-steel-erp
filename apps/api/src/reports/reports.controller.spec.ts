@@ -270,7 +270,7 @@ describe('ReportsController', () => {
     const { controller, reports } = build();
     reports.coilsByMonth.mockResolvedValue(COIL_MONTH);
     const res = fakeResponse();
-    await controller.coilsXlsxFile(actor(Role.SUPERVISOR_PLANTA), { month: '2026-08' }, res);
+    await controller.coilsXlsxFile(actor(Role.SUPERVISOR_PLANTA), { month: '2026-08' }, {}, res);
     expect(reports.coilsByMonth).toHaveBeenCalledWith({ month: '2026-08' }, true);
     expect(res.headers['Content-Disposition']).toBe(
       'attachment; filename="reporte-bobinas-2026-08.xlsx"',
@@ -300,7 +300,7 @@ describe('ReportsController', () => {
   it('el xlsx de inventario sale de una sola consulta y viaja como adjunto', async () => {
     const { controller, inventoryValuation } = build();
     const res = fakeResponse();
-    await controller.inventoryValuationXlsxFile({}, res);
+    await controller.inventoryValuationXlsxFile({}, {}, res);
     expect(inventoryValuation.valuation).toHaveBeenCalledTimes(1);
     expect(res.headers['Content-Type']).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -334,11 +334,11 @@ describe('ReportsController', () => {
     });
     const range = { from: '2026-09-01', to: '2026-09-30' };
 
-    await controller.inventoryValuationXlsxFile({ businessLine: 'drywall' }, fakeResponse());
+    await controller.inventoryValuationXlsxFile({ businessLine: 'drywall' }, {}, fakeResponse());
     expect(inventoryValuation.valuation).toHaveBeenLastCalledWith({ businessLine: 'drywall' });
 
     const margin = fakeResponse();
-    await controller.salesMarginXlsxFile({ ...range, businessLine: 'services' }, margin);
+    await controller.salesMarginXlsxFile({ ...range, businessLine: 'services' }, {}, margin);
     expect(salesMargin.salesMargin).toHaveBeenLastCalledWith({
       ...range,
       businessLine: 'services',
@@ -348,11 +348,11 @@ describe('ReportsController', () => {
     );
 
     const material = { ...range, businessLine: 'drywall' as const, kind: 'PERFIL' as const };
-    await controller.salesByMaterialXlsxFile(material, fakeResponse());
+    await controller.salesByMaterialXlsxFile(material, {}, fakeResponse());
     expect(salesByMaterial.report).toHaveBeenLastCalledWith(material);
 
     const waste = fakeResponse();
-    await controller.coilWasteXlsxFile({ ...range, businessLine: 'drywall' }, waste);
+    await controller.coilWasteXlsxFile({ ...range, businessLine: 'drywall' }, {}, waste);
     expect(coilWaste.report).toHaveBeenLastCalledWith({ ...range, businessLine: 'drywall' });
     expect(waste.headers['Content-Disposition']).toBe(
       'attachment; filename="merma-por-bobina-2026-09-01-a-2026-09-30-drywall.xlsx"',
@@ -370,7 +370,7 @@ describe('ReportsController', () => {
     const { controller, salesMargin } = build();
     const res = fakeResponse();
     const query = { from: '2026-08-01', to: '2026-08-31' };
-    await controller.salesMarginXlsxFile(query, res);
+    await controller.salesMarginXlsxFile(query, {}, res);
     expect(salesMargin.salesMargin).toHaveBeenCalledTimes(1);
     expect(salesMargin.salesMargin).toHaveBeenCalledWith(query);
     expect(res.headers['Content-Disposition']).toMatch(/^attachment; filename=".+\.xlsx"$/);
@@ -381,7 +381,7 @@ describe('ReportsController', () => {
     const query = { from: '2026-09-01', to: '2026-09-30', kind: 'PLANCHA' as const };
     await expect(controller.salesByMaterialReport(query)).resolves.toBe(BY_MATERIAL);
     const res = fakeResponse();
-    await controller.salesByMaterialXlsxFile(query, res);
+    await controller.salesByMaterialXlsxFile(query, {}, res);
     expect(salesByMaterial.report).toHaveBeenCalledTimes(2);
     expect(salesByMaterial.report).toHaveBeenLastCalledWith(query);
     expect(res.headers['Content-Disposition']).toBe(

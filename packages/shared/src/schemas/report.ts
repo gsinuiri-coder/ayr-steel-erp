@@ -327,6 +327,8 @@ export const salesMarginOrderSchema = z.object({
   /** cc39 (D-581): el cliente de los comprobantes de la fila, para enlazar y filtrar. */
   customerId: z.string().uuid(),
   customerName: z.string(),
+  /** cc40 (D-586): el RUC/DNI del cliente, para enlazar a su ficha (`/clientes?search=`, D-172). */
+  customerDocNumber: z.string(),
   /** cc39 (D-581): el vendedor del pedido; `null` sin pedido o sin vendedor. */
   sellerId: z.string().uuid().nullable(),
   sellerName: z.string().nullable(),

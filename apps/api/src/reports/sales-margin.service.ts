@@ -42,6 +42,7 @@ interface DocumentRow {
   order_seq: number | null;
   customer_id: string;
   customer_name: string;
+  customer_doc_number: string;
   seller_id: string | null;
   seller_name: string | null;
 }
@@ -119,6 +120,7 @@ export class SalesMarginService {
         so."seq"  AS "order_seq",
         cu."id"   AS "customer_id",
         cu."name" AS "customer_name",
+        cu."doc_number" AS "customer_doc_number",
         u."id"    AS "seller_id",
         u."name"  AS "seller_name"
       FROM "fiscal_documents" fd
@@ -515,6 +517,7 @@ export class SalesMarginService {
         orderCode: first.order_seq === null ? null : salesOrderCode(first.order_seq),
         customerId: first.customer_id,
         customerName: first.customer_name,
+        customerDocNumber: first.customer_doc_number,
         sellerId: first.seller_id,
         sellerName: first.seller_name,
         salesPen: toFixedString(sales, 'MONEY'),

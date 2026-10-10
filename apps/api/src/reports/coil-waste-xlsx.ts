@@ -17,7 +17,11 @@ import { build, num, TWO_DECIMALS, type Sheet } from './reports-xlsx';
  * teórico, la diferencia y la merma solo de las bobinas con teórico completo (D-425), así que esas
  * tres columnas no suman las filas cuando hay bobinas sin teórico; la fila lo dice.
  */
-export function coilWasteXlsx(report: CoilWasteDto): { buffer: Buffer; filename: string } {
+export function coilWasteXlsx(
+  report: CoilWasteDto,
+  // cc40 (D-588): la búsqueda de la pantalla, al pie de la hoja de bobinas.
+  notes: (string | number | null)[][] = [],
+): { buffer: Buffer; filename: string } {
   // En Drywall, lo que sale al cerrar la OP es la merma de proceso (D-057), no un despunte.
   const trimLabel =
     report.businessLine === BusinessLine.DRYWALL ? 'Merma de proceso (kg)' : 'Despunte (kg)';
@@ -96,6 +100,7 @@ export function coilWasteXlsx(report: CoilWasteDto): { buffer: Buffer; filename:
         t.wastePct === null ? '' : t.overStandard ? 'Sí' : 'No',
         num(t.manualScrapKg),
       ],
+      ...notes,
       ...(partial
         ? [
             [],

@@ -26,6 +26,8 @@ export interface ProductInvoiceLine {
   docType: string;
   issueDate: string;
   orderSeq: number | null;
+  /** cc40 (D-589): el pedido del comprobante, para enlazarlo desde «No trazable». */
+  orderId: string | null;
   productId: string;
   sku: string;
   name: string;
@@ -90,6 +92,7 @@ export function assembleSalesByProduct(
       documentId: line.documentId,
       documentNumber: line.documentNumber,
       issueDate: line.issueDate,
+      salesOrderId: line.orderId,
       orderCode: line.orderSeq === null ? null : salesOrderCode(line.orderSeq),
       sku: line.sku,
       unit: line.unit,

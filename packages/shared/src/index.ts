@@ -41,3 +41,4 @@ export * from './schemas/report-lines';
 export * from './schemas/sales-by-material';
 export * from './schemas/document-profitability';
 export * from './schemas/audit';
+export * from './report-rows';

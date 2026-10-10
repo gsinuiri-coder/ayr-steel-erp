@@ -36,6 +36,7 @@ interface ProductLineRow {
   doc_type: string;
   issue_date: Date;
   order_seq: number | null;
+  order_id: string | null;
   product_id: string;
   sku: string;
   name: string;
@@ -63,6 +64,7 @@ export interface LineRow {
   doc_type: string;
   issue_date: Date;
   order_seq: number | null;
+  order_id: string | null;
   sales_order_item_id: string | null;
   qty: Prisma.Decimal;
   subtotal_pen: Prisma.Decimal;
@@ -137,6 +139,7 @@ const LINE_COLUMNS = Prisma.sql`
         fd."doc_type"::text AS "doc_type",
         fd."issue_date",
         so."seq" AS "order_seq",
+        so."id" AS "order_id",
         soi."id" AS "sales_order_item_id",
         CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."qty" ELSE fdi."qty" END AS "qty",
         CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."subtotal_pen" ELSE fdi."subtotal_pen" END
@@ -389,6 +392,7 @@ export class SalesByMaterialService {
         fd."doc_type"::text AS "doc_type",
         fd."issue_date",
         so."seq" AS "order_seq",
+        so."id" AS "order_id",
         p."id" AS "product_id",
         p."sku",
         p."name",
@@ -694,6 +698,7 @@ export function toInvoiceLine(r: LineRow): InvoiceLine {
     documentNumber: r.number,
     issueDate: r.issue_date.toISOString().slice(0, 10),
     orderSeq: r.order_seq,
+    orderId: r.order_id,
     salesOrderItemId: r.sales_order_item_id,
     sku: r.sku,
     unit: r.unit,
@@ -732,6 +737,7 @@ function toProductLine(r: ProductLineRow): ProductInvoiceLine {
     docType: r.doc_type,
     issueDate: r.issue_date.toISOString().slice(0, 10),
     orderSeq: r.order_seq,
+    orderId: r.order_id,
     productId: r.product_id,
     sku: r.sku,
     name: r.name,
