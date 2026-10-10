@@ -138,7 +138,13 @@ export function ProduccionView() {
                   // cc40 (D-588): con la búsqueda y su «Ver por», el Excel trae lo que se ve.
                   download: xlsxHref(
                     '/api/reports/production-summary/xlsx',
-                    { from: period.from, to: period.to, businessLine: line, ver: view },
+                    {
+                      from: period.from,
+                      to: period.to,
+                      businessLine: line,
+                      // «orden» es la vista por defecto, también para el API.
+                      ver: view === 'pedido' ? view : undefined,
+                    },
                     searchText,
                   ),
                 },
