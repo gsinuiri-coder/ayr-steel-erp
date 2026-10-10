@@ -114,20 +114,24 @@ y rescates.
   con el nombre, sin tocar las fijas. Se conservan los dos respaldos post-día-D más recientes y
   los checkpoints declarados hasta su fecha.
 
-### Ramas vigentes (2026-10-10, después de cc41): 8 de 10
+### Ramas vigentes (2026-10-10, después de cc41): 7 de 10
 
 Ninguna se borra sin OK del dueño por nombre (`AGENTS.md` §3.3).
 
-| Rama                         | id                                | Qué es                                 | Se conserva                                                                 |
-| ---------------------------- | --------------------------------- | -------------------------------------- | --------------------------------------------------------------------------- |
-| `production`                 | `br-steep-night-ae8n7t1k`         | datos reales                           | siempre                                                                     |
-| `dev`                        | `br-wandering-butterfly-aehckak7` | sintéticos                             | siempre                                                                     |
-| `ci`                         | `br-misty-band-ae9s41t7`          | migraciones + smoke de la CI           | siempre                                                                     |
-| `demo`                       | `br-solitary-smoke-aegbos8k`      | UAT (copia de production)              | siempre                                                                     |
-| `respaldo-pre-v4-20260915`   | `br-sweet-resonance-aegd7jdg`     | respaldo del día D                     | siempre                                                                     |
-| `respaldo-pre-log3-20260930` | `br-super-wave-aeoucd2y`          | respaldo de ventana                    | ya no es de los dos más recientes: proponible para borrar con OK por nombre |
-| `respaldo-pre-cc08-20261001` | `br-proud-glade-aev4qddf`         | respaldo de ventana                    | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3)    |
-| `respaldo-pre-cc41-20261010` | `br-old-mountain-aeno2yqp`        | respaldo antes de la migración de cc41 | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3)    |
+| Rama                         | id                                | Qué es                                 | Se conserva                                                              |
+| ---------------------------- | --------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
+| `production`                 | `br-steep-night-ae8n7t1k`         | datos reales                           | siempre                                                                  |
+| `dev`                        | `br-wandering-butterfly-aehckak7` | sintéticos                             | siempre                                                                  |
+| `ci`                         | `br-misty-band-ae9s41t7`          | migraciones + smoke de la CI           | siempre                                                                  |
+| `demo`                       | `br-solitary-smoke-aegbos8k`      | UAT (copia de production)              | siempre                                                                  |
+| `respaldo-pre-v4-20260915`   | `br-sweet-resonance-aegd7jdg`     | respaldo del día D                     | siempre                                                                  |
+| `respaldo-pre-cc08-20261001` | `br-proud-glade-aev4qddf`         | respaldo de ventana                    | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-cc41-20261010` | `br-old-mountain-aeno2yqp`        | respaldo antes de la migración de cc41 | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+
+**Borrada el 2026-10-10 después de cc41, con OK del dueño por nombre** (D-460; id verificado y
+sin ramas hijas): `respaldo-pre-log3-20260930` (`br-super-wave-aeoucd2y`). La borró el agente con
+`neonctl branches delete <id>`, en silencio. Los dos respaldos post-día-D más recientes son ahora
+`respaldo-pre-cc08-20261001` y `respaldo-pre-cc41-20261010`.
 
 **Borradas el 2026-10-10 con OK del dueño por nombre** (D-460; id verificado y sin ramas hijas,
 por la API de Neon con `NEON_API_KEY` desde `.env.setup`): `respaldo-pre-cc16-20261003`

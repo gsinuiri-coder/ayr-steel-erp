@@ -2,6 +2,15 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-10 — Neon: borrado `respaldo-pre-log3-20260930` (OK del dueño por nombre, D-460)
+
+- **Borrada:** `respaldo-pre-log3-20260930` (`br-super-wave-aeoucd2y`), después de verificar que
+  el id coincidía con el nombre y que no tenía ramas hijas. La borró el agente con `neonctl
+branches delete <id>` (salida descartada, sin imprimir nada); la lista posterior ya no la trae.
+- **Quedan 7 de 10:** `production`, `dev`, `ci`, `demo`, `respaldo-pre-v4-20260915`,
+  `respaldo-pre-cc08-20261001` y `respaldo-pre-cc41-20261010` (los dos últimos, los respaldos
+  post-día-D más recientes). La lista con ids está en `docs/ENTORNOS.md`.
+
 ## 2026-10-10 — cc41: el borrador del accesorio vive en el servidor (D-591, reemplaza D-559; PR #166 en prod)
 
 Una migración aditiva con OK del dueño por nombre (D-460); sin SQL contra producción. Detalle en
