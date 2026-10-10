@@ -40,7 +40,9 @@ interface DocumentRow {
   subtotal_pen: Prisma.Decimal;
   sales_order_id: string | null;
   order_seq: number | null;
+  customer_id: string;
   customer_name: string;
+  seller_id: string | null;
   seller_name: string | null;
 }
 
@@ -115,7 +117,9 @@ export class SalesMarginService {
         fd."subtotal_pen",
         fd."sales_order_id",
         so."seq"  AS "order_seq",
+        cu."id"   AS "customer_id",
         cu."name" AS "customer_name",
+        u."id"    AS "seller_id",
         u."name"  AS "seller_name"
       FROM "fiscal_documents" fd
       JOIN "customers" cu ON cu."id" = fd."customer_id"
@@ -509,7 +513,9 @@ export class SalesMarginService {
       orders.push({
         salesOrderId: orderId,
         orderCode: first.order_seq === null ? null : salesOrderCode(first.order_seq),
+        customerId: first.customer_id,
         customerName: first.customer_name,
+        sellerId: first.seller_id,
         sellerName: first.seller_name,
         salesPen: toFixedString(sales, 'MONEY'),
         costPen: cost === null ? null : toFixedString(cost, 'MONEY'),

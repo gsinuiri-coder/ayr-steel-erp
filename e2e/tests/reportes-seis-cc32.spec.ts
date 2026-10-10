@@ -52,10 +52,13 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
       'href',
       `/api/reports/production-summary/xlsx?from=${firstOfMonth(today)}&to=${today}&businessLine=metallic-roofing`,
     );
-    // Merma no tiene Excel en el API: no se muestra.
+    // cc39 (D-580): Merma también ofrece su Excel, con el periodo y la pestaña puestos.
     await page.goto('/reportes/merma');
     await expect(page.getByTestId('tabla-merma')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      'href',
+      `/api/reports/coil-waste/xlsx?from=${firstOfMonth(today)}&to=${today}&businessLine=metallic-roofing`,
+    );
   });
 
   test('el periodo elegido en Ventas y margen se mantiene en Merma, Producción y Bobinas', async ({

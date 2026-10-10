@@ -86,6 +86,8 @@ export const salesMaterialCoilDocumentSchema = z.object({
   documentId: z.string().uuid(),
   documentNumber: z.string().nullable(),
   issueDate: z.string(),
+  /** cc39 (D-581): el cliente del comprobante, para enlazar y filtrar. */
+  customerId: z.string().uuid(),
   customerName: z.string(),
   /** Kilos de la bobina atribuidos a las líneas de este comprobante (prorrateados). */
   kg: z.string(),
@@ -100,6 +102,8 @@ export const salesMaterialCoilSchema = z.object({
   code: z.string(),
   /** RF-14: tipo de bobina (acabado + espesor), el mismo «Tipo» del listado de bobinas. */
   typeKey: z.string(),
+  /** cc39 (D-582): el nombre del acabado de la bobina. */
+  finishName: z.string(),
   /** Espesor y color **de la bobina**: por tolerancia (±0,02 mm, D-086) pudo usarse otra. */
   thicknessMm: z.string(),
   colorLabel: z.string(),

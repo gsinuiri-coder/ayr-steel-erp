@@ -144,8 +144,11 @@ export function DespachoDetalleView({ id }: { id: string }) {
   // cc32: el PDF de la guía lo guarda el API recién cuando SUNAT la acepta (`storeFiles` solo
   // corre con `ACCEPTED`, y `file()` responde 404 «se guarda cuando SUNAT lo acepta» mientras
   // tanto). Con la guía todavía en camino la principal es «Ver la guía» y el texto lo explica.
+  // cc39 (D-583): se imprime cuando el API dice que tiene el PDF (`dispatchNoteHasPdf`), no por
+  // el estado: una guía aceptada sin PDF (manual) ya no ofrece una descarga que daría 404, y una
+  // en baja que sí lo tiene se puede imprimir desde aquí, como desde la guía.
   const noteStatus = d.dispatchNoteId !== null ? d.dispatchNoteStatus : null;
-  const notePrintable = noteStatus === 'ACCEPTED';
+  const notePrintable = d.dispatchNoteId !== null && d.dispatchNoteHasPdf;
   const noteOnTheWay = noteStatus !== null && NOTE_ON_THE_WAY.includes(noteStatus);
   const notePdfHref = `/api/invoicing/documents/${d.dispatchNoteId ?? ''}/pdf`;
 

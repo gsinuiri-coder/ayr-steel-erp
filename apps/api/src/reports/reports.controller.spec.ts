@@ -222,8 +222,9 @@ describe('ReportsController', () => {
     // cc25 (D-426): cuentas por cobrar, solo ADMINISTRADOR.
     expect(rolesOf('receivablesAgingReport')).toEqual([Role.ADMINISTRADOR]);
     expect(rolesOf('receivablesAgingXlsxFile')).toEqual([Role.ADMINISTRADOR]);
-    // cc25 (D-426): merma, solo ADMINISTRADOR.
+    // cc25 (D-426): merma, solo ADMINISTRADOR; cc39 (D-580): también su Excel.
     expect(rolesOf('coilWasteReport')).toEqual([Role.ADMINISTRADOR]);
+    expect(rolesOf('coilWasteXlsxFile')).toEqual([Role.ADMINISTRADOR]);
     // cc29 (M2): producción, administrador y planta; los costos los decide el rol (abajo).
     expect(rolesOf('productionSummaryReport')).toEqual([
       Role.ADMINISTRADOR,
@@ -299,13 +300,63 @@ describe('ReportsController', () => {
   it('el xlsx de inventario sale de una sola consulta y viaja como adjunto', async () => {
     const { controller, inventoryValuation } = build();
     const res = fakeResponse();
-    await controller.inventoryValuationXlsxFile(res);
+    await controller.inventoryValuationXlsxFile({}, res);
     expect(inventoryValuation.valuation).toHaveBeenCalledTimes(1);
     expect(res.headers['Content-Type']).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
     expect(res.headers['Content-Disposition']).toMatch(/^attachment; filename=".+\.xlsx"$/);
     expect(Buffer.isBuffer(res.body)).toBe(true);
+  });
+
+  it('cc39 (D-580): cada Excel pide al servicio la misma consulta que su pantalla, con la línea', async () => {
+    const { controller, inventoryValuation, salesMargin, salesByMaterial, coilWaste } = build();
+    coilWaste.report.mockResolvedValue({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      businessLine: 'drywall',
+      standardPct: '1.00',
+      rows: [],
+      totals: {
+        coilCount: 0,
+        consumedKg: '0.000',
+        trimKg: '0.000',
+        closeAdjustmentKg: '0.000',
+        manualScrapKg: '0.000',
+        comparableCoilCount: 0,
+        comparableConsumedKg: '0.000',
+        theoreticalKg: '0.000',
+        differenceKg: '0.000',
+        wasteKg: '0.000',
+        wastePct: null,
+        overStandard: false,
+      },
+    });
+    const range = { from: '2026-09-01', to: '2026-09-30' };
+
+    await controller.inventoryValuationXlsxFile({ businessLine: 'drywall' }, fakeResponse());
+    expect(inventoryValuation.valuation).toHaveBeenLastCalledWith({ businessLine: 'drywall' });
+
+    const margin = fakeResponse();
+    await controller.salesMarginXlsxFile({ ...range, businessLine: 'services' }, margin);
+    expect(salesMargin.salesMargin).toHaveBeenLastCalledWith({
+      ...range,
+      businessLine: 'services',
+    });
+    expect(margin.headers['Content-Disposition']).toBe(
+      'attachment; filename="ventas-margen-2026-08-01-a-2026-08-31-services.xlsx"',
+    );
+
+    const material = { ...range, businessLine: 'drywall' as const, kind: 'PERFIL' as const };
+    await controller.salesByMaterialXlsxFile(material, fakeResponse());
+    expect(salesByMaterial.report).toHaveBeenLastCalledWith(material);
+
+    const waste = fakeResponse();
+    await controller.coilWasteXlsxFile({ ...range, businessLine: 'drywall' }, waste);
+    expect(coilWaste.report).toHaveBeenLastCalledWith({ ...range, businessLine: 'drywall' });
+    expect(waste.headers['Content-Disposition']).toBe(
+      'attachment; filename="merma-por-bobina-2026-09-01-a-2026-09-30-drywall.xlsx"',
+    );
   });
 
   it('la rentabilidad de un comprobante delega en su servicio (C06)', async () => {

@@ -80,6 +80,7 @@ function row(s: RowSeed): DocumentLineRow {
     in_engine: engine,
     is_credit: credit,
     credit_reason: credit ? (s.creditReason ?? 'DESCUENTO_ITEM') : null,
+    customer_id: '00000000-0000-4000-a000-0000000000c1',
     customer_name: 'CLIENTE SAC',
   };
 }
@@ -109,6 +110,7 @@ function engineFacts(
       kg: u.kg ?? '0',
       costPen: u.costPen ?? '0',
       typeKey: 'PREP-0.30',
+      finishName: 'Prepintado',
       widthMm: '1000.00',
       densityFactor: '7.8500',
       meters: u.meters ?? '0',

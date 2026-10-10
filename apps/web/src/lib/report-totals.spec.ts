@@ -91,6 +91,7 @@ function wasteRow(over: Partial<CoilWasteRowDto>): CoilWasteRowDto {
     code: 'B-1',
     kind: 'COIL',
     typeKey: 'AZ-0.30',
+    finishName: 'Aluzinc',
     colorName: null,
     widthMm: '1200.00',
     status: 'OPEN',

@@ -72,8 +72,11 @@ test.describe('Reportes por línea (cc23)', () => {
     await tab(page, 'Drywall').click();
     await expect(page).toHaveURL(`/reportes/ventas-margen?from=${FROM}&to=${to}&linea=drywall`);
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
-    // D-396: el Excel es el de «Todas» y solo se ofrece ahí.
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(0);
+    // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
+    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      'href',
+      `/api/reports/sales-margin/xlsx?from=${FROM}&to=${to}&businessLine=drywall`,
+    );
 
     await tab(page, 'Servicios').click();
     await expect(page).toHaveURL(/linea=services/);

@@ -22,6 +22,7 @@ function report(withCosts: boolean): CoilMonthReportDto {
           id: '11111111-1111-1111-1111-111111111111',
           code: 'B-2',
           typeKey: 'ALZ-ROJO-3020-0.30',
+          finishName: 'Rojo 3020',
           kind: 'COIL',
           businessLine: 'metallic-roofing',
           colorName: 'ROJO',

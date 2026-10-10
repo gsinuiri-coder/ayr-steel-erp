@@ -72,6 +72,7 @@ function setup(input: {
         typeKey: 'ALZ-0.30',
         widthMm: D('1200.00'),
         status: 'OPEN',
+        finish: { name: 'Aluzinc natural' },
         color: { name: 'Natural' },
       })),
     ),

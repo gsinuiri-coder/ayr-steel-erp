@@ -89,7 +89,8 @@ const dispatchInclude = {
   },
   documents: {
     orderBy: { createdAt: 'desc' },
-    select: { id: true, number: true, status: true },
+    // cc39 (D-583): `pdfKey` solo para saber si la guía tiene PDF; la clave no sale al DTO.
+    select: { id: true, number: true, status: true, pdfKey: true },
   },
   // F8-S7/M3 (D-205): el comprobante que este despacho cubre. `invoice` es la relación del
   // `invoice_id` del propio despacho — no confundir con `documents`, que son las guías de
@@ -1298,6 +1299,7 @@ export class DispatchesService {
       dispatchNoteId: note?.id ?? null,
       dispatchNoteNumber: note?.number ?? null,
       dispatchNoteStatus: note?.status ?? null,
+      dispatchNoteHasPdf: (note?.pdfKey ?? null) !== null,
       blockingDocumentNumbers,
       createdByName: actors.get(row.createdById) ?? null,
       createdAt: row.createdAt.toISOString(),

@@ -85,6 +85,7 @@ export interface LineRow {
   c_density: Prisma.Decimal | null;
   c_finish_kind: string | null;
   c_color: string | null;
+  customer_id: string;
   customer_name: string;
 }
 
@@ -108,6 +109,7 @@ interface UsageRow {
   thickness_mm: Prisma.Decimal;
   width_mm: Prisma.Decimal;
   density_factor: Prisma.Decimal;
+  finish_name: string;
   finish_kind: string;
   color_name: string | null;
   kg: Prisma.Decimal;
@@ -157,6 +159,7 @@ const LINE_COLUMNS = Prisma.sql`
         cf."density_factor" AS "c_density",
         cf."kind"::text AS "c_finish_kind",
         cc."name" AS "c_color",
+        cu."id" AS "customer_id",
         cu."name" AS "customer_name"`;
 
 /** Los cruces de `LINE_COLUMNS`, desde `fiscal_document_items fdi` y `products p`. */
@@ -276,6 +279,7 @@ export class SalesByMaterialService {
         coilId: u.coil_id,
         code: u.code,
         typeKey: u.type_key,
+        finishName: u.finish_name,
         thicknessMm: u.thickness_mm.toFixed(2),
         colorLabel: colorLabelOf(u.color_name, u.finish_kind as FinishKind),
         kg: u.kg.toString(),
@@ -633,6 +637,7 @@ export class SalesByMaterialService {
         c."thickness_mm",
         c."width_mm",
         f."density_factor",
+        f."name" AS "finish_name",
         f."kind"::text AS "finish_kind",
         col."name" AS "color_name",
         t."kg",
@@ -715,6 +720,7 @@ export function toInvoiceLine(r: LineRow): InvoiceLine {
       : isDrywall
         ? FINISH_KIND_LABELS[FinishKind.GALVANIZADO]
         : colorLabelOf(r.p_color, r.p_finish_kind as FinishKind | null),
+    customerId: r.customer_id,
     customerName: r.customer_name,
   };
 }

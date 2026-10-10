@@ -30,6 +30,8 @@ export const coilMonthReportRowSchema = z.object({
   code: z.string(),
   /** RF-14: acabado + espesor, sin ancho. */
   typeKey: z.string(),
+  /** cc39 (D-582): el nombre del acabado de la bobina. */
+  finishName: z.string(),
   kind: z.enum(COIL_KINDS),
   businessLine: z.enum(BUSINESS_LINES),
   colorName: z.string().nullable(),
@@ -134,6 +136,8 @@ export const inventoryValuationCoilSchema = z.object({
   widthMm: z.string(),
   /** D-272: el acabado de la bobina y su RAL (D-270: el RAL vive en el acabado). */
   finishCode: z.string(),
+  /** cc39 (D-582): el nombre de ese acabado. */
+  finishName: z.string(),
   ral: z.string().nullable(),
   /** Saldo vigente de kardex, en kg. */
   qtyKg: z.string(),
@@ -320,7 +324,11 @@ export const salesMarginOrderSchema = z.object({
   salesOrderId: z.string().uuid().nullable(),
   /** `PED-000123`. Null en una venta directa sin pedido, que se agrupa sola. */
   orderCode: z.string().nullable(),
+  /** cc39 (D-581): el cliente de los comprobantes de la fila, para enlazar y filtrar. */
+  customerId: z.string().uuid(),
   customerName: z.string(),
+  /** cc39 (D-581): el vendedor del pedido; `null` sin pedido o sin vendedor. */
+  sellerId: z.string().uuid().nullable(),
   sellerName: z.string().nullable(),
   salesPen: z.string(),
   costPen: z.string().nullable(),

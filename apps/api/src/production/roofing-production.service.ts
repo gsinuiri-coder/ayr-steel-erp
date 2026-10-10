@@ -2515,7 +2515,7 @@ export class RoofingProductionService {
         });
         if (later) {
           throw new BadRequestException(
-            `Hay reportes posteriores vigentes (${later.metersM === null ? `${later.pieces} planchas` : `${later.metersM.toFixed(3)} m de bobina`} del ${later.createdAt.toISOString().slice(0, 10)}): revierte el último primero`,
+            `Hay reportes posteriores vigentes (${later.metersM === null ? `${later.pieces} planchas` : `${later.metersM.toFixed(3)} m de bobina`} del ${businessToday(later.createdAt)}): revierte el último primero`,
           );
         }
 

@@ -153,8 +153,11 @@ test.describe('Reportes de CxC y merma (cc25)', () => {
       'Drywall',
     ]);
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
-    // D-426: sin Excel.
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(0);
+    // cc39 (D-580): con Excel de la pestaña y el periodo que se ven.
+    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      'href',
+      `/api/reports/coil-waste/xlsx?from=${FROM}&to=${to}&businessLine=metallic-roofing`,
+    );
 
     await tab(page, 'Drywall').click();
     await expect(page).toHaveURL(`/reportes/merma?from=${FROM}&to=${to}&linea=drywall`);

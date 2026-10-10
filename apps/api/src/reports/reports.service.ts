@@ -24,6 +24,7 @@ interface CoilMonthRow {
   id: string;
   code: string;
   type_key: string;
+  finish_name: string;
   kind: string;
   business_line_code: string;
   color_name: string | null;
@@ -80,6 +81,7 @@ export class ReportsService {
         c."id",
         c."code",
         c."type_key",
+        f."name"                  AS "finish_name",
         c."kind"::text            AS "kind",
         bl."code"::text           AS "business_line_code",
         col."name"                AS "color_name",
@@ -120,6 +122,7 @@ export class ReportsService {
                  THEN m."operation_date" END) AS "annulled_on"
       FROM "coils" c
       JOIN "business_lines" bl ON bl."id" = c."business_line_id"
+      JOIN "finishes" f ON f."id" = c."finish_id"
       LEFT JOIN "colors" col ON col."id" = c."color_id"
       LEFT JOIN "inventory_movements" m
         ON m."item_type" = 'COIL' AND m."item_id" = c."id"
@@ -135,7 +138,7 @@ export class ReportsService {
       -- los siguientes, no del mes de su fecha de alta (ver coilInMonth): sin filtro por fecha
       -- acá, el filtro está en TypeScript para poder probarlo.
       WHERE (${lineCode}::text IS NULL OR bl."code"::text = ${lineCode}::text)
-      GROUP BY c."id", bl."code", col."name", ev."type"
+      GROUP BY c."id", bl."code", f."name", col."name", ev."type"
       ORDER BY c."code" ASC
     `;
 
@@ -324,6 +327,7 @@ function toRowDto(
     id: r.id,
     code: r.code,
     typeKey: r.type_key,
+    finishName: r.finish_name,
     kind: r.kind as CoilMonthReportRowDto['kind'],
     // D-249: `fromDbLineCode` y no `toSharedLineCode`, porque el valor viene de una
     // consulta cruda. `toSharedLineCode` indexa por el nombre de Prisma y devolvía

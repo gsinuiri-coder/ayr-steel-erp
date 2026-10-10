@@ -13,6 +13,7 @@ import {
   type InventoryMovement,
 } from '@prisma/client';
 import {
+  businessToday,
   Decimal,
   fromDateOnly,
   MAX_ORDER_REPORTS,
@@ -900,7 +901,7 @@ export class ProductionService {
         });
         if (later) {
           throw new BadRequestException(
-            `Hay reportes posteriores vigentes (${later.pieces} piezas del ${later.createdAt.toISOString().slice(0, 10)}): revierte el último primero`,
+            `Hay reportes posteriores vigentes (${later.pieces} piezas del ${businessToday(later.createdAt)}): revierte el último primero`,
           );
         }
 
