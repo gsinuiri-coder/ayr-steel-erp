@@ -1,14 +1,12 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useRef, useState } from 'react';
 import {
   Decimal,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   piecesCount,
   piecesTheoreticalKg,
   sum,
-  TOLERANCE_OVERRIDE_REQUIRED,
   toDecimal,
   Unit,
   type PlantClosePreviewDto,
@@ -16,28 +14,20 @@ import {
   type RoofingBatchCoilDto,
   type RoofingBatchOrderDto,
   type RoofingPieceDto,
-  type RoofingReportDraftDto,
-  BACKDATE_OUT_OF_ORDER,
 } from '@ayr/shared';
-import { api, ApiError } from '@/lib/api';
 import { formatKg, formatMeters, formatQtyAsIs } from '@/lib/format';
-import { errorMessage, toast } from '@/lib/notify';
+import { toast } from '@/lib/notify';
 import type { PieceRow } from '@/lib/pieces';
 import {
   blockFigures,
   byLength,
   catalogQtyPatch,
   catalogRows,
-  coilOfRowError,
   editRow,
   fillFromRemaining,
   planSquare,
-  withoutRowPrefix,
   type BlockFigures,
 } from '@/lib/production-blocks';
-import { invalidateProduction } from '@/lib/production-queries';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
-import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { cn } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
@@ -55,6 +45,12 @@ import {
 import { blockPayload, type BlockEdit } from '@/lib/block-drafts';
 import { planProgress } from '@/lib/plan-progress';
 import { useBlockDrafts } from './use-block-drafts';
+import {
+  DraftSaveStatus,
+  useDraftCommit,
+  useDraftsCache,
+  type DraftToleranceOverride,
+} from './use-draft-commit';
 import {
   CloseButton,
   CloseHint,
@@ -148,30 +144,7 @@ export function ProduceBlocks({
   releaseCoil: (consumptionId: string) => void;
   releasing: boolean;
 }) {
-  const queryClient = useQueryClient();
-  const invalidate = useCallback(() => {
-    invalidateProduction(queryClient, order.orderId);
-  }, [queryClient, order.orderId]);
-  /**
-   * Guardar un bloque no toca el kardex: la pantalla toma el borrador que devolvió el API en su
-   * caché, sin volver a pedir todas las órdenes (revisión de cc35: cada pausa refrescaba todo).
-   */
-  const onSaved = useCallback(
-    (list: RoofingReportDraftDto[]) => {
-      queryClient.setQueriesData<RoofingBatchOrderDto[]>({ queryKey: ['roofing-batch'] }, (old) =>
-        old?.map((o) =>
-          o.orderId === order.orderId
-            ? {
-                ...o,
-                drafts: list,
-                draftMeters: sum(list.map((d) => toDecimal(d.meters))).toFixed(3),
-              }
-            : o,
-        ),
-      );
-    },
-    [queryClient, order.orderId],
-  );
+  const onSaved = useDraftsCache(order.orderId);
   const drafts = useBlockDrafts(order, onSaved);
   /** Último bloque vaciado a mano: no se vuelve a llenar solo hasta que se escriba en él. */
   const [emptied, setEmptied] = useState<ReadonlySet<string>>(new Set());
@@ -182,21 +155,42 @@ export function ProduceBlocks({
   const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
   /** Bloques plegados (`false`) o abiertos (`true`) a mano; sin entrada, decide su estado. */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  /** El error del último registro, en el bloque de su bobina (o arriba si no nombra una fila). */
-  const [commitError, setCommitError] = useState<{ coilId: string | null; message: string } | null>(
-    null,
-  );
   const [attempted, setAttempted] = useState(false);
-  const [preview, setPreview] = useState<PlantClosePreviewDto | null>(null);
-  const [askingReason, setAskingReason] = useState(false);
   /** D-575: «Qué va a pasar» esperando que se confirme el bloque llenado solo (su descripción). */
   const [askingAuto, setAskingAuto] = useState<string | null>(null);
   /** El bloque llenado solo que se confirmó desde «Qué va a pasar» (para nombrarlo ahí). */
   const [autoIncluded, setAutoIncluded] = useState<string | null>(null);
   const [planOpen, setPlanOpen] = useState<{ addLengthM?: string } | null>(null);
-  const reason = useRef<string | null>(null);
-  const closing = useRef(false);
-  const backdate = useRef(false);
+  /** Las casillas listas por fila del borrador; se calculan más abajo, con los bloques. */
+  const overridesRef = useRef<() => DraftToleranceOverride[]>(() => []);
+  const {
+    invalidate,
+    commit,
+    previewClose,
+    run,
+    preview,
+    setPreview,
+    commitError,
+    setCommitError,
+    askingReason,
+    setAskingReason,
+    reason,
+    backdate,
+    closing,
+  } = useDraftCommit({
+    order,
+    operationDate,
+    latestDrafts: drafts.latestDrafts,
+    toleranceOverrides: () => overridesRef.current(),
+    onUpdated,
+    onCommitted: () => {
+      setOverrides({});
+      setAttempted(false);
+    },
+    onRowError: (coilId) => {
+      setExpanded((prev) => ({ ...prev, [coilId]: true }));
+    },
+  });
 
   // ---------------------------------------------------------------------------
   // Los bloques
@@ -328,94 +322,14 @@ export function ProduceBlocks({
   /** Guarda lo pendiente de los bloques confirmados (el llenado solo se queda en la pantalla). */
   const persistAll = (): Promise<boolean> => drafts.flush(registrable.map((b) => b.coil.coilId));
 
-  const submitKey = useIdempotencyKey();
-  const body = (close: boolean) => {
+  overridesRef.current = () => {
     const byCoil = new Map(drafts.latestDrafts().map((d) => [d.coilId, d.id]));
-    const toleranceOverrides = excessBlocks.flatMap((b) => {
+    return excessBlocks.flatMap((b) => {
       const input = overrideInput(overrides[b.coil.coilId], b.figures.excess);
       const draftId = byCoil.get(b.coil.coilId);
       return input === null || draftId === undefined ? [] : [{ draftId, ...input }];
     });
-    return {
-      ...(close ? { close: true } : {}),
-      ...(close && reason.current ? { closeReason: reason.current } : {}),
-      ...(toleranceOverrides.length > 0 ? { toleranceOverrides } : {}),
-      operationDate,
-      confirmBackdate: backdate.current || undefined,
-      // D-182: la clave va atada a lo que se registra, no solo a si cierra.
-      idempotencyKey: submitKey.current(
-        JSON.stringify({
-          close,
-          rows: drafts.latestDrafts().map((d) => [d.id, d.meters, d.consumedKg]),
-          toleranceOverrides,
-        }),
-      ),
-    };
   };
-
-  /** Un rechazo del registro: en el bloque de su fila, o arriba. */
-  const onError = (err: unknown) => {
-    // D-124: la retro-fecha la atiende su diálogo (`useBackdateConfirm`), no es un error del bloque.
-    if (err instanceof ApiError && err.code === BACKDATE_OUT_OF_ORDER) return;
-    setPreview(null);
-    const message = errorMessage(err, 'No se pudo registrar la producción');
-    if (err instanceof ApiError && /motivo/i.test(err.message) && closing.current) {
-      if (err.code !== TOLERANCE_OVERRIDE_REQUIRED) {
-        setAskingReason(true);
-        return;
-      }
-    }
-    reason.current = null;
-    const coilId = coilOfRowError(message, drafts.latestDrafts());
-    setCommitError({ coilId, message: coilId === null ? message : withoutRowPrefix(message) });
-    if (coilId !== null) setExpanded((prev) => ({ ...prev, [coilId]: true }));
-    toast.error(message);
-    invalidate();
-  };
-
-  const commit = useMutation({
-    mutationFn: (close: boolean) =>
-      api<ProductionOrderDto>(`/production/roofing/${order.orderId}/drafts/commit`, {
-        method: 'POST',
-        body: body(close),
-      }),
-    onSettled: (_d, error) => {
-      submitKey.settle(error ?? undefined);
-    },
-    onSuccess: (updated, close) => {
-      toast.success(
-        close
-          ? `${order.code}: producción registrada y orden cerrada`
-          : `${order.code}: producción registrada`,
-      );
-      setOverrides({});
-      setPreview(null);
-      setCommitError(null);
-      setAttempted(false);
-      reason.current = null;
-      onUpdated(updated);
-      invalidate();
-    },
-    onError,
-  });
-
-  const previewClose = useMutation({
-    mutationFn: () =>
-      api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/drafts/commit/preview`, {
-        method: 'POST',
-        body: body(true),
-      }),
-    onSuccess: (result) => {
-      setPreview(result);
-    },
-    onError,
-  });
-
-  const run = useBackdateConfirm(async (confirmBackdate) => {
-    backdate.current = confirmBackdate;
-    if (closing.current) await previewClose.mutateAsync();
-    else await commit.mutateAsync(false);
-  });
 
   const start = async (close: boolean) => {
     setAttempted(true);
@@ -734,13 +648,7 @@ export function ProduceBlocks({
       >
         <span className="mr-auto grid gap-0.5">
           <CloseHint view={progress} unitWord={catalog ? 'und' : 'planchas'} />
-          <span className="text-xs text-muted-foreground" aria-live="polite">
-            {Object.values(drafts.states).some((s) => s.saving)
-              ? 'Guardando…'
-              : Object.keys(drafts.edits).length > 0
-                ? 'Sin guardar todavía'
-                : 'Todo lo escrito está guardado'}
-          </span>
+          <DraftSaveStatus states={drafts.states} edits={drafts.edits} />
         </span>
         <OperationDateField value={operationDate} onChange={onOperationDate} />
         <Button

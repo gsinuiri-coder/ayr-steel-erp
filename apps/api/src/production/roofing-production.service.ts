@@ -1652,17 +1652,6 @@ export class RoofingProductionService {
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
       // D-388: cada fila del borrador sale con su marca de «fuera de tolerancia», medida contra
       // el estado de esta misma lectura (las bobinas montadas y lo ya reportado).
-      const drafts = draftDtos(
-        {
-          orderSeq: order.seq,
-          productSku: order.product.sku,
-          fixedLengthMm: order.product.lengthMm === null ? null : order.product.lengthMm.toFixed(2),
-          planPieces,
-          reportedMeters: piecesMeters(reportedPieces),
-          coils: draftCoilStates(order.consumptions),
-        },
-        order.reportDrafts,
-      );
       const progress = roofingPlanProgress(planPieces, piecesMeters(reportedPieces));
       const salesOrder = order.reservation?.salesOrder ?? null;
       // D-343: un accesorio no tiene plan de largos; su «plan» son los metros que encargó la línea
@@ -1674,6 +1663,21 @@ export class RoofingProductionService {
       const accessoryReported = order.reports.reduce(
         (acc, r) => (r.metersM === null ? acc : acc.plus(toDecimal(r.metersM.toString()))),
         new Decimal(0),
+      );
+      const drafts = draftDtos(
+        {
+          orderSeq: order.seq,
+          productSku: order.product.sku,
+          fixedLengthMm: order.product.lengthMm === null ? null : order.product.lengthMm.toFixed(2),
+          planPieces,
+          reportedMeters: accessory ? accessoryReported : piecesMeters(reportedPieces),
+          coils: draftCoilStates(order.consumptions),
+          // cc41 (D-591): las filas de un accesorio llevan metros y se topan con lo del pedido.
+          accessory: accessory
+            ? { orderedMeters: order.reservation?.salesOrderItem ? accessoryOrdered : null }
+            : null,
+        },
+        order.reportDrafts,
       );
       return {
         orderId: order.id,

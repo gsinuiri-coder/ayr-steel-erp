@@ -5,11 +5,14 @@ import type { RoofingBatchOrderDto, RoofingReportDraftDto } from '@ayr/shared';
 import { api } from '@/lib/api';
 import {
   blockPayload,
+  coveringDraftContent,
+  editMeters,
   flushOrder,
-  saveBlockDraft,
+  saveDraftContent,
   saveErrorTarget,
   type BlockEdit,
   type DraftCall,
+  type DraftContent,
 } from '@/lib/block-drafts';
 import { errorMessage } from '@/lib/notify';
 
@@ -46,11 +49,30 @@ export function newDraftKey(): string {
 
 const call: DraftCall = (path, init) => api<RoofingReportDraftDto[]>(path, init);
 
-export function useBlockDrafts(
+/**
+ * cc41 (D-591): cómo se guarda un tipo de bloque. Coberturas manda largos; el accesorio, metros de
+ * bobina (`lib/accessory-drafts.ts`). `content` da lo que va al borrador (`null` = vaciado) o el
+ * motivo por el que todavía no se puede guardar; `meters`, cuánto ocupa lo escrito.
+ */
+export interface DraftAdapter<E> {
+  content: (edit: E) => { ok: true; content: DraftContent } | { ok: false; reason: string };
+  meters: (edit: E | undefined) => string;
+}
+
+export const COVERING_DRAFTS: DraftAdapter<BlockEdit> = {
+  content: (edit) => {
+    const payload = blockPayload(edit);
+    return payload.ok ? { ok: true, content: coveringDraftContent(payload) } : payload;
+  },
+  meters: editMeters,
+};
+
+export function useBlockDrafts<E = BlockEdit>(
   order: RoofingBatchOrderDto,
   onSaved: (list: RoofingReportDraftDto[]) => void,
+  adapter: DraftAdapter<E> = COVERING_DRAFTS as unknown as DraftAdapter<E>,
 ) {
-  const [edits, setEdits] = useState<Record<string, BlockEdit>>({});
+  const [edits, setEdits] = useState<Record<string, E>>({});
   const [states, setStates] = useState<Record<string, BlockSaveState>>({});
   /** El borrador que devolvió el último guardado: más nuevo que `order.drafts` hasta el refetch. */
   const latest = useRef<RoofingReportDraftDto[]>(order.drafts);
@@ -71,17 +93,17 @@ export function useBlockDrafts(
       const edit = editsRef.current[coilId];
       if (edit === undefined) return true;
       const version = versions.current.get(coilId) ?? 0;
-      const payload = blockPayload(edit);
+      const payload = adapter.content(edit);
       if (!payload.ok) {
         setStates((s) => ({ ...s, [coilId]: { saving: false, error: payload.reason } }));
         return false;
       }
       setStates((s) => ({ ...s, [coilId]: { saving: true, error: null } }));
       try {
-        const list = await saveBlockDraft({
+        const list = await saveDraftContent({
           orderId: order.orderId,
           coilId,
-          payload,
+          content: payload.content,
           existing: latest.current.filter((d) => d.coilId === coilId),
           call,
           keyFor: (fingerprint) => {
@@ -121,7 +143,7 @@ export function useBlockDrafts(
       }
     },
     // `order.orderId` fija la orden; el resto se lee por ref.
-    [order.orderId, onSaved],
+    [order.orderId, onSaved, adapter],
   );
 
   /** Pone el guardado en la fila y devuelve si salió bien. */
@@ -136,7 +158,7 @@ export function useBlockDrafts(
 
   /** Cambia un bloque y programa su guardado. */
   const edit = useCallback(
-    (coilId: string, next: BlockEdit, options: { immediate?: boolean } = {}) => {
+    (coilId: string, next: E, options: { immediate?: boolean } = {}) => {
       versions.current.set(coilId, (versions.current.get(coilId) ?? 0) + 1);
       editsRef.current = { ...editsRef.current, [coilId]: next };
       setEdits(editsRef.current);
@@ -176,11 +198,28 @@ export function useBlockDrafts(
       for (const timer of timers.current.values()) clearTimeout(timer);
       timers.current.clear();
       let ok = true;
-      for (const coilId of flushOrder(coilIds, editsRef.current, latest.current)) {
+      for (const coilId of flushOrder(coilIds, editsRef.current, latest.current, adapter.meters)) {
         ok = (await enqueue(coilId)) && ok;
       }
       await queue.current;
       return ok;
+    },
+    [enqueue, adapter.meters],
+  );
+
+  /**
+   * cc41 (D-591): escribe un bloque y lo guarda ya, esperando el resultado (sin la pausa entre
+   * teclas). Lo usa la transición del accesorio desde el navegador, que sube bloque por bloque.
+   */
+  const put = useCallback(
+    (coilId: string, next: E): Promise<boolean> => {
+      versions.current.set(coilId, (versions.current.get(coilId) ?? 0) + 1);
+      editsRef.current = { ...editsRef.current, [coilId]: next };
+      setEdits(editsRef.current);
+      const timer = timers.current.get(coilId);
+      if (timer !== undefined) clearTimeout(timer);
+      timers.current.delete(coilId);
+      return enqueue(coilId);
     },
     [enqueue],
   );
@@ -203,6 +242,9 @@ export function useBlockDrafts(
     edit,
     flushOne,
     flush,
+    put,
+    /** cc41: si ya se escribió en el bloque desde que se abrió la orden (lo escrito ahí gana). */
+    touched: (coilId: string) => (versions.current.get(coilId) ?? 0) > 0,
     /** El borrador más nuevo conocido (para el número de fila de un error y las casillas). */
     latestDrafts: () => latest.current,
   };
