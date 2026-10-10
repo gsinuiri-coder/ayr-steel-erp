@@ -1,5 +1,7 @@
 import type {
   CoilMonthReportDto,
+  CoilWasteDto,
+  InventoryValuationDto,
   CoilMonthReportRowDto,
   ProductionSummaryDto,
   ProductionSummaryOrderDto,
@@ -10,6 +12,8 @@ import type {
 } from '@ayr/shared';
 import {
   searchCoilMonth,
+  searchCoilWaste,
+  searchInventory,
   searchProduction,
   searchReceivables,
   searchSalesByMaterial,
@@ -272,5 +276,72 @@ describe('searchSalesByMaterial', () => {
     const out = searchSalesByMaterial(report, 'cumbrera');
     expect(out.products?.rows.map((r) => r.sku)).toEqual(['UPVC-2']);
     expect(out.products?.total).toEqual({ salesPen: '5', costPen: '1', profitPen: '4' });
+  });
+});
+
+describe('searchInventory, searchCoilWaste y la búsqueda que deja todo', () => {
+  it('inventario: recorta grupos y productos; los totales por línea quedan enteros', () => {
+    const report = {
+      coilGroups: [
+        {
+          businessLine: 'drywall',
+          finishKind: 'GALVANIZADO',
+          colorName: null,
+          finishes: [],
+          coils: [{ code: 'BOB-9' }],
+        },
+        {
+          businessLine: 'metallic-roofing',
+          finishKind: 'PREPINTADO',
+          colorName: 'Rojo',
+          finishes: [],
+          coils: [],
+        },
+      ],
+      products: [
+        { sku: 'PERF-1', name: 'Perfil', businessLine: 'drywall' },
+        { sku: 'UPVC-1', name: 'Teja', businessLine: 'roofing' },
+      ],
+      totalsByLine: [{ businessLine: 'drywall' }],
+    } as unknown as InventoryValuationDto;
+    const out = searchInventory(report, 'drywall');
+    expect(out.coilGroups).toHaveLength(1);
+    expect(out.products.map((p) => p.sku)).toEqual(['PERF-1']);
+    expect(out.totalsByLine).toBe(report.totalsByLine);
+    expect(searchInventory(report, '')).toBe(report);
+  });
+
+  it('merma: las bobinas que coinciden y su total; si coinciden todas, el total del API', () => {
+    const row = (code: string, consumed: string) => ({
+      code,
+      typeKey: 'AZ',
+      colorName: null,
+      finishName: 'Prepintado',
+      productions: [],
+      status: 'OPEN',
+      consumedKg: consumed,
+      trimKg: '0',
+      closeAdjustmentKg: '0',
+      manualScrapKg: '0',
+      theoreticalKg: consumed,
+      differenceKg: '0',
+      wasteKg: '0',
+    });
+    const report = {
+      standardPct: '1.00',
+      rows: [row('BOB-1', '10.000'), row('BOB-2', '5.000')],
+      totals: { coilCount: 2, consumedKg: '15.000' },
+    } as unknown as CoilWasteDto;
+    const out = searchCoilWaste(report, 'bob-2');
+    expect(out.rows.map((r) => r.code)).toEqual(['BOB-2']);
+    expect(out.totals.consumedKg).toBe('5');
+    expect(out.totals.coilCount).toBe(1);
+    // Todas coinciden: el DTO del API, con su total, como el pie de la pantalla (`allRows`).
+    expect(searchCoilWaste(report, 'prepintado')).toBe(report);
+  });
+
+  it('cxc y producción: si la búsqueda deja todo, el DTO no cambia', () => {
+    expect(searchProduction(production, 'calamina', 'orden')).toBe(production);
+    expect(searchProduction(production, 'op-', 'pedido')).toBe(production);
   });
 });
