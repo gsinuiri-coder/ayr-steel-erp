@@ -966,14 +966,23 @@ export type ReportRoofingPiecesInput = z.infer<typeof reportRoofingPiecesSchema>
  * duplicaban. Al corregir una fila (PUT) no se usa: reescribir la misma fila dos veces deja lo
  * mismo.
  */
-export const roofingReportDraftInputSchema = z.object({
-  /** Opcional con una sola bobina montada; con varias, obligatorio (un reporte sale de un rollo). */
-  coilId: z.string().uuid().optional(),
-  pieces: roofingPiecesSchema,
-  consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
-  notes: z.string().trim().max(240).optional(),
-  ...idempotencyFields,
-});
+export const roofingReportDraftInputSchema = z
+  .object({
+    /** Opcional con una sola bobina montada; con varias, obligatorio (un reporte sale de un rollo). */
+    coilId: z.string().uuid().optional(),
+    pieces: roofingPiecesSchema.optional(),
+    /**
+     * cc41 (D-591): la fila de un **accesorio** lleva metros de bobina, como su parte (D-343), y no
+     * largos. Cuál de las dos formas corresponde lo decide el servicio, por el producto de la orden.
+     */
+    meters: reportRoofingBaseSchema.shape.meters,
+    /** cc41 (D-591): las piezas informativas del accesorio, solo con `meters` (D-343). */
+    piecesCount: reportRoofingBaseSchema.shape.piecesCount,
+    consumedKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
+    notes: z.string().trim().max(240).optional(),
+    ...idempotencyFields,
+  })
+  .superRefine(refineReportForm);
 export type RoofingReportDraftInput = z.infer<typeof roofingReportDraftInputSchema>;
 
 /**
@@ -1004,8 +1013,11 @@ export const roofingReportDraftSchema = z.object({
   rowNumber: z.number().int(),
   coilId: z.string().uuid(),
   coilCode: z.string(),
+  /** Vacío en la fila de un accesorio (cc41, D-591): sus metros van en `meters`. */
   pieces: z.array(roofingPieceSchema),
   meters: z.string(),
+  /** cc41 (D-591): piezas informativas de una fila de accesorio; `null` (o ausente) si no se anotaron. */
+  piecesCount: z.number().int().nullable().optional(),
   /** Kilo teórico con la geometría de esa bobina (D-047): lo que saldría del kardex. */
   theoreticalKg: z.string(),
   consumedKg: z.string().nullable(),

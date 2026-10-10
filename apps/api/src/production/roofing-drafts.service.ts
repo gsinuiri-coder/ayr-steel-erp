@@ -6,6 +6,7 @@ import {
   type Prisma,
 } from '@prisma/client';
 import {
+  isAccessory,
   MAX_ORDER_REPORTS,
   piecesMeters,
   productionOrderCode,
@@ -32,11 +33,14 @@ import {
   DRAFT_INCLUDE,
   draftCoilStates,
   draftDtos,
+  draftRowLike,
+  mathPieces,
   toDraftDto,
   type DraftCheckState,
   type DraftRow,
   type DraftRowLike,
 } from './roofing-drafts';
+import { sumReportedMeters } from './reported-meters';
 import { RoofingProductionService } from './roofing-production.service';
 
 /**
@@ -82,7 +86,7 @@ export class RoofingDraftsService {
       }),
       this.prisma.productionOrder.findUnique({
         where: { id: orderId },
-        select: { seq: true, productId: true, status: true },
+        select: { seq: true, productId: true, reservationId: true, status: true },
       }),
     ]);
     // D-388: con la orden en curso, cada fila sale con su marca de «fuera de tolerancia». Es una
@@ -122,22 +126,13 @@ export class RoofingDraftsService {
             `El borrador admite hasta ${MAX_DRAFT_ROWS} filas: ejecútalo antes de seguir cargando`,
           );
         }
-        const candidate = {
-          coilId: input.coilId,
-          pieces: input.pieces,
-          consumedKg: input.consumedKg ?? null,
-        };
-        const coilId = this.validate(state, [...existing.map(toRowLike), candidate], 'new');
+        const coilId = this.validate(
+          state,
+          [...existing.map(draftRowLike), inputRowLike(input)],
+          'new',
+        );
         await tx.productionReportDraft.create({
-          data: {
-            productionOrderId: orderId,
-            coilId,
-            consumedKg:
-              input.consumedKg === undefined ? null : toFixedString(input.consumedKg, 'KG'),
-            notes: input.notes ?? null,
-            createdById: actor.id,
-            pieces: { create: toPieceRows(input.pieces) },
-          },
+          data: { productionOrderId: orderId, coilId, createdById: actor.id, ...rowData(input) },
         });
       },
       { timeout: 30_000 },
@@ -156,23 +151,13 @@ export class RoofingDraftsService {
         const existing = await this.drafts(tx, orderId);
         const index = existing.findIndex((d) => d.id === draftId);
         if (index < 0) throw new NotFoundException('Esa fila no está en el borrador de la orden');
-        const rows = existing.map(toRowLike);
-        rows[index] = {
-          coilId: input.coilId,
-          pieces: input.pieces,
-          consumedKg: input.consumedKg ?? null,
-        };
+        const rows = existing.map(draftRowLike);
+        rows[index] = inputRowLike(input);
         const coilId = this.validate(state, rows, index);
         await tx.productionReportDraftPiece.deleteMany({ where: { draftId } });
         await tx.productionReportDraft.update({
           where: { id: draftId },
-          data: {
-            coilId,
-            consumedKg:
-              input.consumedKg === undefined ? null : toFixedString(input.consumedKg, 'KG'),
-            notes: input.notes ?? null,
-            pieces: { create: toPieceRows(input.pieces) },
-          },
+          data: { coilId, ...rowData(input) },
         });
       },
       { timeout: 30_000 },
@@ -278,7 +263,7 @@ export class RoofingDraftsService {
       );
     }
     this.assertRoomForReports(state.liveReports, drafts.length);
-    this.validate(state, drafts.map(toRowLike), 'all');
+    this.validate(state, drafts.map(draftRowLike), 'all');
 
     // D-388/D-389: la casilla viaja por fila al ejecutar. Una fila que la
     // necesita y no la trae se rechaza adentro de `reportInTx` con su código y su número de
@@ -289,6 +274,8 @@ export class RoofingDraftsService {
 
     for (const [index, draft] of drafts.entries()) {
       const toleranceOverride = overrides.get(draft.id);
+      const meters = draft.meters ?? null;
+      const piecesCount = draft.piecesCount ?? null;
       try {
         warnings.push(
           ...(await this.roofing.reportInTx(
@@ -297,10 +284,18 @@ export class RoofingDraftsService {
             orderId,
             {
               coilId: draft.coilId,
-              pieces: draft.pieces.map((p) => ({
-                lengthMm: p.lengthMm.toFixed(2),
-                qty: p.qty,
-              })),
+              // cc41 (D-591): una fila de accesorio es su parte por metros (D-343), sin largos.
+              ...(meters === null
+                ? {
+                    pieces: draft.pieces.map((p) => ({
+                      lengthMm: p.lengthMm.toFixed(2),
+                      qty: p.qty,
+                    })),
+                  }
+                : {
+                    meters: meters.toFixed(3),
+                    ...(piecesCount === null ? {} : { piecesCount }),
+                  }),
               ...(draft.consumedKg === null ? {} : { consumedKg: draft.consumedKg.toFixed(3) }),
               ...(draft.notes === null ? {} : { notes: draft.notes }),
               ...(toleranceOverride === undefined ? {} : { toleranceOverride }),
@@ -340,7 +335,7 @@ export class RoofingDraftsService {
         code: productionOrderCode(state.orderSeq),
         rows: drafts.length,
         meters: drafts
-          .reduce((acc, d) => acc.plus(piecesMeters(d.pieces.map(toPieceLike))), toDecimal('0'))
+          .reduce((acc, d) => acc.plus(piecesMeters(mathPieces(draftRowLike(d)))), toDecimal('0'))
           .toFixed(3),
         closed: input.close === true,
         operationDate,
@@ -373,13 +368,13 @@ export class RoofingDraftsService {
   /** Lo que la validación del borrador lee de la orden, sin bloquear nada. */
   private async readState(
     tx: Prisma.TransactionClient,
-    order: { seq: number; productId: string },
+    order: { seq: number; productId: string; reservationId: string | null },
     orderId: string,
   ): Promise<DraftCheckState & { liveReports: number }> {
     const [product, plan, reports, consumptions] = await Promise.all([
       tx.product.findUniqueOrThrow({
         where: { id: order.productId },
-        select: { sku: true, lengthMm: true },
+        select: { sku: true, lengthMm: true, roofingKind: true },
       }),
       tx.productionOrderItem.findMany({
         where: { productionOrderId: orderId },
@@ -388,7 +383,7 @@ export class RoofingDraftsService {
       }),
       tx.productionReport.findMany({
         where: { productionOrderId: orderId, status: ProductionReportStatus.ACTIVE },
-        select: { piecesDetail: { select: { lengthMm: true, qty: true } } },
+        select: { metersM: true, piecesDetail: { select: { lengthMm: true, qty: true } } },
       }),
       tx.productionOrderConsumption.findMany({
         where: { productionOrderId: orderId, releasedAt: null },
@@ -405,14 +400,32 @@ export class RoofingDraftsService {
         },
       }),
     ]);
+    const accessory = isAccessory(product);
+    // cc41 (D-591): el plan de un accesorio son los metros de su línea del pedido (D-343). Una
+    // consulta más, solo en un accesorio con pedido.
+    const line =
+      accessory && order.reservationId !== null
+        ? await tx.reservation.findUnique({
+            where: { id: order.reservationId },
+            select: { salesOrderItem: { select: { qty: true } } },
+          })
+        : null;
     return {
       orderSeq: order.seq,
       productSku: product.sku,
       fixedLengthMm: product.lengthMm === null ? null : product.lengthMm.toFixed(2),
       planPieces: plan.map(toPieceLike),
-      reportedMeters: piecesMeters(reports.flatMap((r) => r.piecesDetail.map(toPieceLike))),
+      // Un accesorio no deja largos: sus metros de bobina están en `meters_m` (D-343).
+      reportedMeters: accessory
+        ? (sumReportedMeters(reports) ?? toDecimal('0'))
+        : piecesMeters(reports.flatMap((r) => r.piecesDetail.map(toPieceLike))),
       liveReports: reports.length,
       coils: draftCoilStates(consumptions),
+      accessory: accessory
+        ? {
+            orderedMeters: line === null ? null : toDecimal(line.salesOrderItem.qty.toString()),
+          }
+        : null,
     };
   }
 
@@ -462,11 +475,25 @@ function toPieceLike(row: { lengthMm: Prisma.Decimal; qty: number }): PieceLike 
   return { lengthMm: row.lengthMm.toFixed(2), qty: row.qty };
 }
 
-function toRowLike(draft: DraftRow): DraftRowLike {
+/** Lo que se escribe del ingreso en la fila: largos en coberturas, metros en un accesorio. */
+function rowData(input: RoofingReportDraftInput) {
   return {
-    coilId: draft.coilId,
-    pieces: draft.pieces.map(toPieceLike),
-    consumedKg: draft.consumedKg === null ? null : draft.consumedKg.toFixed(3),
+    consumedKg: input.consumedKg === undefined ? null : toFixedString(input.consumedKg, 'KG'),
+    // cc41 (D-591): los metros de bobina del accesorio y sus piezas informativas (D-343).
+    meters: input.meters === undefined ? null : toFixedString(input.meters, 'KG'),
+    piecesCount: input.piecesCount ?? null,
+    notes: input.notes ?? null,
+    pieces: { create: toPieceRows(input.pieces ?? []) },
+  };
+}
+
+/** Una fila del ingreso, en la forma que valida `checkDraftRows`. */
+function inputRowLike(input: RoofingReportDraftInput): DraftRowLike {
+  return {
+    coilId: input.coilId,
+    pieces: input.pieces ?? [],
+    meters: input.meters ?? null,
+    consumedKg: input.consumedKg ?? null,
   };
 }
 

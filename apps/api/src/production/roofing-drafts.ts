@@ -4,6 +4,7 @@ import {
   mountedKgForReport,
   piecesMeters,
   planExcessMessage,
+  roofingPlanGap,
   roofingPlanOverrun,
   roofingPlanProgress,
   toDecimal,
@@ -43,14 +44,22 @@ export interface DraftCheckState {
   /** Largo fijo de una plancha de catálogo (D-083); `null` a medida. */
   fixedLengthMm: string | null;
   planPieces: readonly PieceLike[];
-  /** Metros de los reportes vigentes. */
+  /** Metros de los reportes vigentes (en un accesorio, sus metros de bobina). */
   reportedMeters: Decimal;
   coils: readonly DraftCoilState[];
+  /**
+   * cc41 (D-591): la orden es de un **accesorio** (D-343): sus filas llevan metros de bobina y no
+   * largos, y su plan son los metros que encargó la línea del pedido (`null` sin pedido: sin tope,
+   * igual que su parte). Ausente o `null` en una cobertura.
+   */
+  accessory?: { orderedMeters: Decimal | null } | null;
 }
 
 export interface DraftRowLike {
   coilId: string | undefined;
   pieces: readonly PieceLike[];
+  /** cc41 (D-591): metros de bobina de una fila de accesorio; ausente o `null` en coberturas. */
+  meters?: string | null;
   /** Kilos declarados de la fila (D-246: si caben en lo montado, la fila se topa ahí). */
   consumedKg?: string | null;
 }
@@ -92,6 +101,7 @@ export function checkDraftRows(
   state: DraftCheckState,
   rows: readonly DraftRowLike[],
 ): DraftCheckResult {
+  const accessory = state.accessory ?? null;
   const usedKg = new Map<string, Decimal>();
   let draftMeters = new Decimal(0);
   const checks: DraftRowCheck[] = [];
@@ -102,6 +112,18 @@ export function checkDraftRows(
 
     const coil = resolveDraftCoil(state.coils, row.coilId);
     if (typeof coil === 'string') return fail(coil);
+
+    // cc41 (D-591): la forma de la fila la decide el producto, con los textos del parte (D-343).
+    const rowMeters = row.meters ?? null;
+    if (accessory !== null && (rowMeters === null || row.pieces.length > 0)) {
+      return fail(
+        `${state.productSku} es un accesorio: reporta los metros lineales de bobina que usó, no largos`,
+      );
+    }
+    if (accessory === null && rowMeters !== null) {
+      return fail(`${state.productSku} no es un accesorio: detalla los largos que salieron`);
+    }
+    const pieces = mathPieces(row);
 
     if (state.fixedLengthMm !== null) {
       const fixed = toDecimal(state.fixedLengthMm).toFixed(2);
@@ -115,13 +137,25 @@ export function checkDraftRows(
 
     // D-146 con el borrador adentro: lo que ya ocupan las filas anteriores cuenta como si
     // estuviera reportado, porque al ejecutar lo va a estar.
-    const meters = piecesMeters(row.pieces);
-    // cc38 (D-574): el texto nombra cuánto se pasa lo registrado más el borrador.
-    const progress = roofingPlanProgress(state.planPieces, state.reportedMeters.plus(draftMeters));
-    const overrun = roofingPlanOverrun(progress, meters);
-    if (overrun.gt(0)) return fail(planExcessMessage(overrun));
+    const meters = piecesMeters(pieces);
+    // cc38 (D-574): el texto nombra cuánto se pasa lo registrado más el borrador. En un accesorio,
+    // contra los metros del pedido, como su parte (cc41).
+    if (accessory === null) {
+      const progress = roofingPlanProgress(
+        state.planPieces,
+        state.reportedMeters.plus(draftMeters),
+      );
+      const overrun = roofingPlanOverrun(progress, meters);
+      if (overrun.gt(0)) return fail(planExcessMessage(overrun));
+    } else if (accessory.orderedMeters !== null) {
+      const { excess } = roofingPlanGap(
+        accessory.orderedMeters,
+        state.reportedMeters.plus(draftMeters).plus(meters),
+      );
+      if (excess.gt(0)) return fail(planExcessMessage(excess));
+    }
 
-    const theoreticalKg = roofingTheoreticalKg(coil.geometry, row.pieces);
+    const theoreticalKg = roofingTheoreticalKg(coil.geometry, pieces);
     const alreadyKg = usedKg.get(coil.coilId) ?? new Decimal(0);
     const leftKg = coil.remainingKg.minus(alreadyKg);
     // D-246: la misma regla que el reporte del API, fila por fila. Una fila topada deja la
@@ -156,6 +190,16 @@ export function checkDraftRows(
   return { ok: true, rows: checks };
 }
 
+/**
+ * D-343: los metros de un accesorio entran a la cuenta como **un solo largo de esa longitud**, el
+ * mismo vehículo aritmético de su parte (`reportInTx`): kilo teórico y tope de lo montado.
+ */
+export function mathPieces(row: Pick<DraftRowLike, 'pieces' | 'meters'>): PieceLike[] {
+  const meters = row.meters ?? null;
+  if (meters === null) return [...row.pieces];
+  return [{ lengthMm: toDecimal(meters).times(1000).toFixed(2), qty: 1 }];
+}
+
 /** Lo que se lee de un borrador para validarlo y para devolverlo. */
 export const DRAFT_INCLUDE = {
   pieces: { orderBy: { lineNumber: 'asc' } },
@@ -181,20 +225,22 @@ export function toDraftDto(
     lengthMm: p.lengthMm.toFixed(2),
     qty: p.qty,
   }));
+  const math = mathPieces(draftRowLike(draft));
   return {
     id: draft.id,
     rowNumber: index + 1,
     coilId: draft.coilId,
     coilCode: draft.coil.code,
     pieces,
-    meters: piecesMeters(pieces).toFixed(3),
+    meters: piecesMeters(math).toFixed(3),
+    piecesCount: draft.piecesCount ?? null,
     theoreticalKg: roofingTheoreticalKg(
       {
         widthMm: draft.coil.widthMm.toFixed(2),
         thicknessMm: draft.coil.thicknessMm.toFixed(2),
         densityFactor: draft.coil.finish.densityFactor.toFixed(4),
       },
-      pieces,
+      math,
     ).toFixed(3),
     consumedKg: draft.consumedKg === null ? null : draft.consumedKg.toFixed(3),
     notes: draft.notes,
@@ -208,6 +254,8 @@ export function draftRowLike(draft: DraftRow): DraftRowLike {
   return {
     coilId: draft.coilId,
     pieces: draft.pieces.map((p) => ({ lengthMm: p.lengthMm.toFixed(2), qty: p.qty })),
+    // cc41 (D-591): solo una fila de accesorio lleva metros; la de coberturas queda como antes.
+    ...((draft.meters ?? null) === null ? {} : { meters: draft.meters?.toFixed(3) }),
     consumedKg: draft.consumedKg === null ? null : draft.consumedKg.toFixed(3),
   };
 }
