@@ -129,6 +129,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @ayr/shared build
       - run: pnpm --filter @ayr/api db:generate
+      # D-593 (cc42): una base vacía del mismo Postgres, con todas las migraciones, tiene que
+      # diferir de schema.prisma solo en lo aprobado (apps/api/prisma/drift-esperado.sql).
+      - name: Guardián del drift de schema (check:drift)
+        run: pnpm check:drift
       - run: pnpm --filter @ayr/api build
       # D-372 (cc15b): `InventoryService` contra la base real (`*.db-spec.ts`): la precondición
       # y la concurrencia de `replaceEntry`. Resetea y siembra la misma base del job; la suite E2E

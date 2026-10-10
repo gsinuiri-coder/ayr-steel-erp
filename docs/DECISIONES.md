@@ -2214,3 +2214,8 @@ el servidor (las filas que hay pueden ser las que ella misma subió). Hallazgos 
   subirlo como fila nueva duplicaría el kardex. No se sube: se avisa para que se revise;
 - si el operario escribe en un bloque mientras la transición sube los anteriores, gana lo que
   escribió.
+
+## Ratificación del dueño (2026-10-10, pieza cc42)
+
+El dueño ratificó D-591 (cc41: el borrador del accesorio en el servidor, que reemplaza D-559). Su
+fila de `ARQUITECTURA.md` §0.2 lo dice.

@@ -43,6 +43,7 @@
     "check:price-floor": "node scripts/check-price-floor.mjs",
     "check:roofing-catalog": "node scripts/check-roofing-catalog.mjs",
     "check:coil-skus": "node scripts/check-coil-skus.mjs",
+    "check:drift": "node scripts/check-drift.mjs",
     "import:initial-inventory": "node scripts/import-initial-inventory.mjs",
     "normalize:coil-skus": "node scripts/normalize-coil-skus.mjs",
     "sweep:imported": "node scripts/sweep-imported-documents.mjs",
