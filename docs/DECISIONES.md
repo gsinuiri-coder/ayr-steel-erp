@@ -2173,3 +2173,9 @@ piezas cc30 a cc39. Quedan firmes, y su fila de `ARQUITECTURA.md` §0.2 lo dice:
 
 **D-477 no se ratificó**: sigue provisional (planta toma el pedido antes que la OP solo en los
 caminos que escriben el pedido o la reserva).
+
+## Ratificación del dueño (2026-10-10, pieza cc41)
+
+El dueño ratificó D-586 a D-590 (cc40: «Ver por» por id, el Excel de Ventas y margen sin suma
+doble, la búsqueda que viaja al Excel, «No trazable» con enlace al pedido y el acabado a la vista)
+y dio por buena la UAT de cc40 (`docs/uat/cc40.md`). Su fila de `ARQUITECTURA.md` §0.2 lo dice.
