@@ -11,11 +11,13 @@
 ## Lo verificado como correcto
 
 ### Migración
+
 - `ADD COLUMN meters DECIMAL(12,3)` y `pieces_count INTEGER`, ambas nulas: filas existentes y coberturas no cambian. Cabe `MAX_VALUE.KG` (999 999 999) en `(12,3)`, la misma escala que `consumed_kg`, y el schema Zod usa el mismo `decimalStringSchema('KG')` que el parte.
 - CHECK `meters IS NULL OR meters > 0` y `pieces_count IS NULL OR (meters IS NOT NULL AND pieces_count >= 0)`: coinciden con `refineReportForm` (piezas solo con metros). La base admite 0 piezas y el schema exige `min(1)`: más laxa que la API, no al revés, correcto. El db-spec cubre los tres rechazos y los dos pasos.
 - Nombre `20261010140000_...` posterior a la última migración (`20260927200000`). `schema.prisma` coincide con el SQL (`@map("pieces_count")`, `meters` sin map).
 
 ### Validación pura frente a `reportInTx`
+
 - Forma de la fila: los textos de rechazo («es un accesorio: reporta los metros lineales…», «no es un accesorio: detalla los largos…») son los de `reportInTx` (`roofing-production.service.ts:1072-1079`). El schema solo garantiza «una de las dos formas»; el servicio decide por producto, igual que el parte.
 - `mathPieces` replica el vehículo aritmético de D-343 (`meters × 1000` a 2 decimales, `qty 1`); kilo teórico, tope D-246 y acumulado por bobina (`usedKg`) siguen el mismo camino que las coberturas, y el spec lo prueba (la fila 2 sale marcada fuera de tolerancia).
 - Tope de plan (D-573/D-574): `roofingPlanGap(ordenado, registrado + borrador + fila)` con el mismo `planExcessMessage` que el parte; sin pedido (`orderedMeters = null`) no hay tope, igual que `if (accessory && order.reservationId)`. `reportedMeters` de un accesorio suma `metersM`, la misma suma que el parte y que `batchOrders`. `salesOrderItem` es no nulo en `Reservation` (FK obligatoria), así que `line.salesOrderItem.qty` no puede reventar.
@@ -23,6 +25,7 @@
 - `batchOrders` (`:1664-1681`): se reordenó para pasar `accessory` a `draftDtos`; el `draftMeters` del lote suma `d.meters` del DTO, que para un accesorio ya sale de los metros de bobina.
 
 ### Transacción, idempotencia y bloqueos
+
 - El commit sigue por `commitInTx`: `loadState(... parent: true)` toma pedido → OP con `lockOrder` antes de leer nada, y la lectura de la reserva del accesorio va después del bloqueo (D-474). No hay `FOR UPDATE` nuevo ni bloqueo fuera de las puertas; la regla 17 no se toca. La reserva y la línea se leen sin bloquear, como ya hacía `reportInTx`, y el commit revalida todo adentro.
 - Todo o nada: la fila k llama a `reportInTx` dentro de la misma transacción; un fallo de la fila 2 (validación previa o dentro del parte) deshace la fila 1. Los dos db-specs lo prueban con saldos de bobina y conteo de reportes antes y después.
 - `claimIdempotencyKey` por orden en `add` y en `commit` no cambió; la clave del cuerpo web ahora incluye `meters`, `piecesCount` y `consumedKg` de cada fila, de modo que cambiar el contenido regenera la clave.
@@ -30,6 +33,7 @@
 - `previewCommit` usa el mismo `commitInTx`, así que la vista previa del accesorio sale del mismo código.
 
 ### Web
+
 - `useBlockDrafts` generalizado con un adaptador: el de coberturas (`COVERING_DRAFTS`) conserva `blockPayload` + `editMeters`; los dos adaptadores son constantes de módulo, así que `useCallback([... adapter])` no se invalida por render.
 - `flushOrder`: la subida/bajada ahora mide lo guardado de un accesorio por sus metros de bobina; sigue guardando primero lo que baja (necesario por el tope D-146/D-574 sobre todo el borrador).
 - `saveDraftContent`: el mismo PUT/POST/DELETE con clave por huella; vaciar borra todas las filas de la bobina, y dos filas de una bobina colapsan en una al guardar (D-548).
