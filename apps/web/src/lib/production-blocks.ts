@@ -10,6 +10,7 @@ import {
   type RoofingBatchCoilDto,
   type RoofingPieceDto,
 } from '@ayr/shared';
+import type { PieceRow } from './pieces';
 
 /**
  * cc35 (ESPEC §1) — el modelo M de «Producir una OP»: **un bloque por bobina, en el orden en que
@@ -211,4 +212,39 @@ export function planSquare(
   }
   for (const key of inBlocks.keys()) if (!plan.has(key)) complete = false;
   return { planned, covered, complete };
+}
+
+const EMPTY_PIECE_ROW: PieceRow = { lengthM: '', qty: '' };
+
+/**
+ * Una plancha de catálogo tiene un solo largo: su bloque lleva **siempre** su única fila, vacía si
+ * no hay nada escrito. Sin ella, una bobina sin borrador quedaba con `rows = []`: la pantalla
+ * dibujaba una fila de reemplazo, pero la edición se hacía sobre la lista vacía y la tecla se
+ * perdía (hotfix de cc38). La fila vacía no es contenido: `blockPayload` la descarta.
+ */
+export function catalogRows(rows: readonly PieceRow[]): PieceRow[] {
+  return rows.length > 0 ? [...rows] : [EMPTY_PIECE_ROW];
+}
+
+/**
+ * Lo que una tecla en «Unidades» de una plancha de catálogo deja en la fila: el largo fijo con las
+ * unidades, o la fila vacía si se borraron (el largo fijo solo no es contenido: así el bloque queda
+ * vacío y se borra su borrador, en vez de quedar con un error de cantidad).
+ */
+export function catalogQtyPatch(fixedLength: string, qty: string): PieceRow {
+  return qty.trim() === '' ? { lengthM: '', qty } : { lengthM: fixedLength, qty };
+}
+
+/**
+ * Las filas de un bloque después de cambiar la fila `i`: la que se edita queda aunque quede vacía
+ * (es donde está el cursor); las demás vacías se descartan.
+ */
+export function editRow(
+  rows: readonly PieceRow[],
+  i: number,
+  patch: Partial<PieceRow>,
+): PieceRow[] {
+  return rows
+    .map((r, j) => (i === j ? { ...r, ...patch } : r))
+    .filter((r, j) => j === i || r.lengthM.trim() !== '' || r.qty.trim() !== '');
 }

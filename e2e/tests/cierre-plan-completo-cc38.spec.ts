@@ -425,6 +425,84 @@ test.describe('cc38 — la pantalla (D-575, D-576)', () => {
     }
   });
 
+  test('hotfix: se escribe en la primera de varias bobinas, en plancha de catálogo y en a medida', async ({
+    page,
+  }) => {
+    // Plancha de catálogo: 5 planchas de 3.00 m y dos bobinas; la primera no tiene borrador.
+    const scenario = await setupRoofingScenario(api, { weightKg: '2000', pieceLengthMm: '3000' });
+    const extra = await buyRoofingCoil(api, {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      weightKg: '2000',
+    });
+    const customer = await createCustomer(api);
+    const quotation = await createQuotationWithLines(api, {
+      customerId: customer.id,
+      businessLine: ROOFING_LINE,
+      items: [{ productId: scenario.product.id, qty: '5', valuePerMeterPen: '60.0000' }],
+    });
+    const order = await postJson<{ id: string }>(
+      api,
+      `/api/sales/quotations/${quotation.id}/confirm`,
+      {},
+    );
+    const opId = (await reservationsOf(api, order.id)).find(
+      (r) => r.productionOrderId,
+    )?.productionOrderId;
+    if (!opId) throw new Error('confirmar no dejó la OP de la plancha');
+    const catalogTrail: Trail = {
+      supplierId: scenario.supplier.id,
+      finishId: scenario.finish.id,
+      colorId: scenario.color.id,
+      productIds: [scenario.product.id],
+      coilIds: [scenario.coil.id, extra.coil.id],
+      purchaseIds: [scenario.purchaseId, extra.purchaseId],
+      productionOrderIds: [opId],
+      orderIds: [order.id],
+      quotationIds: [quotation.id],
+    };
+    let medida: Awaited<ReturnType<typeof aMedida>> | undefined;
+    try {
+      await mountCoil(api, opId, { coilId: scenario.coil.id });
+      await mountCoil(api, opId, { coilId: extra.coil.id });
+      const op = await getJson<ProductionOrderDto>(api, `/api/production/${opId}`);
+      const panel = await openOrder(page, { orderId: order.id, opId, opCode: op.code });
+      const first = panel.getByTestId(`bloque-${scenario.coil.code}`);
+      const second = panel.getByTestId(`bloque-${extra.coil.code}`);
+      await first.getByLabel(/Unidades del corte 1 de/).fill('2');
+      await expect(first.getByLabel(/Unidades del corte 1 de/)).toHaveValue('2');
+      // La última sigue llenándose sola con lo que falta, sin confirmar (D-575).
+      await expect(second).toHaveAttribute('data-auto', 'sin-confirmar');
+      await expect(second.getByLabel(/Unidades del corte 1 de/)).toHaveValue('3');
+      await waitSaved(panel);
+      const saved = await getJson<{ coilId: string; pieces: { qty: number }[] }[]>(
+        api,
+        `/api/production/roofing/${opId}/drafts`,
+      );
+      expect(saved.map((d) => [d.coilId, d.pieces.map((x) => x.qty)])).toEqual([
+        [scenario.coil.id, [2]],
+      ]);
+
+      // A medida: lo mismo en la primera bobina.
+      medida = await aMedida(api, 2);
+      const [m1] = medida.coils as [{ id: string; code: string }];
+      // La sesión ya está abierta: se navega directo, sin volver a entrar.
+      await page.goto(`/planta?pedido=${medida.orderId}`);
+      await openQueuedOrder(page, medida.opCode);
+      const mPanel = page.locator(`#panel-${medida.opId}`);
+      await expect(mPanel.getByText('Plan y avance')).toBeVisible({ timeout: 60_000 });
+      const mFirst = mPanel.getByTestId(`bloque-${m1.code}`);
+      await mFirst.getByLabel(/Largo del corte 1 de/).selectOption('4.00');
+      await mFirst.getByLabel(/Planchas del corte 1 de/).fill('4');
+      await expect(mFirst.getByLabel(/Planchas del corte 1 de/)).toHaveValue('4');
+      await waitSaved(mPanel);
+    } finally {
+      await purgeRoofingTrail(api, catalogTrail);
+      if (medida) await purgeRoofingTrail(api, medida.trail);
+    }
+  });
+
   test('«Registrar y cerrar» con el bloque llenado solo pide confirmarlo en «Qué va a pasar»', async ({
     page,
   }) => {
