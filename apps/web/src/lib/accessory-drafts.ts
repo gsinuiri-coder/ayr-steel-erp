@@ -215,3 +215,12 @@ export async function uploadLegacyAccessoryEdits(input: {
   remove();
   return { uploaded, failed: null, doubtful };
 }
+
+/** Si este navegador tiene algo de D-559 para la orden (sin leerlo ni tocarlo). */
+export function hasLegacyAccessoryEdits(storage: LegacyStorage | null, orderId: string): boolean {
+  try {
+    return storage !== null && storage.getItem(LEGACY_ACCESSORY_PREFIX + orderId) !== null;
+  } catch {
+    return false;
+  }
+}

@@ -1,15 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BACKDATE_OUT_OF_ORDER,
   Decimal,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   sum,
-  TOLERANCE_OVERRIDE_REQUIRED,
   toDecimal,
-  type PlantClosePreviewDto,
   type ProductionOrderDto,
   type RoofingBatchOrderDto,
   type RoofingReportDraftDto,
@@ -25,16 +21,13 @@ import {
   accessoryDraftContent,
   accessoryEditFromDrafts,
   accessoryEditMeters,
+  hasLegacyAccessoryEdits,
   uploadLegacyAccessoryEdits,
 } from '@/lib/accessory-drafts';
-import { api, ApiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { formatKg, formatMeters, formatQtyAsIs } from '@/lib/format';
 import { planProgress } from '@/lib/plan-progress';
 import { errorMessage, toast } from '@/lib/notify';
-import { coilOfRowError, withoutRowPrefix } from '@/lib/production-blocks';
-import { invalidateProduction } from '@/lib/production-queries';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
-import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 
 import { cn } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
@@ -45,6 +38,12 @@ import { Input } from '@/components/ui/input';
 import { AutoConfirmBlock, BandHeader, ClosePreviewBlock, Stat } from './produce-blocks';
 import { CloseButton, CloseHint, CoilStatusBadge, PlanProgressBar } from './plan-progress-view';
 import { useBlockDrafts, type DraftAdapter } from './use-block-drafts';
+import {
+  DraftSaveStatus,
+  useDraftCommit,
+  useDraftsCache,
+  type DraftToleranceOverride,
+} from './use-draft-commit';
 import {
   EMPTY_OVERRIDE,
   overrideInput,
@@ -99,27 +98,7 @@ export function ProduceAccessory({
   releaseCoil: (consumptionId: string) => void;
   releasing: boolean;
 }) {
-  const queryClient = useQueryClient();
-  const invalidate = useCallback(() => {
-    invalidateProduction(queryClient, order.orderId);
-  }, [queryClient, order.orderId]);
-  /** Guardar un bloque no toca el kardex: el borrador que devolvió el API va a la caché (cc35). */
-  const onSaved = useCallback(
-    (list: RoofingReportDraftDto[]) => {
-      queryClient.setQueriesData<RoofingBatchOrderDto[]>({ queryKey: ['roofing-batch'] }, (old) =>
-        old?.map((o) =>
-          o.orderId === order.orderId
-            ? {
-                ...o,
-                drafts: list,
-                draftMeters: sum(list.map((d) => toDecimal(d.meters))).toFixed(3),
-              }
-            : o,
-        ),
-      );
-    },
-    [queryClient, order.orderId],
-  );
+  const onSaved = useDraftsCache(order.orderId);
   const drafts = useBlockDrafts(order, onSaved, ACCESSORY_DRAFTS);
   /** Último bloque vaciado a mano: no se vuelve a llenar solo hasta que se escriba en él. */
   const [emptied, setEmptied] = useState<ReadonlySet<string>>(new Set());
@@ -127,16 +106,32 @@ export function ProduceAccessory({
   const [starting, setStarting] = useState(false);
 
   const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
-  /** El error del último registro, en el bloque de su bobina (o arriba si no nombra una fila). */
-  const [commitError, setCommitError] = useState<{ coilId: string | null; message: string } | null>(
-    null,
-  );
   const [attempted, setAttempted] = useState(false);
-  const [preview, setPreview] = useState<PlantClosePreviewDto | null>(null);
-  const [askingReason, setAskingReason] = useState(false);
-  const reason = useRef<string | null>(null);
-  const closing = useRef(false);
-  const backdate = useRef(false);
+  /** Las casillas listas por fila del borrador; se calculan más abajo, con los bloques. */
+  const overridesRef = useRef<() => DraftToleranceOverride[]>(() => []);
+  const {
+    commit,
+    previewClose,
+    run,
+    preview,
+    setPreview,
+    commitError,
+    setCommitError,
+    askingReason,
+    setAskingReason,
+    reason,
+    closing,
+  } = useDraftCommit({
+    order,
+    operationDate,
+    latestDrafts: drafts.latestDrafts,
+    toleranceOverrides: () => overridesRef.current(),
+    onUpdated,
+    onCommitted: () => {
+      setOverrides({});
+      setAttempted(false);
+    },
+  });
 
   // cc41: lo que D-559 dejó en este navegador sube una vez al borrador del servidor (si el
   // servidor ya tiene borrador, gana el servidor) y la clave local se borra. Sin avisos salvo error.
@@ -144,30 +139,42 @@ export function ProduceAccessory({
   useEffect(() => {
     if (migrated.current === order.orderId) return;
     migrated.current = order.orderId;
+    const storage = browserStorage();
+    if (!hasLegacyAccessoryEdits(storage, order.orderId)) return;
     const codeOf = (coilId: string) => order.coils.find((c) => c.coilId === coilId)?.coilCode ?? '';
-    void uploadLegacyAccessoryEdits({
-      storage: browserStorage(),
-      orderId: order.orderId,
-      coilIds: order.coils.map((c) => c.coilId),
-      serverCoilIds: order.drafts.map((d) => d.coilId),
-      registeredCoilIds: order.coils
-        .filter((c) => toDecimal(c.reportedMeters).gt(0))
-        .map((c) => c.coilId),
-      // Si el operario ya escribió en ese bloque mientras subía lo anterior, gana lo que escribió.
-      save: (coilId, edit) =>
-        drafts.touched(coilId) ? Promise.resolve(true) : drafts.put(coilId, edit),
-    }).then(({ failed, doubtful }) => {
-      if (failed !== null) {
-        toast.error(
-          `No se pudo pasar al borrador lo escrito en este navegador para la bobina ${codeOf(failed)}: corrígelo en su bloque.`,
-        );
-      }
-      if (doubtful.length > 0) {
-        toast.error(
-          `Lo escrito en este navegador para ${doubtful.map(codeOf).join(', ')} quizá ya se registró: revisa lo registrado y escribe lo que falte.`,
-        );
-      }
-    });
+    // Con algo del navegador por subir, el borrador se lee recién del servidor: la caché puede
+    // ser vieja, y decidir con ella podía dar de alta una segunda fila para la misma bobina.
+    void api<RoofingReportDraftDto[]>(`/production/roofing/${order.orderId}/drafts`)
+      .then((fresh) => {
+        onSaved(fresh);
+        return uploadLegacyAccessoryEdits({
+          storage,
+          orderId: order.orderId,
+          coilIds: order.coils.map((c) => c.coilId),
+          serverCoilIds: fresh.map((d) => d.coilId),
+          registeredCoilIds: order.coils
+            .filter((c) => toDecimal(c.reportedMeters).gt(0))
+            .map((c) => c.coilId),
+          // Si el operario ya escribió en ese bloque mientras subía lo anterior, gana lo suyo.
+          save: (coilId, edit) =>
+            drafts.touched(coilId) ? Promise.resolve(true) : drafts.put(coilId, edit),
+        });
+      })
+      .then(({ failed, doubtful }) => {
+        if (failed !== null) {
+          toast.error(
+            `No se pudo pasar al borrador lo escrito en este navegador para la bobina ${codeOf(failed)}: corrígelo en su bloque.`,
+          );
+        }
+        if (doubtful.length > 0) {
+          toast.error(
+            `Lo escrito en este navegador para ${doubtful.map(codeOf).join(', ')} quizá ya se registró: revisa lo registrado y escribe lo que falte.`,
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        toast.error(errorMessage(err, 'No se pudo leer el borrador de la orden'));
+      });
     // Una vez por orden: lo que se lee es el estado con el que se abrió.
   }, [order.orderId]);
 
@@ -256,91 +263,14 @@ export function ProduceAccessory({
   /** Guarda lo pendiente de los bloques confirmados (el llenado solo se queda en la pantalla). */
   const persistAll = (): Promise<boolean> => drafts.flush(registrable.map((b) => b.coil.coilId));
 
-  const submitKey = useIdempotencyKey();
-  const body = (close: boolean) => {
+  overridesRef.current = () => {
     const byCoil = new Map(drafts.latestDrafts().map((d) => [d.coilId, d.id]));
-    const toleranceOverrides = excessBlocks.flatMap((b) => {
+    return excessBlocks.flatMap((b) => {
       const input = overrideInput(overrides[b.coil.coilId], b.check.figures.excess);
       const draftId = byCoil.get(b.coil.coilId);
       return input === null || draftId === undefined ? [] : [{ draftId, ...input }];
     });
-    return {
-      ...(close ? { close: true } : {}),
-      ...(close && reason.current ? { closeReason: reason.current } : {}),
-      ...(toleranceOverrides.length > 0 ? { toleranceOverrides } : {}),
-      operationDate,
-      confirmBackdate: backdate.current || undefined,
-      // D-182: la clave va atada a lo que se registra, no solo a si cierra.
-      idempotencyKey: submitKey.current(
-        JSON.stringify({
-          close,
-          rows: drafts.latestDrafts().map((d) => [d.id, d.meters, d.piecesCount, d.consumedKg]),
-          toleranceOverrides,
-        }),
-      ),
-    };
   };
-
-  /** Un rechazo del registro: en el bloque de su fila, o arriba. */
-  const onError = (err: unknown) => {
-    // D-124: la retro-fecha la atiende su diálogo (`useBackdateConfirm`), no es un error del bloque.
-    if (err instanceof ApiError && err.code === BACKDATE_OUT_OF_ORDER) return;
-    setPreview(null);
-    const message = errorMessage(err, 'No se pudo registrar la producción');
-    if (err instanceof ApiError && /motivo/i.test(err.message) && closing.current) {
-      if (err.code !== TOLERANCE_OVERRIDE_REQUIRED) {
-        setAskingReason(true);
-        return;
-      }
-    }
-    reason.current = null;
-    const coilId = coilOfRowError(message, drafts.latestDrafts());
-    setCommitError({ coilId, message: coilId === null ? message : withoutRowPrefix(message) });
-    toast.error(message);
-    invalidate();
-  };
-
-  const commit = useMutation({
-    mutationFn: (close: boolean) =>
-      api<ProductionOrderDto>(`/production/roofing/${order.orderId}/drafts/commit`, {
-        method: 'POST',
-        body: body(close),
-      }),
-    onSettled: (_d, error) => {
-      submitKey.settle(error ?? undefined);
-    },
-    onSuccess: (updated, close) => {
-      toast.success(
-        close
-          ? `${order.code}: producción registrada y orden cerrada`
-          : `${order.code}: producción registrada`,
-      );
-      setOverrides({});
-      setPreview(null);
-      setCommitError(null);
-      setAttempted(false);
-      reason.current = null;
-      onUpdated(updated);
-      invalidate();
-    },
-    onError,
-  });
-
-  const previewClose = useMutation({
-    mutationFn: () =>
-      api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/drafts/commit/preview`, {
-        method: 'POST',
-        body: body(true),
-      }),
-    onSuccess: setPreview,
-    onError,
-  });
-
-  const run = useBackdateConfirm(async (confirmBackdate) => {
-    backdate.current = confirmBackdate;
-    if (closing.current) await previewClose.mutateAsync();
-    else await commit.mutateAsync(false);
-  });
 
   const start = async (shouldClose: boolean) => {
     setAttempted(true);
@@ -718,14 +648,7 @@ export function ProduceAccessory({
       >
         <span className="mr-auto grid gap-0.5">
           <CloseHint view={progress} />
-          <span className="text-xs text-muted-foreground" aria-live="polite">
-            {' '}
-            {Object.values(drafts.states).some((s) => s.saving)
-              ? 'Guardando…'
-              : Object.keys(drafts.edits).length > 0
-                ? 'Sin guardar todavía'
-                : 'Todo lo escrito está guardado'}{' '}
-          </span>
+          <DraftSaveStatus states={drafts.states} edits={drafts.edits} />
         </span>
         <OperationDateField value={operationDate} onChange={onOperationDate} />
         <Button
