@@ -105,7 +105,7 @@ describe('coilWasteXlsx (cc39, D-580)', () => {
     expect(total[header.indexOf('Teórico (kg)')]).toBe(98);
     expect(total[header.indexOf('Merma (kg)')]).toBe(3);
     expect(total[header.indexOf('Merma %')]).toBe(3.06);
-    expect(total[header.indexOf('Pasa la tolerancia')]).toBe('Sí');
+    expect(total[header.indexOf('Fuera de tolerancia (merma %)')]).toBe('Sí');
     // Con bobinas sin teórico, la hoja dice de cuántas son el teórico y la merma.
     expect(rows.some((r) => String(r[0]).startsWith('Teórico, diferencia y merma: 1 de 2'))).toBe(
       true,

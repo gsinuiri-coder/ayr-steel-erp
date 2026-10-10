@@ -118,8 +118,10 @@ export function inventoryValuationXlsx(
       'Valor (S/)',
       'Estado',
       'Fecha de alta',
+      // cc39 (D-582): el nombre del acabado, al final para no correr las columnas de siempre.
+      'Nombre del acabado',
     ],
-    widths: [16, 22, 13, 18, 18, 7, 16, 11, 13, 11, 14, 12, 14],
+    widths: [16, 22, 13, 18, 18, 7, 16, 11, 13, 11, 14, 12, 14, 24],
     formats: [null, null, null, null, null, null, null, null, TWO_DECIMALS],
     rows: report.coilGroups.flatMap((g) =>
       g.coils.map((c) => [
@@ -137,6 +139,7 @@ export function inventoryValuationXlsx(
         num(c.totalValuePen),
         COIL_STATUS_LABELS[c.status],
         c.operationDate,
+        c.finishName,
       ]),
     ),
   };
@@ -168,7 +171,7 @@ export function inventoryValuationXlsx(
         num(t.totalValuePen),
       ]),
       [
-        'Total general',
+        line === undefined ? 'Total general' : `Total ${BUSINESS_LINE_LABELS[line]}`,
         num(report.totals.coilValuePen),
         num(report.totals.productValuePen),
         num(report.totals.totalValuePen),
@@ -233,7 +236,9 @@ export function salesMarginXlsx(
           num(o.marginPen),
           num(o.marginPct),
           num(o.opMaterialCostPen),
-          COST_STATUS_LABELS[o.costStatus],
+          // En una línea sin costo (Servicios) el estado del costo lo deciden otras líneas (D-412):
+          // la pantalla no lo muestra, y el Excel tampoco.
+          noCost ? '' : COST_STATUS_LABELS[o.costStatus],
         ],
         // Los comprobantes cuelgan debajo con el pedido en blanco: el archivo se lee de
         // arriba abajo y repetir el código en cada línea lo vuelve ilegible.

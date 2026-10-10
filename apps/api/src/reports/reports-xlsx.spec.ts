@@ -322,7 +322,8 @@ describe('cc39 (D-580): el Excel de la pestaña de una línea', () => {
     // Las filas tienen tantas celdas como la cabecera: nada corrido de columna.
     const first = rowsOf(buffer, 'Por pedido')[1] ?? [];
     expect(first[header.indexOf('Venta sin IGV (S/)')]).toBe(1000);
-    expect(first[header.indexOf('Costo / Emisión')]).toBe('Completo');
+    // El estado del costo lo deciden otras líneas (D-412): ni la pantalla ni el Excel lo muestran.
+    expect(first[header.indexOf('Costo / Emisión')] ?? '').toBe('');
     const total = rowsOf(buffer, 'Totales')[1] ?? [];
     expect(total[0]).toBe('Total Servicios (sin costo registrado)');
     expect(total[1]).toBe(1000);

@@ -204,7 +204,10 @@ describe('Inventario valorizado: el Excel de cada pestaña es la pantalla', () =
     const xlsx = await download((res) => controller.inventoryValuationXlsxFile(query, res));
     if (businessLine !== undefined) expect(xlsx.filename).toContain(businessLine);
 
-    const total = rowStarting(xlsx.sheet('Totales'), 'Total general');
+    const total = rowStarting(
+      xlsx.sheet('Totales'),
+      businessLine === undefined ? 'Total general' : `Total ${BUSINESS_LINE_LABELS[businessLine]}`,
+    );
     expectSame(total[1], screen.totals.coilValuePen, 'bobinas');
     expectSame(total[2], screen.totals.productValuePen, 'productos');
     expectSame(total[3], screen.totals.totalValuePen, 'total');

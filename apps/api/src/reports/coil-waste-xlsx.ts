@@ -40,7 +40,7 @@ export function coilWasteXlsx(report: CoilWasteDto): { buffer: Buffer; filename:
       'Ajuste de cierre (kg)',
       'Merma (kg)',
       'Merma %',
-      'Pasa la tolerancia',
+      'Fuera de tolerancia (merma %)',
       'Otra merma (kg)',
     ],
     widths: [30, 18, 22, 16, 11, 12, 15, 13, 15, 20, 19, 12, 10, 18, 15],
