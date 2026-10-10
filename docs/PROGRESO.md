@@ -2,6 +2,18 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-10 — Neon: borrados los respaldos del 03/10 (OK del dueño por nombre, D-460)
+
+- **Borradas:** `respaldo-pre-cc16-20261003` (`br-late-poetry-aewbwyl6`) y
+  `respaldo-pre-replaceentry-20261003` (`br-rapid-river-ae59y2vw`). Antes se verificó que el id
+  coincidiera con el nombre y que no tuvieran ramas hijas. Las dos respondieron HTTP 200 al
+  `DELETE` de la API de Neon, y la lista posterior ya no las trae. Las corrió el dueño con `!`,
+  porque el clasificador de permisos se las niega al agente.
+- **Quedan 7 de 10:** `production`, `dev`, `ci`, `demo`, `respaldo-pre-v4-20260915`,
+  `respaldo-pre-log3-20260930` y `respaldo-pre-cc08-20261001`. Las dos últimas son ahora los dos
+  respaldos post-día-D más recientes y se conservan (`AGENTS.md` §3.3). La lista con ids está en
+  `docs/ENTORNOS.md`.
+
 ## 2026-10-10 — cc40: Ventas y margen sin suma doble, «Ver por» por id, acabado y búsqueda al Excel (D-586..D-590, PR #163 en prod)
 
 Sin migraciones y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc40.md`; UAT en
