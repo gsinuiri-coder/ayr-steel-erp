@@ -2179,3 +2179,38 @@ caminos que escriben el pedido o la reserva).
 El dueño ratificó D-586 a D-590 (cc40: «Ver por» por id, el Excel de Ventas y margen sin suma
 doble, la búsqueda que viaja al Excel, «No trazable» con enlace al pedido y el acabado a la vista)
 y dio por buena la UAT de cc40 (`docs/uat/cc40.md`). Su fila de `ARQUITECTURA.md` §0.2 lo dice.
+
+## D-591 — cc41: el borrador del accesorio en el servidor (2026-10-10, reemplaza D-559)
+
+**Qué había.** D-559 (cc35) guardaba lo escrito en los bloques de un accesorio en el navegador,
+porque el borrador de reportes de D-191 solo sabía de largos y llevarle metros exigía una
+migración, y la sesión de cc35 no tenía permiso para hacerla. Tenía dos huecos que el dueño ya
+había anotado: lo escrito no salía de ese navegador (otro equipo no lo veía) y «Registrar» mandaba
+un parte por bloque, así que un rechazo en la bobina 3 dejaba registradas la 1 y la 2.
+
+**Qué cambia.** Con la migración aditiva `20261010140000_cc41_borrador_accesorio_metros` (OK del
+dueño por nombre, D-460), el borrador guarda también filas de accesorio: `meters` y
+`pieces_count`. El accesorio pasa a usar el mismo camino que coberturas: validación pura
+(`checkDraftRows`) al ingresar y al ejecutar, un solo `commitInTx` para registrar y para registrar
+y cerrar, y la vista previa sobre ese mismo código.
+
+**Los CHECK.** Prisma no genera ni ve un CHECK: se escribieron a mano en el `migration.sql` y se
+prueban aparte en `test:db`, con inserts reales. Fallan `meters = 0`, `pieces_count` sin `meters`
+y `pieces_count = -1`; pasan `meters > 0` con `pieces_count` nulo o `≥ 0`, y la fila de coberturas
+(las dos nulas). Las piezas de coberturas viven en otra tabla, así que «piezas o metros» no se
+puede exigir con un CHECK: lo exige el servicio por el producto de la orden.
+
+**La transición.** Cuando se despliega, alguna orden puede tener algo escrito en un navegador sin
+registrar. Al abrir esa orden, lo de ese navegador sube una vez al borrador si el del servidor está
+vacío, y la clave local se borra. Si el servidor ya tiene borrador, gana el servidor (otro equipo
+ya escribió). Antes de subir, la clave queda marcada como «transición empezada» con lo que falta.
+Si un guardado se rechaza (por ejemplo, porque ya se registró parte por otro lado y lo escrito pasa
+el pedido) o la pantalla se cierra a mitad, la transición se detiene ahí y avisa con la bobina; la
+vez siguiente, como la clave está marcada, reintenta solo las bobinas que todavía no tienen fila en
+el servidor (las filas que hay pueden ser las que ella misma subió). Hallazgos de la autorrevisión:
+
+- un bloque de D-559 con clave de idempotencia y sin la marca `sent` es un parte que se mandó y
+  cuya respuesta no llegó; si su bobina ya tiene algo registrado, el parte pudo haber entrado, y
+  subirlo como fila nueva duplicaría el kardex. No se sube: se avisa para que se revise;
+- si el operario escribe en un bloque mientras la transición sube los anteriores, gana lo que
+  escribió.

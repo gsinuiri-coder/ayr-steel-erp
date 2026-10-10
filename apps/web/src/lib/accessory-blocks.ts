@@ -6,18 +6,14 @@ import { blockFigures, type BlockFigures } from './production-blocks';
  * escriben directo los metros de bobina que salieron, hasta completar lo del pedido (D-343). Las
  * piezas son opcionales e informativas; los kilos salen de la bobina con su kg por metro.
  *
- * El borrador de reportes (D-191) guarda largos, no metros, así que un bloque de accesorio vive en
- * el navegador hasta registrarse (D-559).
+ * cc41 (D-591, reemplaza D-559): un bloque de accesorio se guarda en el borrador de la orden
+ * (D-191), como los de coberturas, con sus metros de bobina (`lib/accessory-drafts.ts`).
  */
 
 export interface AccessoryEdit {
   meters: string;
   pieces: string;
   consumedKg: string;
-  /** D-182: la clave de idempotencia del parte de este bloque, mientras no se registre. */
-  key?: string;
-  /** Su parte ya respondió: no se vuelve a mandar (se suelta al releer la orden). */
-  sent?: boolean;
 }
 
 export const EMPTY_ACCESSORY_EDIT: AccessoryEdit = { meters: '', pieces: '', consumedKg: '' };

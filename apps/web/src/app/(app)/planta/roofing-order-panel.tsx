@@ -31,7 +31,7 @@ import { ProduceBlocks } from './produce-blocks';
  * **cc35 (modelo M):** se produce bobina por bobina, en el orden en que se montaron. Una
  * cobertura a medida o una plancha de catálogo escribe sus bloques en el borrador de la orden
  * (`ProduceBlocks`); un accesorio, sin plan de corte, escribe metros de bobina por bloque
- * (`ProduceAccessory`, D-559).
+ * (`ProduceAccessory`), también en el borrador de la orden (D-591).
  *
  * Lo que **no** cambió: el tope de metros del plan sigue siendo duro (D-146) y las desviaciones del
  * kilo declarado y el faltante del agregado siguen siendo avisos (D-154).

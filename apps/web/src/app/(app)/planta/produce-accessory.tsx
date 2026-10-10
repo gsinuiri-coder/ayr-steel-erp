@@ -1,15 +1,18 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  BACKDATE_OUT_OF_ORDER,
   Decimal,
   MAX_SCRAP_RATIO_WITHOUT_REASON,
   sum,
+  TOLERANCE_OVERRIDE_REQUIRED,
   toDecimal,
   type PlantClosePreviewDto,
   type ProductionOrderDto,
   type RoofingBatchOrderDto,
+  type RoofingReportDraftDto,
 } from '@ayr/shared';
 import {
   accessoryBlock,
@@ -18,12 +21,20 @@ import {
   typedMeters,
   type AccessoryEdit,
 } from '@/lib/accessory-blocks';
+import {
+  accessoryDraftContent,
+  accessoryEditFromDrafts,
+  accessoryEditMeters,
+  uploadLegacyAccessoryEdits,
+} from '@/lib/accessory-drafts';
 import { api, ApiError } from '@/lib/api';
 import { formatKg, formatMeters, formatQtyAsIs } from '@/lib/format';
 import { planProgress } from '@/lib/plan-progress';
 import { errorMessage, toast } from '@/lib/notify';
+import { coilOfRowError, withoutRowPrefix } from '@/lib/production-blocks';
 import { invalidateProduction } from '@/lib/production-queries';
 import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 
 import { cn } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
@@ -33,7 +44,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AutoConfirmBlock, BandHeader, ClosePreviewBlock, Stat } from './produce-blocks';
 import { CloseButton, CloseHint, CoilStatusBadge, PlanProgressBar } from './plan-progress-view';
-import { newDraftKey } from './use-block-drafts';
+import { useBlockDrafts, type DraftAdapter } from './use-block-drafts';
 import {
   EMPTY_OVERRIDE,
   overrideInput,
@@ -47,43 +58,25 @@ import {
  * el orden de montaje, con los metros de bobina que salieron, las piezas (opcionales, solo
  * información) y los kg consumidos (opcional). El último se llena solo con lo que falta.
  *
- * D-559: el borrador de reportes guarda largos, no metros, y llevarle metros exige una migración.
- * Sin ella, lo escrito se guarda **en este navegador** (sobrevive a un refresco) y «Registrar»
- * manda un parte por bloque, en orden (`POST …/report`, como hoy). «Registrar y cerrar» manda los
- * bloques anteriores y el último junto con el cierre (`…/report-and-close`, con su vista previa).
- * No es todo o nada entre bloques: un rechazo detiene la serie en ese bloque y los anteriores
- * quedan registrados, a la vista en la bobina («ya registrado»).
+ * cc41 (D-591, reemplaza D-559): lo escrito se guarda **en el borrador de la orden** (D-191), como
+ * en coberturas (`useBlockDrafts` con los metros de bobina): sobrevive a un refresco y se ve desde
+ * otro equipo. «Registrar producción» ejecuta el borrador entero en una transacción (todo o nada)
+ * y «Registrar y cerrar» lo ejecuta y cierra en la misma, con «Qué va a pasar» de su vista previa.
+ * Lo que D-559 dejó en el navegador sube una vez al borrador al abrir la orden
+ * (`uploadLegacyAccessoryEdits`).
  */
 
-const STORAGE_PREFIX = 'ayr:cc35:accesorio:';
+const ACCESSORY_DRAFTS: DraftAdapter<AccessoryEdit> = {
+  content: accessoryDraftContent,
+  meters: accessoryEditMeters,
+};
 
-function loadEdits(orderId: string): Record<string, AccessoryEdit> {
+/** El almacenamiento del navegador, si se puede leer (ventana privada o bloqueado: no). */
+function browserStorage(): Storage | null {
   try {
-    const raw = window.localStorage.getItem(STORAGE_PREFIX + orderId);
-    const stored = raw === null ? {} : (JSON.parse(raw) as Record<string, AccessoryEdit>);
-    // Un bloque que ya se registró (su parte respondió) no vuelve: la orden releída ya lo trae.
-    return Object.fromEntries(Object.entries(stored).filter(([, e]) => e.sent !== true));
+    return window.localStorage;
   } catch {
-    return {};
-  }
-}
-
-/** Lo guardado tal cual, con los bloques ya registrados. */
-function loadEditsRaw(orderId: string): Record<string, AccessoryEdit> {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_PREFIX + orderId);
-    return raw === null ? {} : (JSON.parse(raw) as Record<string, AccessoryEdit>);
-  } catch {
-    return {};
-  }
-}
-
-function saveEdits(orderId: string, edits: Record<string, AccessoryEdit>): void {
-  try {
-    if (Object.keys(edits).length === 0) window.localStorage.removeItem(STORAGE_PREFIX + orderId);
-    else window.localStorage.setItem(STORAGE_PREFIX + orderId, JSON.stringify(edits));
-  } catch {
-    // Sin almacenamiento (ventana privada, bloqueado): lo escrito vive solo en la pantalla.
+    return null;
   }
 }
 
@@ -107,44 +100,97 @@ export function ProduceAccessory({
   releasing: boolean;
 }) {
   const queryClient = useQueryClient();
-  const invalidate = () => {
+  const invalidate = useCallback(() => {
     invalidateProduction(queryClient, order.orderId);
-  };
-  // Se lee al crear el estado (el panel se monta por orden y ya con los datos del API, nunca en el
-  // primer pintado del servidor): con un efecto de carga, el doble montaje de desarrollo leía el
-  // almacenamiento después de que el efecto de guardado lo vaciara.
-  const [edits, setEdits] = useState<Record<string, AccessoryEdit>>(() =>
-    typeof window === 'undefined' ? {} : loadEdits(order.orderId),
+  }, [queryClient, order.orderId]);
+  /** Guardar un bloque no toca el kardex: el borrador que devolvió el API va a la caché (cc35). */
+  const onSaved = useCallback(
+    (list: RoofingReportDraftDto[]) => {
+      queryClient.setQueriesData<RoofingBatchOrderDto[]>({ queryKey: ['roofing-batch'] }, (old) =>
+        old?.map((o) =>
+          o.orderId === order.orderId
+            ? {
+                ...o,
+                drafts: list,
+                draftMeters: sum(list.map((d) => toDecimal(d.meters))).toFixed(3),
+              }
+            : o,
+        ),
+      );
+    },
+    [queryClient, order.orderId],
   );
-  useEffect(() => {
-    saveEdits(order.orderId, edits);
-  }, [edits, order.orderId]);
+  const drafts = useBlockDrafts(order, onSaved, ACCESSORY_DRAFTS);
+  /** Último bloque vaciado a mano: no se vuelve a llenar solo hasta que se escriba en él. */
+  const [emptied, setEmptied] = useState<ReadonlySet<string>>(new Set());
+  /** Guardando lo pendiente antes de registrar: los botones no aceptan otro clic. */
+  const [starting, setStarting] = useState(false);
 
   const [overrides, setOverrides] = useState<Record<string, ToleranceOverrideState>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  /** El error del último registro, en el bloque de su bobina (o arriba si no nombra una fila). */
+  const [commitError, setCommitError] = useState<{ coilId: string | null; message: string } | null>(
+    null,
+  );
   const [attempted, setAttempted] = useState(false);
   const [preview, setPreview] = useState<PlantClosePreviewDto | null>(null);
   const [askingReason, setAskingReason] = useState(false);
   const reason = useRef<string | null>(null);
   const closing = useRef(false);
   const backdate = useRef(false);
-  const [sending, setSending] = useState(false);
+
+  // cc41: lo que D-559 dejó en este navegador sube una vez al borrador del servidor (si el
+  // servidor ya tiene borrador, gana el servidor) y la clave local se borra. Sin avisos salvo error.
+  const migrated = useRef<string | null>(null);
+  useEffect(() => {
+    if (migrated.current === order.orderId) return;
+    migrated.current = order.orderId;
+    const codeOf = (coilId: string) => order.coils.find((c) => c.coilId === coilId)?.coilCode ?? '';
+    void uploadLegacyAccessoryEdits({
+      storage: browserStorage(),
+      orderId: order.orderId,
+      coilIds: order.coils.map((c) => c.coilId),
+      serverCoilIds: order.drafts.map((d) => d.coilId),
+      registeredCoilIds: order.coils
+        .filter((c) => toDecimal(c.reportedMeters).gt(0))
+        .map((c) => c.coilId),
+      // Si el operario ya escribió en ese bloque mientras subía lo anterior, gana lo que escribió.
+      save: (coilId, edit) =>
+        drafts.touched(coilId) ? Promise.resolve(true) : drafts.put(coilId, edit),
+    }).then(({ failed, doubtful }) => {
+      if (failed !== null) {
+        toast.error(
+          `No se pudo pasar al borrador lo escrito en este navegador para la bobina ${codeOf(failed)}: corrígelo en su bloque.`,
+        );
+      }
+      if (doubtful.length > 0) {
+        toast.error(
+          `Lo escrito en este navegador para ${doubtful.map(codeOf).join(', ')} quizá ya se registró: revisa lo registrado y escribe lo que falte.`,
+        );
+      }
+    });
+    // Una vez por orden: lo que se lee es el estado con el que se abrió.
+  }, [order.orderId]);
 
   const coils = order.coils;
-  const lastCoil = coils[coils.length - 1];
-  const blocks = coils.map((coil, i) => {
-    const last = coil.coilId === lastCoil?.coilId;
-    const edit = edits[coil.coilId];
+  const blocks = useMemo(() => {
+    const lastCoil = coils[coils.length - 1];
+    const contentOf = (coilId: string): AccessoryEdit | null =>
+      drafts.edits[coilId] ??
+      accessoryEditFromDrafts(order.drafts.filter((d) => d.coilId === coilId));
     const others = coils
-      .filter((c) => c.coilId !== coil.coilId && c.coilId !== lastCoil?.coilId)
-      .map((c) => typedMeters(edits[c.coilId]?.meters ?? ''));
-    const derived = last && edit === undefined;
-    const fill = derived ? accessoryFill(order.remainingMeters, others) : null;
-    const shown: AccessoryEdit = derived
-      ? { ...EMPTY_ACCESSORY_EDIT, meters: fill?.gt(0) ? fill.toFixed(3) : '' }
-      : (edit ?? EMPTY_ACCESSORY_EDIT);
-    return { coil, index: i + 1, last, derived, edit: shown, check: accessoryBlock(coil, shown) };
-  });
+      .filter((c) => c.coilId !== lastCoil?.coilId)
+      .map((c) => typedMeters(contentOf(c.coilId)?.meters ?? ''));
+    return coils.map((coil, i) => {
+      const last = coil.coilId === lastCoil?.coilId;
+      const content = contentOf(coil.coilId);
+      const derived = last && content === null && !emptied.has(coil.coilId);
+      const fill = derived ? accessoryFill(order.remainingMeters, others) : null;
+      const shown: AccessoryEdit = derived
+        ? { ...EMPTY_ACCESSORY_EDIT, meters: fill?.gt(0) ? fill.toFixed(3) : '' }
+        : (content ?? EMPTY_ACCESSORY_EDIT);
+      return { coil, index: i + 1, last, derived, edit: shown, check: accessoryBlock(coil, shown) };
+    });
+  }, [coils, order.drafts, order.remainingMeters, drafts.edits, emptied]);
   /** D-575: el último bloque llenado solo y sin confirmar: no se registra hasta confirmarlo. */
   const autoBlock = blocks.find((b) => b.derived && b.check.meters !== null);
   const registrable = blocks.filter((b) => !b.derived);
@@ -160,201 +206,160 @@ export function ProduceAccessory({
   const [autoIncluded, setAutoIncluded] = useState<string | null>(null);
   const autoLabel = (b: (typeof blocks)[number]) =>
     `${formatMeters(b.check.meters ?? '0')} que se llenaron solos en la bobina ${b.coil.coilCode}`;
-  /** «Sí, salió así»: lo llenado pasa a ser lo escrito (y se guarda en el navegador, D-559). */
-  const confirmAuto = () => {
-    if (autoBlock !== undefined) setEdit(autoBlock.coil.coilId, autoBlock.edit);
-  };
-
-  /** Escribir en un bloque cambia su contenido: su clave de idempotencia deja de valer. */
-  const setEdit = (coilId: string, next: AccessoryEdit) => {
-    setErrors((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== coilId)));
-    const { key: _old, ...rest } = next;
-    setEdits((prev) => ({ ...prev, [coilId]: rest }));
-  };
 
   /**
-   * D-182: la clave de idempotencia de un parte vive **con lo escrito** (en el navegador, D-559):
-   * un reintento —también tras recargar, si la respuesta se perdió— no duplica el parte, y un parte
-   * nuevo con las mismas cifras (después de registrar el anterior) lleva otra.
+   * Escribir en un bloque lo deja confirmado (D-575) y lo guarda en el borrador. El último, vaciado
+   * del todo, no se vuelve a llenar solo hasta que se escriba en él.
    */
-  const keyFor = (b: (typeof blocks)[number]): string => {
-    if (b.edit.key !== undefined) return b.edit.key;
-    const key = newDraftKey();
-    const next = { ...edits, [b.coil.coilId]: { ...b.edit, key } };
-    saveEdits(order.orderId, next);
-    setEdits(next);
-    return key;
+  const editBlock = (b: (typeof blocks)[number], next: AccessoryEdit) => {
+    setCommitError(null);
+    if (b.last) {
+      const content = accessoryDraftContent(next);
+      setEmptied((prev) => {
+        const out = new Set(prev);
+        if (content.ok && content.content === null) out.add(b.coil.coilId);
+        else out.delete(b.coil.coilId);
+        return out;
+      });
+    }
+    drafts.edit(b.coil.coilId, next);
   };
 
-  const bodyOf = (b: (typeof blocks)[number], extra: object = {}) => {
-    const override = overrideInput(overrides[b.coil.coilId], b.check.figures.excess);
-    const body = {
-      coilId: b.coil.coilId,
-      meters: b.check.meters?.toFixed(3),
-      ...(b.check.pieces === null ? {} : { piecesCount: b.check.pieces }),
-      ...(b.edit.consumedKg.trim() === ''
-        ? {}
-        : { consumedKg: toDecimal(b.edit.consumedKg.trim()).toFixed(3) }),
-      ...(override === null ? {} : { toleranceOverride: override }),
+  /** «Sí, salió así»: lo llenado pasa al borrador tal como se ve (D-575). */
+  const confirmAuto = async (): Promise<boolean> => {
+    if (autoBlock === undefined) return true;
+    drafts.edit(autoBlock.coil.coilId, autoBlock.edit, { immediate: true });
+    return drafts.flush([autoBlock.coil.coilId]);
+  };
+
+  /** «Vaciar»: el bloque llenado solo queda vacío y no se vuelve a llenar hasta escribir en él. */
+  const clearAuto = () => {
+    if (autoBlock === undefined) return;
+    setEmptied((prev) => new Set(prev).add(autoBlock.coil.coilId));
+  };
+
+  // ---------------------------------------------------------------------------
+  // Registrar: el borrador entero, en una transacción (D-191)
+  // ---------------------------------------------------------------------------
+
+  const excessBlocks = registrable.filter(
+    (b) => b.check.figures.excess !== null && b.check.meters !== null,
+  );
+  const pendingOverride = excessBlocks.find(
+    (b) => overrideInput(overrides[b.coil.coilId], b.check.figures.excess) === null,
+  );
+  const blocking = registrable.find(
+    (b) => b.check.error !== null || (drafts.states[b.coil.coilId]?.error ?? null) !== null,
+  );
+  const hasContent = registrable.some((b) => b.check.meters !== null) || order.drafts.length > 0;
+
+  /** Guarda lo pendiente de los bloques confirmados (el llenado solo se queda en la pantalla). */
+  const persistAll = (): Promise<boolean> => drafts.flush(registrable.map((b) => b.coil.coilId));
+
+  const submitKey = useIdempotencyKey();
+  const body = (close: boolean) => {
+    const byCoil = new Map(drafts.latestDrafts().map((d) => [d.coilId, d.id]));
+    const toleranceOverrides = excessBlocks.flatMap((b) => {
+      const input = overrideInput(overrides[b.coil.coilId], b.check.figures.excess);
+      const draftId = byCoil.get(b.coil.coilId);
+      return input === null || draftId === undefined ? [] : [{ draftId, ...input }];
+    });
+    return {
+      ...(close ? { close: true } : {}),
+      ...(close && reason.current ? { closeReason: reason.current } : {}),
+      ...(toleranceOverrides.length > 0 ? { toleranceOverrides } : {}),
       operationDate,
       confirmBackdate: backdate.current || undefined,
-      ...extra,
+      // D-182: la clave va atada a lo que se registra, no solo a si cierra.
+      idempotencyKey: submitKey.current(
+        JSON.stringify({
+          close,
+          rows: drafts.latestDrafts().map((d) => [d.id, d.meters, d.piecesCount, d.consumedKg]),
+          toleranceOverrides,
+        }),
+      ),
     };
-    return { ...body, idempotencyKey: keyFor(b) };
   };
 
-  /** Un bloque cuyo parte ya respondió: queda marcado (y guardado) hasta releer la orden. */
-  const markSent = (coilId: string, edit: AccessoryEdit) => {
-    const stored = loadEditsRaw(order.orderId);
-    stored[coilId] = { ...edit, sent: true };
-    saveEdits(order.orderId, stored);
-    setEdits((prev) => ({ ...prev, [coilId]: { ...edit, sent: true } }));
-  };
-
-  /** Manda en orden los partes de `list`; para en el primero que el API rechaza. */
-  const sendReports = async (list: typeof blocks): Promise<boolean> => {
-    const sent: string[] = [];
-    let ok = true;
-    let lastResponse: ProductionOrderDto | null = null;
-    for (const b of list) {
-      if (b.check.meters === null || b.edit.sent === true) continue;
-      try {
-        lastResponse = await api<ProductionOrderDto>(
-          `/production/roofing/${order.orderId}/report`,
-          {
-            method: 'POST',
-            body: bodyOf(b),
-          },
-        );
-        sent.push(b.coil.coilId);
-        // Marcado en el almacenamiento en el acto: un F5 o un cambio de orden a mitad de la serie
-        // no lo vuelve a mandar.
-        markSent(b.coil.coilId, b.edit);
-      } catch (err) {
-        if (err instanceof ApiError && err.code === 'BACKDATE_OUT_OF_ORDER' && sent.length === 0) {
-          throw err;
-        }
-        setErrors((prev) => ({
-          ...prev,
-          [b.coil.coilId]: errorMessage(err, 'No se pudo registrar esta bobina'),
-        }));
-        ok = false;
-        break;
+  /** Un rechazo del registro: en el bloque de su fila, o arriba. */
+  const onError = (err: unknown) => {
+    // D-124: la retro-fecha la atiende su diálogo (`useBackdateConfirm`), no es un error del bloque.
+    if (err instanceof ApiError && err.code === BACKDATE_OUT_OF_ORDER) return;
+    setPreview(null);
+    const message = errorMessage(err, 'No se pudo registrar la producción');
+    if (err instanceof ApiError && /motivo/i.test(err.message) && closing.current) {
+      if (err.code !== TOLERANCE_OVERRIDE_REQUIRED) {
+        setAskingReason(true);
+        return;
       }
     }
-    if (sent.length > 0) {
-      // Lo registrado se suelta recién con la orden releída: si no, el último bloque se volvía a
-      // llenar con lo que faltaba **antes** de estos partes (revisión de cc35).
-      invalidateProduction(queryClient, order.orderId);
-      await queryClient.refetchQueries({ queryKey: ['roofing-batch'] });
-      setEdits((prev) =>
-        Object.fromEntries(Object.entries(prev).filter(([id]) => !sent.includes(id))),
-      );
-      // D-154: los avisos del agregado que devolvió el último parte.
-      onUpdated(lastResponse);
-    }
-    return ok;
-  };
-
-  const lastBlock = blocks[blocks.length - 1];
-  const closeBody = () => ({
-    ...(reason.current ? { reason: reason.current } : {}),
-    operationDate,
-    confirmBackdate: backdate.current || undefined,
-  });
-  /** El cierre: con metros en el último bloque, «reportar y cerrar»; si no, el cierre suelto. */
-  const closePath = () =>
-    lastBlock?.check.meters !== null && lastBlock !== undefined
-      ? {
-          path: `/production/roofing/${order.orderId}/report-and-close`,
-          body: bodyOf(lastBlock, reason.current ? { closeReason: reason.current } : {}),
-        }
-      : { path: `/production/roofing/${order.orderId}/close`, body: closeBody() };
-
-  const onCloseError = (err: unknown) => {
-    if (
-      err instanceof ApiError &&
-      /motivo/i.test(err.message) &&
-      err.code !== 'TOLERANCE_OVERRIDE_REQUIRED'
-    ) {
-      setAskingReason(true);
-      return;
-    }
     reason.current = null;
-    const message = errorMessage(err, 'No se pudo cerrar la orden');
-    if (lastBlock !== undefined)
-      setErrors((prev) => ({ ...prev, [lastBlock.coil.coilId]: message }));
+    const coilId = coilOfRowError(message, drafts.latestDrafts());
+    setCommitError({ coilId, message: coilId === null ? message : withoutRowPrefix(message) });
     toast.error(message);
+    invalidate();
   };
 
-  /** Lo que «Qué va a pasar» calculó: se confirma exactamente eso (D-453). */
-  const pendingClose = useRef<{ path: string; body: object } | null>(null);
-  const previewClose = useMutation({
-    mutationFn: () => {
-      const request = closePath();
-      pendingClose.current = request;
-      return api<PlantClosePreviewDto>(`${request.path}/preview`, {
+  const commit = useMutation({
+    mutationFn: (close: boolean) =>
+      api<ProductionOrderDto>(`/production/roofing/${order.orderId}/drafts/commit`, {
         method: 'POST',
-        body: request.body,
-      });
+        body: body(close),
+      }),
+    onSettled: (_d, error) => {
+      submitKey.settle(error ?? undefined);
     },
-    onSuccess: setPreview,
-    onError: onCloseError,
-  });
-  const close = useMutation({
-    mutationFn: () => {
-      const request = pendingClose.current ?? closePath();
-      return api<ProductionOrderDto>(request.path, { method: 'POST', body: request.body });
-    },
-    onSuccess: (updated) => {
-      toast.success(`${order.code}: producción registrada y orden cerrada`);
-      setEdits({});
+    onSuccess: (updated, close) => {
+      toast.success(
+        close
+          ? `${order.code}: producción registrada y orden cerrada`
+          : `${order.code}: producción registrada`,
+      );
+      setOverrides({});
       setPreview(null);
+      setCommitError(null);
+      setAttempted(false);
       reason.current = null;
       onUpdated(updated);
       invalidate();
     },
-    onError: onCloseError,
+    onError,
+  });
+
+  const previewClose = useMutation({
+    mutationFn: () =>
+      api<PlantClosePreviewDto>(`/production/roofing/${order.orderId}/drafts/commit/preview`, {
+        method: 'POST',
+        body: body(true),
+      }),
+    onSuccess: setPreview,
+    onError,
   });
 
   const run = useBackdateConfirm(async (confirmBackdate) => {
     backdate.current = confirmBackdate;
-    setSending(true);
-    try {
-      if (closing.current) {
-        const before = blocks.filter((b) => !b.last);
-        if (!(await sendReports(before))) return;
-        await previewClose.mutateAsync();
-        return;
-      }
-      // D-575: el bloque llenado solo y sin confirmar no se manda.
-      if (await sendReports(registrable)) {
-        toast.success(`${order.code}: producción registrada`);
-      }
-      invalidate();
-    } finally {
-      setSending(false);
-    }
+    if (closing.current) await previewClose.mutateAsync();
+    else await commit.mutateAsync(false);
   });
 
-  const pendingOverride = registrable.find(
-    (b) =>
-      b.check.figures.excess !== null &&
-      overrideInput(overrides[b.coil.coilId], b.check.figures.excess) === null,
-  );
-  const blocking = registrable.find((b) => b.check.error !== null);
-
-  const start = (shouldClose: boolean) => {
+  const start = async (shouldClose: boolean) => {
     setAttempted(true);
+    setCommitError(null);
     closing.current = shouldClose;
     reason.current = null;
     if (blocking !== undefined || pendingOverride !== undefined) return;
-    if (!shouldClose && registrable.every((b) => b.check.meters === null)) {
+    if (!shouldClose && !hasContent) {
       toast.warning('No hay nada escrito para registrar.');
       return;
     }
     // D-573: con los metros de la orden incompletos no se cierra (el API tampoco deja).
     if (shouldClose && !progress.canClose) return;
+    setStarting(true);
+    try {
+      if (!(await persistAll())) return;
+    } finally {
+      setStarting(false);
+    }
     // D-575: «Qué va a pasar» pide confirmar el bloque llenado solo antes de calcular.
     if (shouldClose && autoBlock !== undefined && autoBlock.check.figures.excess !== null) {
       toast.warning(
@@ -369,18 +374,28 @@ export function ProduceAccessory({
     void run.attempt();
   };
 
-  const confirmAutoAndPreview = () => {
-    confirmAuto();
-    setAutoIncluded(askingAuto);
+  /** La casilla «Confirmo que salieron»: confirma el bloque y calcula «Qué va a pasar». */
+  const confirmAutoAndPreview = async () => {
+    const label = askingAuto;
+    setStarting(true);
+    try {
+      if (!(await confirmAuto())) {
+        setAskingAuto(null);
+        return;
+      }
+    } finally {
+      setStarting(false);
+    }
     setAskingAuto(null);
+    setAutoIncluded(label);
     void run.attempt();
   };
 
   // Con «Qué va a pasar» a la vista no se edita: se confirma lo que el resumen dijo.
   const busy =
-    sending ||
+    starting ||
+    commit.isPending ||
     previewClose.isPending ||
-    close.isPending ||
     preview !== null ||
     askingAuto !== null ||
     refreshing ||
@@ -428,7 +443,12 @@ export function ProduceAccessory({
             {blocks.map((b) => {
               const { figures } = b.check;
               const label = `la bobina ${String(b.index)} (${b.coil.coilCode})`;
-              const error = errors[b.coil.coilId] ?? b.check.error;
+              const error =
+                (commitError !== null && commitError.coilId === b.coil.coilId
+                  ? commitError.message
+                  : null) ??
+                drafts.states[b.coil.coilId]?.error ??
+                b.check.error;
               const override = overrides[b.coil.coilId] ?? EMPTY_OVERRIDE;
               const auto = b === autoBlock;
               return (
@@ -436,6 +456,9 @@ export function ProduceAccessory({
                   key={b.coil.coilId}
                   data-testid={`bloque-${b.coil.coilCode}`}
                   data-auto={auto ? 'sin-confirmar' : undefined}
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget)) drafts.flushOne(b.coil.coilId);
+                  }}
                   className={cn(
                     'grid content-start gap-2.5 rounded-xl border p-3.5',
                     auto && 'border-dashed border-tone-warning-foreground bg-tone-warning/40',
@@ -503,7 +526,9 @@ export function ProduceAccessory({
                           size="sm"
                           aria-label={`Sí, salió así en ${label}`}
                           disabled={busy}
-                          onClick={confirmAuto}
+                          onClick={() => {
+                            void confirmAuto();
+                          }}
                         >
                           Sí, salió así
                         </Button>
@@ -513,7 +538,7 @@ export function ProduceAccessory({
                           aria-label={`Vaciar ${label}`}
                           disabled={busy}
                           onClick={() => {
-                            setEdit(b.coil.coilId, EMPTY_ACCESSORY_EDIT);
+                            clearAuto();
                           }}
                         >
                           Vaciar
@@ -535,7 +560,7 @@ export function ProduceAccessory({
                           disabled={busy}
                           value={b.edit.meters}
                           onChange={(e) => {
-                            setEdit(b.coil.coilId, { ...b.edit, meters: e.target.value });
+                            editBlock(b, { ...b.edit, meters: e.target.value });
                           }}
                         />
                         <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-xs text-muted-foreground">
@@ -549,7 +574,7 @@ export function ProduceAccessory({
                         disabled={busy}
                         value={b.edit.pieces}
                         onChange={(e) => {
-                          setEdit(b.coil.coilId, { ...b.edit, pieces: e.target.value });
+                          editBlock(b, { ...b.edit, pieces: e.target.value });
                         }}
                       />
                     </div>
@@ -571,7 +596,7 @@ export function ProduceAccessory({
                         disabled={busy}
                         value={b.edit.consumedKg}
                         onChange={(e) => {
-                          setEdit(b.coil.coilId, { ...b.edit, consumedKg: e.target.value });
+                          editBlock(b, { ...b.edit, consumedKg: e.target.value });
                         }}
                       />
                       <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-xs text-muted-foreground">
@@ -659,8 +684,10 @@ export function ProduceAccessory({
       {askingAuto !== null && (
         <AutoConfirmBlock
           label={askingAuto}
-          pending={sending}
-          onConfirm={confirmAutoAndPreview}
+          pending={starting}
+          onConfirm={() => {
+            void confirmAutoAndPreview();
+          }}
           onBack={() => {
             setAskingAuto(null);
           }}
@@ -673,14 +700,14 @@ export function ProduceAccessory({
           order={order}
           preview={preview}
           autoIncluded={autoIncluded}
-          pending={close.isPending}
+          pending={commit.isPending}
           onBack={() => {
             reason.current = null;
             setAutoIncluded(null);
             setPreview(null);
           }}
           onConfirm={() => {
-            close.mutate();
+            commit.mutate(true);
           }}
         />
       )}
@@ -691,19 +718,24 @@ export function ProduceAccessory({
       >
         <span className="mr-auto grid gap-0.5">
           <CloseHint view={progress} />
-          <span className="text-xs text-muted-foreground">
-            Lo escrito se guarda en este navegador hasta registrarlo.
+          <span className="text-xs text-muted-foreground" aria-live="polite">
+            {' '}
+            {Object.values(drafts.states).some((s) => s.saving)
+              ? 'Guardando…'
+              : Object.keys(drafts.edits).length > 0
+                ? 'Sin guardar todavía'
+                : 'Todo lo escrito está guardado'}{' '}
           </span>
         </span>
         <OperationDateField value={operationDate} onChange={onOperationDate} />
         <Button
           variant={progress.canClose ? 'outline' : 'default'}
           aria-label={`Registrar producción de ${order.code}`}
-          pending={sending && !closing.current}
+          pending={commit.isPending && !closing.current}
           pendingText="Registrando…"
-          disabled={busy || registrable.every((b) => b.check.meters === null)}
+          disabled={busy || !hasContent}
           onClick={() => {
-            start(false);
+            void start(false);
           }}
         >
           Registrar producción
@@ -714,7 +746,7 @@ export function ProduceAccessory({
           pending={previewClose.isPending}
           busy={busy}
           onClick={() => {
-            start(true);
+            void start(true);
           }}
         />
       </div>

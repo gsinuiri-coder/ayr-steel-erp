@@ -40,7 +40,6 @@ import {
   type DraftRow,
   type DraftRowLike,
 } from './roofing-drafts';
-import { sumReportedMeters } from './reported-meters';
 import { RoofingProductionService } from './roofing-production.service';
 
 /**
@@ -415,9 +414,13 @@ export class RoofingDraftsService {
       productSku: product.sku,
       fixedLengthMm: product.lengthMm === null ? null : product.lengthMm.toFixed(2),
       planPieces: plan.map(toPieceLike),
-      // Un accesorio no deja largos: sus metros de bobina están en `meters_m` (D-343).
+      // Un accesorio no deja largos: sus metros de bobina están en `meters_m` (D-343). La misma
+      // suma que `reportInTx` y `batchOrders`.
       reportedMeters: accessory
-        ? (sumReportedMeters(reports) ?? toDecimal('0'))
+        ? reports.reduce(
+            (acc, r) => (r.metersM === null ? acc : acc.plus(toDecimal(r.metersM.toString()))),
+            toDecimal('0'),
+          )
         : piecesMeters(reports.flatMap((r) => r.piecesDetail.map(toPieceLike))),
       liveReports: reports.length,
       coils: draftCoilStates(consumptions),
