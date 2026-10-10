@@ -2492,6 +2492,11 @@ model ProductionReportDraft {
   coil              Coil            @relation(fields: [coilId], references: [id])
   /// D-146: kilo declarado de este reporte, opcional. Dato de planta, no consumo.
   consumedKg        Decimal?        @map("consumed_kg") @db.Decimal(12, 3)
+  /// cc41 (D-591): metros de bobina de una fila de **accesorio** (D-343), que no lleva largos.
+  /// Nulo en coberturas, que siguen con sus piezas. CHECK en la base: `meters > 0` si viene.
+  meters            Decimal?        @db.Decimal(12, 3)
+  /// cc41 (D-591): piezas informativas de un accesorio; solo junto con `meters` (CHECK en la base).
+  piecesCount       Int?            @map("pieces_count")
   notes             String?         @db.VarChar(240)
   createdById       String          @map("created_by_id") @db.Uuid
   createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
