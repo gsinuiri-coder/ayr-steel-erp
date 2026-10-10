@@ -160,20 +160,17 @@ export function InventarioValorizadoView() {
         }
         actions={
           // Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que esta
-          // pantalla. D-396: sin exportación por línea; el Excel es el de «Todas» y solo se
-          // ofrece ahí.
-          line === undefined ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  download: '/api/reports/inventory-valuation/xlsx',
-                },
-              ]}
-            />
-          ) : undefined
+          // pantalla. cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: `/api/reports/inventory-valuation/xlsx${line === undefined ? '' : `?businessLine=${line}`}`,
+              },
+            ]}
+          />
         }
       />
 
@@ -427,7 +424,6 @@ function coilColumns(
  * que decía otra cosa).
  */
 function CoilRows({ group }: { group: InventoryValuationCoilGroupDto }) {
-  const names = new Map(group.finishes.map((f) => [f.finishCode, f.finishName]));
   return (
     <>
       {group.coils.map((coil) => (
@@ -439,11 +435,8 @@ function CoilRows({ group }: { group: InventoryValuationCoilGroupDto }) {
               </Link>
               <span className="text-muted-foreground">Ancho {formatQty(coil.widthMm, 'mm')}</span>
               <span className="text-muted-foreground">
-                {finishText(
-                  names.get(coil.finishCode) ?? coil.finishCode,
-                  coil.finishCode,
-                  coil.ral,
-                )}
+                {/* cc39 (D-582): el nombre del acabado viene en la bobina, del API. */}
+                {finishText(coil.finishName, coil.finishCode, coil.ral)}
               </span>
               <span className="text-muted-foreground">Alta {formatDate(coil.operationDate)}</span>
               {/*

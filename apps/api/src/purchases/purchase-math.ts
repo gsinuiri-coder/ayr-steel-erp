@@ -1,6 +1,14 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Currency, type CoilStatus, type Prisma } from '@prisma/client';
-import { cents, Decimal, money, toDecimal, type CreatePurchaseInput } from '@ayr/shared';
+import {
+  businessToday,
+  cents,
+  daysBetween,
+  Decimal,
+  money,
+  toDecimal,
+  type CreatePurchaseInput,
+} from '@ayr/shared';
 
 /**
  * Aritmética de compras (D-030, D-038, D-039). Funciones puras, sin base de datos ni
@@ -167,12 +175,15 @@ export function paidAmount(purchase: BalanceablePurchase, payments: BalanceableP
   return money(toDecimal(purchase.total.toString()).minus(purchaseBalance(purchase, payments)));
 }
 
-export function startOfDayUtc(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-}
-
-export function daysBetween(from: Date, to: Date): number {
-  return Math.round((to.getTime() - from.getTime()) / 86_400_000);
+/**
+ * Días de atraso de una compra en el estado de cuenta del proveedor (D-039), contra **hoy en
+ * Lima** (D-069). cc39 (D-584): antes se contaba contra el día UTC (`startOfDayUtc(new Date())`),
+ * que entre las 19:00 y la medianoche de Lima ya es mañana: el atraso salía con un día de más.
+ * `dueDate` es una columna `DATE` (medianoche UTC), así que su día es el de su ISO.
+ */
+export function overdueDays(dueDate: Date | null, now: Date = new Date()): number | null {
+  if (dueDate === null) return null;
+  return daysBetween(dueDate.toISOString().slice(0, 10), businessToday(now));
 }
 
 /**

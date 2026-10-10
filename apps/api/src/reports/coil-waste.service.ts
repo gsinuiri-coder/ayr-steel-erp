@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import {
   BusinessLine,
   fromDateOnly,
@@ -20,6 +21,18 @@ import {
   type WasteReport,
   type WasteToleranceOverride,
 } from './coil-waste';
+
+/** Una bobina del rango, con su acabado y su color (cc39: una sola sentencia). */
+interface CoilRow {
+  id: string;
+  code: string;
+  kind: string;
+  type_key: string;
+  width_mm: Prisma.Decimal;
+  status: string;
+  finish_name: string;
+  color_name: string | null;
+}
 
 /**
  * cc25 (D-424, D-425, D-429..D-431, D-433..D-436). Merma por bobina. Solo lectura y solo
@@ -91,18 +104,24 @@ export class CoilWasteService {
     ];
 
     const [coilRows, reportRows] = await Promise.all([
-      this.prisma.coil.findMany({
-        where: { id: { in: coilIds } },
-        select: {
-          id: true,
-          code: true,
-          kind: true,
-          typeKey: true,
-          widthMm: true,
-          status: true,
-          color: { select: { name: true } },
-        },
-      }),
+      // cc39 (D-582): una sola sentencia con el acabado y el color. Con `findMany` y sus
+      // relaciones, Prisma manda una sentencia por relación, y sumar el acabado rompía el
+      // presupuesto fijo de consultas de los Paneles (`dashboards.db-spec`).
+      this.prisma.$queryRaw<CoilRow[]>`
+        SELECT
+          c."id",
+          c."code",
+          c."kind"::text   AS "kind",
+          c."type_key",
+          c."width_mm",
+          c."status"::text AS "status",
+          f."name"         AS "finish_name",
+          col."name"       AS "color_name"
+        FROM "coils" c
+        JOIN "finishes" f ON f."id" = c."finish_id"
+        LEFT JOIN "colors" col ON col."id" = c."color_id"
+        WHERE c."id" = ANY(${coilIds}::uuid[])
+      `,
       reportIds.length === 0
         ? Promise.resolve([])
         : this.prisma.productionReport.findMany({
@@ -135,11 +154,12 @@ export class CoilWasteService {
         c.id,
         {
           code: c.code,
-          kind: c.kind,
-          typeKey: c.typeKey,
-          colorName: c.color?.name ?? null,
-          widthMm: c.widthMm.toFixed(2),
-          status: c.status,
+          kind: c.kind as WasteCoil['kind'],
+          typeKey: c.type_key,
+          finishName: c.finish_name,
+          colorName: c.color_name,
+          widthMm: c.width_mm.toFixed(2),
+          status: c.status as WasteCoil['status'],
         },
       ]),
     );

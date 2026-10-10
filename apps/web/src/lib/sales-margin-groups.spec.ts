@@ -22,7 +22,9 @@ function order(
     salesOrderId:
       code === null ? null : `00000000-0000-4000-8000-${code.slice(-6).padStart(12, '0')}`,
     orderCode: code,
+    customerId: '00000000-0000-4000-8000-0000000000c1',
     customerName: customer,
+    sellerId: seller === null ? null : '00000000-0000-4000-8000-0000000000d1',
     sellerName: seller,
     salesPen: sales,
     costPen: cost,

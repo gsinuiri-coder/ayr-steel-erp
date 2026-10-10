@@ -16,6 +16,7 @@ import {
   toDecimal,
 } from '@ayr/shared';
 import { Stat, StatStrip } from '@/components/stat-strip';
+import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
@@ -41,7 +42,7 @@ import { LINK_CLASSNAME, cn } from '@/lib/utils';
 
 /**
  * cc25 (D-424, D-425, D-429..D-431, D-433). Merma por bobina en un rango. **Solo administrador**
- * (D-426), sin Excel.
+ * (D-426). cc39 (D-580): con Excel por pestaña.
  *
  * Entran las bobinas con producción en el rango, con las cifras del kardex del rango. La merma es
  * (consumido − teórico) + despunte + ajuste de cierre, sobre el teórico, contra el 1 % estándar.
@@ -123,6 +124,21 @@ export function MermaView() {
               redondeado al final.
             </p>
           </>
+        }
+        actions={
+          // cc39 (D-580): el Excel de la pestaña y el periodo que se ven (descarga directa, D-149).
+          valid ? (
+            <HeaderActions
+              primary={['xlsx']}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  download: `/api/reports/coil-waste/xlsx?from=${period.from}&to=${period.to}&businessLine=${line}`,
+                },
+              ]}
+            />
+          ) : undefined
         }
       />
 

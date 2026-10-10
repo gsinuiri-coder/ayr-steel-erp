@@ -1165,6 +1165,11 @@ export const dispatchSchema = z.object({
   dispatchNoteNumber: z.string().nullable(),
   dispatchNoteStatus: z.enum(FISCAL_DOCUMENT_STATUSES).nullable(),
   /**
+   * cc39 (D-583): la guía vigente ya tiene su PDF guardado (el API lo guarda cuando SUNAT la
+   * acepta). Falso sin guía. La pantalla sabe si puede imprimirla sin pedir el PDF.
+   */
+  dispatchNoteHasPdf: z.boolean(),
+  /**
    * Comprobantes aceptados que facturan líneas de este despacho. Mientras haya uno, la
    * reversa está bloqueada (D-074): deshacer una salida que una factura vigente declara
    * dejaría al kardex y a SUNAT contando cosas distintas.

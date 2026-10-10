@@ -170,6 +170,7 @@ export class InventoryValuationService {
         kind: r.kind as InventoryValuationCoilDto['kind'],
         widthMm: r.width_mm.toFixed(2),
         finishCode: r.finish_code,
+        finishName: r.finish_name,
         ral,
         qtyKg: qty.toFixed(3),
         avgCostPen: avgCost.toFixed(4),

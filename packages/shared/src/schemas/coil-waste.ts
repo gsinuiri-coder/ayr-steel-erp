@@ -92,6 +92,8 @@ export const coilWasteRowSchema = z.object({
   kind: z.enum(COIL_KINDS),
   /** RF-14: acabado + espesor. */
   typeKey: z.string(),
+  /** cc39 (D-582): el nombre del acabado de la bobina. */
+  finishName: z.string(),
   colorName: z.string().nullable(),
   widthMm: z.string(),
   status: z.enum(COIL_STATUSES),

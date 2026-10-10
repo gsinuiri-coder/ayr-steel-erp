@@ -45,6 +45,7 @@ import { productionSummaryXlsx } from './production-summary-xlsx';
 import { ProductionSummaryService } from './production-summary.service';
 import { SellerDashboardService } from './seller-dashboard.service';
 import { coilMonthXlsx } from './coil-month-xlsx';
+import { coilWasteXlsx } from './coil-waste-xlsx';
 import { CoilWasteService } from './coil-waste.service';
 import { DocumentProfitabilityService } from './document-profitability.service';
 import { InventoryValuationService } from './inventory-valuation.service';
@@ -160,9 +161,13 @@ export class ReportsController {
    */
   @Roles(Role.ADMINISTRADOR)
   @Get('inventory-valuation/xlsx')
-  async inventoryValuationXlsxFile(@Res() res: Response): Promise<void> {
-    const report = await this.inventoryValuation.valuation();
-    sendXlsx(res, inventoryValuationXlsx(report));
+  async inventoryValuationXlsxFile(
+    // cc39 (D-580): la pestaña de la línea, con el mismo esquema que la pantalla.
+    @Query(new ZodValidationPipe(inventoryValuationQuerySchema)) query: InventoryValuationQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    const report = await this.inventoryValuation.valuation(query);
+    sendXlsx(res, inventoryValuationXlsx(report, query.businessLine));
   }
 
   /** RF-S4a/M3. */
@@ -172,9 +177,10 @@ export class ReportsController {
     @Query(new ZodValidationPipe(salesMarginQuerySchema)) query: SalesMarginQuery,
     @Res() res: Response,
   ): Promise<void> {
-    // cc23 (D-396): sin exportación por línea; el Excel sigue siendo el de «Todas».
-    const report = await this.salesMargin.salesMargin({ from: query.from, to: query.to });
-    sendXlsx(res, salesMarginXlsx(report));
+    // cc39 (D-580, reemplaza a D-396 en el Excel): el Excel de la pestaña que se ve, con el mismo
+    // DTO que la pantalla; sin línea, el de «Todas» de siempre.
+    const report = await this.salesMargin.salesMargin(query);
+    sendXlsx(res, salesMarginXlsx(report, query.businessLine));
   }
 
   /**
@@ -196,10 +202,9 @@ export class ReportsController {
     @Query(new ZodValidationPipe(salesByMaterialQuerySchema)) query: SalesByMaterialQuery,
     @Res() res: Response,
   ): Promise<void> {
-    // cc24 (D-396, criterio de D-399): sin exportación por línea; el Excel sigue siendo el de
-    // Coberturas Aluzinc, la vista que ya lo tenía, aunque llegue otra línea.
-    const { businessLine: _line, ...aluzinc } = query;
-    sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(aluzinc)));
+    // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con sus filtros; sin
+    // línea, Coberturas Aluzinc, como la pantalla.
+    sendXlsx(res, salesByMaterialXlsx(await this.salesByMaterial.report(query)));
   }
 
   /**
@@ -225,7 +230,7 @@ export class ReportsController {
   }
 
   /**
-   * cc25 (D-424, D-425). Merma por bobina en un rango. Solo ADMINISTRADOR (D-426), y sin Excel.
+   * cc25 (D-424, D-425). Merma por bobina en un rango. Solo ADMINISTRADOR (D-426).
    * `businessLine` es la pestaña (Coberturas Aluzinc o Drywall); otra línea es 400.
    */
   @Roles(Role.ADMINISTRADOR)
@@ -234,6 +239,16 @@ export class ReportsController {
     @Query(new ZodValidationPipe(coilWasteQuerySchema)) query: CoilWasteQuery,
   ): Promise<CoilWasteDto> {
     return this.coilWaste.report(query);
+  }
+
+  /** cc39 (D-580). El xlsx de Merma por bobina, del mismo DTO que la pantalla y su pestaña. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('coil-waste/xlsx')
+  async coilWasteXlsxFile(
+    @Query(new ZodValidationPipe(coilWasteQuerySchema)) query: CoilWasteQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, coilWasteXlsx(await this.coilWaste.report(query)));
   }
 
   /**

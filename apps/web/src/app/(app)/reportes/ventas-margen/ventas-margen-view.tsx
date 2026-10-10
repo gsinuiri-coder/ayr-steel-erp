@@ -142,15 +142,15 @@ export function VentasMargenView() {
         }
         actions={
           // Descarga directa contra el API (patrón D-149), con el periodo que se ve.
-          // D-396: sin exportación por línea; el Excel es el de «Todas» y solo se ofrece ahí.
-          line === undefined && valid ? (
+          // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve, también por línea.
+          valid ? (
             <HeaderActions
               primary={['xlsx']}
               actions={[
                 {
                   key: 'xlsx',
                   label: 'Descargar Excel',
-                  download: `/api/reports/sales-margin/xlsx?from=${period.from}&to=${period.to}`,
+                  download: `/api/reports/sales-margin/xlsx?from=${period.from}&to=${period.to}${line === undefined ? '' : `&businessLine=${line}`}`,
                 },
               ]}
             />

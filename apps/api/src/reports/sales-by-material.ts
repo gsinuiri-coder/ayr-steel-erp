@@ -59,6 +59,8 @@ export interface InvoiceLine {
   colorLabel: string;
   /** Razón social del cliente del comprobante (nivel 2 del desglose, D-370). */
   customerName: string;
+  /** cc39 (D-581): su id. */
+  customerId: string;
 }
 
 /** Lo que dice cada línea de pedido de sí misma (consultas 2 y 3). */
@@ -79,6 +81,8 @@ export interface CoilUsage {
   coilId: string;
   code: string;
   typeKey: string;
+  /** cc39 (D-582): el nombre del acabado de la bobina. */
+  finishName: string;
   thicknessMm: string;
   colorLabel: string;
   kg: string;
@@ -276,6 +280,7 @@ export interface TracedCoil {
   coilId: string;
   code: string;
   typeKey: string;
+  finishName: string;
   thicknessMm: string;
   colorLabel: string;
   kg: Decimal;
@@ -395,6 +400,7 @@ export function traceLine(
       coilId: u.coilId,
       code: u.code,
       typeKey: u.typeKey,
+      finishName: u.finishName,
       thicknessMm: u.thicknessMm,
       colorLabel: u.colorLabel,
       kg,
@@ -449,6 +455,7 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
     documentId: string;
     documentNumber: string | null;
     issueDate: string;
+    customerId: string;
     customerName: string;
     kg: Decimal;
     meters: Decimal;
@@ -456,7 +463,7 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
   interface CoilState {
     dto: Pick<
       SalesMaterialCoilDto,
-      'coilId' | 'code' | 'typeKey' | 'thicknessMm' | 'colorLabel' | 'avgCostPen'
+      'coilId' | 'code' | 'typeKey' | 'finishName' | 'thicknessMm' | 'colorLabel' | 'avgCostPen'
     >;
     kg: Decimal;
     cost: Decimal;
@@ -500,6 +507,7 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
           coilId: u.coilId,
           code: u.code,
           typeKey: u.typeKey,
+          finishName: u.finishName,
           thicknessMm: u.thicknessMm,
           colorLabel: u.colorLabel,
           avgCostPen: u.avgCostPen,
@@ -518,6 +526,7 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
         documentId: line.documentId,
         documentNumber: line.documentNumber,
         issueDate: line.issueDate,
+        customerId: line.customerId,
         customerName: line.customerName,
         kg: ZERO,
         meters: ZERO,
@@ -570,6 +579,7 @@ export function assembleSalesByMaterial(input: AssembleInput): SalesByMaterialDt
               documentId: d.documentId,
               documentNumber: d.documentNumber,
               issueDate: d.issueDate,
+              customerId: d.customerId,
               customerName: d.customerName,
               kg: toFixedString(d.kg, 'KG'),
               meters: toFixedString(d.meters, 'KG'),

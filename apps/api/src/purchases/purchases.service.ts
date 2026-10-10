@@ -80,10 +80,9 @@ import {
   computeDueDate,
   computeTotals,
   receptionCost,
-  daysBetween,
+  overdueDays,
   paidAmount,
   purchaseBalance,
-  startOfDayUtc,
   toPurchaseCurrency,
   assertPenRateIsOne,
 } from './purchase-math';
@@ -1552,7 +1551,8 @@ export class PurchasesService {
       orderBy: [{ issueDate: 'asc' }],
     });
 
-    const today = startOfDayUtc(new Date());
+    // cc39 (D-584): un solo «ahora» para todas las filas, cortado en el día de Lima.
+    const now = new Date();
     const rows = purchases
       .map((p) => {
         const dto = toListDto(p);
@@ -1560,7 +1560,7 @@ export class PurchasesService {
         return {
           ...dto,
           balancePen: toFixedString(balance.times(toDecimal(dto.exchangeRate)), 'MONEY'),
-          overdueDays: p.dueDate ? daysBetween(startOfDayUtc(p.dueDate), today) : null,
+          overdueDays: overdueDays(p.dueDate, now),
         };
       })
       .filter((p) => toDecimal(p.balance).gt(0));

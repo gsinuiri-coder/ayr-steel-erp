@@ -63,19 +63,19 @@ function setup(input: {
       );
     }),
   };
-  const coil = {
-    findMany: jest.fn().mockResolvedValue(
-      coilIds.map((id, i) => ({
-        id,
-        code: `BOB-${String(i + 1).padStart(3, '0')}`,
-        kind: 'COIL',
-        typeKey: 'ALZ-0.30',
-        widthMm: D('1200.00'),
-        status: 'OPEN',
-        color: { name: 'Natural' },
-      })),
-    ),
-  };
+  // cc39: las bobinas salen de una sola sentencia cruda, con el acabado y el color.
+  const $queryRaw = jest.fn().mockResolvedValue(
+    coilIds.map((id, i) => ({
+      id,
+      code: `BOB-${String(i + 1).padStart(3, '0')}`,
+      kind: 'COIL',
+      type_key: 'ALZ-0.30',
+      width_mm: D('1200.00'),
+      status: 'OPEN',
+      finish_name: 'Aluzinc natural',
+      color_name: 'Natural',
+    })),
+  );
   const productionReport = {
     findMany: jest.fn().mockResolvedValue(
       (input.reports ?? []).map((r) => ({
@@ -103,13 +103,13 @@ function setup(input: {
   };
   const prisma = {
     inventoryMovement,
-    coil,
+    $queryRaw,
     productionReport,
     auditLog,
   } as unknown as PrismaService;
   const calls = () =>
     inventoryMovement.findMany.mock.calls.length +
-    coil.findMany.mock.calls.length +
+    $queryRaw.mock.calls.length +
     productionReport.findMany.mock.calls.length +
     auditLog.findMany.mock.calls.length;
   return { service: new CoilWasteService(prisma), inventoryMovement, auditLog, calls };

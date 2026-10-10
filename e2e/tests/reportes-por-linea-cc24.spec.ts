@@ -14,8 +14,8 @@ import { adminApi, adminCredentials, getJson } from '../helpers/api';
  * Servicios.
  *
  * - Ventas por material: Coberturas Aluzinc y Drywall, sin «Todas», Aluzinc por defecto; la
- *   pestaña en `?linea=` con historial, refrescar y URL inválida (D-394, D-395); el Excel solo
- *   en Coberturas Aluzinc (D-396, criterio de D-399).
+ *   pestaña en `?linea=` con historial, refrescar y URL inválida (D-394, D-395); desde cc39 el
+ *   Excel en cada pestaña (D-580, que reemplaza a D-416).
  * - Para el mismo rango, la venta por material de una línea es la venta de esa línea en ventas
  *   y margen, contando los pedidos que allá quedan fuera de los totales (D-406).
  * - En «Todas» de ventas y margen, el margen se calcula sin Servicios (D-409).
@@ -59,7 +59,11 @@ test.describe('Reportes por línea (cc24)', () => {
     await tab(page, 'Drywall').click();
     await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}&to=${to}&linea=drywall`);
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(0);
+    // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve.
+    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      'href',
+      `/api/reports/sales-by-material/xlsx?from=${FROM}&to=${to}&businessLine=drywall`,
+    );
     await expect(page.getByTestId('cuadre-ventas-margen')).toContainText('venta de Drywall');
 
     await page.reload();

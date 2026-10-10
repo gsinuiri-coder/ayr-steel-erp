@@ -50,6 +50,7 @@ const valuation: InventoryValuationDto = {
           id: '11111111-1111-1111-1111-111111111111',
           code: 'BOB-001',
           typeKey: 'GALV-0.50',
+          finishName: 'Galvanizado',
           kind: 'COIL',
           widthMm: '1200.00',
           finishCode: 'GALV',
@@ -98,7 +99,9 @@ const margin: SalesMarginDto = {
     {
       salesOrderId: '33333333-3333-3333-3333-333333333333',
       orderCode: 'PED-000012',
+      customerId: '00000000-0000-4000-a000-0000000000c1',
       customerName: 'Cliente S.A.',
+      sellerId: '00000000-0000-4000-a000-0000000000d1',
       sellerName: 'Vendedor Uno',
       salesPen: '1000.0000',
       costPen: '600.0000',
@@ -125,7 +128,9 @@ const margin: SalesMarginDto = {
     {
       salesOrderId: '55555555-5555-5555-5555-555555555555',
       orderCode: 'PED-000013',
+      customerId: '00000000-0000-4000-a000-0000000000c2',
       customerName: 'Otro Cliente',
+      sellerId: null,
       sellerName: null,
       salesPen: '400.0000',
       costPen: null,
@@ -289,5 +294,55 @@ describe('reports-xlsx', () => {
       );
       expect(cell(sheet, 'B5')?.v).toBe(100);
     });
+  });
+});
+
+describe('cc39 (D-580): el Excel de la pestaña de una línea', () => {
+  const headerOf = (buffer: Buffer, name: string): unknown[] =>
+    XLSX.utils.sheet_to_json<unknown[]>(sheetOf(buffer, name), { header: 1 })[0] ?? [];
+  const rowsOf = (buffer: Buffer, name: string): unknown[][] =>
+    XLSX.utils.sheet_to_json<unknown[]>(sheetOf(buffer, name), { header: 1 });
+
+  it('ventas y margen de Drywall: sin «Material de OPs» y con el total de la pestaña', () => {
+    const { buffer, filename } = salesMarginXlsx(margin, 'drywall');
+    expect(filename).toBe('ventas-margen-2026-09-01-a-2026-09-30-drywall.xlsx');
+    const header = headerOf(buffer, 'Por pedido');
+    expect(header).not.toContain('Material de OPs (S/)');
+    expect(header).toContain('Costo (S/)');
+    const total = rowsOf(buffer, 'Totales').find((r) => r[0] === 'Total Drywall');
+    expect(total).toEqual(['Total Drywall', 1000, 600, 400, 40]);
+  });
+
+  it('ventas y margen de Servicios: sin costo ni margen, solo la venta (D-392)', () => {
+    const { buffer } = salesMarginXlsx(margin, 'services');
+    const header = headerOf(buffer, 'Por pedido');
+    for (const name of ['Costo (S/)', 'Margen (S/)', 'Margen %', 'Material de OPs (S/)']) {
+      expect(header).not.toContain(name);
+    }
+    // Las filas tienen tantas celdas como la cabecera: nada corrido de columna.
+    const first = rowsOf(buffer, 'Por pedido')[1] ?? [];
+    expect(first[header.indexOf('Venta sin IGV (S/)')]).toBe(1000);
+    // El estado del costo lo deciden otras líneas (D-412): ni la pantalla ni el Excel lo muestran.
+    expect(first[header.indexOf('Costo / Emisión')] ?? '').toBe('');
+    const total = rowsOf(buffer, 'Totales')[1] ?? [];
+    expect(total[0]).toBe('Total Servicios (sin costo registrado)');
+    expect(total[1]).toBe(1000);
+    expect(total.slice(2).every((c) => c === undefined || c === null)).toBe(true);
+  });
+
+  it('«Todas» no cambia: las once columnas y el archivo de siempre', () => {
+    const { buffer, filename } = salesMarginXlsx(margin);
+    expect(filename).toBe('ventas-margen-2026-09-01-a-2026-09-30.xlsx');
+    expect(headerOf(buffer, 'Por pedido')).toHaveLength(11);
+  });
+
+  it('inventario valorizado de una línea: el archivo la nombra; kg a dos decimales a la vista', () => {
+    const { buffer, filename } = inventoryValuationXlsx(valuation, 'drywall');
+    expect(filename).toBe('inventario-valorizado-2026-09-22-drywall.xlsx');
+    // El valor completo en la celda (la suma da el total); el formato solo decide lo que se ve.
+    const book = XLSX.read(buffer, { type: 'buffer', cellNF: true });
+    const kg = book.Sheets['Bobinas por grupo']?.E2 as XLSX.CellObject | undefined;
+    expect(kg?.t).toBe('n');
+    expect(kg?.z).toBe('#,##0.00');
   });
 });

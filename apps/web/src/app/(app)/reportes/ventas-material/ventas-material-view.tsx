@@ -238,9 +238,9 @@ export function VentasMaterialView() {
           </>
         }
         actions={
-          // D-396 con el criterio de D-399: sin exportación por línea. El Excel de siempre es el
-          // de Coberturas Aluzinc y solo se ofrece en esa pestaña, con el periodo y los filtros.
-          line === BusinessLine.METALLIC_ROOFING && valid ? (
+          // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con el periodo y
+          // los filtros (`qs` lleva la línea).
+          valid ? (
             <HeaderActions
               primary={['xlsx']}
               actions={[

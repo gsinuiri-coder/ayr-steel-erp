@@ -34,6 +34,7 @@ export interface WasteCoil {
   code: string;
   kind: CoilKind;
   typeKey: string;
+  finishName: string;
   colorName: string | null;
   widthMm: string;
   status: CoilStatus;
@@ -125,6 +126,7 @@ export function assembleCoilWaste(input: {
       code: coil.code,
       kind: coil.kind,
       typeKey: coil.typeKey,
+      finishName: coil.finishName,
       colorName: coil.colorName,
       widthMm: coil.widthMm,
       status: coil.status,

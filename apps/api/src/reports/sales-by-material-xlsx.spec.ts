@@ -30,6 +30,7 @@ const coil = (code: string, kg: string, cost: string) => ({
   kg,
   costPen: cost,
   typeKey: 'PREP-0.30',
+  finishName: 'Prepintado',
   theoreticalKg: kg,
   meters: '0.000',
   avgCostPen: null,
@@ -151,5 +152,118 @@ describe('salesByMaterialXlsx (D-354)', () => {
       ['1', 0.3, 'ROJO', 'Coberturas', 20, 50],
       ['2', 0.3, 'ROJO', 'Coberturas', 4, 10],
     ]);
+  });
+});
+
+describe('cc39 (D-580): el Excel de todas las pestañas', () => {
+  it('Drywall: las hojas por material, con la línea en el cuadre y en el archivo', () => {
+    const drywall: SalesByMaterialDto = {
+      ...REPORT,
+      businessLine: 'drywall',
+      reconciliation: { ...REPORT.reconciliation, unclassifiedSalesPen: '50.0000' },
+    };
+    const { buffer, filename } = salesByMaterialXlsx(drywall);
+    expect(filename).toBe('ventas-por-material-2026-09-01-a-2026-09-30-drywall.xlsx');
+    const main = sheet(buffer, 'Ventas por material');
+    expect(main.find((r) => r[0] === 'Venta de Drywall facturada en el rango (S/)')![1]).toBe(900);
+    const unclassified = main.find((r) =>
+      String(r[0]).startsWith('Productos comprados de Drywall (sin bobina)'),
+    );
+    expect(unclassified![1]).toBe(50);
+  });
+
+  const products: SalesByMaterialDto = {
+    ...REPORT,
+    businessLine: 'trading',
+    rows: [],
+    subtotals: [],
+    untraceable: [],
+    untraceableSalesPen: '20.0000',
+    reconciliation: {
+      lineSalesPen: '520.0000',
+      coilSalesPen: '200.0000',
+      unclassifiedSalesPen: '0.0000',
+    },
+    products: {
+      rows: [
+        {
+          sku: 'TOR-001',
+          name: 'Tornillo',
+          unit: 'NIU',
+          qty: '120.000',
+          salesPen: '120.0000',
+          costPen: '60.0000',
+          profitPen: '60.0000',
+          costPerUnitPen: '0.5000',
+          lineCount: 2,
+        },
+        {
+          sku: 'CAN-002',
+          name: 'Canaleta',
+          unit: 'MTR',
+          qty: '30.000',
+          salesPen: '180.0000',
+          costPen: '90.0000',
+          profitPen: '90.0000',
+          costPerUnitPen: null,
+          lineCount: 1,
+        },
+      ],
+      total: { salesPen: '300.0000', costPen: '150.0000', profitPen: '150.0000' },
+      untraceable: [
+        {
+          reason: 'SIN_DESPACHO_DECLARADO',
+          documentId: '22222222-2222-2222-2222-222222222222',
+          documentNumber: 'F001-10',
+          issueDate: '2026-09-15',
+          orderCode: null,
+          sku: 'TOR-001',
+          unit: 'NIU',
+          qty: '20.000',
+          salesPen: '20.0000',
+        },
+      ],
+    },
+  };
+
+  it('Reventa: por producto, con la unidad («und») aparte y el total del API', () => {
+    const { buffer, filename } = salesByMaterialXlsx(products);
+    expect(filename).toBe('ventas-por-material-2026-09-01-a-2026-09-30-trading.xlsx');
+    expect(XLSX.read(buffer, { type: 'buffer' }).SheetNames).toEqual([
+      'Ventas por producto',
+      'No trazable',
+    ]);
+    const main = sheet(buffer, 'Ventas por producto');
+    const header = main[0]!;
+    expect(main[1]![header.indexOf('Unidad')]).toBe('und');
+    expect(main[1]![header.indexOf('Cantidad')]).toBe(120);
+    // Sin divisor, «—» como en la planilla de material (C06).
+    expect(main[2]![header.indexOf('Costo prom./unidad (S/)')]).toBe('—');
+    const total = main.find((r) => r[0] === 'Total')!;
+    expect(total[header.indexOf('Venta sin IGV (S/)')]).toBe(300);
+    expect(total[header.indexOf('Costo (S/)')]).toBe(150);
+    expect(total[header.indexOf('Utilidad (S/)')]).toBe(150);
+    expect(main.find((r) => r[0] === 'Venta no trazable (S/)')![1]).toBe(20);
+    expect(main.find((r) => String(r[0]).startsWith('De ella, bobinas enteras'))![1]).toBe(200);
+    const untraceable = sheet(buffer, 'No trazable');
+    expect(untraceable[1]).toEqual([
+      'F001-10',
+      '2026-09-15',
+      '',
+      'TOR-001',
+      'Ningún despacho declara el comprobante',
+      20,
+      'und',
+      20,
+    ]);
+  });
+
+  it('Coberturas Aluzinc conserva el archivo de siempre y no agrega lo sin subtipo en cero', () => {
+    const { buffer, filename } = salesByMaterialXlsx(REPORT);
+    expect(filename).toBe('ventas-por-material-2026-09-01-a-2026-09-30.xlsx');
+    const main = sheet(buffer, 'Ventas por material');
+    expect(main.some((r) => String(r[0]).startsWith('Productos de la línea sin subtipo'))).toBe(
+      false,
+    );
   });
 });

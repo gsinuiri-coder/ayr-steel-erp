@@ -185,6 +185,8 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
       // 2. Con la guía en envío (con número, sin aceptar): la principal es verla, como en main;
       //    imprimir espera deshabilitado en el menú y el texto lo explica.
       let noteStatus = 'ISSUED';
+      // cc39 (D-583): el PDF lo dice el API; el SUNAT de la CI no guarda archivos.
+      let noteHasPdf = false;
       await page.route(`**/api/dispatches/${dispatch.id}`, async (route) => {
         const res = await route.fetch();
         const body = (await res.json()) as Record<string, unknown>;
@@ -195,6 +197,7 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
             dispatchNoteId: FAKE_NOTE_ID,
             dispatchNoteNumber: 'T001-000214',
             dispatchNoteStatus: noteStatus,
+            dispatchNoteHasPdf: noteHasPdf,
           },
         });
       });
@@ -214,8 +217,20 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
       await expect(page.getByRole('menuitem', { name: 'Imprimir guía' })).toBeDisabled();
       await page.keyboard.press('Escape');
 
-      // 3. Con la guía aceptada: «Imprimir guía» imprime sin descargar.
+      // 3. cc39 (D-583): aceptada pero sin PDF guardado (una guía manual): no se ofrece imprimir
+      //    ni descargar —daría 404—; la principal es verla.
       noteStatus = 'ACCEPTED';
+      await page.reload();
+      await expect(header.getByRole('link', { name: 'Ver la guía', exact: true })).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(header.getByRole('button', { name: 'Imprimir guía' })).toHaveCount(0);
+      // Sin PDF no queda nada más que ofrecer: ni imprimir, ni descargar, ni revertir (la guía
+      // vigente lo bloquea), así que tampoco hay menú.
+      await expect(header.getByRole('button', { name: 'Más opciones' })).toHaveCount(0);
+
+      // 4. Con la guía aceptada y su PDF: «Imprimir guía» imprime sin descargar.
+      noteHasPdf = true;
       await page.reload();
       const print = header.getByRole('button', { name: 'Imprimir guía', exact: true });
       await expect(print).toBeEnabled({ timeout: 30_000 });

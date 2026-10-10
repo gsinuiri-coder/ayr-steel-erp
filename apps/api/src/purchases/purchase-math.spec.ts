@@ -4,6 +4,7 @@ import {
   assertPenRateIsOne,
   computeDueDate,
   computeTotals,
+  overdueDays,
   paidAmount,
   purchaseBalance,
   toPurchaseCurrency,
@@ -205,5 +206,33 @@ describe('assertPenRateIsOne (cc33 N1, D-534)', () => {
     expect(() => {
       assertPenRateIsOne({ currency: Currency.USD, exchangeRate: new Decimal('3.75') });
     }).not.toThrow();
+  });
+});
+
+describe('overdueDays: el estado de cuenta del proveedor corta el día en Lima (cc39, D-584)', () => {
+  // Vence el 9 de octubre. Lima es UTC−5: sus 19:00 son las 00:00 UTC del día siguiente, y antes
+  // de D-584 el atraso se contaba contra el día UTC y salía con un día de más hasta la medianoche.
+  const due = new Date('2026-10-09T00:00:00.000Z');
+  const lima = (iso: string): Date => new Date(`${iso}-05:00`);
+
+  it('18:59 de Lima del día del vencimiento: 0 días', () => {
+    expect(overdueDays(due, lima('2026-10-09T18:59:00'))).toBe(0);
+  });
+
+  it('19:00 de Lima (ya es mañana en UTC): sigue en 0, no adelanta un día', () => {
+    expect(overdueDays(due, lima('2026-10-09T19:00:00'))).toBe(0);
+  });
+
+  it('23:59 de Lima: sigue en 0', () => {
+    expect(overdueDays(due, lima('2026-10-09T23:59:00'))).toBe(0);
+  });
+
+  it('00:00 de Lima del día siguiente: 1 día', () => {
+    expect(overdueDays(due, lima('2026-10-10T00:00:00'))).toBe(1);
+  });
+
+  it('antes del vencimiento es negativo, y sin vencimiento no hay atraso', () => {
+    expect(overdueDays(due, lima('2026-10-07T20:00:00'))).toBe(-2);
+    expect(overdueDays(null, lima('2026-10-09T20:00:00'))).toBeNull();
   });
 });
