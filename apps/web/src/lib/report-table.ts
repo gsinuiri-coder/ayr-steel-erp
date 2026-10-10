@@ -63,7 +63,8 @@ export function xlsxHref(
 ): string {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, v);
-  if (searchWords(search).length > 0) qs.set('search', search.trim());
+  // El API acepta hasta 200 caracteres (`reportXlsxSearchSchema`).
+  if (searchWords(search).length > 0) qs.set('search', search.trim().slice(0, 200));
   const query = qs.toString();
   return query === '' ? path : `${path}?${query}`;
 }

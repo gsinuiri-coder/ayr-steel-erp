@@ -19,6 +19,8 @@ import { build, num, type Sheet } from './reports-xlsx';
 export function coilMonthXlsx(
   report: CoilMonthReportDto,
   notes: (string | number | null)[][] = [],
+  // cc40 (D-588): con búsqueda, el aviso de que «Resumen» es el de todo el mes.
+  unsearched: (string | number | null)[][] = [],
 ): { buffer: Buffer; filename: string } {
   const showsCost = report.totals.closingValuePen !== null;
   const header = [
@@ -32,8 +34,10 @@ export function coilMonthXlsx(
     'Saldo fin de mes (kg)',
     ...(showsCost ? ['Costo/kg (S/)', 'Valor fin de mes (S/)'] : []),
     'Estado',
+    // cc40 (D-590): el acabado, al final para no correr las columnas de siempre.
+    'Acabado',
   ];
-  const widths = [34, 22, 20, 14, 11, 20, 12, 20, ...(showsCost ? [13, 20] : []), 12];
+  const widths = [34, 22, 20, 14, 11, 20, 12, 20, ...(showsCost ? [13, 20] : []), 12, 24];
 
   const section = (name: string, film: CoilFilmState, s: CoilMonthReportSectionDto): Sheet => ({
     name,
@@ -51,6 +55,7 @@ export function coilMonthXlsx(
         num(r.closingKg),
         ...(showsCost ? [num(r.unitCostPerKg), num(r.closingValuePen)] : []),
         coilStateLabel({ status: r.status, film }),
+        r.finishName,
       ]),
       [
         `Subtotal ${name}`,
@@ -62,6 +67,7 @@ export function coilMonthXlsx(
         num(s.totals.weightKg),
         num(s.totals.closingKg),
         ...(showsCost ? [null, num(s.totals.closingValuePen)] : []),
+        '',
         '',
       ],
       ...notes,
@@ -94,6 +100,7 @@ export function coilMonthXlsx(
       ...(showsCost
         ? [[], ['Valor fin de mes (S/)', null, num(report.totals.closingValuePen)]]
         : []),
+      ...unsearched,
     ],
   };
 

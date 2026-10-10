@@ -398,3 +398,27 @@ describe('La búsqueda de la pantalla viaja al Excel', () => {
     );
   });
 });
+
+/**
+ * cc40 (pedido del dueño, cc32): el saldo de Cuentas por cobrar y el del Panel. Los dos salen de
+ * `ReceivablesAgingService.report({})`, la misma consulta: el Panel lo muestra sin céntimos
+ * (`formatMoney(v, 'PEN', 0)`) y el reporte con dos decimales. Esta prueba fija que la cifra del API
+ * es la misma, que el total es la suma de los clientes, y que la única diferencia visible es el
+ * redondeo a soles, a lo sumo medio sol.
+ */
+describe('Cuentas por cobrar frente al Panel: la diferencia es solo redondeo', () => {
+  it('el mismo saldo en el API; el Panel lo redondea a soles', async () => {
+    const report = await controller.receivablesAgingReport({});
+    const panel = await controller.adminDashboardReport();
+    const balance = toDecimal(report.totals.balancePen);
+    expect(panel.receivables.balancePen).toBe(report.totals.balancePen);
+    expect(panel.receivables.customerCount).toBe(report.totals.customerCount);
+    expect(panel.receivables.documentCount).toBe(report.totals.documentCount);
+    const customers = report.customers.reduce((acc, c) => acc.plus(c.balancePen), new Decimal(0));
+    expect(customers.toFixed(4)).toBe(balance.toFixed(4));
+    // Lo que se ve: el reporte a dos decimales y el Panel a cero. La diferencia es el redondeo.
+    const shownReport = balance.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const shownPanel = balance.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+    expect(shownPanel.minus(shownReport).abs().lte('0.5')).toBe(true);
+  });
+});

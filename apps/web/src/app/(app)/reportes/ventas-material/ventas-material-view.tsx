@@ -254,7 +254,7 @@ export function VentasMaterialView() {
                   download: `/api/reports/sales-by-material/xlsx?${qs}${
                     searchWords(searchText).length === 0
                       ? ''
-                      : `&search=${encodeURIComponent(searchText.trim())}`
+                      : `&search=${encodeURIComponent(searchText.trim().slice(0, 200))}`
                   }`,
                 },
               ]}

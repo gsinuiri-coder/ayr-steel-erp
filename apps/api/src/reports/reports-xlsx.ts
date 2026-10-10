@@ -90,8 +90,10 @@ export function build(sheets: Sheet[]): Buffer {
 export function inventoryValuationXlsx(
   report: InventoryValuationDto,
   line?: InventoryValuationQuery['businessLine'],
-  // cc40 (D-588): la búsqueda de la pantalla, al pie de las dos hojas que busca.
+  // cc40 (D-588): la búsqueda de la pantalla, al pie de las dos hojas que busca, y el aviso de
+  // que «Totales» no se busca.
   notes: (string | number | null)[][] = [],
+  unsearched: (string | number | null)[][] = [],
 ): {
   buffer: Buffer;
   filename: string;
@@ -192,6 +194,7 @@ export function inventoryValuationXlsx(
         num(report.totals.productValuePen),
         num(report.totals.totalValuePen),
       ],
+      ...unsearched,
     ],
   };
 
@@ -297,18 +300,34 @@ export function salesMarginXlsx(
         ? []
         : [
             ...excludedOrders.map(orderRow),
-            orderKeep.pick([
-              `Total · ${salesMarginCountLabel(summarizeSalesMargin(excludedOrders))}`,
-              '',
-              '',
-              excludedOrders.reduce((n, o) => n + o.documents.length, 0),
-              num(summarizeSalesMargin(excludedOrders).sales.toFixed()),
-              null,
-              null,
-              null,
-              null,
-              '',
-            ]),
+            // Segundo modelo de cc40 (P2-1): la pantalla los lista en dos secciones, y así los
+            // totaliza la hoja, uno por estado del costo.
+            ...(['NO_COMPARABLE', 'NO_RASTREABLE'] as const).flatMap((status) => {
+              const orders = excludedOrders.filter((o) => o.costStatus === status);
+              if (orders.length === 0) return [];
+              return [
+                orderKeep.pick([
+                  `Total ${MARGIN_COST_STATUS_LABELS[status].toLowerCase()} · ${salesMarginCountLabel(summarizeSalesMargin(orders))}`,
+                  '',
+                  '',
+                  orders.reduce((n, o) => n + o.documents.length, 0),
+                  num(summarizeSalesMargin(orders).sales.toFixed()),
+                  null,
+                  null,
+                  null,
+                  null,
+                  '',
+                ]),
+              ];
+            }),
+            ...(line === undefined
+              ? [
+                  [],
+                  [
+                    `La venta de Servicios de estos pedidos no depende del costo y sí suma en «Totales» (D-412): la venta fuera de los totales es S/ ${toDecimal(report.totals.excludedSalesPen).toFixed(2)} (facturación parcial) y S/ ${toDecimal(report.totals.untraceableSalesPen).toFixed(2)} (costo no rastreable), como dice la pantalla.`,
+                  ],
+                ]
+              : []),
           ],
   };
 
@@ -491,14 +510,30 @@ function plural(n: number, one: string, many: string): string {
  */
 export function searchNoteRows(
   search: string,
-  shown: number,
-  total: number,
+  shown?: number,
+  total?: number,
 ): (string | number | null)[][] {
   if (searchWords(search).length === 0) return [];
+  const count =
+    shown === undefined || total === undefined
+      ? ''
+      : `: ${String(shown)} de ${String(total)} filas`;
   return [
     [],
     [
-      `Búsqueda «${search.trim()}»: ${String(shown)} de ${String(total)} filas, las mismas que la pantalla. El total suma solo esas filas.`,
+      `Búsqueda «${search.trim()}»${count}, las mismas que la pantalla. El total suma solo esas filas.`,
     ],
+  ];
+}
+
+/**
+ * cc40 (D-588): en una hoja que la pantalla no busca (totales por línea, resumen), con búsqueda,
+ * la hoja dice que sus cifras son las de toda la pestaña.
+ */
+export function unsearchedNoteRows(search: string): (string | number | null)[][] {
+  if (searchWords(search).length === 0) return [];
+  return [
+    [],
+    [`Sin la búsqueda «${search.trim()}»: las cifras de toda la pestaña, como en la pantalla.`],
   ];
 }

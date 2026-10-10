@@ -58,7 +58,12 @@ import { kardexPepsXlsx } from './kardex-peps-xlsx';
 import { KardexPepsService } from './kardex-peps.service';
 import { kardexSheetXlsx } from './kardex-sheet-xlsx';
 import { KardexSheetService } from './kardex-sheet.service';
-import { inventoryValuationXlsx, salesMarginXlsx, searchNoteRows } from './reports-xlsx';
+import {
+  inventoryValuationXlsx,
+  salesMarginXlsx,
+  searchNoteRows,
+  unsearchedNoteRows,
+} from './reports-xlsx';
 import {
   searchCoilMonth,
   searchCoilWaste,
@@ -121,10 +126,12 @@ export class ReportsController {
     @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
-    const full = await this.reports.coilsByMonth(query, canSeeCosts(actor));
-    const report = searchCoilMonth(full, search);
-    const count = (r: CoilMonthReportDto) => r.sealed.rows.length + r.opened.rows.length;
-    sendXlsx(res, coilMonthXlsx(report, searchNoteRows(search, count(report), count(full))));
+    const report = searchCoilMonth(
+      await this.reports.coilsByMonth(query, canSeeCosts(actor)),
+      search,
+    );
+    // Dos tablas recortadas a la vez: la nota no mezcla sus cuentas.
+    sendXlsx(res, coilMonthXlsx(report, searchNoteRows(search), unsearchedNoteRows(search)));
   }
 
   /** D-355. El PDF del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. */
@@ -185,15 +192,15 @@ export class ReportsController {
     @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
-    const full = await this.inventoryValuation.valuation(query);
-    const report = searchInventory(full, search);
-    const count = (r: InventoryValuationDto) => r.coilGroups.length + r.products.length;
+    const report = searchInventory(await this.inventoryValuation.valuation(query), search);
+    // Grupos y productos se recortan a la vez: la nota no mezcla sus cuentas.
     sendXlsx(
       res,
       inventoryValuationXlsx(
         report,
         query.businessLine,
-        searchNoteRows(search, count(report), count(full)),
+        searchNoteRows(search),
+        unsearchedNoteRows(search),
       ),
     );
   }

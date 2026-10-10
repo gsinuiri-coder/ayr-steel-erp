@@ -37,8 +37,9 @@ import {
  * la búsqueda puesta, con las mismas funciones. Lo que la pantalla no busca (resúmenes, franjas,
  * totales por línea, lo no trazable) queda entero.
  *
- * Sin búsqueda devuelve el DTO tal cual: los totales son los del API, como el pie de la pantalla
- * sin búsqueda (las filas llegan redondeadas a su escala y sumarlas podría correr un milésimo).
+ * Sin búsqueda, o con una que deja todas las filas, devuelve el DTO tal cual: los totales son los
+ * del API, como el pie de la pantalla (`allRows`): las filas llegan redondeadas a su escala y
+ * sumarlas podría correr un milésimo.
  */
 
 const searching = (search: string): boolean => searchWords(search).length > 0;
@@ -50,6 +51,7 @@ export function searchCoilMonth(report: CoilMonthReportDto, search: string): Coi
   if (!searching(search)) return report;
   const section = (s: CoilMonthReportSectionDto, film: CoilFilmState) => {
     const rows = filterBySearch(s.rows, (r) => coilMonthRowSearchText(r, film), search);
+    if (rows.length === s.rows.length) return s;
     const t = coilMonthTotalsOf(rows);
     return {
       rows,
@@ -76,6 +78,7 @@ export function searchReceivables(
 ): ReceivablesAgingDto {
   if (!searching(search)) return report;
   const customers = filterBySearch(report.customers, receivablesCustomerSearchText, search);
+  if (customers.length === report.customers.length) return report;
   const t = agingTotalsOf(customers);
   return {
     ...report,
@@ -115,6 +118,7 @@ export function searchInventory(
 export function searchCoilWaste(report: CoilWasteDto, search: string): CoilWasteDto {
   if (!searching(search)) return report;
   const rows = filterBySearch(report.rows, coilWasteRowSearchText, search);
+  if (rows.length === report.rows.length) return report;
   const t = wasteTotalsOf(rows, report.standardPct);
   return {
     ...report,
@@ -173,6 +177,7 @@ export function searchProduction(
           })
           .filter((g) => g.orders.length > 0);
   const orders = groups.flatMap((g) => g.orders);
+  if (orders.length === report.groups.reduce((n, g) => n + g.orders.length, 0)) return report;
   return {
     ...report,
     groups,
@@ -192,6 +197,7 @@ export function searchSalesByMaterial(
   if (!searching(search)) return report;
   if (report.products !== null) {
     const rows = filterBySearch(report.products.rows, salesProductRowSearchText, search);
+    if (rows.length === report.products.rows.length) return report;
     const t = productTotalsOf(rows);
     return {
       ...report,
@@ -207,6 +213,7 @@ export function searchSalesByMaterial(
     };
   }
   const rows = filterBySearch(report.rows, salesMaterialRowSearchText, search);
+  if (rows.length === report.rows.length) return report;
   const kinds = new Set<SalesMaterialKind>(rows.map((r) => r.kind));
   return {
     ...report,
