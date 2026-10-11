@@ -153,6 +153,12 @@ de Neon (`GET /projects/{id}/endpoints`), con `NEON_API_KEY` en el header y nunc
 Existe para lo que antes se hacía contra producción: ensayar el flujo completo, capacitar a
 un vendedor, cargar datos de prueba y romperlos sin consecuencias.
 
+**Estado al 2026-10-10 (cc43): demo está apagada.** El `pnpm dev:demo` que corría desde cc38 en
+3100/3101, con código anterior, se detuvo. La rama Neon `demo` y sus datos siguen intactos, pero
+**no tienen la migración de cc41** (D-591). Antes de volver a usarla se restablece desde
+`production` con OK del dueño (D-227; ver «Rehacer demo desde producción», más abajo). Para los
+casos de planta sin demo está `pnpm seed:escenarios` en `ayr_local` (D-595).
+
 ```
 pnpm env:demo    # escribe .env.demo con la conexión a la rama demo (no se commitea)
 pnpm db:demo     # migraciones + seed en demo
@@ -357,7 +363,7 @@ pnpm dev:preview              # después: api :4000, web :4001; entra con viewer
 ### Guardián del drift de schema: `pnpm check:drift` (cc42, D-593)
 
 Crea la base descartable `ayr_drift_check` en el Postgres local, le aplica las migraciones y
-compara `prisma migrate diff` con `apps/api/prisma/drift-esperado.sql`. Corre en el job `e2e` de
+compara `prisma migrate diff` con `apps/api/prisma/drift-esperado.sql`. Corre en el job `base` de
 la CI. La clasificación está en `docs/analisis/drift-schema.md`.
 
 ### E2E con latencia: comparar el rendimiento de dos commits (F8-R1)

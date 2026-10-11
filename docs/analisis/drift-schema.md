@@ -59,7 +59,7 @@ Como `schema.prisma` vive en `apps/`, el cambio cuenta como runtime para la regl
 ## Guardián en la CI (D-593)
 
 `pnpm check:drift` (`scripts/check-drift.mjs`) crea la base vacía `ayr_drift_check` en un Postgres
-**local** (Docker en la máquina; en GitHub Actions, el Postgres de servicio del job E2E), le aplica
+**local** (Docker en la máquina; en GitHub Actions, el Postgres de servicio del job `base`, D-596), le aplica
 las migraciones, saca el SQL de `migrate diff` y lo compara sentencia por sentencia con
 `apps/api/prisma/drift-esperado.sql`. Falla si aparece una diferencia que no está aprobada (por
 ejemplo, un cambio de `schema.prisma` sin su migración) o si desaparece una que sí estaba. Rechaza

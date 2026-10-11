@@ -13,9 +13,24 @@ import { assertTestDatabase } from './test-db-guard';
 
 const FLOOR = 10_000_000;
 const RANGE = 80_000_000;
+/**
+ * D-596 (cc43): la CI corre la suite en 2 shards, cada uno con su base, que pasan por acá con
+ * segundos de diferencia y emiten contra la misma cuenta demo de Nubefact. Sin separarlos, los
+ * dos tomarían los mismos números. `E2E_SHARD` (1, 2) corre la base del shard 2 a la mitad del
+ * rango; sin la variable (local, `e2e:smoke`) la base es la de siempre.
+ */
+const SHARD_STRIDE = RANGE / 2;
+
+function shardOffset(): number {
+  const shard = Number(process.env.E2E_SHARD ?? '1');
+  if (!Number.isInteger(shard) || shard < 1 || shard > 2) {
+    throw new Error('E2E_SHARD tiene que ser 1 o 2');
+  }
+  return (shard - 1) * SHARD_STRIDE;
+}
 
 function runCorrelativeBase(nowMs: number): number {
-  return FLOOR + (Math.floor(nowMs / 1000) % RANGE);
+  return FLOOR + ((Math.floor(nowMs / 1000) + shardOffset()) % RANGE);
 }
 
 async function main(): Promise<void> {
