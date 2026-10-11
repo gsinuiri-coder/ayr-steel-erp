@@ -201,7 +201,7 @@ test.describe('cc45 — cambiar la cantidad con producción (D-603, D-604)', () 
       const item = order.items[0]!;
       await dispatchOrder(api, {
         salesOrderId: order.id,
-        items: [{ salesOrderItemId: item.id, qty: '4' }],
+        items: [{ salesOrderItemId: item.id, qty: '4', weightKg: '4' }],
       });
       const url = `/api/sales/orders/${order.id}/items/${item.id}/qty`;
       const below = await patchExpectingError(api, url, {
