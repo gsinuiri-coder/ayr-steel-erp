@@ -9,8 +9,8 @@ revisión en `docs/revision/cc43-segundo-modelo.md`.
 
 - **CI:** job `base` (`check:drift` una vez y `test:db`), `e2e-shard` en matrix `--shard=1/2`
   (30 min cada uno, su Postgres) y un agregado `e2e` con el nombre de siempre. El check E2E pasó
-  de 34–39 min a 15 min 34 s en la primera corrida (shards 10 y 15 min). `main` no tiene
-  protección de rama. El camino largo ahora es `smoke-neon` (~37 min).
+  de 34–39 min a 15,5–16,7 min (shard 1 10–12 min, shard 2 15–17 min). `main` no tiene
+  protección de rama. `smoke-neon` (12–37 min) puede ser ahora el camino largo.
 - **Correlativos:** `e2e-fiscal-offset.ts` separa los de cada shard (`E2E_SHARD`); es herramienta
   de prueba en `apps/`, por eso la verificación del `git-sha` da exit 1 sin desalineación de runtime.
 - **Demo:** el `dev:demo` de cc38 (3100/3101) quedó apagado; la rama Neon `demo` intacta, sin la

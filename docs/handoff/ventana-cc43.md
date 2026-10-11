@@ -35,13 +35,15 @@ pendiente de ratificación.
 | ---------------------------------- | ---------- | ----------- | ---------- | --------------------------------- |
 | Antes: run 38101351095 (job único) | —          | —           | —          | 34 min 42 s (39 min 11 s en #170) |
 | Run 38105190424 (`e00e0905`)       | 10 min 7 s | 15 min 27 s | 8 min 21 s | 15 min 34 s                       |
+| Run 38107486823 (`2c5afc12`)       | 12 min 8 s | 16 min 37 s | 8 min 9 s  | 16 min 44 s                       |
 
-Los tests solos: shard 1 8 min 15 s, shard 2 13 min 6 s; `test:db` 7 min 37 s. Ningún shard pasa
-de 25 min, así que no se rebalanceó ni se subió a 3. La segunda y la tercera corrida están en el
-PR #171.
+Los tests solos: shard 1 8 min 15 s y 9 min 54 s, shard 2 13 min 6 s y 14 min 12 s; `test:db`
+7 min 37 s y 7 min 31 s. Ningún shard pasa de 25 min, así que no se rebalanceó ni se subió a 3.
+La corrida siguiente, sobre el commit de estas medidas, queda en el PR #171.
 
-**El camino más largo de la CI ahora es `smoke-neon`** (36 min 56 s en la misma corrida, límite
-45): depende de la latencia del runner a Neon (D-201) y quedó fuera del alcance de cc43.
+**`smoke-neon` puede ser ahora el camino más largo de la CI:** 36 min 56 s en la primera corrida y
+11 min 47 s en la segunda (límite 45). Depende de la latencia del runner a Neon (D-201) y quedó
+fuera del alcance de cc43.
 
 ## Demo
 
