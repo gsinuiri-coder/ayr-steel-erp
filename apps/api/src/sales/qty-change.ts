@@ -146,3 +146,22 @@ export function samePieces(a: readonly PieceLike[], b: readonly PieceLike[]): bo
   const y = piecesByLength(b);
   return x.size === y.size && [...x].every(([lengthMm, qty]) => y.get(lengthMm) === qty);
 }
+
+/**
+ * Qué cambia por largo, en palabras: «se agregan 6 planchas de 3.00 m», «se quitan 10 planchas de
+ * 2.40 m». De mayor a menor largo.
+ */
+export function piecesChanges(before: readonly PieceLike[], after: readonly PieceLike[]): string[] {
+  const b = piecesByLength(before);
+  const a = piecesByLength(after);
+  const keys = [...new Set([...b.keys(), ...a.keys()])].sort((x, y) =>
+    toDecimal(y).comparedTo(toDecimal(x)),
+  );
+  const out: string[] = [];
+  for (const key of keys) {
+    const diff = (a.get(key) ?? 0) - (b.get(key) ?? 0);
+    if (diff > 0) out.push(`se agregan ${String(diff)} planchas de ${lengthLabel(key)}`);
+    if (diff < 0) out.push(`se quitan ${String(-diff)} planchas de ${lengthLabel(key)}`);
+  }
+  return out;
+}

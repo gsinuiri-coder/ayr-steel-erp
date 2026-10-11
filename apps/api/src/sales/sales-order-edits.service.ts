@@ -74,6 +74,7 @@ import type { ShortfallLine } from './order-shortfall';
 import { recordPriceChanges } from './price-changes';
 import {
   lengthRows,
+  piecesChanges,
   piecesMinus,
   qtyFloorViolation,
   qtyKindOf,
@@ -165,7 +166,7 @@ function linePieces(kind: QtyChangeKind, item: QtyItem): number | null {
 /** `4,787.80`: solo para el texto de «Qué va a pasar». */
 function formatPen(value: Decimal): string {
   const [int = '0', dec = '00'] = value.toFixed(2).split('.');
-  return `${int.replace(/B(?=(d{3})+(?!d))/g, ',')}.${dec}`;
+  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${dec}`;
 }
 
 /** El pedido bloqueado, con lo que las cuatro ediciones necesitan mirar. */
@@ -1377,6 +1378,11 @@ export class SalesOrderEditsService {
           ? `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label} y faltan ${shortfall.toFixed(3)} ${unit}: se confirma con faltante y motivo (D-341).`
           : `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label}: hay disponible.`,
       );
+      if (shortfall.lte(0) && line.reserveItemType === InventoryItemType.RAW_MATERIAL) {
+        effects.push(
+          'Si no hubiera material suficiente, se confirma con faltante y motivo (D-341).',
+        );
+      }
     }
 
     const orderEffects = await this.followPlan(
@@ -1388,7 +1394,7 @@ export class SalesOrderEditsService {
       nextPieces,
       reservationId,
     );
-    effects.push(...orderEffects.effects);
+    effects.unshift(...orderEffects.effects);
 
     await tx.salesOrderItemPiece.deleteMany({ where: { salesOrderItemId: item.id } });
     await tx.salesOrderItem.update({
@@ -1457,6 +1463,7 @@ export class SalesOrderEditsService {
       orderTotalBefore,
       effects,
       shortfall,
+      facts.kind === 'QTY' ? null : facts.registeredQty,
     );
   }
 
@@ -1625,6 +1632,8 @@ export class SalesOrderEditsService {
     orderTotalBefore: Prisma.Decimal,
     effects: string[],
     shortfall: Decimal,
+    /** Lo registrado, en la unidad de la línea; `null` si la línea no se produce. */
+    registered: Decimal | null = null,
   ): QtyOutcome {
     const qty = toDecimal(line.qty);
     const before = toDecimal(item.qty.toString());
@@ -1636,6 +1645,13 @@ export class SalesOrderEditsService {
         : kind === 'UNITS'
           ? `${qty.toFixed(0)} planchas`
           : `${qty.toFixed(3)} ${unit}`;
+    const atRegistered = registered !== null && registered.gt(0) && qty.equals(registered);
+    // Como en el tablero: «se agregan 6 planchas de 3.00 m», «se quitan 10 planchas de 2.40 m».
+    const changes =
+      kind === 'PIECES' ? piecesChanges(item.pieces.map(toPieceLike), line.pieces) : [];
+    const lineEffect = atRegistered
+      ? `La línea queda en ${lineText}: igual a lo registrado.`
+      : `La línea ${qty.gt(before) ? 'sube' : 'baja'} a ${lineText}${changes.length > 0 ? `: ${changes.join(', ')}` : ''}.`;
     const totalBefore = toDecimal(orderTotalBefore.toString());
     const totalAfter = toDecimal(orderTotalAfter);
     const per = kind === 'PIECES' || kind === 'METERS' ? 'metro' : 'unidad';
@@ -1646,7 +1662,7 @@ export class SalesOrderEditsService {
       totalPen: toDecimal(line.totalPen).toFixed(2),
       orderTotalPen: totalAfter.toFixed(2),
       effects: [
-        `La línea ${qty.gt(before) ? 'sube' : 'baja'} a ${lineText}.`,
+        lineEffect,
         ...effects,
         `El total del pedido ${totalAfter.gt(totalBefore) ? 'sube' : 'baja'} de S/ ${formatPen(totalBefore)} a S/ ${formatPen(totalAfter)}. El precio por ${per} no cambia.`,
       ],

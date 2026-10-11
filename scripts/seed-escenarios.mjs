@@ -1,6 +1,7 @@
 // cc42 (D-592, D-595): siembra en el Postgres local `ayr_local` los casos de prueba de planta de
-// demo-cc38 (plancha P1/P2, a medida M1/M2, accesorio A1/A2) y un drywall completo, para mirarlos
-// con `pnpm dev:preview` (4000/4001).
+// demo-cc38 (plancha P1/P2, a medida M1/M2, accesorio A1/A2), los de «Cambiar cantidad» de cc45
+// (C1 bajar a medida, C2 subir accesorio) y un drywall completo, para mirarlos con
+// `pnpm dev:preview` (4000/4001).
 //
 // - Solo contra una base llamada exactamente `ayr_local` en localhost (el Docker de
 //   `local-docker-env.mjs`). Cualquier otra —Neon, `ayr_local_e2e`, otro nombre u otro host— se
@@ -258,6 +259,7 @@ export function createClient(base) {
     get: (p) => call('GET', p),
     post: (p, b = {}) => call('POST', p, b),
     del: (p, b) => call('DELETE', p, b),
+    patch: (p, b) => call('PATCH', p, b),
     /** Listados: unos devuelven un arreglo y otros `{ items }`. */
     list: async (p) => {
       const r = await call('GET', `${p}${p.includes('?') ? '&' : '?'}pageSize=200`);
@@ -711,6 +713,39 @@ export async function seedCases(api, masters) {
     probar: '4 m en la bobina 2 → «Excede el plan en 1.000 m» (D-574); con 3 m cierra exacto',
   });
 
+  // cc45 (D-603, D-604): «Cambiar cantidad» con producción, desde el detalle del pedido.
+  // C1 · bajar en a medida: 3 largos pedidos y 2 registrados enteros; el de 2,40 m no se hizo.
+  const c1 = await orderFor(
+    'C1',
+    custom,
+    { qty: '125.600', unitPricePen: '22.0000', pieces: pieces([6, 10], [5.2, 8], [2.4, 10]) },
+    await buyCoils(roofing, white, '0.40', ['310', '311'], 'caso C1'),
+  );
+  await report(c1, { coilId: c1.coils[0].id, pieces: pieces([6, 10]) });
+  await report(c1, { coilId: c1.coils[1].id, pieces: pieces([5.2, 8]) });
+  cases.push({
+    ...c1,
+    abrir: `${PREVIEW_WEB}/pedidos/${c1.orderId}`,
+    probar:
+      'línea 1 → «Cambiar cantidad» → «Bajar a lo registrado» (2,40 m a 0): la OP queda lista para «Registrar y cerrar» y se libera la reserva',
+  });
+
+  // C2 · subir en accesorio: 20 m pedidos, registrados y la OP cerrada.
+  const c2 = await orderFor(
+    'C2',
+    accessory,
+    { qty: '20.000', unitPricePen: '15.0000' },
+    await buyCoils(roofing, white, '0.25', ['60', '61'], 'caso C2'),
+  );
+  await report(c2, { coilId: c2.coils[0].id, meters: '20.000' });
+  await api.post(`/production/roofing/${c2.opId}/close`, {});
+  cases.push({
+    ...c2,
+    abrir: `${PREVIEW_WEB}/pedidos/${c2.orderId}`,
+    probar:
+      'línea 1 → «Cambiar cantidad» a 26 m: reserva 6 m más y nace una OP por la diferencia; la tarjeta dice «20.00 m de 20.00 m»',
+  });
+
   // Drywall: dos bobinas; la 1 cortada en 5 flejes de 244 mm (parante) y recibida, la 2 libre.
   const [dw1, dw2] = await buyCoils('drywall', galv, '0.45', ['2500', '2000'], 'drywall');
   const cutting = await api.post('/cutting', {
@@ -738,7 +773,7 @@ export function casesTable({ cases, drywall }, masters) {
     '|---|---|---|---|---|',
     ...cases.map(
       (c) =>
-        `| ${c.key} | ${c.order} | ${c.op} | ${PREVIEW_WEB}/planta?op=${c.opId} | ${c.probar} |`,
+        `| ${c.key} | ${c.order} | ${c.op} | ${c.abrir ?? `${PREVIEW_WEB}/planta?op=${c.opId}`} | ${c.probar} |`,
     ),
     `| Drywall | — | — | ${PREVIEW_WEB}/corte/${drywall.cuttingId} | ${drywall.cut.code} cortada en 5 flejes de 244 mm (${masters.products.stud.sku}); ${drywall.free.code} libre para tu orden de corte con ${DEMO.cuttingSupplier.name}; perfiles en «Nueva orden de perfiles» (${PREVIEW_WEB}/planta) |`,
   ];

@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser, getJson, postJson } from '../helpers/api';
-import { headerAction, rowAction } from '../helpers/ui';
+import { headerAction, rowAction, saveQtyChange } from '../helpers/ui';
 import { expireTemporaryReservationsNow } from '../helpers/db';
 import { apiAs, ROLE_PASSWORD } from '../helpers/production';
 import {
@@ -293,9 +293,10 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
       // Lo que ve lo puede usar: la cantidad pasa de 1 a 2 planchas de 10 m desde el diálogo.
       await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       const dialog = page.getByRole('dialog');
-      await expect(dialog.getByLabel('Planchas del largo 1', { exact: true })).toHaveValue('1');
-      await dialog.getByLabel('Planchas del largo 1', { exact: true }).fill('2');
-      await dialog.getByRole('button', { name: 'Guardar cantidad' }).click();
+      // cc45: la tabla por largo del diálogo «Cambiar cantidad», con su motivo.
+      await expect(dialog.getByLabel('Nuevo · 10.00 m', { exact: true })).toHaveValue('1');
+      await dialog.getByLabel('Nuevo · 10.00 m', { exact: true }).fill('2');
+      await saveQtyChange(page);
       await expect(dialog).toBeHidden({ timeout: 30_000 });
       await expect(page.getByText('20.00 m', { exact: true })).toBeVisible();
       const ownActive = (await reservationsOf(api, ownOrder.id)).filter(
@@ -495,14 +496,12 @@ test.describe('F8-S2 por pantalla — cotización, confirmar, reservas y pedido'
 
       await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       const dialog = page.getByRole('dialog');
-      await expect(dialog.getByLabel('Largo 1 en metros', { exact: true })).toHaveValue(
-        /^10(\.0+)?$/,
-      );
+      await expect(dialog.getByLabel('Nuevo · 10.00 m', { exact: true })).toHaveValue('1');
       // 1 × 10 m + 2 × 5 m = 20 m ⇒ 80.800 kg.
-      await dialog.getByRole('button', { name: 'Agregar largo' }).click();
-      await dialog.getByLabel('Planchas del largo 2', { exact: true }).fill('2');
-      await dialog.getByLabel('Largo 2 en metros', { exact: true }).fill('5');
-      await dialog.getByRole('button', { name: 'Guardar cantidad' }).click();
+      await dialog.getByRole('button', { name: '+ Otro largo' }).click();
+      await dialog.getByLabel('Nuevo · largo nuevo 1', { exact: true }).fill('2');
+      await dialog.getByLabel('Metros del largo nuevo 1', { exact: true }).fill('5');
+      await saveQtyChange(page);
       await expect(dialog).toBeHidden({ timeout: 30_000 });
 
       // La pantalla refleja la cantidad y la reserva nuevas sin recargar.

@@ -3,6 +3,7 @@ import {
   lengthLabel,
   lengthRows,
   piecesByLength,
+  piecesChanges,
   piecesMinus,
   piecesSummary,
   qtyFloorViolation,
@@ -117,5 +118,13 @@ describe('cc45 — aritmética de «Cambiar cantidad» (D-603, D-604)', () => {
     expect(samePieces([p(6, 2), p(3, 1)], [p(3, 1), p(6, 2)])).toBe(true);
     expect(samePieces([p(6, 2)], [p(6, 3)])).toBe(false);
     expect(samePieces([p(6, 2)], [p(6, 2), p(3, 1)])).toBe(false);
+  });
+
+  it('piecesChanges dice qué largos se agregan y cuáles se quitan', () => {
+    expect(piecesChanges([p(6, 10), p(2.4, 10)], [p(6, 10), p(3, 6)])).toEqual([
+      'se agregan 6 planchas de 3.00 m',
+      'se quitan 10 planchas de 2.40 m',
+    ]);
+    expect(piecesChanges([p(6, 2)], [p(6, 2)])).toEqual([]);
   });
 });
