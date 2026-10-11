@@ -13,10 +13,16 @@
 // - Compara por nombre y por definición normalizada (espacios, mayúsculas, comillas). Deja fuera lo
 //   que pertenece a extensiones y lo que no está en el esquema `public` (Neon, catálogos).
 // - Exige la misma versión mayor de Postgres en los dos lados.
+// - Un trigger deshabilitado, una CHECK `NOT VALID` y un índice inválido cuentan como distintos.
+//   Lo que difiere solo en mayúsculas, comillas o espacios se marca como cosmético, no se oculta.
+// - No cubre (D-610): vistas materializadas, reglas que no son de vista, políticas RLS, triggers
+//   de evento, enums, defaults, permisos ni dueños. Defaults y columnas los ve `check:drift`.
+// - Contenedor `ayr-drift-objetos` en 127.0.0.1:5441, nombre fijo: no se corre en dos sesiones a la
+//   vez. Si se corta con Ctrl+C, queda arriba y la corrida siguiente lo borra al empezar.
 //
 // Solo informe: no corrige nada ni escribe migraciones. No va en la CI; se corre a mano.
 //
-// Uso: pnpm check:drift:objetos [--out <archivo.json>]
+// Uso: pnpm check:drift:objetos [--out local-data/<archivo>.json]
 //      (el JSON lleva nombres y definiciones de esquema, nunca filas de datos)
 import { writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -26,46 +32,76 @@ import { ROOT, neonConnectionString, run } from './lib.mjs';
 
 export const OBJECTS_DB_NAME = 'ayr_drift_objetos';
 
-/** Objetos del esquema `public` que no son de una extensión (`pg_depend.deptype = 'e'`). */
-const NOT_FROM_EXTENSION = (oid) =>
-  `NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = ${oid} AND d.deptype = 'e')`;
+/**
+ * Objetos que no son de una extensión (`pg_depend.deptype = 'e'`). Se filtra también por
+ * `classid`: los OID no son únicos entre catálogos (revisión cc46).
+ */
+const NOT_FROM_EXTENSION = (oid, catalog) =>
+  `NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = '${catalog}'::regclass ` +
+  `AND d.objid = ${oid} AND d.deptype = 'e')`;
 
 export const CATALOG_QUERIES = Object.freeze({
-  // CHECK y exclusión: Prisma no los modela. (PK, UNIQUE y FK ya los mira `check:drift`.)
+  // CHECK y exclusión: Prisma no los modela. (PK, UNIQUE, FK y NOT NULL ya los mira
+  // `check:drift`.) Una CHECK de dominio no tiene tabla: se nombra por su tipo.
   constraint: `
-    SELECT c.conrelid::regclass::text AS "table", c.conname AS "name",
-           pg_get_constraintdef(c.oid) AS "def"
+    SELECT COALESCE(NULLIF(c.conrelid, 0)::regclass::text, 'dominio ' || c.contypid::regtype::text)
+             AS "table",
+           c.conname AS "name",
+           pg_get_constraintdef(c.oid) || CASE WHEN c.convalidated THEN '' ELSE ' NOT VALID' END
+             AS "def"
     FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
-    WHERE n.nspname = 'public' AND c.contype IN ('c', 'x') AND ${NOT_FROM_EXTENSION('c.oid')}`,
+    WHERE n.nspname = 'public' AND c.contype IN ('c', 'x')
+      AND ${NOT_FROM_EXTENSION('c.oid', 'pg_constraint')}`,
+  // `pg_get_triggerdef` no dice si está deshabilitado: un `DISABLE TRIGGER` a mano pasaba igual.
   trigger: `
     SELECT t.tgrelid::regclass::text AS "table", t.tgname AS "name",
-           pg_get_triggerdef(t.oid) AS "def"
+           pg_get_triggerdef(t.oid) || ' -- tgenabled=' || t.tgenabled::text AS "def"
     FROM pg_trigger t JOIN pg_class r ON r.oid = t.tgrelid
     JOIN pg_namespace n ON n.oid = r.relnamespace
-    WHERE n.nspname = 'public' AND NOT t.tgisinternal AND ${NOT_FROM_EXTENSION('t.oid')}`,
+    WHERE n.nspname = 'public' AND NOT t.tgisinternal
+      AND ${NOT_FROM_EXTENSION('t.oid', 'pg_trigger')}`,
   // Los agregados no tienen `pg_get_functiondef`; se nombran con su firma por si hay sobrecargas.
   function: `
-    SELECT '' AS "table", p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS "name",
+    SELECT '' AS "table",
+           p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS "name",
            pg_get_functiondef(p.oid) AS "def"
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p') AND ${NOT_FROM_EXTENSION('p.oid')}`,
-  // Solo los índices que Prisma no ve del todo: parciales (WHERE) o de expresión.
+    WHERE n.nspname = 'public' AND p.prokind IN ('f', 'p')
+      AND ${NOT_FROM_EXTENSION('p.oid', 'pg_proc')}`,
+  // Solo los índices que Prisma no ve del todo: parciales (WHERE) o de expresión. Un índice
+  // inválido (un CREATE INDEX CONCURRENTLY que falló) tiene la misma definición: se marca.
   index: `
     SELECT i.indrelid::regclass::text AS "table", ic.relname AS "name",
-           pg_get_indexdef(i.indexrelid) AS "def"
+           pg_get_indexdef(i.indexrelid) || CASE WHEN i.indisvalid THEN '' ELSE ' -- INVALID' END
+             AS "def"
     FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
     JOIN pg_namespace n ON n.oid = ic.relnamespace
     WHERE n.nspname = 'public' AND (i.indpred IS NOT NULL OR i.indexprs IS NOT NULL)
-      AND ${NOT_FROM_EXTENSION('i.indexrelid')}`,
+      AND ${NOT_FROM_EXTENSION('i.indexrelid', 'pg_class')}`,
   view: `
     SELECT '' AS "table", v.viewname AS "name", pg_get_viewdef(c.oid) AS "def"
     FROM pg_views v JOIN pg_class c ON c.relname = v.viewname
     JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = v.schemaname
-    WHERE v.schemaname = 'public' AND ${NOT_FROM_EXTENSION('c.oid')}`,
+    WHERE v.schemaname = 'public' AND ${NOT_FROM_EXTENSION('c.oid', 'pg_class')}`,
 });
 
-/** Definición comparable: sin comillas dobles, en minúsculas y con los espacios colapsados. */
+/**
+ * Definición comparable. Con la misma versión mayor, `pg_get_*def` devuelve texto canónico: solo
+ * se quitan fin de línea CRLF y espacios al final de línea (los cuerpos de función son el texto
+ * de la migración tal cual). Nada de minúsculas ni comillas: `'ACTIVE'` y `'Active'` son reglas
+ * distintas (revisión cc46).
+ */
 export function normalizeDef(def) {
+  return String(def)
+    .replaceAll('\r\n', '\n')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trim();
+}
+
+/** Lo que solo cambia en mayúsculas, comillas o espacios: se informa como cosmético, no se oculta. */
+export function looseDef(def) {
   return String(def).replaceAll('"', '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
@@ -74,18 +110,23 @@ export function objectKey(kind, row) {
   return row.table ? `${kind} ${row.table}.${row.name}` : `${kind} ${row.name}`;
 }
 
-/** `{ kind: rows[] }` → `Map<clave, { kind, table, name, def }>`. */
+/** `{ kind: rows[] }` → `Map<clave, { kind, table, name, def }>`. Una clave repetida corta. */
 export function indexCatalog(catalog) {
   const map = new Map();
   for (const [kind, rows] of Object.entries(catalog)) {
-    for (const row of rows) map.set(objectKey(kind, row), { kind, ...row });
+    for (const row of rows) {
+      const key = objectKey(kind, row);
+      if (map.has(key)) throw new Error(`Clave repetida en el catálogo: ${key}`);
+      map.set(key, { kind, ...row });
+    }
   }
   return map;
 }
 
 /**
  * Las diferencias entre la referencia (migraciones) y producción: lo que solo está en un lado y lo
- * que está en los dos con otra definición (normalizada). Cada lista va ordenada por clave.
+ * que está en los dos con otra definición. Una diferencia de solo mayúsculas, comillas o espacios
+ * va marcada `cosmetic` (D-611), pero se informa igual. Cada lista va ordenada por clave.
  */
 export function compareCatalogs(reference, production) {
   const ref = indexCatalog(reference);
@@ -96,7 +137,12 @@ export function compareCatalogs(reference, production) {
     .filter((k) => prod.has(k))
     .filter((k) => normalizeDef(ref.get(k).def) !== normalizeDef(prod.get(k).def))
     .sort()
-    .map((k) => ({ key: k, reference: ref.get(k).def, production: prod.get(k).def }));
+    .map((k) => ({
+      key: k,
+      cosmetic: looseDef(ref.get(k).def) === looseDef(prod.get(k).def),
+      reference: ref.get(k).def,
+      production: prod.get(k).def,
+    }));
   const counts = {};
   for (const kind of Object.keys(CATALOG_QUERIES)) {
     counts[kind] = {
@@ -130,9 +176,11 @@ export async function readCatalog(url) {
     return await prisma.$transaction(
       async (tx) => {
         await tx.$executeRawUnsafe('SET TRANSACTION READ ONLY');
-        const [{ v }] = await tx.$queryRawUnsafe(
-          "SELECT current_setting('server_version_num') AS v",
+        await tx.$executeRawUnsafe('SET LOCAL search_path = public');
+        const [{ v, ro }] = await tx.$queryRawUnsafe(
+          "SELECT current_setting('server_version_num') AS v, current_setting('transaction_read_only') AS ro",
         );
+        if (ro !== 'on') throw new Error('La transacción del catálogo no quedó READ ONLY.');
         const catalog = {};
         for (const [kind, sql] of Object.entries(CATALOG_QUERIES)) {
           catalog[kind] = (await tx.$queryRawUnsafe(sql)).map((r) => ({
@@ -143,7 +191,8 @@ export async function readCatalog(url) {
         }
         return { major: majorOf(v), catalog };
       },
-      { timeout: 120_000 },
+      // `maxWait`: una compute de Neon suspendida tarda en dar la primera conexión.
+      { maxWait: 30_000, timeout: 120_000 },
     );
   } finally {
     await prisma.$disconnect();
@@ -191,22 +240,34 @@ export async function referenceCatalog(major) {
   );
   try {
     for (let i = 0; ; i += 1) {
+      // Por TCP (`-h 127.0.0.1`): el servidor temporal del `initdb` de la imagen solo escucha por
+      // el socket y contesta antes de reiniciarse; el definitivo es el que abre TCP.
       const ready = run(
         'docker',
-        ['exec', REFERENCE_CONTAINER, 'pg_isready', '-U', 'ayr', '-d', OBJECTS_DB_NAME],
+        [
+          'exec',
+          REFERENCE_CONTAINER,
+          'pg_isready',
+          '-h',
+          '127.0.0.1',
+          '-p',
+          '5432',
+          '-U',
+          'ayr',
+          '-d',
+          OBJECTS_DB_NAME,
+        ],
         { allowFail: true, quiet: true },
       );
       if (ready.includes('accepting connections')) break;
       if (i >= 60) throw new Error('El Postgres de referencia no arrancó en 60 s.');
       waitMs(1000);
     }
-    // `pg_isready` contesta antes de que termine el arranque inicial del contenedor.
-    waitMs(3000);
     const url = referenceUrl();
+    // La URL de referencia es local y sin contraseña: si `migrate deploy` falla, se muestra.
     run('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], {
       cwd: resolve(ROOT, 'apps/api'),
       env: { DATABASE_URL: url, DIRECT_URL: url },
-      quiet: true,
     });
     return await readCatalog(url);
   } finally {
@@ -226,7 +287,8 @@ function printReport(result, majors) {
   for (const k of result.onlyReference) console.log(`\n- Solo en las migraciones: ${k}`);
   for (const c of result.changed) {
     console.log(
-      `\n~ Distinta: ${c.key}\n  migraciones: ${c.reference}\n  production:  ${c.production}`,
+      `\n~ Distinta${c.cosmetic ? ' (solo mayúsculas, comillas o espacios)' : ''}: ${c.key}` +
+        `\n  migraciones: ${c.reference}\n  production:  ${c.production}`,
     );
   }
   console.log(
@@ -239,6 +301,9 @@ function printReport(result, majors) {
 async function main() {
   const argv = process.argv.slice(2);
   const out = argv.includes('--out') ? argv[argv.indexOf('--out') + 1] : undefined;
+  if (argv.includes('--out') && (out === undefined || out.startsWith('--'))) {
+    throw new Error('--out necesita la ruta del archivo (sugerida: local-data/…).');
+  }
   const production = await readCatalog(neonConnectionString('production', { pooled: false }));
   const reference = await referenceCatalog(production.major);
   if (reference.major !== production.major) {
