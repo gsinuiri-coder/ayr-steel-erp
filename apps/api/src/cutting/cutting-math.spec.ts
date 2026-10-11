@@ -4,6 +4,7 @@ import {
   deriveCuttingOrderStatus,
   expandWidthCounts,
   prorateReceptionValue,
+  receptionCosts,
   validateWidthBudget,
 } from './cutting-math';
 
@@ -103,5 +104,48 @@ describe('prorateReceptionValue — borde de valor casi nulo (revisión cc44)', 
     const shares = prorateReceptionValue('0.0002', ['1', '1', '1', '1', '1.5']);
     expect(shares.every((s) => !s.isNegative())).toBe(true);
     expect(shares.reduce((a, s) => a.plus(s), new Decimal(0)).toFixed(4)).toBe('0.0002');
+  });
+});
+
+describe('receptionCosts (D-597)', () => {
+  it('reparte el valor, sube el costo del documento y valoriza el kerf', () => {
+    // 1 500 kg a S/ 4.1234 (S/ 6 185.10) en 737.705 + 688.525 kg: 73.770 kg de kerf y borde.
+    const costs = receptionCosts({
+      outValuePen: '6185.1000',
+      motherDocumentUnitCost: '4.1234',
+      splitWeightKg: '1500.000',
+      kerfLossKg: '73.770',
+      childrenWeightsKg: ['737.705', '688.525'],
+    });
+    expect(costs.childrenValuesPen.reduce((a, v) => a.plus(v), new Decimal(0)).toFixed(4)).toBe(
+      '6185.1000',
+    );
+    expect(costs.documentUnitCost.toFixed(4)).toBe('4.3367');
+    expect(costs.kerfValuePen.toFixed(2)).toBe('304.18');
+  });
+
+  it('sin kerf el documento queda igual y el kerf vale cero', () => {
+    const costs = receptionCosts({
+      outValuePen: '100',
+      motherDocumentUnitCost: '4',
+      splitWeightKg: '25',
+      kerfLossKg: '0',
+      childrenWeightsKg: ['12.5', '12.5'],
+    });
+    expect(costs.documentUnitCost.toFixed(4)).toBe('4.0000');
+    expect(costs.kerfValuePen.toFixed(4)).toBe('0.0000');
+    expect(costs.childrenValuesPen.map((v) => v.toFixed(4))).toEqual(['50.0000', '50.0000']);
+  });
+
+  it('un plan degenerado sin kilos no divide por cero', () => {
+    const costs = receptionCosts({
+      outValuePen: '0',
+      motherDocumentUnitCost: '4',
+      splitWeightKg: '0',
+      kerfLossKg: '0',
+      childrenWeightsKg: [],
+    });
+    expect(costs.documentUnitCost.toFixed(4)).toBe('4.0000');
+    expect(costs.kerfValuePen.toFixed(4)).toBe('0.0000');
   });
 });

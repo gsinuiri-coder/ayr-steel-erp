@@ -52,7 +52,7 @@ import { assertNotReserved } from '../sales/reservation-guard';
 import {
   deriveCuttingOrderStatus,
   expandWidthCounts,
-  prorateReceptionValue,
+  receptionCosts,
   validateWidthBudget,
 } from './cutting-math';
 
@@ -299,19 +299,13 @@ export class CuttingService {
         // se reparte por kilo entre los flejes (el más pesado se lleva el redondeo), así que la
         // suma de sus entradas es exactamente la salida de la madre. Antes los flejes entraban al
         // promedio de la madre y el valor de `kerfLossKg` desaparecía del inventario.
-        const childrenValuesPen = prorateReceptionValue(
-          out.totalCost.toString(),
-          plan.children.map((c) => c.weightKg),
-        );
-        const childrenKg = plan.splitWeightKg.minus(plan.kerfLossKg);
-        // El costo del documento sube en la misma proporción (como lo hace el costo del corte,
-        // RF-41): los mismos kilos de la madre repartidos sobre los que quedaron en fleje.
-        const documentUnitCost = toDecimal(coil.unitCostPerKg.toString())
-          .times(plan.splitWeightKg)
-          .div(childrenKg);
-        const kerfValuePen = toDecimal(out.totalCost.toString())
-          .times(plan.kerfLossKg)
-          .div(plan.splitWeightKg);
+        const { childrenValuesPen, documentUnitCost, kerfValuePen } = receptionCosts({
+          outValuePen: out.totalCost.toString(),
+          motherDocumentUnitCost: coil.unitCostPerKg.toString(),
+          splitWeightKg: plan.splitWeightKg,
+          kerfLossKg: plan.kerfLossKg,
+          childrenWeightsKg: plan.children.map((c) => c.weightKg),
+        });
 
         const batch = await this.coils.prepareBatch(tx, {
           supplierId: coil.supplierId,

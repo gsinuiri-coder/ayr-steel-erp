@@ -67,6 +67,32 @@ export function prorateReceptionValue(
   return shares;
 }
 
+/**
+ * D-597 (cc44): los costos de una recepción de corte. El valor de cada fleje en el kardex
+ * (`prorateReceptionValue`), su costo del documento —el de la madre subido en la proporción
+ * `kilos que salieron / kilos en fleje`, como el costo del corte (RF-41), en la moneda de la
+ * bobina— y el valor del kerf y el borde que quedó repartido (informativo, para la auditoría).
+ */
+export function receptionCosts(input: {
+  outValuePen: DecimalInput;
+  motherDocumentUnitCost: DecimalInput;
+  splitWeightKg: DecimalInput;
+  kerfLossKg: DecimalInput;
+  childrenWeightsKg: DecimalInput[];
+}): { childrenValuesPen: Decimal[]; documentUnitCost: Decimal; kerfValuePen: Decimal } {
+  const split = toDecimal(input.splitWeightKg);
+  const kerf = toDecimal(input.kerfLossKg);
+  const outValue = toDecimal(input.outValuePen);
+  const childrenKg = split.minus(kerf);
+  return {
+    childrenValuesPen: prorateReceptionValue(outValue, input.childrenWeightsKg),
+    documentUnitCost: childrenKg.lte(0)
+      ? toDecimal(input.motherDocumentUnitCost)
+      : toDecimal(input.motherDocumentUnitCost).times(split).div(childrenKg),
+    kerfValuePen: split.lte(0) ? new Decimal(0) : outValue.times(kerf).div(split),
+  };
+}
+
 /** Expande `{ widthMm, stripsCount }` a una entrada por tira, en orden. Mismo shape que `expandSplitWidths`. */
 export function expandWidthCounts(rows: { widthMm: string; stripsCount: number }[]): string[] {
   return rows.flatMap((row) => Array.from({ length: row.stripsCount }, () => row.widthMm));
