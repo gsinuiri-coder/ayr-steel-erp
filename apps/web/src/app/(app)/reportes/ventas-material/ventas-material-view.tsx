@@ -140,7 +140,7 @@ export function VentasMaterialView() {
     if (url.range === '') return;
     const legacy = legacyRangePeriod(url.range, url.from, url.to, businessToday());
     setUrl(legacy === null ? { range: '' } : { range: '', from: legacy.from, to: legacy.to });
-  }, [url.range]);
+  }, [url.range, url.from, url.to, setUrl]);
   const [sort, toggleSort] = useSort<string>();
   const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });

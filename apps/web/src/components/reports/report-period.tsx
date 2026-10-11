@@ -67,7 +67,7 @@ export function useReportPeriod(): ReportPeriodState {
     const next = completePeriod(url, today, readStoredPeriod(sessionStore(), today));
     setChosen(next.preset);
     setUrl({ from: next.from, to: next.to });
-  }, [complete, search]);
+  }, [complete, search, url, setUrl]);
 
   const period = { from: url.from, to: url.to };
   const error = complete ? periodError(period) : null;
@@ -201,7 +201,7 @@ export function useReportMonth(): ReportMonthState {
     if (complete) return;
     const today = businessToday();
     setUrl({ mes: defaultMonth(today, readStoredPeriod(sessionStore(), today)) });
-  }, [complete, search]);
+  }, [complete, search, setUrl]);
 
   const error = complete ? monthError(url.mes) : null;
   return {

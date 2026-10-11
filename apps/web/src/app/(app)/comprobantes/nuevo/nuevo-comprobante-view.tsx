@@ -136,14 +136,20 @@ export function NuevoComprobanteView() {
       fetchAllForPicker<DispatchListItemDto>('/invoicing/dispatches', { salesOrderId }),
     enabled: salesOrderId !== NONE,
   });
-  const linkableDispatches = (dispatches.data ?? []).filter(
-    (d) =>
-      d.status !== 'REVERSED' &&
-      // No alcanza con `invoiceId === null`: el enlace se toma al crear el comprobante, así
-      // que un borrador descartado o un rechazado lo dejan puesto sin ocupar nada. Lo que
-      // ocupa el despacho es un comprobante **vivo**, que es la misma lista blanca que aplica
-      // el API al validar.
-      (d.invoiceStatus === null || !LIVE_DOCUMENT_STATUSES.includes(d.invoiceStatus)),
+  // Memorizado sobre la respuesta: el efecto de preselección de abajo depende de esta lista y
+  // tiene que correr cuando llega otra respuesta, no en cada render.
+  const linkableDispatches = useMemo(
+    () =>
+      (dispatches.data ?? []).filter(
+        (d) =>
+          d.status !== 'REVERSED' &&
+          // No alcanza con `invoiceId === null`: el enlace se toma al crear el comprobante, así
+          // que un borrador descartado o un rechazado lo dejan puesto sin ocupar nada. Lo que
+          // ocupa el despacho es un comprobante **vivo**, que es la misma lista blanca que aplica
+          // el API al validar.
+          (d.invoiceStatus === null || !LIVE_DOCUMENT_STATUSES.includes(d.invoiceStatus)),
+      ),
+    [dispatches.data],
   );
 
   /**
@@ -162,9 +168,9 @@ export function NuevoComprobanteView() {
     // preselección es una comodidad del primer render, no una corrección permanente.
     if (dispatchTouched.current) return;
     setDispatchId(linkableDispatches.length === 1 ? (linkableDispatches[0]?.id ?? NONE) : NONE);
-    // Depende del pedido y de la **respuesta**, no de `linkableDispatches`, que se recalcula
-    // en cada render: es el mismo criterio que el efecto del cliente de acá abajo.
-  }, [salesOrderId, dispatches.data]);
+    // Depende del pedido y de la **respuesta** (`linkableDispatches` está memorizado sobre ella):
+    // es el mismo criterio que el efecto del cliente de acá abajo.
+  }, [salesOrderId, linkableDispatches]);
 
   // Elegir el pedido fija el cliente: facturar a otro sería emitirle a alguien que no
   // compró. El cliente sale del **avance del pedido**, que se pide por id, y no de la

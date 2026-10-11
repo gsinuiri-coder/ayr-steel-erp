@@ -162,19 +162,20 @@ export function ImportarComprasView() {
     },
   });
 
-  // Cada edición revalida contra el servidor, con una espera tras la última tecla.
+  // Cada edición revalida contra el servidor, con una espera tras la última tecla. `mutate` es
+  // estable (TanStack Query lo memoriza); el objeto `revalidate` entero cambia en cada render.
+  const { mutate: revalidateMutate } = revalidate;
   useEffect(() => {
     if (!dirty || docs === null) return;
     const current = ++version.current;
     const handle = setTimeout(() => {
-      if (docs.length > 0) revalidate.mutate({ documents: docs, version: current });
+      if (docs.length > 0) revalidateMutate({ documents: docs, version: current });
       else setDirty(false);
     }, REVALIDATE_MS);
     return () => {
       clearTimeout(handle);
     };
-    // `revalidate` es estable en lo que importa; incluirlo relanzaría el efecto en cada render.
-  }, [docs, dirty]);
+  }, [docs, dirty, revalidateMutate]);
 
   const edit = (key: string, patch: (doc: ReviewDocument) => ReviewDocument | null) => {
     setDocs((prev) =>

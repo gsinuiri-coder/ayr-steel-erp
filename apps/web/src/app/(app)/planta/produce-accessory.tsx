@@ -136,12 +136,14 @@ export function ProduceAccessory({
   // cc41: lo que D-559 dejó en este navegador sube una vez al borrador del servidor (si el
   // servidor ya tiene borrador, gana el servidor) y la clave local se borra. Sin avisos salvo error.
   const migrated = useRef<string | null>(null);
+  const { put: putDraft, touched: touchedDraft } = drafts;
+  const orderCoils = order.coils;
   useEffect(() => {
     if (migrated.current === order.orderId) return;
     migrated.current = order.orderId;
     const storage = browserStorage();
     if (!hasLegacyAccessoryEdits(storage, order.orderId)) return;
-    const codeOf = (coilId: string) => order.coils.find((c) => c.coilId === coilId)?.coilCode ?? '';
+    const codeOf = (coilId: string) => orderCoils.find((c) => c.coilId === coilId)?.coilCode ?? '';
     // Con algo del navegador por subir, el borrador se lee recién del servidor: la caché puede
     // ser vieja, y decidir con ella podía dar de alta una segunda fila para la misma bobina.
     void api<RoofingReportDraftDto[]>(`/production/roofing/${order.orderId}/drafts`)
@@ -150,14 +152,14 @@ export function ProduceAccessory({
         return uploadLegacyAccessoryEdits({
           storage,
           orderId: order.orderId,
-          coilIds: order.coils.map((c) => c.coilId),
+          coilIds: orderCoils.map((c) => c.coilId),
           serverCoilIds: fresh.map((d) => d.coilId),
-          registeredCoilIds: order.coils
+          registeredCoilIds: orderCoils
             .filter((c) => toDecimal(c.reportedMeters).gt(0))
             .map((c) => c.coilId),
           // Si el operario ya escribió en ese bloque mientras subía lo anterior, gana lo suyo.
           save: (coilId, edit) =>
-            drafts.touched(coilId) ? Promise.resolve(true) : drafts.put(coilId, edit),
+            touchedDraft(coilId) ? Promise.resolve(true) : putDraft(coilId, edit),
         });
       })
       .then(({ failed, doubtful }) => {
@@ -175,8 +177,8 @@ export function ProduceAccessory({
       .catch((err: unknown) => {
         toast.error(errorMessage(err, 'No se pudo leer el borrador de la orden'));
       });
-    // Una vez por orden: lo que se lee es el estado con el que se abrió.
-  }, [order.orderId]);
+    // Una vez por orden (`migrated`): un refetch de las bobinas vuelve a entrar acá y sale arriba.
+  }, [order.orderId, orderCoils, onSaved, putDraft, touchedDraft]);
 
   const coils = order.coils;
   const blocks = useMemo(() => {

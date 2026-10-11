@@ -128,14 +128,17 @@ export function useUrlSearchInput(
   const ownCommits = useRef(new Set<string>());
   const trimmed = draft.trim();
   const debounced = useDebounced(trimmed, delay);
+  // `commit` es un literal nuevo en cada render: se lee el último por ref y el efecto corre
+  // solo cuando cambia el valor debounced.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
 
   useEffect(() => {
     if (debounced !== lastCommitted.current) {
       lastCommitted.current = debounced;
       ownCommits.current.add(debounced);
-      commit(debounced);
+      commitRef.current(debounced);
     }
-    // `commit` cambia de identidad con el path; lo que importa es el valor debounced.
   }, [debounced]);
 
   useEffect(() => {
