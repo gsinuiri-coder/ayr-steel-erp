@@ -27,6 +27,7 @@ import {
   formatMoneyOrDash,
   formatQtyAsIs,
   formatTimestampDate,
+  formatUnits,
   unitSymbol,
 } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
@@ -149,7 +150,8 @@ export function ProduccionDetalleView({ id }: { id: string }) {
     o.kind === ProductionOrderKind.ROOFING || o.productPieceWeightKg === null
       ? null
       : new Decimal(o.productPieceWeightKg);
-  const theoreticalPieces = kgPerPiece?.gt(0) ? assignedKg.div(kgPerPiece) : null;
+  // D-600 (cc44): piezas enteras hacia abajo, como «Alcanza para» en planta.
+  const theoreticalPieces = kgPerPiece?.gt(0) ? assignedKg.div(kgPerPiece).floor() : null;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
@@ -249,7 +251,7 @@ export function ProduccionDetalleView({ id }: { id: string }) {
         {theoreticalPieces !== null && (
           <SummaryCard
             title="Piezas teóricas"
-            value={theoreticalPieces.toFixed(1)}
+            value={formatUnits(theoreticalPieces.toFixed(0))}
             hint={`Del fleje montado, vs. ${o.piecesReported} reportadas`}
           />
         )}

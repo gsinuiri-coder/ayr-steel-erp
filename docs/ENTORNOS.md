@@ -434,6 +434,35 @@ mapeado.
 (`E2E_RESET_DB=1`, seteado por `playwright.config.ts`). Exportar `DATABASE_URL`/`DIRECT_URL` a
 mano antes de correr `pnpm e2e` sigue funcionando para apuntar a otra base puntualmente.
 
+### Protección de `main` en GitHub (cc44, D-602)
+
+Desde el 2026-10-11, `main` tiene protección de rama clásica (no rulesets):
+
+| Regla                          | Valor                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------- |
+| PR obligatorio                 | Sí, con **0 aprobaciones**: el dueño trabaja solo, nadie más revisa        |
+| Check obligatorio              | «E2E Playwright (Postgres del runner)», de GitHub Actions (`app_id` 15368) |
+| Rama al día con `main`         | No (`strict: false`): un PR no tiene que rebasarse cada vez que entra otro |
+| También para administradores   | Sí (`enforce_admins`): ni el dueño ni el agente empujan directo a `main`   |
+| Push forzado / borrado de main | Bloqueados                                                                 |
+
+- El check es el agregado de D-596: verde solo si `base` (drift + `test:db`) y los dos shards
+  lo son. Lint, Sonar, `smoke-neon` y escenarios **no** son obligatorios: se miran igual antes de
+  mergear (D-232), pero no traban el botón.
+- Consultarla: `gh api repos/gsinuiri-coder/ayr-steel-erp/branches/main/protection`. La
+  configuración aplicada está en el handoff de cc44.
+- **Ningún flujo empujaba a `main`**: el agente entra por PR (`gh pr merge`) desde D-445/cc28 y
+  ningún workflow ni script hace `git push` a `main`. El hook `.githooks/pre-push` queda como
+  segunda red local; `AYR_OWNER_PUSH=1 git push` ya no sirve: GitHub lo rechaza.
+- **Vuelta atrás de emergencia** (un revert que no puede esperar la CI): la API vuelve sola con
+  `gcloud run services update-traffic` (no depende de `main`); el web se puede devolver desde
+  Vercel promoviendo el deploy anterior. Si de verdad hiciera falta empujar a `main`, el dueño
+  apaga la regla para administradores con
+  `gh api -X DELETE repos/gsinuiri-coder/ayr-steel-erp/branches/main/protection/enforce_admins`
+  y la vuelve a encender con `-X POST` al mismo recurso.
+- Verificación de cc44: un push de prueba a una rama nueva (`chore/cc44-prueba-proteccion`)
+  entró normal y se borró; nunca se probó empujar a `main`.
+
 ---
 
 ## La corrida por defecto no depende de nada externo

@@ -25,6 +25,7 @@ import {
   cents,
   money,
   toDecimal,
+  type Decimal,
   toFixedString,
   toSkipTake,
   Unit,
@@ -100,6 +101,12 @@ export interface CreateCoilInput {
    * promedio vigente de la madre, que ya puede incluir landed cost (D-043).
    */
   kardexUnitCostPen?: string;
+  /**
+   * D-597 (cc44): el valor exacto en soles con el que la bobina entra al kardex, cuando es su parte
+   * de un valor repartido y no `peso × unitario`. Lo usa la recepción de corte: cada fleje entra
+   * con su parte del valor que salió de la madre, kerf incluido. El unitario se deriva.
+   */
+  kardexTotalCostPen?: string;
   notes?: string;
   /** D-206: el código con el que el cliente identifica esta bobina en su propio inventario.
    *  Solo lo manda la carga inicial (`InitialInventoryImportService`); el resto de vías no lo
@@ -157,8 +164,10 @@ export class CoilsService {
     const totalCost =
       input.totalCost === undefined ? weightKg.times(unitCostPerKg) : money(input.totalCost);
     // D-359: con un total del papel, el kardex entra por ese total en soles y el unitario se deriva.
-    const kardexTotalPen =
-      input.totalCost === undefined ? undefined : cents(totalCost.times(exchangeRate));
+    // D-597: un fleje de corte trae su valor ya repartido en soles.
+    let kardexTotalPen: Decimal | undefined;
+    if (input.kardexTotalCostPen !== undefined) kardexTotalPen = money(input.kardexTotalCostPen);
+    else if (input.totalCost !== undefined) kardexTotalPen = cents(totalCost.times(exchangeRate));
 
     // El partido reserva los correlativos de golpe y precarga proveedor y acabado: sin
     // eso, cada hija repetía cuatro consultas y otro `UPDATE suppliers`, que retiene el

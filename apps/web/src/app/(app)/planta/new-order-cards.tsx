@@ -5,15 +5,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import {
   describePieces,
-  MAX_REPORT_PIECES,
   type LineWithoutOrderDto,
   type ProductDto,
   type ProductionOrderDto,
-  type ReservationDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { drywallProfilesOf } from '@/lib/drywall-profiles';
-import { formatDate, formatQtyAsIs, unitSymbol } from '@/lib/format';
+import { formatDate, formatQtyAsIs } from '@/lib/format';
 import { invalidateProduction } from '@/lib/production-queries';
 import { OperationDateField } from '@/components/operation-date-field';
 import {
@@ -24,7 +22,6 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -147,48 +144,29 @@ function LineWithoutOrderSummary({ entry }: { entry: LineWithoutOrderDto }) {
 
 /**
  * Una corrida de perfiles de drywall: nace del SKU del perfil (D-344: el espesor y el ancho del
- * fleje son del SKU, ya no hay receta), con meta opcional.
+ * fleje son del SKU, ya no hay receta). D-599 (cc44): toda orden de perfiles es una **corrida de
+ * stock**, sin pedido detrás —un pedido de perfiles se confirma solo con stock (D-598)— y D-601:
+ * sin meta de piezas. El API sigue aceptando `reservationId` y `targetPieces` opcionales.
  */
 export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) => void }) {
   const queryClient = useQueryClient();
   const [productId, setProductId] = useState('');
-  const [targetPieces, setTargetPieces] = useState('');
-  /** D-066: pedido contra el que se fabrica. Vacío = corrida de stock, sin reserva detrás. */
-  const [reservationId, setReservationId] = useState('');
   const [orderDate, setOrderDate] = useState<string | undefined>(undefined);
 
   const catalog = useQuery({
     queryKey: ['catalog'],
     queryFn: () => api<ProductDto[]>('/catalog'),
   });
-  /**
-   * Reservas activas: los pedidos que esperan que planta fabrique (D-066).
-   *
-   * Sin esto la reserva no tenía consumidor en la UI y el guardrail se volvía en contra: al
-   * confirmar un pedido, el material quedaba bloqueado para **toda** orden que no fuera la
-   * nacida de esa reserva, y planta no tenía forma de crear esa orden.
-   */
-  const reservations = useQuery({
-    queryKey: ['reservations', 'ACTIVE'],
-    queryFn: () => api<ReservationDto[]>('/sales/reservations?status=ACTIVE'),
-  });
 
   const create = useMutation({
     mutationFn: () =>
       api<ProductionOrderDto>('/production', {
         method: 'POST',
-        body: {
-          productId,
-          operationDate: orderDate,
-          ...(targetPieces.trim() ? { targetPieces: Number(targetPieces.trim()) } : {}),
-          ...(reservationId ? { reservationId } : {}),
-        },
+        body: { productId, operationDate: orderDate },
       }),
     onSuccess: (order) => {
       toast.success(`Orden ${order.code} creada`);
       setProductId('');
-      setTargetPieces('');
-      setReservationId('');
       invalidateProduction(queryClient);
       onCreated(order.id);
     },
@@ -198,25 +176,13 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
   // Solo los perfiles de drywall con el SKU completo: una corrida de coberturas no se crea
   // eligiendo el producto (D-084), y uno sin espesor, ancho o peso terminaría en un 400 del API.
   const { ready: profiles, incomplete } = drywallProfilesOf(catalog.data ?? []);
-  // Solo las reservas de pedidos que piden **este** perfil: el API rechaza cualquier otra
-  // (una reserva solo autoriza a fabricar lo que su propio pedido encargó).
-  const productReservations = (reservations.data ?? []).filter((r) =>
-    r.orderProductIds.includes(productId),
-  );
-  const piecesValue = targetPieces.trim();
-  // Las mismas cotas que el API (`piecesSchema`): 1 .. MAX_REPORT_PIECES enteras.
-  const piecesInvalid =
-    piecesValue !== '' &&
-    (!/^\d+$/.test(piecesValue) ||
-      Number(piecesValue) < 1 ||
-      Number(piecesValue) > MAX_REPORT_PIECES);
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle>Nueva orden de perfiles (drywall)</CardTitle>
       </CardHeader>
-      <CardContent className="grid gap-x-4 gap-y-3 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
+      <CardContent className="grid gap-x-4 gap-y-3 sm:grid-cols-[2fr_auto] sm:items-end">
         <div className="grid gap-2">
           <Label htmlFor="planta-producto">Perfil a fabricar</Label>
           <Select value={productId} onValueChange={setProductId}>
@@ -233,19 +199,8 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
           </Select>
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="planta-meta">Meta de piezas (opcional)</Label>
-          <Input
-            id="planta-meta"
-            inputMode="numeric"
-            value={targetPieces}
-            onChange={(e) => {
-              setTargetPieces(e.target.value);
-            }}
-          />
-        </div>
-        <div className="grid gap-2">
           <Button
-            disabled={!productId || piecesInvalid || create.isPending}
+            disabled={!productId || create.isPending}
             onClick={() => {
               create.mutate();
             }}
@@ -254,51 +209,28 @@ export function DrywallOrderCard({ onCreated }: { onCreated: (orderId: string) =
           </Button>
           <OperationDateField value={orderDate} onChange={setOrderDate} />
         </div>
-        {productId !== '' && productReservations.length > 0 && (
-          <div className="grid gap-2 sm:col-span-3">
-            <Label htmlFor="planta-pedido">Pedido a atender (opcional)</Label>
-            <Select value={reservationId} onValueChange={setReservationId}>
-              <SelectTrigger id="planta-pedido">
-                <SelectValue placeholder="Corrida de stock, sin pedido" />
-              </SelectTrigger>
-              <SelectContent>
-                {productReservations.map((r) => (
-                  <SelectItem key={r.id} value={r.id}>
-                    {r.salesOrderCode} — {r.customerName} — {r.itemLabel} (
-                    {formatQtyAsIs(r.qty, unitSymbol(r.unit))})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">
-              Con un pedido elegido, la orden puede montar el material que ese pedido reservó — que
-              para cualquier otra orden está bloqueado.
-            </p>
-          </div>
-        )}
-        {catalog.isPending && <Skeleton className="h-5 w-full sm:col-span-3" />}
+        <p className="text-sm text-muted-foreground sm:col-span-2">
+          Corrida de stock: las piezas entran al almacén y los pedidos de perfiles se confirman
+          contra ese stock.
+        </p>
+        {catalog.isPending && <Skeleton className="h-5 w-full sm:col-span-2" />}
         {catalog.isError && (
-          <p className="text-sm text-destructive sm:col-span-3">
+          <p className="text-sm text-destructive sm:col-span-2">
             No se pudo cargar el catálogo de perfiles.
           </p>
         )}
         {catalog.isSuccess && profiles.length === 0 && (
-          <p className="text-sm text-muted-foreground sm:col-span-3">
+          <p className="text-sm text-muted-foreground sm:col-span-2">
             Ningún perfil tiene el SKU completo todavía: un administrador tiene que cargar el
             espesor y el ancho del fleje, el largo y el peso desde el catálogo.
           </p>
         )}
         {catalog.isSuccess && profiles.length > 0 && incomplete.length > 0 && (
-          <p className="text-sm text-muted-foreground sm:col-span-3">
+          <p className="text-sm text-muted-foreground sm:col-span-2">
             {incomplete.length === 1
               ? '1 perfil no aparece porque le falta'
               : `${String(incomplete.length)} perfiles no aparecen porque les falta`}{' '}
             espesor, ancho del fleje o peso en el catálogo.
-          </p>
-        )}
-        {piecesInvalid && (
-          <p className="text-sm text-destructive sm:col-span-3">
-            La meta de piezas es un número entero entre 1 y {MAX_REPORT_PIECES}.
           </p>
         )}
       </CardContent>

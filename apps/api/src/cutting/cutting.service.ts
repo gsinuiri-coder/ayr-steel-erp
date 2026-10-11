@@ -49,7 +49,12 @@ import { assertStripsNotAssigned } from '../production/production-assignments';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import { assertRawMaterialInvariant } from '../sales/raw-material';
 import { assertNotReserved } from '../sales/reservation-guard';
-import { deriveCuttingOrderStatus, expandWidthCounts, validateWidthBudget } from './cutting-math';
+import {
+  deriveCuttingOrderStatus,
+  expandWidthCounts,
+  receptionCosts,
+  validateWidthBudget,
+} from './cutting-math';
 
 /** Shape JSON de `widthPlanMm`/`receivedWidthsMm` (una fila por ancho, no por tira). */
 interface WidthCount {
@@ -290,7 +295,17 @@ export class CuttingService {
         if (!out) {
           throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
         }
-        const unitCostPen = out.unitCost.toFixed(4);
+        // D-597 (cc44): el kerf y el borde no se pierden. El valor entero que salió de la madre
+        // se reparte por kilo entre los flejes (el más pesado se lleva el redondeo), así que la
+        // suma de sus entradas es exactamente la salida de la madre. Antes los flejes entraban al
+        // promedio de la madre y el valor de `kerfLossKg` desaparecía del inventario.
+        const { childrenValuesPen, documentUnitCost, kerfValuePen } = receptionCosts({
+          outValuePen: out.totalCost.toString(),
+          motherDocumentUnitCost: coil.unitCostPerKg.toString(),
+          splitWeightKg: plan.splitWeightKg,
+          kerfLossKg: plan.kerfLossKg,
+          childrenWeightsKg: plan.children.map((c) => c.weightKg),
+        });
 
         const batch = await this.coils.prepareBatch(tx, {
           supplierId: coil.supplierId,
@@ -316,10 +331,10 @@ export class CuttingService {
                 thicknessMm: coil.thicknessMm.toFixed(2),
                 currency: coil.currency,
                 exchangeRate: coil.exchangeRate.toFixed(4),
-                // El costo del documento se hereda (igual que el partido, RF-15); el del
-                // kardex es el promedio vigente de la madre, de donde salieron los kilos.
-                unitCostPerKg: coil.unitCostPerKg.toFixed(4),
-                kardexUnitCostPen: unitCostPen,
+                // D-597: el kardex entra con su parte del valor que salió de la madre (kerf
+                // incluido); el documento, con el costo de la madre subido en la misma proporción.
+                unitCostPerKg: toFixedString(documentUnitCost, 'MONEY'),
+                kardexTotalCostPen: toFixedString(childrenValuesPen[index] ?? '0', 'MONEY'),
                 refType: 'CUTTING',
                 refId: row.id,
                 parentCoilId: coil.id,
@@ -382,6 +397,8 @@ export class CuttingService {
             strips: children.map((c) => c.code),
             receivedWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
+            // D-597: el valor del kerf que quedó repartido en los flejes.
+            kerfValuePen: toFixedString(kerfValuePen, 'MONEY'),
           },
         });
       },

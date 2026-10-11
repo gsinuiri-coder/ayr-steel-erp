@@ -161,14 +161,8 @@ export function ProductionOrdersCard({
                     </>
                   ) : (
                     <>
-                      {formatUnits(String(o.piecesReported), null)}
-                      {o.targetPieces !== null && (
-                        <span className="text-muted-foreground">
-                          {' '}
-                          / {formatUnits(String(o.targetPieces), null)}
-                        </span>
-                      )}{' '}
-                      {UNITS_SYMBOL}
+                      {/* D-601 (cc44): solo lo producido, sin «/ meta». */}
+                      {formatUnits(String(o.piecesReported), null)} {UNITS_SYMBOL}
                     </>
                   )}
                 </TableCell>

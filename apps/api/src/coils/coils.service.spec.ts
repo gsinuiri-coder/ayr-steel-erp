@@ -243,6 +243,30 @@ describe('CoilsService.create (RF-10..RF-14)', () => {
     expect(fake.created[0]).toMatchObject({ totalCost: '5400.0000', totalCostPen: '20250.0000' });
   });
 
+  it('D-597: un fleje de corte entra al kardex con su valor repartido y el unitario derivado', async () => {
+    const fake = createFakeTx();
+    await service.create(
+      fake.tx,
+      input({ unitCostPerKg: '4.3367', kardexTotalCostPen: '19515.1234' }),
+    );
+
+    // El total en soles de la bobina es su valor de kardex; el del documento, peso × unitario.
+    expect(fake.created[0]).toMatchObject({
+      totalCost: '19515.1500',
+      totalCostPen: '19515.1234',
+    });
+    expect(inventory.record).toHaveBeenCalledWith(
+      fake.tx,
+      expect.objectContaining({
+        type: 'IN',
+        qty: '4500.000',
+        totalCost: '19515.1234',
+        // 19 515.1234 / 4 500 = 4.33669…
+        unitCost: '4.3367',
+      }),
+    );
+  });
+
   it('el correlativo por proveedor sale de un UPDATE ... RETURNING atómico', async () => {
     const fake = createFakeTx();
     await service.create(fake.tx, input());

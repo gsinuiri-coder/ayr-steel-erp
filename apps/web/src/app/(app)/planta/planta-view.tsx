@@ -676,9 +676,8 @@ function toDrywallRow(order: ProductionOrderListItemDto): WorkspaceOrder {
     salesOrderCode: order.salesOrderCode,
     customerName: order.customerName,
     subtitle:
-      `${order.productSku} · ${String(order.piecesReported)} piezas` +
-      (order.targetPieces === null ? '' : ` de ${String(order.targetPieces)}`) +
-      ` · ${formatQtyAsIs(order.assignedKg, 'kg')} montados` +
+      // D-601 (cc44): sin «de meta».
+      `${order.productSku} · ${String(order.piecesReported)} piezas · ${formatQtyAsIs(order.assignedKg, 'kg')} montados` +
       (order.customerName === null ? '' : ` · ${order.customerName}`),
     // La cola de D-189 es solo de coberturas: una corrida de perfiles nunca la tuvo.
     queueNote: null,
