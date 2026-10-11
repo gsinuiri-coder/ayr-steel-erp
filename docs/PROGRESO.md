@@ -2,6 +2,27 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-10 — cc42: drift de schema clasificado, `check:drift` y `seed:escenarios` (D-592..D-595; PR #169 en prod)
+
+Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc42.md`; clasificación
+en `docs/analisis/drift-schema.md`; revisión en `docs/revision/cc42-segundo-modelo.md`. D-591
+ratificada por el dueño.
+
+- **En producción:** API `00114-mgd` (`git-sha=dfbc6bff`), 100 % del tráfico; `smoke:prod` en
+  verde. Sin cambios de web. Vuelta atrás: tráfico a `00113-d6r`.
+- **Drift:** `production` y una base desde cero daban el mismo SQL (ninguna REAL). 8 SOLO-SCHEMA
+  corregidas en `schema.prisma` (5 FK `Restrict`, 2 índices, 1 nombre); los 5 defaults de
+  `operation_date` quedan como ESPERADA (D-594). **El «drift conocido» de cada ventana es desde
+  ahora `apps/api/prisma/drift-esperado.sql`** (5 sentencias), comprobado tras el deploy.
+- **Guardián:** `pnpm check:drift` en el job `e2e`.
+- **`pnpm seed:escenarios`:** casos P1/P2, M1/M2, A1/A2 y drywall en `ayr_local`, por la API;
+  se repite anulando lo DEMO (D-592); prueba de dos corridas en el job `escenarios`. Corrido en
+  el `ayr_local` del dueño y `dev:preview` arriba en 4000/4001 (tabla de casos en el handoff).
+- **`ayr_local` del dueño:** tenía restos de dos migraciones abandonadas de D-248 (columna
+  `products.development_mm` y su CHECK); quitados con OK del dueño, solo en el Docker local.
+- **Registro de riesgo:** `schema.prisma` (acciones de FK declaradas: la próxima `migrate dev` ya
+  no las pasa a `SET NULL`); `scripts/seed-escenarios.mjs` (`assertEscenariosDb`, `voidPrevious`).
+
 ## 2026-10-10 — Neon: borrado `respaldo-pre-log3-20260930` (OK del dueño por nombre, D-460)
 
 - **Borrada:** `respaldo-pre-log3-20260930` (`br-super-wave-aeoucd2y`), después de verificar que
