@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { Decimal } from '@ayr/shared';
 import {
   deriveCuttingOrderStatus,
   expandWidthCounts,
@@ -94,5 +95,13 @@ describe('prorateReceptionValue (D-597)', () => {
   it('sin kilos no reparte nada', () => {
     expect(prorateReceptionValue('10', [])).toEqual([]);
     expect(prorateReceptionValue('10', ['0']).map((s) => s.toFixed(4))).toEqual(['0.0000']);
+  });
+});
+
+describe('prorateReceptionValue — borde de valor casi nulo (revisión cc44)', () => {
+  it('el pesado nunca queda negativo aunque el total sea de milésimas', () => {
+    const shares = prorateReceptionValue('0.0002', ['1', '1', '1', '1', '1.5']);
+    expect(shares.every((s) => !s.isNegative())).toBe(true);
+    expect(shares.reduce((a, s) => a.plus(s), new Decimal(0)).toFixed(4)).toBe('0.0002');
   });
 });

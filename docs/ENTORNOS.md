@@ -438,13 +438,13 @@ mano antes de correr `pnpm e2e` sigue funcionando para apuntar a otra base puntu
 
 Desde el 2026-10-11, `main` tiene protección de rama clásica (no rulesets):
 
-| Regla                          | Valor                                                                         |
-| ------------------------------ | ----------------------------------------------------------------------------- |
-| PR obligatorio                 | Sí, con **0 aprobaciones**: el dueño trabaja solo, nadie más revisa           |
-| Check obligatorio              | «E2E Playwright (Postgres del runner)», de GitHub Actions (`app_id` 15368)    |
-| Rama al día con `main`         | No (`strict: false`): un PR no tiene que rebasarse cada vez que entra otro    |
-| También para administradores   | Sí (`enforce_admins`): ni el dueño ni el agente empujan directo a `main`      |
-| Push forzado / borrado de main | Bloqueados                                                                    |
+| Regla                          | Valor                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------- |
+| PR obligatorio                 | Sí, con **0 aprobaciones**: el dueño trabaja solo, nadie más revisa        |
+| Check obligatorio              | «E2E Playwright (Postgres del runner)», de GitHub Actions (`app_id` 15368) |
+| Rama al día con `main`         | No (`strict: false`): un PR no tiene que rebasarse cada vez que entra otro |
+| También para administradores   | Sí (`enforce_admins`): ni el dueño ni el agente empujan directo a `main`   |
+| Push forzado / borrado de main | Bloqueados                                                                 |
 
 - El check es el agregado de D-596: verde solo si `base` (drift + `test:db`) y los dos shards
   lo son. Lint, Sonar, `smoke-neon` y escenarios **no** son obligatorios: se miran igual antes de

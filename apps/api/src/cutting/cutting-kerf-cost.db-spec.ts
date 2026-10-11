@@ -10,7 +10,6 @@ import {
   createSupplierSchema,
   Decimal,
   receiveCuttingOrderCoilSchema,
-  roundTo,
 } from '@ayr/shared';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
 import { AppModule } from '../app.module';
@@ -105,7 +104,9 @@ afterAll(async () => {
 const UNIT_PRICE = '4.1234';
 
 /** Una bobina de drywall de 2 000 kg y 1 220 mm a S/ 4.1234, enviada a cortar en 600 + 560. */
-async function sentCoil(): Promise<{ orderId: string; motherId: string }> {
+async function sentCoil(
+  currency: 'PEN' | 'USD' = 'PEN',
+): Promise<{ orderId: string; motherId: string }> {
   const purchase = await purchases.create(
     admin,
     createPurchaseSchema.parse({
@@ -114,7 +115,8 @@ async function sentCoil(): Promise<{ orderId: string; motherId: string }> {
       series: 'F001',
       number: digits(8),
       issueDate: businessToday(),
-      currency: 'PEN',
+      currency,
+      ...(currency === 'USD' ? { exchangeRate: '3.7500' } : {}),
       paymentTerms: 'CONTADO',
       businessLine: 'drywall',
       type: 'COIL',
@@ -213,12 +215,16 @@ describe('D-597 — el kerf del corte tercerizado queda en el costo de los fleje
     // kerf se repartieron por kilo.
     const atMotherCost = sum(ins.map((m) => dec(m.qty).times(UNIT_PRICE)));
     expect(dec(out.totalCost).minus(atMotherCost).toFixed(2)).toBe('304.18');
-    // El liviano lleva su parte redondeada; el pesado, el resto.
+    // El liviano lleva su parte truncada a 4 decimales; el pesado, el resto.
     const totalKg = sum(ins.map((m) => dec(m.qty)));
     const light = ins[1];
     if (!light) throw new Error('Faltan flejes');
     expect(dec(light.totalCost).toFixed(4)).toBe(
-      roundTo(dec(out.totalCost).times(dec(light.qty)).div(totalKg), 'MONEY').toFixed(4),
+      dec(out.totalCost)
+        .times(dec(light.qty))
+        .div(totalKg)
+        .toDecimalPlaces(4, Decimal.ROUND_DOWN)
+        .toFixed(4),
     );
 
     // El costo por kilo sube y los kilos no cambian.
@@ -239,6 +245,7 @@ describe('D-597 — el kerf del corte tercerizado queda en el costo de los fleje
 
   it('la reversa de la recepción lo deshace exacto (D-052)', async () => {
     const { orderId, motherId } = await sentCoil();
+    const before = await balance(motherId);
     await receive(orderId, motherId);
     const { ins } = await receptionMovements(orderId, motherId);
 
@@ -249,9 +256,10 @@ describe('D-597 — el kerf del corte tercerizado queda en el costo de los fleje
       cancelCuttingOrderSchema.parse({ reason: 'Prueba de reversa del kerf cc44' }),
     );
 
+    // La madre vuelve a sus kilos y su valorizado de antes de recibir.
     const mother = await balance(motherId);
-    expect(mother.qty.toFixed(3)).toBe('2000.000');
-    expect(mother.avgCost.toFixed(4)).toBe(UNIT_PRICE);
+    expect(mother.qty.toFixed(3)).toBe(before.qty.toFixed(3));
+    expect(mother.avgCost.toFixed(4)).toBe(before.avgCost.toFixed(4));
     for (const m of ins) {
       const b = await balance(m.itemId);
       expect(b.qty.toFixed(3)).toBe('0.000');
@@ -266,6 +274,39 @@ describe('D-597 — el kerf del corte tercerizado queda en el costo de los fleje
     });
     expect(row.status).toBe('SENT');
     expect(row.receivedKerfLossKg).toBeNull();
+    // Valor de los flejes vivo: cero. Todo volvió a la madre.
+    for (const m of ins) {
+      const b = await balance(m.itemId);
+      expect(dec(b.qty).times(dec(b.avgCost)).toFixed(4)).toBe('0.0000');
+    }
+
+    // Recibir de nuevo reparte otra vez exacto, sin arrastrar nada de la generación revertida.
+    await receive(orderId, motherId);
+    const again = await receptionMovements(orderId, motherId);
+    expect(again.ins.map((m) => m.id)).not.toEqual(ins.map((m) => m.id));
+    expect(sum(again.ins.map((m) => dec(m.totalCost))).toFixed(4)).toBe(
+      again.out.totalCost.toFixed(4),
+    );
+    expect(again.out.totalCost.toFixed(4)).toBe('6185.1000');
+  });
+
+  it('en una bobina en USD el kardex reparte en soles y el documento sube en dólares', async () => {
+    const { orderId, motherId } = await sentCoil('USD');
+    await receive(orderId, motherId);
+    const { out, ins } = await receptionMovements(orderId, motherId);
+    // La compra entra por S/ 30 925.50 (2 000 kg × 4.1234 USD × 3.75): promedio 15.4628 a 4
+    // decimales, así que 1 500 kg salen por S/ 23 194.20.
+    expect(out.totalCost.toFixed(4)).toBe('23194.2000');
+    expect(sum(ins.map((m) => dec(m.totalCost))).toFixed(4)).toBe('23194.2000');
+    const strips = await prisma.coil.findMany({ where: { parentCoilId: motherId } });
+    for (const s of strips) {
+      // El documento sigue en dólares, subido en la misma proporción que en soles.
+      expect(s.currency).toBe('USD');
+      expect(s.unitCostPerKg.toFixed(4)).toBe('4.3367');
+      // El total en soles del fleje es su valor de kardex.
+      const entry = ins.find((m) => m.itemId === s.id);
+      expect(s.totalCostPen.toFixed(4)).toBe(entry?.totalCost.toFixed(4));
+    }
   });
 
   it('la factura del corte que llega después suma por kilo encima del kerf (RF-41)', async () => {

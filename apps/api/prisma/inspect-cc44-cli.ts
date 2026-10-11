@@ -75,6 +75,7 @@ async function main(): Promise<void> {
           liveStripsFromCutting: strips,
           kerfKg: kerfKg.toFixed(3),
           kerfValuePenAtOutCost: kerfValuePen.toFixed(2),
+          note: 'kerfValuePenAtOutCost suma TODAS las recepciones vigentes: antes de D-597 ese valor salió con la madre; desde D-597 ya está repartido en los flejes. Para medir lo perdido, correrlo antes del deploy de cc44.',
         };
       },
       { timeout: 120_000 },

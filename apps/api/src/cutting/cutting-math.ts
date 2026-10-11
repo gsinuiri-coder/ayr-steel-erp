@@ -1,5 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
-import { Decimal, roundTo, toDecimal, type DecimalInput } from '@ayr/shared';
+import { Decimal, toDecimal, type DecimalInput } from '@ayr/shared';
+
+/** Escala del dinero en el kardex (4 decimales, `toFixedString(…, 'MONEY')`). */
+const MONEY_SCALE = 4;
 
 /**
  * Validación del plan de anchos de una bobina dentro de una orden de corte (RF-40).
@@ -39,8 +42,9 @@ export function validateWidthBudget(
  * entero se reparte **por kilo** entre los flejes, así el kerf no se pierde: sube el costo por kg
  * de cada fleje y sus kilos no cambian (el mismo criterio que el costo del corte, RF-41).
  *
- * Cada parte se redondea a la escala del dinero y **el fleje más pesado se lleva el redondeo**
- * (el primero, si empatan), así la suma de las partes es exactamente `outValuePen`.
+ * Cada parte se trunca a la escala del dinero y **el fleje más pesado se lleva el redondeo**
+ * (el primero, si empatan), así la suma de las partes es exactamente `outValuePen`. Truncar y no
+ * redondear al más cercano garantiza que el resto del pesado nunca sea negativo (revisión cc44).
  */
 export function prorateReceptionValue(
   outValuePen: DecimalInput,
@@ -55,7 +59,9 @@ export function prorateReceptionValue(
   weights.forEach((w, i) => {
     if (w.gt(weights[heaviest] ?? w)) heaviest = i;
   });
-  const shares = weights.map((w) => roundTo(total.times(w).div(totalKg), 'MONEY'));
+  const shares = weights.map((w) =>
+    total.times(w).div(totalKg).toDecimalPlaces(MONEY_SCALE, Decimal.ROUND_DOWN),
+  );
   const others = shares.reduce((acc, s, i) => (i === heaviest ? acc : acc.plus(s)), new Decimal(0));
   shares[heaviest] = total.minus(others);
   return shares;
