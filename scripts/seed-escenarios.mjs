@@ -1,7 +1,7 @@
 // cc42 (D-592, D-595): siembra en el Postgres local `ayr_local` los casos de prueba de planta de
 // demo-cc38 (plancha P1/P2, a medida M1/M2, accesorio A1/A2), los de «Cambiar cantidad» de cc45
-// (C1 bajar a medida, C2 subir accesorio) y un drywall completo, para mirarlos con
-// `pnpm dev:preview` (4000/4001).
+// (C1 bajar a medida, C2 subir accesorio), un drywall completo y un partido con borde de cc46 (S1),
+// para mirarlos con `pnpm dev:preview` (4000/4001).
 //
 // - Solo contra una base llamada exactamente `ayr_local` en localhost (el Docker de
 //   `local-docker-env.mjs`). Cualquier otra —Neon, `ayr_local_e2e`, otro nombre u otro host— se
@@ -498,6 +498,22 @@ export async function voidPrevious(api, masters) {
     }
   });
 
+  // cc46: las hijas de un partido no se anulan sueltas (RF-16): primero se revierte el partido,
+  // antes que los cortes y las compras (un fleje partido frena la reversa de su corte).
+  await attempt('partidos', async () => {
+    const splitIds = new Set(
+      (await api.list('/coils'))
+        .filter(
+          (c) => supplierIds.has(c.supplierId) && c.splitId !== null && c.status !== 'CANCELLED',
+        )
+        .map((c) => c.splitId),
+    );
+    for (const splitId of splitIds) {
+      await attempt(`partido ${splitId}`, () =>
+        api.post(`/coils/splits/${splitId}/revert`, reason),
+      );
+    }
+  });
   await attempt('cortes', async () => {
     const orders = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
     for (const o of orders.filter((x) => ['RECEIVED', 'PARTIALLY_RECEIVED'].includes(x.status))) {
@@ -764,10 +780,25 @@ export async function seedCases(api, masters) {
     receivedWeightKg: '2500',
     kerfLossMm: '0',
   });
-  return { cases, drywall: { cuttingId: cutting.id, cut: dw1, free: dw2 } };
+
+  // S1 · partido con borde (cc46, D-608): 1 000 kg de 1 220 mm en 600 + 560 con 20 mm de kerf.
+  // Quedan 40 mm de borde: el valor del kerf y el borde entra a las hijas (sube su costo por kg).
+  const [s1] = await buyCoils('drywall', galv, '0.50', ['1000'], 'partido S1');
+  const s1Children = await api.post(`/coils/${s1.id}/split`, {
+    kerfLossMm: '20',
+    children: [
+      { widthMm: '600', count: 1 },
+      { widthMm: '560', count: 1 },
+    ],
+  });
+  return {
+    cases,
+    drywall: { cuttingId: cutting.id, cut: dw1, free: dw2 },
+    split: { mother: s1, children: s1Children },
+  };
 }
 
-export function casesTable({ cases, drywall }, masters) {
+export function casesTable({ cases, drywall, split }, masters) {
   const lines = [
     '| Caso | Pedido | OP | Abrir | Qué probar |',
     '|---|---|---|---|---|',
@@ -776,6 +807,7 @@ export function casesTable({ cases, drywall }, masters) {
         `| ${c.key} | ${c.order} | ${c.op} | ${c.abrir ?? `${PREVIEW_WEB}/planta?op=${c.opId}`} | ${c.probar} |`,
     ),
     `| Drywall | — | — | ${PREVIEW_WEB}/corte/${drywall.cuttingId} | ${drywall.cut.code} cortada en 5 flejes de 244 mm (${masters.products.stud.sku}); ${drywall.free.code} libre para tu orden de corte con ${DEMO.cuttingSupplier.name}; perfiles en «Nueva orden de perfiles» (${PREVIEW_WEB}/planta) |`,
+    `| S1 | — | — | ${PREVIEW_WEB}/bobinas/${split.mother.id} | ${split.mother.code} partida en ${split.children.map((c) => c.code).join(' y ')} con 20 mm de kerf y 40 mm de borde: las hijas suman el valor que salió de la madre (D-608); «Revertir» la devuelve exacta |`,
   ];
   return lines.join('\n');
 }

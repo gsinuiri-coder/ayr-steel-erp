@@ -96,15 +96,10 @@ export interface CreateCoilInput {
    */
   operationDate?: string;
   /**
-   * Costo en soles con el que la bobina entra al kardex, cuando no es simplemente
-   * `unitCostPerKg × exchangeRate`. Lo usa el partido: las hijas entran al costo
-   * promedio vigente de la madre, que ya puede incluir landed cost (D-043).
-   */
-  kardexUnitCostPen?: string;
-  /**
    * D-597 (cc44): el valor exacto en soles con el que la bobina entra al kardex, cuando es su parte
-   * de un valor repartido y no `peso × unitario`. Lo usa la recepción de corte: cada fleje entra
-   * con su parte del valor que salió de la madre, kerf incluido. El unitario se deriva.
+   * de un valor repartido y no `peso × unitario`. Lo usan la recepción de corte (D-597) y el
+   * partido (D-608, cc46): cada fleje o hija entra con su parte del valor que salió de la madre,
+   * kerf y borde incluidos. El unitario se deriva.
    */
   kardexTotalCostPen?: string;
   notes?: string;
@@ -241,7 +236,7 @@ export class CoilsService {
       // tipo de cambio para el documento; el promedio ponderado necesita una sola escala.
       unitCost: toFixedString(
         kardexTotalPen === undefined
-          ? (input.kardexUnitCostPen ?? unitCostPerKg.times(exchangeRate))
+          ? unitCostPerKg.times(exchangeRate)
           : kardexTotalPen.div(weightKg),
         'MONEY',
       ),

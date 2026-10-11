@@ -5,8 +5,10 @@ import {
   MIN_SPLIT_YIELD,
   roundTo,
   toDecimal,
+  toFixedString,
   type DecimalInput,
 } from '@ayr/shared';
+import { receptionCosts } from '../cutting/cutting-math';
 
 /**
  * Aritmética del partido de bobina (RF-15), aparte del servicio para poder probarla
@@ -140,4 +142,40 @@ export function planCoilSplit(input: SplitPlanInput): SplitPlan {
 /** Expande `{ widthMm, count }` a una entrada por bobina hija, en orden. */
 export function expandSplitWidths(rows: { widthMm: string; count: number }[]): string[] {
   return rows.flatMap((row) => Array.from({ length: row.count }, () => row.widthMm));
+}
+
+/** Lo que entra al alta de cada hija (D-608): su costo del documento y su valor en el kardex. */
+export interface SplitChildCost {
+  unitCostPerKg: string;
+  kardexTotalCostPen: string;
+}
+
+/**
+ * D-608 (cc46), la misma regla que D-597 en la recepción de corte: el valor que salió de la madre
+ * —kerf declarado y recorte de borde incluidos— se reparte **por kilo** entre las hijas
+ * (`receptionCosts`: la más pesada se lleva el redondeo), así la suma de sus entradas es la
+ * salida exacta. Los kilos no cambian; sube el costo por kg, y el del documento sube en la
+ * proporción `kilos partidos / kilos en hijas`. Antes las hijas entraban al promedio de la madre
+ * y el valor del kerf y el borde desaparecía del inventario.
+ */
+export function splitChildrenCosts(input: {
+  outValuePen: DecimalInput;
+  motherDocumentUnitCost: DecimalInput;
+  plan: SplitPlan;
+}): { children: SplitChildCost[]; kerfValuePen: string } {
+  const { childrenValuesPen, documentUnitCost, kerfValuePen } = receptionCosts({
+    outValuePen: input.outValuePen,
+    motherDocumentUnitCost: input.motherDocumentUnitCost,
+    splitWeightKg: input.plan.splitWeightKg,
+    kerfLossKg: input.plan.kerfLossKg,
+    childrenWeightsKg: input.plan.children.map((c) => c.weightKg),
+  });
+  const unitCostPerKg = toFixedString(documentUnitCost, 'MONEY');
+  return {
+    children: childrenValuesPen.map((value) => ({
+      unitCostPerKg,
+      kardexTotalCostPen: toFixedString(value, 'MONEY'),
+    })),
+    kerfValuePen: toFixedString(kerfValuePen, 'MONEY'),
+  };
 }

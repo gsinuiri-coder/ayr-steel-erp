@@ -47,7 +47,7 @@ import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
 import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from './coil-auto-terminate';
 import { openFilmIfSealed } from './coil-film';
-import { expandSplitWidths, planCoilSplit } from './coil-split-math';
+import { expandSplitWidths, planCoilSplit, splitChildrenCosts } from './coil-split-math';
 import { CoilsService } from './coils.service';
 
 /**
@@ -141,9 +141,8 @@ export class CoilOperationsService {
         });
 
         // La salida sale al promedio ponderado vigente de la madre (D-028), que ya
-        // puede incluir landed cost (D-043); ese mismo costo por kilo es el que
-        // heredan las hijas, así que el valor del inventario solo pierde lo que se
-        // lleva la merma de corte, que es una pérdida física real.
+        // puede incluir landed cost (D-043). D-608 (cc46): ese valor entero entra a las hijas
+        // (abajo), así que el kerf y el borde no se pierden del inventario.
         const out = await this.inventory.record(tx, {
           businessLineId: coil.businessLineId,
           itemType: 'COIL',
@@ -161,7 +160,12 @@ export class CoilOperationsService {
         if (!out) {
           throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
         }
-        const unitCostPen = out.unitCost.toFixed(4);
+        // D-608 (cc46): el valor entero de la salida —kerf y borde incluidos— entra a las hijas.
+        const costs = splitChildrenCosts({
+          outValuePen: out.totalCost.toString(),
+          motherDocumentUnitCost: coil.unitCostPerKg.toString(),
+          plan,
+        });
 
         // Proveedor, acabado, producto de catálogo y los N correlativos se resuelven una
         // sola vez para toda la tanda: con una hija por consulta, un partido de 20 tiras
@@ -175,6 +179,11 @@ export class CoilOperationsService {
 
         const children: Coil[] = [];
         for (const [index, child] of plan.children.entries()) {
+          // Salen de la misma lista: si alguna vez no cuadraran, se corta (nunca una hija a 0).
+          const cost = costs.children[index];
+          if (cost === undefined) {
+            throw new Error('El reparto del valor del partido no cuadra con sus hijas');
+          }
           children.push(
             await this.coils.create(
               tx,
@@ -190,10 +199,7 @@ export class CoilOperationsService {
                 thicknessMm: coil.thicknessMm.toFixed(2),
                 currency: coil.currency,
                 exchangeRate: coil.exchangeRate.toFixed(4),
-                // El costo del documento se hereda tal cual (RF-15); el del kardex es el
-                // promedio vigente de la madre, que es de donde salieron estos kilos.
-                unitCostPerKg: coil.unitCostPerKg.toFixed(4),
-                kardexUnitCostPen: unitCostPen,
+                ...cost,
                 refType: 'SPLIT',
                 refId: split.id,
                 parentCoilId: coil.id,
@@ -250,6 +256,8 @@ export class CoilOperationsService {
             splitId: split.id,
             splitWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
+            // D-608: el valor del kerf y el borde, ya repartido en las hijas (informativo).
+            kerfValuePen: costs.kerfValuePen,
             children: children.map((c) => c.code),
             remainingKg: remaining.toFixed(3),
             status: motherClosed ? CoilStatus.CLOSED : coil.status,
@@ -1187,6 +1195,14 @@ export class CoilOperationsService {
           const unitCostPerKg = toDecimal(input.unitCostPerKg ?? coil.unitCostPerKg.toFixed(4));
           const weightKg = toDecimal(initial.qty.toString());
           const totalCost = weightKg.times(unitCostPerKg);
+          // cc46 (autorrevisión de D-608, P2-1): si el costo no cambia (el formulario puede
+          // reenviar los mismos valores), el reingreso repite el valor exacto del ingreso. Una
+          // hija de partido (D-608) o un fleje (D-597) entró con su parte de un valor repartido,
+          // no con `peso × unitario`; reingresar por el unitario perdía céntimos de ese reparto.
+          const costUnchanged =
+            currency === coil.currency &&
+            exchangeRate.eq(coil.exchangeRate.toString()) &&
+            unitCostPerKg.eq(coil.unitCostPerKg.toString());
 
           // D-045: el kardex es append-only, así que recostear es reversar el ingreso y
           // volver a ingresar al costo corregido, no reescribir el movimiento original.
@@ -1205,7 +1221,9 @@ export class CoilOperationsService {
             type: 'IN',
             qty: initial.qty.toFixed(3),
             unit: initial.unit,
-            unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY'),
+            ...(costUnchanged
+              ? { unitCost: initial.unitCost.toFixed(4), totalCost: initial.totalCost.toFixed(4) }
+              : { unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY') }),
             refType: initial.refType,
             refId: initial.refId ?? undefined,
             notes: input.reason,
@@ -1221,7 +1239,10 @@ export class CoilOperationsService {
           data.exchangeRate = toFixedString(exchangeRate, 'RATE');
           data.unitCostPerKg = toFixedString(unitCostPerKg, 'MONEY');
           data.totalCost = toFixedString(totalCost, 'MONEY');
-          data.totalCostPen = toFixedString(totalCost.times(exchangeRate), 'MONEY');
+          // Sin cambio de costo, el total en soles sigue siendo el del kardex (D-597, D-608).
+          if (!costUnchanged) {
+            data.totalCostPen = toFixedString(totalCost.times(exchangeRate), 'MONEY');
+          }
         }
 
         const updated = await tx.coil.update({ where: { id: coilId }, data });

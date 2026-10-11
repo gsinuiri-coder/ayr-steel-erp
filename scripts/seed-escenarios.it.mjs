@@ -172,7 +172,7 @@ try {
       .map((s) => s.id),
   );
   const purchases = (await api.list('/purchases')).filter((p) => supplierIds.has(p.supplierId));
-  assert.equal(purchases.filter((p) => p.status !== 'CANCELLED').length, 9, 'nueve compras vivas');
+  assert.equal(purchases.filter((p) => p.status !== 'CANCELLED').length, 10, 'diez compras vivas');
 
   const cuts = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
   assert.equal(cuts.filter((o) => o.status === 'RECEIVED').length, 1, 'un corte recibido vivo');
@@ -183,6 +183,14 @@ try {
     (c) => c.kind !== 'STRIP' && c.availableKg === '2000.000' && c.thicknessMm === '0.45',
   );
   assert.equal(free.length, 1, 'la bobina de drywall libre (2 000 kg)');
+  // cc46: S1 · un solo partido vivo (el de la corrida 1 se revirtió), con borde y dos hijas.
+  const splitChildren = coils.filter((c) => c.splitId !== null);
+  assert.equal(splitChildren.length, 2, 'S1: dos hijas vivas del partido');
+  assert.equal(new Set(splitChildren.map((c) => c.splitId)).size, 1, 'S1: un solo partido vivo');
+  const splits = await api.get(`/coils/${splitChildren[0].parentCoilId}/splits`);
+  const s1 = splits.find((s) => s.id === splitChildren[0].splitId);
+  assert.equal(s1?.status, 'ACTIVE', 'S1: el partido está vigente');
+  assert.equal(s1?.kerfLossKg, '49.180', 'S1: 20 mm de kerf y 40 mm de borde (49.180 kg)');
   console.log('seed:escenarios:test ok: dos corridas, un juego vivo y el anterior anulado.');
 } finally {
   await server.stop();
