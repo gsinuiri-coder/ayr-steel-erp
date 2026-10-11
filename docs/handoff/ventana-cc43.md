@@ -2,7 +2,7 @@
 
 2026-10-10, sesión atendida. Ventana suspendida (D-533). Sin migraciones, sin SQL contra
 producción, sin deploy: no cambia el runtime. D-592 a D-595 ratificadas por el dueño; D-596 nueva,
-pendiente de ratificación.
+ratificada por el dueño al cierre.
 
 ## CI nueva (D-596)
 
@@ -68,6 +68,6 @@ riesgo de correlativos (P1 en el segundo modelo), corregido. Los demás:
 
 ## Para la próxima sesión
 
-- D-596 pendiente de ratificación.
+- D-596 ratificada por el dueño el 2026-10-10.
 - El reparto está desparejo (shard 2 tarda unos 5 min más). Si un shard pasa de 25 min, subir la
   matrix a 3: `e2e-fiscal-offset.ts` hoy acepta solo `E2E_SHARD` 1 o 2 y hay que ampliar el paso.
