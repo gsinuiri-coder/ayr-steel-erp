@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -136,11 +136,16 @@ export function VentasMaterialView() {
   });
   // Un enlace guardado con `range=month|prev` y sin fechas se traduce una vez al atajo y `range`
   // sale de la URL. Este efecto va después del de `useReportPeriod`, así que su `replace` gana.
+  // Corre solo cuando cambia `range`: las fechas se leen por ref, porque un `replace` intermedio
+  // de `useReportPeriod` (con `range` todavía puesto) no debe volver a traducir el enlace.
+  const periodRef = useRef({ from: url.from, to: url.to });
+  periodRef.current = { from: url.from, to: url.to };
   useEffect(() => {
     if (url.range === '') return;
-    const legacy = legacyRangePeriod(url.range, url.from, url.to, businessToday());
+    const { from, to } = periodRef.current;
+    const legacy = legacyRangePeriod(url.range, from, to, businessToday());
     setUrl(legacy === null ? { range: '' } : { range: '', from: legacy.from, to: legacy.to });
-  }, [url.range, url.from, url.to, setUrl]);
+  }, [url.range, setUrl]);
   const [sort, toggleSort] = useSort<string>();
   const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });
