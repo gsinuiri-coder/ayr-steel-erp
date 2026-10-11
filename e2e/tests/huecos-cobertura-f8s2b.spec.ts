@@ -281,17 +281,17 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();
 
-      // Misma pregunta para el diálogo de cantidad.
+      // Misma pregunta para el diálogo de cantidad (cc45: la fila única, «Nuevo (und)»).
       await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       dialog = page.getByRole('dialog');
-      await expect(dialog.getByLabel(/Cantidad/)).toHaveValue('5.000');
-      await dialog.getByLabel(/Cantidad/).fill('777');
+      await expect(dialog.getByLabel('Nuevo (und)')).toHaveValue('5.000');
+      await dialog.getByLabel('Nuevo (und)').fill('777');
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();
 
       await (await rowAction(page, 'línea 2', 'Cambiar cantidad de la línea 2')).click();
       dialog = page.getByRole('dialog');
-      await expect(dialog.getByLabel(/Cantidad/)).toHaveValue('9.000');
+      await expect(dialog.getByLabel('Nuevo (und)')).toHaveValue('9.000');
     } finally {
       await purgeSalesTrail(api, { orderIds: [order.id] });
     }
@@ -327,14 +327,14 @@ test.describe('F8-S2b — huecos de cobertura', () => {
         timeout: 60_000,
       });
 
-      // Línea 1 (un solo largo): se agrega una fila más y se llena, sin guardar.
+      // Línea 1 (un solo largo): se agrega una fila más y se llena, sin guardar (cc45: la tabla
+      // por largo del diálogo «Cambiar cantidad»).
       await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       let dialog = page.getByRole('dialog');
-      await expect(dialog.getByLabel('Largo 1 en metros')).toHaveValue('10.000');
-      await expect(dialog.getByLabel('Planchas del largo 1')).toHaveValue('1');
-      await dialog.getByRole('button', { name: 'Agregar largo' }).click();
-      await dialog.getByLabel('Planchas del largo 2').fill('9');
-      await dialog.getByLabel('Largo 2 en metros').fill('8');
+      await expect(dialog.getByLabel('Nuevo · 10.00 m')).toHaveValue('1');
+      await dialog.getByRole('button', { name: '+ Otro largo' }).click();
+      await dialog.getByLabel('Nuevo · largo nuevo 1').fill('9');
+      await dialog.getByLabel('Metros del largo nuevo 1').fill('8');
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();
 
@@ -342,11 +342,10 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       // que quedó armada en la línea 1, ni con solo una fila si el reseteo se quedó a medias.
       await (await rowAction(page, 'línea 2', 'Cambiar cantidad de la línea 2')).click();
       dialog = page.getByRole('dialog');
-      await expect(dialog.getByRole('button', { name: /Quitar el largo/ })).toHaveCount(2);
-      await expect(dialog.getByLabel('Largo 1 en metros')).toHaveValue('6.000');
-      await expect(dialog.getByLabel('Planchas del largo 1')).toHaveValue('1');
-      await expect(dialog.getByLabel('Largo 2 en metros')).toHaveValue('4.000');
-      await expect(dialog.getByLabel('Planchas del largo 2')).toHaveValue('1');
+      await expect(dialog.getByLabel('Nuevo · 6.00 m')).toHaveValue('1');
+      await expect(dialog.getByLabel('Nuevo · 4.00 m')).toHaveValue('1');
+      await expect(dialog.getByLabel('Nuevo · 10.00 m')).toHaveCount(0);
+      await expect(dialog.getByLabel('Metros del largo nuevo 1')).toHaveCount(0);
     } finally {
       await purgeRoofingTrail(api, trail);
     }

@@ -1675,6 +1675,80 @@ export class SalesOrdersService {
   }
 
   /**
+   * cc45 (D-604): suma `extraQty` a la reserva de una línea ya confirmada por la **misma puerta**
+   * que confirmar —bobinas y saldos bloqueados en el mismo orden, disponible comprobado bajo
+   * ellos—. A diferencia de `createReservations`, no reescribe la fila con lo que la línea
+   * promete entera: le suma lo nuevo (la línea pudo haber consumido parte en producción o en
+   * despachos). Una fila `RELEASED` o `CONSUMED` revive con lo nuevo (D-379: lo liberado no
+   * suma). Con `allowShortfall` (administrador, D-341) reserva lo que hay y el resto va al
+   * faltante de la misma fila. Devuelve lo reservado y lo que faltó.
+   */
+  async reserveExtra(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    item: ReservableLine & { id: string },
+    extraQty: string,
+    options?: ReserveOptions,
+  ): Promise<{ reserved: Decimal; shortfall: Decimal }> {
+    let result = { reserved: new Decimal(0), shortfall: new Decimal(0) };
+    await this.reserveLines(
+      tx,
+      [{ ...item, reserveQty: extraQty }],
+      'el pedido',
+      async (line, reserved, shortfall) => {
+        result = { reserved, shortfall };
+        const key = {
+          salesOrderItemId_itemType_itemId: {
+            salesOrderItemId: line.id,
+            itemType: line.reserveItemType,
+            itemId: line.reserveItemId,
+          },
+        };
+        const existing = await tx.reservation.findUnique({
+          where: key,
+          select: { qty: true, shortfallQty: true, status: true },
+        });
+        // Lo reservado solo suma si la fila está activa: una CONSUMIDA guarda la cifra que su
+        // reversa necesita y no promete nada (autorrevisión cc45). Su faltante sí sigue.
+        const baseQty =
+          existing?.status === ReservationStatus.ACTIVE
+            ? toDecimal(existing.qty.toString())
+            : new Decimal(0);
+        const baseShortfall =
+          existing !== null && existing.status !== ReservationStatus.RELEASED
+            ? toDecimal(existing.shortfallQty.toString())
+            : new Decimal(0);
+        await tx.reservation.upsert({
+          where: key,
+          create: {
+            salesOrderId: orderId,
+            salesOrderItemId: line.id,
+            itemType: line.reserveItemType,
+            itemId: line.reserveItemId,
+            qty: reserved.toFixed(3),
+            shortfallQty: shortfall.toFixed(3),
+            unit: line.reserveUnit,
+            status: ReservationStatus.ACTIVE,
+            createdById: actor.id,
+          },
+          update: {
+            qty: baseQty.plus(reserved).toFixed(3),
+            shortfallQty: baseShortfall.plus(shortfall).toFixed(3),
+            status: ReservationStatus.ACTIVE,
+            consumedAt: null,
+            releasedAt: null,
+            releasedById: null,
+          },
+        });
+      },
+      actor,
+      options,
+    );
+    return result;
+  }
+
+  /**
    * El corazón de `createReservations`, sin decidir **dónde** se escribe la promesa (D-185).
    *
    * La reserva firme del pedido y la temporal de la cotización comprueban exactamente lo

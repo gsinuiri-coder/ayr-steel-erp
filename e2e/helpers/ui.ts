@@ -279,3 +279,19 @@ export async function confirmPlantClose(page: Page, confirmLabel: string): Promi
   await expect(dialog).toBeHidden({ timeout: 60_000 });
   return dialog;
 }
+
+/**
+ * cc45 (D-603): el motivo del diálogo «Cambiar cantidad» —obligatorio— y su guardado. El botón
+ * «Guardar el cambio» se habilita recién cuando la vista previa del API dijo qué va a pasar.
+ */
+export async function saveQtyChange(
+  page: Page,
+  reason = 'El cliente amplió el pedido',
+): Promise<void> {
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox', { name: 'Motivo del cambio' }).click();
+  await page.getByRole('option', { name: reason, exact: true }).click();
+  const save = dialog.getByRole('button', { name: 'Guardar el cambio' });
+  await expect(save).toBeEnabled({ timeout: 30_000 });
+  await save.click();
+}

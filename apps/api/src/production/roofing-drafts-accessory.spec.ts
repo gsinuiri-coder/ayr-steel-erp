@@ -198,9 +198,14 @@ function accessoryService(drafts: DraftRow[], reportedMeters: string[] = []) {
     },
     productionOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
     productionReport: {
-      findMany: jest
-        .fn()
-        .mockResolvedValue(reportedMeters.map((m) => ({ metersM: PD(m), piecesDetail: [] }))),
+      // D-605 (cc45): la consulta de las órdenes hermanas de la línea no encuentra ninguna.
+      findMany: jest.fn((args?: { where?: { productionOrder?: unknown } }) =>
+        Promise.resolve(
+          args?.where?.productionOrder !== undefined
+            ? []
+            : reportedMeters.map((m) => ({ metersM: PD(m), piecesDetail: [] })),
+        ),
+      ),
     },
     productionOrderConsumption: {
       findMany: jest
@@ -211,6 +216,9 @@ function accessoryService(drafts: DraftRow[], reportedMeters: string[] = []) {
     },
     reservation: {
       findUnique: jest.fn().mockResolvedValue({ salesOrderItem: { qty: PD('10.000') } }),
+      findUniqueOrThrow: jest
+        .fn()
+        .mockResolvedValue({ salesOrderItemId: 'it-1', salesOrderItem: { qty: PD('10.000') } }),
     },
     productionReportDraft: {
       findMany: jest.fn().mockResolvedValue(drafts),

@@ -30,6 +30,7 @@ import { RESERVATION_TONE } from '@/components/status-tone';
 import { InfoPopover } from '@/components/info-popover';
 import { OperationDateField } from '@/components/operation-date-field';
 import { PromisedDateControl } from '@/components/production-queue';
+import { LineProductionInfo, useLineOrders } from './line-production';
 import { ProductionOrdersCard } from './production-orders-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -60,9 +61,9 @@ import {
   ChangeCustomerDialog,
   ChangeLineCoilDialog,
   EditLinePriceDialog,
-  EditLineQtyDialog,
   isCoilSaleLine,
 } from '@/components/sales/order-edit-dialogs';
+import { ChangeLineQtyDialog } from '@/components/sales/change-line-qty-dialog';
 import { usePlantSheetActions } from '@/components/sales/plant-sheet-buttons';
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { OrderDocumentLinks } from '@/components/sales/order-documents';
@@ -121,6 +122,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
   });
   // Antes de los retornos tempranos: es un hook (el de compartir mira `navigator`).
   const plantSheetActions = usePlantSheetActions(id, o?.code ?? '');
+  // cc45: la OP de cada línea, con su avance (también un hook, antes de los retornos).
+  const lineOrders = useLineOrders(id, o?.reservations ?? [], isAdmin && o !== undefined);
 
   function onError(err: unknown): void {
     toast.error(errorMessage(err, 'La operación no se pudo completar'));
@@ -312,7 +315,11 @@ export function PedidoDetalleView({ id }: { id: string }) {
   const restorableByLine = new Map(
     isAdmin ? o.reservations.filter((r) => r.restorable).map((r) => [r.salesOrderItemId, r]) : [],
   );
-  const showLineActions = canEditAsAdmin || canEditAsOwner || restorableByLine.size > 0;
+  // cc45 (D-603): «Cambiar cantidad» también con producción (solo ADMINISTRADOR). Con
+  // comprobante el administrador la ve apagada, con el motivo: primero va la nota de crédito.
+  const canResizeAsAdmin = isAdmin && o.status !== 'CANCELLED';
+  const showLineActions =
+    canEditAsAdmin || canEditAsOwner || canResizeAsAdmin || restorableByLine.size > 0;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -640,6 +647,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground">{item.description}</div>
+                  {isAdmin && <LineProductionInfo orders={lineOrders.get(item.id) ?? []} />}
                 </TableCell>
                 <TableCell className="text-right">
                   {formatQty(item.qty, unitSymbol(item.unit))}
@@ -660,7 +668,7 @@ export function PedidoDetalleView({ id }: { id: string }) {
                       label={`línea ${String(item.lineNumber)}`}
                       // D-379: sin ediciones, «Restaurar reserva» queda en el menú ⋯, no como botón.
                       // Con ediciones, la principal sigue siendo la de siempre (precio o cantidad).
-                      primary={canEditAsAdmin || canEditAsOwner ? 'price' : null}
+                      primary={canEditAsAdmin || canEditAsOwner || canResizeAsAdmin ? 'qty' : null}
                       actions={[
                         {
                           key: 'price',
@@ -671,12 +679,20 @@ export function PedidoDetalleView({ id }: { id: string }) {
                             setPricing(item);
                           },
                         },
-                        // D-116: una bobina entera vende su saldo; su cantidad no se edita.
+                        // D-116: una bobina entera vende su saldo; su cantidad no se edita. cc45: una
+                        // línea cuyas órdenes están todas anuladas tampoco ofrece el botón.
                         {
                           key: 'qty',
-                          label: 'Cantidad',
+                          label: 'Cambiar cantidad',
                           ariaLabel: `Cambiar cantidad de la línea ${String(item.lineNumber)}`,
-                          show: canEditAsOwner && item.reserveItemType !== 'COIL',
+                          show:
+                            (canEditAsOwner || canResizeAsAdmin) &&
+                            item.reserveItemType !== 'COIL' &&
+                            !onlyCancelledOrders(lineOrders.get(item.id)),
+                          disabled: !o.isEditable,
+                          title: o.isEditable
+                            ? undefined
+                            : 'El pedido ya tiene comprobante: para cambiar la cantidad, primero va la nota de crédito',
                           onSelect: () => {
                             setResizing(item);
                           },
@@ -891,13 +907,18 @@ export function PedidoDetalleView({ id }: { id: string }) {
           if (!open) setPricing(null);
         }}
       />
-      <EditLineQtyDialog
-        order={o}
-        item={resizing}
-        onOpenChange={(open) => {
-          if (!open) setResizing(null);
-        }}
-      />
+      {/* Autorrevisión cc45 (P2-2): montado por línea y solo abierto; al reabrir no queda nada
+          de la vez anterior (ni la tabla ni el contexto del API). */}
+      {resizing && (
+        <ChangeLineQtyDialog
+          key={resizing.id}
+          order={o}
+          item={resizing}
+          onOpenChange={(open) => {
+            if (!open) setResizing(null);
+          }}
+        />
+      )}
       <ChangeLineCoilDialog
         order={o}
         item={recoiling}
@@ -908,4 +929,9 @@ export function PedidoDetalleView({ id }: { id: string }) {
       <ChangeCustomerDialog order={o} open={changingCustomer} onOpenChange={setChangingCustomer} />
     </RoleGate>
   );
+}
+
+/** cc45: la línea tuvo órdenes y todas están anuladas. */
+function onlyCancelledOrders(orders: readonly { status: string }[] | undefined): boolean {
+  return orders !== undefined && orders.length > 0 && orders.every((o) => o.status === 'CANCELLED');
 }

@@ -1,10 +1,18 @@
 import { assertSellerAccess } from '../auth/seller-scope';
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   DispatchStatus,
   FiscalDocType,
   InventoryItemType,
   Prisma,
+  ProductionOrderKind,
   ProductionOrderStatus,
   ProductionReportStatus,
   ReservationStatus,
@@ -13,6 +21,16 @@ import {
 import {
   businessToday,
   carriesInventory,
+  Decimal,
+  describePieces,
+  piecesCount,
+  piecesMeters,
+  toDecimal,
+  type PieceLike,
+  type QtyChangeKind,
+  type SalesOrderItemQtyOutcomeDto,
+  type SalesOrderItemQtyPreviewDto,
+  type SalesOrderItemQtyPreviewInput,
   DERIVED_UNIT_VALUE_DECIMALS,
   derivedUnitValue,
   isImportedQuotation,
@@ -51,10 +69,108 @@ import {
   findCoilSaleProducts,
   lineCoilPool,
 } from './coil-sale-product';
+import { unitSymbol } from '../common/unit-symbol';
+import { sumReportedMeters } from '../production/reported-meters';
+import type { ShortfallLine } from './order-shortfall';
 import { recordPriceChanges } from './price-changes';
+import {
+  lengthRows,
+  piecesChanges,
+  piecesMinus,
+  qtyFloorViolation,
+  qtyKindOf,
+  releaseSplit,
+  samePieces,
+} from './qty-change';
+import { rawMaterialSpecLabels } from './raw-material';
 import { assertPriceFloor } from './price-floor';
 import { resolveSalesLines } from './sales-lines';
 import { SalesOrdersService } from './sales-orders.service';
+
+/** La línea con lo que las ediciones leen de ella. */
+const ITEM_INCLUDE = {
+  product: {
+    select: {
+      businessLineId: true,
+      lengthMm: true,
+      sku: true,
+      name: true,
+      roofingKind: true,
+      businessLine: { select: { code: true } },
+    },
+  },
+  pieces: { orderBy: { lineNumber: 'asc' } },
+} satisfies Prisma.SalesOrderItemInclude;
+
+type QtyItem = Prisma.SalesOrderItemGetPayload<{ include: typeof ITEM_INCLUDE }>;
+
+/** cc45: lo que la línea tiene hoy, leído bajo los locks de sus OP y sus reservas. */
+interface QtyFacts {
+  kind: QtyChangeKind;
+  reservations: {
+    id: string;
+    status: ReservationStatus;
+    itemType: InventoryItemType;
+    itemId: string;
+    qty: Decimal;
+    shortfallQty: Decimal;
+  }[];
+  orders: {
+    id: string;
+    seq: number;
+    status: ProductionOrderStatus;
+    reservationId: string | null;
+    live: boolean;
+    planMeters: Decimal;
+    registeredMeters: Decimal;
+  }[];
+  registeredPieces: PieceLike[];
+  registeredClosedPieces: PieceLike[];
+  /** En la unidad de la línea: metros (a medida, accesorio) o planchas (catálogo). */
+  registeredQty: Decimal;
+  registeredClosedQty: Decimal;
+  dispatchedQty: Decimal;
+  hasProduction: boolean;
+  hasDispatches: boolean;
+  /** Órdenes de perfiles (drywall) atadas a la línea antes de D-599: su producción es otra. */
+  drywallOrders: string[];
+}
+
+type QtyOutcome = Omit<SalesOrderItemQtyOutcomeDto, 'ok' | 'message'>;
+
+/** La vista previa corre la acción y la deshace tirando esto (como `previewPlantClose`). */
+class QtyPreviewRollback extends Error {
+  constructor(readonly result: SalesOrderItemQtyPreviewDto) {
+    super('vista previa de la cantidad');
+  }
+}
+
+function httpMessage(error: HttpException): string {
+  const response = error.getResponse();
+  if (typeof response === 'string') return response;
+  const message = (response as { message?: string | string[] }).message;
+  return Array.isArray(message) ? message.join(' ') : (message ?? error.message);
+}
+
+function toPieceLike(row: { lengthMm: Prisma.Decimal; qty: number }): PieceLike {
+  return { lengthMm: row.lengthMm.toFixed(2), qty: row.qty };
+}
+
+function lineMeters(kind: QtyChangeKind, item: QtyItem): string | null {
+  return kind === 'PIECES' || kind === 'METERS' ? item.qty.toFixed(3) : null;
+}
+
+function linePieces(kind: QtyChangeKind, item: QtyItem): number | null {
+  if (kind === 'PIECES') return piecesCount(item.pieces.map(toPieceLike));
+  if (kind === 'UNITS') return item.qty.toNumber();
+  return null;
+}
+
+/** `4,787.80`: solo para el texto de «Qué va a pasar». */
+function formatPen(value: Decimal): string {
+  const [int = '0', dec = '00'] = value.toFixed(2).split('.');
+  return `${int.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${dec}`;
+}
 
 /** El pedido bloqueado, con lo que las cuatro ediciones necesitan mirar. */
 interface LockedOrder {
@@ -611,21 +727,23 @@ export class SalesOrderEditsService {
   }
 
   // -------------------------------------------------------------------------
-  // Cantidad de una línea confirmada
+  // Cantidad de una línea confirmada (D-187; con producción o despachos, D-603/D-604)
   // -------------------------------------------------------------------------
 
   /**
    * Cambia la cantidad (y, en una línea a medida, sus largos) de una línea confirmada.
    *
-   * **Solo mientras nada de esa línea salió de su lugar.** Con un reporte de producción vigente
-   * la reserva ya se consumió en parte y el material rolado existe; con un despacho, la reserva
-   * ya bajó. Recalcular encima de cualquiera de las dos obligaría a adivinar qué parte de lo
-   * nuevo ya está hecha. La salida en ese caso es agregar un ítem con la diferencia, y el
-   * rechazo lo dice.
+   * **Sin producción registrada ni despachos** sigue siendo D-187: dueño o ADMINISTRADOR; libera
+   * la reserva de la línea y reserva la cantidad nueva por la puerta de siempre, y la OP viva pasa
+   * a colgar de la reserva nueva con el plan de corte por defecto (D-084).
    *
-   * Lo que sí hace: libera la reserva vigente de la línea y reserva la nueva cantidad por la
-   * puerta de siempre (si no alcanza, no cambia nada); la OP viva, si la hay, pasa a colgar de
-   * la reserva nueva con el plan de corte por defecto de la cantidad nueva (D-084).
+   * **Con producción registrada o despachos** (cc45, D-603/D-604): solo ADMINISTRADOR, con
+   * motivo y antes del comprobante. Nunca por debajo de lo registrado (por largo en una línea a
+   * medida) ni de lo despachado. La reserva queda en lo que falta fabricar (o despachar): bajar
+   * libera, subir reserva lo nuevo por la puerta de confirmar y, si no alcanza, el administrador
+   * confirma con faltante (D-341). El plan de la OP viva sigue a la cantidad nueva; con la OP
+   * cerrada, al subir nace una OP nueva por la diferencia. Todo en esta transacción, con el orden
+   * de bloqueos de D-471: pedido → OP → reserva → bobinas → saldos.
    */
   async updateItemQty(
     actor: RequestUser,
@@ -634,242 +752,966 @@ export class SalesOrderEditsService {
     input: UpdateSalesOrderItemQtyInput,
   ): Promise<SalesOrderDto> {
     await this.prisma.$transaction(
-      async (tx) => {
-        const order = await this.lockEditable(tx, orderId, 'cambiar cantidades');
-        this.assertOwner(actor, order, 'cambiarle cantidades');
-        const item = await this.requireItem(tx, orderId, itemId);
-        const at = `Línea ${item.lineNumber}`;
-        const addInstead = 'Agrega un ítem nuevo con la diferencia.';
-
-        if (item.reserveItemType === InventoryItemType.COIL) {
-          throw new BadRequestException(
-            `${at}: la venta de una bobina entera vende su saldo completo; la cantidad no se edita`,
-          );
-        }
-        const dispatched = await tx.dispatchItem.findFirst({
-          where: { salesOrderItemId: item.id, dispatch: { status: DispatchStatus.ISSUED } },
-          select: { id: true },
-        });
-        if (dispatched) {
-          throw new BadRequestException(
-            `${at}: ya tiene despachos, así que su cantidad no se cambia. ${addInstead}`,
-          );
-        }
-
-        // cc30 (grupo C, cruce c): las OP de la línea y sus reservas, juntas, detrás del pedido y
-        // antes del inventario. Antes la OP se escribía al final (`productionOrder.update`), con las
-        // bobinas y los saldos en mano, mientras reportar coberturas iba OP → pedido. Los ids se
-        // leen sin bloqueo y se releen abajo, ya bloqueados.
-        const linked = await tx.reservation.findMany({
-          where: { salesOrderItemId: item.id },
-          select: { id: true, productionOrders: { select: { id: true } } },
-        });
-        await lockDocuments(tx, {
-          productionOrders: linked.flatMap((r) => r.productionOrders.map((o) => o.id)),
-          reservations: linked.map((r) => r.id),
-        });
-        const reservations = await tx.reservation.findMany({
-          where: { salesOrderItemId: item.id },
-          select: {
-            id: true,
-            status: true,
-            itemType: true,
-            shortfallQty: true,
-            // **Todas** las OP no anuladas, cerradas incluidas: una OP que reportó y se cerró
-            // ya no está viva, pero dejó producto fabricado con su propia reserva y la de
-            // materia prima liberada. Mirar solo las vivas dejaba recalcular encima de eso.
-            productionOrders: {
-              where: { status: { not: ProductionOrderStatus.CANCELLED } },
-              select: { id: true, seq: true, status: true, reservationId: true },
-            },
-          },
-        });
-        const orders = reservations.flatMap((r) => r.productionOrders);
-        const closed = orders.find(
-          (o) =>
-            o.status !== ProductionOrderStatus.DRAFT &&
-            o.status !== ProductionOrderStatus.IN_PROGRESS,
-        );
-        if (closed) {
-          throw new BadRequestException(
-            `${at}: la orden ${productionOrderCode(closed.seq)} ya se cerró, así que la cantidad no se cambia. ${addInstead}`,
-          );
-        }
-        const liveOrders = orders;
-        if (liveOrders.length > 0) {
-          const reported = await tx.productionReport.findFirst({
-            where: {
-              productionOrderId: { in: liveOrders.map((o) => o.id) },
-              status: ProductionReportStatus.ACTIVE,
-            },
-            select: { productionOrder: { select: { seq: true } } },
-          });
-          if (reported) {
-            throw new BadRequestException(
-              `${at}: la orden ${productionOrderCode(reported.productionOrder.seq)} ya tiene reportes de producción, así que la cantidad no se cambia. ${addInstead}`,
-            );
-          }
-        }
-        // D-088: producir traslada la promesa a una reserva del producto fabricado. Si la línea
-        // tiene una reserva viva de otro tipo que el suyo, ya hay producción detrás.
-        if (
-          reservations.some(
-            (r) => r.status === ReservationStatus.ACTIVE && r.itemType !== item.reserveItemType,
-          )
-        ) {
-          throw new BadRequestException(
-            `${at}: ya tiene material fabricado reservado, así que la cantidad no se cambia. ${addInstead}`,
-          );
-        }
-        // D-341: cambiar la cantidad libera y vuelve a reservar la línea completa, y eso borraría en
-        // silencio el faltante que el administrador aceptó al confirmar. Se rechaza, también con la
-        // reserva ya consumida: completar la reserva la admite (y la revive).
-        if (
-          reservations.some(
-            (r) => r.status !== ReservationStatus.RELEASED && r.shortfallQty.greaterThan(0),
-          )
-        ) {
-          throw new BadRequestException(
-            `${at}: Esta línea tiene faltante de material: completá la reserva o anulá antes de cambiar la cantidad`,
-          );
-        }
-        if (reservations.some((r) => r.status === ReservationStatus.CONSUMED)) {
-          throw new BadRequestException(
-            `${at}: su material ya se consumió en producción, así que la cantidad no se cambia. ${addInstead}`,
-          );
-        }
-
-        const [line] = await resolveSalesLines(
-          tx,
-          [this.lineInput(item, { qty: input.qty, pieces: input.pieces })],
-          // Sin piso: el precio no cambia y ya pasó el piso cuando se fijó. Cambiar una
-          // cantidad no es la ocasión de rechazar un precio que nadie tocó.
-          // D-256 (aclaración): salvo en un pedido **importado**, cuyo precio nunca pasó por el
-          // piso. Cambiarle la cantidad deja de representar al comprobante, y fuera del
-          // ADMINISTRADOR eso pasa por el piso como cualquier línea.
-          {
-            firstLineNumber: item.lineNumber,
-            ...(order.imported && actor.role !== Role.ADMINISTRADOR
-              ? { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }
-              : {}),
-          },
-        );
-        if (!line) throw new NotFoundException(`${at}: no se pudo recalcular`);
-
-        const active = reservations.filter((r) => r.status === ReservationStatus.ACTIVE);
-        if (active.length > 0) {
-          await tx.reservation.updateMany({
-            where: { id: { in: active.map((r) => r.id) }, status: ReservationStatus.ACTIVE },
-            data: {
-              qty: '0',
-              shortfallQty: '0', // D-341: ídem.
-              status: ReservationStatus.RELEASED,
-              releasedAt: new Date(),
-              releasedById: actor.id,
-            },
-          });
-        }
-
-        await tx.salesOrderItemPiece.deleteMany({ where: { salesOrderItemId: item.id } });
-        const updated = await tx.salesOrderItem.update({
-          where: { id: item.id },
-          data: {
-            description: line.description,
-            qty: line.qty,
-            subtotalPen: line.subtotalPen,
-            igvPen: line.igvPen,
-            totalPen: line.totalPen,
-            reserveItemType: line.reserveItemType,
-            reserveItemId: line.reserveItemId,
-            reserveQty: line.reserveQty,
-            reserveUnit: line.reserveUnit,
-            ...(line.pieces.length > 0
-              ? {
-                  pieces: {
-                    create: line.pieces.map((p) => ({
-                      lineNumber: p.lineNumber,
-                      lengthMm: p.lengthMm,
-                      qty: p.qty,
-                    })),
-                  },
-                }
-              : {}),
-          },
-        });
-        await this.orders.createReservations(tx, actor, orderId, [updated]);
-
-        // La OP viva sigue siendo la misma orden —puede tener la bobina montada, y montar es
-        // decisión de planta (D-086)—; lo que cambia es la promesa de la que cuelga y el plan.
-        const newReservation = await tx.reservation.findFirst({
-          where: {
-            salesOrderItemId: item.id,
-            status: ReservationStatus.ACTIVE,
-            itemType: InventoryItemType.RAW_MATERIAL,
-          },
-          select: { id: true },
-        });
-        const plan =
-          newReservation !== null
-            ? derivePiecesPlan(
-                line.pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
-                item.product.lengthMm === null ? null : item.product.lengthMm.toFixed(2),
-                line.qty,
-              )
-            : [];
-        const adjustedOrders: string[] = [];
-        for (const op of liveOrders) {
-          // Si el catálogo movió la especificación, la reserva nueva es otra fila: una OP en curso
-          // tiene una bobina montada elegida para la especificación vieja y no se reasigna sola.
-          if (
-            newReservation &&
-            op.status === ProductionOrderStatus.IN_PROGRESS &&
-            op.reservationId !== newReservation.id
-          ) {
-            throw new BadRequestException(
-              `${at}: la materia prima de la línea cambió en el catálogo y la orden ${productionOrderCode(op.seq)} ya tiene bobina montada: libera la bobina antes de cambiar la cantidad`,
-            );
-          }
-          if (!newReservation) {
-            // La línea dejó de fabricarse (el catálogo cambió entre confirmar y hoy): la OP no
-            // tiene de qué colgar. Que planta la anule a mano con su motivo.
-            throw new BadRequestException(
-              `${at}: ya no reserva materia prima y la orden ${productionOrderCode(op.seq)} depende de ella: anula la orden antes de cambiar la cantidad`,
-            );
-          }
-          await tx.productionOrder.update({
-            where: { id: op.id },
-            data: { reservationId: newReservation.id },
-          });
-          await tx.productionOrderItem.deleteMany({ where: { productionOrderId: op.id } });
-          await tx.productionOrderItem.createMany({
-            data: plan.map((p) => ({ productionOrderId: op.id, ...p })),
-          });
-          adjustedOrders.push(productionOrderCode(op.seq));
-        }
-
-        const totals = await this.refreshTotals(tx, orderId);
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'sales.order.item-qty',
-          entity: 'sales_orders',
-          entityId: orderId,
-          before: {
-            code: salesOrderCode(order.seq),
-            lineNumber: item.lineNumber,
-            qty: item.qty.toString(),
-            reserveQty: item.reserveQty.toString(),
-          },
-          after: {
-            qty: line.qty,
-            reserveQty: line.reserveQty,
-            productionOrders: adjustedOrders,
-            totalPen: totals.totalPen,
-          },
-        });
-      },
-      { timeout: 30_000 },
+      (tx) => this.changeItemQtyInTx(tx, actor, orderId, itemId, input, false),
+      // Como agregar ítems: puede reservar y crear una OP.
+      { timeout: 60_000, maxWait: 15_000 },
     );
     return this.orders.findOne(orderId);
+  }
+
+  /**
+   * cc45 (D-603): lo que el diálogo necesita para abrirse —lo pedido, lo registrado y lo
+   * despachado de la línea, sus órdenes— y, con una cantidad, lo que `updateItemQty` haría. Corre
+   * el mismo servicio, bajo los mismos locks, y deshace siempre: la pantalla no puede prometer
+   * algo distinto de lo que el guardado hace. Un rechazo viaja como `outcome.message`.
+   */
+  async previewItemQty(
+    actor: RequestUser,
+    orderId: string,
+    itemId: string,
+    input: SalesOrderItemQtyPreviewInput,
+  ): Promise<SalesOrderItemQtyPreviewDto> {
+    try {
+      await this.prisma.$transaction(
+        async (tx) => {
+          const context = await this.qtyContextInTx(tx, actor, orderId, itemId);
+          let outcome: SalesOrderItemQtyOutcomeDto | null = null;
+          if (context.blocked === null && input.qty !== undefined) {
+            try {
+              const result = await this.changeItemQtyInTx(
+                tx,
+                actor,
+                orderId,
+                itemId,
+                {
+                  qty: input.qty,
+                  ...(input.pieces !== undefined ? { pieces: input.pieces } : {}),
+                  confirmShortfall: true,
+                },
+                true,
+              );
+              outcome = { ok: true, message: null, ...result };
+            } catch (error) {
+              if (!(error instanceof HttpException) || error.getStatus() >= 500) throw error;
+              outcome = {
+                ok: false,
+                message: httpMessage(error),
+                qty: null,
+                meters: null,
+                pieces: null,
+                totalPen: null,
+                orderTotalPen: null,
+                effects: [],
+                shortfallQty: null,
+              };
+            }
+          }
+          throw new QtyPreviewRollback({ ...context, outcome });
+        },
+        { timeout: 60_000, maxWait: 15_000 },
+      );
+    } catch (error) {
+      if (error instanceof QtyPreviewRollback) return error.result;
+      throw error;
+    }
+    throw new Error('La vista previa de la cantidad no devolvió resultado');
+  }
+
+  /** El contexto de la línea para el diálogo, sin cambiar nada (bajo los locks de la acción). */
+  private async qtyContextInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    itemId: string,
+  ): Promise<Omit<SalesOrderItemQtyPreviewDto, 'outcome'>> {
+    let blocked: string | null = null;
+    try {
+      const order = await this.lockEditable(tx, orderId, 'cambiar cantidades');
+      this.assertOwner(actor, order, 'cambiarle cantidades');
+    } catch (error) {
+      if (!(error instanceof BadRequestException)) throw error;
+      blocked = httpMessage(error);
+    }
+    const item = await this.requireItem(tx, orderId, itemId);
+    if (blocked === null && item.reserveItemType === InventoryItemType.COIL) {
+      blocked = 'La venta de una bobina entera vende su saldo completo; la cantidad no se edita';
+    }
+    const facts = await this.readQtyFacts(tx, item);
+    const adminOnly = facts.hasProduction || facts.hasDispatches;
+    if (blocked === null && adminOnly && actor.role !== Role.ADMINISTRADOR) {
+      blocked =
+        'La línea ya tiene producción registrada o despachos: solo un administrador cambia su cantidad';
+    }
+    const order = await tx.salesOrder.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { totalPen: true },
+    });
+    const minQty = Decimal.max(facts.registeredQty, facts.dispatchedQty);
+    return {
+      itemId: item.id,
+      lineNumber: item.lineNumber,
+      productSku: item.product.sku,
+      kind: facts.kind,
+      unit: item.unit,
+      qty: item.qty.toFixed(3),
+      meters: lineMeters(facts.kind, item),
+      pieces: linePieces(facts.kind, item),
+      totalPen: item.totalPen.toFixed(2),
+      orderTotalPen: order.totalPen.toFixed(2),
+      rows:
+        facts.kind === 'PIECES'
+          ? lengthRows(item.pieces.map(toPieceLike), facts.registeredPieces)
+          : [],
+      registeredQty: facts.registeredQty.toFixed(3),
+      dispatchedQty: facts.dispatchedQty.toFixed(3),
+      minQty: minQty.toFixed(3),
+      hasProduction: facts.hasProduction,
+      hasDispatches: facts.hasDispatches,
+      adminOnly,
+      blocked,
+      productionOrders: facts.orders.map((o) => ({
+        id: o.id,
+        code: productionOrderCode(o.seq),
+        status: o.status,
+        planMeters: o.planMeters.toFixed(3),
+        registeredMeters: o.registeredMeters.toFixed(3),
+      })),
+    };
+  }
+
+  /** La acción y su vista previa: el mismo camino. `preview` solo relaja el motivo. */
+  private async changeItemQtyInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    orderId: string,
+    itemId: string,
+    input: UpdateSalesOrderItemQtyInput,
+    preview: boolean,
+  ): Promise<QtyOutcome> {
+    const order = await this.lockEditable(tx, orderId, 'cambiar cantidades');
+    this.assertOwner(actor, order, 'cambiarle cantidades');
+    const item = await this.requireItem(tx, orderId, itemId);
+    const at = `Línea ${item.lineNumber}`;
+    if (item.reserveItemType === InventoryItemType.COIL) {
+      throw new BadRequestException(
+        `${at}: la venta de una bobina entera vende su saldo completo; la cantidad no se edita`,
+      );
+    }
+    // cc30 (grupo C, cruce c): las OP de la línea y sus reservas, juntas, detrás del pedido y
+    // antes del inventario.
+    const facts = await this.readQtyFacts(tx, item);
+    const orderTotalBefore = (
+      await tx.salesOrder.findUniqueOrThrow({ where: { id: orderId }, select: { totalPen: true } })
+    ).totalPen;
+    return facts.hasProduction || facts.hasDispatches
+      ? this.resizeStartedInTx(tx, actor, order, item, facts, input, preview, orderTotalBefore)
+      : this.resizeUnstartedInTx(tx, actor, order, item, facts, input, preview, orderTotalBefore);
+  }
+
+  /**
+   * Lo que la línea tiene hoy, leído **después** de bloquear sus OP y sus reservas: lo registrado
+   * por todas sus órdenes no anuladas (vivas y cerradas, D-603: el piso es la suma) y lo
+   * despachado.
+   */
+  private async readQtyFacts(tx: Prisma.TransactionClient, item: QtyItem): Promise<QtyFacts> {
+    const linked = await tx.reservation.findMany({
+      where: { salesOrderItemId: item.id },
+      select: { id: true, productionOrders: { select: { id: true } } },
+    });
+    await lockDocuments(tx, {
+      productionOrders: linked.flatMap((r) => r.productionOrders.map((o) => o.id)),
+      reservations: linked.map((r) => r.id),
+    });
+    const reservations = await tx.reservation.findMany({
+      where: { salesOrderItemId: item.id },
+      select: {
+        id: true,
+        status: true,
+        itemType: true,
+        itemId: true,
+        qty: true,
+        shortfallQty: true,
+        productionOrders: {
+          where: { status: { not: ProductionOrderStatus.CANCELLED } },
+          select: {
+            id: true,
+            seq: true,
+            kind: true,
+            status: true,
+            reservationId: true,
+            items: { select: { lengthMm: true, qty: true } },
+            reports: {
+              where: { status: ProductionReportStatus.ACTIVE },
+              select: { metersM: true, piecesDetail: { select: { lengthMm: true, qty: true } } },
+            },
+          },
+          orderBy: { seq: 'asc' },
+        },
+      },
+    });
+    const dispatched = await tx.dispatchItem.aggregate({
+      where: { salesOrderItemId: item.id, dispatch: { status: DispatchStatus.ISSUED } },
+      _sum: { qty: true },
+    });
+    const rawOrders = reservations.flatMap((r) => r.productionOrders);
+    const produced =
+      rawOrders.length > 0 || item.reserveItemType === InventoryItemType.RAW_MATERIAL;
+    const kind = qtyKindOf(
+      {
+        unit: item.unit,
+        roofingKind: item.product.roofingKind,
+        lengthMm: item.product.lengthMm === null ? null : item.product.lengthMm.toFixed(2),
+      },
+      produced,
+    );
+    const lineQty = toDecimal(item.qty.toString());
+    const live = (o: { status: ProductionOrderStatus }) =>
+      o.status === ProductionOrderStatus.DRAFT || o.status === ProductionOrderStatus.IN_PROGRESS;
+    const registeredMetersOf = (o: (typeof rawOrders)[number]) =>
+      sumReportedMeters(o.reports) ?? new Decimal(0);
+    const piecesOf = (orders: readonly (typeof rawOrders)[number][]): PieceLike[] =>
+      orders.flatMap((o) => o.reports.flatMap((r) => r.piecesDetail.map(toPieceLike)));
+    const qtyOf = (orders: readonly (typeof rawOrders)[number][]): Decimal => {
+      if (kind === 'UNITS') return new Decimal(piecesCount(piecesOf(orders)));
+      if (kind === 'PIECES' || kind === 'METERS') {
+        return orders.reduce((acc, o) => acc.plus(registeredMetersOf(o)), new Decimal(0));
+      }
+      return new Decimal(0);
+    };
+    const closedOrders = rawOrders.filter((o) => !live(o));
+    const registeredQty = qtyOf(rawOrders);
+    const registeredClosedQty = qtyOf(closedOrders);
+    const dispatchedQty = toDecimal((dispatched._sum.qty ?? 0).toString());
+    return {
+      kind,
+      reservations: reservations.map((r) => ({
+        id: r.id,
+        status: r.status,
+        itemType: r.itemType,
+        itemId: r.itemId,
+        qty: toDecimal(r.qty.toString()),
+        shortfallQty: toDecimal(r.shortfallQty.toString()),
+      })),
+      orders: rawOrders.map((o) => {
+        const registeredMeters = registeredMetersOf(o);
+        return {
+          id: o.id,
+          seq: o.seq,
+          status: o.status,
+          reservationId: o.reservationId,
+          live: live(o),
+          planPieces: o.items.map(toPieceLike),
+          planMeters:
+            kind === 'METERS'
+              ? // D-605: los metros de la línea menos lo que registraron las otras órdenes; una
+                // cerrada, no más de lo que fabricó (`accessoryPlans`).
+                Decimal.min(
+                  Decimal.max(lineQty.minus(registeredQty.minus(registeredMeters)), 0),
+                  live(o) ? lineQty : registeredMeters,
+                )
+              : piecesMeters(o.items.map(toPieceLike)),
+          registeredMeters,
+        };
+      }),
+      registeredPieces: kind === 'METERS' ? [] : piecesOf(rawOrders),
+      registeredClosedPieces: kind === 'METERS' ? [] : piecesOf(closedOrders),
+      registeredQty,
+      registeredClosedQty,
+      dispatchedQty,
+      // Cualquier parte vigente cuenta, aunque no deje metros ni planchas (revisión cc45).
+      hasProduction:
+        registeredQty.gt(0) ||
+        closedOrders.length > 0 ||
+        rawOrders.some((o) => o.reports.length > 0),
+      hasDispatches: dispatchedQty.gt(0),
+      drywallOrders: rawOrders
+        .filter((o) => o.kind === ProductionOrderKind.DRYWALL)
+        .map((o) => productionOrderCode(o.seq)),
+    };
+  }
+
+  /** D-187: la línea todavía no produjo ni despachó nada. Se reescribe entera, como siempre. */
+  private async resizeUnstartedInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    order: LockedOrder,
+    item: QtyItem,
+    facts: QtyFacts,
+    input: UpdateSalesOrderItemQtyInput,
+    preview: boolean,
+    orderTotalBefore: Prisma.Decimal,
+  ): Promise<QtyOutcome> {
+    const at = `Línea ${item.lineNumber}`;
+    const addInstead = 'Agrega un ítem nuevo con la diferencia.';
+    // D-088: producir traslada la promesa a una reserva del producto fabricado. Si la línea
+    // tiene una reserva viva de otro tipo que el suyo, ya hay producción detrás.
+    if (
+      facts.reservations.some(
+        (r) => r.status === ReservationStatus.ACTIVE && r.itemType !== item.reserveItemType,
+      )
+    ) {
+      throw new BadRequestException(
+        `${at}: ya tiene material fabricado reservado, así que la cantidad no se cambia. ${addInstead}`,
+      );
+    }
+    // D-341: cambiar la cantidad libera y vuelve a reservar la línea completa, y eso borraría en
+    // silencio el faltante que el administrador aceptó al confirmar. Se rechaza, también con la
+    // reserva ya consumida: completar la reserva la admite (y la revive).
+    if (
+      facts.reservations.some(
+        (r) => r.status !== ReservationStatus.RELEASED && r.shortfallQty.greaterThan(0),
+      )
+    ) {
+      throw new BadRequestException(
+        `${at}: Esta línea tiene faltante de material: completá la reserva o anulá antes de cambiar la cantidad`,
+      );
+    }
+    if (facts.reservations.some((r) => r.status === ReservationStatus.CONSUMED)) {
+      throw new BadRequestException(
+        `${at}: su material ya se consumió en producción, así que la cantidad no se cambia. ${addInstead}`,
+      );
+    }
+
+    const [line] = await resolveSalesLines(
+      tx,
+      [this.lineInput(item, { qty: input.qty, pieces: input.pieces })],
+      // Sin piso: el precio no cambia y ya pasó el piso cuando se fijó. Cambiar una
+      // cantidad no es la ocasión de rechazar un precio que nadie tocó.
+      // D-256 (aclaración): salvo en un pedido **importado**, cuyo precio nunca pasó por el
+      // piso. Cambiarle la cantidad deja de representar al comprobante, y fuera del
+      // ADMINISTRADOR eso pasa por el piso como cualquier línea.
+      {
+        firstLineNumber: item.lineNumber,
+        ...(order.imported && actor.role !== Role.ADMINISTRADOR
+          ? { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }
+          : {}),
+      },
+    );
+    if (!line) throw new NotFoundException(`${at}: no se pudo recalcular`);
+
+    const active = facts.reservations.filter((r) => r.status === ReservationStatus.ACTIVE);
+    const reservedBefore = active.reduce((acc, r) => acc.plus(r.qty), new Decimal(0));
+    if (active.length > 0) {
+      await tx.reservation.updateMany({
+        where: { id: { in: active.map((r) => r.id) }, status: ReservationStatus.ACTIVE },
+        data: {
+          qty: '0',
+          shortfallQty: '0', // D-341: ídem.
+          status: ReservationStatus.RELEASED,
+          releasedAt: new Date(),
+          releasedById: actor.id,
+        },
+      });
+    }
+
+    await tx.salesOrderItemPiece.deleteMany({ where: { salesOrderItemId: item.id } });
+    const updated = await tx.salesOrderItem.update({
+      where: { id: item.id },
+      data: {
+        description: line.description,
+        qty: line.qty,
+        subtotalPen: line.subtotalPen,
+        igvPen: line.igvPen,
+        totalPen: line.totalPen,
+        reserveItemType: line.reserveItemType,
+        reserveItemId: line.reserveItemId,
+        reserveQty: line.reserveQty,
+        reserveUnit: line.reserveUnit,
+        ...(line.pieces.length > 0
+          ? {
+              pieces: {
+                create: line.pieces.map((p) => ({
+                  lineNumber: p.lineNumber,
+                  lengthMm: p.lengthMm,
+                  qty: p.qty,
+                })),
+              },
+            }
+          : {}),
+      },
+    });
+    // D-341 (cc45): el administrador también puede subir sin material, con faltante y motivo.
+    const shortfalls: ShortfallLine[] = [];
+    const allowShortfall =
+      actor.role === Role.ADMINISTRADOR && (preview || input.confirmShortfall === true);
+    await this.orders.createReservations(tx, actor, order.id, [updated], {
+      allowShortfall,
+      shortfalls,
+    });
+
+    // La OP viva sigue siendo la misma orden —puede tener la bobina montada, y montar es
+    // decisión de planta (D-086)—; lo que cambia es la promesa de la que cuelga y el plan.
+    const newReservation = await tx.reservation.findFirst({
+      where: {
+        salesOrderItemId: item.id,
+        status: ReservationStatus.ACTIVE,
+        itemType: InventoryItemType.RAW_MATERIAL,
+      },
+      select: { id: true },
+    });
+    const plan =
+      newReservation !== null
+        ? derivePiecesPlan(
+            line.pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
+            item.product.lengthMm === null ? null : item.product.lengthMm.toFixed(2),
+            line.qty,
+          )
+        : [];
+    const effects: string[] = [];
+    const adjustedOrders: string[] = [];
+    for (const op of facts.orders) {
+      // Si el catálogo movió la especificación, la reserva nueva es otra fila: una OP en curso
+      // tiene una bobina montada elegida para la especificación vieja y no se reasigna sola.
+      if (
+        newReservation &&
+        op.status === ProductionOrderStatus.IN_PROGRESS &&
+        op.reservationId !== newReservation.id
+      ) {
+        throw new BadRequestException(
+          `${at}: la materia prima de la línea cambió en el catálogo y la orden ${productionOrderCode(op.seq)} ya tiene bobina montada: libera la bobina antes de cambiar la cantidad`,
+        );
+      }
+      if (!newReservation) {
+        // La línea dejó de fabricarse (el catálogo cambió entre confirmar y hoy): la OP no
+        // tiene de qué colgar. Que planta la anule a mano con su motivo.
+        throw new BadRequestException(
+          `${at}: ya no reserva materia prima y la orden ${productionOrderCode(op.seq)} depende de ella: anula la orden antes de cambiar la cantidad`,
+        );
+      }
+      await tx.productionOrder.update({
+        where: { id: op.id },
+        data: { reservationId: newReservation.id },
+      });
+      await tx.productionOrderItem.deleteMany({ where: { productionOrderId: op.id } });
+      await tx.productionOrderItem.createMany({
+        data: plan.map((p) => ({ productionOrderId: op.id, ...p })),
+      });
+      adjustedOrders.push(productionOrderCode(op.seq));
+      effects.push(
+        facts.kind === 'METERS'
+          ? `El plan de ${productionOrderCode(op.seq)} pasa a ${toDecimal(line.qty).toFixed(3)} m.`
+          : `El plan de ${productionOrderCode(op.seq)} pasa de ${op.planMeters.toFixed(3)} m a ${piecesMeters(plan).toFixed(3)} m.`,
+      );
+    }
+
+    const reservedAfter = await tx.reservation.aggregate({
+      where: { salesOrderItemId: item.id, status: ReservationStatus.ACTIVE },
+      _sum: { qty: true },
+    });
+    const unit = unitSymbol(line.reserveUnit);
+    const reservedNow = toDecimal((reservedAfter._sum.qty ?? 0).toString());
+    if (!reservedNow.equals(reservedBefore)) {
+      effects.push(
+        `La reserva de material de la línea pasa de ${reservedBefore.toFixed(3)} ${unit} a ${reservedNow.toFixed(3)} ${unit}.`,
+      );
+    }
+    const missing = shortfalls.reduce((acc, s) => acc.plus(s.missingQty), new Decimal(0));
+    if (missing.gt(0)) {
+      effects.push(
+        `Faltan ${missing.toFixed(3)} ${unit} de material: se confirma con faltante y motivo (D-341).`,
+      );
+    }
+
+    const totals = await this.refreshTotals(tx, order.id);
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.order.item-qty',
+      entity: 'sales_orders',
+      entityId: order.id,
+      before: {
+        code: salesOrderCode(order.seq),
+        lineNumber: item.lineNumber,
+        qty: item.qty.toString(),
+        reserveQty: item.reserveQty.toString(),
+      },
+      after: {
+        qty: line.qty,
+        reserveQty: line.reserveQty,
+        productionOrders: adjustedOrders,
+        totalPen: totals.totalPen,
+        ...(missing.gt(0) ? { shortfallQty: missing.toFixed(3) } : {}),
+      },
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    });
+    return this.outcome(
+      item,
+      facts.kind,
+      line,
+      totals.totalPen,
+      orderTotalBefore,
+      effects,
+      missing,
+    );
+  }
+
+  /** D-603/D-604: la línea ya tiene producción registrada o despachos. */
+  private async resizeStartedInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    order: LockedOrder,
+    item: QtyItem,
+    facts: QtyFacts,
+    input: UpdateSalesOrderItemQtyInput,
+    preview: boolean,
+    orderTotalBefore: Prisma.Decimal,
+  ): Promise<QtyOutcome> {
+    const at = `Línea ${item.lineNumber}`;
+    // Autorrevisión cc45 (P1-1): una OP de perfiles atada a la línea (anterior a D-599) consume la
+    // reserva de otra forma (D-048) y no deja metros ni planchas: este camino no la sabe medir.
+    if (facts.drywallOrders.length > 0) {
+      throw new BadRequestException(
+        `${at}: tiene la orden de perfiles ${facts.drywallOrders.join(', ')}, así que su cantidad no se cambia desde acá`,
+      );
+    }
+    if (actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        `${at}: ya tiene producción registrada o despachos, así que solo un administrador cambia su cantidad`,
+      );
+    }
+    if (!preview && input.reason === undefined) {
+      throw new BadRequestException(
+        `${at}: el motivo es obligatorio para cambiar la cantidad de una línea con producción o despachos`,
+      );
+    }
+    // El precio no cambia (D-603): no pasa por el piso de D-163. Solo un administrador llega acá.
+    const [line] = await resolveSalesLines(
+      tx,
+      [this.lineInput(item, { qty: input.qty, pieces: input.pieces })],
+      { firstLineNumber: item.lineNumber },
+    );
+    if (!line) throw new NotFoundException(`${at}: no se pudo recalcular`);
+    if (
+      line.reserveItemType !== item.reserveItemType ||
+      line.reserveItemId !== item.reserveItemId
+    ) {
+      throw new BadRequestException(
+        `${at}: el material que reserva la línea cambió en el catálogo desde que se confirmó, así que su cantidad no se cambia desde acá`,
+      );
+    }
+    const nextQty = toDecimal(line.qty);
+    const nextPieces: PieceLike[] = line.pieces.map((p) => ({
+      lengthMm: toDecimal(p.lengthMm).toFixed(2),
+      qty: p.qty,
+    }));
+    const violation = qtyFloorViolation({
+      kind: facts.kind,
+      unitLabel: unitSymbol(item.unit),
+      qty: nextQty,
+      pieces: nextPieces,
+      registeredPieces: facts.registeredPieces,
+      registeredQty: facts.registeredQty,
+      dispatchedQty: facts.dispatchedQty,
+    });
+    if (violation !== null) throw new BadRequestException(`${at}: ${violation}`);
+    if (
+      nextQty.equals(item.qty.toString()) &&
+      samePieces(nextPieces, item.pieces.map(toPieceLike))
+    ) {
+      throw new BadRequestException(`${at}: la cantidad nueva es la misma de ahora`);
+    }
+
+    const effects: string[] = [];
+    // D-604: la reserva queda en lo que falta fabricar —o despachar, en una línea que sale de
+    // stock—: lo nuevo menos lo ya hecho, en la proporción de la promesa de la línea entera.
+    const done = facts.kind === 'QTY' ? facts.dispatchedQty : facts.registeredQty;
+    // Segundo modelo cc45 (P2-1): con todas las órdenes cerradas, solo subir pide material (y una
+    // OP nueva). Bajar una línea que una OP cerró corta (antes de D-573) no reabre producción.
+    const rising = nextQty.gt(item.qty.toString());
+    const allClosed = facts.orders.length > 0 && !facts.orders.some((o) => o.live);
+    const pending =
+      allClosed && !rising ? new Decimal(0) : Decimal.max(nextQty.minus(done), new Decimal(0));
+    const target = toDecimal(
+      toFixedString(toDecimal(line.reserveQty).times(pending).div(nextQty), 'KG'),
+    );
+    const row = facts.reservations.find(
+      (r) => r.itemType === item.reserveItemType && r.itemId === item.reserveItemId,
+    );
+    const current = row?.status === ReservationStatus.ACTIVE ? row.qty : new Decimal(0);
+    const currentShortfall =
+      row && row.status !== ReservationStatus.RELEASED ? row.shortfallQty : new Decimal(0);
+    const promised = current.plus(currentShortfall);
+    const unit = unitSymbol(line.reserveUnit);
+    const label = await this.reserveLabel(tx, item);
+    let shortfall = new Decimal(0);
+    let reservationId = row?.id ?? null;
+    let released = new Decimal(0);
+    let reserved = new Decimal(0);
+    if (row && target.lt(promised)) {
+      const split = releaseSplit({
+        delta: target.minus(promised),
+        qty: current,
+        shortfall: currentShortfall,
+      });
+      released = split.released;
+      const emptied = split.qty.lte(0) && split.shortfall.lte(0);
+      await tx.reservation.update({
+        where: { id: row.id },
+        // Autorrevisión cc45 (P1-1): de una fila que no está activa solo baja el faltante; su
+        // `qty` es la cifra que una reversa necesita.
+        data:
+          row.status !== ReservationStatus.ACTIVE
+            ? { shortfallQty: split.shortfall.toFixed(3) }
+            : emptied
+              ? {
+                  qty: '0',
+                  shortfallQty: '0',
+                  status: ReservationStatus.RELEASED,
+                  releasedAt: new Date(),
+                  releasedById: actor.id,
+                }
+              : { qty: split.qty.toFixed(3), shortfallQty: split.shortfall.toFixed(3) },
+      });
+      if (released.gt(0)) {
+        effects.push(
+          rising
+            ? `La reserva de ${label} se ajusta a lo que falta fabricar: se liberan ${released.toFixed(3)} ${unit} (lo consumido fue menos que lo teórico).`
+            : `Se libera ${released.toFixed(3)} ${unit} de ${label}: lo que ya no se ${facts.kind === 'QTY' ? 'despacha' : 'produce'}.`,
+        );
+      }
+    } else if (target.gt(promised)) {
+      const result = await this.orders.reserveExtra(
+        tx,
+        actor,
+        order.id,
+        {
+          id: item.id,
+          lineNumber: item.lineNumber,
+          productId: item.productId,
+          reserveItemType: line.reserveItemType,
+          reserveItemId: line.reserveItemId,
+          reserveQty: line.reserveQty,
+          reserveUnit: line.reserveUnit,
+        },
+        target.minus(promised).toFixed(3),
+        { allowShortfall: preview || input.confirmShortfall === true },
+      );
+      reserved = result.reserved;
+      shortfall = result.shortfall;
+      reservationId =
+        reservationId ??
+        (
+          await tx.reservation.findUnique({
+            where: {
+              salesOrderItemId_itemType_itemId: {
+                salesOrderItemId: item.id,
+                itemType: line.reserveItemType,
+                itemId: line.reserveItemId,
+              },
+            },
+            select: { id: true },
+          })
+        )?.id ??
+        null;
+      if (reserved.gt(0) || shortfall.gt(0))
+        effects.push(
+          shortfall.gt(0)
+            ? `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label} y faltan ${shortfall.toFixed(3)} ${unit}: se confirma con faltante y motivo (D-341).`
+            : `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label}: hay disponible.`,
+        );
+      if (
+        reserved.gt(0) &&
+        shortfall.lte(0) &&
+        line.reserveItemType === InventoryItemType.RAW_MATERIAL
+      ) {
+        effects.push(
+          'Si no hubiera material suficiente, se confirma con faltante y motivo (D-341).',
+        );
+      }
+    }
+
+    const orderEffects = await this.followPlan(
+      tx,
+      actor,
+      item,
+      facts,
+      nextQty,
+      nextPieces,
+      reservationId,
+      rising,
+      preview,
+    );
+    effects.unshift(...orderEffects.effects);
+
+    await tx.salesOrderItemPiece.deleteMany({ where: { salesOrderItemId: item.id } });
+    await tx.salesOrderItem.update({
+      where: { id: item.id },
+      data: {
+        description: line.description,
+        qty: line.qty,
+        subtotalPen: line.subtotalPen,
+        igvPen: line.igvPen,
+        totalPen: line.totalPen,
+        reserveQty: line.reserveQty,
+        ...(line.pieces.length > 0
+          ? {
+              pieces: {
+                create: line.pieces.map((p) => ({
+                  lineNumber: p.lineNumber,
+                  lengthMm: p.lengthMm,
+                  qty: p.qty,
+                })),
+              },
+            }
+          : {}),
+      },
+    });
+    const totals = await this.refreshTotals(tx, order.id);
+    await this.refreshFulfillment(tx, order.id);
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'sales.order.item-qty',
+      entity: 'sales_orders',
+      entityId: order.id,
+      before: {
+        code: salesOrderCode(order.seq),
+        lineNumber: item.lineNumber,
+        qty: item.qty.toString(),
+        pieces: describePieces(item.pieces.map(toPieceLike)),
+        totalPen: item.totalPen.toFixed(4),
+        orderTotalPen: orderTotalBefore.toFixed(2),
+        reserveQty: item.reserveQty.toString(),
+        reservation: { qty: current.toFixed(3), shortfallQty: currentShortfall.toFixed(3) },
+      },
+      after: {
+        qty: line.qty,
+        pieces: describePieces(nextPieces),
+        totalPen: line.totalPen,
+        orderTotalPen: totals.totalPen,
+        reserveQty: line.reserveQty,
+        registeredQty: facts.registeredQty.toFixed(3),
+        dispatchedQty: facts.dispatchedQty.toFixed(3),
+        reservation: {
+          releasedQty: released.toFixed(3),
+          reservedQty: reserved.toFixed(3),
+          shortfallQty: shortfall.toFixed(3),
+          unit: line.reserveUnit,
+        },
+        productionOrders: orderEffects.audit,
+      },
+      ...(input.reason !== undefined ? { reason: input.reason } : {}),
+    });
+    return this.outcome(
+      item,
+      facts.kind,
+      line,
+      totals.totalPen,
+      orderTotalBefore,
+      effects,
+      shortfall,
+      facts.kind === 'QTY' ? null : facts.registeredQty,
+    );
+  }
+
+  /**
+   * D-604: el plan de la OP viva sigue a la cantidad nueva —lo nuevo menos lo que registraron las
+   * órdenes cerradas de la línea—; sin OP viva y con lo registrado por debajo de lo nuevo, nace
+   * una orden por la diferencia por el camino de siempre (D-084/D-186). Las bobinas montadas no
+   * cambian.
+   */
+  private async followPlan(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    item: QtyItem,
+    facts: QtyFacts,
+    nextQty: Decimal,
+    nextPieces: PieceLike[],
+    reservationId: string | null,
+    rising: boolean,
+    preview: boolean,
+  ): Promise<{ effects: string[]; audit: Record<string, string>[] }> {
+    if (facts.kind === 'QTY') return { effects: [], audit: [] };
+    const at = `Línea ${item.lineNumber}`;
+    const lengthMm = item.product.lengthMm === null ? null : item.product.lengthMm.toFixed(2);
+    const live = facts.orders.filter((o) => o.live);
+    if (live.length > 1) {
+      throw new BadRequestException(
+        `${at}: tiene más de una orden viva (${live.map((o) => productionOrderCode(o.seq)).join(', ')}): deja una sola antes de cambiar la cantidad`,
+      );
+    }
+    const planFor = (minus: PieceLike[], minusQty: Decimal): PieceLike[] => {
+      if (facts.kind === 'PIECES') return piecesMinus(nextPieces, minus);
+      if (facts.kind === 'UNITS') {
+        return derivePiecesPlan([], lengthMm, Decimal.max(nextQty.minus(minusQty), 0).toString());
+      }
+      return [];
+    };
+    const op = live[0];
+    if (op) {
+      const code = productionOrderCode(op.seq);
+      let planAfter: Decimal;
+      if (facts.kind === 'METERS') {
+        planAfter = Decimal.max(nextQty.minus(facts.registeredClosedQty), new Decimal(0));
+      } else {
+        const plan = planFor(facts.registeredClosedPieces, facts.registeredClosedQty);
+        planAfter = piecesMeters(plan);
+        if (planAfter.gt(0)) {
+          await tx.productionOrderItem.deleteMany({ where: { productionOrderId: op.id } });
+          await tx.productionOrderItem.createMany({
+            data: plan.map((p, i) => ({
+              productionOrderId: op.id,
+              lineNumber: i + 1,
+              lengthMm: p.lengthMm,
+              qty: p.qty,
+            })),
+          });
+        }
+      }
+      if (planAfter.lte(0)) {
+        throw new BadRequestException(
+          `${at}: la orden ${code} quedaría sin nada que fabricar: anúlala antes de bajar la cantidad`,
+        );
+      }
+      const ready = planAfter.equals(op.registeredMeters);
+      return {
+        effects: [
+          `El plan de ${code} pasa de ${op.planMeters.toFixed(3)} m a ${planAfter.toFixed(3)} m${
+            ready ? ': igual a lo registrado, la orden queda lista para «Registrar y cerrar».' : '.'
+          }`,
+        ],
+        audit: [
+          {
+            code,
+            action: 'PLAN',
+            planMetersBefore: op.planMeters.toFixed(3),
+            planMetersAfter: planAfter.toFixed(3),
+          },
+        ],
+      };
+    }
+    // Solo subir abre una orden nueva (segundo modelo cc45, P2-1).
+    if (facts.orders.length === 0 || !rising || nextQty.lte(facts.registeredQty))
+      return { effects: [], audit: [] };
+    // Todas las órdenes de la línea están cerradas y lo nuevo pasa lo registrado.
+    const plan = planFor(facts.registeredPieces, facts.registeredQty);
+    if (facts.kind !== 'METERS' && piecesCount(plan) === 0) return { effects: [], audit: [] };
+    if (reservationId === null) {
+      throw new BadRequestException(
+        `${at}: no tiene reserva de materia prima de la que colgar una orden nueva`,
+      );
+    }
+    const meters =
+      facts.kind === 'METERS' ? nextQty.minus(facts.registeredQty) : piecesMeters(plan);
+    // Autorrevisión cc45 (P2-1): la vista previa no crea la orden —el correlativo de una OP no
+    // vuelve con el rollback—; dice que nace una, sin código.
+    let code = 'una orden nueva';
+    if (!preview) {
+      const id = await this.roofing.createFromReservationInTx(tx, actor, {
+        reservationId,
+        operationDate: businessToday(),
+        notes: `Diferencia del cambio de cantidad de la línea ${String(item.lineNumber)}`,
+        plan,
+      });
+      const created = await tx.productionOrder.findUniqueOrThrow({
+        where: { id },
+        select: { seq: true },
+      });
+      code = productionOrderCode(created.seq);
+    }
+    return {
+      effects: [
+        facts.kind === 'METERS'
+          ? `Nace ${code} por la diferencia: ${meters.toFixed(3)} m.`
+          : `Nace ${code} por la diferencia: ${String(piecesCount(plan))} planchas, ${meters.toFixed(3)} m.`,
+      ],
+      audit: [{ code, action: 'CREATED', planMeters: meters.toFixed(3) }],
+    };
+  }
+
+  /** Qué reserva la línea, en palabras: el agregado de materia prima o el SKU. */
+  private async reserveLabel(tx: Prisma.TransactionClient, item: QtyItem): Promise<string> {
+    if (item.reserveItemType === InventoryItemType.RAW_MATERIAL) {
+      const labels = await rawMaterialSpecLabels(tx, [item.reserveItemId]);
+      return labels.get(item.reserveItemId) ?? 'la materia prima';
+    }
+    return item.product.sku;
+  }
+
+  /**
+   * Con algo despachado, el estado del pedido se recalcula con la cantidad nueva: bajar hasta lo
+   * despachado lo atiende entero, subir lo reabre. La misma regla que `recomputeOrderStatus` de
+   * los despachos (D-167: una línea de servicio no espera despacho). Sin despachos no se toca.
+   */
+  private async refreshFulfillment(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
+    const order = await tx.salesOrder.findUniqueOrThrow({
+      where: { id: orderId },
+      select: {
+        status: true,
+        items: {
+          select: {
+            id: true,
+            qty: true,
+            product: { select: { businessLine: { select: { inventoryStrategy: true } } } },
+          },
+        },
+      },
+    });
+    const rows = await tx.dispatchItem.groupBy({
+      by: ['salesOrderItemId'],
+      where: {
+        salesOrderItemId: { in: order.items.map((i) => i.id) },
+        dispatch: { status: DispatchStatus.ISSUED },
+      },
+      _sum: { qty: true },
+    });
+    const dispatched = new Map(
+      rows.map((r) => [r.salesOrderItemId, toDecimal((r._sum.qty ?? 0).toString())]),
+    );
+    if (![...dispatched.values()].some((q) => q.gt(0))) return;
+    const complete = order.items
+      .filter((i) => carriesInventory(i.product.businessLine))
+      .every((i) => (dispatched.get(i.id) ?? new Decimal(0)).gte(i.qty.toString()));
+    const next = complete ? SalesOrderStatus.FULFILLED : SalesOrderStatus.PARTIALLY_FULFILLED;
+    if (next !== order.status) {
+      await tx.salesOrder.update({ where: { id: orderId }, data: { status: next } });
+    }
+  }
+
+  /** Lo que la acción devuelve y la vista previa muestra. */
+  private outcome(
+    item: QtyItem,
+    kind: QtyChangeKind,
+    line: { qty: string; totalPen: string; pieces: readonly PieceLike[] },
+    orderTotalAfter: string,
+    orderTotalBefore: Prisma.Decimal,
+    effects: string[],
+    shortfall: Decimal,
+    /** Lo registrado, en la unidad de la línea; `null` si la línea no se produce. */
+    registered: Decimal | null = null,
+  ): QtyOutcome {
+    const qty = toDecimal(line.qty);
+    const before = toDecimal(item.qty.toString());
+    const unit = unitSymbol(item.unit);
+    const piecesNow = piecesCount(line.pieces);
+    const lineText =
+      kind === 'PIECES'
+        ? `${qty.toFixed(3)} m, ${String(piecesNow)} planchas`
+        : kind === 'UNITS'
+          ? `${qty.toFixed(0)} planchas`
+          : `${qty.toFixed(3)} ${unit}`;
+    const atRegistered = registered !== null && registered.gt(0) && qty.equals(registered);
+    // Como en el tablero: «se agregan 6 planchas de 3.00 m», «se quitan 10 planchas de 2.40 m».
+    const changes =
+      kind === 'PIECES' ? piecesChanges(item.pieces.map(toPieceLike), line.pieces) : [];
+    const lineEffect = atRegistered
+      ? `La línea queda en ${lineText}: igual a lo registrado.`
+      : `La línea ${qty.gt(before) ? 'sube' : 'baja'} a ${lineText}${changes.length > 0 ? `: ${changes.join(', ')}` : ''}.`;
+    const totalBefore = toDecimal(orderTotalBefore.toString());
+    const totalAfter = toDecimal(orderTotalAfter);
+    const per = kind === 'PIECES' || kind === 'METERS' ? 'metro' : 'unidad';
+    return {
+      qty: qty.toFixed(3),
+      meters: kind === 'PIECES' || kind === 'METERS' ? qty.toFixed(3) : null,
+      pieces: kind === 'PIECES' ? piecesNow : kind === 'UNITS' ? qty.toNumber() : null,
+      totalPen: toDecimal(line.totalPen).toFixed(2),
+      orderTotalPen: totalAfter.toFixed(2),
+      effects: [
+        lineEffect,
+        ...effects,
+        `El total del pedido ${totalAfter.gt(totalBefore) ? 'sube' : 'baja'} de S/ ${formatPen(totalBefore)} a S/ ${formatPen(totalAfter)}. El precio por ${per} no cambia.`,
+      ],
+      shortfallQty: shortfall.gt(0) ? shortfall.toFixed(3) : null,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -937,18 +1779,7 @@ export class SalesOrderEditsService {
   private async requireItem(tx: Prisma.TransactionClient, orderId: string, itemId: string) {
     const item = await tx.salesOrderItem.findFirst({
       where: { id: itemId, salesOrderId: orderId },
-      include: {
-        product: {
-          select: {
-            businessLineId: true,
-            lengthMm: true,
-            sku: true,
-            name: true,
-            businessLine: { select: { code: true } },
-          },
-        },
-        pieces: { orderBy: { lineNumber: 'asc' } },
-      },
+      include: ITEM_INCLUDE,
     });
     if (!item) throw new NotFoundException('Línea del pedido no encontrada');
     return item;

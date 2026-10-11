@@ -97,10 +97,14 @@ function build(
         sellerId: null,
         notes: opts.notes === undefined ? IMPORTED : opts.notes,
       }),
+      // cc45: el total del pedido antes del cambio, para «Qué va a pasar».
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ totalPen: D('13824.0000') }),
       update: jest.fn().mockResolvedValue({}),
     },
     dispatchItem: {
       findFirst: jest.fn().mockResolvedValue(opts.dispatched ? { id: 'd-1' } : null),
+      // cc45 (D-603): lo despachado de la línea es el piso de la cantidad.
+      aggregate: jest.fn().mockResolvedValue({ _sum: { qty: opts.dispatched ? D('1') : null } }),
     },
     reservation: {
       // cc30: los ids de las reservas de la línea, para tomarlas por la puerta.
@@ -419,6 +423,8 @@ describe('D-341: cambiar la cantidad de una línea con faltante de material', ()
     id: 'res-1',
     status,
     itemType: InventoryItemType.RAW_MATERIAL,
+    itemId: 'r-1',
+    qty: D('0'),
     shortfallQty: D(shortfallQty),
     productionOrders: [],
   });

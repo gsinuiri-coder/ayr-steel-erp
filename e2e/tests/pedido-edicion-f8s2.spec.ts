@@ -286,22 +286,41 @@ test.describe('F8-S2 — edición del pedido confirmado (D-187)', () => {
       expect(short.status).toBe(400);
       expect(await availableKg(api, s)).toBe('378.800');
 
-      // La línea 1 se produce: con un reporte vigente su cantidad ya no se toca, y el mensaje
-      // manda a agregar un ítem.
+      // La línea 1 se produce. cc45 (D-603): con un reporte vigente la cantidad se sigue
+      // cambiando, pero con motivo y nunca por debajo de lo registrado.
       const line1 = (await reservationsOf(api, order.id)).find(
         (r) => r.salesOrderItemId === order.items[0]!.id && r.status === 'ACTIVE',
       );
       const line1Op = line1!.productionOrderId!;
       await mountCoil(api, line1Op, { coilId: s.coil.id });
       await reportPieces(api, line1Op, { pieces: pieces([10, 1]), coilId: s.coil.id });
-      const reported = await patchExpectingError(
+      const line1Url = `/api/sales/orders/${order.id}/items/${order.items[0]!.id}/qty`;
+      const noReason = await patchExpectingError(api, line1Url, {
+        qty: metersOf(longer),
+        pieces: longer,
+      });
+      expect(noReason.status).toBe(400);
+      expect(noReason.message).toContain('el motivo es obligatorio');
+      const below = await patchExpectingError(api, line1Url, {
+        qty: metersOf(pieces([5, 1])),
+        pieces: pieces([5, 1]),
+        reason: 'El cliente redujo el pedido',
+      });
+      expect(below.status).toBe(400);
+      expect(below.message).toContain('El largo 10.00 m no puede bajar de 1 planchas');
+      // La única bobina está montada en esta orden: subir pide confirmar con faltante (D-341).
+      const raised = await patchJson<SalesOrderDto>(api, line1Url, {
+        qty: metersOf(longer),
+        pieces: longer,
+        reason: 'El cliente amplió el pedido',
+        confirmShortfall: true,
+      });
+      expect(raised.items[0]).toMatchObject({ qty: '20.000' });
+      const op1 = await getJson<{ items: { lengthMm: string; qty: number }[] }>(
         api,
-        `/api/sales/orders/${order.id}/items/${order.items[0]!.id}/qty`,
-        { qty: metersOf(longer), pieces: longer },
+        `/api/production/${line1Op}`,
       );
-      expect(reported.status).toBe(400);
-      expect(reported.message).toContain('reportes de producción');
-      expect(reported.message).toContain('Agrega un ítem');
+      expect(op1.items).toEqual([expect.objectContaining({ lengthMm: '10000.00', qty: 2 })]);
     } finally {
       await purgeRoofingTrail(api, trail);
     }

@@ -78,6 +78,7 @@ import { CoilsService } from '../coils/coils.service';
 import { ENV, type Env } from '../config/env';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
+import { accessoryPlanMeters, accessoryPlans } from './accessory-plan';
 import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
@@ -266,7 +267,16 @@ export class RoofingProductionService {
   async createFromReservationInTx(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
-    input: { reservationId: string; operationDate: string; notes: string | null },
+    input: {
+      reservationId: string;
+      operationDate: string;
+      notes: string | null;
+      /**
+       * cc45 (D-604): el plan de una orden nueva **por la diferencia** cuando la línea ya tenía
+       * una orden cerrada. Sin esto, el plan es lo que encargó la línea entera (D-084).
+       */
+      plan?: readonly PieceLike[];
+    },
   ): Promise<string> {
     // Lock antes de mirar: sin él, dos altas concurrentes pasaban las dos el chequeo de
     // "reserva ya tomada" y el material quedaba prometido a dos órdenes. cc30 (D-472): la reserva
@@ -357,14 +367,16 @@ export class RoofingProductionService {
     // D-122), así que el plan se deriva de la cantidad pedida y de ese largo. Misma
     // función que usa la cola de Fase 7 para mostrar los mismos subítems antes de que
     // esta OP exista (D-093).
-    const items = derivePiecesPlan(
-      reservation.salesOrderItem.pieces.map((p) => ({
-        lengthMm: p.lengthMm.toFixed(2),
-        qty: p.qty,
-      })),
-      roofing.lengthMm === null ? null : roofing.lengthMm.toFixed(2),
-      reservation.salesOrderItem.qty.toString(),
-    );
+    const items = input.plan
+      ? input.plan.map((p, i) => ({ lineNumber: i + 1, lengthMm: p.lengthMm, qty: p.qty }))
+      : derivePiecesPlan(
+          reservation.salesOrderItem.pieces.map((p) => ({
+            lengthMm: p.lengthMm.toFixed(2),
+            qty: p.qty,
+          })),
+          roofing.lengthMm === null ? null : roofing.lengthMm.toFixed(2),
+          reservation.salesOrderItem.qty.toString(),
+        );
 
     const order = await tx.productionOrder.create({
       data: {
@@ -1215,7 +1227,7 @@ export class RoofingProductionService {
     // cierra solo con esos metros exactos, así que un reporte que los pasa dejaría la orden sin
     // poder cerrarse nunca: se rechaza igual que en una cobertura con plan.
     if (accessory && order.reservationId) {
-      const orderedMl = await accessoryOrderedMeters(tx, order.reservationId);
+      const orderedMl = await accessoryPlanMeters(tx, order.id, order.reservationId);
       const reportedBeforeMl = liveReportRows.reduce(
         (acc, r) => (r.metersM === null ? acc : acc.plus(toDecimal(r.metersM.toString()))),
         new Decimal(0),
@@ -1579,6 +1591,7 @@ export class RoofingProductionService {
         reservation: {
           select: {
             // D-343: los metros que encargó la línea, que en un accesorio son el «plan».
+            salesOrderItemId: true,
             salesOrderItem: { select: { qty: true } },
             salesOrder: {
               select: {
@@ -1647,6 +1660,23 @@ export class RoofingProductionService {
           ).map((m) => [m.refId, m.itemId]),
     );
 
+    // D-605 (cc45): el plan de cada accesorio descuenta lo que registraron las otras órdenes de su
+    // línea. Una consulta para todo el lote, y ninguna sin accesorios.
+    const plans = await accessoryPlans(
+      this.prisma,
+      orders.flatMap((o) =>
+        isAccessory(o.product) && o.reservation?.salesOrderItem
+          ? [
+              {
+                orderId: o.id,
+                salesOrderItemId: o.reservation.salesOrderItemId,
+                lineQty: toDecimal(o.reservation.salesOrderItem.qty.toString()),
+              },
+            ]
+          : [],
+      ),
+    );
+
     const rows = orders.map((order): RoofingBatchOrderDto => {
       const planPieces = order.items.map(toPieceLike);
       const reportedPieces = order.reports.flatMap((r) => r.piecesDetail.map(toPieceLike));
@@ -1659,7 +1689,7 @@ export class RoofingProductionService {
       // detalle de largos. Se expresan en los mismos campos para que la pantalla los muestre sin
       // un segundo camino.
       const accessory = isAccessory(order.product);
-      const accessoryOrdered = toDecimal(order.reservation?.salesOrderItem?.qty.toString() ?? '0');
+      const accessoryOrdered = plans.get(order.id) ?? new Decimal(0);
       const accessoryReported = order.reports.reduce(
         (acc, r) => (r.metersM === null ? acc : acc.plus(toDecimal(r.metersM.toString()))),
         new Decimal(0),
@@ -1794,6 +1824,8 @@ export class RoofingProductionService {
             name: true,
             thicknessMm: true,
             widthMm: true,
+            // D-605: un accesorio en cola muestra los metros de su línea, no un plan vacío.
+            roofingKind: true,
             color: { select: { name: true } },
             finish: { select: { densityFactor: true } },
           },
@@ -1801,6 +1833,8 @@ export class RoofingProductionService {
         items: { orderBy: { lineNumber: 'asc' }, select: { lengthMm: true, qty: true } },
         reservation: {
           select: {
+            salesOrderItemId: true,
+            salesOrderItem: { select: { qty: true } },
             salesOrder: {
               select: {
                 id: true,
@@ -1819,6 +1853,20 @@ export class RoofingProductionService {
     const actors = await resolveActorNames(
       this.prisma,
       orders.map((o) => o.priorityById).filter((id): id is string => id !== null),
+    );
+    const plans = await accessoryPlans(
+      this.prisma,
+      orders.flatMap((o) =>
+        isAccessory(o.product) && o.reservation?.salesOrderItem
+          ? [
+              {
+                orderId: o.id,
+                salesOrderItemId: o.reservation.salesOrderItemId,
+                lineQty: toDecimal(o.reservation.salesOrderItem.qty.toString()),
+              },
+            ]
+          : [],
+      ),
     );
 
     const today = businessToday();
@@ -1856,7 +1904,7 @@ export class RoofingProductionService {
         colorName: product.color?.name ?? null,
         thicknessMm: product.thicknessMm?.toFixed(2) ?? null,
         planItems,
-        planMeters: piecesMeters(planItems).toFixed(3),
+        planMeters: (plans.get(order.id) ?? piecesMeters(planItems)).toFixed(3),
         theoreticalKg: geometry ? roofingTheoreticalKg(geometry, planItems).toFixed(3) : null,
         promisedDeliveryDate,
         semaphore: queueSemaphore(promisedDeliveryDate, today),
@@ -3300,7 +3348,7 @@ export class RoofingProductionService {
     }
     const planMeters =
       accessory && order.reservationId !== null
-        ? await accessoryOrderedMeters(tx, order.reservationId)
+        ? await accessoryPlanMeters(tx, order.id, order.reservationId)
         : piecesMeters(planRows.map(toPieceLike));
     const { missing, excess } = roofingPlanGap(
       planMeters,
@@ -3358,18 +3406,6 @@ function registeredByCoil(
       .map(([lengthMm, qty], i) => ({ lineNumber: i + 1, lengthMm, qty })),
     reportedMeters: (sumReportedMeters(reports) ?? new Decimal(0)).toFixed(3),
   };
-}
-
-/** D-343: el «plan» de un accesorio son los metros que encargó la línea del pedido. */
-async function accessoryOrderedMeters(
-  tx: Prisma.TransactionClient,
-  reservationId: string,
-): Promise<Decimal> {
-  const reservation = await tx.reservation.findUniqueOrThrow({
-    where: { id: reservationId },
-    select: { salesOrderItem: { select: { qty: true } } },
-  });
-  return toDecimal(reservation.salesOrderItem.qty.toString());
 }
 
 /** Fila persistida de largos → la forma mínima que la aritmética compartida necesita. */

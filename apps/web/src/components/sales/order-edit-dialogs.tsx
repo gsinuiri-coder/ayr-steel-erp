@@ -6,10 +6,8 @@ import { errorMessage, toast } from '@/lib/notify';
 import {
   BusinessLine,
   COIL_SKU_PREFIX,
-  detailsLengths,
   lineAmounts,
   money,
-  piecesMeters,
   salePriceFromValue,
   saleValueFromPrice,
   toFixedString,
@@ -29,8 +27,6 @@ import {
   isPositiveDecimal,
   unitSymbol,
 } from '@/lib/format';
-import { EMPTY_PIECE_ROW, mmToMeters, parsePieceRows, type PieceRow } from '@/lib/pieces';
-import { invalidateProduction } from '@/lib/production-queries';
 import { invalidateSales } from '@/lib/sales-queries';
 import { SearchSelectField } from '@/components/search-select-modal';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -273,199 +269,6 @@ export function EditLinePriceDialog({
             onClick={submit}
           >
             Guardar precio
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
- * D-187: nueva cantidad de una línea confirmada. Una línea a medida se edita por sus largos
- * (D-083) y la cantidad sale de la suma. El API la rechaza si la línea ya tiene reportes de
- * producción o despachos, y el mensaje dice que se agregue un ítem con la diferencia.
- */
-export function EditLineQtyDialog({
-  order,
-  item,
-  onOpenChange,
-}: {
-  order: SalesOrderDto;
-  item: SalesItemDto | null;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const queryClient = useQueryClient();
-  const [qty, setQty] = useState('');
-  const [rows, setRows] = useState<PieceRow[]>([EMPTY_PIECE_ROW]);
-  const [error, setError] = useState<string | null>(null);
-  // Todo lo que se muestra sale de esto, no de `item` directo: ver el comentario en
-  // `EditLinePriceDialog`. Acá importa más que en el de precio — sin esto, `byPieces` caía a
-  // `false` al cerrar y el formulario cambiaba de "planchas por largo" a un campo de cantidad
-  // simple (o al revés) en plena animación de salida.
-  const [lastItem, setLastItem] = useState<SalesItemDto | null>(null);
-  // Regla dura 13 (D-131/D-343): el desglose de largos lo decide `detailsLengths` —la unidad `MTR`
-  // **y** que no sea un accesorio—, no que la línea los haya traído. Un accesorio cambia su
-  // cantidad (metros de bobina) con un campo simple, sin largos.
-  const byPieces =
-    lastItem !== null &&
-    detailsLengths({ unit: lastItem.unit, roofingKind: lastItem.productRoofingKind });
-
-  useEffect(() => {
-    if (item) {
-      setLastItem(item);
-      setQty(item.qty);
-      setRows(
-        item.pieces.length > 0
-          ? item.pieces.map((p) => ({ lengthM: mmToMeters(p.lengthMm), qty: String(p.qty) }))
-          : [EMPTY_PIECE_ROW],
-      );
-      setError(null);
-    }
-  }, [item]);
-
-  const save = useMutation({
-    mutationFn: (body: unknown) =>
-      api<SalesOrderDto>(`/sales/orders/${order.id}/items/${item?.id ?? ''}/qty`, {
-        method: 'PATCH',
-        body,
-      }),
-    onSuccess: () => {
-      toast.success('Cantidad actualizada');
-      invalidateSales(queryClient, { orderId: order.id });
-      // El plan de corte de la OP cambió con la cantidad.
-      invalidateProduction(queryClient);
-      onOpenChange(false);
-    },
-    onError: (err) => {
-      setError(errorText(err));
-    },
-  });
-
-  function submit(): void {
-    if (save.isPending || !item) return;
-    if (byPieces) {
-      const parsed = parsePieceRows(rows);
-      if (!parsed.ok) {
-        setError(parsed.reason);
-        return;
-      }
-      save.mutate({
-        qty: piecesMeters(parsed.pieces).toFixed(3),
-        pieces: parsed.pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })),
-      });
-      return;
-    }
-    if (!isPositiveDecimal(qty)) {
-      setError('La cantidad debe ser mayor a cero');
-      return;
-    }
-    save.mutate({ qty: toFixedString(qty, 'KG') });
-  }
-
-  function patchRow(i: number, patch: Partial<PieceRow>): void {
-    setRows((current) => current.map((r, j) => (i === j ? { ...r, ...patch } : r)));
-    setError(null);
-  }
-
-  return (
-    <Dialog open={item !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            Cambiar cantidad · L{lastItem?.lineNumber} {lastItem?.productSku}
-          </DialogTitle>
-          <DialogDescription>
-            Ajusta la reserva de material y, si la línea se fabrica, el plan de corte de su orden.
-            Solo mientras la orden no tenga reportes de producción y la línea no tenga despachos.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-2">
-          {byPieces ? (
-            <>
-              <span className="text-sm font-medium">Planchas (cantidad × largo en metros)</span>
-              {rows.map((row, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Input
-                    className="w-24"
-                    inputMode="numeric"
-                    aria-label={`Planchas del largo ${String(i + 1)}`}
-                    value={row.qty}
-                    onChange={(e) => {
-                      patchRow(i, { qty: e.target.value });
-                    }}
-                  />
-                  <span className="text-muted-foreground">×</span>
-                  <Input
-                    className="w-28"
-                    inputMode="decimal"
-                    aria-label={`Largo ${String(i + 1)} en metros`}
-                    value={row.lengthM}
-                    onChange={(e) => {
-                      patchRow(i, { lengthM: e.target.value });
-                    }}
-                  />
-                  <span className="text-muted-foreground">m</span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-9"
-                    aria-label={`Quitar el largo ${String(i + 1)}`}
-                    disabled={rows.length === 1}
-                    onClick={() => {
-                      setRows((current) => current.filter((_, j) => j !== i));
-                    }}
-                  >
-                    ✕
-                  </Button>
-                </div>
-              ))}
-              <Button
-                variant="outline"
-                size="sm"
-                className="justify-self-start"
-                onClick={() => {
-                  setRows((current) => [...current, EMPTY_PIECE_ROW]);
-                }}
-              >
-                Agregar largo
-              </Button>
-            </>
-          ) : (
-            <>
-              <Label htmlFor="line-qty">Cantidad ({unitSymbol(lastItem?.unit ?? '')})</Label>
-              <Input
-                id="line-qty"
-                inputMode="decimal"
-                value={qty}
-                onChange={(e) => {
-                  setQty(e.target.value);
-                  setError(null);
-                }}
-              />
-            </>
-          )}
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-        </div>
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => {
-              onOpenChange(false);
-            }}
-          >
-            Cancelar
-          </Button>
-          <Button
-            disabled={save.isPending}
-            pending={save.isPending}
-            pendingText="Guardando…"
-            onClick={submit}
-          >
-            Guardar cantidad
           </Button>
         </DialogFooter>
       </DialogContent>

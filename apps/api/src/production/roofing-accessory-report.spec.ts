@@ -104,13 +104,15 @@ function build(setup: Setup) {
     productionOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
     productionReport: {
       count: jest.fn().mockResolvedValue(0),
-      findMany: jest
-        .fn()
-        .mockResolvedValue(
-          setup.reportedMl === undefined
+      // D-605 (cc45): la consulta de las órdenes hermanas de la línea (filtra por
+      // `productionOrder`) no encuentra ninguna.
+      findMany: jest.fn((args?: { where?: { productionOrder?: unknown } }) =>
+        Promise.resolve(
+          args?.where?.productionOrder !== undefined || setup.reportedMl === undefined
             ? []
             : [{ consumedKg: null, metersM: D(setup.reportedMl), piecesDetail: [] }],
         ),
+      ),
       create: jest.fn((args: { data: Record<string, unknown> }) => {
         created.push(args.data);
         return Promise.resolve({ id: 'rep-1' });

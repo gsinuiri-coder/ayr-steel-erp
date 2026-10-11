@@ -108,10 +108,14 @@ function harness(setup: Setup) {
     },
     productionReport: {
       count: jest.fn(() => Promise.resolve(reports.length)),
-      findMany: jest.fn((args: { where?: { id?: { in?: string[] } } }) => {
-        const ids = args.where?.id?.in;
-        return Promise.resolve(ids ? reports.filter((r) => ids.includes(r.id)) : reports);
-      }),
+      findMany: jest.fn(
+        (args: { where?: { id?: { in?: string[] }; productionOrder?: unknown } }) => {
+          // D-605 (cc45): la consulta de las órdenes hermanas de la línea no encuentra ninguna.
+          if (args.where?.productionOrder !== undefined) return Promise.resolve([]);
+          const ids = args.where?.id?.in;
+          return Promise.resolve(ids ? reports.filter((r) => ids.includes(r.id)) : reports);
+        },
+      ),
     },
     productionReportDraft: {
       count: jest.fn(() => Promise.resolve(0)),
@@ -141,6 +145,7 @@ function harness(setup: Setup) {
     },
     reservation: {
       findUniqueOrThrow: jest.fn().mockResolvedValue({
+        salesOrderItemId: 'it-1',
         salesOrderItem: { qty: D(setup.orderedMeters ?? '0') },
       }),
     },

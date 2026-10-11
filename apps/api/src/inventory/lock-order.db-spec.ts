@@ -108,6 +108,9 @@ let customerId = '';
 let supplierId = '';
 let roofingFinishId = '';
 let redColorId = '';
+/** cc45: el segundo color (y su acabado) de `nextRoofingSpec`, cuando el rojo llega al tope. */
+let blueColorId = '';
+let blueFinishId = '';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const letters = (n: number) =>
@@ -149,6 +152,7 @@ beforeAll(async () => {
     await prisma.businessLine.findUniqueOrThrow({ where: { code: 'METALLIC_ROOFING' } })
   ).id;
   redColorId = (await prisma.color.findUniqueOrThrow({ where: { code: 'ROJO' } })).id;
+  blueColorId = (await prisma.color.findUniqueOrThrow({ where: { code: 'AZUL' } })).id;
   supplierId = (
     await suppliers.create(
       admin,
@@ -181,6 +185,19 @@ beforeAll(async () => {
         densityFactor: '8',
         kind: 'PREPINTADO',
         colorId: redColorId,
+        businessLine: 'metallic-roofing',
+      }),
+    )
+  ).id;
+  blueFinishId = (
+    await finishes.create(
+      admin,
+      createFinishSchema.parse({
+        code: `E${letters(5)}`,
+        name: 'Acabado cc45 azul',
+        densityFactor: '8',
+        kind: 'PREPINTADO',
+        colorId: blueColorId,
         businessLine: 'metallic-roofing',
       }),
     )
@@ -255,7 +272,10 @@ async function productPurchase(productIds: string[], qty = '100'): Promise<strin
 }
 
 /** Una bobina de coberturas (ROJO, espesor dado) comprada y recibida en su propia compra. */
-async function roofingCoil(thicknessMm: string): Promise<{ coilId: string; purchaseId: string }> {
+async function roofingCoil(
+  thicknessMm: string,
+  finishId = roofingFinishId,
+): Promise<{ coilId: string; purchaseId: string }> {
   const purchase = await purchases.create(
     admin,
     createPurchaseSchema.parse({
@@ -274,7 +294,7 @@ async function roofingCoil(thicknessMm: string): Promise<{ coilId: string; purch
           qty: '2000',
           unit: 'KGM',
           unitPrice: '5',
-          finishId: roofingFinishId,
+          finishId,
           widthMm: '1000',
           thicknessMm,
           coilStatus: 'OPEN',
@@ -340,16 +360,34 @@ function cancelPurchase(purchaseId: string) {
  * espesor propio para que los agregados de iteraciones distintas no se mezclen.
  */
 let thicknessStep = 0;
+/** Agregados por vuelta de color: de 0,33 a 9,90 mm en pasos de 0,03 (tope del SKU, 9,99). */
+const SPECS_PER_COLOR = 320;
+/**
+ * cc45: el agregado de cada caso (espesor + color + acabado). cc29 los separó por espesor; la
+ * corrida pasó los 320 espesores que caben bajo el tope y la vuelta siguiente sigue en azul, que es
+ * otro agregado aunque repita espesores.
+ */
+function nextRoofingSpec(): { thicknessMm: string; colorId: string; finishId: string } {
+  thicknessStep += 1;
+  const lap = Math.floor((thicknessStep - 1) / SPECS_PER_COLOR);
+  const index = ((thicknessStep - 1) % SPECS_PER_COLOR) + 1;
+  if (lap > 1) throw new Error('lock-order: se acabaron los agregados de prueba (dos colores)');
+  return {
+    thicknessMm: (0.3 + index * 0.03).toFixed(2),
+    colorId: lap === 0 ? redColorId : blueColorId,
+    finishId: lap === 0 ? roofingFinishId : blueFinishId,
+  };
+}
 async function roofingAggregate(coils: number): Promise<{
   coils: { coilId: string; purchaseId: string }[];
   productionOrderId: string;
   /** cc30: el pedido que dejó la confirmación, para los pares entre documentos. */
   salesOrder: SalesOrderDto;
 }> {
-  thicknessStep += 1;
   // cc29: paso de 0,03 mm (más que la tolerancia de ±0,02 de D-086, así los agregados no se
   // mezclan). Con 0,05 los ~240 agregados de la corrida pasaban de 9,99 mm, el tope del SKU.
-  const thicknessMm = (0.3 + thicknessStep * 0.03).toFixed(2);
+  const spec = nextRoofingSpec();
+  const thicknessMm = spec.thicknessMm;
   const product = await catalog.create(
     admin,
     createProductSchema.parse({
@@ -359,15 +397,15 @@ async function roofingAggregate(coils: number): Promise<{
       unit: 'MTR',
       source: 'MANUFACTURED',
       listPricePen: '30',
-      finishId: roofingFinishId,
-      colorId: redColorId,
+      finishId: spec.finishId,
+      colorId: spec.colorId,
       thicknessMm,
       widthMm: '1000',
       roofingKind: 'A_MEDIDA',
     }),
   );
   const made: { coilId: string; purchaseId: string }[] = [];
-  for (let i = 0; i < coils; i++) made.push(await roofingCoil(thicknessMm));
+  for (let i = 0; i < coils; i++) made.push(await roofingCoil(thicknessMm, spec.finishId));
   const quotation = await quotations.create(
     admin,
     createQuotationSchema.parse({
@@ -1127,15 +1165,51 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
             admin,
             agg.salesOrder.id,
             item.id,
+            // cc45 (D-603): con el reporte ya hecho, el cambio pasa por el camino con producción
+            // (motivo y, con la bobina montada entera, faltante confirmado); sin él, por D-187.
             updateSalesOrderItemQtySchema.parse({
               qty: '9.000',
               pieces: [{ lengthMm: '3000.00', qty: 3 }],
+              reason: 'cc45 el cliente amplió',
+              confirmShortfall: true,
             }),
           ),
       ];
       await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
     }
     expectClean(tally, '(c) cambiar cantidad × reportar coberturas');
+  });
+
+  it('(e) cc45: cambiar la cantidad con producción × revertir el reporte', async () => {
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const agg = await reportedAggregate();
+      const item = agg.salesOrder.items[0];
+      if (!item) throw new Error('El pedido de la fixture no tiene líneas');
+      const ops = [
+        () =>
+          roofing.reverseReport(
+            admin,
+            agg.productionOrderId,
+            agg.reportId,
+            reverseMovementSchema.parse({ reason: 'cc45 revertir reporte' }),
+          ),
+        () =>
+          edits.updateItemQty(
+            admin,
+            agg.salesOrder.id,
+            item.id,
+            updateSalesOrderItemQtySchema.parse({
+              qty: '9.000',
+              pieces: [{ lengthMm: '3000.00', qty: 3 }],
+              reason: 'cc45 el cliente amplió',
+              confirmShortfall: true,
+            }),
+          ),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, '(e) cambiar cantidad con producción × revertir reporte');
   });
 
   it('(d) cerrar coberturas sin despunte × anular el pedido (sin ciclo: regresión)', async () => {
@@ -1161,8 +1235,8 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
    * la reserva de materia prima con las bobinas y el saldo ya en mano.
    */
   async function shortfallAggregate() {
-    thicknessStep += 1;
-    const thicknessMm = (0.3 + thicknessStep * 0.03).toFixed(2);
+    const spec = nextRoofingSpec();
+    const thicknessMm = spec.thicknessMm;
     const product = await catalog.create(
       admin,
       createProductSchema.parse({
@@ -1172,8 +1246,8 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
         unit: 'MTR',
         source: 'MANUFACTURED',
         listPricePen: '30',
-        finishId: roofingFinishId,
-        colorId: redColorId,
+        finishId: spec.finishId,
+        colorId: spec.colorId,
         thicknessMm,
         widthMm: '1000',
         roofingKind: 'A_MEDIDA',
@@ -1204,11 +1278,11 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
     });
     const raw = order.reservations.find((r) => r.itemType === 'RAW_MATERIAL');
     if (!raw?.productionOrderId) throw new Error('La confirmación no dejó la OP de coberturas');
-    const first = await roofingCoil(thicknessMm);
+    const first = await roofingCoil(thicknessMm, spec.finishId);
     await mount(raw.productionOrderId, first.coilId);
     await report(raw.productionOrderId);
     // Material nuevo del mismo agregado: completar la reserva tiene de dónde tomar.
-    await roofingCoil(thicknessMm);
+    await roofingCoil(thicknessMm, spec.finishId);
     return { productionOrderId: raw.productionOrderId, salesOrder: order };
   }
 

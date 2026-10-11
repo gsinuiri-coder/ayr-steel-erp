@@ -50,15 +50,16 @@ function runSeed(round) {
     /No se pudo anular/,
     `La corrida ${String(round)} dejó algo sin anular`,
   );
-  const ops = [...res.stdout.matchAll(/\| (P1|P2|M1|M2|A1|A2) \| (PED-\d+) \| (OP-\d+) \|/g)];
-  assert.equal(ops.length, 6, `La corrida ${String(round)} no imprimió los seis casos`);
+  const ops = [...res.stdout.matchAll(/\| (P1|P2|M1|M2|A1|A2|C1|C2) \| (PED-\d+) \| (OP-\d+) \|/g)];
+  assert.equal(ops.length, 8, `La corrida ${String(round)} no imprimió los ocho casos`);
   return Object.fromEntries(ops.map((m) => [m[1], m[3]]));
 }
 
 /**
  * Revisión cc42: entre corrida y corrida se usan los casos como lo haría el dueño, para que la
  * segunda anule también lo que ya se probó: P2 registrada y cerrada, M2 registrado y una OP de
- * drywall fabricada y cerrada (reabrir, revertir y anular, D-592).
+ * drywall fabricada y cerrada (reabrir, revertir y anular, D-592). cc45: C1 baja a lo registrado y
+ * C2 sube, que deja una OP nueva por la diferencia.
  */
 async function useCases(ops) {
   const server = await startApi(url, apiPort(), { compile: false });
@@ -82,8 +83,35 @@ async function useCases(ops) {
     await api.post(`/production/${order.id}/report`, { pieces: 50, idempotencyKey: randomUUID() });
     await api.post(`/production/${order.id}/close`, { reason: 'Prueba: el resto del fleje queda' });
     const closed = (await api.list('/production')).filter((o) => o.status === 'CLOSED');
-    assert.equal(closed.length, 2, 'P2 y la OP de drywall quedaron cerradas');
-    return order.code;
+    assert.equal(closed.length, 3, 'P2, C2 y la OP de drywall quedaron cerradas');
+
+    const reason = 'El cliente cambió el pedido';
+    const lineOf = async (opCode) => {
+      const op = byCode.get(opCode);
+      const salesOrder = await api.get(`/sales/orders/${op.salesOrderId}`);
+      return { orderId: salesOrder.id, item: salesOrder.items[0] };
+    };
+    const c1 = await lineOf(ops.C1);
+    const lowered = await api.patch(`/sales/orders/${c1.orderId}/items/${c1.item.id}/qty`, {
+      qty: '101.600',
+      pieces: [
+        { lengthMm: '6000.00', qty: 10 },
+        { lengthMm: '5200.00', qty: 8 },
+      ],
+      reason,
+    });
+    assert.equal(lowered.items[0].qty, '101.600', 'C1 bajó a lo registrado');
+    const c2 = await lineOf(ops.C2);
+    await api.patch(`/sales/orders/${c2.orderId}/items/${c2.item.id}/qty`, {
+      qty: '26.000',
+      reason,
+    });
+    const grown = (await api.list(`/production?salesOrderId=${c2.orderId}`)).filter(
+      (o) => o.status === 'DRAFT',
+    );
+    assert.equal(grown.length, 1, 'C2: nació una OP por la diferencia');
+    assert.equal(grown[0].planMeters, '6.000', 'C2: la OP nueva fabrica 6 m');
+    return { drywall: order.code, extra: grown[0].code };
   } finally {
     await server.stop();
   }
@@ -91,7 +119,7 @@ async function useCases(ops) {
 
 const first = runSeed(1);
 console.log('Corrida 1:', JSON.stringify(first));
-const drywallOp = await useCases(first);
+const used = await useCases(first);
 const second = runSeed(2);
 console.log('Corrida 2:', JSON.stringify(second));
 for (const key of Object.keys(first)) assert.notEqual(first[key], second[key], `${key} repitió OP`);
@@ -108,7 +136,7 @@ try {
     Object.values(second).sort(),
     'Las OP DEMO vivas tienen que ser exactamente las de la última corrida',
   );
-  for (const code of [...Object.values(first), drywallOp]) {
+  for (const code of [...Object.values(first), used.drywall, used.extra]) {
     assert.equal(ops.find((o) => o.code === code)?.status, 'CANCELLED', `${code} no quedó anulada`);
   }
 
@@ -135,7 +163,7 @@ try {
     (c) => c.docNumber === DEMO.customer.docNumber,
   );
   const orders = (await api.list('/sales/orders')).filter((o) => o.customerId === customer.id);
-  assert.equal(orders.filter((o) => o.status !== 'CANCELLED').length, 6, 'seis pedidos vivos');
+  assert.equal(orders.filter((o) => o.status !== 'CANCELLED').length, 8, 'ocho pedidos vivos');
 
   const suppliers = await api.list('/suppliers');
   const supplierIds = new Set(
@@ -144,7 +172,7 @@ try {
       .map((s) => s.id),
   );
   const purchases = (await api.list('/purchases')).filter((p) => supplierIds.has(p.supplierId));
-  assert.equal(purchases.filter((p) => p.status !== 'CANCELLED').length, 7, 'siete compras vivas');
+  assert.equal(purchases.filter((p) => p.status !== 'CANCELLED').length, 9, 'nueve compras vivas');
 
   const cuts = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
   assert.equal(cuts.filter((o) => o.status === 'RECEIVED').length, 1, 'un corte recibido vivo');

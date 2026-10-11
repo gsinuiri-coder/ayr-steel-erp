@@ -154,15 +154,15 @@ test.describe('D-378 — reactivar con las líneas actuales del pedido', () => {
       const { stock, order, line1, invoice } = await annulledWithDispatchedLine(api, trail);
       const number = invoice.number ?? '';
 
-      // D-187 sigue mandando con el comprobante anulado: la línea despachada no cambia de
-      // cantidad.
+      // Con el comprobante anulado, la línea despachada vuelve a editarse. cc45 (D-603): con
+      // despachos, solo con motivo (y nunca debajo de lo despachado).
       const qty = await patchExpectingError(
         api,
         `/api/sales/orders/${order.id}/items/${line1.id}/qty`,
         { qty: '12' },
       );
       expect(qty.status).toBe(400);
-      expect(qty.message).toContain('ya tiene despachos, así que su cantidad no se cambia');
+      expect(qty.message).toContain('el motivo es obligatorio');
 
       // Lo que faltó en el pedido: dos unidades más del mismo producto, como línea 2.
       const grown = await postJson<OrderWithReservations>(

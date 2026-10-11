@@ -2253,3 +2253,38 @@ El dueño ratificó D-597 a D-602 (cc44: el kerf y el borde del corte tercerizad
 flejes, el pedido de perfiles solo con stock, la OP de perfiles sin pedido, las piezas teóricas
 enteras hacia abajo, sin «Meta de piezas» y `main` protegida en GitHub). Sus filas de
 `ARQUITECTURA.md` §0.2 lo dicen.
+
+## cc45 — «Cambiar cantidad» con producción (D-603, D-604, D-605)
+
+**Por qué así.** La especificación del dueño (11/10/2026) reemplazó el «cierre corto» dibujado en
+cc38: cerrar una OP con menos de su plan rompía D-573. Cuando el cliente cambia lo que pide, cambia
+el pedido; el plan de la OP sigue al pedido y la OP cierra exacta, como siempre.
+
+**Ejemplo numérico (caso C1 de `seed:escenarios`, datos inventados).** Cobertura a medida de
+1 220 mm × 0,40 mm, densidad 8: 3,94304 kg/m con el 1 % de D-165. Línea de 125,6 m (10 × 6,00,
+8 × 5,20 y 10 × 2,40) a S/ 22 el metro. La OP registró 101,6 m (los 10 de 6,00 y los 8 de 5,20).
+
+- _Pisos:_ el largo de 6,00 no baja de 10 planchas ni el de 5,20 de 8; el de 2,40 puede ir a 0.
+  En total, la línea no baja de 101,6 m.
+- _Bajar a lo registrado_ (101,6 m): lo que falta fabricar es 0, así que se liberan los
+  24 m × 3,94304 = 94,634 kg de materia prima. El plan de la OP pasa de 125,6 a 101,6 m, igual a lo
+  registrado, y la OP queda lista para «Registrar y cerrar». El total del pedido baja de
+  S/ 3 260,58 a S/ 2 637,54 con el mismo precio por metro.
+- _Subir_ con 6 planchas de 3,00 m (143,6 m): faltan 42 m, que son 165,608 kg de reserva. Como ya
+  quedaban 94,634 kg reservados, se reservan 70,974 kg más por la puerta de confirmar. Si no
+  alcanzara, el administrador confirma con faltante (D-341). El plan de la OP pasa a 143,6 m.
+- _Con la OP cerrada_ (por ejemplo, 10 m de 5,00 registrados y cerrados, y la línea sube a 16 m
+  con 3 de 2,00): nace una OP por 3 × 2,00 = 6 m y se reservan 6 m × kg/m.
+
+**Reserva por objetivo.** La reserva queda en `reserveQty × (nuevo − hecho) ÷ nuevo`, no en la
+diferencia con lo de antes. Así realinea también la diferencia entre lo que planta consumió de
+verdad (los partes descuentan los kilos reales) y lo teórico, y cubre una OP cerrada corta antes
+de D-573. La contracara (segundo modelo, P2-2): al subir un metro, la reserva puede moverse más
+que ese metro; «Qué va a pasar» lo dice.
+
+**Accesorio con varias OP (D-605).** El plan de cada OP de accesorio son los metros de la línea
+menos lo registrado por sus hermanas; una cerrada no pasa de lo que fabricó. PED-000049 (una OP
+cerrada con 6 m registrados de 5 pedidos) muestra «6.00 m de 5.00 m».
+
+**Revisiones.** Autorrevisión y segundo modelo (`docs/revision/cc45-segundo-modelo.md`): sin P0;
+los P1 y P2 se corrigieron antes del deploy (ver la sección de atención del informe).
