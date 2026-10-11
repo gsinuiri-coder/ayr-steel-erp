@@ -346,6 +346,10 @@ pnpm dev:preview              # después: api :4000, web :4001; entra con viewer
   anular sale al final del informe y queda como historia, sin estorbar a los casos nuevos.
 - Al terminar imprime la tabla de casos (pedido, OP, enlace a `http://127.0.0.1:4001/planta?op=…`,
   qué probar), sin credenciales.
+- **Desde cualquier checkout.** Si `ayr-local-db` ya corre, no hace `docker compose up` (desde
+  un worktree chocaría por el nombre fijo del contenedor). Corre `prisma generate`: en Windows
+  puede avisar que no terminó si otro proceso de ese checkout (la demo, la vista previa) tiene
+  tomado el motor; el cliente igual queda escrito.
 - **Prueba:** `pnpm seed:escenarios:test` corre el script dos veces contra una `ayr_local`
   descartable y verifica los casos por la API. En la CI lo hace el job `escenarios`. No corre
   contra el Docker del dueño (puerto 5434).

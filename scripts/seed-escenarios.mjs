@@ -152,6 +152,18 @@ export function prepareDatabase(url) {
     ADMIN_EMAIL: LOCAL_ADMIN_EMAIL,
     ADMIN_PASSWORD: LOCAL_ADMIN_PASSWORD,
   };
+  // cc42: un checkout con el cliente Prisma viejo compila mal la API. En Windows, el DLL del motor
+  // puede estar tomado por otro proceso (la demo, la vista previa): ahí `generate` falla al
+  // final, pero ya escribió el cliente; es la misma versión del motor, así que se sigue.
+  const generated = run('pnpm', ['exec', 'prisma', 'generate'], {
+    cwd: apiDir,
+    env,
+    allowFail: true,
+    quiet: true,
+  });
+  if (!/Generated Prisma Client/.test(generated)) {
+    console.warn('Aviso: prisma generate no terminó (¿el motor está en uso por otro proceso?).');
+  }
   run('pnpm', ['exec', 'prisma', 'migrate', 'deploy'], { cwd: apiDir, env });
   run('pnpm', ['exec', 'tsx', 'prisma/seed.ts'], { cwd: apiDir, env });
   run('pnpm', ['exec', 'tsx', 'prisma/seed-view.ts'], {
@@ -740,7 +752,14 @@ export async function seedEscenarios(env = process.env, { log = console.log } = 
   const port = apiPort(env);
   if ((env.ESCENARIOS_DATABASE_URL ?? '').trim() === '') {
     log('1/5 Postgres local (docker compose)…');
-    run('docker', ['compose', 'up', '-d', '--wait', 'db'], { inherit: true });
+    // cc42: el contenedor tiene nombre fijo (`ayr-local-db`); desde un worktree, `compose up`
+    // es otro proyecto y choca con el que ya corre. Si está arriba, no se toca.
+    const running = run('docker', ['inspect', '-f', '{{.State.Running}}', 'ayr-local-db'], {
+      allowFail: true,
+      quiet: true,
+    }).trim();
+    if (running !== 'true')
+      run('docker', ['compose', 'up', '-d', '--wait', 'db'], { inherit: true });
   }
   log('2/5 Migraciones, seed y la cuenta de la vista previa en ayr_local…');
   prepareDatabase(url);
