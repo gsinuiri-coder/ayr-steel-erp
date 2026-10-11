@@ -2,6 +2,19 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-11 — Permisos de `prod`/`secrets` en `.claude/settings.json` y D-597..D-602 ratificadas
+
+Solo configuración y docs; no cambia el runtime.
+
+- **Permisos:** `Bash(pnpm * prod:*)` y `Bash(pnpm * secrets:*)` mezclaban `*` con el sufijo `:*`.
+  Claude Code las tomaba como prefijo literal: nunca coincidían y avisaba al arrancar. Ahora hay una
+  regla por script real de `package.json` (las apps no tienen ninguno): `pnpm db:prod:*`,
+  `pnpm smoke:prod:*`, `pnpm prod:purge-e2e:*`, `pnpm secrets:gh:*` y `pnpm secrets:gcp:*`.
+  `e2e:prod` y `reset-go-live` no se agregan y el `deny` no cambia. Verificado con
+  `claude -p --debug`: con las reglas viejas salían los dos avisos; con las nuevas, ninguno.
+- **D-597..D-602 ratificadas por el dueño** (cc44): en §0.2, en `docs/DECISIONES.md` y en el
+  handoff de cc44.
+
 ## 2026-10-11 — cc44: drywall — kerf con costo, piezas enteras, sin meta, OP sin pedido y `main` protegida (D-597..D-602; PR #173 en prod)
 
 Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc44.md`; revisión en

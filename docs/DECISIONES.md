@@ -2246,3 +2246,10 @@ clasificado con su guardián, los defaults de `operation_date` fuera del schema 
 
 El dueño ratificó también D-596 (cc43: el E2E de la CI en 2 shards, con el job `base` para el drift
 y `test:db` y el agregado `e2e` con el nombre de siempre), después de la entrega del PR #171.
+
+## Ratificación del dueño (2026-10-11, después de cc44)
+
+El dueño ratificó D-597 a D-602 (cc44: el kerf y el borde del corte tercerizado en el costo de los
+flejes, el pedido de perfiles solo con stock, la OP de perfiles sin pedido, las piezas teóricas
+enteras hacia abajo, sin «Meta de piezas» y `main` protegida en GitHub). Sus filas de
+`ARQUITECTURA.md` §0.2 lo dicen.
