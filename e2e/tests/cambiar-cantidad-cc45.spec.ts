@@ -11,7 +11,14 @@ import {
   setupRoofingScenario,
   type RoofingScenario,
 } from '../helpers/roofing';
-import { createCustomer } from '../helpers/sales';
+import { dispatchOrder } from '../helpers/invoicing';
+import { POS_LINE, setupPosStock } from '../helpers/pos';
+import {
+  createCustomer,
+  createDirectOrder,
+  patchExpectingError,
+  purgeSalesTrail,
+} from '../helpers/sales';
 import { rowAction, saveQtyChange } from '../helpers/ui';
 
 /**
@@ -40,6 +47,12 @@ function trailOf(s: RoofingScenario) {
     quotationIds: [] as string[],
     productionOrderIds: [] as string[],
   };
+}
+
+async function patchJson<T>(api: APIRequestContext, path: string, data: unknown): Promise<T> {
+  const res = await api.patch(path, { data });
+  if (!res.ok()) throw new Error(`PATCH ${path} → ${String(res.status())} ${await res.text()}`);
+  return (await res.json()) as T;
 }
 
 const ordersOf = (api: APIRequestContext, salesOrderId: string) =>
@@ -173,6 +186,49 @@ test.describe('cc45 — cambiar la cantidad con producción (D-603, D-604)', () 
       expect(all.map((o) => o.status)).toEqual(['CLOSED', 'CLOSED']);
     } finally {
       await purgeRoofingTrail(api, trail);
+    }
+  });
+
+  test('con despachos: nunca debajo de lo despachado, y el estado del pedido sigue a la cantidad', async () => {
+    const stock = await setupPosStock(api, { qty: '20' });
+    const customer = await createCustomer(api);
+    const order = await createDirectOrder(api, {
+      customerId: customer.id,
+      businessLine: POS_LINE,
+      items: [{ productId: stock.product.id, qty: '10', unitPricePen: '30' }],
+    });
+    try {
+      const item = order.items[0]!;
+      await dispatchOrder(api, {
+        salesOrderId: order.id,
+        items: [{ salesOrderItemId: item.id, qty: '4' }],
+      });
+      const url = `/api/sales/orders/${order.id}/items/${item.id}/qty`;
+      const below = await patchExpectingError(api, url, {
+        qty: '3',
+        reason: 'El cliente redujo el pedido',
+      });
+      expect(below.status).toBe(400);
+      expect(below.message).toContain('ya se despacharon');
+
+      // Bajar a lo despachado: el pedido queda atendido y la reserva en cero.
+      const atDispatched = await patchJson<{
+        status: string;
+        reservations: { status: string; qty: string }[];
+      }>(api, url, { qty: '4', reason: 'El cliente redujo el pedido' });
+      expect(atDispatched.status).toBe('FULFILLED');
+
+      // Subir otra vez: vuelve a parcialmente atendido y reserva lo que falta despachar.
+      const raised = await patchJson<{
+        status: string;
+        reservations: { status: string; qty: string }[];
+      }>(api, url, { qty: '6', reason: 'El cliente amplió el pedido' });
+      expect(raised.status).toBe('PARTIALLY_FULFILLED');
+      expect(raised.reservations.filter((r) => r.status === 'ACTIVE')).toEqual([
+        expect.objectContaining({ qty: '2.000' }),
+      ]);
+    } finally {
+      await purgeSalesTrail(api, { orderIds: [order.id] });
     }
   });
 });

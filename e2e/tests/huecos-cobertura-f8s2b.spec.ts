@@ -284,14 +284,14 @@ test.describe('F8-S2b — huecos de cobertura', () => {
       // Misma pregunta para el diálogo de cantidad (cc45: la fila única, «Nuevo (und)»).
       await (await rowAction(page, 'línea 1', 'Cambiar cantidad de la línea 1')).click();
       dialog = page.getByRole('dialog');
-      await expect(dialog.getByLabel(/^Nuevo (/)).toHaveValue('5.000');
-      await dialog.getByLabel(/^Nuevo (/).fill('777');
+      await expect(dialog.getByLabel('Nuevo (und)')).toHaveValue('5.000');
+      await dialog.getByLabel('Nuevo (und)').fill('777');
       await dialog.getByRole('button', { name: 'Cancelar' }).click();
       await expect(dialog).toBeHidden();
 
       await (await rowAction(page, 'línea 2', 'Cambiar cantidad de la línea 2')).click();
       dialog = page.getByRole('dialog');
-      await expect(dialog.getByLabel(/^Nuevo (/)).toHaveValue('9.000');
+      await expect(dialog.getByLabel('Nuevo (und)')).toHaveValue('9.000');
     } finally {
       await purgeSalesTrail(api, { orderIds: [order.id] });
     }

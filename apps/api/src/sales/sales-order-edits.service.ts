@@ -12,6 +12,7 @@ import {
   FiscalDocType,
   InventoryItemType,
   Prisma,
+  ProductionOrderKind,
   ProductionOrderStatus,
   ProductionReportStatus,
   ReservationStatus,
@@ -131,6 +132,8 @@ interface QtyFacts {
   dispatchedQty: Decimal;
   hasProduction: boolean;
   hasDispatches: boolean;
+  /** Órdenes de perfiles (drywall) atadas a la línea antes de D-599: su producción es otra. */
+  drywallOrders: string[];
 }
 
 type QtyOutcome = Omit<SalesOrderItemQtyOutcomeDto, 'ok' | 'message'>;
@@ -933,6 +936,7 @@ export class SalesOrderEditsService {
           select: {
             id: true,
             seq: true,
+            kind: true,
             status: true,
             reservationId: true,
             items: { select: { lengthMm: true, qty: true } },
@@ -1014,8 +1018,15 @@ export class SalesOrderEditsService {
       registeredQty,
       registeredClosedQty,
       dispatchedQty,
-      hasProduction: registeredQty.gt(0) || closedOrders.length > 0,
+      // Cualquier parte vigente cuenta, aunque no deje metros ni planchas (revisión cc45).
+      hasProduction:
+        registeredQty.gt(0) ||
+        closedOrders.length > 0 ||
+        rawOrders.some((o) => o.reports.length > 0),
       hasDispatches: dispatchedQty.gt(0),
+      drywallOrders: rawOrders
+        .filter((o) => o.kind === ProductionOrderKind.DRYWALL)
+        .map((o) => productionOrderCode(o.seq)),
     };
   }
 
@@ -1245,6 +1256,13 @@ export class SalesOrderEditsService {
     orderTotalBefore: Prisma.Decimal,
   ): Promise<QtyOutcome> {
     const at = `Línea ${item.lineNumber}`;
+    // Autorrevisión cc45 (P1-1): una OP de perfiles atada a la línea (anterior a D-599) consume la
+    // reserva de otra forma (D-048) y no deja metros ni planchas: este camino no la sabe medir.
+    if (facts.drywallOrders.length > 0) {
+      throw new BadRequestException(
+        `${at}: tiene la orden de perfiles ${facts.drywallOrders.join(', ')}, así que su cantidad no se cambia desde acá`,
+      );
+    }
     if (actor.role !== Role.ADMINISTRADOR) {
       throw new ForbiddenException(
         `${at}: ya tiene producción registrada o despachos, así que solo un administrador cambia su cantidad`,
@@ -1296,7 +1314,12 @@ export class SalesOrderEditsService {
     // D-604: la reserva queda en lo que falta fabricar —o despachar, en una línea que sale de
     // stock—: lo nuevo menos lo ya hecho, en la proporción de la promesa de la línea entera.
     const done = facts.kind === 'QTY' ? facts.dispatchedQty : facts.registeredQty;
-    const pending = Decimal.max(nextQty.minus(done), new Decimal(0));
+    // Segundo modelo cc45 (P2-1): con todas las órdenes cerradas, solo subir pide material (y una
+    // OP nueva). Bajar una línea que una OP cerró corta (antes de D-573) no reabre producción.
+    const rising = nextQty.gt(item.qty.toString());
+    const allClosed = facts.orders.length > 0 && !facts.orders.some((o) => o.live);
+    const pending =
+      allClosed && !rising ? new Decimal(0) : Decimal.max(nextQty.minus(done), new Decimal(0));
     const target = toDecimal(
       toFixedString(toDecimal(line.reserveQty).times(pending).div(nextQty), 'KG'),
     );
@@ -1323,20 +1346,26 @@ export class SalesOrderEditsService {
       const emptied = split.qty.lte(0) && split.shortfall.lte(0);
       await tx.reservation.update({
         where: { id: row.id },
+        // Autorrevisión cc45 (P1-1): de una fila que no está activa solo baja el faltante; su
+        // `qty` es la cifra que una reversa necesita.
         data:
-          emptied && row.status === ReservationStatus.ACTIVE
-            ? {
-                qty: '0',
-                shortfallQty: '0',
-                status: ReservationStatus.RELEASED,
-                releasedAt: new Date(),
-                releasedById: actor.id,
-              }
-            : { qty: split.qty.toFixed(3), shortfallQty: split.shortfall.toFixed(3) },
+          row.status !== ReservationStatus.ACTIVE
+            ? { shortfallQty: split.shortfall.toFixed(3) }
+            : emptied
+              ? {
+                  qty: '0',
+                  shortfallQty: '0',
+                  status: ReservationStatus.RELEASED,
+                  releasedAt: new Date(),
+                  releasedById: actor.id,
+                }
+              : { qty: split.qty.toFixed(3), shortfallQty: split.shortfall.toFixed(3) },
       });
       if (released.gt(0)) {
         effects.push(
-          `Se libera ${released.toFixed(3)} ${unit} de ${label}: lo que ya no se ${facts.kind === 'QTY' ? 'despacha' : 'produce'}.`,
+          rising
+            ? `La reserva de ${label} se ajusta a lo que falta fabricar: se liberan ${released.toFixed(3)} ${unit} (lo consumido fue menos que lo teórico).`
+            : `Se libera ${released.toFixed(3)} ${unit} de ${label}: lo que ya no se ${facts.kind === 'QTY' ? 'despacha' : 'produce'}.`,
         );
       }
     } else if (target.gt(promised)) {
@@ -1373,12 +1402,17 @@ export class SalesOrderEditsService {
           })
         )?.id ??
         null;
-      effects.push(
-        shortfall.gt(0)
-          ? `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label} y faltan ${shortfall.toFixed(3)} ${unit}: se confirma con faltante y motivo (D-341).`
-          : `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label}: hay disponible.`,
-      );
-      if (shortfall.lte(0) && line.reserveItemType === InventoryItemType.RAW_MATERIAL) {
+      if (reserved.gt(0) || shortfall.gt(0))
+        effects.push(
+          shortfall.gt(0)
+            ? `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label} y faltan ${shortfall.toFixed(3)} ${unit}: se confirma con faltante y motivo (D-341).`
+            : `Se reserva ${reserved.toFixed(3)} ${unit} más de ${label}: hay disponible.`,
+        );
+      if (
+        reserved.gt(0) &&
+        shortfall.lte(0) &&
+        line.reserveItemType === InventoryItemType.RAW_MATERIAL
+      ) {
         effects.push(
           'Si no hubiera material suficiente, se confirma con faltante y motivo (D-341).',
         );
@@ -1393,6 +1427,8 @@ export class SalesOrderEditsService {
       nextQty,
       nextPieces,
       reservationId,
+      rising,
+      preview,
     );
     effects.unshift(...orderEffects.effects);
 
@@ -1481,6 +1517,8 @@ export class SalesOrderEditsService {
     nextQty: Decimal,
     nextPieces: PieceLike[],
     reservationId: string | null,
+    rising: boolean,
+    preview: boolean,
   ): Promise<{ effects: string[]; audit: Record<string, string>[] }> {
     if (facts.kind === 'QTY') return { effects: [], audit: [] };
     const at = `Línea ${item.lineNumber}`;
@@ -1541,7 +1579,8 @@ export class SalesOrderEditsService {
         ],
       };
     }
-    if (facts.orders.length === 0 || nextQty.lte(facts.registeredQty))
+    // Solo subir abre una orden nueva (segundo modelo cc45, P2-1).
+    if (facts.orders.length === 0 || !rising || nextQty.lte(facts.registeredQty))
       return { effects: [], audit: [] };
     // Todas las órdenes de la línea están cerradas y lo nuevo pasa lo registrado.
     const plan = planFor(facts.registeredPieces, facts.registeredQty);
@@ -1551,19 +1590,24 @@ export class SalesOrderEditsService {
         `${at}: no tiene reserva de materia prima de la que colgar una orden nueva`,
       );
     }
-    const id = await this.roofing.createFromReservationInTx(tx, actor, {
-      reservationId,
-      operationDate: businessToday(),
-      notes: `Diferencia del cambio de cantidad de la línea ${String(item.lineNumber)}`,
-      plan,
-    });
-    const created = await tx.productionOrder.findUniqueOrThrow({
-      where: { id },
-      select: { seq: true },
-    });
-    const code = productionOrderCode(created.seq);
     const meters =
       facts.kind === 'METERS' ? nextQty.minus(facts.registeredQty) : piecesMeters(plan);
+    // Autorrevisión cc45 (P2-1): la vista previa no crea la orden —el correlativo de una OP no
+    // vuelve con el rollback—; dice que nace una, sin código.
+    let code = 'una orden nueva';
+    if (!preview) {
+      const id = await this.roofing.createFromReservationInTx(tx, actor, {
+        reservationId,
+        operationDate: businessToday(),
+        notes: `Diferencia del cambio de cantidad de la línea ${String(item.lineNumber)}`,
+        plan,
+      });
+      const created = await tx.productionOrder.findUniqueOrThrow({
+        where: { id },
+        select: { seq: true },
+      });
+      code = productionOrderCode(created.seq);
+    }
     return {
       effects: [
         facts.kind === 'METERS'

@@ -156,7 +156,8 @@ export function ChangeLineQtyDialog({
           ...(draft.pieces ? { pieces: draft.pieces } : {}),
         })
       : null;
-  const debounced = useDebounced(payload, 300);
+  // Cada vista previa bloquea las filas de la acción: medio segundo entre teclas.
+  const debounced = useDebounced(payload, 500);
 
   const preview = useQuery({
     queryKey: ['sales-order-qty-preview', order.id, itemId, debounced],
@@ -195,6 +196,7 @@ export function ChangeLineQtyDialog({
       invalidateSales(queryClient, { orderId: order.id });
       // El plan de la OP, la reserva y quizá una OP nueva cambiaron con la cantidad.
       invalidateProduction(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ['sales-order-qty-preview', order.id] });
       void queryClient.invalidateQueries({
         queryKey: ['production-orders', 'sales-order', order.id],
       });
@@ -486,6 +488,10 @@ export function ChangeLineQtyDialog({
               ) : same ? (
                 <span className="text-muted-foreground">
                   Cambia algún valor para ver qué pasaría.
+                </span>
+              ) : preview.isError && debounced === payload ? (
+                <span className="text-destructive">
+                  {errorMessage(preview.error, 'No se pudo calcular qué va a pasar')}
                 </span>
               ) : outcome === undefined ? (
                 <span className="text-muted-foreground">Calculando…</span>

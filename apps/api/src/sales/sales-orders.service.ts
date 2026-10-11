@@ -1709,9 +1709,16 @@ export class SalesOrdersService {
           where: key,
           select: { qty: true, shortfallQty: true, status: true },
         });
-        const live = existing !== null && existing.status !== ReservationStatus.RELEASED;
-        const baseQty = live ? toDecimal(existing.qty.toString()) : new Decimal(0);
-        const baseShortfall = live ? toDecimal(existing.shortfallQty.toString()) : new Decimal(0);
+        // Lo reservado solo suma si la fila está activa: una CONSUMIDA guarda la cifra que su
+        // reversa necesita y no promete nada (autorrevisión cc45). Su faltante sí sigue.
+        const baseQty =
+          existing?.status === ReservationStatus.ACTIVE
+            ? toDecimal(existing.qty.toString())
+            : new Decimal(0);
+        const baseShortfall =
+          existing !== null && existing.status !== ReservationStatus.RELEASED
+            ? toDecimal(existing.shortfallQty.toString())
+            : new Decimal(0);
         await tx.reservation.upsert({
           where: key,
           create: {

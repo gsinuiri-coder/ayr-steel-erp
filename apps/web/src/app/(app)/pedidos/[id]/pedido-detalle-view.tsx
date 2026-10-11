@@ -907,13 +907,18 @@ export function PedidoDetalleView({ id }: { id: string }) {
           if (!open) setPricing(null);
         }}
       />
-      <ChangeLineQtyDialog
-        order={o}
-        item={resizing}
-        onOpenChange={(open) => {
-          if (!open) setResizing(null);
-        }}
-      />
+      {/* Autorrevisión cc45 (P2-2): montado por línea y solo abierto; al reabrir no queda nada
+          de la vez anterior (ni la tabla ni el contexto del API). */}
+      {resizing && (
+        <ChangeLineQtyDialog
+          key={resizing.id}
+          order={o}
+          item={resizing}
+          onOpenChange={(open) => {
+            if (!open) setResizing(null);
+          }}
+        />
+      )}
       <ChangeLineCoilDialog
         order={o}
         item={recoiling}

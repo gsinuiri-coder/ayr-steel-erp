@@ -460,6 +460,17 @@ describe('cc45 (D-603, D-604) — cambiar la cantidad con producción', () => {
     await roofing.close(admin, s.opId, closeRoofingOrderSchema.parse({}));
 
     const next = [m(5, 2), m(2, 3)];
+    // La vista previa dice que nace una orden, sin crearla (el correlativo no vuelve con el
+    // rollback).
+    const opsBefore = await prisma.productionOrder.count();
+    const preview = await edits.previewItemQty(admin, s.salesOrderId, s.itemId, {
+      qty: '16.000',
+      pieces: next,
+    });
+    expect(preview.outcome?.effects.join(' ')).toContain(
+      'Nace una orden nueva por la diferencia: 3 planchas, 6.000 m.',
+    );
+    expect(await prisma.productionOrder.count()).toBe(opsBefore);
     await edits.updateItemQty(
       admin,
       s.salesOrderId,

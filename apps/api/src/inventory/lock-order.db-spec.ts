@@ -1127,15 +1127,53 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
             admin,
             agg.salesOrder.id,
             item.id,
+            // cc45 (D-603): con el reporte ya hecho, el cambio pasa por el camino con producción
+            // (motivo y, con la bobina montada entera, faltante confirmado); sin él, por D-187.
             updateSalesOrderItemQtySchema.parse({
               qty: '9.000',
               pieces: [{ lengthMm: '3000.00', qty: 3 }],
+              reason: 'cc45 el cliente amplió',
+              confirmShortfall: true,
             }),
           ),
       ];
       await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
     }
     expectClean(tally, '(c) cambiar cantidad × reportar coberturas');
+  });
+
+  it('(e) cc45: cambiar la cantidad con producción × revertir el reporte', async () => {
+    const tally = newTally();
+    // La mitad de las vueltas: cada una gasta un agregado (un espesor) y la corrida entera ya
+    // anda cerca del tope de 9,99 mm del SKU (ver `roofingAggregate`).
+    for (let i = 0; i < ITERATIONS / 2; i++) {
+      const agg = await reportedAggregate();
+      const item = agg.salesOrder.items[0];
+      if (!item) throw new Error('El pedido de la fixture no tiene líneas');
+      const ops = [
+        () =>
+          roofing.reverseReport(
+            admin,
+            agg.productionOrderId,
+            agg.reportId,
+            reverseMovementSchema.parse({ reason: 'cc45 revertir reporte' }),
+          ),
+        () =>
+          edits.updateItemQty(
+            admin,
+            agg.salesOrder.id,
+            item.id,
+            updateSalesOrderItemQtySchema.parse({
+              qty: '9.000',
+              pieces: [{ lengthMm: '3000.00', qty: 3 }],
+              reason: 'cc45 el cliente amplió',
+              confirmShortfall: true,
+            }),
+          ),
+      ];
+      await race(tally, `iteración ${i}`, i % 2 === 0 ? ops : [...ops].reverse());
+    }
+    expectClean(tally, '(e) cambiar cantidad con producción × revertir reporte');
   });
 
   it('(d) cerrar coberturas sin despunte × anular el pedido (sin ciclo: regresión)', async () => {
