@@ -2,6 +2,24 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-11 — cc44: drywall — kerf con costo, piezas enteras, sin meta, OP sin pedido y `main` protegida (D-597..D-602; PR #173 en prod)
+
+Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc44.md`; revisión en
+`docs/revision/cc44-segundo-modelo.md`; UAT en `docs/uat/cc44.md`.
+
+- **En producción:** API `00115-wnv` (`git-sha=0c9366db`), web de `b65e396b`; `smoke:prod`
+  verde después de cada corte. Vuelta atrás: tráfico a `00114-mgd`.
+- **D-597:** el valor del kerf y el borde de una recepción de corte se reparte por kilo entre los
+  flejes; la suma cuadra con la salida de la madre y la reversa lo deshace exacto. Producción no
+  tenía recepciones de corte (`pnpm inspect:cc44`): nada histórico que reparar.
+- **D-598..D-601:** pedido de perfil solo con stock (E2E nuevo); OP de perfiles sin pedido; piezas
+  teóricas enteras; sin meta de piezas. El API sigue aceptando `targetPieces` y `reservationId`.
+- **D-602:** `main` protegida (PR, check E2E, también para administradores, sin push forzado ni
+  borrado). `AYR_OWNER_PUSH=1` ya no sirve.
+- **Registro de riesgo (kardex):** `apps/api/src/cutting/cutting.service.ts` (`receive`),
+  `cutting-math.ts` (`receptionCosts`, `prorateReceptionValue`), `coils.service.ts`
+  (`kardexTotalCostPen`).
+
 ## 2026-10-10 — cc43: E2E de la CI en 2 shards, D-592..D-595 ratificadas y demo apagada (D-596; PR #171)
 
 Sin migraciones ni deploy (no cambia el runtime). Detalle en `docs/handoff/ventana-cc43.md`;
