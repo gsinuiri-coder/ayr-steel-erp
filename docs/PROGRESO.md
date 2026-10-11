@@ -2,6 +2,22 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-10 — cc43: E2E de la CI en 2 shards, D-592..D-595 ratificadas y demo apagada (D-596; PR #171)
+
+Sin migraciones ni deploy (no cambia el runtime). Detalle en `docs/handoff/ventana-cc43.md`;
+revisión en `docs/revision/cc43-segundo-modelo.md`.
+
+- **CI:** job `base` (`check:drift` una vez y `test:db`), `e2e-shard` en matrix `--shard=1/2`
+  (30 min cada uno, su Postgres) y un agregado `e2e` con el nombre de siempre. El check E2E pasó
+  de 34–39 min a 15,5–16,7 min (shard 1 10–12 min, shard 2 15–17 min). `main` no tiene
+  protección de rama. `smoke-neon` (12–37 min) puede ser ahora el camino largo.
+- **Correlativos:** `e2e-fiscal-offset.ts` separa los de cada shard (`E2E_SHARD`); es herramienta
+  de prueba en `apps/`, por eso la verificación del `git-sha` da exit 1 sin desalineación de runtime.
+- **Demo:** el `dev:demo` de cc38 (3100/3101) quedó apagado; la rama Neon `demo` intacta, sin la
+  migración de cc41: se restablece desde `production` con OK del dueño antes de usarla.
+- **Registro de riesgo:** `.github/workflows/ci.yml` (el agregado `e2e` es lo único que mira el
+  estado de los shards); `apps/api/prisma/e2e-fiscal-offset.ts` (`shardOffset`).
+
 ## 2026-10-10 — cc42: drift de schema clasificado, `check:drift` y `seed:escenarios` (D-592..D-595; PR #169 en prod)
 
 Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc42.md`; clasificación

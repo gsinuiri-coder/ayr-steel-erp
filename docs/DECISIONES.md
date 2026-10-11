@@ -2237,3 +2237,9 @@ de demo-cc38 sin restablecer demo. «Borrar y recrear lo suyo» choca con el kar
 el dueño eligió anular por servicios (D-592). La anulación se probó también después de usar los
 casos: con P2 y A2 cerradas, M2 registrado y una OP de drywall fabricada y cerrada, la corrida
 siguiente lo anuló todo sin fallas y el saldo del perfil volvió a 0.
+
+## Ratificación del dueño (2026-10-10, pieza cc43)
+
+El dueño ratificó D-592 a D-595 (cc42: anular en vez de borrar en `seed:escenarios`, el drift
+clasificado con su guardián, los defaults de `operation_date` fuera del schema y el propio
+`seed:escenarios`). Sus filas de `ARQUITECTURA.md` §0.2 lo dicen.

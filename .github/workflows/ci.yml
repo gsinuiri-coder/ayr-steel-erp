@@ -49,10 +49,84 @@ jobs:
           path: apps/web/coverage/lcov.info
           if-no-files-found: ignore
 
-  e2e:
-    name: E2E Playwright (Postgres del runner)
+  base:
+    name: Drift y kardex contra la base
     runs-on: ubuntu-latest
     needs: calidad
+    # D-596 (cc43): lo que antes corría dentro del job E2E antes de Playwright, ahora en paralelo
+    # con los shards y una sola vez: el guardián del drift (D-593) y los `*.db-spec.ts` (D-372).
+    # En el run 38101351095 los dos juntos tomaron 7,5 min dentro del E2E.
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ayr
+          POSTGRES_PASSWORD: ayr_ci
+          POSTGRES_DB: ayr_ci_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ayr -d ayr_ci_e2e"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # Mismo entorno que tenía `test:db` dentro del job E2E, a propósito: R2, PSE y padrón no los
+      # usa ninguno de los dos pasos, pero quitarlos cambiaría el entorno de los db-spec sin medirlo.
+      DATABASE_URL: postgresql://ayr:ayr_ci@localhost:5432/ayr_ci_e2e?schema=public
+      DIRECT_URL: postgresql://ayr:ayr_ci@localhost:5432/ayr_ci_e2e?schema=public
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+      ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      CI: true
+      ALLOW_DB_RESET: '1'
+      THROTTLE_DISABLED: 'true'
+      APIS_NET_PE_TOKEN: ${{ secrets.APIS_NET_PE_TOKEN }}
+      NUBEFACT_URL: ${{ secrets.NUBEFACT_URL }}
+      NUBEFACT_TOKEN: ${{ secrets.NUBEFACT_TOKEN }}
+      PSE_ENABLED: 'true'
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ayr/shared build
+      - run: pnpm --filter @ayr/api db:generate
+      # D-593 (cc42): una base vacía del mismo Postgres, con todas las migraciones, tiene que
+      # diferir de schema.prisma solo en lo aprobado (apps/api/prisma/drift-esperado.sql).
+      - name: Guardián del drift de schema (check:drift)
+        run: pnpm check:drift
+      # D-372 (cc15b): `InventoryService` contra la base real (`*.db-spec.ts`): la precondición
+      # y la concurrencia de `replaceEntry`. Resetea y siembra la base de este job.
+      - name: Kardex contra la base (test:db)
+        run: pnpm --filter @ayr/api test:db
+        env:
+          SEED_ADMIN_FOR_TESTS: '1'
+
+  e2e-shard:
+    name: E2E Playwright, shard ${{ matrix.shard }}/2
+    runs-on: ubuntu-latest
+    needs: calidad
+    # D-596 (cc43): la suite se parte en 2 shards por archivo (`--shard=i/2`; con
+    # `fullyParallel: false` Playwright reparte archivos enteros, nunca tests de un mismo
+    # archivo). Cada shard tiene su Postgres, y su `globalSetup` resetea, migra y siembra esa
+    # base: ningún spec puede leer lo que creó un spec del otro shard. Ningún spec depende de
+    # datos de otro archivo (cc43 lo revisó; además `e2e:smoke` ya corre una docena sueltos).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     # D-202: la suite completa corre contra un Postgres de servicio **dentro del runner**, no
     # contra Neon. D-201 midió que la lentitud del E2E en CI era consultas × latencia
     # runner→Neon, y esa latencia cambia con la región donde cae el runner (16 ms en `eastus`,
@@ -70,7 +144,10 @@ jobs:
     # cc30: 40. El job también corre `test:db` (los pares de concurrencia de D-386 y del grupo C,
     # 20 iteraciones cada uno): en el run 37559257048 tomó 6,6 min, y con 551 tests de Playwright
     # el job se cortó a los 30 sin ningún rojo (el E2E llevaba 21 min).
-    timeout-minutes: 40
+    #
+    # cc43: 30 por shard. El job único llegó a 39 min 11 s con límite de 40; `test:db` y
+    # `check:drift` se fueron al job `base`, y cada shard corre la mitad de la suite.
+    timeout-minutes: 30
     services:
       postgres:
         # La misma imagen que docker-compose.yml: local y CI corren la suite sobre el mismo motor.
@@ -129,18 +206,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @ayr/shared build
       - run: pnpm --filter @ayr/api db:generate
-      # D-593 (cc42): una base vacía del mismo Postgres, con todas las migraciones, tiene que
-      # diferir de schema.prisma solo en lo aprobado (apps/api/prisma/drift-esperado.sql).
-      - name: Guardián del drift de schema (check:drift)
-        run: pnpm check:drift
       - run: pnpm --filter @ayr/api build
-      # D-372 (cc15b): `InventoryService` contra la base real (`*.db-spec.ts`): la precondición
-      # y la concurrencia de `replaceEntry`. Resetea y siembra la misma base del job; la suite E2E
-      # la vuelve a resetear en su `globalSetup`.
-      - name: Kardex contra la base (test:db)
-        run: pnpm --filter @ayr/api test:db
-        env:
-          SEED_ADMIN_FOR_TESTS: '1'
       - run: pnpm --filter @ayr/web build
         env:
           API_URL: http://localhost:3000
@@ -154,13 +220,39 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit != 'true'
       - run: pnpm exec playwright install-deps chromium
         if: steps.pw-cache.outputs.cache-hit == 'true'
-      - run: pnpm e2e
+      - run: pnpm e2e --shard=${{ matrix.shard }}/2
+        env:
+          # `e2e-fiscal-offset.ts` separa los correlativos de cada shard: los dos emiten contra la
+          # misma cuenta demo de Nubefact.
+          E2E_SHARD: ${{ matrix.shard }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-shard-${{ matrix.shard }}
           path: playwright-report
           retention-days: 7
+
+  e2e:
+    # D-596 (cc43): el check con el nombre de siempre. Si algún día la protección de `main` pide
+    # «E2E Playwright (Postgres del runner)», sigue existiendo y solo da verde si los dos shards
+    # y el job `base` dieron verde. `if: always()` para que un shard rojo lo deje rojo, no
+    # «skipped» (un check saltado cuenta como aprobado para la protección de rama). Con
+    # `!cancelled()` un shard cancelado a mano lo dejaría saltado; por eso `always()`, aunque
+    # una corrida reemplazada por `cancel-in-progress` lo muestre en rojo.
+    name: E2E Playwright (Postgres del runner)
+    runs-on: ubuntu-latest
+    needs: [base, e2e-shard]
+    if: always()
+    timeout-minutes: 5
+    steps:
+      - name: Shards y base en verde
+        env:
+          BASE_RESULT: ${{ needs.base.result }}
+          SHARDS_RESULT: ${{ needs.e2e-shard.result }}
+        run: |
+          echo "base: $BASE_RESULT · shards: $SHARDS_RESULT"
+          test "$BASE_RESULT" = success
+          test "$SHARDS_RESULT" = success
 
   escenarios:
     name: Escenarios de planta (seed:escenarios)
