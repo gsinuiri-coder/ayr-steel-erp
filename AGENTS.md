@@ -255,6 +255,10 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
 - `pnpm setup:agentes` configura `core.hooksPath=.githooks`. `.githooks/pre-push` permite ramas
   de trabajo y bloquea cualquier push cuyo destino sea `main` salvo con `AYR_OWNER_PUSH=1`. Desde D-445 el agente no empuja a `main`: todo entra por PR, por decisión del dueño
   (con el resumen de D-232 ya presentado al dueño). `AYR_OWNER_PUSH=1` queda para el dueño.
+- **`main` está protegida en GitHub (D-602, cc44):** PR obligatorio sin aprobaciones, el check
+  «E2E Playwright (Postgres del runner)» en verde, también para administradores, sin push
+  forzado ni borrado. Un push directo a `main` lo rechaza GitHub aunque pase el hook; la vuelta
+  atrás de emergencia está en `docs/ENTORNOS.md` («Protección de `main`»).
 
 ### 3.3 Datos reales, Neon y operaciones destructivas
 
