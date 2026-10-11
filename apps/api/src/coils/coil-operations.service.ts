@@ -47,6 +47,7 @@ import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
 import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from './coil-auto-terminate';
 import { openFilmIfSealed } from './coil-film';
+import { receptionCosts } from '../cutting/cutting-math';
 import { expandSplitWidths, planCoilSplit } from './coil-split-math';
 import { CoilsService } from './coils.service';
 
@@ -141,9 +142,8 @@ export class CoilOperationsService {
         });
 
         // La salida sale al promedio ponderado vigente de la madre (D-028), que ya
-        // puede incluir landed cost (D-043); ese mismo costo por kilo es el que
-        // heredan las hijas, así que el valor del inventario solo pierde lo que se
-        // lleva la merma de corte, que es una pérdida física real.
+        // puede incluir landed cost (D-043). D-608 (cc46): ese valor entero entra a las hijas
+        // (abajo), así que el kerf y el borde no se pierden del inventario.
         const out = await this.inventory.record(tx, {
           businessLineId: coil.businessLineId,
           itemType: 'COIL',
@@ -161,7 +161,18 @@ export class CoilOperationsService {
         if (!out) {
           throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
         }
-        const unitCostPen = out.unitCost.toFixed(4);
+        // D-608 (cc46), la misma regla que D-597 en la recepción de corte: el valor que salió de
+        // la madre —kerf declarado y recorte de borde incluidos— se reparte **por kilo** entre las
+        // hijas (la más pesada se lleva el redondeo), así la suma de sus entradas es la salida de
+        // la madre exacta. Los kilos no cambian; sube el costo por kg. El costo del documento sube
+        // en la misma proporción (`kilos que salieron / kilos en hijas`).
+        const { childrenValuesPen, documentUnitCost, kerfValuePen } = receptionCosts({
+          outValuePen: out.totalCost.toString(),
+          motherDocumentUnitCost: coil.unitCostPerKg.toString(),
+          splitWeightKg: plan.splitWeightKg,
+          kerfLossKg: plan.kerfLossKg,
+          childrenWeightsKg: plan.children.map((c) => c.weightKg),
+        });
 
         // Proveedor, acabado, producto de catálogo y los N correlativos se resuelven una
         // sola vez para toda la tanda: con una hija por consulta, un partido de 20 tiras
@@ -190,10 +201,11 @@ export class CoilOperationsService {
                 thicknessMm: coil.thicknessMm.toFixed(2),
                 currency: coil.currency,
                 exchangeRate: coil.exchangeRate.toFixed(4),
-                // El costo del documento se hereda tal cual (RF-15); el del kardex es el
-                // promedio vigente de la madre, que es de donde salieron estos kilos.
-                unitCostPerKg: coil.unitCostPerKg.toFixed(4),
-                kardexUnitCostPen: unitCostPen,
+                // D-608: el kardex entra con su parte del valor que salió de la madre (kerf y
+                // borde incluidos); el documento, con el costo de la madre subido en la misma
+                // proporción. Antes heredaban el promedio de la madre y ese valor se perdía.
+                unitCostPerKg: toFixedString(documentUnitCost, 'MONEY'),
+                kardexTotalCostPen: toFixedString(childrenValuesPen[index] ?? '0', 'MONEY'),
                 refType: 'SPLIT',
                 refId: split.id,
                 parentCoilId: coil.id,
@@ -250,6 +262,8 @@ export class CoilOperationsService {
             splitId: split.id,
             splitWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
+            // D-608: el valor del kerf y el borde, ya repartido en las hijas (informativo).
+            kerfValuePen: toFixedString(kerfValuePen, 'MONEY'),
             children: children.map((c) => c.code),
             remainingKg: remaining.toFixed(3),
             status: motherClosed ? CoilStatus.CLOSED : coil.status,
