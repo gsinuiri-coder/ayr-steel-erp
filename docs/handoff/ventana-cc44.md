@@ -1,7 +1,7 @@
 # Ventana cc44 — Drywall: protección de main, piezas enteras, sin meta, kerf con costo y OP sin pedido
 
 2026-10-11, sesión atendida en modo continuo. Ventana suspendida (D-533). Sin migraciones, sin SQL
-contra producción. D-597 a D-602 nuevas, pendientes de ratificación del dueño.
+contra producción. D-597 a D-602 nuevas, ratificadas por el dueño el 2026-10-11.
 
 ## En producción
 
@@ -103,7 +103,7 @@ sin cambio a propósito). SonarCloud pidió cobertura de unitarios: el cálculo 
 
 ## Para la próxima sesión
 
-- Ratificar D-597..D-602.
+- D-597..D-602 ratificadas por el dueño el 2026-10-11.
 - El partido interno (RF-15) sigue perdiendo el valor del borde: si el dueño lo quiere como el
   corte tercerizado, es otra decisión.
 - `AYR_OWNER_PUSH=1` ya no sirve: GitHub rechaza el push directo a `main` también para el dueño.
