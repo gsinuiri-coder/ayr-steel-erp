@@ -215,7 +215,8 @@ export function ImportarCotizacionesView() {
     () => mergeById(customers.data?.items ?? [], createdCustomers),
     [customers.data, createdCustomers],
   );
-  const allProducts = products.data ?? [];
+  // Memorizado: un `[]` nuevo por render (mientras carga) rehacía todos los `useMemo` de abajo.
+  const allProducts = useMemo(() => products.data ?? [], [products.data]);
   // Las opciones de los dos maestros, una sola vez para las 141 filas: rearmarlas por celda
   // era un recorrido del catálogo entero por render de cada fila.
   const customerOptions = useMemo(

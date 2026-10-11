@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   checkRoofingPlanAdjustment,
@@ -145,9 +145,13 @@ export function PlanAdjustDialog({
   const [rows, setRows] = useState<PlanRow[]>([]);
   const [attempted, setAttempted] = useState(false);
 
-  // Cada vez que se abre, parte del plan vigente.
+  // Cada vez que se abre, parte del plan vigente. El plan se lee por ref: un refetch con el
+  // diálogo abierto no debe pisar las filas que el usuario está escribiendo.
+  const openWith = useRef({ order, fixedLengthMm, addLengthM, reported });
+  openWith.current = { order, fixedLengthMm, addLengthM, reported };
   useEffect(() => {
     if (!open) return;
+    const { order, fixedLengthMm, addLengthM, reported } = openWith.current;
     // Una fila del plan con planchas reportadas queda fija de origen (no por lo que se escribe).
     const locked = (lengthMm: string) => (reported.get(toDecimal(lengthMm).toFixed(2)) ?? 0) > 0;
     const base: PlanRow[] =

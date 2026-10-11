@@ -103,6 +103,22 @@ interface FieldIssue {
 }
 
 /**
+ * F8-S1/M3: peso teórico de la línea (kg/unidad de venta × cantidad a despachar), la
+ * misma propuesta que ya arma `suggestedWeight` para el total pero por línea. `null`
+ * cuando el producto no tiene un kg por unidad calculable (a medida): ahí no hay
+ * propuesta y el campo queda en blanco hasta que lo escriba la báscula.
+ */
+function theoreticalLineWeight(
+  l: SalesOrderProgressDto['lines'][number],
+  qtyByLine: Record<string, string>,
+): string | null {
+  if (l.weightKgPerUnit === null) return null;
+  const qty = toDecimal(qtyByLine[l.salesOrderItemId] ?? '0');
+  if (qty.lte(0)) return null;
+  return toDecimal(l.weightKgPerUnit).times(qty).toFixed(3);
+}
+
+/**
  * RF-77/RF-78: despacho de un pedido.
  *
  * Los datos de transporte (D-078) se autocompletan con lo usado en despachos anteriores:
@@ -248,19 +264,6 @@ export function NuevoDespachoView() {
     setTotalWeightKg((prev) => (prev === '' || prev === '0.000' ? suggestedWeight : prev));
   }, [suggestedWeight]);
 
-  /**
-   * F8-S1/M3: peso teórico de la línea (kg/unidad de venta × cantidad a despachar), la
-   * misma propuesta que ya arma `suggestedWeight` para el total pero por línea. `null`
-   * cuando el producto no tiene un kg por unidad calculable (a medida): ahí no hay
-   * propuesta y el campo queda en blanco hasta que lo escriba la báscula.
-   */
-  function theoreticalLineWeight(l: SalesOrderProgressDto['lines'][number]): string | null {
-    if (l.weightKgPerUnit === null) return null;
-    const qty = toDecimal(qtyByLine[l.salesOrderItemId] ?? '0');
-    if (qty.lte(0)) return null;
-    return toDecimal(l.weightKgPerUnit).times(qty).toFixed(3);
-  }
-
   // Mismo criterio que el peso total (`suggestedWeight`): la propuesta sigue a la cantidad
   // mientras el campo no se tocó, y deja de pisarlo apenas el usuario escribe algo distinto
   // de lo último que se propuso — ahí manda la báscula.
@@ -270,7 +273,7 @@ export function NuevoDespachoView() {
       const next = { ...prev };
       let changed = false;
       for (const l of selectedLines) {
-        const suggested = theoreticalLineWeight(l);
+        const suggested = theoreticalLineWeight(l, qtyByLine);
         if (suggested === null) continue;
         const current = next[l.salesOrderItemId];
         const wasAutoFilled =

@@ -12,7 +12,11 @@ export default [
     rules: {
       ...nextPlugin.configs.recommended.rules,
       ...nextPlugin.configs['core-web-vitals'].rules,
-      ...reactHooks.configs.recommended.rules,
+      // D-606 (cc46): las dos reglas clásicas, explícitas y como error. `configs.recommended.rules`
+      // de la v6 es `undefined` (el preset es un arreglo de configs planas) y las reglas nunca se
+      // activaron. Las del React Compiler (`refs`, `set-state-in-effect`, …) quedan fuera.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
       '@typescript-eslint/no-misused-promises': [
         'error',
         { checksVoidReturn: { attributes: false } },

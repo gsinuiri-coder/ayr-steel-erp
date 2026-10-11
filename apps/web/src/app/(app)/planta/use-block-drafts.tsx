@@ -236,16 +236,10 @@ export function useBlockDrafts<E = BlockEdit>(
     [enqueue],
   );
 
-  return {
-    edits,
-    states,
-    edit,
-    flushOne,
-    flush,
-    put,
-    /** cc41: si ya se escribió en el bloque desde que se abrió la orden (lo escrito ahí gana). */
-    touched: (coilId: string) => (versions.current.get(coilId) ?? 0) > 0,
-    /** El borrador más nuevo conocido (para el número de fila de un error y las casillas). */
-    latestDrafts: () => latest.current,
-  };
+  /** cc41: si ya se escribió en el bloque desde que se abrió la orden (lo escrito ahí gana). */
+  const touched = useCallback((coilId: string) => (versions.current.get(coilId) ?? 0) > 0, []);
+  /** El borrador más nuevo conocido (para el número de fila de un error y las casillas). */
+  const latestDrafts = useCallback(() => latest.current, []);
+
+  return { edits, states, edit, flushOne, flush, put, touched, latestDrafts };
 }
