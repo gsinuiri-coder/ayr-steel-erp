@@ -488,7 +488,8 @@ test.describe('Fase 3 — corte tercerizado (RF-40..42, RF-22, D-047..D-050)', (
       );
 
       // Cada fleje es hija de la madre, sin partido asociado (D-049: nace de `cutting`,
-      // no de `coils/:id/split`), y hereda el costo por kg vigente de la madre.
+      // no de `coils/:id/split`). D-597: hereda el costo de la madre más su parte del kerf y el
+      // borde: 3 000 kg a S/ 4 (S/ 12 000) repartidos sobre los 2 852.459 kg que quedaron en fleje.
       for (const [strip, weightKg] of [
         [strip600, '1475.410'],
         [strip560, '1377.049'],
@@ -504,7 +505,7 @@ test.describe('Fase 3 — corte tercerizado (RF-40..42, RF-22, D-047..D-050)', (
           businessLine: LINE,
           weightKg,
           availableKg: weightKg,
-          unitCostPerKg: '4.0000',
+          unitCostPerKg: '4.2069',
         });
       }
 
@@ -522,8 +523,8 @@ test.describe('Fase 3 — corte tercerizado (RF-40..42, RF-22, D-047..D-050)', (
       );
       expect(row600, 'No aparece el fleje de 600 mm en /cutting/strips').toBeDefined();
       expect(row560, 'No aparece el fleje de 560 mm en /cutting/strips').toBeDefined();
-      expect(row600).toMatchObject({ qtyKg: '1475.410', avgCostPen: '4.0000', coilCount: 1 });
-      expect(row560).toMatchObject({ qtyKg: '1377.049', avgCostPen: '4.0000', coilCount: 1 });
+      expect(row600).toMatchObject({ qtyKg: '1475.410', avgCostPen: '4.2069', coilCount: 1 });
+      expect(row560).toMatchObject({ qtyKg: '1377.049', avgCostPen: '4.2069', coilCount: 1 });
 
       // --- Costo del servicio de corte (RF-41): compra SERVICE/CUTTING vinculada ---
       const service = await postJson<PurchaseDto>(api, '/api/purchases', {
@@ -559,7 +560,7 @@ test.describe('Fase 3 — corte tercerizado (RF-40..42, RF-22, D-047..D-050)', (
 
       // Mientras el servicio siga en borrador, no toca el costo de los flejes (D-030).
       expect((await getJson<CoilDto>(api, `/api/coils/${strip600.id}`)).unitCostPerKg).toBe(
-        '4.0000',
+        '4.2069',
       );
 
       const serviceReceived = await postJson<PurchaseDto>(
@@ -571,13 +572,13 @@ test.describe('Fase 3 — corte tercerizado (RF-40..42, RF-22, D-047..D-050)', (
       // Reparto por kilo entre los 2 flejes recibidos: 600 soles sobre 2 852.459 kg.
       const strip600After = await getJson<CoilDto>(api, `/api/coils/${strip600.id}`);
       const strip560After = await getJson<CoilDto>(api, `/api/coils/${strip560.id}`);
-      expect(strip600After).toMatchObject({ unitCostPerKg: '4.2103', totalCostPen: '6211.9849' });
-      expect(strip560After).toMatchObject({ unitCostPerKg: '4.2103', totalCostPen: '5797.8511' });
+      expect(strip600After).toMatchObject({ unitCostPerKg: '4.4172', totalCostPen: '6517.2422' });
+      expect(strip560After).toMatchObject({ unitCostPerKg: '4.4172', totalCostPen: '6082.7578' });
       // El kilaje disponible no cambia: es un ajuste de costo, no de cantidad.
       expect(strip600After.availableKg).toBe('1475.410');
       expect(strip560After.availableKg).toBe('1377.049');
-      expect((await coilBalance(api, strip600.id)).avgCost).toBe('4.2103');
-      expect((await coilBalance(api, strip560.id)).avgCost).toBe('4.2103');
+      expect((await coilBalance(api, strip600.id)).avgCost).toBe('4.4172');
+      expect((await coilBalance(api, strip560.id)).avgCost).toBe('4.4172');
 
       // La orden refleja el servicio ya imputado.
       const orderWithService = await getJson<CuttingOrderDto>(api, `/api/cutting/${orderId}`);
@@ -920,11 +921,12 @@ test.describe('Fase 3 — roles (D-046, D-043)', () => {
       expect(denied.status).toBe(403);
       expect(denied.message).toContain('administrador');
 
-      // Nada de lo rechazado dejó rastro: los flejes conservan el costo de la madre.
+      // Nada de lo rechazado dejó rastro: los flejes conservan el costo de la madre con su parte
+      // del borde (D-597: 4 × 1 220 / 1 160 mm).
       const strips = received.coils.find((c) => c.coilId === motherA.id)!.strips;
       for (const strip of strips) {
         const stripCoil = await getJson<CoilDto>(api, `/api/coils/${strip.id}`);
-        expect(stripCoil.unitCostPerKg).toBe('4.0000');
+        expect(stripCoil.unitCostPerKg).toBe('4.2069');
       }
     } finally {
       if (isProduction) {

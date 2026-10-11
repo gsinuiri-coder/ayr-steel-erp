@@ -1,5 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
-import { deriveCuttingOrderStatus, expandWidthCounts, validateWidthBudget } from './cutting-math';
+import {
+  deriveCuttingOrderStatus,
+  expandWidthCounts,
+  prorateReceptionValue,
+  validateWidthBudget,
+} from './cutting-math';
 
 describe('validateWidthBudget (RF-40)', () => {
   it('acepta un plan que cabe en el ancho de la bobina', () => {
@@ -69,5 +74,25 @@ describe('deriveCuttingOrderStatus (RF-22, RF-40..42)', () => {
 
   it('CANCELLED solo si nada se llegó a recibir', () => {
     expect(deriveCuttingOrderStatus(['CANCELLED', 'CANCELLED'])).toBe('CANCELLED');
+  });
+});
+
+describe('prorateReceptionValue (D-597)', () => {
+  it('reparte el valor de la madre por kilo y la suma cuadra exacta', () => {
+    // 2 852.459 kg de fleje sobre 3 000 kg que salieron a S/ 4: S/ 12 000 enteros en los flejes.
+    const shares = prorateReceptionValue('12000.0000', ['1475.410', '1377.049']);
+    expect(shares.map((s) => s.toFixed(4))).toEqual(['6206.8973', '5793.1027']);
+    expect(shares[0]?.plus(shares[1] ?? '0').toFixed(4)).toBe('12000.0000');
+  });
+
+  it('el fleje más pesado se lleva el redondeo', () => {
+    const shares = prorateReceptionValue('100.0000', ['1', '3', '3']);
+    // 100/7 = 14.2857…, 300/7 = 42.8571…; el primero de los dos de 3 kg absorbe el resto.
+    expect(shares.map((s) => s.toFixed(4))).toEqual(['14.2857', '42.8572', '42.8571']);
+  });
+
+  it('sin kilos no reparte nada', () => {
+    expect(prorateReceptionValue('10', [])).toEqual([]);
+    expect(prorateReceptionValue('10', ['0']).map((s) => s.toFixed(4))).toEqual(['0.0000']);
   });
 });

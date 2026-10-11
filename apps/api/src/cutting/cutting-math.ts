@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { Decimal, toDecimal, type DecimalInput } from '@ayr/shared';
+import { Decimal, roundTo, toDecimal, type DecimalInput } from '@ayr/shared';
 
 /**
  * Validación del plan de anchos de una bobina dentro de una orden de corte (RF-40).
@@ -31,6 +31,34 @@ export function validateWidthBudget(
       `${label}: los anchos más la merma de corte (${consumed.toFixed(2)} mm) superan el ancho de la bobina (${parentWidth.toFixed(2)} mm)`,
     );
   }
+}
+
+/**
+ * D-597 (cc44): el valor con el que entra cada fleje de una recepción de corte. La madre sale
+ * con `outValuePen` (sus kilos recibidos al promedio vigente, kerf y borde incluidos); ese valor
+ * entero se reparte **por kilo** entre los flejes, así el kerf no se pierde: sube el costo por kg
+ * de cada fleje y sus kilos no cambian (el mismo criterio que el costo del corte, RF-41).
+ *
+ * Cada parte se redondea a la escala del dinero y **el fleje más pesado se lleva el redondeo**
+ * (el primero, si empatan), así la suma de las partes es exactamente `outValuePen`.
+ */
+export function prorateReceptionValue(
+  outValuePen: DecimalInput,
+  weightsKg: DecimalInput[],
+): Decimal[] {
+  const total = toDecimal(outValuePen);
+  const weights = weightsKg.map((w) => toDecimal(w));
+  const totalKg = weights.reduce((acc, w) => acc.plus(w), new Decimal(0));
+  if (weights.length === 0 || totalKg.lte(0)) return weights.map(() => new Decimal(0));
+
+  let heaviest = 0;
+  weights.forEach((w, i) => {
+    if (w.gt(weights[heaviest] ?? w)) heaviest = i;
+  });
+  const shares = weights.map((w) => roundTo(total.times(w).div(totalKg), 'MONEY'));
+  const others = shares.reduce((acc, s, i) => (i === heaviest ? acc : acc.plus(s)), new Decimal(0));
+  shares[heaviest] = total.minus(others);
+  return shares;
 }
 
 /** Expande `{ widthMm, stripsCount }` a una entrada por tira, en orden. Mismo shape que `expandSplitWidths`. */
