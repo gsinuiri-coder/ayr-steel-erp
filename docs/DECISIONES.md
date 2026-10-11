@@ -2243,3 +2243,6 @@ siguiente lo anuló todo sin fallas y el saldo del perfil volvió a 0.
 El dueño ratificó D-592 a D-595 (cc42: anular en vez de borrar en `seed:escenarios`, el drift
 clasificado con su guardián, los defaults de `operation_date` fuera del schema y el propio
 `seed:escenarios`). Sus filas de `ARQUITECTURA.md` §0.2 lo dicen.
+
+El dueño ratificó también D-596 (cc43: el E2E de la CI en 2 shards, con el job `base` para el drift
+y `test:db` y el agregado `e2e` con el nombre de siempre), después de la entrega del PR #171.
