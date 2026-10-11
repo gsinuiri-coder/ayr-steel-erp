@@ -14,7 +14,7 @@ ratificada por el dueño.
   corregidas en `schema.prisma` (5 FK `Restrict`, 2 índices, 1 nombre); los 5 defaults de
   `operation_date` quedan como ESPERADA (D-594). **El «drift conocido» de cada ventana es desde
   ahora `apps/api/prisma/drift-esperado.sql`** (5 sentencias), comprobado tras el deploy.
-- **Guardián:** `pnpm check:drift` en el job `base` de la CI (D-596, cc43; antes en el job `e2e`).
+- **Guardián:** `pnpm check:drift` en el job `e2e`.
 - **`pnpm seed:escenarios`:** casos P1/P2, M1/M2, A1/A2 y drywall en `ayr_local`, por la API;
   se repite anulando lo DEMO (D-592); prueba de dos corridas en el job `escenarios`. Corrido en
   el `ayr_local` del dueño y `dev:preview` arriba en 4000/4001 (tabla de casos en el handoff).
