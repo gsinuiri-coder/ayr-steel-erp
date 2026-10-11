@@ -2,6 +2,25 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-11 — cc45: cambiar la cantidad de una línea del pedido con producción (D-603..D-605; PR #176 en prod)
+
+Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc45.md`; revisión en
+`docs/revision/cc45-segundo-modelo.md`; UAT en `docs/uat/cc45.md`.
+
+- **En producción:** API `00116-hfd` (`git-sha=cf61ee48`), web de `f7e99b19`; `smoke:prod` verde
+  después de cada corte. Vuelta atrás: tráfico a `00115-wnv`.
+- **D-603:** «Cambiar cantidad» también con producción registrada o despachos: solo
+  administrador, con motivo y antes del comprobante; pisos por largo, planchas o metros y por lo
+  despachado (suma de todas las OP de la línea). Vista previa real del API («Qué va a pasar»).
+- **D-604:** el plan de la OP viva sigue a la cantidad nueva; la reserva queda en lo que falta
+  fabricar (bajar libera, subir reserva por la puerta de confirmar, faltante D-341); con la OP
+  cerrada, subir abre una OP por la diferencia. Una transacción, orden de D-471.
+- **D-605:** el accesorio mide su avance contra los metros del pedido (PED-000049: «6.00 m de
+  5.00 m»), descontando lo de sus OP hermanas.
+- **Registro de riesgo (kardex/reservas):** `sales-order-edits.service.ts` (`resizeStartedInTx`,
+  `followPlan`), `sales-orders.service.ts` (`reserveExtra`), `production/accessory-plan.ts`.
+- **Pendiente de decisión del dueño:** ratificar D-603..D-605.
+
 ## 2026-10-11 — Permisos de `prod`/`secrets` en `.claude/settings.json` y D-597..D-602 ratificadas
 
 Solo configuración y docs; no cambia el runtime.
