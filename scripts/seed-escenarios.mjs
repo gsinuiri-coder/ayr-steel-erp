@@ -498,6 +498,22 @@ export async function voidPrevious(api, masters) {
     }
   });
 
+  // cc46: las hijas de un partido no se anulan sueltas (RF-16): primero se revierte el partido,
+  // antes que los cortes y las compras (un fleje partido frena la reversa de su corte).
+  await attempt('partidos', async () => {
+    const splitIds = new Set(
+      (await api.list('/coils'))
+        .filter(
+          (c) => supplierIds.has(c.supplierId) && c.splitId !== null && c.status !== 'CANCELLED',
+        )
+        .map((c) => c.splitId),
+    );
+    for (const splitId of splitIds) {
+      await attempt(`partido ${splitId}`, () =>
+        api.post(`/coils/splits/${splitId}/revert`, reason),
+      );
+    }
+  });
   await attempt('cortes', async () => {
     const orders = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
     for (const o of orders.filter((x) => ['RECEIVED', 'PARTIALLY_RECEIVED'].includes(x.status))) {
@@ -515,19 +531,6 @@ export async function voidPrevious(api, masters) {
       await attempt(`corte ${o.code ?? o.id}`, () => api.post(`/cutting/${o.id}/cancel`, reason));
   });
 
-  // cc46: las hijas de un partido no se anulan sueltas (RF-16): primero se revierte el partido.
-  await attempt('partidos', async () => {
-    const splitIds = new Set(
-      (await api.list('/coils?status=OPEN'))
-        .filter((c) => supplierIds.has(c.supplierId) && c.splitId !== null)
-        .map((c) => c.splitId),
-    );
-    for (const splitId of splitIds) {
-      await attempt(`partido ${splitId}`, () =>
-        api.post(`/coils/splits/${splitId}/revert`, reason),
-      );
-    }
-  });
   await attempt('compras', async () => {
     const purchases = (await api.list('/purchases')).filter(
       (p) => supplierIds.has(p.supplierId) && p.status !== 'CANCELLED',

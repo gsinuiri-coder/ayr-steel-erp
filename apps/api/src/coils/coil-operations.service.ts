@@ -186,6 +186,11 @@ export class CoilOperationsService {
 
         const children: Coil[] = [];
         for (const [index, child] of plan.children.entries()) {
+          // Salen de la misma lista: si alguna vez no cuadraran, se corta (nunca una hija a 0).
+          const childValuePen = childrenValuesPen[index];
+          if (childValuePen === undefined) {
+            throw new Error('El reparto del valor del partido no cuadra con sus hijas');
+          }
           children.push(
             await this.coils.create(
               tx,
@@ -205,7 +210,7 @@ export class CoilOperationsService {
                 // borde incluidos); el documento, con el costo de la madre subido en la misma
                 // proporción. Antes heredaban el promedio de la madre y ese valor se perdía.
                 unitCostPerKg: toFixedString(documentUnitCost, 'MONEY'),
-                kardexTotalCostPen: toFixedString(childrenValuesPen[index] ?? '0', 'MONEY'),
+                kardexTotalCostPen: toFixedString(childValuePen, 'MONEY'),
                 refType: 'SPLIT',
                 refId: split.id,
                 parentCoilId: coil.id,
@@ -1201,6 +1206,14 @@ export class CoilOperationsService {
           const unitCostPerKg = toDecimal(input.unitCostPerKg ?? coil.unitCostPerKg.toFixed(4));
           const weightKg = toDecimal(initial.qty.toString());
           const totalCost = weightKg.times(unitCostPerKg);
+          // cc46 (autorrevisión de D-608, P2-1): si el costo no cambia (el formulario puede
+          // reenviar los mismos valores), el reingreso repite el valor exacto del ingreso. Una
+          // hija de partido (D-608) o un fleje (D-597) entró con su parte de un valor repartido,
+          // no con `peso × unitario`; reingresar por el unitario perdía céntimos de ese reparto.
+          const costUnchanged =
+            currency === coil.currency &&
+            exchangeRate.eq(coil.exchangeRate.toString()) &&
+            unitCostPerKg.eq(coil.unitCostPerKg.toString());
 
           // D-045: el kardex es append-only, así que recostear es reversar el ingreso y
           // volver a ingresar al costo corregido, no reescribir el movimiento original.
@@ -1219,7 +1232,9 @@ export class CoilOperationsService {
             type: 'IN',
             qty: initial.qty.toFixed(3),
             unit: initial.unit,
-            unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY'),
+            ...(costUnchanged
+              ? { unitCost: initial.unitCost.toFixed(4), totalCost: initial.totalCost.toFixed(4) }
+              : { unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY') }),
             refType: initial.refType,
             refId: initial.refId ?? undefined,
             notes: input.reason,
@@ -1235,7 +1250,10 @@ export class CoilOperationsService {
           data.exchangeRate = toFixedString(exchangeRate, 'RATE');
           data.unitCostPerKg = toFixedString(unitCostPerKg, 'MONEY');
           data.totalCost = toFixedString(totalCost, 'MONEY');
-          data.totalCostPen = toFixedString(totalCost.times(exchangeRate), 'MONEY');
+          // Sin cambio de costo, el total en soles sigue siendo el del kardex (D-597, D-608).
+          if (!costUnchanged) {
+            data.totalCostPen = toFixedString(totalCost.times(exchangeRate), 'MONEY');
+          }
         }
 
         const updated = await tx.coil.update({ where: { id: coilId }, data });

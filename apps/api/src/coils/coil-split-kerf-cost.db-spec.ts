@@ -9,6 +9,7 @@ import {
   createSupplierSchema,
   Decimal,
   reverseMovementSchema,
+  updateCoilSchema,
 } from '@ayr/shared';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
 import { AppModule } from '../app.module';
@@ -369,5 +370,67 @@ describe('D-608 — el kerf y el borde del partido interno quedan en el costo de
     expect(after.minus(before).abs().lte(bound)).toBe(true);
     const lostBefore608 = dec(out.totalCost).times(dec(record.kerfLossKg)).div(dec(out.qty));
     expect(lostBefore608.gt(bound.times(10))).toBe(true);
+    // Revisión cc46 (P2-1): el total de la línea suma toda la base y solo es estable porque
+    // `test:db` corre `--runInBand`. Lo mismo, acotado a la madre y sus hijas: el valor no cambia.
+    const valueOf = async (ids: string[]) =>
+      sum(
+        await Promise.all(
+          ids.map(async (id) => {
+            const b = await balance(id);
+            return dec(b.qty).times(dec(b.avgCost));
+          }),
+        ),
+      );
+    const family = [motherId, ...ins.map((m) => m.itemId)];
+    const motherAfter = await balance(motherId);
+    // Antes del partido la madre tenía 2 000 kg a su promedio.
+    const familyBefore = dec('2000').times(dec(motherAfter.avgCost));
+    expect((await valueOf(family)).minus(familyBefore).abs().lte(bound)).toBe(true);
+  });
+
+  it('recostear una hija sin cambiar el costo conserva el valor exacto del reparto (D-045)', async () => {
+    const motherId = await openCoil();
+    await split(
+      motherId,
+      [
+        { widthMm: '600.00', count: 1 },
+        { widthMm: '560.00', count: 1 },
+      ],
+      '20.00',
+    );
+    const { record, ins } = await splitMovements(motherId);
+    const children = await prisma.coil.findMany({ where: { splitId: record.id } });
+    const child = children[0];
+    const entry = ins.find((m) => m.itemId === child?.id);
+    if (!child || !entry) throw new Error('Falta la hija');
+
+    // El formulario reenvía el mismo costo (con un motivo): reversa y reingreso por el mismo valor.
+    await operations.update(
+      admin,
+      child.id,
+      updateCoilSchema.parse({
+        unitCostPerKg: child.unitCostPerKg.toFixed(4),
+        reason: 'Prueba cc46: mismo costo',
+      }),
+    );
+    const live = await prisma.inventoryMovement.findMany({
+      where: { itemType: 'COIL', itemId: child.id, reversalOfId: null, reversals: { none: {} } },
+    });
+    expect(live).toHaveLength(1);
+    expect(live[0]?.totalCost.toFixed(4)).toBe(entry.totalCost.toFixed(4));
+    const after = await prisma.coil.findUniqueOrThrow({ where: { id: child.id } });
+    expect(after.totalCostPen.toFixed(4)).toBe(entry.totalCost.toFixed(4));
+    expect(after.unitCostPerKg.toFixed(4)).toBe(child.unitCostPerKg.toFixed(4));
+
+    // Cambiar el costo sí revaloriza (D-045): es una corrección explícita del administrador.
+    await operations.update(
+      admin,
+      child.id,
+      updateCoilSchema.parse({ unitCostPerKg: '4.5000', reason: 'Prueba cc46: costo nuevo' }),
+    );
+    const recosted = await prisma.inventoryMovement.findFirstOrThrow({
+      where: { itemType: 'COIL', itemId: child.id, reversalOfId: null, reversals: { none: {} } },
+    });
+    expect(recosted.unitCost.toFixed(4)).toBe('4.5000');
   });
 });

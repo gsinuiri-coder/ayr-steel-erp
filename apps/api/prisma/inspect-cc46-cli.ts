@@ -4,9 +4,10 @@
  * JSON en stdout (para guardarlo en `local-data/cc46/`, que no se sube al repo) y un resumen en
  * stderr.
  *
- * De cada partido vigente cuenta el `kerfLossKg` (kerf declarado más el recorte de borde) que salió
- * con la madre y lo valoriza al costo de la salida del partido: es el valor que antes de D-608 no
- * quedó en ninguna hija. Los partidos anteriores a D-608 no se reparan (D-609).
+ * De cada partido vigente cuenta el `kerfLossKg` (kerf declarado más el recorte de borde) y el valor
+ * que se perdió: la salida de la madre menos las entradas vivas de sus hijas. Antes de D-608 es el
+ * valor del kerf y el borde, que no quedaba en ninguna hija; desde D-608, cero. Los partidos
+ * anteriores no se reparan (D-609).
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
@@ -43,17 +44,28 @@ async function main(): Promise<void> {
             parentCoil: { select: { code: true, widthMm: true, currency: true } },
           },
         });
-        const outs = await tx.inventoryMovement.findMany({
+        // Salida de la madre y entradas vivas de las hijas de cada partido. Lo perdido es la
+        // diferencia: antes de D-608 es el valor del kerf y el borde; desde D-608, cero.
+        const movements = await tx.inventoryMovement.findMany({
           where: {
             refType: 'SPLIT',
-            type: 'OUT',
+            type: { in: ['OUT', 'IN'] },
             reversalOfId: null,
             reversals: { none: {} },
             refId: { in: active.map((s) => s.id) },
           },
-          select: { refId: true, unitCost: true, totalCost: true },
+          select: { refId: true, type: true, unitCost: true, totalCost: true },
         });
-        const outBySplit = new Map(outs.map((m) => [m.refId, m]));
+        const outBySplit = new Map(
+          movements.filter((m) => m.type === 'OUT').map((m) => [m.refId, m]),
+        );
+        const inValueBySplit = new Map<string | null, Decimal>();
+        for (const m of movements.filter((x) => x.type === 'IN')) {
+          inValueBySplit.set(
+            m.refId,
+            (inValueBySplit.get(m.refId) ?? new Decimal(0)).plus(m.totalCost.toString()),
+          );
+        }
         let kerfKg = new Decimal(0);
         let kerfValuePen = new Decimal(0);
         const withKerf = [];
@@ -61,7 +73,11 @@ async function main(): Promise<void> {
           const kg = toDecimal(split.kerfLossKg.toString());
           if (kg.lte(0)) continue;
           const out = outBySplit.get(split.id);
-          const value = out ? kg.times(out.unitCost.toString()) : null;
+          const value = out
+            ? toDecimal(out.totalCost.toString()).minus(
+                inValueBySplit.get(split.id) ?? new Decimal(0),
+              )
+            : null;
           kerfKg = kerfKg.plus(kg);
           if (value) kerfValuePen = kerfValuePen.plus(value);
           withKerf.push({
@@ -73,7 +89,7 @@ async function main(): Promise<void> {
             kerfLossMm: split.kerfLossMm.toFixed(2),
             kerfLossKg: kg.toFixed(3),
             outUnitCostPen: out ? out.unitCost.toFixed(4) : null,
-            kerfValuePen: value ? value.toFixed(2) : null,
+            lostValuePen: value ? value.toFixed(2) : null,
           });
         }
         return {
@@ -84,7 +100,7 @@ async function main(): Promise<void> {
           activeSplitsWithKerf: withKerf.length,
           activeSplitsWithoutOutMovement: active.filter((s) => !outBySplit.has(s.id)).length,
           kerfKg: kerfKg.toFixed(3),
-          kerfValuePenAtOutCost: kerfValuePen.toFixed(2),
+          lostValuePen: kerfValuePen.toFixed(2),
           splits: withKerf,
         };
       },
