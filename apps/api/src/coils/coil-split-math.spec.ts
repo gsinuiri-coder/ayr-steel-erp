@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Decimal } from '@ayr/shared';
-import { expandSplitWidths, planCoilSplit } from './coil-split-math';
+import { expandSplitWidths, planCoilSplit, splitChildrenCosts } from './coil-split-math';
 
 /** Suma los pesos de las hijas de un plan, para verificar que el reparto cierra. */
 function childrenTotal(children: { weightKg: Decimal }[]): Decimal {
@@ -135,5 +135,45 @@ describe('planCoilSplit (RF-15)', () => {
         }),
       ).toThrow(BadRequestException);
     });
+  });
+});
+
+describe('splitChildrenCosts (D-608)', () => {
+  it('reparte la salida entera por kilo y sube el documento en kilos partidos / kilos en hijas', () => {
+    const plan = planCoilSplit({
+      parentWidthMm: '1220',
+      availableKg: '2000',
+      kerfLossMm: '20',
+      widthsMm: ['600', '560'],
+    });
+    const { children, kerfValuePen } = splitChildrenCosts({
+      outValuePen: '8246.8000',
+      motherDocumentUnitCost: '4.1234',
+      plan,
+    });
+    expect(children.map((c) => c.unitCostPerKg)).toEqual(['4.3367', '4.3367']);
+    const total = children.reduce((acc, c) => acc.plus(c.kardexTotalCostPen), new Decimal(0));
+    expect(total.toFixed(4)).toBe('8246.8000');
+    // 98.361 kg de kerf y borde a la salida: 8 246.80 × 98.361 / 2 000.
+    expect(kerfValuePen).toBe('405.5817');
+  });
+
+  it('sin kerf ni borde, el documento queda igual y cada hija a su parte exacta', () => {
+    const plan = planCoilSplit({
+      parentWidthMm: '1220',
+      availableKg: '1000',
+      kerfLossMm: '0',
+      widthsMm: ['610', '610'],
+    });
+    const { children, kerfValuePen } = splitChildrenCosts({
+      outValuePen: '4123.4000',
+      motherDocumentUnitCost: '4.1234',
+      plan,
+    });
+    expect(children).toEqual([
+      { unitCostPerKg: '4.1234', kardexTotalCostPen: '2061.7000' },
+      { unitCostPerKg: '4.1234', kardexTotalCostPen: '2061.7000' },
+    ]);
+    expect(kerfValuePen).toBe('0.0000');
   });
 });

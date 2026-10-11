@@ -383,10 +383,12 @@ test.describe('Fase 2b — partido, merma, anulación y landed cost', () => {
         typeKey: mother.typeKey,
         status: 'OPEN',
       });
-      // Las hijas heredan el costo por kg de la madre (RF-15) y siguen colgando de la
-      // misma compra, así que la trazabilidad al comprobante no se pierde.
+      // D-608 (cc46): el costo del documento de las hijas es el de la madre subido en la
+      // proporción kilos partidos / kilos en hijas (4 × 3 000 / 2 852.459 = 4.2069): el kerf y
+      // el borde ya no se pierden. Siguen colgando de la misma compra, así que la trazabilidad
+      // al comprobante no se pierde.
       for (const child of children) {
-        expect(child.unitCostPerKg).toBe('4.0000');
+        expect(child.unitCostPerKg).toBe('4.2069');
         expect(child.purchaseId).toBe(purchase.id);
         expect(child.splitId).not.toBeNull();
       }
@@ -431,11 +433,13 @@ test.describe('Fase 2b — partido, merma, anulación y landed cost', () => {
         reversalOfId: null,
       });
 
-      // Un IN por hija bajo el mismo partido, al mismo costo por kilo que salió de la
-      // madre: el valor del inventario solo pierde la merma de corte.
+      // Un IN por hija bajo el mismo partido, con su parte por kilo del valor que salió de la
+      // madre (D-608): la liviana truncada a 4 decimales, la pesada con el resto. Suman los
+      // S/ 12 000 de la salida: el valor del inventario no pierde nada; los kilos del kerf y el
+      // borde sí salen (pérdida física).
       const expectedChildren = [
-        { qty: '1475.410', totalCost: '5901.6400' },
-        { qty: '1377.049', totalCost: '5508.1960' },
+        { qty: '1475.410', unitCost: '4.2069', totalCost: '6206.8973' },
+        { qty: '1377.049', unitCost: '4.2069', totalCost: '5793.1027' },
       ];
       for (const [index, child] of children.entries()) {
         const movements = await coilMovements(api, child.id);
@@ -446,7 +450,7 @@ test.describe('Fase 2b — partido, merma, anulación y landed cost', () => {
           refId: splitId,
           qty: expectedChildren[index]!.qty,
           unit: 'KGM',
-          unitCost: '4.0000',
+          unitCost: expectedChildren[index]!.unitCost,
           totalCost: expectedChildren[index]!.totalCost,
         });
       }

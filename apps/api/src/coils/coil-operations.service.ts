@@ -47,8 +47,7 @@ import { reservedByItem } from '../sales/reserved-ledger';
 import { planCoilCloseAdjustment, type CoilCloseAdjustmentKind } from './coil-close-math';
 import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from './coil-auto-terminate';
 import { openFilmIfSealed } from './coil-film';
-import { receptionCosts } from '../cutting/cutting-math';
-import { expandSplitWidths, planCoilSplit } from './coil-split-math';
+import { expandSplitWidths, planCoilSplit, splitChildrenCosts } from './coil-split-math';
 import { CoilsService } from './coils.service';
 
 /**
@@ -161,17 +160,11 @@ export class CoilOperationsService {
         if (!out) {
           throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
         }
-        // D-608 (cc46), la misma regla que D-597 en la recepción de corte: el valor que salió de
-        // la madre —kerf declarado y recorte de borde incluidos— se reparte **por kilo** entre las
-        // hijas (la más pesada se lleva el redondeo), así la suma de sus entradas es la salida de
-        // la madre exacta. Los kilos no cambian; sube el costo por kg. El costo del documento sube
-        // en la misma proporción (`kilos que salieron / kilos en hijas`).
-        const { childrenValuesPen, documentUnitCost, kerfValuePen } = receptionCosts({
+        // D-608 (cc46): el valor entero de la salida —kerf y borde incluidos— entra a las hijas.
+        const costs = splitChildrenCosts({
           outValuePen: out.totalCost.toString(),
           motherDocumentUnitCost: coil.unitCostPerKg.toString(),
-          splitWeightKg: plan.splitWeightKg,
-          kerfLossKg: plan.kerfLossKg,
-          childrenWeightsKg: plan.children.map((c) => c.weightKg),
+          plan,
         });
 
         // Proveedor, acabado, producto de catálogo y los N correlativos se resuelven una
@@ -187,8 +180,8 @@ export class CoilOperationsService {
         const children: Coil[] = [];
         for (const [index, child] of plan.children.entries()) {
           // Salen de la misma lista: si alguna vez no cuadraran, se corta (nunca una hija a 0).
-          const childValuePen = childrenValuesPen[index];
-          if (childValuePen === undefined) {
+          const cost = costs.children[index];
+          if (cost === undefined) {
             throw new Error('El reparto del valor del partido no cuadra con sus hijas');
           }
           children.push(
@@ -206,11 +199,7 @@ export class CoilOperationsService {
                 thicknessMm: coil.thicknessMm.toFixed(2),
                 currency: coil.currency,
                 exchangeRate: coil.exchangeRate.toFixed(4),
-                // D-608: el kardex entra con su parte del valor que salió de la madre (kerf y
-                // borde incluidos); el documento, con el costo de la madre subido en la misma
-                // proporción. Antes heredaban el promedio de la madre y ese valor se perdía.
-                unitCostPerKg: toFixedString(documentUnitCost, 'MONEY'),
-                kardexTotalCostPen: toFixedString(childValuePen, 'MONEY'),
+                ...cost,
                 refType: 'SPLIT',
                 refId: split.id,
                 parentCoilId: coil.id,
@@ -268,7 +257,7 @@ export class CoilOperationsService {
             splitWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossKg: toFixedString(plan.kerfLossKg, 'KG'),
             // D-608: el valor del kerf y el borde, ya repartido en las hijas (informativo).
-            kerfValuePen: toFixedString(kerfValuePen, 'MONEY'),
+            kerfValuePen: costs.kerfValuePen,
             children: children.map((c) => c.code),
             remainingKg: remaining.toFixed(3),
             status: motherClosed ? CoilStatus.CLOSED : coil.status,
