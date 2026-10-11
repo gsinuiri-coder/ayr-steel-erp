@@ -15,6 +15,7 @@ import {
 import {
   businessToday,
   Decimal,
+  isAccessory,
   fromDateOnly,
   MAX_ORDER_REPORTS,
   MAX_ORDER_STRIPS,
@@ -78,6 +79,7 @@ import {
   type StripAllocationRow,
 } from './production-math';
 import { sumReportedMeters } from './reported-meters';
+import { accessoryPlans } from './accessory-plan';
 
 const ORDER_RELATIONS = {
   businessLine: { select: { code: true } },
@@ -90,6 +92,8 @@ const ORDER_RELATIONS = {
       thicknessMm: true,
       widthMm: true,
       pieceWeightKg: true,
+      // D-605: el plan de un accesorio son los metros de su línea.
+      roofingKind: true,
     },
   },
   /** D-084: el plan de corte de una OP de coberturas. Vacío en drywall. */
@@ -100,6 +104,9 @@ const ORDER_RELATIONS = {
    */
   reservation: {
     select: {
+      // D-605: los metros de la línea, que en un accesorio son el plan.
+      salesOrderItemId: true,
+      salesOrderItem: { select: { qty: true } },
       salesOrder: {
         select: {
           id: true,
@@ -152,10 +159,15 @@ const LIST_RELATIONS = {
       thicknessMm: true,
       widthMm: true,
       pieceWeightKg: true,
+      // D-605: el plan de un accesorio son los metros de su línea.
+      roofingKind: true,
     },
   },
   reservation: {
     select: {
+      // D-605: los metros de la línea, que en un accesorio son el plan.
+      salesOrderItemId: true,
+      salesOrderItem: { select: { qty: true } },
       salesOrder: {
         select: {
           id: true,
@@ -1601,7 +1613,8 @@ export class ProductionService {
     const actors = await this.resolveActorNames(
       orders.flatMap((o) => [o.createdById, ...(o.priorityById ? [o.priorityById] : [])]),
     );
-    return orders.map((order) => this.toListItem(order, actors));
+    const plans = await accessoryPlans(this.prisma, accessoryPlanInputs(orders));
+    return orders.map((order) => this.toListItem(order, actors, plans.get(order.id)));
   }
 
   async findOne(id: string): Promise<ProductionOrderDto> {
@@ -1626,7 +1639,8 @@ export class ProductionService {
       ...order.reports.map((r) => r.createdById),
     ]);
 
-    const listItem = this.toListItem(order, actors);
+    const plans = await accessoryPlans(this.prisma, accessoryPlanInputs([order]));
+    const listItem = this.toListItem(order, actors, plans.get(order.id));
     // El detalle conserva un historial acotado de reportes. Si las reversas ocupan
     // ese cupo, consultar los vigentes aparte evita truncar el avance del plan.
     if (
@@ -1898,7 +1912,12 @@ export class ProductionService {
     return recomputeOrderStatus(tx, orderId);
   }
 
-  private toListItem(order: OrderForList, actors: Map<string, string>): ProductionOrderListItemDto {
+  private toListItem(
+    order: OrderForList,
+    actors: Map<string, string>,
+    /** D-605: el plan de un accesorio (metros de su línea menos lo de sus hermanas). */
+    accessoryPlan?: Decimal,
+  ): ProductionOrderListItemDto {
     const live = order.consumptions.filter((c) => c.releasedAt === null);
     const activeReports = order.reports.filter((r) => r.status === ProductionReportStatus.ACTIVE);
     const assignedKg = live.reduce(
@@ -1959,11 +1978,13 @@ export class ProductionService {
           : planMetersReported.toFixed(3),
       // D-148: lo que el plan de corte encarga. Null en drywall, que no tiene plan de largos.
       planMeters:
-        order.kind === ProductionOrderKind.ROOFING
-          ? piecesMeters(
-              order.items.map((i) => ({ lengthMm: i.lengthMm.toFixed(2), qty: i.qty })),
-            ).toFixed(3)
-          : null,
+        accessoryPlan !== undefined
+          ? accessoryPlan.toFixed(3)
+          : order.kind === ProductionOrderKind.ROOFING
+            ? piecesMeters(
+                order.items.map((i) => ({ lengthMm: i.lengthMm.toFixed(2), qty: i.qty })),
+              ).toFixed(3)
+            : null,
       assignedKg: toFixedString(assignedKg, 'KG'),
       consumedKg: toFixedString(consumedKg, 'KG'),
       scrapKg: order.scrapKg ? order.scrapKg.toFixed(3) : null,
@@ -2033,4 +2054,30 @@ export class ProductionService {
       finish: product.finish,
     };
   }
+}
+
+/** D-605 (cc45): las órdenes de accesorio de una lista, con su línea, para `accessoryPlans`. */
+function accessoryPlanInputs(
+  orders: readonly {
+    id: string;
+    status: ProductionOrderStatus;
+    product: { roofingKind: string | null };
+    reservation: {
+      salesOrderItemId: string;
+      salesOrderItem: { qty: Prisma.Decimal };
+    } | null;
+  }[],
+): { orderId: string; salesOrderItemId: string; lineQty: Decimal }[] {
+  return orders.flatMap((o) =>
+    isAccessory(o.product) && o.reservation
+      ? [
+          {
+            orderId: o.id,
+            salesOrderItemId: o.reservation.salesOrderItemId,
+            lineQty: toDecimal(o.reservation.salesOrderItem.qty.toString()),
+            closed: o.status === ProductionOrderStatus.CLOSED,
+          },
+        ]
+      : [],
+  );
 }

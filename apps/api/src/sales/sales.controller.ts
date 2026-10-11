@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   ParseUUIDPipe,
@@ -19,6 +20,9 @@ import {
   updateSalesOrderItemCoilSchema,
   updateSalesOrderItemPriceSchema,
   updateSalesOrderItemQtySchema,
+  salesOrderItemQtyPreviewSchema,
+  type SalesOrderItemQtyPreviewDto,
+  type SalesOrderItemQtyPreviewInput,
   type AddSalesOrderItemsInput,
   type ChangeSalesOrderCustomerInput,
   type CoilPoolDto,
@@ -496,7 +500,10 @@ export class SalesController {
     return this.edits.updateItemPrice(actor, id, itemId, body);
   }
 
-  /** Cantidad de una línea sin reportes de producción ni despachos: dueño o ADMINISTRADOR. */
+  /**
+   * Cantidad de una línea (D-187): sin producción ni despachos, dueño o ADMINISTRADOR; con
+   * producción registrada o despachos, solo ADMINISTRADOR y con motivo (cc45, D-603/D-604).
+   */
   @Patch('orders/:id/items/:itemId/qty')
   updateOrderItemQty(
     @CurrentUser() actor: RequestUser,
@@ -505,6 +512,22 @@ export class SalesController {
     @Body(new ZodValidationPipe(updateSalesOrderItemQtySchema)) body: UpdateSalesOrderItemQtyInput,
   ): Promise<SalesOrderDto> {
     return this.edits.updateItemQty(actor, id, itemId, body);
+  }
+
+  /**
+   * cc45 (D-603): el contexto del diálogo «Cambiar cantidad» y, con una cantidad, lo que pasaría.
+   * Solo lectura: corre la acción y la deshace. Un POST porque lleva los largos en el cuerpo.
+   */
+  @Post('orders/:id/items/:itemId/qty-preview')
+  @HttpCode(200)
+  previewOrderItemQty(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body(new ZodValidationPipe(salesOrderItemQtyPreviewSchema))
+    body: SalesOrderItemQtyPreviewInput,
+  ): Promise<SalesOrderItemQtyPreviewDto> {
+    return this.edits.previewItemQty(actor, id, itemId, body);
   }
 
   /**

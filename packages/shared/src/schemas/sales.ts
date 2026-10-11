@@ -1524,24 +1524,126 @@ export type CoilPoolDto = z.infer<typeof coilPoolSchema>;
  * Nueva cantidad de una línea confirmada. Una línea a medida manda sus largos, y la cantidad
  * tiene que ser su suma (D-083).
  */
+/**
+ * cc45 (D-603): los motivos de «Cambiar cantidad». «Otro» no está en la lista: es el texto libre
+ * que se escribe en su lugar.
+ */
+export const QTY_CHANGE_REASONS = [
+  'El cliente redujo el pedido',
+  'El cliente amplió el pedido',
+  'Corrección',
+] as const;
+
+/** cc45 (D-603): motivo del cambio de cantidad; obligatorio con producción o despachos. */
+export const qtyChangeReasonSchema = z
+  .string()
+  .trim()
+  .min(5, 'Explica el motivo en al menos 5 caracteres')
+  .max(240, 'Máximo 240 caracteres');
+
+function refinePiecesMatchQty(
+  v: { qty?: string; pieces?: z.infer<typeof roofingPiecesSchema> },
+  ctx: z.RefinementCtx,
+): void {
+  if (v.pieces === undefined || v.qty === undefined) return;
+  const expected = piecesMeters(v.pieces);
+  if (!expected.equals(toDecimal(v.qty))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['qty'],
+      message: `Los largos suman ${expected.toFixed(3)} m y la línea dice ${toDecimal(v.qty).toFixed(3)}`,
+    });
+  }
+}
+
 export const updateSalesOrderItemQtySchema = z
   .object({
     qty: qtySchema,
     pieces: roofingPiecesSchema.optional(),
+    /** cc45 (D-603): obligatorio cuando la línea ya tiene producción registrada o despachos. */
+    reason: qtyChangeReasonSchema.optional(),
+    /** cc45 (D-604, D-341): al subir sin material, el administrador confirma con faltante. */
+    confirmShortfall: z.boolean().optional(),
   })
-  .superRefine((v, ctx) => {
-    if (v.pieces !== undefined) {
-      const expected = piecesMeters(v.pieces);
-      if (!expected.equals(toDecimal(v.qty))) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['qty'],
-          message: `Los largos suman ${expected.toFixed(3)} m y la línea dice ${toDecimal(v.qty).toFixed(3)}`,
-        });
-      }
-    }
-  });
+  .superRefine(refinePiecesMatchQty);
 export type UpdateSalesOrderItemQtyInput = z.infer<typeof updateSalesOrderItemQtySchema>;
+
+/**
+ * cc45 (D-603): la vista previa de «Cambiar cantidad». Sin `qty` devuelve solo el contexto de la
+ * línea (pedido, registrado y despachado, órdenes); con `qty`, además qué pasaría.
+ */
+export const salesOrderItemQtyPreviewSchema = z
+  .object({
+    qty: qtySchema.optional(),
+    pieces: roofingPiecesSchema.optional(),
+  })
+  .superRefine(refinePiecesMatchQty);
+export type SalesOrderItemQtyPreviewInput = z.infer<typeof salesOrderItemQtyPreviewSchema>;
+
+/**
+ * cc45: cómo se mide la cantidad de la línea en el diálogo. `PIECES`: a medida, por largo;
+ * `UNITS`: plancha de catálogo, en planchas; `METERS`: accesorio, en metros de bobina; `QTY`: lo
+ * demás (stock, sin producción), en su unidad.
+ */
+export const QTY_CHANGE_KINDS = ['PIECES', 'UNITS', 'METERS', 'QTY'] as const;
+export type QtyChangeKind = (typeof QTY_CHANGE_KINDS)[number];
+
+export interface SalesOrderItemQtyRowDto {
+  lengthMm: string;
+  /** Planchas de ese largo en la línea del pedido. */
+  ordered: number;
+  /** Planchas de ese largo registradas por las órdenes vivas y cerradas de la línea. */
+  registered: number;
+}
+
+export interface SalesOrderItemQtyOrderDto {
+  id: string;
+  code: string;
+  status: string;
+  planMeters: string;
+  registeredMeters: string;
+}
+
+export interface SalesOrderItemQtyOutcomeDto {
+  ok: boolean;
+  /** El rechazo, si `ok` es falso: el mismo texto que daría «Guardar el cambio». */
+  message: string | null;
+  qty: string | null;
+  meters: string | null;
+  pieces: number | null;
+  totalPen: string | null;
+  orderTotalPen: string | null;
+  /** «Qué va a pasar», en el orden en que pasa. */
+  effects: string[];
+  /** Lo que no alcanzó a reservarse (D-341); el administrador lo confirma con faltante. */
+  shortfallQty: string | null;
+}
+
+export interface SalesOrderItemQtyPreviewDto {
+  itemId: string;
+  lineNumber: number;
+  productSku: string;
+  kind: QtyChangeKind;
+  unit: string;
+  qty: string;
+  meters: string | null;
+  pieces: number | null;
+  totalPen: string;
+  orderTotalPen: string;
+  rows: SalesOrderItemQtyRowDto[];
+  registeredQty: string;
+  dispatchedQty: string;
+  /** El piso de la cantidad total: lo registrado y lo despachado, el mayor. */
+  minQty: string;
+  hasProduction: boolean;
+  hasDispatches: boolean;
+  /** Con producción o despachos, solo ADMINISTRADOR (D-603). */
+  adminOnly: boolean;
+  /** Por qué el diálogo no deja cambiar nada (comprobante, anulado, bobina entera, rol). */
+  blocked: string | null;
+  productionOrders: SalesOrderItemQtyOrderDto[];
+  outcome: SalesOrderItemQtyOutcomeDto | null;
+}
 
 /** Agregar ítems a un pedido confirmado: mismas líneas que una cotización. */
 export const addSalesOrderItemsSchema = z.object({

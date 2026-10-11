@@ -25,6 +25,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RawMaterialShortfall } from '../sales/raw-material';
+import { accessoryPlanMeters } from './accessory-plan';
 import { COMMIT_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import { assertKind, lockOrder } from './production-shared';
 import { ProductionService } from './production.service';
@@ -402,12 +403,10 @@ export class RoofingDraftsService {
     const accessory = isAccessory(product);
     // cc41 (D-591): el plan de un accesorio son los metros de su línea del pedido (D-343). Una
     // consulta más, solo en un accesorio con pedido.
-    const line =
+    // D-605 (cc45): menos lo que registraron las otras órdenes de la misma línea.
+    const orderedMeters =
       accessory && order.reservationId !== null
-        ? await tx.reservation.findUnique({
-            where: { id: order.reservationId },
-            select: { salesOrderItem: { select: { qty: true } } },
-          })
+        ? await accessoryPlanMeters(tx, orderId, order.reservationId)
         : null;
     return {
       orderSeq: order.seq,
@@ -424,11 +423,7 @@ export class RoofingDraftsService {
         : piecesMeters(reports.flatMap((r) => r.piecesDetail.map(toPieceLike))),
       liveReports: reports.length,
       coils: draftCoilStates(consumptions),
-      accessory: accessory
-        ? {
-            orderedMeters: line === null ? null : toDecimal(line.salesOrderItem.qty.toString()),
-          }
-        : null,
+      accessory: accessory ? { orderedMeters } : null,
     };
   }
 
