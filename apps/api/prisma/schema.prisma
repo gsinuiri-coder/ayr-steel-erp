@@ -615,7 +615,7 @@ model Finish {
   kind           FinishKind
   /// Obligatorio con `PREPINTADO`, nulo con `NATURAL` y `GALVANIZADO` (CHECK en la base).
   colorId        String?      @map("color_id") @db.Uuid
-  color          Color?       @relation(fields: [colorId], references: [id])
+  color          Color?       @relation(fields: [colorId], references: [id], onDelete: Restrict)
   /// Línea dura: un acabado pertenece a una sola línea de negocio. Obligatorio desde D-209.
   businessLineId String       @map("business_line_id") @db.Uuid
   businessLine   BusinessLine @relation(fields: [businessLineId], references: [id])
@@ -659,7 +659,7 @@ model Product {
   /// cobertura a tener receta para poder cotizarse. Acá es del producto, que es de quien
   /// siempre fue: rolar no cambia el acabado.
   finishId       String?             @map("finish_id") @db.Uuid
-  finish         Finish?             @relation(fields: [finishId], references: [id])
+  finish         Finish?             @relation(fields: [finishId], references: [id], onDelete: Restrict)
   /// D-118 (Fase 7e, B): espesor del SKU. Obligatorio en Metallic Roofing —es también el
   /// espesor del producto terminado (rolar no cambia el espesor)—. D-344: obligatorio también en
   /// Drywall, donde es el espesor **del fleje** con el que se produce el perfil. No aplica al resto.
@@ -715,6 +715,7 @@ model Product {
   @@unique([businessLineId, sku])
   @@index([businessLineId])
   @@index([colorId])
+  @@index([finishId])
   @@index([importBatchId])
   @@index([mergedIntoId])
   @@map("products")
@@ -898,6 +899,7 @@ model InventoryMovement {
   /// instante en que se grabó (auditoría) y no se toca nunca; `operationDate` es la fecha
   /// que el kardex ordena y que todo reporte filtra y agrupa. Por defecto hoy: el flujo
   /// normal no cambia. Solo un ADMINISTRADOR la puede retrofechar (carga histórica).
+  // D-594: la base le pone un DEFAULT (día de Lima, D-124) que este schema no declara a propósito.
   operationDate  DateTime              @map("operation_date") @db.Date
 
   /// Un movimiento se anula una sola vez (Postgres permite varios NULL en un índice único).
@@ -1137,6 +1139,7 @@ model Coil {
   createdById        String                       @map("created_by_id") @db.Uuid
   /// D-124: día de negocio en que la bobina entró (Lima). `createdAt` queda como el
   /// instante de grabación, para auditoría.
+  // D-594: la base le pone un DEFAULT (día de Lima, D-124) que este schema no declara a propósito.
   operationDate      DateTime                     @map("operation_date") @db.Date
   createdAt          DateTime                     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1248,6 +1251,7 @@ model CuttingOrder {
   status         CuttingOrderStatus @default(SENT)
   sentAt         DateTime           @default(now()) @map("sent_at") @db.Timestamptz(3)
   /// D-124: día de negocio del **envío** a corte (Lima). `sentAt` es el instante grabado.
+  // D-594: la base le pone un DEFAULT (día de Lima, D-124) que este schema no declara a propósito.
   operationDate  DateTime           @map("operation_date") @db.Date
   cancelledAt    DateTime?          @map("cancelled_at") @db.Timestamptz(3)
   notes          String?            @db.VarChar(500)
@@ -1367,7 +1371,7 @@ model ProductionOrder {
   /// producto y no de una receta. Las de drywall siguen naciendo de la suya, que es lo que
   /// dice qué fleje consumen.
   bomId               String?               @map("bom_id") @db.Uuid
-  bom                 ProductBom?           @relation(fields: [bomId], references: [id])
+  bom                 ProductBom?           @relation(fields: [bomId], references: [id], onDelete: Restrict)
   /// D-087: qué línea de transformación es. `DRYWALL` consume flejes y reporta piezas;
   /// `ROOFING` consume bobina y reporta largos. El correlativo, los estados, el ledger de
   /// reservas y la auditoría son los mismos para las dos.
@@ -1407,6 +1411,7 @@ model ProductionOrder {
   unitCostPen         Decimal?              @map("unit_cost_pen") @db.Decimal(18, 4)
   createdById         String                @map("created_by_id") @db.Uuid
   /// D-124: día de negocio en que la OP **arranca** (Lima).
+  // D-594: la base le pone un DEFAULT (día de Lima, D-124) que este schema no declara a propósito.
   operationDate       DateTime              @map("operation_date") @db.Date
   /// D-124: día de negocio del **cierre**. Null mientras la OP no se cierra.
   closedOperationDate DateTime?             @map("closed_operation_date") @db.Date
@@ -1519,6 +1524,7 @@ model ProductionReport {
   status             ProductionReportStatus @default(ACTIVE)
   notes              String?                @db.VarChar(240)
   /// D-124: día de negocio del reporte de piezas (Lima).
+  // D-594: la base le pone un DEFAULT (día de Lima, D-124) que este schema no declara a propósito.
   operationDate      DateTime               @map("operation_date") @db.Date
   createdById        String                 @map("created_by_id") @db.Uuid
   createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -1714,6 +1720,7 @@ model SalesOrder {
   @@index([sellerId, status, issueDate])
   @@index([quotationId])
   @@index([importBatchId])
+  @@index([origin, status])
   @@map("sales_orders")
 }
 
@@ -1783,12 +1790,12 @@ model RawMaterialSpec {
   /// Igualdad estricta, `null` incluido: un producto sin color solo se rola con bobina sin
   /// color. Es el mismo criterio de `roofingCoilWhere` (D-086) y no puede ser otro.
   colorId        String?      @map("color_id") @db.Uuid
-  color          Color?       @relation(fields: [colorId], references: [id])
+  color          Color?       @relation(fields: [colorId], references: [id], onDelete: Restrict)
   /// Espesor de entrada que pide la receta, en mm.
   thicknessMm    Decimal      @map("thickness_mm") @db.Decimal(6, 2)
   createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  @@index([businessLineId, thicknessMm])
+  @@index([businessLineId, thicknessMm], map: "raw_material_specs_lookup_idx")
   @@map("raw_material_specs")
 }
 
@@ -2317,7 +2324,7 @@ model Dispatch {
   /// TRUNCATE aparte): un despacho, en cambio, ya se edita (su `status`), y un despacho con
   /// varias líneas comparte un solo comprobante de todas formas.
   invoiceId String?         @map("invoice_id") @db.Uuid
-  invoice   FiscalDocument? @relation("DispatchInvoice", fields: [invoiceId], references: [id])
+  invoice   FiscalDocument? @relation("DispatchInvoice", fields: [invoiceId], references: [id], onDelete: Restrict)
 
   items     DispatchItem[]
   /// Guías de remisión emitidas para este despacho. Es una lista y no una sola porque una

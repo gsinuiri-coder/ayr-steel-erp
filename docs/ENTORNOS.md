@@ -313,6 +313,49 @@ disponible en paralelo. Las credenciales del Postgres local están fijas y a la 
 `scripts/local-docker-env.mjs` — no son secretas, son de una base descartable que nunca sale
 de `localhost`.
 
+### Casos de prueba de planta: `pnpm seed:escenarios` (cc42, D-592, D-595)
+
+Siembra en `ayr_local` los casos de demo-cc38 para mirarlos con `pnpm dev:preview`. Son plancha
+P1/P2, a medida M1/M2 y accesorio A1/A2; A1 lleva 20 m en el borrador del servidor (D-591). Cubren
+la casilla del 1 %, el despunte del 10 %, el borrador, el bloque llenado solo sin confirmar y el
+exceso. También deja un drywall completo:
+
+- dos bobinas galvanizadas;
+- un corte recibido con 5 flejes de 244 mm para `DEMO-PARANTE-89`;
+- la otra bobina libre para una orden de corte nueva con «Proveedor Demo Corte»;
+- dos perfiles en «Nueva orden de perfiles».
+
+Todos los datos son inventados: «Proveedor Demo Aceros», «Proveedor Demo Corte», «Cliente Demo»
+y SKU `DEMO-…`/`ACCES025DEMOBLANCO`.
+
+```
+pnpm seed:escenarios          # migra y siembra ayr_local, levanta su propia API en :3200 y la apaga al terminar
+pnpm dev:preview              # después: api :4000, web :4001; entra con viewer@ayr.local
+```
+
+- **Solo `ayr_local` en localhost.** El script rechaza cualquier otra base (Neon,
+  `ayr_local_e2e`, otro nombre u otro host) antes de conectar. `ESCENARIOS_DATABASE_URL` solo
+  cambia el puerto y las credenciales: la usa la prueba, con un Postgres descartable.
+- **Todo por la API**, nada de SQL: kardex, reservas y estados los escriben los mismos servicios
+  que la pantalla. La API propia se compila a `apps/api/dist-cli`, no a `dist`, para no pisar el
+  `nest start --watch` de `dev:preview`; se puede correr con la vista previa arriba.
+- **Se puede repetir (D-592).** El kardex y la auditoría no admiten `DELETE`, así que lo DEMO de
+  la corrida anterior se **anula** por los caminos de un administrador y se crea un juego nuevo
+  con códigos nuevos. Anula aunque el caso ya se haya probado: reabre las OP cerradas, revierte
+  los partes, anula el pedido, la cotización, el corte, la compra y la bobina. Lo que no se pueda
+  anular sale al final del informe y queda como historia, sin estorbar a los casos nuevos.
+- Al terminar imprime la tabla de casos (pedido, OP, enlace a `http://127.0.0.1:4001/planta?op=…`,
+  qué probar), sin credenciales.
+- **Prueba:** `pnpm seed:escenarios:test` corre el script dos veces contra una `ayr_local`
+  descartable y verifica los casos por la API. En la CI lo hace el job `escenarios`. No corre
+  contra el Docker del dueño (puerto 5434).
+
+### Guardián del drift de schema: `pnpm check:drift` (cc42, D-593)
+
+Crea la base descartable `ayr_drift_check` en el Postgres local, le aplica las migraciones y
+compara `prisma migrate diff` con `apps/api/prisma/drift-esperado.sql`. Corre en el job `e2e` de
+la CI. La clasificación está en `docs/analisis/drift-schema.md`.
+
 ### E2E con latencia: comparar el rendimiento de dos commits (F8-R1)
 
 Docker responde en ~0 ms, así que una regresión que vive en **cantidad de round-trips** a la
@@ -497,7 +540,10 @@ con su resultado.
 2. **Respaldo Neon** de `production` (rama `respaldo-pre-deploy-AAAAMMDD`), vía
    `scripts/lib.mjs#run` con `quiet: true` y `--output json` (regla dura 5).
 3. **Migraciones pendientes** en `production`: `node scripts/migrations-status.mjs --branch
-production`. Si alguna muta datos, se dice en `PROGRESO.md` cuál y qué hace.
+production`. Si alguna muta datos, se dice en `PROGRESO.md` cuál y qué hace. Drift (D-593):
+   el SQL de `node scripts/migrations-diff.mjs --branch production --script` tiene que ser
+   exactamente el de `apps/api/prisma/drift-esperado.sql` (sin las notas `-- #`); desde cc42 son
+   solo los 5 defaults de `operation_date`. Cualquier otra diferencia, para.
 4. **Gate PSE: `pnpm e2e:pse`** en local.
    - **Cuenta:** el gate verifica que `apps/api/.env` coincida con
      `NUBEFACT_DEMO_URL`/`NUBEFACT_DEMO_TOKEN` de `.env.setup` antes de reservar correlativos.

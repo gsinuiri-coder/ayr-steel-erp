@@ -1,5 +1,5 @@
 // `prisma migrate diff` SOLO LECTURA contra una rama Neon (base real) vs. schema.prisma local.
-// Uso: node scripts/migrations-diff.mjs --branch production
+// Uso: node scripts/migrations-diff.mjs --branch production [--script]
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ROOT, neonConnectionString } from './lib.mjs';
@@ -19,6 +19,8 @@ const res = spawnSync(
     'prisma/schema.prisma',
     '--to-schema-datamodel',
     'prisma/schema.prisma',
+    // cc42: `--script` da el SQL exacto, para compararlo con `pnpm check:drift`.
+    ...(process.argv.includes('--script') ? ['--script'] : []),
   ],
   {
     cwd: resolve(ROOT, 'apps/api'),
