@@ -478,9 +478,8 @@ function producedLabel(order: ProductionOrderListItemDto): string {
     return `${formatQtyAsIs(order.planMetersReported ?? '0.000', 'm')} / ${formatQtyAsIs(order.planMeters, 'm')}`;
   }
   if (order.metersReported === null) {
-    return order.targetPieces === null
-      ? formatUnits(String(order.piecesReported))
-      : `${formatUnits(String(order.piecesReported), null)} / ${formatUnits(String(order.targetPieces))}`;
+    // D-601 (cc44): solo lo producido; la meta de piezas ya no se muestra.
+    return formatUnits(String(order.piecesReported));
   }
   return `${formatQtyAsIs(order.metersReported, 'm')} · ${formatUnits(String(order.piecesReported))}`;
 }

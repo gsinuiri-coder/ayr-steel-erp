@@ -77,7 +77,7 @@ async function useCases(ops) {
     const strip = (await api.list('/coils?status=OPEN')).find(
       (c) => c.kind === 'STRIP' && c.availableKg !== '0.000',
     );
-    const order = await api.post('/production', { productId: stud.id, targetPieces: 50 });
+    const order = await api.post('/production', { productId: stud.id });
     await api.post(`/production/${order.id}/consume`, { coilId: strip.id });
     await api.post(`/production/${order.id}/report`, { pieces: 50, idempotencyKey: randomUUID() });
     await api.post(`/production/${order.id}/close`, { reason: 'Prueba: el resto del fleje queda' });

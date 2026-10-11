@@ -96,8 +96,8 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
   }) => {
     const api = await adminApi(baseURL!);
     const scenario = await setupScenario(api);
-    // 2400 kg montados / 2 kg por pieza (KG_PER_PIECE) = 1200.0 piezas teóricas exactas:
-    // deja el valor esperado comprobable a ojo, sin redondeos raros.
+    // 2400 kg montados / 2 kg por pieza (KG_PER_PIECE) = 1200 piezas teóricas exactas:
+    // deja el valor esperado comprobable a ojo. D-600 (cc44): se muestran enteras, sin decimal.
     const order = await postJson<{ id: string; code: string }>(api, '/api/production', {
       productId: scenario.product.id,
     });
@@ -126,12 +126,19 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
       const panel = page.locator(`#panel-${order.id}`);
       await expect(panel.getByText(order.code, { exact: true })).toBeVisible();
       await expect(panel.getByText('Piezas teóricas', { exact: true })).toBeVisible();
-      await expect(panel.getByText('1200.0', { exact: true })).toBeVisible();
+      // «Alcanza para» también dice 1,200 und (no se reportó nada): se ancla en la nota, que es
+      // de las piezas teóricas y también va entera.
+      await expect(
+        panel.getByText('Fleje montado: +1200 vs. reportado', { exact: true }),
+      ).toBeVisible();
+      await expect(panel.getByText('1200.0', { exact: true })).toHaveCount(0);
+      // D-601 (cc44): sin el recuadro «Meta».
+      await expect(panel.getByText('Meta', { exact: true })).toHaveCount(0);
 
       await page.goto(`/produccion/${order.id}`);
       await expect(page.getByRole('heading', { name: order.code })).toBeVisible();
       await expect(page.getByText('Piezas teóricas', { exact: true })).toBeVisible();
-      await expect(page.getByText('1200.0', { exact: true })).toBeVisible();
+      await expect(page.getByText('1,200 und', { exact: true })).toBeVisible();
       await expect(page.getByText('vs. 0 reportadas', { exact: false })).toBeVisible();
     } finally {
       await purgeProductionOrder(api, order.id).catch(() => undefined);

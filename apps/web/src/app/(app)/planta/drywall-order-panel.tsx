@@ -224,8 +224,9 @@ export function DrywallOrderPanel({
   const maxPieces = kgPerPiece.lte(0) ? 0 : pendingKg.div(kgPerPiece).floor().toNumber();
   // D-121: piezas teóricas de TODO lo montado en la orden (no solo lo pendiente), para
   // comparar en vivo contra lo ya reportado — el mismo cálculo que hace el cierre para la
-  // merma de proceso, pero antes de cerrar y sin redondear.
-  const theoreticalPieces = kgPerPiece.gt(0) ? assignedKg.div(kgPerPiece) : new Decimal(0);
+  // merma de proceso, pero antes de cerrar. D-600 (cc44): en piezas enteras hacia abajo, como
+  // «Alcanza para»: una pieza a medias no sale de la perfiladora.
+  const theoreticalPieces = kgPerPiece.gt(0) ? assignedKg.div(kgPerPiece).floor() : new Decimal(0);
   const theoreticalDelta = theoreticalPieces.minus(o.piecesReported);
   const trimmed = pieces.trim();
   const piecesValid = /^\d+$/.test(trimmed) && Number(trimmed) > 0;
@@ -284,18 +285,18 @@ export function DrywallOrderPanel({
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-5">
+          {/* D-601 (cc44): sin el recuadro «Meta»; la meta de piezas ya no se pide ni se muestra. */}
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border bg-border lg:grid-cols-4">
             <BigStat label="Piezas buenas" value={String(o.piecesReported)} />
             <BigStat
               label="Piezas teóricas"
-              value={theoreticalPieces.toFixed(1)}
+              value={formatUnits(theoreticalPieces.toFixed(0))}
               hint={
                 assignedKg.gt(0)
-                  ? `Fleje montado: ${theoreticalDelta.gte(0) ? '+' : ''}${theoreticalDelta.toFixed(1)} vs. reportado`
+                  ? `Fleje montado: ${theoreticalDelta.gte(0) ? '+' : ''}${theoreticalDelta.toFixed(0)} vs. reportado`
                   : undefined
               }
             />
-            <BigStat label="Meta" value={o.targetPieces === null ? '—' : String(o.targetPieces)} />
             <BigStat label="Fleje pendiente" value={formatQtyAsIs(pendingKg.toFixed(3), 'kg')} />
             <BigStat label="Alcanza para" value={formatUnits(String(maxPieces))} />
           </div>
