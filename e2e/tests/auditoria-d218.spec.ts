@@ -1,9 +1,10 @@
+import { addDays, businessToday } from '@ayr/shared';
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser } from '../helpers/api';
 import { createInvoiceableCustomer, freeLine, invoiceBody } from '../helpers/invoicing';
 import { getExpectingError } from '../helpers/production';
 import { createSellableProduct } from '../helpers/sales';
-import { loginAndSetPassword, openFilters } from '../helpers/ui';
+import { loginAndSetPassword, moreOption, openFilters } from '../helpers/ui';
 
 /**
  * RF-S2/D-218 — visor unificado de auditoría (`/auditoria`, `GET /audit`), admin-only.
@@ -32,30 +33,64 @@ async function loginAsAdmin(page: Page): Promise<void> {
 }
 
 test.describe('Auditoría (RF-95, D-218) — un administrador ve una acción sensible', () => {
-  test('el alta de un usuario deja una fila en /auditoria filtrando por tipo de entidad e id', async ({
+  test('el alta de un usuario deja una fila con su nombre (cc48): buscar, «Filtros» y la URL', async ({
     page,
     baseURL,
   }) => {
     const api = await adminApi(baseURL!);
-    const created = await createUser(api, 'VENDEDOR');
+    const name = `Auditoria cc48 ${String(Date.now())}`;
+    const created = await createUser(api, 'VENDEDOR', { name });
 
     await loginAsAdmin(page);
     await page.goto('/auditoria');
     await expect(page.getByRole('heading', { name: 'Auditoría' })).toBeVisible();
 
-    // cc47 (D-615): los filtros se eligen en el modal «Filtros» y se aplican juntos.
+    // cc47 (D-615): los filtros se eligen en el modal «Filtros» y se aplican juntos; cc48
+    // (D-634): quedan en la URL.
     const modal = await openFilters(page);
     await modal.getByRole('combobox', { name: 'Tipo de entidad' }).click();
     await page.getByRole('option', { name: 'Usuarios', exact: true }).click();
-    await modal.getByLabel('ID de entidad').fill(created.id);
     await modal.getByRole('button', { name: 'Aplicar' }).click();
     await expect(page.getByRole('button', { name: 'Filtros, 1 activo' })).toBeVisible();
+    await expect(page).toHaveURL(/entityType=users/);
 
-    // No depende del texto de la acción (podría reformularse): el id exacto y el tipo de
-    // entidad alcanzan para identificar la fila sin ambigüedad.
-    const row = page.getByRole('row').filter({ hasText: created.id });
-    await expect(row).toBeVisible({ timeout: 15_000 });
-    await expect(row).toContainText('Usuarios');
+    // D-634: buscar primero, por el código legible (el nombre del usuario) — resuelto a su id.
+    await page.getByRole('searchbox', { name: 'Buscar en la auditoría' }).fill(name);
+    await expect(page).toHaveURL(/search=/);
+    // D-633: la fila muestra el nombre, no el UUID; el id sigue a mano en «Copiar id».
+    const row = page.getByTestId('fila-auditoria').filter({ hasText: name });
+    await expect(row.first()).toBeVisible({ timeout: 15_000 });
+    await expect(row.first()).toContainText('Usuarios');
+    await expect(row.first()).not.toContainText(created.id);
+    await expect(row.first().getByRole('button', { name: 'Copiar id' })).toHaveAttribute(
+      'title',
+      created.id,
+    );
+
+    // Refrescar y volver atrás dan la misma lista.
+    await page.reload();
+    await expect(page.getByRole('searchbox', { name: 'Buscar en la auditoría' })).toHaveValue(name);
+    await expect(row.first()).toBeVisible({ timeout: 15_000 });
+
+    // D-635: el «Historial» de una entidad entra por la URL, filtrado y con su aviso.
+    await page.goto(`/auditoria?entityType=users&entityId=${created.id}`);
+    await expect(page.getByTestId('filtro-documento')).toBeVisible();
+    await expect(page.getByTestId('fila-auditoria').filter({ hasText: name }).first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText('Últimos 12 meses')).toBeVisible();
+
+    // El Excel en «Más opciones», con lo mismo que la lista.
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
+      'href',
+      `/api/audit/xlsx?entityType=users&entityId=${created.id}`,
+    );
+    await page.keyboard.press('Escape');
+
+    // Con más de 31 días, el buscar avisa que solo busca por código (regla del dueño).
+    const sixtyDaysAgo = addDays(businessToday(), -60);
+    await page.goto(`/auditoria?search=demo&from=${sixtyDaysAgo}`);
+    await expect(page.getByTestId('aviso-buscar')).toContainText('solo por código');
   });
 });
 

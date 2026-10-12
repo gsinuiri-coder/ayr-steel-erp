@@ -1,42 +1,52 @@
 'use client';
 
-import { SelectFilterField } from '@/components/select-filter-field';
-import { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { Copy } from 'lucide-react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import {
   AUDIT_ENTITY_TYPES,
   AUDIT_SOURCE_LABELS,
+  auditActionLabel,
+  auditActionOptions,
+  auditChangedKeys,
+  auditEntityTypeLabel,
+  auditFieldLabel,
+  auditFieldValueLabel,
+  businessToday,
+  isPriceListValueField,
   money,
   Role,
   salePriceFromValue,
   toFixedString,
-  type AuditEntityType,
   type AuditEventDto,
   type AuditPageDto,
   type UserDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import {
-  auditActionLabel,
-  auditEntityTypeLabel,
-  auditFieldLabel,
-  auditFieldValueLabel,
-  isPriceListValueField,
-} from '@/lib/audit-labels';
+  AUDIT_URL_DEFAULTS,
+  auditActiveFilterCount,
+  auditDefaultPeriodLabel,
+  auditParamsOf,
+  auditSearchNotice,
+} from '@/lib/audit-url';
 import { formatMoney, formatDateTime } from '@/lib/format';
-import { FilterField, FiltersDialog, TableToolbar } from '@/components/table-toolbar';
+import { listXlsxHref } from '@/lib/list-export';
+import { toast } from '@/lib/notify';
+import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { cn, LINK_CLASSNAME } from '@/lib/utils';
+import { HeaderActions } from '@/components/header-actions';
+import { SelectFilterField } from '@/components/select-filter-field';
+import {
+  FilterField,
+  FiltersDialog,
+  TableToolbar,
+  ToolbarSearch,
+} from '@/components/table-toolbar';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -46,8 +56,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-const ALL = 'ALL';
 
 /** Precio de lista (D-217): se guarda sin IGV y el catálogo lo muestra con IGV — el visor sigue
  *  el mismo vocabulario en vez de mostrar el valor crudo de la base (D-225/ajustes UAT). */
@@ -74,14 +82,7 @@ function formatFieldValue(event: AuditEventDto, key: string, value: unknown): st
  * se dice explícitamente en vez de dejar la fila en blanco.
  */
 function EventDiff({ event }: { event: AuditEventDto }) {
-  const keys = [
-    ...new Set([...Object.keys(event.before ?? {}), ...Object.keys(event.after ?? {})]),
-  ];
-  const changed = keys.filter((k) => {
-    const bv = event.before?.[k];
-    const av = event.after?.[k];
-    return JSON.stringify(bv) !== JSON.stringify(av);
-  });
+  const changed = auditChangedKeys(event);
 
   if (changed.length === 0) {
     return <span className="text-muted-foreground">Sin detalle registrado.</span>;
@@ -107,155 +108,176 @@ function EventDiff({ event }: { event: AuditEventDto }) {
   );
 }
 
+/** cc48 (D-633): el UUID completo sigue a mano, sin ocupar la fila. */
+function CopyIdButton({ id }: { id: string }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      title={id}
+      aria-label="Copiar id"
+      onClick={() => {
+        // Sin contexto seguro no hay portapapeles: `clipboard` no existe y no hay promesa.
+        const copied =
+          navigator.clipboard?.writeText(id) ?? Promise.reject(new Error('sin portapapeles'));
+        void copied.then(
+          () => toast.success('Id copiado'),
+          () => toast.error('No se pudo copiar el id'),
+        );
+      }}
+    >
+      <Copy aria-hidden />
+    </Button>
+  );
+}
+
+/**
+ * cc48 (D-633): la entidad con su código legible (PED-…, el número del comprobante, el código de
+ * la bobina, el SKU, el nombre del cliente…), enlazado a su detalle cuando existe. Una entidad
+ * borrada lo dice.
+ */
+function EntityCell({ event }: { event: AuditEventDto }) {
+  const code = event.entityCode;
+  return (
+    <>
+      <div className="text-xs text-muted-foreground">{auditEntityTypeLabel(event.entityType)}</div>
+      {code !== null && (
+        <div className="flex items-center gap-1">
+          {event.entityHref ? (
+            <Link href={event.entityHref} className={cn('font-medium', LINK_CLASSNAME)}>
+              {code}
+            </Link>
+          ) : (
+            <span className={event.entityDeleted ? 'text-muted-foreground' : 'font-medium'}>
+              {code}
+            </span>
+          )}
+          {/* El código guardado de una entidad borrada no dice que se borró: la marca sí. */}
+          {event.entityDeleted && !code.startsWith('Eliminado') && (
+            <Badge variant="outline">Eliminado</Badge>
+          )}
+          {event.entityId && <CopyIdButton id={event.entityId} />}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** cc47 (D-615) y cc48 (D-634): los filtros del modal. */
+interface AuditFilters {
+  entityType: string;
+  actorId: string;
+  action: string;
+  from: string;
+  to: string;
+}
+
+const NO_AUDIT_FILTERS: AuditFilters = {
+  entityType: '',
+  actorId: '',
+  action: '',
+  from: '',
+  to: '',
+};
+
+const ENTITY_TYPE_OPTIONS = AUDIT_ENTITY_TYPES.map((t) => ({
+  value: t,
+  label: auditEntityTypeLabel(t),
+}));
+const ACTION_OPTIONS = auditActionOptions();
+
 /**
  * Visor unificado de auditoría (RF-95, D-218/M3). Une `audit_log` con los changelogs
  * dedicados que ya existían (D-187/D-217/D-211) en una sola línea de tiempo, paginada por
  * cursor — "Cargar más" en vez de páginas numeradas porque la unión no tiene un `total`
  * barato de calcular (D-218: presupuesto de consultas fijo, sin `COUNT` por fuente).
  * Admin-only: `RoleGate` corta la vista, y el API vuelve a exigir el rol del lado del server.
+ *
+ * cc48 (D-633..D-635): cada fila con el código legible de su entidad; buscar primero (por código
+ * o por el texto del detalle) y «Filtros» con periodo, usuario, acción y tipo de entidad, todo en
+ * la URL; el Excel en «Más opciones», con lo mismo. El «Historial» de un documento entra con
+ * `?entityType=&entityId=`.
  */
-/** `AUDIT_ENTITY_TYPES` no exporta el tipo como un `Set`, y `includes` de un array `readonly
- *  string[]` no acepta un `string` suelto sin este cast — el valor ya se valida acá. */
-function isAuditEntityType(value: string): value is AuditEntityType {
-  return (AUDIT_ENTITY_TYPES as readonly string[]).includes(value);
-}
-
-/** cc47 (D-615): los filtros del modal. */
-interface AuditFilters {
-  entityType: AuditEntityType | typeof ALL;
-  entityId: string;
-  actorId: string;
-  from: string;
-  to: string;
-}
-
-const NO_AUDIT_FILTERS: AuditFilters = {
-  entityType: ALL,
-  entityId: '',
-  actorId: ALL,
-  from: '',
-  to: '',
-};
-
 export function AuditoriaView() {
-  // M4/D-218 (sacrificable, se llegó a tiempo): un "Historial" en el detalle de un pedido,
-  // cotización, bobina o comprobante enlaza acá con `?entityType=&entityId=` — se lee una
-  // sola vez al montar, como el `?item=` de /kardex, no como estado controlado por la URL.
-  const initialParams = useSearchParams();
-  // cc47 (D-615): los filtros se eligen en el modal «Filtros» y se aplican juntos. Siguen en
-  // estado de la pantalla, como antes (no en la URL).
-  const [filters, setFilters] = useState<AuditFilters>(() => {
-    const raw = initialParams.get('entityType');
-    return {
-      ...NO_AUDIT_FILTERS,
-      entityType: raw && isAuditEntityType(raw) ? raw : ALL,
-      entityId: initialParams.get('entityId') ?? '',
-    };
+  const [url, setUrl] = useUrlState(AUDIT_URL_DEFAULTS);
+  const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v });
   });
-  const { entityType, actorId, from, to } = filters;
-  const entityId = filters.entityId.trim();
-
+  const params = auditParamsOf(url);
   const users = useQuery({ queryKey: ['users'], queryFn: () => api<UserDto[]>('/users') });
 
-  const filterKey = JSON.stringify({
-    entityType,
-    entityId: entityType === ALL ? '' : entityId,
-    actorId,
-    from,
-    to,
-  });
-
   const pages = useInfiniteQuery({
-    queryKey: ['audit', filterKey],
+    queryKey: ['audit', params.toString()],
     queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams();
-      if (entityType !== ALL) {
-        params.set('entityType', entityType);
-        if (entityId) params.set('entityId', entityId);
-      }
-      if (actorId !== ALL) params.set('actorId', actorId);
-      if (from) params.set('from', from);
-      if (to) params.set('to', to);
-      if (pageParam) params.set('cursor', pageParam);
-      return api<AuditPageDto>(`/audit?${params.toString()}`);
+      const page = new URLSearchParams(params);
+      if (pageParam) page.set('cursor', pageParam);
+      return api<AuditPageDto>(`/audit?${page.toString()}`);
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
   const rows = pages.data?.pages.flatMap((p) => p.items) ?? [];
+  const filters: AuditFilters = {
+    entityType: url.entityType,
+    actorId: url.actorId,
+    action: url.action,
+    from: url.from,
+    to: url.to,
+  };
+  const period = auditDefaultPeriodLabel(url);
+  const searchNotice = auditSearchNotice(url, businessToday());
+  // El buscar coincidió con más códigos de los que se buscan: la lista puede quedar corta.
+  const searchCapped = pages.data?.pages[0]?.searchCapped ?? false;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <div className="space-y-4">
-        <div>
-          <h1 className="text-xl font-semibold">Auditoría</h1>
-          <p className="text-xs text-muted-foreground">
-            Historial de acciones sensibles del sistema. Solo lectura.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold">Auditoría</h1>
+            <p className="text-xs text-muted-foreground">
+              Historial de acciones sensibles del sistema. Solo lectura.
+            </p>
+          </div>
+          {/* cc48 (D-634, D-623): el Excel, en «Más opciones», con el buscar y los filtros. */}
+          <HeaderActions
+            primary={[]}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/audit', params),
+              },
+            ]}
+          />
         </div>
 
-        {/* cc47 (D-615): «Filtros» con todos los filtros. Sin buscar ni Excel. */}
         <TableToolbar
+          search={
+            <ToolbarSearch
+              label="Buscar en la auditoría"
+              placeholder="Buscar por código (PED-…, bobina, SKU, cliente), id o detalle…"
+              value={searchText}
+              onChange={setSearchText}
+            />
+          }
           filters={
             <FiltersDialog<AuditFilters>
               value={filters}
               empty={NO_AUDIT_FILTERS}
-              activeCount={
-                [entityType !== ALL, actorId !== ALL, from !== '', to !== ''].filter(Boolean).length
-              }
+              activeCount={auditActiveFilterCount(url)}
               onApply={(next) => {
-                setFilters(next.entityType === ALL ? { ...next, entityId: '' } : next);
+                // Otro tipo de entidad (o ninguno) suelta el documento del «Historial».
+                setUrl({
+                  ...next,
+                  ...(next.entityType === url.entityType ? {} : { entityId: '' }),
+                });
               }}
             >
               {(draft, update) => (
                 <>
-                  <FilterField label="Tipo de entidad" htmlFor="filtro-entidad">
-                    <Select
-                      value={draft.entityType}
-                      onValueChange={(v) => {
-                        update(
-                          v === ALL
-                            ? { entityType: ALL, entityId: '' }
-                            : { entityType: v as AuditEntityType },
-                        );
-                      }}
-                    >
-                      <SelectTrigger id="filtro-entidad" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={ALL}>Todos los tipos</SelectItem>
-                        {AUDIT_ENTITY_TYPES.map((t) => (
-                          <SelectItem key={t} value={t}>
-                            {auditEntityTypeLabel(t)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FilterField>
-                  <FilterField label="ID de entidad" htmlFor="filtro-id">
-                    <Input
-                      id="filtro-id"
-                      disabled={draft.entityType === ALL}
-                      placeholder={draft.entityType === ALL ? 'elige un tipo primero' : 'id exacto'}
-                      value={draft.entityId}
-                      onChange={(e) => {
-                        update({ entityId: e.target.value });
-                      }}
-                    />
-                  </FilterField>
-                  <SelectFilterField
-                    id="filtro-usuario"
-                    label="Usuario"
-                    value={draft.actorId}
-                    onChange={(v) => {
-                      update({ actorId: v });
-                    }}
-                    allLabel="Todos los usuarios"
-                    allValue={ALL}
-                    options={(users.data ?? []).map((u) => ({ value: u.id, label: u.name }))}
-                  />
                   <div className="flex flex-wrap items-end gap-3">
                     <FilterField label="Desde" htmlFor="filtro-desde">
                       <Input
@@ -281,16 +303,79 @@ export function AuditoriaView() {
                     </FilterField>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Sin fechas: últimos 31 días. Máximo 12 meses de rango.
+                    Sin fechas: últimos 31 días (el historial de un documento, 12 meses). Máximo 12
+                    meses de rango.
                   </p>
+                  <SelectFilterField
+                    id="filtro-usuario"
+                    label="Usuario"
+                    value={draft.actorId}
+                    onChange={(v) => {
+                      update({ actorId: v });
+                    }}
+                    allLabel="Todos los usuarios"
+                    options={(users.data ?? []).map((u) => ({ value: u.id, label: u.name }))}
+                  />
+                  <SelectFilterField
+                    id="filtro-accion"
+                    label="Acción"
+                    value={draft.action}
+                    onChange={(v) => {
+                      update({ action: v });
+                    }}
+                    allLabel="Todas las acciones"
+                    options={ACTION_OPTIONS}
+                  />
+                  <SelectFilterField
+                    id="filtro-entidad"
+                    label="Tipo de entidad"
+                    value={draft.entityType}
+                    onChange={(v) => {
+                      update({ entityType: v });
+                    }}
+                    allLabel="Todos los tipos"
+                    options={ENTITY_TYPE_OPTIONS}
+                  />
                 </>
               )}
             </FiltersDialog>
           }
           status={
-            from === '' && to === '' ? (
-              <span className="text-sm text-muted-foreground">Últimos 31 días</span>
-            ) : undefined
+            <>
+              {period !== null && <span className="text-sm text-muted-foreground">{period}</span>}
+              {searchNotice !== null && (
+                <span
+                  role="status"
+                  className="text-sm text-muted-foreground"
+                  data-testid="aviso-buscar"
+                >
+                  {searchNotice}
+                </span>
+              )}
+              {searchCapped && (
+                <span role="status" className="text-sm text-muted-foreground">
+                  El buscar coincide con muchos registros: puede faltar alguno. Acótalo.
+                </span>
+              )}
+              {/* D-635: abierta desde el «Historial» de un documento. */}
+              {url.entityType && url.entityId && (
+                <span className="flex items-center gap-1 text-sm" data-testid="filtro-documento">
+                  <span className="text-muted-foreground">
+                    Solo un registro de {auditEntityTypeLabel(url.entityType).toLowerCase()}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => {
+                      setUrl({ entityId: '' });
+                    }}
+                  >
+                    Quitar
+                  </Button>
+                </span>
+              )}
+            </>
           }
         />
 
@@ -321,7 +406,7 @@ export function AuditoriaView() {
                 </TableRow>
               )}
               {rows.map((ev) => (
-                <TableRow key={`${ev.source}:${ev.id}`}>
+                <TableRow key={`${ev.source}:${ev.id}`} data-testid="fila-auditoria">
                   <TableCell className="whitespace-nowrap align-top">
                     {formatDateTime(ev.occurredAt)}
                   </TableCell>
@@ -331,11 +416,8 @@ export function AuditoriaView() {
                       {AUDIT_SOURCE_LABELS[ev.source]}
                     </Badge>
                   </TableCell>
-                  <TableCell className="align-top">
-                    <div>{auditEntityTypeLabel(ev.entityType)}</div>
-                    {ev.entityId && (
-                      <div className="font-mono text-xs text-muted-foreground">{ev.entityId}</div>
-                    )}
+                  <TableCell className="align-top" data-testid="entidad-auditoria">
+                    <EntityCell event={ev} />
                   </TableCell>
                   <TableCell className="align-top">
                     {ev.actorKind === 'SYSTEM' ? (
