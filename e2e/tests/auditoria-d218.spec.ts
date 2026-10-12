@@ -1,3 +1,4 @@
+import { addDays, businessToday } from '@ayr/shared';
 import { expect, test, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser } from '../helpers/api';
 import { createInvoiceableCustomer, freeLine, invoiceBody } from '../helpers/invoicing';
@@ -87,7 +88,7 @@ test.describe('Auditoría (RF-95, D-218) — un administrador ve una acción sen
     await page.keyboard.press('Escape');
 
     // Con más de 31 días, el buscar avisa que solo busca por código (regla del dueño).
-    const sixtyDaysAgo = new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10);
+    const sixtyDaysAgo = addDays(businessToday(), -60);
     await page.goto(`/auditoria?search=demo&from=${sixtyDaysAgo}`);
     await expect(page.getByTestId('aviso-buscar')).toContainText('solo por código');
   });
