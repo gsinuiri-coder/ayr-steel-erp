@@ -5,10 +5,10 @@ import { build, num, type Sheet } from './reports-xlsx';
 
 /**
  * cc29 (M2). El reporte de producción en xlsx, del **mismo DTO** que la pantalla (con o sin
- * costos, según quien lo pide). Tres hojas: una fila por OP con el total; el subtotal de cada
- * pedido con el mismo total (cc48: en su propia hoja, para que sumar la columna de «Por OP» no
- * cuente cada OP dos veces); y el detalle por bobina aparte, para ordenarlo y filtrarlo sin romper
- * las otras.
+ * costos, según quien lo pide). cc48: cuatro hojas, y en ninguna una fila suma a otras de su misma
+ * columna (sumar una columna nunca cuenta dos veces): una fila por OP, el subtotal de cada pedido,
+ * el total del rango y el detalle por bobina, aparte para ordenarlo y filtrarlo sin romper las
+ * otras.
  *
  * D-446: con más de `LIST_XLSX_MAX_ROWS` filas en una hoja, 400 «acota los filtros»; nunca un
  * archivo recortado.
@@ -26,9 +26,8 @@ export function productionSummaryXlsx(
     (a, g) => a + g.orders.reduce((b, o) => b + o.coils.length, 0),
     0,
   );
-  // Las filas de la hoja «Por OP» son las OPs y el total; las de «Por pedido», un subtotal por
-  // pedido y el total.
-  assertExportable(Math.max(orderRows + 1, report.groups.length + 1, coilRows), exportWindow());
+  // Las filas de la hoja «Por OP» son las OPs; las de «Por pedido», un subtotal por pedido.
+  assertExportable(Math.max(orderRows, report.groups.length, coilRows), exportWindow());
 
   const costHeader = report.withCosts ? ['Costo salido (S/)', 'Costo despunte (S/)'] : [];
   const costWidths = report.withCosts ? [16, 18] : [];
@@ -41,6 +40,15 @@ export function productionSummaryXlsx(
     wastePct: string | null;
   }) => [num(f.theoreticalKg), num(f.consumedKg), num(f.trimKg), num(f.wastePct)];
 
+  const byOrderHeader = [
+    'Pedido',
+    'OP',
+    'Kg teórico',
+    'Kg salido',
+    'Despunte (kg)',
+    '% sobre el estándar',
+    ...costHeader,
+  ];
   const totalLabel = `Total ${BUSINESS_LINE_LABELS[report.businessLine]} del ${report.from} al ${report.to} (${String(report.totals.orderCount)} OP)`;
 
   const orders: Sheet = {
@@ -75,32 +83,13 @@ export function productionSummaryXlsx(
           o.coils.map((c) => c.code).join(', '),
         ]),
       ),
-      [
-        totalLabel,
-        null,
-        null,
-        null,
-        null,
-        null,
-        ...figures(report.totals),
-        ...costs(report.totals),
-        null,
-      ],
       ...notes,
     ],
   };
 
   const byOrder: Sheet = {
     name: 'Por pedido',
-    header: [
-      'Pedido',
-      'OP',
-      'Kg teórico',
-      'Kg salido',
-      'Despunte (kg)',
-      '% sobre el estándar',
-      ...costHeader,
-    ],
+    header: byOrderHeader,
     widths: [14, 8, 12, 12, 13, 18, ...costWidths],
     rows: [
       ...report.groups.map((g) => [
@@ -109,6 +98,15 @@ export function productionSummaryXlsx(
         ...figures(g.subtotal),
         ...costs(g.subtotal),
       ]),
+      ...notes,
+    ],
+  };
+
+  const total: Sheet = {
+    name: 'Total',
+    header: byOrderHeader,
+    widths: [44, 8, 12, 12, 13, 18, ...costWidths],
+    rows: [
       [totalLabel, report.totals.orderCount, ...figures(report.totals), ...costs(report.totals)],
       ...notes,
     ],
@@ -132,7 +130,7 @@ export function productionSummaryXlsx(
   };
 
   return {
-    buffer: build([orders, byOrder, coils]),
+    buffer: build([orders, byOrder, total, coils]),
     filename: `produccion-${report.businessLine}-${report.from}-${report.to}.xlsx`,
   };
 }

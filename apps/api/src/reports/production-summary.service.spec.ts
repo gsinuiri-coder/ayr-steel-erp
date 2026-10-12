@@ -240,27 +240,33 @@ describe('ProductionSummaryService', () => {
     expect(plant.buffer.length).toBeGreaterThan(0);
   });
 
-  it('cc48: los subtotales por pedido van en «Por pedido»; sumar «Por OP» cuenta cada OP una vez', async () => {
+  it('cc48: OPs, subtotales y total en hojas distintas; sumar cualquier columna cuenta una vez', async () => {
     const { service } = build();
     const report = await service.report(RANGE, true);
     const book = XLSX.read(productionSummaryXlsx(report).buffer, { type: 'buffer' });
-    expect(book.SheetNames).toEqual(['Por OP', 'Por pedido', 'Por bobina']);
+    expect(book.SheetNames).toEqual(['Por OP', 'Por pedido', 'Total', 'Por bobina']);
     const rowsOf = (name: string) =>
       XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[name]!, { header: 1 }).slice(1);
     const byOp = rowsOf('Por OP');
     const kgCol = 7; // «Kg salido»
-    const opRows = byOp.slice(0, -1);
-    expect(opRows.some((r) => String(r[0]).startsWith('Subtotal'))).toBe(false);
+    const opRows = byOp;
+    expect(opRows.some((r) => /^(Subtotal|Total)/.test(String(r[0])))).toBe(false);
     const cents = (rows: unknown[][]) =>
       rows.reduce((acc, r) => acc + Math.round(Number(r[kgCol] ?? 0) * 1000), 0);
     expect(cents(opRows)).toBe(Math.round(Number(report.totals.consumedKg) * 1000));
     const byOrder = rowsOf('Por pedido');
-    expect(byOrder).toHaveLength(report.groups.length + 1);
-    expect(byOrder.at(-1)?.[0]).toBe(byOp.at(-1)?.[0]);
-    // «Kg salido» es la cuarta columna de «Por pedido».
-    const orderKg = byOrder
-      .slice(0, -1)
-      .reduce<number>((acc, r) => acc + Math.round(Number(r[3] ?? 0) * 1000), 0);
+    expect(byOrder).toHaveLength(report.groups.length);
+    // «Kg salido» es la cuarta columna de «Por pedido» y de «Total».
+    const orderKg = byOrder.reduce<number>(
+      (acc, r) => acc + Math.round(Number(r[3] ?? 0) * 1000),
+      0,
+    );
     expect(orderKg).toBe(Math.round(Number(report.totals.consumedKg) * 1000));
+    const total = rowsOf('Total');
+    expect(total).toHaveLength(1);
+    expect(String(total[0]?.[0])).toMatch(/^Total /);
+    expect(Math.round(Number(total[0]?.[3]) * 1000)).toBe(
+      Math.round(Number(report.totals.consumedKg) * 1000),
+    );
   });
 });

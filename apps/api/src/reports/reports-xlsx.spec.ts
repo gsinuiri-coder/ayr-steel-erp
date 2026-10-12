@@ -308,7 +308,7 @@ describe('reports-xlsx', () => {
       expect(cell(sheet, 'B3')?.v).toBe(100);
     });
 
-    it('cc48: «Por línea» suma la venta de la franja una sola vez, con el redondeo', () => {
+    it('cc48: «Por línea» suma la venta de la franja una sola vez, con el redondeo y sin fila de total', () => {
       const { buffer } = salesMarginXlsx({
         ...margin,
         totalsByLine: [
@@ -331,11 +331,10 @@ describe('reports-xlsx', () => {
       const rows = XLSX.utils.sheet_to_json<unknown[]>(sheetOf(buffer, 'Por línea'), {
         header: 1,
       });
-      const body = rows.slice(1, -1);
-      const total = rows.at(-1) ?? [];
+      const body = rows.slice(1);
       expect(body.map((r) => r[0])).toContain('Redondeo al céntimo de los comprobantes');
-      expect(total[0]).toBe('Total');
-      expect(total[1]).toBe(1100.01);
+      expect(body.map((r) => r[0])).not.toContain('Total');
+      // Sumar la columna entera da la venta de la franja, una vez.
       const sum = body.reduce((acc, r) => acc + Math.round(Number(r[1] ?? 0) * 100), 0);
       expect(sum).toBe(110001);
       // Ninguna fila de «Totales» repite la venta por línea.

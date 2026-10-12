@@ -453,9 +453,9 @@ export function salesMarginXlsx(
   };
 
   // cc48 (cierre de cc40): en «Todas», las filas de «Totales por línea» van en su propia hoja, con
-  // el redondeo de los comprobantes (D-461) y una sola fila de total, que es la venta y el costo
-  // de la franja: la columna de la venta suma exactamente esa venta. Antes compartían la columna
-  // con «Total del rango», la venta sin costo y los conteos, y sumarla contaba dos veces.
+  // el redondeo de los comprobantes (D-461) y **sin** fila de total: sumar la columna de la venta
+  // da exactamente la venta de la franja, que está en «Totales». Antes compartían la columna con
+  // «Total del rango», la venta sin costo y los conteos, y sumarla contaba dos veces.
   const byLine: Sheet | null =
     line !== undefined
       ? null
@@ -487,9 +487,6 @@ export function salesMarginXlsx(
                     null,
                   ],
                 ]),
-            // El margen del total no es la suma de estas filas (sin Servicios ni «Sin línea»,
-            // D-409/D-419): está en «Totales».
-            ['Total', num(report.totals.salesPen), num(report.totals.costPen), null, null],
           ],
         };
 
