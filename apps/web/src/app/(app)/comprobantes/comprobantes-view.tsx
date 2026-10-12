@@ -193,7 +193,7 @@ export function ComprobantesView() {
         <div className="flex items-center gap-3">
           {/* D-292: el estado del PSE, en un modal (ⓘ) con su badge en la cabecera. */}
           <ContingencyCard />
-          {/* cc31: un solo botón principal. cc47 (D-615): el Excel pasa a la línea de la tabla. */}
+          {/* cc31: un solo botón principal. cc47b (D-623): el Excel, en «Más opciones». */}
           <HeaderActions
             primary={['new']}
             actions={[

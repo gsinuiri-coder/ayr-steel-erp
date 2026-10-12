@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import type { BusinessLine } from '@ayr/shared';
+import { BUSINESS_LINE_LABELS, type BusinessLine } from '@ayr/shared';
 
 /**
  * cc23 (D-393..D-395): la pestaña de línea de negocio de un reporte vive en la query string,
@@ -117,4 +117,12 @@ export function useLineTab(config: LineTabsConfig): {
   );
 
   return { tab, line: tab === ALL_LINES_TAB ? undefined : tab, select };
+}
+
+/**
+ * cc47b (D-623): el rótulo de una descarga en un reporte con pestañas de línea: la descarga es la
+ * de la pestaña que se ve, y el rótulo lo dice («Descargar Excel · Drywall»).
+ */
+export function downloadLabelFor(base: string, line: BusinessLine | undefined): string {
+  return `${base} · ${line === undefined ? 'Todas las líneas' : BUSINESS_LINE_LABELS[line]}`;
 }

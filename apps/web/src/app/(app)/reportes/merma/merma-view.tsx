@@ -40,7 +40,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import { formatDate, formatKg, formatQty } from '@/lib/format';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { allRows, wasteTotalsOf, type WasteTotals } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
@@ -102,7 +102,7 @@ export function MermaView() {
               actions={[
                 {
                   key: 'xlsx',
-                  label: 'Descargar Excel',
+                  label: downloadLabelFor('Descargar Excel', line),
                   // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
                   download: xlsxHref(
                     '/api/reports/coil-waste/xlsx',
@@ -204,7 +204,7 @@ export function MermaView() {
         </>
       )}
 
-      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, el Excel. */}
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) (el Excel, en «Más opciones», cc47b). */}
       <TableToolbar
         search={
           <ToolbarSearch

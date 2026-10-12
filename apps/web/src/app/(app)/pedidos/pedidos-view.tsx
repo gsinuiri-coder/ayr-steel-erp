@@ -153,7 +153,7 @@ export function PedidosView() {
         />
       </div>
 
-      {/* cc47 (D-615): buscar, «Filtros» (el estado) y, a la derecha, el Excel. */}
+      {/* cc47 (D-615): buscar, «Filtros» (el estado) (el Excel, en «Más opciones», cc47b). */}
       <TableToolbar
         search={
           <ToolbarSearch

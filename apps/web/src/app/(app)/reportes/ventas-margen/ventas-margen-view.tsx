@@ -40,7 +40,7 @@ import {
 } from '@/components/reports/report-table';
 import { keepPreviousInScope } from '@/lib/report-query';
 import { Segmented } from '@/components/reports/segmented';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import {
   SALES_MARGIN_VIEWS,
   SALES_MARGIN_VIEW_LABELS,
@@ -149,7 +149,7 @@ export function VentasMargenView() {
               actions={[
                 {
                   key: 'xlsx',
-                  label: 'Descargar Excel',
+                  label: downloadLabelFor('Descargar Excel', line),
                   download: xlsxHref(
                     '/api/reports/sales-margin/xlsx',
                     { from: period.from, to: period.to, businessLine: line },
@@ -185,7 +185,7 @@ export function VentasMargenView() {
         </BusyRegion>
       )}
 
-      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» y el Excel. */}
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» (el Excel, en «Más opciones», cc47b). */}
       <TableToolbar
         search={
           <ToolbarSearch

@@ -131,7 +131,7 @@ export function CotizacionesView() {
         />
       </div>
 
-      {/* cc47 (D-615): buscar, «Filtros» (el estado) y, a la derecha, el Excel. cc26: el Excel
+      {/* cc47 (D-615): buscar, «Filtros» (el estado) (el Excel, en «Más opciones», cc47b). cc26: el Excel
           lleva los filtros y el orden de la lista (todas las páginas). */}
       <TableToolbar
         search={

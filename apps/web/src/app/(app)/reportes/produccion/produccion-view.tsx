@@ -42,7 +42,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import { formatAmount, formatKg, formatMeters, formatUnits } from '@/lib/format';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { allRows, productionTotalsOf, type ProductionTotals } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
@@ -112,7 +112,7 @@ export function ProduccionView() {
               actions={[
                 {
                   key: 'xlsx',
-                  label: 'Descargar Excel',
+                  label: downloadLabelFor('Descargar Excel', line),
                   // cc40 (D-588): con la búsqueda y su «Ver por», el Excel trae lo que se ve.
                   download: xlsxHref(
                     '/api/reports/production-summary/xlsx',
@@ -194,7 +194,7 @@ export function ProduccionView() {
         </>
       )}
 
-      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» y el Excel. */}
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» (el Excel, en «Más opciones», cc47b). */}
       <TableToolbar
         search={
           <ToolbarSearch

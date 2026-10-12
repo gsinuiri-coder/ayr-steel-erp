@@ -42,6 +42,7 @@ import { SearchSelectField, type SearchSelectOption } from '@/components/search-
 import { SupplierDialog } from '@/app/(app)/proveedores/supplier-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -280,16 +281,22 @@ export function ImportarComprasView() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" asChild>
-              <a href="/plantillas/importar-compras.xlsx" download>
-                Plantilla
-              </a>
-            </Button>
-            <Button variant="outline" asChild>
-              <a href="/plantillas/importar-compras-ejemplo.xlsx" download>
-                Ejemplo
-              </a>
-            </Button>
+            {/* cc47b (D-623): la plantilla y el ejemplo, en «Más opciones». */}
+            <HeaderActions
+              primary={[]}
+              actions={[
+                {
+                  key: 'template',
+                  label: 'Descargar plantilla',
+                  download: '/plantillas/importar-compras.xlsx',
+                },
+                {
+                  key: 'example',
+                  label: 'Descargar ejemplo',
+                  download: '/plantillas/importar-compras-ejemplo.xlsx',
+                },
+              ]}
+            />
           </div>
         </div>
 

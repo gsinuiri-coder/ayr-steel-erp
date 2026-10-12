@@ -668,12 +668,14 @@ function SaleDoneDialog({
           {/* cc47b (D-623): la descarga va a «Más opciones». «Imprimir comprobante» sigue como
               principal (cc32) y «Nueva venta» queda a la vista: es adonde vuelve el foco al imprimir
               (D-523). */}
-          <div className="sm:mr-auto">
-            <HeaderActions
-              primary={[]}
-              actions={[{ key: 'pdf', label: 'Descargar PDF', show: printable, download: pdfHref }]}
-            />
-          </div>
+          {printable && (
+            <div className="sm:mr-auto">
+              <HeaderActions
+                primary={[]}
+                actions={[{ key: 'pdf', label: 'Descargar PDF', download: pdfHref }]}
+              />
+            </div>
+          )}
           <Button ref={newSaleRef} variant="outline" onClick={onClose}>
             Nueva venta
           </Button>

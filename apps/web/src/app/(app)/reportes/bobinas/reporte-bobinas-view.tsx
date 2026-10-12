@@ -28,7 +28,7 @@ import {
   useReportMonth,
 } from '@/components/reports/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { filterReportRows, xlsxHref } from '@/lib/report-table';
 import { allRows, coilMonthTotalsOf } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
@@ -122,7 +122,7 @@ export function ReporteBobinasView() {
               actions={[
                 {
                   key: 'xlsx',
-                  label: 'Descargar Excel',
+                  label: downloadLabelFor('Descargar Excel', line),
                   // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
                   download: xlsxHref(
                     '/api/reports/coils/xlsx',
@@ -132,7 +132,7 @@ export function ReporteBobinasView() {
                 },
                 {
                   key: 'pdf',
-                  label: 'Descargar PDF',
+                  label: downloadLabelFor('Descargar PDF', line),
                   download: `/api/reports/coils/pdf?${qs}`,
                 },
               ]}
@@ -204,7 +204,7 @@ export function ReporteBobinasView() {
         </>
       )}
 
-      {/* cc47 (D-615): buscar, «Filtros» (el mes) y, a la derecha, el Excel y el PDF. */}
+      {/* cc47 (D-615): buscar, «Filtros» (el mes) (las descargas, en «Más opciones», cc47b). */}
       <TableToolbar
         search={
           <ToolbarSearch

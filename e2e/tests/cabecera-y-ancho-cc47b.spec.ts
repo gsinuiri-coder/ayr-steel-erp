@@ -54,7 +54,9 @@ test.describe('Cabecera y ancho (cc47b)', () => {
       const wide: string[] = [];
       for (const path of PAGES) {
         await page.goto(path);
-        await page.waitForLoadState('networkidle').catch(() => undefined);
+        // El título de la pantalla, y un respiro para que las tablas pinten sus filas.
+        await expect(page.locator('main h1').first()).toBeVisible({ timeout: 60_000 });
+        await page.waitForTimeout(500);
         const { sw, cw } = await page.evaluate(() => ({
           sw: document.documentElement.scrollWidth,
           cw: document.documentElement.clientWidth,
@@ -64,6 +66,28 @@ test.describe('Cabecera y ancho (cc47b)', () => {
       expect(wide).toEqual([]);
     });
   }
+
+  test('D-624: las tablas de las pestañas son listas con el scroll único', async ({ page }) => {
+    await loginAsAdmin(page);
+    for (const path of [
+      '/cobranzas',
+      '/cobranzas?tab=pendientes',
+      '/inventario',
+      '/inventario?tabla=productos',
+      '/reportes/inventario-valorizado',
+      '/reportes/bobinas',
+    ]) {
+      await page.goto(path);
+      const list = page.locator('main [data-slot="table"][data-density="list"]');
+      await expect(list, path).toHaveCount(1, { timeout: 60_000 });
+      // El contenedor de la tabla se desplaza por dentro (tope de alto) y la cabecera es fija.
+      const container = page.locator('main [data-slot="table-container"]').first();
+      await expect
+        .poll(() => container.evaluate((el) => getComputedStyle(el).maxHeight), { message: path })
+        .not.toBe('none');
+      await expect(list.locator('thead').first(), path).toHaveCSS('position', 'sticky');
+    }
+  });
 
   test('D-623: las descargas están en «Más opciones» y llevan el filtro activo', async ({
     page,

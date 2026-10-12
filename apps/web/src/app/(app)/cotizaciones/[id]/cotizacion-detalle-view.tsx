@@ -194,13 +194,14 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         </div>
         {/*
           F8-S3b/M3: principal + «⋯». Principal: confirmar mientras se pueda (es a lo que va la
-          cotización); si no, editar; si tampoco, el PDF. Duplicar funciona en cualquier estado
+          cotización); si no, editar; si tampoco, imprimir (cc47b, D-623: una descarga nunca es la
+          principal; «Descargar PDF» va a «Más opciones»). Duplicar funciona en cualquier estado
           (D-119). La descarga es directa desde el API (D-068), no depende de `pdfKey`.
         */}
         <div className="flex items-center gap-2">
           <AuditHistoryLink entityType="quotations" entityId={q.id} />
           <HeaderActions
-            primary={['confirm', 'edit']}
+            primary={['confirm', 'edit', 'print']}
             actions={[
               // cc32: imprimir el mismo PDF sin descargarlo, en «Más opciones»; la principal sigue
               // siendo la del estado.

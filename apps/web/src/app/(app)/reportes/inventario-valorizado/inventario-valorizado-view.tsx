@@ -36,7 +36,7 @@ import {
   ReportTable,
   type ReportColumn,
 } from '@/components/reports/report-table';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { sumDecimal, xlsxHref } from '@/lib/report-table';
 import { allRows } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
@@ -164,7 +164,7 @@ export function InventarioValorizadoView() {
             actions={[
               {
                 key: 'xlsx',
-                label: 'Descargar Excel',
+                label: downloadLabelFor('Descargar Excel', line),
                 // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
                 download: xlsxHref(
                   '/api/reports/inventory-valuation/xlsx',

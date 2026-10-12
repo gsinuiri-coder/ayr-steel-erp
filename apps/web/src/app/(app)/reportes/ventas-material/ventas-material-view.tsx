@@ -47,7 +47,7 @@ import { Section } from '@/components/section';
 import { legacyRangePeriod } from '@/lib/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { Stat, StatStrip } from '@/components/stat-strip';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { RoleGate } from '@/components/role-gate';
 import { Button } from '@/components/ui/button';
 import {
@@ -233,7 +233,7 @@ export function VentasMaterialView() {
               actions={[
                 {
                   key: 'xlsx',
-                  label: 'Descargar Excel',
+                  label: downloadLabelFor('Descargar Excel', line),
                   // cc40 (D-588): con la búsqueda, el Excel trae las filas que se ven.
                   download: `/api/reports/sales-by-material/xlsx?${qs}${
                     searchWords(searchText).length === 0

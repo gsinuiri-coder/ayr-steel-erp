@@ -173,7 +173,7 @@ export function BobinasView() {
         </div>
         {/*
           F8-S3b/M3: principal + «⋯». Principal: la compra de bobinas, que es por donde entra
-          casi todo el alta. cc47 (D-615): el PDF pasa a la línea de la tabla.
+          casi todo el alta. cc47b (D-623): el PDF, en «Más opciones».
         */}
         <HeaderActions
           primary={['new-purchase', 'import-purchases']}
