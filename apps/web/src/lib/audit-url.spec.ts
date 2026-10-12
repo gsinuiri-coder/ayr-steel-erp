@@ -32,6 +32,10 @@ describe('cc48 (D-634): la auditoría en la URL', () => {
     expect(auditParamsOf(url({ search: 'x'.repeat(100) })).get('search')).toHaveLength(80);
   });
 
+  it('un tipo de entidad que no existe se ignora (no da 400)', () => {
+    expect(auditParamsOf(url({ entityType: 'inventado', entityId: 'x' })).toString()).toBe('');
+  });
+
   it('el id de la entidad solo viaja con su tipo', () => {
     expect(auditParamsOf(url({ entityId: 'abc' })).has('entityId')).toBe(false);
     const withType = auditParamsOf(url({ entityType: 'sales_orders', entityId: 'abc' }));
@@ -51,6 +55,7 @@ describe('cc48 (D-634): la auditoría en la URL', () => {
       'Últimos 12 meses',
     );
     expect(auditDefaultPeriodLabel(url({ from: '2026-10-01' }))).toBeNull();
+    expect(auditDefaultPeriodLabel(url({ to: '2026-10-05' }))).toBe('31 días hasta el 05/10/2026');
   });
 });
 

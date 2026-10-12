@@ -1,4 +1,4 @@
-import { auditTextSearchApplies } from '@ayr/shared';
+import { AUDIT_ENTITY_TYPES, auditTextSearchApplies } from '@ayr/shared';
 
 /**
  * cc48 (D-634): lo que la auditoría guarda en la URL —el buscar y los filtros—, para que refrescar
@@ -24,7 +24,8 @@ export function auditParamsOf(url: AuditUrl): URLSearchParams {
   const params = new URLSearchParams();
   const search = url.search.trim().slice(0, SEARCH_MAX);
   if (search) params.set('search', search);
-  if (url.entityType) {
+  // Un tipo que no existe (una URL escrita a mano) se ignora, como antes, en vez de dar 400.
+  if ((AUDIT_ENTITY_TYPES as readonly string[]).includes(url.entityType)) {
     params.set('entityType', url.entityType);
     // El id solo vale con su tipo (el API lo exige).
     if (url.entityId) params.set('entityId', url.entityId);
@@ -46,6 +47,8 @@ export function auditActiveFilterCount(url: AuditUrl): number {
  * de un documento (D-635, el API usa el rango más largo). Con fechas, nada.
  */
 export function auditDefaultPeriodLabel(url: AuditUrl): string | null {
+  // Solo «Hasta»: el API toma los 31 días anteriores a esa fecha.
+  if (!url.from && url.to) return `31 días hasta el ${url.to.split('-').reverse().join('/')}`;
   if (url.from || url.to) return null;
   return url.entityType && url.entityId ? 'Últimos 12 meses' : 'Últimos 31 días';
 }

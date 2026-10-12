@@ -116,9 +116,12 @@ function CopyIdButton({ id }: { id: string }) {
       variant="ghost"
       size="icon-xs"
       title={id}
-      aria-label={`Copiar id ${id}`}
+      aria-label="Copiar id"
       onClick={() => {
-        void navigator.clipboard.writeText(id).then(
+        // Sin contexto seguro no hay portapapeles: `clipboard` no existe y no hay promesa.
+        const copied =
+          navigator.clipboard?.writeText(id) ?? Promise.reject(new Error('sin portapapeles'));
+        void copied.then(
           () => toast.success('Id copiado'),
           () => toast.error('No se pudo copiar el id'),
         );
@@ -225,6 +228,8 @@ export function AuditoriaView() {
   };
   const period = auditDefaultPeriodLabel(url);
   const searchNotice = auditSearchNotice(url, businessToday());
+  // El buscar coincidió con más códigos de los que se buscan: la lista puede quedar corta.
+  const searchCapped = pages.data?.pages[0]?.searchCapped ?? false;
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
@@ -253,7 +258,7 @@ export function AuditoriaView() {
           search={
             <ToolbarSearch
               label="Buscar en la auditoría"
-              placeholder="Buscar por código (PED-…, bobina, SKU, cliente) o detalle…"
+              placeholder="Buscar por código (PED-…, bobina, SKU, cliente), id o detalle…"
               value={searchText}
               onChange={setSearchText}
             />
@@ -345,6 +350,11 @@ export function AuditoriaView() {
                   data-testid="aviso-buscar"
                 >
                   {searchNotice}
+                </span>
+              )}
+              {searchCapped && (
+                <span role="status" className="text-sm text-muted-foreground">
+                  El buscar coincide con muchos registros: puede faltar alguno. Acótalo.
                 </span>
               )}
               {/* D-635: abierta desde el «Historial» de un documento. */}

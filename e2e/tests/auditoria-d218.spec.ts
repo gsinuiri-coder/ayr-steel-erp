@@ -3,7 +3,7 @@ import { adminApi, adminCredentials, createUser } from '../helpers/api';
 import { createInvoiceableCustomer, freeLine, invoiceBody } from '../helpers/invoicing';
 import { getExpectingError } from '../helpers/production';
 import { createSellableProduct } from '../helpers/sales';
-import { loginAndSetPassword, openFilters } from '../helpers/ui';
+import { loginAndSetPassword, moreOption, openFilters } from '../helpers/ui';
 
 /**
  * RF-S2/D-218 — visor unificado de auditoría (`/auditoria`, `GET /audit`), admin-only.
@@ -61,9 +61,10 @@ test.describe('Auditoría (RF-95, D-218) — un administrador ve una acción sen
     await expect(row.first()).toBeVisible({ timeout: 15_000 });
     await expect(row.first()).toContainText('Usuarios');
     await expect(row.first()).not.toContainText(created.id);
-    await expect(
-      row.first().getByRole('button', { name: `Copiar id ${created.id}` }),
-    ).toBeVisible();
+    await expect(row.first().getByRole('button', { name: 'Copiar id' })).toHaveAttribute(
+      'title',
+      created.id,
+    );
 
     // Refrescar y volver atrás dan la misma lista.
     await page.reload();
@@ -77,6 +78,18 @@ test.describe('Auditoría (RF-95, D-218) — un administrador ve una acción sen
       timeout: 15_000,
     });
     await expect(page.getByText('Últimos 12 meses')).toBeVisible();
+
+    // El Excel en «Más opciones», con lo mismo que la lista.
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
+      'href',
+      `/api/audit/xlsx?entityType=users&entityId=${created.id}`,
+    );
+    await page.keyboard.press('Escape');
+
+    // Con más de 31 días, el buscar avisa que solo busca por código (regla del dueño).
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10);
+    await page.goto(`/auditoria?search=demo&from=${sixtyDaysAgo}`);
+    await expect(page.getByTestId('aviso-buscar')).toContainText('solo por código');
   });
 });
 
