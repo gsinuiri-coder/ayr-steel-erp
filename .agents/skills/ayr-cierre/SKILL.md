@@ -25,6 +25,10 @@ description: 'Cierra una sesión de AYR Steel ERP después de revisión y QA: co
 7. Empuja la rama de trabajo y entrega la lista de commits y el estado de CI. Antes de cualquier
    push o merge a `main`, presenta el resumen de D-232 y espera el OK explícito del dueño; solo
    entonces usa `AYR_OWNER_PUSH=1`. Verifica CI antes de declarar cierre definitivo.
+8. Cada merge que publica la web se verifica con `pnpm smoke:prod` (D-636): espera a que
+   `/version` de los dos dominios diga el commit de `origin/main`, y con `--expect-api-sha` si
+   hubo `deploy:api`. Pega su salida en el informe; no uses la caché de `/login` ni los
+   despliegues de Vercel en GitHub como prueba.
 
 Fuentes: protocolo de cierre de `AGENTS.md` §5 y `$ayr-handoff`. No existe un
 comando `/goal` versionado; no se inventa uno.

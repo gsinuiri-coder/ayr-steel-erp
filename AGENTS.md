@@ -244,6 +244,13 @@ Reglas de convivencia, sin excepción:
   `--update-labels git-sha=<sha-corto>`; un push a `main` publica el web en Vercel, no la API.
 - `pnpm smoke:prod` se corre desde un worktree en el mismo SHA desplegado: un smoke más nuevo
   que la API produce falsos rojos y uno más viejo, falsos verdes.
+- **Qué commit está publicado (D-636).** La web lo dice en `/version` (`sha` y `builtAt`, sin
+  caché) y la API en `/api/health` (`sha`, el mismo valor que el label `git-sha`). Tras cada
+  merge, `pnpm smoke:prod` espera, hasta 10 minutos, a que `/version` de **los dos dominios**
+  publique `origin/main` (o `--expect-sha <sha>`), y falla con el sha esperado, el publicado y el
+  dominio si no llega. Tras un `deploy:api`, se le pasa además `--expect-api-sha <sha-corto>` con
+  el sha recién desplegado; sin esa bandera solo muestra el de la API. Esto reemplaza la
+  verificación por la caché de `/login` y por los despliegues de Vercel en GitHub.
 - Un `migrate diff` no vacío solo se admite si coincide **exactamente** con el drift aprobado en
   `apps/api/prisma/drift-esperado.sql` (D-593, clasificado en `docs/analisis/drift-schema.md`);
   cualquier diferencia nueva obliga a parar. `pnpm check:drift` lo comprueba en la CI sobre una

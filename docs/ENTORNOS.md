@@ -565,9 +565,12 @@ inventario real es contaminación del stock del cliente.
 
 En su lugar:
 
-- **Post-deploy: `pnpm smoke:prod`.** Health sin sesión, login con el admin efímero y cuatro o
-  cinco GET (líneas, catálogo, inventario, bobinas, reporte mensual). Lo único que escribe es
-  ese usuario efímero, y lo borra en `finally`.
+- **Post-deploy: `pnpm smoke:prod`.** Primero el commit publicado (D-636): espera hasta 10
+  minutos a que `/version` de los dos dominios diga `origin/main` (o `--expect-sha <sha>`) y
+  muestra el `sha` de `/api/health`, que compara solo con `--expect-api-sha <sha-corto>` (tras un
+  `deploy:api`). Después, login con el admin efímero y cuatro o cinco GET (líneas, catálogo,
+  inventario, bobinas, reporte mensual). Lo único que escribe es ese usuario efímero, y lo borra
+  en `finally`.
 - **La suite completa: local y CI**, contra Docker local y el Postgres del runner; el smoke,
   contra la rama Neon `ci` (D-202). Es la que manda antes de un push (D-123).
 - **`pnpm prod:purge-e2e` queda solo para emergencias documentadas**: si algún día vuelve a
