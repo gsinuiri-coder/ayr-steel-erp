@@ -154,6 +154,7 @@ export function PeriodFields({
     <div className="grid gap-2" data-testid="periodo">
       <Segmented<PickerValue>
         label="Periodo"
+        showLabel
         value={value}
         options={[
           ...PERIOD_PRESETS.map((p) => ({ value: p, label: PERIOD_PRESET_LABELS[p] })),
@@ -328,6 +329,7 @@ export function MonthFields({
     <div className="grid gap-2" data-testid="periodo">
       <Segmented<MonthPickerValue>
         label="Mes"
+        showLabel
         value={value}
         options={[
           ...MONTH_PRESETS.map((p) => ({ value: p, label: MONTH_PRESET_LABELS[p] })),
