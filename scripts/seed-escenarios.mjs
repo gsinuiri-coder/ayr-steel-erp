@@ -773,19 +773,28 @@ export async function seedCases(api, masters) {
       'línea 1 → «Cambiar cantidad» a 26 m: reserva 6 m más y nace una OP por la diferencia; la tarjeta dice «20.00 m de 20.00 m»',
   });
 
-  // V1 · venta a crédito con saldo (cc48): la boleta manual (D-153; el cliente DEMO tiene DNI) de
-  // los 20 m de C2, a 15 días.
-  // Le da filas a Cobranzas «Por cliente», a «Ventas y margen» y a «Totales por línea».
-  const c2Detail = await api.get(`/sales/orders/${c2.orderId}`);
+  // V1 · venta a crédito con saldo (cc48): un pedido propio de accesorio, producido y cerrado, con
+  // su boleta manual (D-153; el cliente DEMO tiene DNI) a 15 días. Le da filas a Cobranzas «Por
+  // cliente», a «Ventas y margen» y a «Totales por línea». Va aparte de C2: un pedido con
+  // comprobante ya no admite «Cambiar cantidad», que es lo que C2 prueba.
+  const v1Order = await orderFor(
+    'V1',
+    accessory,
+    { qty: '20.000', unitPricePen: '15.0000' },
+    await buyCoils(roofing, white, '0.25', ['62', '63'], 'caso V1'),
+  );
+  await report(v1Order, { coilId: v1Order.coils[0].id, meters: '20.000' });
+  await api.post(`/production/roofing/${v1Order.opId}/close`, {});
+  const v1Detail = await api.get(`/sales/orders/${v1Order.orderId}`);
   const invoice = await api.post('/invoicing/documents', {
     docType: 'BOLETA',
     customerId: masters.customer.id,
-    salesOrderId: c2.orderId,
+    salesOrderId: v1Order.orderId,
     issueDate: today,
     paymentTerms: 'CREDITO',
     dueDate: addDaysIso(today, 15),
     notes: 'DEMO · caso V1',
-    items: [{ salesOrderItemId: c2Detail.items[0].id, qty: '20.000' }],
+    items: [{ salesOrderItemId: v1Detail.items[0].id, qty: '20.000' }],
   });
   const v1 = await api.post(`/invoicing/documents/${invoice.id}/register-manual`, {
     series: 'B900',
@@ -793,8 +802,8 @@ export async function seedCases(api, masters) {
   });
   cases.push({
     key: 'V1',
-    order: c2.order,
-    op: c2.op,
+    order: v1Order.order,
+    op: v1Order.op,
     abrir: `${PREVIEW_WEB}/cobranzas`,
     probar: `boleta ${v1.number} a crédito con saldo: Cobranzas «Por cliente» y Ventas y margen`,
   });

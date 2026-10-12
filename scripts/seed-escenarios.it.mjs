@@ -83,7 +83,7 @@ async function useCases(ops) {
     await api.post(`/production/${order.id}/report`, { pieces: 50, idempotencyKey: randomUUID() });
     await api.post(`/production/${order.id}/close`, { reason: 'Prueba: el resto del fleje queda' });
     const closed = (await api.list('/production')).filter((o) => o.status === 'CLOSED');
-    assert.equal(closed.length, 3, 'P2, C2 y la OP de drywall quedaron cerradas');
+    assert.equal(closed.length, 4, 'P2, C2, V1 y la OP de drywall quedaron cerradas');
 
     const reason = 'El cliente cambió el pedido';
     const lineOf = async (opCode) => {
@@ -163,7 +163,11 @@ try {
     (c) => c.docNumber === DEMO.customer.docNumber,
   );
   const orders = (await api.list('/sales/orders')).filter((o) => o.customerId === customer.id);
-  assert.equal(orders.filter((o) => o.status !== 'CANCELLED').length, 8, 'ocho pedidos vivos');
+  assert.equal(
+    orders.filter((o) => o.status !== 'CANCELLED').length,
+    9,
+    'nueve pedidos vivos (con V1, cc48)',
+  );
 
   const suppliers = await api.list('/suppliers');
   const supplierIds = new Set(
@@ -172,7 +176,11 @@ try {
       .map((s) => s.id),
   );
   const purchases = (await api.list('/purchases')).filter((p) => supplierIds.has(p.supplierId));
-  assert.equal(purchases.filter((p) => p.status !== 'CANCELLED').length, 10, 'diez compras vivas');
+  assert.equal(
+    purchases.filter((p) => p.status !== 'CANCELLED').length,
+    11,
+    'once compras vivas (con V1, cc48)',
+  );
 
   const cuts = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
   assert.equal(cuts.filter((o) => o.status === 'RECEIVED').length, 1, 'un corte recibido vivo');
