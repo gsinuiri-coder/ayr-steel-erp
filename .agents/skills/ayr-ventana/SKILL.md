@@ -24,7 +24,9 @@ guion UAT. Una autorización general de ventana no elimina las paradas manuales 
 7. **PARADA DEL DUEÑO:** el agente no hace push. Entrega el comando con
    `AYR_OWNER_PUSH=1`; continúa solo después de confirmación del push y CI verde.
 8. Desde un worktree en el SHA desplegado, corre `pnpm smoke:prod`; nunca `e2e:prod` (D-126).
-   Verifica `/health`, revisión activa, label y ausencia de drift de runtime.
+   El smoke espera a que `/version` de los dos dominios publique el commit de `main` y, con
+   `--expect-api-sha <sha-corto>` tras `deploy:api`, que `/api/health` diga ese sha (D-636).
+   Verifica además revisión activa, label y ausencia de drift de runtime.
 9. **PARADA DE VERIFICACIÓN:** el dueño ejecuta el guion manual/UAT en producción. Sin esa
    confirmación la ventana queda abierta, no «completada».
 10. Registra tiempos y resultados medidos en `docs/PROGRESO.md` y cierra con `$ayr-cierre`.

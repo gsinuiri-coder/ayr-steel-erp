@@ -10,12 +10,25 @@
 // nunca se usa la cuenta real del dueño), que se borra en `finally` pase lo que pase. De ahí
 // en adelante son GET.
 //
-// Uso: pnpm smoke:prod [--base-url https://...]
+// D-636: antes de probar nada espera a que la web publique el commit esperado, en los dos
+// dominios (`/version`), y muestra el de la API (`/api/health`). El esperado de la web es
+// `--expect-sha` o, sin él, `origin/main`. El de la API solo se compara con `--expect-api-sha`
+// (la API no se despliega en cada merge).
+//
+// Uso: pnpm smoke:prod [--base-url https://...] [--expect-sha <sha>] [--expect-api-sha <sha>]
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { ROOT, neonConnectionString } from './lib.mjs';
-import { isAllowedSmokeBaseUrl } from './smoke-prod-guard.mjs';
+import { ROOT, neonConnectionString, run } from './lib.mjs';
+import { PRODUCTION_WEB_HOSTS, isAllowedSmokeBaseUrl } from './smoke-prod-guard.mjs';
+import {
+  VERSION_TIMEOUT_MS,
+  argValue,
+  fetchShaField,
+  gitContains,
+  mismatchMessage,
+  waitForSha,
+} from './smoke-version.mjs';
 
 const DEFAULT_BASE_URL = 'https://ayr-steel-erp-web.vercel.app';
 const E2E_ADMIN_EMAIL = 'e2e-smoke@ayr.test';
@@ -31,6 +44,14 @@ if (!isAllowedSmokeBaseUrl(baseUrl)) {
   throw new Error(
     `--base-url tiene que ser https y del dominio del proyecto (recibido: ${baseUrl})`,
   );
+}
+
+// D-636: el commit que tiene que estar publicado. Se valida antes de tocar producción.
+const expectedApiSha = argValue(argv, '--expect-api-sha');
+let expectedWebSha = argValue(argv, '--expect-sha');
+if (expectedWebSha === null) {
+  run('git', ['fetch', '--quiet', 'origin', 'main']);
+  expectedWebSha = run('git', ['rev-parse', 'origin/main']).trim();
 }
 
 const apiDir = resolve(ROOT, 'apps/api');
@@ -83,13 +104,74 @@ const ok = (label, detail = '') => {
 
 console.log(`Smoke de solo lectura contra ${baseUrl}`);
 
-// 1. Salud del API, sin sesión.
-try {
-  const res = await fetch(`${baseUrl}/api/health`);
-  if (res.ok) ok('health', String(res.status));
-  else fail('health', `HTTP ${res.status}`);
-} catch (err) {
-  fail('health', err instanceof Error ? err.message : String(err));
+// 0. D-636: el commit publicado. La web, en los dos dominios, hasta que coincida o hasta el tope;
+// la API, con su sha a la vista y comparado solo si se pidió. Los dos dominios comparten un solo
+// tope de 10 minutos, y vale también un commit posterior que ya trae el esperado.
+const webDeadline = Date.now() + VERSION_TIMEOUT_MS;
+const contains = gitContains(ROOT);
+for (const host of PRODUCTION_WEB_HOSTS) {
+  const url = `https://${host}/version`;
+  const label = `web publicada (${host})`;
+  const result = await waitForSha({
+    expected: expectedWebSha,
+    deadline: webDeadline,
+    contains,
+    readSha: () => fetchShaField(fetch, url, 'sha'),
+    onAttempt: ({ attempts, published, error }) =>
+      console.log(
+        `  …      ${label}: intento ${attempts}, publicado ${published ?? '—'}${error ? ` (${error})` : ''}; esperado ${expectedWebSha.slice(0, 8)}`,
+      ),
+  });
+  if (result.ok)
+    ok(
+      label,
+      result.newer
+        ? `sha ${result.published.slice(0, 8)}, posterior a ${expectedWebSha.slice(0, 8)} y lo contiene`
+        : `sha ${result.published.slice(0, 8)}`,
+    );
+  else
+    fail(
+      label,
+      mismatchMessage({
+        where: url,
+        expected: expectedWebSha,
+        published: result.published,
+        error: result.error,
+        timeoutMs: VERSION_TIMEOUT_MS,
+      }),
+    );
+}
+
+// 1. Salud del API, sin sesión, con el commit desplegado.
+const healthUrl = `${baseUrl}/api/health`;
+if (expectedApiSha === null) {
+  try {
+    const sha = await fetchShaField(fetch, healthUrl, 'sha');
+    ok('health', `API en ${sha ?? '(sin sha)'}; sin --expect-api-sha no se compara`);
+  } catch (err) {
+    fail('health', err instanceof Error ? err.message : String(err));
+  }
+} else {
+  const result = await waitForSha({
+    expected: expectedApiSha,
+    readSha: () => fetchShaField(fetch, healthUrl, 'sha'),
+    onAttempt: ({ attempts, published, error }) =>
+      console.log(
+        `  …      health: intento ${attempts}, API en ${published ?? '—'}${error ? ` (${error})` : ''}; esperado ${expectedApiSha}`,
+      ),
+  });
+  if (result.ok) ok('health', `API en ${result.published}, el esperado`);
+  else
+    fail(
+      'health',
+      mismatchMessage({
+        where: healthUrl,
+        expected: expectedApiSha,
+        published: result.published,
+        error: result.error,
+        timeoutMs: VERSION_TIMEOUT_MS,
+      }),
+    );
 }
 
 // 2. Login con el admin efímero, y de ahí los GET.
