@@ -2414,3 +2414,72 @@ en local, a 1366, a 1920 y forzando 900 px, y lo vigila un E2E.
 
 **Revisiones.** Autorrevisión y segundo modelo, sin P0 ni P1 (`docs/revision/cc47b-segundo-modelo.md`).
 Sonar pidió unitarios para `downloadLabelFor`: su cobertura solo cuenta `.ts`.
+
+## Ratificación del dueño (2026-10-12, pieza cc48)
+
+El dueño ratificó D-606 a D-626:
+
+- cc46: D-606 a D-611 (hooks de React en el lint, borde del partido, objetos de base);
+- cc47: D-612 a D-622 (estándar de tablas, reportes, Cobranzas, menú y Panel);
+- cc47b: D-623 a D-626 (descargas en «Más opciones», scroll único en las pestañas, sin scroll
+  horizontal, recepción en tanda como principal en Compras).
+
+Quedan firmes, y su fila de `ARQUITECTURA.md` §0.2 lo dice. Aprobó además D-633 (auditoría con código
+legible) antes de implementarla.
+
+**Alcance (12/10):** el dueño sacó del alcance Nubefact (D-542) y la IA (factura de proveedor a compra
+en borrador). Los casos de Dora no se tocan. El repo se queda público.
+
+## cc48 — cierre de cc47 y auditoría legible (D-627..D-635)
+
+**Lo que no cambia de forma (D-627, D-628).** Las listas sin nada que buscar ni filtrar (usuarios,
+acabados, líneas) siguen sin nada encima de la tabla, y Caja sigue como pantalla de operación, sin
+pestañas. Se dejan escritas para que la línea estándar de cc47 no se lea como obligatoria en todas.
+
+**La franja de totales (D-629).** El pedido era una sola fila compacta que se pliega si la tabla queda
+por debajo de unos 360 px. La primera versión decidía con el `max-height` de la tabla, y la medición
+lo tumbó: con pocas filas, `useFillViewport` deja la tabla en su alto natural (o en su mínimo de 240
+px), así que la franja se plegaba aunque sobrara ventana. Se decide con la ventana: el alto que
+quedaría entre el inicio de la tabla y el final de la franja abierta. La autorrevisión notó que en
+Ventas y margen hay secciones entre la tabla y la franja, de modo que plegar no siempre lleva la tabla
+a 360 px; se dejó como lo dice el pedido (si la tabla queda baja, se pliega). Un clic manda sobre la
+decisión automática en esa visita.
+
+**Buscar en Cobranzas «Por cliente» (D-630).** El resumen por cliente se arma en memoria (está acotado
+por los clientes con deuda), así que el buscar filtra ese resumen antes de paginar, con el buscar de
+los reportes (`filterBySearch`: por palabras, sin mayúsculas ni tildes). Las tarjetas siguen sumando a
+todos, y por eso el Excel con buscar lo dice en una nota: un archivo filtrado no puede leerse como el
+total por cobrar.
+
+**El PDF de bobinas (D-631)** recibe el buscar con el mismo `searchCoilMonth` del Excel y lo dice dos
+veces, igual que el Excel (D-588): las tablas son las de la búsqueda; el cuadre, el de toda la pestaña.
+
+**Columnas del reporte mensual (D-632).** Solo la propuesta, en el informe: quitar «Tipo», juntar
+acabado y color, «Línea» solo en «Todas», y el código de la bobina truncado.
+
+**Auditoría con código legible (D-633, aprobada).** `audit_log` guarda el tipo y el id; el código se
+resuelve al leer, por lotes (una consulta por tipo presente en la página). Lo que se pensó y no se
+hizo: guardar el código al escribir (exigía migración y tocar cada escritor) o resolverlo fila por
+fila (N+1). Una entidad borrada muestra el código que el registro guardó en su detalle, si guardó uno,
+o «Eliminado · <8 del id>».
+
+**Buscar y filtros de la auditoría (D-634).**
+
+- El código legible se resuelve a ids por tipo y se filtra por id; un correlativo va directo por
+  `seq`; un UUID pegado se busca tal cual.
+- El texto del detalle está en JSON, que Prisma no compara como texto. Por eso la página de
+  `audit_log` con buscar es una consulta SQL de solo lectura que replica la de Prisma (filtros, corte
+  del cursor, orden y tope).
+- La regla del dueño se aplicó porque la medición la pidió. Con 50 000 registros, un buscar sin
+  coincidencias en 12 meses tardaba 215 ms, cinco veces la primera página, y crece con la tabla.
+  Con texto solo hasta 31 días, el mismo caso tarda 15 ms.
+- Las dos revisiones encontraron el mismo P1: un correlativo inexistente dejaba una lista vacía, y
+  `Prisma.join([])` lanza error.
+
+**El historial de un documento (D-635).** El enlace ya existía; lo nuevo es que, sin fechas, toma 12
+meses: el «Historial» de un pedido de hace dos meses no puede abrir vacío por los 31 días por
+defecto.
+
+**Lo que se resolvió sin decisión nueva.** «Cotizaciones sin stock» queda vivo (lo usan el smoke y
+cinco E2E; decisión del dueño). `.claude/settings.json` no se toca: las reglas que citaba el brief no
+existen y las que hay funcionan por prefijo.

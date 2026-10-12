@@ -27,6 +27,8 @@ Aplica a los siete reportes: Ventas y margen, Ventas por material, Cuentas por c
 
 > **Enmienda cc47b (D-623..D-625; UAT del dueño del 12/10/2026).** Las descargas (Excel, PDF, plantillas) no van en la línea del buscar ni como botón principal: siempre en «Más opciones» de la cabecera, que tiene un solo botón principal; la línea queda con buscar, «Filtros» y «Ver por». Las tablas de las pestañas usan el scroll único, y ninguna página se desplaza en horizontal: una tabla ancha se desplaza dentro de su contenedor.
 
+> **Enmienda cc48 (D-629, D-631; 12/10/2026).** «Totales por línea» va en una sola franja compacta, con las líneas una al lado de otra; si con la franja abierta la tabla quedaría por debajo de 360 px, se pliega en «Totales por línea ▸» y se abre con un clic. El PDF del Reporte mensual de bobinas recibe el buscar, como su Excel. En los Excel, ninguna fila suma a otras de su misma columna: Ventas y margen tiene la hoja «Por línea» y Producción, «Por OP», «Por pedido» y «Total».
+
 - Un solo componente para todos: atajos «Este mes», «Mes anterior», «Últimos 3 meses», «Este año» y «Otro periodo…» (rango libre), con el rango escrito al lado.
 - Fechas en hora de Lima, como hoy (`businessToday`, texto AAAA-MM-DD).
 - El periodo va siempre en la URL, también cuando es el predeterminado, para que un enlace guardado muestre el mismo periodo otro día.

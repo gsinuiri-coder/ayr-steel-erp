@@ -2,6 +2,44 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-12 — cc48: cierre de cc47 y auditoría legible (D-627..D-635; PR #187 y #188)
+
+API y web, sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc48.md`;
+revisiones en `docs/revision/cc48-{a,b}-*.md`; UAT en `docs/uat/cc48.md`.
+
+- **En producción:**
+  - Corte A: API `00118-x92` (`85703550`) y web de `cebdb94f`.
+  - Corte B: API `00119-dkj` (`e28853a5`) y web de `31adda6f`.
+  - `smoke:prod` verde en los dos dominios tras cada corte.
+- **Decisiones del dueño (12/10):**
+  - Quedan ratificadas D-606 a D-626 y D-633 (aprobada antes de implementar).
+  - **Nubefact (D-542) e IA (factura de proveedor a compra en borrador) salen del alcance**: ya no
+    son pendientes.
+  - Los casos de Dora no se tocan. El repo sigue público.
+- **Corte A:**
+  - D-629: «Totales por línea» en una franja compacta que se pliega si la tabla queda por debajo
+    de 360 px.
+  - D-630: buscar en Cobranzas «Por cliente», en el API y en su Excel.
+  - D-631: el PDF de bobinas con buscar.
+  - Hojas de Excel sin totales en la columna que se suma.
+  - `grid-cols-1` en 19 grillas con tablas; medido, ninguna página desborda a 1366 ni a 1920.
+  - Caso V1 en `seed:escenarios`.
+  - D-627 y D-628 sin cambio de código; D-632, solo propuesta.
+- **Corte B:**
+  - D-633: la auditoría con el código legible de cada entidad, resuelto por lotes.
+  - D-634: buscar (código, id o detalle; el detalle, solo con periodos de hasta 31 días),
+    «Filtros» en la URL y Excel.
+  - D-635: el «Historial» con 12 meses.
+- **Sin cambios, por decisión del dueño:** el endpoint de «Cotizaciones sin stock» queda vivo (lo
+  usan el smoke y cinco E2E; la web ya no lo invalida). `.claude/settings.json` no se toca: las
+  reglas citadas no existían y las que hay funcionan por prefijo.
+- **Registro de riesgo:** no toca kardex ni datos. El buscar de la auditoría usa SQL de solo lectura
+  (`$queryRaw` parametrizado sobre `audit_log`).
+- **Pendiente de decisión del dueño:**
+  - Ratificar D-627 a D-632, D-634 y D-635.
+  - Decidir la propuesta de columnas de D-632.
+  - Decidir si se agrega el «Historial» en compra, corte y OP.
+
 ## 2026-10-12 — cc47b: correcciones del UAT de cc47 (D-623..D-626; PR #185)
 
 Solo web: sin API, sin migraciones y sin SQL. Detalle en `docs/handoff/ventana-cc47b.md`; revisión en

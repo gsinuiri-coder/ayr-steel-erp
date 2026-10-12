@@ -83,6 +83,8 @@ Tablero: `Tablas`.
 
 > **Enmienda cc47b (D-623..D-625; UAT del dueño del 12/10/2026).** Las descargas (Excel, PDF, plantillas) no van en la línea del buscar ni como botón principal: siempre en «Más opciones» de la cabecera, que tiene un solo botón principal; la línea queda con buscar, «Filtros» y «Ver por». Las tablas de las pestañas usan el scroll único, y ninguna página se desplaza en horizontal: una tabla ancha se desplaza dentro de su contenedor.
 
+> **Enmienda cc48 (D-627, D-628, D-630, D-634; 12/10/2026).** Las listas sin nada que buscar ni filtrar (usuarios, acabados, líneas y similares) no llevan nada encima de la tabla, y Caja sigue como pantalla de operación, sin pestañas. Cobranzas «Por cliente» y la auditoría tienen buscar en el API; la auditoría lleva «Filtros» con periodo, usuario, acción y tipo de entidad, todo en la URL, y muestra el código legible de cada entidad en vez del UUID (D-633). Una grilla de una columna que contiene una tabla lleva `grid-cols-1`, para que la tabla no la estire.
+
 - Título con el filtro activo, «Más opciones» y un botón principal.
 - La unidad va en el encabezado («Total (S/)»), no en cada celda. Vacío con palabra («Sin emitir»), no con raya.
 - Pie con cuántas filas se ven y la suma de la columna de importe.
