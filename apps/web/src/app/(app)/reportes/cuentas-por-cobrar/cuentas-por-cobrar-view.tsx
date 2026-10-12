@@ -107,6 +107,25 @@ export function CuentasPorCobrarView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // cc25 (M3): descarga directa contra el API (patrón D-149), con el mismo vendedor.
+          <HeaderActions
+            primary={[]}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                // cc40 (D-588): con la búsqueda, el Excel trae los clientes que se ven.
+                download: xlsxHref(
+                  '/api/reports/receivables-aging/xlsx',
+                  { sellerId: sellerId || undefined },
+                  searchText,
+                ),
+              },
+            ]}
+          />
+        }
         title="Cuentas por cobrar"
         subtitle={`Saldo a hoy${data ? ` (${formatDate(data.asOf)})` : ''} por cliente y antigüedad, en soles con IGV.`}
         howItWorks={
@@ -184,24 +203,6 @@ export function CuentasPorCobrarView() {
               />
             )}
           </FiltersDialog>
-        }
-        aside={
-          // cc25 (M3): descarga directa contra el API (patrón D-149), con el mismo vendedor.
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                // cc40 (D-588): con la búsqueda, el Excel trae los clientes que se ven.
-                download: xlsxHref(
-                  '/api/reports/receivables-aging/xlsx',
-                  { sellerId: sellerId || undefined },
-                  searchText,
-                ),
-              },
-            ]}
-          />
         }
       />
 

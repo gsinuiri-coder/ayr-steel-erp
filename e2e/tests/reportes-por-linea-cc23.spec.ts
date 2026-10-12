@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { moreOption } from '../helpers/ui';
 import {
   INVENTORY_VALUATION_LINES,
   SALES_MARGIN_LINES,
@@ -67,16 +68,18 @@ test.describe('Reportes por línea (cc23)', () => {
       'Reventa',
     ]);
     await expect(tab(page, 'Todas')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(1);
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveCount(1);
+    await page.keyboard.press('Escape');
 
     await tab(page, 'Drywall').click();
     await expect(page).toHaveURL(`/reportes/ventas-margen?from=${FROM}&to=${to}&linea=drywall`);
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
     // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/sales-margin/xlsx?from=${FROM}&to=${to}&businessLine=drywall`,
     );
+    await page.keyboard.press('Escape');
 
     await tab(page, 'Servicios').click();
     await expect(page).toHaveURL(/linea=services/);

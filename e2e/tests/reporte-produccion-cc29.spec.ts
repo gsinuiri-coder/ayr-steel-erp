@@ -9,7 +9,7 @@ import {
   type ProductionSummaryDto,
 } from '@ayr/shared';
 import { adminApi, createUser, getJson, postJson } from '../helpers/api';
-import { loginAndSetPassword, openSidebarGroup } from '../helpers/ui';
+import { loginAndSetPassword, openSidebarGroup, moreOption } from '../helpers/ui';
 import {
   apiAs,
   deactivateTrail,
@@ -169,7 +169,8 @@ test('reporte de producción: una OP de drywall con su reporte y su cierre, y lo
       'repartido en orden de montaje',
     );
     await expect(page.getByRole('columnheader', { name: 'Costo salido' })).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toBeVisible();
+    await expect(await moreOption(page, 'Descargar Excel')).toBeVisible();
+    await page.keyboard.press('Escape');
   } finally {
     await purgeProductionOrder(api, order.id).catch(() => undefined);
     await deactivateTrail(api, {

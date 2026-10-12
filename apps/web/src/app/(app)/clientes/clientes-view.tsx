@@ -136,6 +136,11 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 openDialog();
               },
             },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/customers', params),
+            },
           ]}
         />
       </div>
@@ -149,7 +154,7 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
         </Alert>
       )}
 
-      {/* cc47 (D-615): buscar y, a la derecha, el Excel (sin filtros, sin botón «Filtros»).
+      {/* cc47 (D-615): buscar (el Excel, en «Más opciones», cc47b) (sin filtros, sin botón «Filtros»).
           cc26 M2: el Excel lleva la búsqueda y el orden de la lista (todas las páginas). */}
       <TableToolbar
         search={
@@ -158,18 +163,6 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
             placeholder="Buscar por nombre o número de documento…"
             value={searchText}
             onChange={setSearchText}
-          />
-        }
-        aside={
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/customers', params),
-              },
-            ]}
           />
         }
       />

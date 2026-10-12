@@ -18,6 +18,7 @@ import { AuditHistoryLink } from '@/components/audit-history-link';
 import { RoleGate } from '@/components/role-gate';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -178,11 +179,17 @@ export function ImportarPreciosView() {
         <div className="flex gap-2">
           {/* D-225: cada carga, cada reversa y cada SKU que tocaron quedan en el visor. */}
           <AuditHistoryLink entityType="products" />
-          <Button variant="outline" size="sm" asChild>
-            <a href="/plantillas/precios-de-lista.csv" download>
-              Descargar plantilla
-            </a>
-          </Button>
+          {/* cc47b (D-623): la plantilla, en «Más opciones». */}
+          <HeaderActions
+            primary={[]}
+            actions={[
+              {
+                key: 'template',
+                label: 'Descargar plantilla',
+                download: '/plantillas/precios-de-lista.csv',
+              },
+            ]}
+          />
         </div>
       </div>
 

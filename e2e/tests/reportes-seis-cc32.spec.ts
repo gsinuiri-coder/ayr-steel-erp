@@ -7,7 +7,7 @@ import {
   previousMonth,
   uuid,
 } from '../helpers/report-fixtures';
-import { applyPeriodPreset, expectPeriodPreset, openFilters } from '../helpers/ui';
+import { applyPeriodPreset, expectPeriodPreset, openFilters, moreOption } from '../helpers/ui';
 
 /**
  * cc32 (corte 2) — los otros seis reportes sobre la plantilla del corte 1: Ventas por material,
@@ -47,17 +47,19 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
       await expectPeriodPreset(page, 'Este mes');
     }
     // Producción ofrece el Excel con el periodo y la pestaña puestos.
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/production-summary/xlsx?from=${firstOfMonth(today)}&to=${today}&businessLine=metallic-roofing`,
     );
+    await page.keyboard.press('Escape');
     // cc39 (D-580): Merma también ofrece su Excel, con el periodo y la pestaña puestos.
     await page.goto('/reportes/merma');
     await expect(page.getByTestId('tabla-merma')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/coil-waste/xlsx?from=${firstOfMonth(today)}&to=${today}&businessLine=metallic-roofing`,
     );
+    await page.keyboard.press('Escape');
   });
 
   test('el periodo elegido en Ventas y margen se mantiene en Merma, Producción y Bobinas', async ({
@@ -273,10 +275,11 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
     await expectPeriodPreset(page, 'Este mes');
     await applyPeriodPreset(page, 'Mes anterior');
     await expect(page).toHaveURL(`/reportes/bobinas?mes=${prev.month}`);
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/coils/xlsx?month=${prev.month}&businessLine=metallic-roofing`,
     );
+    await page.keyboard.press('Escape');
     const sealed = page.getByRole('region', { name: 'Bobinas selladas' });
     await expect(sealed).toContainText('Subtotal Selladas · 2 bobinas');
     await expect(total(page, 'tabla-selladas', 'closing')).toHaveText('3,500.00');
@@ -304,10 +307,11 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
     const rows = page.getByTestId('fila-material');
     await expect(rows).toHaveCount(2);
     await expect(total(page, 'ventas-material', 'sales')).toHaveText('4,500.50');
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/sales-by-material/xlsx?from=${firstOfMonth(today)}&to=${today}&businessLine=metallic-roofing`,
     );
+    await page.keyboard.press('Escape');
 
     await page.getByRole('button', { name: 'Venta (S/)', exact: true }).click();
     await expect(rows.first()).toContainText('AZUL');

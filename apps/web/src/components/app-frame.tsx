@@ -42,7 +42,13 @@ export function AppFrame({ children }: { children: ReactNode }) {
           <Suspense fallback={null}>
             <AppSidebar />
           </Suspense>
-          <SidebarInset>
+          {/*
+            cc47b (D-625): `min-w-0` en el marco y en el contenido. Los dos son ítems flex con
+            `min-width: auto`: una tabla más ancha que la ventana estiraba la página entera (scroll
+            horizontal de toda la página). Con `min-w-0` el ancho lo pone la ventana y el
+            desplazamiento queda dentro de la tabla, en su propio contenedor.
+          */}
+          <SidebarInset className="min-w-0">
             {/*
               cc31: la barra lleva la ruta (grupo / lista / documento), que reemplaza al botón
               «Volver», la etiqueta de demo y la campana de pendientes. Sigue siendo una franja
@@ -64,7 +70,7 @@ export function AppFrame({ children }: { children: ReactNode }) {
               F8-S7/M4: un `<div>`, no un segundo `<main>`. `SidebarInset` ya es el `<main>` del
               panel (`sidebar.tsx`), así que esto anidaba dos landmarks `main`.
             */}
-            <div className="flex flex-1 flex-col gap-3 p-4">{children}</div>
+            <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">{children}</div>
           </SidebarInset>
         </SidebarProvider>
         <GoToDialog open={goToOpen} onOpenChange={setGoToOpen} />

@@ -39,7 +39,6 @@ import { formatDate, formatMoney } from '@/lib/format';
 import { FilterChip } from '@/components/filter-chip';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
@@ -161,12 +160,30 @@ export function ComprasView() {
           </p>
         </div>
         {/* cc31: un solo botón principal y lo demás en «Más opciones». D-351: la carga en tanda
-            desde planilla. cc47 (D-615): el Excel pasa a la línea de la tabla. */}
+            desde planilla. cc47b (D-623): con filas marcadas, la principal es recibirlas (la acción
+            que el usuario acaba de preparar) y «Nueva compra» pasa al menú; el Excel, siempre en
+            el menú. */}
         <HeaderActions
-          primary={['new']}
+          primary={['receive', 'new']}
           actions={[
+            {
+              key: 'receive',
+              label: `Recibir seleccionadas (${String(selectedCount)})`,
+              show: selectedCount > 0,
+              disabled: receiveMany.isPending,
+              pending: receiveMany.isPending,
+              pendingText: 'Recibiendo…',
+              onSelect: () => {
+                receiveMany.mutate();
+              },
+            },
             { key: 'new', label: 'Nueva compra', href: '/compras/nueva' },
             { key: 'import', label: 'Importar compras', href: '/compras/importar' },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/purchases', params),
+            },
           ]}
         />
       </div>
@@ -250,32 +267,6 @@ export function ComprasView() {
               </>
             )}
           </FiltersDialog>
-        }
-        aside={
-          <>
-            {selectedCount > 0 && (
-              <Button
-                disabled={receiveMany.isPending}
-                pending={receiveMany.isPending}
-                pendingText="Recibiendo…"
-                onClick={() => {
-                  receiveMany.mutate();
-                }}
-              >
-                Recibir seleccionadas ({selectedCount})
-              </Button>
-            )}
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  download: listXlsxHref('/purchases', params),
-                },
-              ]}
-            />
-          </>
         }
       />
 

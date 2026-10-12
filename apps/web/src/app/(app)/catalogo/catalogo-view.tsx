@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,7 +22,6 @@ import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -42,6 +40,7 @@ import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
 import { FilterChip } from '@/components/filter-chip';
+import { HeaderActions } from '@/components/header-actions';
 import {
   FilterField,
   FiltersDialog,
@@ -70,6 +69,8 @@ export function CatalogoView() {
   }>({ open: false, lineId: '', nonce: 0 });
   const [historyProduct, setHistoryProduct] = useState<ProductDto | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProductDto | null>(null);
+  // cc47b (D-623): el alta de color la abre la cabecera (botón principal en la pestaña Colores).
+  const [creatingColor, setCreatingColor] = useState(false);
   // RF-S3/M4: el card «SKUs con lista bajo piso» del Panel enlaza acá con
   // `?bajoPiso=<productId>` — un id concreto resalta esa fila (y abre su línea), el valor
   // `1` (más de 8 en el card) solo llega a la vista sin resaltar nada en particular.
@@ -180,11 +181,35 @@ export function CatalogoView() {
           <h1 className="text-xl font-semibold">Catálogo</h1>
           <p className="text-xs text-muted-foreground">Productos por línea de negocio.</p>
         </div>
-        {isAdmin && (
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/catalogo/precios/importar">Cargar precios de lista</Link>
-          </Button>
-        )}
+        {/* cc47b (D-623): un solo principal —el alta de la pestaña que se ve— y la carga de
+            precios en «Más opciones». */}
+        <HeaderActions
+          primary={['new-product', 'new-color']}
+          actions={[
+            {
+              key: 'new-product',
+              label: 'Nuevo producto',
+              show: isAdmin && activeLineId !== undefined && activeLineId !== 'colores',
+              onSelect: () => {
+                if (activeLineId !== undefined) openDialog(activeLineId);
+              },
+            },
+            {
+              key: 'new-color',
+              label: 'Nuevo color',
+              show: isAdmin && activeLineId === 'colores',
+              onSelect: () => {
+                setCreatingColor(true);
+              },
+            },
+            {
+              key: 'prices',
+              label: 'Cargar precios de lista',
+              show: isAdmin,
+              href: '/catalogo/precios/importar',
+            },
+          ]}
+        />
       </div>
 
       <Tabs value={activeLineId} onValueChange={selectTab}>
@@ -197,7 +222,11 @@ export function CatalogoView() {
           <TabsTrigger value="colores">Colores</TabsTrigger>
         </TabsList>
         <TabsContent value="colores">
-          <ColoresPanel isAdmin={isAdmin} />
+          <ColoresPanel
+            isAdmin={isAdmin}
+            creating={creatingColor}
+            onCreatingChange={setCreatingColor}
+          />
         </TabsContent>
         {lines.data.map((line) => {
           const inLine = products.data?.filter((p) => p.businessLineId === line.id) ?? [];
@@ -220,7 +249,7 @@ export function CatalogoView() {
             price: { decimal: (p) => p.listPricePen ?? '' },
           });
           return (
-            <TabsContent key={line.id} value={line.id} className="grid gap-4">
+            <TabsContent key={line.id} value={line.id} className="grid grid-cols-1 gap-4">
               {/* cc47 (D-615): buscar, «Filtros» (los inactivos) y, a la derecha, el alta. */}
               <TableToolbar
                 search={
@@ -255,18 +284,6 @@ export function CatalogoView() {
                       </FilterField>
                     )}
                   </FiltersDialog>
-                }
-                aside={
-                  isAdmin && (
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        openDialog(line.id);
-                      }}
-                    >
-                      Nuevo producto
-                    </Button>
-                  )
                 }
               />
               <div className="rounded-lg border">

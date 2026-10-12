@@ -83,7 +83,11 @@ export function HeaderActions({
   companion?: string;
 }) {
   const visible = actions.filter((a) => a.show !== false);
-  const primaryKey = primary.find((k) => visible.some((a) => a.key === k && !a.destructive));
+  // cc47b (D-623): una descarga nunca es el botón principal; va siempre a «Más opciones». Si una
+  // vista la nombra como candidata, se salta y se toma la siguiente (o ninguna).
+  const primaryKey = primary.find((k) =>
+    visible.some((a) => a.key === k && !a.destructive && a.download === undefined),
+  );
   const main = visible.find((a) => a.key === primaryKey) ?? null;
   const beside = main === null ? null : (visible.find((a) => a.key === companion) ?? null);
   const rest = visible.filter((a) => a !== main && a !== beside);

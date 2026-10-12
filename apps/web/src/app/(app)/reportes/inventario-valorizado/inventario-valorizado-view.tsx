@@ -36,7 +36,7 @@ import {
   ReportTable,
   type ReportColumn,
 } from '@/components/reports/report-table';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { sumDecimal, xlsxHref } from '@/lib/report-table';
 import { allRows } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
@@ -149,31 +149,32 @@ export function InventarioValorizadoView() {
           onChange={setSearchText}
         />
       }
-      aside={
-        // Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que esta
-        // pantalla. cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
-        <HeaderActions
-          primary={['xlsx']}
-          actions={[
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
-              download: xlsxHref(
-                '/api/reports/inventory-valuation/xlsx',
-                { businessLine: line },
-                searchText,
-              ),
-            },
-          ]}
-        />
-      }
     />
   );
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que esta
+          // pantalla. cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
+          <HeaderActions
+            primary={[]}
+            actions={[
+              {
+                key: 'xlsx',
+                label: downloadLabelFor('Descargar Excel', line),
+                // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
+                download: xlsxHref(
+                  '/api/reports/inventory-valuation/xlsx',
+                  { businessLine: line },
+                  searchText,
+                ),
+              },
+            ]}
+          />
+        }
         title="Inventario valorizado"
         subtitle={
           data
@@ -258,7 +259,7 @@ export function InventarioValorizadoView() {
             <TabsTrigger value="bobinas">Bobinas con saldo</TabsTrigger>
             <TabsTrigger value="productos">Productos con stock</TabsTrigger>
           </TabsList>
-          <TabsContent value="bobinas" className="mt-3 grid gap-2">
+          <TabsContent value="bobinas" className="mt-3 grid grid-cols-1 gap-2">
             {toolbar}
             <ReportTable
               testId="tabla-inventario-bobinas"
@@ -282,7 +283,7 @@ export function InventarioValorizadoView() {
               errorTitle="No se pudo cargar el reporte"
             />
           </TabsContent>
-          <TabsContent value="productos" className="mt-3 grid gap-2">
+          <TabsContent value="productos" className="mt-3 grid grid-cols-1 gap-2">
             {toolbar}
             <ReportTable
               testId="tabla-inventario-productos"

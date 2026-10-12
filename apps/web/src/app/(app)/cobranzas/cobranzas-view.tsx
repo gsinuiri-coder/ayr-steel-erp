@@ -67,6 +67,41 @@ const PENDING_SERVER_KEYS = {
   balance: null,
 } as const;
 
+type PendingSortKey = 'number' | 'customer' | 'issue' | 'due' | 'total' | 'paid' | 'balance';
+
+/** D-289: lo que «Comprobantes con saldo» guarda en la URL. */
+const PENDING_URL_DEFAULTS = {
+  pPage: '1',
+  pSize: String(DEFAULT_PAGE_SIZE),
+  search: '',
+  docType: '',
+  origin: '',
+};
+
+/**
+ * Los parámetros de «Comprobantes con saldo» para el API: la tabla los usa para su consulta y la
+ * cabecera para su Excel (cc47b, D-623), así los dos ven el mismo buscar, filtros y orden.
+ */
+function pendingParamsOf(
+  url: typeof PENDING_URL_DEFAULTS,
+  sort: { key: PendingSortKey | null; dir: string },
+): URLSearchParams {
+  const params = new URLSearchParams({
+    pendingOnly: 'true',
+    page: String(Math.max(1, Number(url.pPage) || 1)),
+    pageSize: String(Number(url.pSize) || DEFAULT_PAGE_SIZE),
+  });
+  if (url.docType) params.set('docType', url.docType);
+  if (url.origin) params.set('origin', url.origin);
+  if (url.search) params.set('search', url.search);
+  const serverSort = sort.key === null ? null : PENDING_SERVER_KEYS[sort.key];
+  if (serverSort) {
+    params.set('sort', serverSort);
+    params.set('dir', sort.dir);
+  }
+  return params;
+}
+
 /** Sin orden elegido: `sortRows` deja las filas como llegan. */
 const NO_SORT = { key: null, dir: 'asc' } as const;
 
@@ -87,15 +122,44 @@ export function CobranzasView() {
   });
   /** Regla dura 1: el vencido se compara como `Decimal`, no como número ni como string. */
   const overdue = toDecimal(totals.data?.totalOverduePen ?? '0').gt(0);
+  // cc47b (D-623): el Excel de la pestaña activa, con lo que esa tabla tiene puesto.
+  const [pendingUrl] = useUrlState(PENDING_URL_DEFAULTS);
+  const [pendingSort] = useSort<PendingSortKey>('p');
 
   return (
     <RoleGate allow={SALES_ROLES}>
-      <div>
-        <h1 className="text-xl font-semibold">Cobranzas</h1>
-        <p className="text-xs text-muted-foreground">
-          Saldo por comprobante. El cobro se registra desde el comprobante, y revertirlo devuelve el
-          monto al saldo.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Cobranzas</h1>
+          <p className="text-xs text-muted-foreground">
+            Saldo por comprobante. El cobro se registra desde el comprobante, y revertirlo devuelve
+            el monto al saldo.
+          </p>
+        </div>
+        {/* cc47b (D-623): las descargas, en «Más opciones»; la de la pestaña que se ve. cc26 M2:
+            «Por cliente» trae todas las filas y el total de las tarjetas (solo ADMINISTRADOR, como
+            la pestaña); la de comprobantes, el buscar, los filtros y el orden de la tabla, y el
+            vendedor recibe solo los suyos. */}
+        <HeaderActions
+          primary={[]}
+          actions={[
+            {
+              key: 'xlsx-cliente',
+              label: 'Descargar Excel · Por cliente',
+              show: tab === 'cliente',
+              download: '/api/invoicing/receivables/xlsx',
+            },
+            {
+              key: 'xlsx-pendientes',
+              label: 'Descargar Excel · Comprobantes con saldo',
+              show: tab === 'pendientes',
+              download: listXlsxHref(
+                '/invoicing/documents',
+                pendingParamsOf(pendingUrl, pendingSort),
+              ),
+            },
+          ]}
+        />
       </div>
 
       {/* cc31: si las cifras no cargan se dice, en vez de dejar el esqueleto o un cero. */}
@@ -163,11 +227,11 @@ export function CobranzasView() {
           <TabsTrigger value="pendientes">Comprobantes con saldo</TabsTrigger>
         </TabsList>
         {isAdmin && (
-          <TabsContent value="cliente" className="mt-3 grid gap-2">
+          <TabsContent value="cliente" className="mt-3 grid grid-cols-1 gap-2">
             <ReceivablesTab />
           </TabsContent>
         )}
-        <TabsContent value="pendientes" className="mt-3 grid gap-2">
+        <TabsContent value="pendientes" className="mt-3 grid grid-cols-1 gap-2">
           <PendingTab />
         </TabsContent>
       </Tabs>
@@ -212,27 +276,12 @@ function ReceivablesTab() {
 
   return (
     <>
-      <TableToolbar
-        aside={
-          // cc26 M2: todas las filas de la tabla y el total de las tarjetas. Solo ADMINISTRADOR,
-          // el mismo permiso de la pestaña (MR-1 de menu-por-rol.md sigue como propuesta).
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Excel por cliente',
-                download: '/api/invoicing/receivables/xlsx',
-              },
-            ]}
-          />
-        }
-      />
       {receivables.isPending ? (
         <Skeleton className="h-40 w-full" />
       ) : (
         <div className="rounded-lg border">
-          <Table>
+          {/* cc47b (D-624): una tabla por pestaña (D-617): lista con el scroll único (D-547). */}
+          <Table list>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <SortHead
@@ -363,13 +412,7 @@ const NO_PENDING_FILTERS: PendingFilters = { docType: '', origin: '' };
  */
 function PendingTab() {
   // D-289: la página, el tamaño, el buscar y los filtros viven en la URL.
-  const [url, setUrl] = useUrlState({
-    pPage: '1',
-    pSize: String(DEFAULT_PAGE_SIZE),
-    search: '',
-    docType: '',
-    origin: '',
-  });
+  const [url, setUrl] = useUrlState(PENDING_URL_DEFAULTS);
   const pendingPage = {
     page: Math.max(1, Number(url.pPage) || 1),
     pageSize: Number(url.pSize) || DEFAULT_PAGE_SIZE,
@@ -386,23 +429,10 @@ function PendingTab() {
   });
   const { docType, origin } = url;
 
-  const [pSort, togglePSort] = useSort<
-    'number' | 'customer' | 'issue' | 'due' | 'total' | 'paid' | 'balance'
-  >('p');
+  const [pSort, togglePSort] = useSort<PendingSortKey>('p');
   const serverSort = pSort.key === null ? null : PENDING_SERVER_KEYS[pSort.key];
   // cc26 M2: los parámetros de la tabla, de los que salen la consulta y su Excel (sin página).
-  const pendingParams = new URLSearchParams({
-    pendingOnly: 'true',
-    page: String(pendingPage.page),
-    pageSize: String(pendingPage.pageSize),
-  });
-  if (docType) pendingParams.set('docType', docType);
-  if (origin) pendingParams.set('origin', origin);
-  if (search) pendingParams.set('search', search);
-  if (serverSort) {
-    pendingParams.set('sort', serverSort);
-    pendingParams.set('dir', pSort.dir);
-  }
+  const pendingParams = pendingParamsOf(url, pSort);
   const pending = useQuery({
     queryKey: [
       'fiscal-documents',
@@ -459,26 +489,13 @@ function PendingTab() {
             )}
           </FiltersDialog>
         }
-        aside={
-          // cc26 M2: el Excel de comprobantes (M1) con el buscar, los filtros y el orden de esta
-          // tabla; el vendedor recibe solo los suyos, como en la tabla.
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Excel de pendientes',
-                download: listXlsxHref('/invoicing/documents', pendingParams),
-              },
-            ]}
-          />
-        }
       />
       {pending.isPending ? (
         <Skeleton className="h-40 w-full" />
       ) : (
         <div className="rounded-lg border">
-          <Table>
+          {/* cc47b (D-624): una tabla por pestaña (D-617): lista con el scroll único (D-547). */}
+          <Table list>
             <TableHeader className="sticky top-0 z-10 bg-background">
               <TableRow>
                 <SortHead sort={pSort} onSort={togglePSort} k="number">

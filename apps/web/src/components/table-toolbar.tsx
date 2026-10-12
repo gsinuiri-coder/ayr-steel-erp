@@ -22,7 +22,8 @@ import { cn } from '@/lib/utils';
  * 2. después, el botón «Filtros» (`filters`, un `FiltersDialog`), que abre un modal con todos los
  *    filtros de la tabla, incluido el periodo; sin filtros, no hay botón;
  * 3. lo que informa sin ser filtro (`status`: el periodo elegido, «Actualizando…»);
- * 4. a la derecha, lo que no es filtro (`aside`): «Ver por» y los botones de Excel, PDF o imprimir.
+ * 4. a la derecha, lo que no es filtro (`aside`): «Ver por». Las descargas van a «Más opciones» de
+ *    la cabecera (cc47b, D-623).
  *
  * Los filtros y el buscar siguen en la URL como antes (D-289): este componente solo los ordena.
  */

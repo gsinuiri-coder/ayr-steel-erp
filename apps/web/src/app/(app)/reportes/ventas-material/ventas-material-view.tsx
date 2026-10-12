@@ -47,7 +47,7 @@ import { Section } from '@/components/section';
 import { legacyRangePeriod } from '@/lib/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { Stat, StatStrip } from '@/components/stat-strip';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { RoleGate } from '@/components/role-gate';
 import { Button } from '@/components/ui/button';
 import {
@@ -81,7 +81,7 @@ import { sumDecimal } from '@/lib/report-table';
 import { allRows, materialFiguresOf } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
-import { cn, LINK_CLASSNAME } from '@/lib/utils';
+import { cn, LINK_CLASSNAME, WIDE_DIALOG_CLASSNAME } from '@/lib/utils';
 
 /**
  * cc24 (D-406, D-407): una pestaña por línea, sin «Todas», Coberturas Aluzinc por defecto. Al
@@ -223,6 +223,28 @@ export function VentasMaterialView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con el periodo y
+          // los filtros (`qs` lleva la línea).
+          valid ? (
+            <HeaderActions
+              primary={[]}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: downloadLabelFor('Descargar Excel', line),
+                  // cc40 (D-588): con la búsqueda, el Excel trae las filas que se ven.
+                  download: `/api/reports/sales-by-material/xlsx?${qs}${
+                    searchWords(searchText).length === 0
+                      ? ''
+                      : `&search=${encodeURIComponent(searchText.trim().slice(0, 200))}`
+                  }`,
+                },
+              ]}
+            />
+          ) : undefined
+        }
         title="Ventas por material"
         subtitle={
           byProduct
@@ -355,27 +377,6 @@ export function VentasMaterialView() {
           </FiltersDialog>
         }
         status={<PeriodStatus state={periodState} updating={updating} />}
-        aside={
-          // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con el periodo y
-          // los filtros (`qs` lleva la línea).
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  // cc40 (D-588): con la búsqueda, el Excel trae las filas que se ven.
-                  download: `/api/reports/sales-by-material/xlsx?${qs}${
-                    searchWords(searchText).length === 0
-                      ? ''
-                      : `&search=${encodeURIComponent(searchText.trim().slice(0, 200))}`
-                  }`,
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
 
       {periodState.error !== null && (
@@ -982,7 +983,7 @@ function MaterialBreakdownDialog({
     >
       {/* `sm:max-w-*` con prefijo: `cn()` no desduplica un `max-w-*` sin variante contra el
           `sm:max-w-sm` por defecto de DialogContent, y el modal quedaba en 384px. */}
-      <DialogContent className="sm:max-w-5xl" data-testid="desglose-material">
+      <DialogContent className={WIDE_DIALOG_CLASSNAME} data-testid="desglose-material">
         <DialogHeader>
           <DialogTitle>
             {row === null

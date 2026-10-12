@@ -42,7 +42,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
 import { formatAmount, formatKg, formatMeters, formatUnits } from '@/lib/format';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import { allRows, productionTotalsOf, type ProductionTotals } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
@@ -103,6 +103,33 @@ export function ProduccionView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // Descarga directa contra el API (patrón D-149), con el periodo y la pestaña que se ven.
+          valid ? (
+            <HeaderActions
+              primary={[]}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: downloadLabelFor('Descargar Excel', line),
+                  // cc40 (D-588): con la búsqueda y su «Ver por», el Excel trae lo que se ve.
+                  download: xlsxHref(
+                    '/api/reports/production-summary/xlsx',
+                    {
+                      from: period.from,
+                      to: period.to,
+                      businessLine: line,
+                      // «orden» es la vista por defecto, también para el API.
+                      ver: view === 'pedido' ? view : undefined,
+                    },
+                    searchText,
+                  ),
+                },
+              ]}
+            />
+          ) : undefined
+        }
         title="Reporte de producción"
         subtitle={`${BUSINESS_LINE_LABELS[line]}. Lo que produjo cada orden en el periodo, con los kilos del kardex.`}
         howItWorks={
@@ -167,7 +194,7 @@ export function ProduccionView() {
         </>
       )}
 
-      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» y el Excel. */}
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» (el Excel, en «Más opciones», cc47b). */}
       <TableToolbar
         search={
           <ToolbarSearch
@@ -193,32 +220,6 @@ export function ProduccionView() {
                 setUrl({ ver: v });
               }}
             />
-            {
-              // Descarga directa contra el API (patrón D-149), con el periodo y la pestaña que se ven.
-              valid ? (
-                <HeaderActions
-                  primary={['xlsx']}
-                  actions={[
-                    {
-                      key: 'xlsx',
-                      label: 'Descargar Excel',
-                      // cc40 (D-588): con la búsqueda y su «Ver por», el Excel trae lo que se ve.
-                      download: xlsxHref(
-                        '/api/reports/production-summary/xlsx',
-                        {
-                          from: period.from,
-                          to: period.to,
-                          businessLine: line,
-                          // «orden» es la vista por defecto, también para el API.
-                          ver: view === 'pedido' ? view : undefined,
-                        },
-                        searchText,
-                      ),
-                    },
-                  ]}
-                />
-              ) : undefined
-            }
           </>
         }
       />

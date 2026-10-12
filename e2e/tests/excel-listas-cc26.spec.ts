@@ -80,10 +80,10 @@ test.describe('Excel de las listas (cc26)', () => {
       await expect(item).toHaveAttribute('href', new RegExp(`^${api}`));
       await page.keyboard.press('Escape');
     }
+    // cc47b (D-623): el Excel de la pestaña, en «Más opciones».
     await page.goto('/cobranzas');
-    await expect(page.locator('a[href^="/api/invoicing/receivables/xlsx"]').first()).toBeAttached({
-      timeout: 30_000,
-    });
+    const receivables = await headerAction(page, 'Descargar Excel · Por cliente');
+    await expect(receivables).toHaveAttribute('href', /^\/api\/invoicing\/receivables\/xlsx/);
   });
 
   test('cc28 (D-446): el clic descarga el archivo y un 400 del tope sale en un aviso', async ({

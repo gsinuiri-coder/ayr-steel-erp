@@ -49,8 +49,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListStateMessage } from '@/components/list-state';
-import { onDownloadClick, printWithNotice } from '@/components/header-actions';
-import { LINK_CLASSNAME } from '@/lib/utils';
+import { HeaderActions, printWithNotice } from '@/components/header-actions';
 
 const POS_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -666,16 +665,16 @@ function SaleDoneDialog({
           </p>
         )}
         <DialogFooter className="items-center">
+          {/* cc47b (D-623): la descarga va a «Más opciones». «Imprimir comprobante» sigue como
+              principal (cc32) y «Nueva venta» queda a la vista: es adonde vuelve el foco al imprimir
+              (D-523). */}
           {printable && (
-            <a
-              href={pdfHref}
-              className={`${LINK_CLASSNAME} text-sm whitespace-nowrap sm:mr-auto`}
-              onClick={(e) => {
-                onDownloadClick(e, pdfHref);
-              }}
-            >
-              Descargar PDF
-            </a>
+            <div className="sm:mr-auto">
+              <HeaderActions
+                primary={[]}
+                actions={[{ key: 'pdf', label: 'Descargar PDF', download: pdfHref }]}
+              />
+            </div>
           )}
           <Button ref={newSaleRef} variant="outline" onClick={onClose}>
             Nueva venta

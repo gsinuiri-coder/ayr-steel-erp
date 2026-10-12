@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { loginAsAdmin } from '../helpers/report-fixtures';
-import { applyPeriodPreset, openFilters } from '../helpers/ui';
+import { applyPeriodPreset, moreOption, openFilters } from '../helpers/ui';
 
 /**
  * cc47 — Correcciones 07: estándar de tablas (corte A, la muestra).
@@ -28,9 +28,14 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
       'active',
       { timeout: 60_000 },
     );
-    // «Por cliente» no se busca ni se filtra en el API: sin buscar ni «Filtros», solo su Excel.
+    // «Por cliente» no se busca ni se filtra en el API: sin buscar ni «Filtros». cc47b (D-623): su
+    // Excel, en «Más opciones» de la cabecera y con la pestaña en el rótulo.
     await expect(page.getByTestId('boton-filtros')).toHaveCount(0);
-    await expect(page.locator('a[href="/api/invoicing/receivables/xlsx"]')).toBeAttached();
+    await expect(await moreOption(page, 'Descargar Excel · Por cliente')).toHaveAttribute(
+      'href',
+      '/api/invoicing/receivables/xlsx',
+    );
+    await page.keyboard.press('Escape');
 
     // La otra pestaña entra al historial y queda en la URL.
     await tabs.getByRole('tab', { name: 'Comprobantes con saldo' }).click();
@@ -59,9 +64,10 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
     await expect(modal).toBeHidden();
     await expect(page).toHaveURL(/docType=FACTURA/);
     await expect(page.getByRole('button', { name: 'Filtros, 1 activo' })).toBeVisible();
-    const excel = page.getByRole('link', { name: 'Excel de pendientes' });
+    const excel = await moreOption(page, 'Descargar Excel · Comprobantes con saldo');
     await expect(excel).toHaveAttribute('href', /docType=FACTURA/);
     await expect(excel).toHaveAttribute('href', /search=F001/);
+    await page.keyboard.press('Escape');
 
     // Refrescar vuelve al mismo estado.
     await page.reload();
@@ -100,7 +106,8 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
       timeout: 60_000,
     });
     await expect(toolbar.getByRole('group', { name: 'Ver por' })).toBeVisible();
-    await expect(toolbar.getByRole('link', { name: 'Descargar Excel' })).toBeVisible();
+    // cc47b (D-623): en la línea solo queda «Ver por»; el Excel, en «Más opciones».
+    await expect(toolbar.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(0);
     // Fuera del modal no queda ningún filtro suelto: ni atajos ni fechas.
     await expect(page.getByRole('group', { name: 'Periodo' })).toHaveCount(0);
     // Un periodo distinto de «Este mes» cuenta como filtro activo.
@@ -119,10 +126,11 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
     await applyPeriodPreset(page, 'Este mes');
     await expect(page.getByRole('button', { name: 'Filtros', exact: true })).toBeVisible();
     await expect(page).not.toHaveURL(/from=2025-01-01&to=2025-01-07/);
-    await expect(toolbar.getByRole('link', { name: 'Descargar Excel' })).not.toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).not.toHaveAttribute(
       'href',
       /to=2025-01-07/,
     );
+    await page.keyboard.press('Escape');
   });
 
   test('D-614: «Bobinas por tipo» solo en las líneas con bobinas; D-613: sin pie gris', async ({

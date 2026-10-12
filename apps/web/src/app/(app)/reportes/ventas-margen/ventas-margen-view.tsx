@@ -40,7 +40,7 @@ import {
 } from '@/components/reports/report-table';
 import { keepPreviousInScope } from '@/lib/report-query';
 import { Segmented } from '@/components/reports/segmented';
-import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
+import { useLineTab, type LineTabsConfig, downloadLabelFor } from '@/lib/line-tabs';
 import {
   SALES_MARGIN_VIEWS,
   SALES_MARGIN_VIEW_LABELS,
@@ -138,6 +138,28 @@ export function VentasMargenView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // Descarga directa contra el API (patrón D-149), con el periodo que se ve.
+          // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve, también por línea.
+          // cc40 (D-588): con la búsqueda de la pantalla, el archivo trae las mismas filas.
+          valid ? (
+            <HeaderActions
+              primary={[]}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: downloadLabelFor('Descargar Excel', line),
+                  download: xlsxHref(
+                    '/api/reports/sales-margin/xlsx',
+                    { from: period.from, to: period.to, businessLine: line },
+                    searchText,
+                  ),
+                },
+              ]}
+            />
+          ) : undefined
+        }
         title="Ventas y margen"
         subtitle="Comprobantes emitidos en el periodo, sin IGV."
         howItWorks={
@@ -163,7 +185,7 @@ export function VentasMargenView() {
         </BusyRegion>
       )}
 
-      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» y el Excel. */}
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» (el Excel, en «Más opciones», cc47b). */}
       <TableToolbar
         search={
           <ToolbarSearch
@@ -189,27 +211,6 @@ export function VentasMargenView() {
                 setUrl({ ver: v });
               }}
             />
-            {
-              // Descarga directa contra el API (patrón D-149), con el periodo que se ve.
-              // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve, también por línea.
-              // cc40 (D-588): con la búsqueda de la pantalla, el archivo trae las mismas filas.
-              valid ? (
-                <HeaderActions
-                  primary={['xlsx']}
-                  actions={[
-                    {
-                      key: 'xlsx',
-                      label: 'Descargar Excel',
-                      download: xlsxHref(
-                        '/api/reports/sales-margin/xlsx',
-                        { from: period.from, to: period.to, businessLine: line },
-                        searchText,
-                      ),
-                    },
-                  ]}
-                />
-              ) : undefined
-            }
           </>
         }
       />
