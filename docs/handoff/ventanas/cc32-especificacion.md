@@ -23,6 +23,8 @@ Aplica a los siete reportes: Ventas y margen, Ventas por material, Cuentas por c
 
 ### Periodo
 
+> **Enmienda cc47 (D-615, D-616).** El periodo (o el mes) se elige dentro del modal «Filtros» de la línea estándar, con los mismos atajos; junto al botón queda escrito el rango aplicado. Las descargas pasan de la cabecera a la derecha de esa línea, y el orden de la página es título, pestaña de línea, cifras, línea estándar, tabla y totales por línea en franja gris.
+
 - Un solo componente para todos: atajos «Este mes», «Mes anterior», «Últimos 3 meses», «Este año» y «Otro periodo…» (rango libre), con el rango escrito al lado.
 - Fechas en hora de Lima, como hoy (`businessToday`, texto AAAA-MM-DD).
 - El periodo va siempre en la URL, también cuando es el predeterminado, para que un enlace guardado muestre el mismo periodo otro día.

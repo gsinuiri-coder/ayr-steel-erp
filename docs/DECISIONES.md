@@ -2333,3 +2333,57 @@ merge. Resultado: ninguna diferencia.
 
 **Revisiones.** Autorrevisión y segundo modelo por corte (`docs/revision/cc46-a-segundo-modelo.md`,
 `cc46-b-…`, `cc46-c-…`): sin P0; los P1 y P2 corregidos antes de cada merge.
+
+## cc47 — estándar de tablas, reportes, Cobranzas, menú y Panel (D-612..D-622)
+
+**El pedido.** El 11/10 el dueño decidió siete cambios de forma (D-612 a D-618): menos entradas en el
+menú, fuera la franja gris con la suma de la página, fuera «Bobinas» de UPVC y Reventa, una línea
+igual encima de toda tabla con los filtros en un modal, una estructura única para los reportes, una
+tabla por página y fuera «Cotizaciones sin stock» del Panel. Ninguno cambia un cálculo. Se hizo en dos
+cortes: una muestra (Ventas y margen, Cobranzas, el menú, el Panel y la limpieza de las listas) y el
+resto del sitio.
+
+**«Bobinas» en UPVC y Reventa (D-614).** La condición de parada era encontrar bobinas registradas en
+esas líneas. No pueden existir:
+
+- la compra y el importador rechazan una compra de bobina fuera de Drywall o Aluzinc (D-116);
+- el inventario inicial toma la línea del acabado, y un acabado solo pertenece a una línea con
+  bobinas;
+- el partido y el corte heredan la línea de la madre;
+- el saldo vive en la línea dueña del ítem (D-119).
+
+Por eso la tabla estaba vacía siempre. Igual se dejó una red: si un saldo de bobina apareciera en otra
+línea, la tabla vuelve a mostrarse, para no esconder valor.
+
+**El modal (D-620).** Las dos preguntas eran qué pasa con lo elegido y cuándo se aplica. Se eligió un
+borrador: aplicar escribe todo de una vez en la URL, y cerrar sin aplicar lo descarta. Así una
+selección a medias no dispara una consulta por cada cambio, y refrescar o retroceder siguen
+funcionando porque la URL solo cambia al aplicar. «Limpiar» aplica y cierra, para no obligar a dos
+clics. Dos detalles salieron de las revisiones:
+
+- aplicar sin cambios no escribe la URL, porque cualquier escritura volvía a la página 1;
+- cuando el periodo y otros filtros se aplican juntos, van en un solo `replace`, porque dos instancias
+  de `useUrlState` en el mismo tick se pisan. Por la misma razón, el atajo elegido («Este año» en
+  enero) se recuerda aparte.
+
+**Lo que no se tocó (D-622).** Caja y el historial de Planta quedan fuera de la línea estándar porque
+la pieza excluye las pantallas de planta y de operación. Las listas sin nada que buscar, filtrar ni
+descargar no llevan línea: no habría qué poner, y el pedido dice que sin filtros no hay botón. En
+Bobinas, las pestañas de vista son la pestaña principal de la página, como la de línea en los reportes.
+En el Kardex el ítem es lo que se busca, y el método va en la cabecera de la hoja del cliente (D-298).
+
+**Paradas (D-621).** Hubo una sola: buscar en Cobranzas «Por cliente». El API solo pagina esa tabla y
+la pantalla no tiene todas sus filas. El PDF del reporte de bobinas tampoco recibe el buscar, pero eso
+ya era así antes y es del API.
+
+**Lo que se ve distinto sin que cambien los datos.**
+
+- **El alto de las tablas.** Con una sola lista en pantalla rige el scroll único de cc35 (D-547). En
+  los reportes con «Totales por línea» debajo, a 1366×768 la tabla queda en su mínimo (240 px).
+- **Las descargas.** El Excel y el PDF pasaron de la cabecera, o de «Más opciones», a la derecha de la
+  línea.
+
+**Revisiones.** Autorrevisión y segundo modelo por corte (`docs/revision/cc47-a-segundo-modelo.md` y
+`cc47-b-…`), sin P0. En el corte A, los P1 fueron dos E2E que iban a quedar en rojo; en el B no hubo
+P1. Sonar pidió dos cosas: unitarios para `useUrlTab` (su cobertura solo mide `.ts`) y menos
+duplicación en los modales, de donde salieron `SelectFilterField` y `DocumentFilterFields`.
