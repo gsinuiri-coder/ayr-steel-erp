@@ -145,3 +145,87 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
     }
   });
 });
+
+test.describe('Estándar de tablas (cc47, corte B)', () => {
+  test('cada lista y cada reporte llevan la línea estándar, sin filtros sueltos fuera del modal', async ({
+    page,
+  }) => {
+    // Muchas pantallas seguidas: en modo desarrollo cada una se compila al entrar.
+    test.setTimeout(300_000);
+    await loginAsAdmin(page);
+    const withFilters = [
+      '/pedidos',
+      '/cotizaciones',
+      '/comprobantes',
+      '/compras',
+      '/despachos',
+      '/bobinas',
+      '/corte',
+      '/flejes',
+      '/kardex',
+      '/auditoria',
+      '/reportes/ventas-material',
+      '/reportes/cuentas-por-cobrar',
+      '/reportes/bobinas',
+      '/reportes/merma',
+      '/reportes/produccion',
+    ];
+    for (const path of withFilters) {
+      await page.goto(path);
+      const toolbar = page.getByTestId('linea-tabla').first();
+      await expect(toolbar, path).toBeVisible({ timeout: 60_000 });
+      await expect(toolbar.getByTestId('boton-filtros'), path).toBeVisible();
+      // Fuera del modal no queda ningún selector ni chip de filtro.
+      await expect(
+        page.locator(
+          'main [role="combobox"]:not([aria-label="Filas por página"]), main select:not([aria-hidden="true"])',
+        ),
+        path,
+      ).toHaveCount(0);
+      await expect(page.locator('main button[aria-pressed]:not([role="tab"])'), path).toHaveCount(
+        // «Ver por» (Producción) no es un filtro: queda a la derecha.
+        path === '/reportes/produccion' ? 2 : 0,
+      );
+    }
+    // Sin filtros, sin botón «Filtros» (solo buscar y, si existe, el Excel).
+    for (const path of ['/clientes', '/proveedores', '/reportes/inventario-valorizado']) {
+      await page.goto(path);
+      await expect(page.getByTestId('linea-tabla').first(), path).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByTestId('boton-filtros'), path).toHaveCount(0);
+    }
+  });
+
+  test('D-617: inventario y reporte de bobinas con una tabla por pestaña, en la URL', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page);
+    await page.goto('/inventario');
+    const tabs = page.getByTestId('pestanas-tabla-inventario');
+    await expect(tabs.getByRole('tab', { name: 'Bobinas por tipo' })).toHaveAttribute(
+      'data-state',
+      'active',
+      { timeout: 60_000 },
+    );
+    await tabs.getByRole('tab', { name: 'Productos de catálogo' }).click();
+    await expect(page).toHaveURL(/tabla=productos/);
+    await page.reload();
+    await expect(
+      page
+        .getByTestId('pestanas-tabla-inventario')
+        .getByRole('tab', { name: 'Productos de catálogo' }),
+    ).toHaveAttribute('data-state', 'active', { timeout: 60_000 });
+    await page.goBack();
+    await expect(page).not.toHaveURL(/tabla=productos/);
+
+    await page.goto('/reportes/bobinas');
+    const coilTabs = page.getByTestId('pestanas-tabla-bobinas');
+    await expect(coilTabs.getByRole('tab', { name: 'Selladas' })).toHaveAttribute(
+      'data-state',
+      'active',
+      { timeout: 60_000 },
+    );
+    await coilTabs.getByRole('tab', { name: 'Abiertas' }).click();
+    await expect(page).toHaveURL(/tabla=abiertas/);
+    await expect(page.getByRole('region', { name: 'Bobinas abiertas' })).toBeVisible();
+  });
+});

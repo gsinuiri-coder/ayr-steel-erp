@@ -3,7 +3,7 @@ import { adminApi, adminCredentials, createUser } from '../helpers/api';
 import { createInvoiceableCustomer, freeLine, invoiceBody } from '../helpers/invoicing';
 import { getExpectingError } from '../helpers/production';
 import { createSellableProduct } from '../helpers/sales';
-import { loginAndSetPassword } from '../helpers/ui';
+import { loginAndSetPassword, openFilters } from '../helpers/ui';
 
 /**
  * RF-S2/D-218 — visor unificado de auditoría (`/auditoria`, `GET /audit`), admin-only.
@@ -43,9 +43,13 @@ test.describe('Auditoría (RF-95, D-218) — un administrador ve una acción sen
     await page.goto('/auditoria');
     await expect(page.getByRole('heading', { name: 'Auditoría' })).toBeVisible();
 
-    await page.getByRole('combobox', { name: 'Tipo de entidad' }).click();
+    // cc47 (D-615): los filtros se eligen en el modal «Filtros» y se aplican juntos.
+    const modal = await openFilters(page);
+    await modal.getByRole('combobox', { name: 'Tipo de entidad' }).click();
     await page.getByRole('option', { name: 'Usuarios', exact: true }).click();
-    await page.getByLabel('ID de entidad').fill(created.id);
+    await modal.getByLabel('ID de entidad').fill(created.id);
+    await modal.getByRole('button', { name: 'Aplicar' }).click();
+    await expect(page.getByRole('button', { name: 'Filtros, 1 activo' })).toBeVisible();
 
     // No depende del texto de la acción (podría reformularse): el id exacto y el tipo de
     // entidad alcanzan para identificar la fila sin ambigüedad.

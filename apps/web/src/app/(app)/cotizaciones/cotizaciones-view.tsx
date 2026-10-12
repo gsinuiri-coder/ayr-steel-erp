@@ -27,9 +27,9 @@ import {
   useUrlSearchInput,
   useUrlState,
 } from '@/lib/use-url-state';
-import { StatusFilter } from '@/components/status-filter';
+import { StatusFiltersButton } from '@/components/status-filter';
 import { PaginationBar } from '@/components/pagination-bar';
-import { Input } from '@/components/ui/input';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import {
   cn,
   customerSearchHref,
@@ -109,18 +109,13 @@ export function CotizacionesView() {
             Cotizar no reserva stock; confirmar crea el pedido y la reserva.
           </p>
         </div>
-        {/* cc31: un solo botón principal y lo demás en «Más opciones». cc26: el Excel lleva los
-            filtros y el orden de la lista (todas las páginas). D-152: la carga histórica entra
-            por «Importar desde Excel» y termina en cotizaciones en borrador. */}
+        {/* cc31: un solo botón principal y lo demás en «Más opciones». D-152: la carga histórica
+            entra por «Importar desde Excel» y termina en cotizaciones en borrador. cc47 (D-615):
+            el Excel pasa a la línea de la tabla. */}
         <HeaderActions
           primary={['new']}
           actions={[
             { key: 'new', label: 'Nueva cotización', href: '/cotizaciones/nueva' },
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              download: listXlsxHref('/sales/quotations', params),
-            },
             {
               key: 'import',
               label: 'Importar desde Excel',
@@ -131,27 +126,43 @@ export function CotizacionesView() {
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          placeholder="Buscar por código, comprobante, cliente o documento…"
-          className="max-w-sm"
-          value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
-          }}
-        />
-        <StatusFilter
-          value={status}
-          onChange={(v) => {
-            setUrl({ status: v });
-          }}
-          options={QUOTATION_STATUSES.filter((s) => s !== 'CANCELLED').map((s) => ({
-            value: s,
-            label: QUOTATION_STATUS_LABELS[s],
-          }))}
-          negativeValue="CANCELLED"
-        />
-      </div>
+      {/* cc47 (D-615): buscar, «Filtros» (el estado) y, a la derecha, el Excel. cc26: el Excel
+          lleva los filtros y el orden de la lista (todas las páginas). */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar cotizaciones"
+            placeholder="Buscar por código, comprobante, cliente o documento…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <StatusFiltersButton
+            value={status}
+            onApply={(v) => {
+              setUrl({ status: v });
+            }}
+            options={QUOTATION_STATUSES.filter((s) => s !== 'CANCELLED').map((s) => ({
+              value: s,
+              label: QUOTATION_STATUS_LABELS[s],
+            }))}
+            negativeValue="CANCELLED"
+          />
+        }
+        aside={
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/sales/quotations', params),
+              },
+            ]}
+          />
+        }
+      />
 
       <div className="rounded-lg border">
         <Table list>

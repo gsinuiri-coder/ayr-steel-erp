@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { adminApi, createFinish, createUser } from '../helpers/api';
-import { loginAndSetPassword, openSidebarGroup } from '../helpers/ui';
+import { loginAndSetPassword, openFilters, openSidebarGroup } from '../helpers/ui';
 import { createSellableProduct } from '../helpers/sales';
 
 /**
@@ -29,10 +29,14 @@ test('D-349 — inactivos ocultos por defecto, visibles con el chip o buscando e
   await page.getByRole('link', { name: 'Productos', exact: true }).click();
   await page.getByRole('tab', { name: 'Coberturas Aluzinc' }).click();
   const row = page.getByRole('row').filter({ hasText: product.sku });
-  const chip = page.getByRole('button', { name: 'Inactivos', exact: true });
 
-  // Por defecto el inactivo no aparece.
-  await expect(chip).toHaveAttribute('aria-pressed', 'false');
+  // Por defecto el inactivo no aparece. cc47 (D-615): el chip vive en el modal «Filtros».
+  let modal = await openFilters(page);
+  await expect(modal.getByRole('button', { name: 'Incluir inactivos' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  );
+  await page.keyboard.press('Escape');
   await expect(row).toBeHidden();
 
   // Buscando su SKU aparece aunque el chip esté apagado.
@@ -43,16 +47,14 @@ test('D-349 — inactivos ocultos por defecto, visibles con el chip o buscando e
   await expect(row).toBeHidden();
 
   // El chip lo muestra y el estado queda en la URL: recargar lo conserva.
-  await chip.click();
-  await expect(chip).toHaveAttribute('aria-pressed', 'true');
+  modal = await openFilters(page);
+  await modal.getByRole('button', { name: 'Incluir inactivos' }).click();
+  await modal.getByRole('button', { name: 'Aplicar' }).click();
   await expect(page).toHaveURL(/inactivos=1/);
   await expect(row).toBeVisible();
   await page.reload();
   await page.getByRole('tab', { name: 'Coberturas Aluzinc' }).click();
-  await expect(page.getByRole('button', { name: 'Inactivos', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(page.getByRole('button', { name: 'Filtros, 1 activo' })).toBeVisible();
   await expect(row).toBeVisible();
 
   // El API filtra igual si se lo piden.

@@ -55,6 +55,19 @@ describe('useUrlTab (cc47, D-617)', () => {
     expect(push).toHaveBeenCalledWith('/cobranzas', { scroll: false });
   });
 
+  it('en el navegador parte de la URL del momento del clic, no de la del último render', () => {
+    // El render todavía no vio el buscar que el usuario acaba de escribir: el clic lo conserva.
+    search = new URLSearchParams('tab=pendientes');
+    vi.stubGlobal('window', { location: { search: '?tab=pendientes&search=F001' } });
+    try {
+      const [, select] = useUrlTab(TABS, 'cliente');
+      select('cliente');
+      expect(push).toHaveBeenCalledWith('/cobranzas?search=F001', { scroll: false });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('acepta otro nombre de parámetro', () => {
     search = new URLSearchParams('tabla=productos&line=roofing');
     const [tab, select] = useUrlTab(['bobinas', 'productos'] as const, 'bobinas', 'tabla');

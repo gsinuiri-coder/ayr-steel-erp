@@ -118,7 +118,10 @@ test.describe('Reportes por línea (cc23)', () => {
     await expect(page.getByRole('heading', { name: 'Bobinas con saldo' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Productos con stock' })).toBeVisible();
     await tab(page, 'Drywall').click();
-    await expect(page.getByRole('heading', { name: 'Bobinas con saldo' })).toBeVisible();
+    // cc47 (D-617): con bobinas, las dos tablas van en pestañas.
+    await expect(
+      page.getByTestId('pestanas-tabla-inventario').getByRole('tab', { name: 'Bobinas con saldo' }),
+    ).toBeVisible();
   });
 
   test('la API valida la línea y las pestañas suman «Todas»', async ({ baseURL }) => {

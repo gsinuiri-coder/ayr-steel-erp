@@ -43,7 +43,10 @@ import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
+import { Section } from '@/components/section';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/lib/use-url-tab';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -83,12 +86,18 @@ const COST_DECIMALS = 4;
 const LINE_TABS: LineTabsConfig = {
   lines: INVENTORY_VALUATION_LINES,
   includeAll: true,
-  keep: ['sort', 'dir', 'psort', 'pdir'],
+  keep: ['sort', 'dir', 'psort', 'pdir', 'tabla'],
 };
+
+/** cc47 (D-617): las dos tablas del reporte, cada una en su pestaña. */
+const TABLE_TABS = ['bobinas', 'productos'] as const;
+type TableTab = (typeof TABLE_TABS)[number];
 
 export function InventarioValorizadoView() {
   const { tab, line, select } = useLineTab(LINE_TABS);
   const [url, setUrl] = useUrlState({ search: '' });
+  // cc47 (D-617): bobinas y productos, cada tabla en su pestaña (`?tabla=`).
+  const [tableTab, selectTableTab] = useUrlTab<TableTab>(TABLE_TABS, 'bobinas', 'tabla');
   const [sort, toggleSort] = useSort<string>();
   // La tabla de productos ordena con su propio prefijo: las dos tablas están en la misma URL.
   const [productSort, toggleProductSort] = useSort<string>('p');
@@ -128,6 +137,40 @@ export function InventarioValorizadoView() {
   };
   const coilCount = data?.coilGroups.reduce((n, g) => n + g.coilCount, 0) ?? 0;
 
+  // cc47 (D-615): la línea estándar de cada pestaña — el mismo buscar (filtra las dos tablas) y,
+  // a la derecha, el Excel de la pestaña de línea, que lleva las dos. A hoy y sin filtros.
+  const toolbar = (
+    <TableToolbar
+      search={
+        <ToolbarSearch
+          label="Buscar en el reporte"
+          placeholder="Buscar color, bobina, SKU o producto"
+          value={searchText}
+          onChange={setSearchText}
+        />
+      }
+      aside={
+        // Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que esta
+        // pantalla. cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
+        <HeaderActions
+          primary={['xlsx']}
+          actions={[
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
+              download: xlsxHref(
+                '/api/reports/inventory-valuation/xlsx',
+                { businessLine: line },
+                searchText,
+              ),
+            },
+          ]}
+        />
+      }
+    />
+  );
+
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
@@ -159,25 +202,6 @@ export function InventarioValorizadoView() {
               completos y redondeado al final.
             </p>
           </>
-        }
-        actions={
-          // Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que esta
-          // pantalla. cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
-                download: xlsxHref(
-                  '/api/reports/inventory-valuation/xlsx',
-                  { businessLine: line },
-                  searchText,
-                ),
-              },
-            ]}
-          />
         }
       />
 
@@ -222,72 +246,97 @@ export function InventarioValorizadoView() {
         </BusyRegion>
       )}
 
-      <Input
-        type="search"
-        aria-label="Buscar en el reporte"
-        placeholder="Buscar color, bobina, SKU o producto"
-        className="h-8 max-w-xs"
-        value={searchText}
-        onChange={(e) => {
-          setSearchText(e.target.value);
-        }}
-      />
-
-      {hasCoils && (
+      {hasCoils ? (
+        <Tabs
+          activationMode="manual"
+          value={tableTab}
+          onValueChange={(next) => {
+            selectTableTab(next as TableTab);
+          }}
+        >
+          <TabsList aria-label="Tabla del reporte" data-testid="pestanas-tabla-inventario">
+            <TabsTrigger value="bobinas">Bobinas con saldo</TabsTrigger>
+            <TabsTrigger value="productos">Productos con stock</TabsTrigger>
+          </TabsList>
+          <TabsContent value="bobinas" className="mt-3 grid gap-2">
+            {toolbar}
+            <ReportTable
+              testId="tabla-inventario-bobinas"
+              rowTestId="grupo-bobinas"
+              columns={coilColumns(data)}
+              rows={data?.coilGroups ?? []}
+              rowKey={(g) => g.key}
+              sort={sort}
+              onSort={toggleSort}
+              search={searchText}
+              updating={updating}
+              detail={(g) => <CoilRows group={g} />}
+              detailLabel={(g) => `${coilGroupLabel(g)} ${g.thicknessMm} mm`}
+              footerLabel={({ length: n }) =>
+                `Total · ${n === 1 ? '1 grupo' : `${String(n)} grupos`}`
+              }
+              query={query}
+              emptyTitle="No hay bobinas con saldo"
+              noResultsTitle={`Ningún grupo de bobinas coincide con «${searchText.trim()}»`}
+              onClearSearch={clearSearch}
+              errorTitle="No se pudo cargar el reporte"
+            />
+          </TabsContent>
+          <TabsContent value="productos" className="mt-3 grid gap-2">
+            {toolbar}
+            <ReportTable
+              testId="tabla-inventario-productos"
+              rowTestId="fila-producto"
+              columns={productColumns(data)}
+              rows={data?.products ?? []}
+              rowKey={(p) => p.itemId}
+              sort={productSort}
+              onSort={toggleProductSort}
+              search={searchText}
+              updating={updating}
+              footerLabel={({ length: n }) =>
+                `Total · ${n === 1 ? '1 producto' : `${String(n)} productos`}`
+              }
+              query={query}
+              emptyTitle="No hay productos con stock"
+              noResultsTitle={`Ningún producto coincide con «${searchText.trim()}»`}
+              onClearSearch={clearSearch}
+              errorTitle="No se pudo cargar el reporte"
+            />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        // Sin bobinas, la pestaña tiene una sola tabla: no lleva pestañas.
         <section className="space-y-2">
-          <h2 className="text-sm font-semibold">Bobinas con saldo</h2>
+          <h2 className="text-sm font-semibold">Productos con stock</h2>
+          {toolbar}
           <ReportTable
-            testId="tabla-inventario-bobinas"
-            rowTestId="grupo-bobinas"
-            columns={coilColumns(data)}
-            rows={data?.coilGroups ?? []}
-            rowKey={(g) => g.key}
-            sort={sort}
-            onSort={toggleSort}
+            testId="tabla-inventario-productos"
+            rowTestId="fila-producto"
+            columns={productColumns(data)}
+            rows={data?.products ?? []}
+            rowKey={(p) => p.itemId}
+            sort={productSort}
+            onSort={toggleProductSort}
             search={searchText}
             updating={updating}
-            detail={(g) => <CoilRows group={g} />}
-            detailLabel={(g) => `${coilGroupLabel(g)} ${g.thicknessMm} mm`}
             footerLabel={({ length: n }) =>
-              `Total · ${n === 1 ? '1 grupo' : `${String(n)} grupos`}`
+              `Total · ${n === 1 ? '1 producto' : `${String(n)} productos`}`
             }
             query={query}
-            emptyTitle="No hay bobinas con saldo"
-            noResultsTitle={`Ningún grupo de bobinas coincide con «${searchText.trim()}»`}
+            emptyTitle="No hay productos con stock"
+            noResultsTitle={`Ningún producto coincide con «${searchText.trim()}»`}
             onClearSearch={clearSearch}
             errorTitle="No se pudo cargar el reporte"
           />
         </section>
       )}
 
-      <section className="space-y-2">
-        <h2 className="text-sm font-semibold">Productos con stock</h2>
-        <ReportTable
-          testId="tabla-inventario-productos"
-          rowTestId="fila-producto"
-          columns={productColumns(data)}
-          rows={data?.products ?? []}
-          rowKey={(p) => p.itemId}
-          sort={productSort}
-          onSort={toggleProductSort}
-          search={searchText}
-          updating={updating}
-          footerLabel={({ length: n }) =>
-            `Total · ${n === 1 ? '1 producto' : `${String(n)} productos`}`
-          }
-          query={query}
-          emptyTitle="No hay productos con stock"
-          noResultsTitle={`Ningún producto coincide con «${searchText.trim()}»`}
-          onClearSearch={clearSearch}
-          errorTitle="No se pudo cargar el reporte"
-        />
-      </section>
-
       {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
       {data && line === undefined && (
-        <BusyRegion busy={updating} className="space-y-2">
-          <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
-          <div className="rounded-md border">
+        // cc47 (D-616): los totales por línea, en franja gris que separa de la tabla.
+        <BusyRegion busy={updating}>
+          <Section title="Totales por línea de negocio">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -322,7 +371,7 @@ export function InventarioValorizadoView() {
                 </TableRow>
               </TableBody>
             </Table>
-          </div>
+          </Section>
         </BusyRegion>
       )}
     </RoleGate>

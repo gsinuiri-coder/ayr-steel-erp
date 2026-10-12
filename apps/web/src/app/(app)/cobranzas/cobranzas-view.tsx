@@ -1,13 +1,11 @@
 'use client';
 
+import { DocumentFilterFields } from '@/components/invoicing/document-filter-fields';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   DEFAULT_PAGE_SIZE,
   FISCAL_DOC_TYPE_LABELS,
-  FISCAL_DOCUMENT_ORIGIN_LABELS,
-  FISCAL_DOCUMENT_ORIGINS,
-  INVOICE_DOC_TYPES,
   Role,
   toDecimal,
   type FiscalDocumentListItemDto,
@@ -28,22 +26,10 @@ import { PaginationBar } from '@/components/pagination-bar';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { RoleGate } from '@/components/role-gate';
 import { ListStateRows } from '@/components/list-state';
-import {
-  FilterField,
-  FiltersDialog,
-  TableToolbar,
-  ToolbarSearch,
-} from '@/components/table-toolbar';
+import { FiltersDialog, TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -86,8 +72,6 @@ const NO_SORT = { key: null, dir: 'asc' } as const;
 
 const TABS = ['cliente', 'pendientes'] as const;
 type CobranzasTab = (typeof TABS)[number];
-
-const ALL = 'ALL';
 
 export function CobranzasView() {
   const { user } = useSession();
@@ -466,46 +450,11 @@ function PendingTab() {
           >
             {(draft, update) => (
               <>
-                <FilterField label="Tipo" htmlFor="filtro-tipo">
-                  <Select
-                    value={draft.docType || ALL}
-                    onValueChange={(v) => {
-                      update({ docType: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-tipo" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todos los tipos</SelectItem>
-                      {INVOICE_DOC_TYPES.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {FISCAL_DOC_TYPE_LABELS[t]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
-                <FilterField label="Origen" htmlFor="filtro-origen">
-                  <Select
-                    value={draft.origin || ALL}
-                    onValueChange={(v) => {
-                      update({ origin: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-origen" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todos los orígenes</SelectItem>
-                      {FISCAL_DOCUMENT_ORIGINS.map((o) => (
-                        <SelectItem key={o} value={o}>
-                          {FISCAL_DOCUMENT_ORIGIN_LABELS[o]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
+                <DocumentFilterFields
+                  docType={draft.docType}
+                  origin={draft.origin}
+                  onChange={update}
+                />
               </>
             )}
           </FiltersDialog>

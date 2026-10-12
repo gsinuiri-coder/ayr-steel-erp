@@ -23,7 +23,6 @@ import { api } from '@/lib/api';
 import { formatDate, formatDateTime, formatTimestampDate } from '@/lib/format';
 import {
   isIsoDate,
-  kardexCustomPatch,
   KARDEX_RANGE_LABELS,
   orderKardexRows,
   parseKardexRange,
@@ -35,6 +34,8 @@ import { useSession } from '@/lib/session';
 import { useSort } from '@/lib/use-sort';
 import { useUrlState } from '@/lib/use-url-state';
 import { FilterChip } from '@/components/filter-chip';
+import { FilterField, FiltersDialog, TableToolbar } from '@/components/table-toolbar';
+import { formatPeriodRange } from '@/lib/report-period';
 import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
 import { SearchSelectField, type SearchSelectOption } from '@/components/search-select-modal';
@@ -149,10 +150,6 @@ export function KardexView() {
   const isPending = method === 'PEPS' ? peps.isPending && validRange : movements.isPending;
   const isError = method === 'PEPS' ? peps.isError : movements.isError;
 
-  const setRange = (next: KardexRange) => {
-    setUrl({ range: next, from: '', to: '' });
-  };
-
   /** «Detalle» del promedio: el origen con su enlace (D-205), la nota y el usuario. */
   const renderAverageDetail = (row: KardexSheetRow) => {
     const m = movementById.get(row.key);
@@ -216,90 +213,89 @@ export function KardexView() {
             Saldo corrido de un producto o de una bobina.
           </p>
         </div>
-        {hasItem && isAdmin && (
-          <HeaderActions
-            primary={['excel']}
-            actions={[
-              {
-                key: 'excel',
-                label: 'Descargar Excel',
-                download: excelHref,
-                // Una descarga principal es un enlace y no se deshabilita: con el rango al
-                // revés el API respondería 400, así que el botón no se ofrece.
-                show: validRange,
-              },
-              {
-                key: 'sunat',
-                label: 'Descargar PEPS (SUNAT 13.1)',
-                download: sunatHref,
-                show: validRange,
-              },
-            ]}
-          />
-        )}
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="grid gap-1 text-sm">
-          <span className="text-muted-foreground">Ítem</span>
-          <SearchSelectField
-            className="w-80"
-            label="Ítem del kardex"
-            placeholder="Buscar bobina por código o producto por SKU / nombre"
-            actionLabel="Ver kardex"
-            value={hasItem ? `${itemType}:${itemId}` : null}
-            selectedOption={selectedItem.data ? toOption(selectedItem.data) : null}
-            selectedOptionLoading={selectedItem.isLoading}
-            search={(q) =>
-              api<InventoryItemOptionDto[]>(
-                `/inventory/items/search?q=${encodeURIComponent(q)}`,
-              ).then((list) => list.map(toOption))
-            }
-            onChange={(id) => {
-              const [type = '', ...rest] = id.split(':');
-              setUrl({ itemType: type, item: rest.join(':') });
-            }}
-          />
-        </div>
-
-        <div className="flex items-center gap-2" role="group" aria-label="Rango de fechas">
-          {(Object.keys(KARDEX_RANGE_LABELS) as (keyof typeof KARDEX_RANGE_LABELS)[]).map((r) => (
-            <FilterChip
-              key={r}
-              active={range === r}
-              onToggle={() => {
-                setRange(r);
+      {/*
+        cc47 (D-615): primero el ítem (el kardex es el de un ítem: hace de buscar), después
+        «Filtros» con el rango de fechas, el rango aplicado y, a la derecha, las descargas. El
+        método va en la cabecera de la hoja (formato del cliente, D-298): no es un filtro.
+      */}
+      <TableToolbar
+        className="items-end"
+        search={
+          <div className="grid gap-1 text-sm">
+            <span className="text-muted-foreground">Ítem</span>
+            <SearchSelectField
+              className="w-80"
+              label="Ítem del kardex"
+              placeholder="Buscar bobina por código o producto por SKU / nombre"
+              actionLabel="Ver kardex"
+              value={hasItem ? `${itemType}:${itemId}` : null}
+              selectedOption={selectedItem.data ? toOption(selectedItem.data) : null}
+              selectedOptionLoading={selectedItem.isLoading}
+              search={(q) =>
+                api<InventoryItemOptionDto[]>(
+                  `/inventory/items/search?q=${encodeURIComponent(q)}`,
+                ).then((list) => list.map(toOption))
+              }
+              onChange={(id) => {
+                const [type = '', ...rest] = id.split(':');
+                setUrl({ itemType: type, item: rest.join(':') });
               }}
-            >
-              {KARDEX_RANGE_LABELS[r]}
-            </FilterChip>
-          ))}
-        </div>
-        <label className="grid gap-1 text-sm">
-          <span className="text-muted-foreground">Desde</span>
-          <Input
-            type="date"
-            className="w-40"
-            value={dates.from}
-            onChange={(e) => {
-              const value = e.target.value;
-              setUrl((cur) => kardexCustomPatch('from', value, cur, dates));
+            />
+          </div>
+        }
+        filters={
+          <FiltersDialog<RangeDraft>
+            value={{ range, from: dates.from, to: dates.to }}
+            empty={{ range: 'month', from: '', to: '' }}
+            activeCount={range === 'month' ? 0 : 1}
+            validate={(d) =>
+              d.range === 'custom' && d.from && d.to && !(isIsoDate(d.from) && d.from <= d.to)
+                ? 'La fecha «Desde» es posterior a «Hasta».'
+                : null
+            }
+            onApply={(next) => {
+              setUrl(
+                next.range === 'custom'
+                  ? { range: 'custom', from: next.from, to: next.to }
+                  : { range: next.range === 'month' ? '' : next.range, from: '', to: '' },
+              );
             }}
-          />
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span className="text-muted-foreground">Hasta</span>
-          <Input
-            type="date"
-            className="w-40"
-            value={dates.to}
-            onChange={(e) => {
-              const value = e.target.value;
-              setUrl((cur) => kardexCustomPatch('to', value, cur, dates));
-            }}
-          />
-        </label>
-      </div>
+          >
+            {(draft, update) => <RangeFields draft={draft} onChange={update} today={today} />}
+          </FiltersDialog>
+        }
+        status={
+          <span className="text-sm text-muted-foreground" data-testid="kardex-rango">
+            {rangeText(range, dates)}
+          </span>
+        }
+        aside={
+          hasItem &&
+          isAdmin && (
+            <HeaderActions
+              primary={['excel']}
+              actions={[
+                {
+                  key: 'excel',
+                  label: 'Descargar Excel',
+                  download: excelHref,
+                  // Una descarga principal es un enlace y no se deshabilita: con el rango al
+                  // revés el API respondería 400, así que el botón no se ofrece.
+                  show: validRange,
+                },
+                {
+                  key: 'sunat',
+                  label: 'Descargar PEPS (SUNAT 13.1)',
+                  download: sunatHref,
+                  show: validRange,
+                },
+              ]}
+            />
+          )
+        }
+      />
       {range === 'custom' &&
         dates.from &&
         dates.to &&
@@ -392,5 +388,80 @@ export function KardexView() {
         </>
       )}
     </RoleGate>
+  );
+}
+
+/** cc47 (D-615): el rango del kardex como borrador del modal «Filtros». */
+interface RangeDraft {
+  range: KardexRange;
+  from: string;
+  to: string;
+}
+
+/** El rango aplicado, escrito junto al botón «Filtros». */
+function rangeText(range: KardexRange, dates: { from: string; to: string }): string {
+  if (range === 'all') return 'Todo el historial';
+  if (dates.from && dates.to) return formatPeriodRange({ from: dates.from, to: dates.to });
+  if (dates.from) return `Desde el ${formatDate(dates.from)}`;
+  if (dates.to) return `Hasta el ${formatDate(dates.to)}`;
+  return 'Todo el historial';
+}
+
+/**
+ * cc47 (D-615): el rango dentro del modal — los mismos atajos (D-290) y las dos fechas. Elegir un
+ * atajo muestra sus fechas; escribir una fecha pasa a un rango propio, partiendo de lo que se veía.
+ */
+function RangeFields({
+  draft,
+  onChange,
+  today,
+}: {
+  draft: RangeDraft;
+  onChange: (patch: Partial<RangeDraft>) => void;
+  today: string;
+}) {
+  const shown = resolveKardexDates(draft.range, draft.from, draft.to, today);
+  return (
+    <>
+      <FilterField label="Rango de fechas">
+        <div className="flex flex-wrap items-center gap-2">
+          {(Object.keys(KARDEX_RANGE_LABELS) as (keyof typeof KARDEX_RANGE_LABELS)[]).map((r) => (
+            <FilterChip
+              key={r}
+              active={draft.range === r}
+              onToggle={() => {
+                onChange({ range: r, from: '', to: '' });
+              }}
+            >
+              {KARDEX_RANGE_LABELS[r]}
+            </FilterChip>
+          ))}
+        </div>
+      </FilterField>
+      <div className="flex flex-wrap items-end gap-3">
+        <FilterField label="Desde" htmlFor="kardex-desde">
+          <Input
+            id="kardex-desde"
+            type="date"
+            className="w-40"
+            value={shown.from}
+            onChange={(e) => {
+              onChange({ range: 'custom', from: e.target.value, to: shown.to });
+            }}
+          />
+        </FilterField>
+        <FilterField label="Hasta" htmlFor="kardex-hasta">
+          <Input
+            id="kardex-hasta"
+            type="date"
+            className="w-40"
+            value={shown.to}
+            onChange={(e) => {
+              onChange({ range: 'custom', from: shown.from, to: e.target.value });
+            }}
+          />
+        </FilterField>
+      </div>
+    </>
   );
 }

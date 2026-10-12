@@ -407,6 +407,11 @@ test.describe('D-328 — film de protección', () => {
       await expect(sealedTable.getByRole('row').filter({ hasText: code })).toContainText('Sellada');
       // cc32 (corte 2): el subtotal va al pie de la tabla y solo cuando la tabla tiene filas; las
       // abiertas pueden no tener ninguna en la base de la suite.
+      // cc47 (D-617): cada tabla en su pestaña.
+      await page
+        .getByTestId('pestanas-tabla-bobinas')
+        .getByRole('tab', { name: 'Abiertas' })
+        .click();
       await expect(
         page
           .getByRole('region', { name: 'Bobinas abiertas' })

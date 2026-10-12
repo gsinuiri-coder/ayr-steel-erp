@@ -21,7 +21,12 @@ import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
-import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
+import {
+  PeriodFiltersButton,
+  PeriodStatus,
+  useReportPeriod,
+} from '@/components/reports/report-period';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import {
   BusyRegion,
   DETAIL_ROW_CLASSNAME,
@@ -31,7 +36,6 @@ import {
 import { xlsxHref } from '@/lib/report-table';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
@@ -127,29 +131,7 @@ export function MermaView() {
             </p>
           </>
         }
-        actions={
-          // cc39 (D-580): el Excel de la pestaña y el periodo que se ven (descarga directa, D-149).
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
-                  download: xlsxHref(
-                    '/api/reports/coil-waste/xlsx',
-                    { from: period.from, to: period.to, businessLine: line },
-                    searchText,
-                  ),
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
-
-      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -157,10 +139,6 @@ export function MermaView() {
         value={tab}
         onChange={select}
       />
-
-      {periodState.error !== null && (
-        <ListStateMessage tone="error" title={periodState.error} hint="Elige otro periodo." />
-      )}
 
       {periodState.error === null && (
         <>
@@ -202,18 +180,53 @@ export function MermaView() {
               )}
             </BusyRegion>
           )}
+        </>
+      )}
 
-          <Input
-            type="search"
-            aria-label="Buscar en el reporte"
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, el Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar en el reporte"
             placeholder="Buscar bobina, tipo, color u orden"
-            className="h-8 max-w-xs"
             value={searchText}
-            onChange={(e) => {
-              setSearchText(e.target.value);
-            }}
+            onChange={setSearchText}
           />
+        }
+        filters={<PeriodFiltersButton state={periodState} />}
+        status={<PeriodStatus state={periodState} updating={updating} />}
+        aside={
+          // cc39 (D-580): el Excel de la pestaña y el periodo que se ven (descarga directa, D-149).
+          valid ? (
+            <HeaderActions
+              primary={['xlsx']}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
+                  download: xlsxHref(
+                    '/api/reports/coil-waste/xlsx',
+                    { from: period.from, to: period.to, businessLine: line },
+                    searchText,
+                  ),
+                },
+              ]}
+            />
+          ) : undefined
+        }
+      />
 
+      {periodState.error !== null && (
+        <ListStateMessage
+          tone="error"
+          title={periodState.error}
+          hint="Elige otro periodo en «Filtros»."
+        />
+      )}
+
+      {periodState.error === null && (
+        <>
           <ReportTable
             testId="tabla-merma"
             rowTestId="merma-bobina"

@@ -16,6 +16,8 @@ import {
 import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useUrlState } from '@/lib/use-url-state';
+import { useUrlTab } from '@/lib/use-url-tab';
+import { TableToolbar } from '@/components/table-toolbar';
 import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
 import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
@@ -87,7 +89,12 @@ export function InventarioView() {
   );
 }
 
+/** cc47 (D-617): las dos tablas de una línea, cada una en su pestaña (`?tabla=`). */
+const TABLE_TABS = ['bobinas', 'productos'] as const;
+type TableTab = (typeof TABLE_TABS)[number];
+
 function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean }) {
+  const [tableTab, selectTableTab] = useUrlTab<TableTab>(TABLE_TABS, 'bobinas', 'tabla');
   const summary = useQuery({
     queryKey: ['inventory', 'summary', line],
     queryFn: () => api<InventorySummaryDto>(`/inventory/summary?businessLine=${line}`),
@@ -127,143 +134,166 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
         </CardContent>
       </Card>
 
-      {showCoils && (
-        <SummaryTable
-          title="Bobinas por tipo"
-          emptyLabel="No hay bobinas con saldo en esta línea."
-          rows={coils}
-          keyHeader="Tipo (acabado-espesor)"
-          showCosts={showCosts}
-          showMeters
-          xlsxHref={`/api/inventory/summary/coils-xlsx?businessLine=${line}`}
-        />
+      {showCoils ? (
+        <Tabs
+          activationMode="manual"
+          value={tableTab}
+          onValueChange={(next) => {
+            selectTableTab(next as TableTab);
+          }}
+        >
+          <TabsList aria-label="Tabla del inventario" data-testid="pestanas-tabla-inventario">
+            <TabsTrigger value="bobinas">Bobinas por tipo</TabsTrigger>
+            <TabsTrigger value="productos">Productos de catálogo</TabsTrigger>
+          </TabsList>
+          <TabsContent value="bobinas" className="mt-3 grid gap-2">
+            {/* cc47 (D-615): sin buscar ni filtros; a la derecha, el Excel (D-356). */}
+            <TableToolbar
+              aside={
+                <HeaderActions
+                  primary={['xlsx']}
+                  actions={[
+                    {
+                      key: 'xlsx',
+                      label: 'Descargar Excel',
+                      download: `/api/inventory/summary/coils-xlsx?businessLine=${line}`,
+                    },
+                  ]}
+                />
+              }
+            />
+            <SummaryTable
+              emptyLabel="No hay bobinas con saldo en esta línea."
+              rows={coils}
+              keyHeader="Tipo (acabado-espesor)"
+              showCosts={showCosts}
+              showMeters
+            />
+          </TabsContent>
+          <TabsContent value="productos" className="mt-3 grid gap-2">
+            <SummaryTable
+              emptyLabel="No hay productos con saldo en esta línea."
+              rows={products}
+              keyHeader="SKU"
+              showCosts={showCosts}
+            />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        // Sin bobinas, la línea tiene una sola tabla: no lleva pestañas.
+        <section className="grid gap-2">
+          <h2 className="text-sm font-semibold">Productos de catálogo</h2>
+          <SummaryTable
+            emptyLabel="No hay productos con saldo en esta línea."
+            rows={products}
+            keyHeader="SKU"
+            showCosts={showCosts}
+          />
+        </section>
       )}
-      <SummaryTable
-        title="Productos de catálogo"
-        emptyLabel="No hay productos con saldo en esta línea."
-        rows={products}
-        keyHeader="SKU"
-        showCosts={showCosts}
-      />
     </>
   );
 }
 
 function SummaryTable({
-  title,
   keyHeader,
   emptyLabel,
   rows,
   showCosts,
   showMeters = false,
-  xlsxHref,
 }: {
-  title: string;
   keyHeader: string;
   emptyLabel: string;
   rows: InventorySummaryRowDto[];
   showCosts: boolean;
   /** D-356: la columna «ML teórico (disponible)», solo en las bobinas. */
   showMeters?: boolean;
-  /** D-356: descarga directa del Excel de la tabla (patrón D-149). */
-  xlsxHref?: string;
 }) {
   // Físico, reservado y disponible son tres columnas siempre visibles: son cantidades,
   // no costos, así que VENDEDOR también las ve (D-066, §3.4).
   const columnCount = (showCosts ? 8 : 6) + (showMeters ? 1 : 0);
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-        <CardTitle>{title}</CardTitle>
-        {xlsxHref !== undefined && (
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[{ key: 'xlsx', label: 'Descargar Excel', download: xlsxHref }]}
-          />
-        )}
-      </CardHeader>
-      <CardContent className="px-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{keyHeader}</TableHead>
-              <TableHead>Descripción</TableHead>
-              <TableHead className="text-right">Ítems</TableHead>
-              <TableHead className="text-right">Físico</TableHead>
-              <TableHead className="text-right">Reservado</TableHead>
-              <TableHead className="text-right">Disponible</TableHead>
-              {showMeters && <TableHead className="text-right">ML teórico (disponible)</TableHead>}
-              {showCosts && <TableHead className="text-right">Costo prom.</TableHead>}
-              {showCosts && <TableHead className="text-right">Valorizado</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => (
-              <TableRow key={`${row.itemType}:${row.key}`}>
-                <TableCell className="font-mono font-medium">
-                  {/* Solo se enlaza al kardex cuando la fila es un ítem único: el kardex
+    <div className="rounded-lg border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{keyHeader}</TableHead>
+            <TableHead>Descripción</TableHead>
+            <TableHead className="text-right">Ítems</TableHead>
+            <TableHead className="text-right">Físico</TableHead>
+            <TableHead className="text-right">Reservado</TableHead>
+            <TableHead className="text-right">Disponible</TableHead>
+            {showMeters && <TableHead className="text-right">ML teórico (disponible)</TableHead>}
+            {showCosts && <TableHead className="text-right">Costo prom.</TableHead>}
+            {showCosts && <TableHead className="text-right">Valorizado</TableHead>}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={`${row.itemType}:${row.key}`}>
+              <TableCell className="font-mono font-medium">
+                {/* Solo se enlaza al kardex cuando la fila es un ítem único: el kardex
                       de un grupo de bobinas distintas no existe como tal (RF-53). */}
-                  {row.itemId ? (
-                    <Link
-                      className={LINK_CLASSNAME}
-                      href={`/kardex?itemType=${row.itemType}&item=${row.itemId}&range=all`}
-                    >
-                      {row.key}
-                    </Link>
-                  ) : (
-                    row.key
-                  )}
-                </TableCell>
-                <TableCell>{row.name}</TableCell>
-                <TableCell className="text-right">{row.itemCount}</TableCell>
-                <TableCell className="text-right">
-                  {formatQty(row.qty, unitSymbol(row.unit))}
-                </TableCell>
-                <TableCell className="text-right">
-                  {/* Un cero reservado se muestra como guion: la fila normal es la que no
+                {row.itemId ? (
+                  <Link
+                    className={LINK_CLASSNAME}
+                    href={`/kardex?itemType=${row.itemType}&item=${row.itemId}&range=all`}
+                  >
+                    {row.key}
+                  </Link>
+                ) : (
+                  row.key
+                )}
+              </TableCell>
+              <TableCell>{row.name}</TableCell>
+              <TableCell className="text-right">{row.itemCount}</TableCell>
+              <TableCell className="text-right">
+                {formatQty(row.qty, unitSymbol(row.unit))}
+              </TableCell>
+              <TableCell className="text-right">
+                {/* Un cero reservado se muestra como guion: la fila normal es la que no
                       tiene nada comprometido, y un "0.000" en cada línea es ruido. */}
-                  {new Decimal(row.reservedQty).isZero() ? (
-                    <span className="text-muted-foreground">—</span>
-                  ) : (
-                    <span className="font-medium text-tone-warning-foreground">
-                      {formatQty(row.reservedQty, unitSymbol(row.unit))}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-right">
-                  {formatQty(row.availableQty, unitSymbol(row.unit))}
-                </TableCell>
-                {/* D-356: sumado bobina por bobina en el API (`equivalentMeters`, la misma
+                {new Decimal(row.reservedQty).isZero() ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  <span className="font-medium text-tone-warning-foreground">
+                    {formatQty(row.reservedQty, unitSymbol(row.unit))}
+                  </span>
+                )}
+              </TableCell>
+              <TableCell className="text-right">
+                {formatQty(row.availableQty, unitSymbol(row.unit))}
+              </TableCell>
+              {/* D-356: sumado bobina por bobina en el API (`equivalentMeters`, la misma
                     conversión que la columna del peso inicial de /bobinas). */}
-                {showMeters && (
-                  <TableCell className="text-right">
-                    {row.theoreticalMeters === null || row.theoreticalMeters === undefined
-                      ? '—'
-                      : formatQty(row.theoreticalMeters, 'm')}
-                  </TableCell>
-                )}
-                {showCosts && (
-                  <TableCell className="text-right">
-                    {formatMoneyOrDash(row.avgCostPen, 'PEN', 4)}
-                  </TableCell>
-                )}
-                {showCosts && (
-                  <TableCell className="text-right font-medium">
-                    {formatMoneyOrDash(row.totalValuePen)}
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
-            {rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
-                  {emptyLabel}
+              {showMeters && (
+                <TableCell className="text-right">
+                  {row.theoreticalMeters === null || row.theoreticalMeters === undefined
+                    ? '—'
+                    : formatQty(row.theoreticalMeters, 'm')}
                 </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+              )}
+              {showCosts && (
+                <TableCell className="text-right">
+                  {formatMoneyOrDash(row.avgCostPen, 'PEN', 4)}
+                </TableCell>
+              )}
+              {showCosts && (
+                <TableCell className="text-right font-medium">
+                  {formatMoneyOrDash(row.totalValuePen)}
+                </TableCell>
+              )}
+            </TableRow>
+          ))}
+          {rows.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={columnCount} className="text-center text-muted-foreground">
+                {emptyLabel}
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

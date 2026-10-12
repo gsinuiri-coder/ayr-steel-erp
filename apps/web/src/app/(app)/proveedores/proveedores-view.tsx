@@ -10,7 +10,7 @@ import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { HeaderActions } from '@/components/header-actions';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import {
   Table,
   TableBody,
@@ -109,13 +109,16 @@ export function ProveedoresView() {
         />
       </div>
 
-      <Input
-        placeholder="Buscar por nombre o número de documento…"
-        className="max-w-sm"
-        value={search}
-        onChange={(e) => {
-          setSearch(e.target.value);
-        }}
+      {/* cc47 (D-615): solo buscar; sin filtros ni Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar proveedores"
+            placeholder="Buscar por nombre o número de documento…"
+            value={search}
+            onChange={setSearch}
+          />
+        }
       />
 
       <div className="rounded-lg border">

@@ -1,5 +1,6 @@
 'use client';
 
+import { SelectFilterField } from '@/components/select-filter-field';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -35,15 +36,8 @@ import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { LINK_CLASSNAME, cn } from '@/lib/utils';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { FiltersDialog, TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -132,24 +126,6 @@ export function CuentasPorCobrarView() {
             </p>
           </>
         }
-        actions={
-          // cc25 (M3): descarga directa contra el API (patrón D-149), con el mismo vendedor.
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                // cc40 (D-588): con la búsqueda, el Excel trae los clientes que se ven.
-                download: xlsxHref(
-                  '/api/reports/receivables-aging/xlsx',
-                  { sellerId: sellerId || undefined },
-                  searchText,
-                ),
-              },
-            ]}
-          />
-        }
       />
 
       {report.isPending && <Skeleton className="h-14 w-full" />}
@@ -175,36 +151,59 @@ export function CuentasPorCobrarView() {
         </BusyRegion>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Select
-          value={sellerId || ALL}
-          onValueChange={(v) => {
-            setUrl({ vendedor: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="h-8 w-56" aria-label="Vendedor">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los vendedores</SelectItem>
-            {sellers.map((s) => (
-              <SelectItem key={s.id} value={s.id}>
-                {s.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          type="search"
-          aria-label="Buscar en el reporte"
-          placeholder="Buscar cliente, RUC, comprobante o pedido"
-          className="h-8 max-w-xs"
-          value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
-          }}
-        />
-      </div>
+      {/* cc47 (D-615): buscar, «Filtros» (el vendedor; el reporte es a hoy, sin periodo) y, a la
+          derecha, el Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar en el reporte"
+            placeholder="Buscar cliente, RUC, comprobante o pedido"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <FiltersDialog<{ vendedor: string }>
+            value={{ vendedor: sellerId }}
+            empty={{ vendedor: '' }}
+            activeCount={sellerId ? 1 : 0}
+            onApply={(next) => {
+              setUrl(next);
+            }}
+          >
+            {(draft, update) => (
+              <SelectFilterField
+                id="filtro-vendedor"
+                label="Vendedor"
+                value={draft.vendedor}
+                onChange={(v) => {
+                  update({ vendedor: v });
+                }}
+                allLabel="Todos los vendedores"
+                options={sellers.map((s) => ({ value: s.id, label: s.name }))}
+              />
+            )}
+          </FiltersDialog>
+        }
+        aside={
+          // cc25 (M3): descarga directa contra el API (patrón D-149), con el mismo vendedor.
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                // cc40 (D-588): con la búsqueda, el Excel trae los clientes que se ven.
+                download: xlsxHref(
+                  '/api/reports/receivables-aging/xlsx',
+                  { sellerId: sellerId || undefined },
+                  searchText,
+                ),
+              },
+            ]}
+          />
+        }
+      />
 
       <ReportTable
         testId="tabla-cxc"
@@ -399,5 +398,4 @@ const BUCKET_KEYS: Record<AgingBucket, string> = {
 /** Cliente, comprobantes, los cinco tramos y el saldo. */
 const COLUMN_COUNT = 3 + AGING_BUCKETS.length;
 
-const ALL = '__todos__';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

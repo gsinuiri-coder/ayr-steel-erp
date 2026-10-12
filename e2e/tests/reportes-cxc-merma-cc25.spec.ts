@@ -11,6 +11,7 @@ import {
   type ReceivablesAgingDto,
 } from '@ayr/shared';
 import { adminApi, adminCredentials, getJson } from '../helpers/api';
+import { openFilters } from '../helpers/ui';
 
 /**
  * cc25 (D-421..D-426) — reportes de cuentas por cobrar y de merma.
@@ -102,9 +103,13 @@ test.describe('Reportes de CxC y merma (cc25)', () => {
     await expect(page.getByRole('heading', { name: 'Cuentas por cobrar' })).toBeVisible();
     // Un valor que no es un id cae a «todos» y se corrige la URL.
     await expect(page).toHaveURL('/reportes/cuentas-por-cobrar');
-    await expect(page.getByRole('combobox', { name: 'Vendedor' })).toHaveText(
+    // cc47 (D-615): el vendedor vive en el modal «Filtros»; sin filtro, ninguno activo.
+    await expect(page.getByRole('button', { name: 'Filtros', exact: true })).toBeVisible();
+    const modal = await openFilters(page);
+    await expect(modal.getByRole('combobox', { name: 'Vendedor' })).toHaveText(
       'Todos los vendedores',
     );
+    await page.keyboard.press('Escape');
     await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
       'href',
       '/api/reports/receivables-aging/xlsx',

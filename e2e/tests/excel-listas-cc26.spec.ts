@@ -66,8 +66,8 @@ test.describe('Excel de las listas (cc26)', () => {
     await page.getByRole('button', { name: 'Ingresar' }).click();
     await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 
-    // cc31: en las listas el Excel vive en «Más opciones» (el principal es crear); se abre el
-    // menú para alcanzarlo.
+    // cc47 (D-615): en las listas el Excel pasó a la derecha de la línea de la tabla (antes vivía
+    // en «Más opciones»); `headerAction` lo encuentra en los dos sitios.
     for (const [path, api] of [
       ['/comprobantes', '/api/invoicing/documents/xlsx'],
       ['/cotizaciones', '/api/sales/quotations/xlsx'],
