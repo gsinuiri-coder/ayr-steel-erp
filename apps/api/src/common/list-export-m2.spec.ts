@@ -125,7 +125,7 @@ describe('los controladores de M2 entregan el archivo con el rol del usuario', (
     expect(filenameOf(res)).toMatch(/^attachment; filename="clientes-\d{4}-\d{2}-\d{2}\.xlsx"$/);
   });
 
-  it('cobranzas por cliente: el resumen entero del servicio', async () => {
+  it('cobranzas por cliente: el resumen del servicio con el buscar de la tabla (cc48, D-630)', async () => {
     const receivables = { exportReceivables: jest.fn().mockResolvedValue([]) };
     const controller = new InvoicingController(
       {} as never,
@@ -134,11 +134,13 @@ describe('los controladores de M2 entregan el archivo con el rol del usuario', (
       {} as never,
     );
     const res = response();
+    const query = { search: 'acero' } as never;
     await controller.findReceivablesXlsx(
       { id: 'u-1', role: Role.ADMINISTRADOR } as never,
+      query,
       res as never,
     );
-    expect(receivables.exportReceivables).toHaveBeenCalledWith();
+    expect(receivables.exportReceivables).toHaveBeenCalledWith(query);
     expect(filenameOf(res)).toMatch(
       /^attachment; filename="cobranzas-por-cliente-\d{4}-\d{2}-\d{2}\.xlsx"$/,
     );

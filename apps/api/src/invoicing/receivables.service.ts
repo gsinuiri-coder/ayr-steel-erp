@@ -17,7 +17,8 @@ import {
   toFixedString,
   type CreateCustomerPaymentInput,
   type PaginatedResult,
-  type PaginationQuery,
+  type ReceivablesExportQuery,
+  type ReceivablesQuery,
   type ReceivableSummaryDto,
   type ReceivableTotalsDto,
 } from '@ayr/shared';
@@ -238,8 +239,8 @@ export class ReceivablesService {
    * ya vive en `@ayr/shared`, y esa duplicación es exactamente la que hace que la lista y
    * el detalle empiecen a decir números distintos.
    */
-  async receivables(query: PaginationQuery): Promise<PaginatedResult<ReceivableSummaryDto>> {
-    const { items, total } = await this.findWindow(pageWindow(query));
+  async receivables(query: ReceivablesQuery): Promise<PaginatedResult<ReceivableSummaryDto>> {
+    const { items, total } = await this.findWindow(pageWindow(query), query.search);
     return paginate(items, total, query);
   }
 
@@ -249,15 +250,16 @@ export class ReceivablesService {
    * la ventana completa. Su fila de total coincide con `totals()`, que suma el mismo resumen.
    * Pasado el tope (`LIST_XLSX_MAX_ROWS`), 400.
    */
-  async exportReceivables(): Promise<ReceivableSummaryDto[]> {
-    return (await this.findWindow(exportWindow())).items;
+  async exportReceivables(query: ReceivablesExportQuery = {}): Promise<ReceivableSummaryDto[]> {
+    return (await this.findWindow(exportWindow(), query.search)).items;
   }
 
   /** El cuerpo de la tabla y de su Excel: el resumen por cliente, sobre una ventana de filas. */
   private async findWindow(
     window: ListWindow,
+    search?: string,
   ): Promise<{ items: ReceivableSummaryDto[]; total: number }> {
-    const sorted = await this.loadCustomerSummaries();
+    const sorted = filterReceivablesBySearch(await this.loadCustomerSummaries(), search);
     assertExportable(sorted.length, window);
     return {
       items: sorted.slice(window.skip, window.skip + window.take),
@@ -322,4 +324,23 @@ export class ReceivablesService {
       toDecimal(b.balancePen).cmp(toDecimal(a.balancePen)),
     );
   }
+}
+
+/**
+ * cc48 (D-630): el buscar de «Por cliente». El resumen se arma en memoria (está acotado por los
+ * clientes con deuda), así que el buscar filtra ese resumen antes de paginar: el total y las
+ * páginas son los de las filas que coinciden. Mismo criterio que la lista de clientes: contiene,
+ * sin distinguir mayúsculas, en el nombre o en el documento.
+ */
+export function filterReceivablesBySearch(
+  rows: ReceivableSummaryDto[],
+  search: string | undefined,
+): ReceivableSummaryDto[] {
+  const needle = search?.trim().toLocaleLowerCase('es');
+  if (!needle) return rows;
+  return rows.filter(
+    (r) =>
+      r.customerName.toLocaleLowerCase('es').includes(needle) ||
+      r.customerDocNumber.toLocaleLowerCase('es').includes(needle),
+  );
 }

@@ -1313,6 +1313,19 @@ export const receivableSummarySchema = z.object({
 export type ReceivableSummaryDto = z.infer<typeof receivableSummarySchema>;
 
 /**
+ * cc48 (D-630): «Por cliente» de /cobranzas busca el cliente por nombre o documento, igual que la
+ * lista de clientes. Las tarjetas (`receivables/summary`) no lo reciben: suman toda la deuda.
+ */
+export const receivablesQuerySchema = paginationQuerySchema.extend({
+  search: z.string().trim().max(80).optional(),
+});
+export type ReceivablesQuery = z.infer<typeof receivablesQuerySchema>;
+
+/** cc48 (D-630): el Excel de «Por cliente», con el mismo buscar y sin paginar. */
+export const receivablesExportQuerySchema = listExportQuerySchema(receivablesQuerySchema);
+export type ReceivablesExportQuery = z.infer<typeof receivablesExportQuerySchema>;
+
+/**
  * Totales de cuentas por cobrar (Fase 7d): las tarjetas de resumen de /cobranzas suman
  * sobre **todos** los clientes con deuda, no solo la página que muestra la tabla.
  */

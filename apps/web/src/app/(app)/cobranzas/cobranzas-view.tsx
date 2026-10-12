@@ -102,6 +102,23 @@ function pendingParamsOf(
   return params;
 }
 
+/** D-289: lo que «Por cliente» guarda en la URL; cc48 (D-630) suma su buscar. */
+const RECEIVABLES_URL_DEFAULTS = {
+  rPage: '1',
+  rSize: String(DEFAULT_PAGE_SIZE),
+  rSearch: '',
+};
+
+/** cc48 (D-630): los parámetros de «Por cliente» para el API, de la tabla y de su Excel. */
+function receivablesParamsOf(url: typeof RECEIVABLES_URL_DEFAULTS): URLSearchParams {
+  const params = new URLSearchParams({
+    page: String(Math.max(1, Number(url.rPage) || 1)),
+    pageSize: String(Number(url.rSize) || DEFAULT_PAGE_SIZE),
+  });
+  if (url.rSearch) params.set('search', url.rSearch);
+  return params;
+}
+
 /** Sin orden elegido: `sortRows` deja las filas como llegan. */
 const NO_SORT = { key: null, dir: 'asc' } as const;
 
@@ -125,6 +142,7 @@ export function CobranzasView() {
   // cc47b (D-623): el Excel de la pestaña activa, con lo que esa tabla tiene puesto.
   const [pendingUrl] = useUrlState(PENDING_URL_DEFAULTS);
   const [pendingSort] = useSort<PendingSortKey>('p');
+  const [receivablesUrl] = useUrlState(RECEIVABLES_URL_DEFAULTS);
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -137,7 +155,7 @@ export function CobranzasView() {
           </p>
         </div>
         {/* cc47b (D-623): las descargas, en «Más opciones»; la de la pestaña que se ve. cc26 M2:
-            «Por cliente» trae todas las filas y el total de las tarjetas (solo ADMINISTRADOR, como
+            «Por cliente» trae todas las filas con su buscar (cc48, D-630; solo ADMINISTRADOR, como
             la pestaña); la de comprobantes, el buscar, los filtros y el orden de la tabla, y el
             vendedor recibe solo los suyos. */}
         <HeaderActions
@@ -147,7 +165,7 @@ export function CobranzasView() {
               key: 'xlsx-cliente',
               label: 'Descargar Excel · Por cliente',
               show: tab === 'cliente',
-              download: '/api/invoicing/receivables/xlsx',
+              download: listXlsxHref('/invoicing/receivables', receivablesParamsOf(receivablesUrl)),
             },
             {
               key: 'xlsx-pendientes',
@@ -240,13 +258,13 @@ export function CobranzasView() {
 }
 
 /**
- * «Por cliente»: el resumen armado en memoria por el API, paginado por el servidor. El API no busca
- * ni filtra esta tabla (`paginationQuerySchema`) y la pantalla no trae todas sus filas, así que no
- * lleva buscar ni «Filtros» (cc47, D-617: aquí se paró; buscar por cliente pide API).
+ * «Por cliente»: el resumen armado en memoria por el API, paginado por el servidor. cc48 (D-630):
+ * lleva buscar (cliente por nombre o documento), hecho en el API antes de paginar; no tiene nada más
+ * que filtrar, así que no lleva «Filtros».
  */
 function ReceivablesTab() {
-  // D-289: la página y el tamaño viven en la URL (`rPage`/`rSize`).
-  const [url, setUrl] = useUrlState({ rPage: '1', rSize: String(DEFAULT_PAGE_SIZE) });
+  // D-289: la página, el tamaño y el buscar viven en la URL (`rPage`/`rSize`/`rSearch`).
+  const [url, setUrl] = useUrlState(RECEIVABLES_URL_DEFAULTS);
   const receivablesPage = {
     page: Math.max(1, Number(url.rPage) || 1),
     pageSize: Number(url.rSize) || DEFAULT_PAGE_SIZE,
@@ -257,11 +275,16 @@ function ReceivablesTab() {
       setUrl({ rSize: String(size), rPage: '1' });
     },
   };
+  // Buscar vuelve a la página 1 de esta tabla.
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.rSearch, (v) => {
+    setUrl({ rSearch: v, rPage: '1' });
+  });
+  const receivablesParams = receivablesParamsOf(url);
   const receivables = useQuery({
-    queryKey: ['receivables', receivablesPage.page, receivablesPage.pageSize],
+    queryKey: ['receivables', receivablesPage.page, receivablesPage.pageSize, search],
     queryFn: () =>
       api<PaginatedResult<ReceivableSummaryDto>>(
-        `/invoicing/receivables?page=${receivablesPage.page}&pageSize=${receivablesPage.pageSize}`,
+        `/invoicing/receivables?${receivablesParams.toString()}`,
       ),
   });
   // D-323: «Por cliente» ordena solo las filas de la página y sus encabezados lo dicen.
@@ -276,6 +299,16 @@ function ReceivablesTab() {
 
   return (
     <>
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar clientes con saldo"
+            placeholder="Buscar por cliente o documento…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+      />
       {receivables.isPending ? (
         <Skeleton className="h-40 w-full" />
       ) : (
@@ -374,10 +407,14 @@ function ReceivablesTab() {
                 query={receivables}
                 colSpan={5}
                 isEmpty={receivableRows.length === 0}
-                filtered={false}
+                filtered={Boolean(search)}
                 emptyTitle="No hay nada por cobrar"
                 emptyHint="Aquí aparece cada cliente con comprobantes que tienen saldo."
-                noResultsTitle="No hay nada por cobrar"
+                noResultsTitle="Ningún cliente con saldo coincide con la búsqueda"
+                onClearFilters={() => {
+                  setSearchText('');
+                  setUrl({ rSearch: '', rPage: '1' });
+                }}
                 errorTitle="No se pudo cargar el saldo por cliente"
               />
             </TableBody>

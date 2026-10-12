@@ -24,7 +24,8 @@ import {
   businessToday,
   fiscalDocumentExportQuerySchema,
   fiscalDocumentQuerySchema,
-  paginationQuerySchema,
+  receivablesExportQuerySchema,
+  receivablesQuerySchema,
   reverseCustomerPaymentSchema,
   Role,
   updateFiscalSeriesSchema,
@@ -47,7 +48,8 @@ import {
   type FiscalSeriesDto,
   type InvoicingSettingsDto,
   type PaginatedResult,
-  type PaginationQuery,
+  type ReceivablesExportQuery,
+  type ReceivablesQuery,
   type ReceivableSummaryDto,
   type ReceivableTotalsDto,
   type ReverseCustomerPaymentInput,
@@ -390,7 +392,7 @@ export class InvoicingController {
   @Get('receivables')
   @Roles(Role.ADMINISTRADOR)
   receivables(
-    @Query(new ZodValidationPipe(paginationQuerySchema)) query: PaginationQuery,
+    @Query(new ZodValidationPipe(receivablesQuerySchema)) query: ReceivablesQuery,
   ): Promise<PaginatedResult<ReceivableSummaryDto>> {
     return this.receivablesService.receivables(query);
   }
@@ -409,15 +411,17 @@ export class InvoicingController {
    * cc26 M2 (D-provisional): el Excel de «Por cliente» en /cobranzas: todas las filas de la
    * tabla en el orden del servidor, con la fila de total que coincide con `receivables/summary`.
    * Mismo permiso que su GET (solo ADMINISTRADOR; el vendedor recibe 403 igual que en la tabla,
-   * MR-1 de docs/manual/menu-por-rol.md queda como propuesta). La tabla no tiene filtros.
+   * MR-1 de docs/manual/menu-por-rol.md queda como propuesta). cc48 (D-630): recibe el buscar de
+   * la tabla; con el buscar, la fila de total suma solo los clientes que coinciden.
    */
   @Get('receivables/xlsx')
   @Roles(Role.ADMINISTRADOR)
   async findReceivablesXlsx(
     @CurrentUser() actor: RequestUser,
+    @Query(new ZodValidationPipe(receivablesExportQuerySchema)) query: ReceivablesExportQuery,
     @Res() res: Response,
   ): Promise<void> {
-    const rows = await this.receivablesService.exportReceivables();
+    const rows = await this.receivablesService.exportReceivables(query);
     sendXlsx(res, receivablesXlsx(rows, actor.role, businessToday()));
   }
 
