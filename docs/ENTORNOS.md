@@ -366,6 +366,16 @@ Crea la base descartable `ayr_drift_check` en el Postgres local, le aplica las m
 compara `prisma migrate diff` con `apps/api/prisma/drift-esperado.sql`. Corre en el job `base` de
 la CI. La clasificación está en `docs/analisis/drift-schema.md`.
 
+### Objetos de base contra las migraciones: `pnpm check:drift:objetos` (cc46, D-610)
+
+Lo que `check:drift` no ve: CHECK, triggers (también si están deshabilitados), funciones, índices
+parciales o de expresión y vistas de `production`. Levanta un `postgres:<major>-alpine` descartable
+(`ayr-drift-objetos`, 127.0.0.1:5441) con la **versión mayor de production** (Postgres 18; el Docker
+del repo es 17), le aplica las migraciones y compara catálogo contra catálogo en `READ ONLY`. Se
+corre a mano desde el checkout principal (lee `.env.setup` por `neonConnectionString`) o con
+`AYR_ENV_SETUP` desde un worktree: `pnpm check:drift:objetos --out local-data/drift-objetos.json`.
+No va en la CI. Resultado y nombres en `docs/analisis/drift-objetos.md`.
+
 ### E2E con latencia: comparar el rendimiento de dos commits (F8-R1)
 
 Docker responde en ~0 ms, así que una regresión que vive en **cantidad de round-trips** a la

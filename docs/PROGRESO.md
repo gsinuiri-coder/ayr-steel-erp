@@ -2,6 +2,29 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-11 — cc46: hooks de React en el lint, borde del partido con costo y objetos de base (D-606..D-611; PR #178, #179 y #180)
+
+Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc46.md`; revisiones en
+`docs/revision/cc46-{a,b,c}-segundo-modelo.md`; UAT en `docs/uat/cc46.md`. **D-603..D-605
+ratificadas por el dueño** (cc45).
+
+- **En producción:** web de `49e85067` (corte A) y API `00117-7pm` (`git-sha=6cb372ce`, corte B),
+  main `be5bb78f`; `smoke:prod` verde en los dos dominios después de cada corte. Vuelta atrás de
+  la API: tráfico a `00116-hfd`. El corte C (`87abfc3a`) es solo un script, sin deploy.
+- **D-606/D-607:** `rules-of-hooks` y `exhaustive-deps` como error (el preset de la v6 nunca las
+  había activado); 14 hallazgos corregidos sin `eslint-disable`; sin cambios visibles.
+- **D-608/D-609:** el valor del kerf y el borde del partido interno entra a las hijas (la regla de
+  D-597); la reversa devuelve exacto. Producción no tenía ningún partido (`pnpm inspect:cc46`).
+- **D-610/D-611:** `pnpm check:drift:objetos` (Postgres 18, catálogo en `READ ONLY`): production
+  y las migraciones tienen los mismos 46 CHECK, 7 triggers, 6 funciones y 9 índices parciales;
+  ninguna diferencia (`docs/analisis/drift-objetos.md`).
+- **Suite E2E local:** 590 passed, 19 failed, 2 flaky, 2 skipped; los rojos son de entorno (los de
+  cc44/cc45) o de orden (pasan solos y en la CI).
+- **Registro de riesgo (kardex):** `apps/api/src/coils/coil-split-math.ts` (`splitChildrenCosts`),
+  `coil-operations.service.ts` (`split`; recosteo en `update` con `costUnchanged`),
+  `coils.service.ts` (`kardexTotalCostPen`).
+- **Pendiente de decisión del dueño:** ratificar D-606..D-611.
+
 ## 2026-10-11 — cc45: cambiar la cantidad de una línea del pedido con producción (D-603..D-605; PR #176 en prod)
 
 Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc45.md`; revisión en
