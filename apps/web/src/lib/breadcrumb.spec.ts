@@ -52,6 +52,14 @@ describe('ruta de la barra superior', () => {
     expect(crumbsFor('/catalogo').list?.title).toBe('Productos');
   });
 
+  it('cc47 (D-612): lo que salió del menú conserva su ruta con grupo', () => {
+    expect(crumbsFor('/produccion/0b6f1c2e-1a2b-4c3d-8e9f-0a1b2c3d4e5f')).toEqual({
+      group: 'Planta',
+      list: { title: 'Órdenes de producción', href: '/produccion' },
+      leaf: 'document',
+    });
+  });
+
   it('cc32: Reportes tiene página de inicio y el grupo enlaza a ella', () => {
     expect(crumbsFor('/reportes')).toEqual({
       group: 'Reportes',

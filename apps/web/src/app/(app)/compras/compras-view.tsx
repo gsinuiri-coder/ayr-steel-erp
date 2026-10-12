@@ -30,7 +30,6 @@ import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
 import { FilterChip } from '@/components/filter-chip';
-import { ListFooterRow } from '@/components/list-footer';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -414,15 +413,6 @@ export function ComprasView() {
               errorTitle="No se pudieron cargar las compras"
             />
           </TableBody>
-          {/* La moneda va por fila (PEN o USD): el pie solo cuenta, no suma. */}
-          {rows.length > 0 && (
-            <ListFooterRow
-              shown={rows.length}
-              total={purchases.data?.total ?? rows.length}
-              noun={filterLabel ? `compras ${filterLabel}` : 'compras'}
-              colCount={10}
-            />
-          )}
         </Table>
       </div>
       <PaginationBar

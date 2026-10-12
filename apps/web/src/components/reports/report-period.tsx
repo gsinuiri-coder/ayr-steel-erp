@@ -6,6 +6,7 @@ import { businessToday } from '@ayr/shared';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Segmented } from '@/components/reports/segmented';
+import { FiltersDialog } from '@/components/table-toolbar';
 import {
   MONTH_PRESETS,
   PERIOD_PRESETS,
@@ -178,6 +179,159 @@ export function PeriodPicker({
         </span>
       )}
     </div>
+  );
+}
+
+/** cc47 (D-615): el periodo como borrador del modal de filtros. */
+export interface PeriodDraft {
+  from: string;
+  to: string;
+  /** El atajo que lo eligió, o `null` si es un rango libre. */
+  preset: PeriodPreset | null;
+}
+
+/** cc47: el borrador que parte del periodo aplicado. */
+export function periodDraftOf(state: ReportPeriodState): PeriodDraft {
+  return { from: state.period.from, to: state.period.to, preset: state.preset };
+}
+
+/** cc47: el periodo sin filtro elegido: «Este mes». */
+export function defaultPeriodDraft(): PeriodDraft {
+  return { ...presetPeriod('this-month', businessToday()), preset: 'this-month' };
+}
+
+/**
+ * cc47: el periodo cuenta como filtro activo cuando no es «Este mes», el predeterminado. El atajo
+ * elegido manda (en enero, «Este año» da las mismas fechas que «Este mes» y es otra elección).
+ */
+export function periodIsFiltered(state: ReportPeriodState): boolean {
+  if (!state.complete) return false;
+  if (state.preset !== null) return state.preset !== 'this-month';
+  const base = presetPeriod('this-month', businessToday());
+  return state.period.from !== base.from || state.period.to !== base.to;
+}
+
+/** cc47: el mensaje que impide aplicar el periodo del borrador, o `null`. */
+export function periodDraftError(draft: PeriodDraft): string | null {
+  if (draft.from === '' || draft.to === '') return 'Elige las dos fechas del periodo.';
+  return periodError({ from: draft.from, to: draft.to });
+}
+
+/**
+ * cc47 (D-615): el periodo dentro del modal de filtros — los mismos atajos y «Otro periodo…» que
+ * `PeriodPicker`, pero sobre un borrador: no cambia la URL hasta «Aplicar».
+ */
+export function PeriodFields({
+  draft,
+  onChange,
+}: {
+  draft: PeriodDraft;
+  onChange: (next: PeriodDraft) => void;
+}) {
+  const today = businessToday();
+  const [customOpen, setCustomOpen] = useState(draft.preset === null);
+  const value: PickerValue = customOpen || draft.preset === null ? 'custom' : draft.preset;
+  const valid = periodDraftError(draft) === null;
+  return (
+    <div className="grid gap-2" data-testid="periodo">
+      <Segmented<PickerValue>
+        label="Periodo"
+        value={value}
+        options={[
+          ...PERIOD_PRESETS.map((p) => ({ value: p, label: PERIOD_PRESET_LABELS[p] })),
+          { value: 'custom', label: 'Otro periodo…' },
+        ]}
+        onChange={(next) => {
+          if (next === 'custom') {
+            setCustomOpen(true);
+            onChange({ ...draft, preset: null });
+            return;
+          }
+          setCustomOpen(false);
+          onChange({ ...presetPeriod(next, today), preset: next });
+        }}
+      />
+      {value === 'custom' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Label htmlFor="periodo-desde" className="text-xs text-muted-foreground">
+            Desde
+          </Label>
+          <Input
+            id="periodo-desde"
+            type="date"
+            className="h-8 w-auto"
+            value={draft.from}
+            onChange={(e) => {
+              onChange({ ...draft, from: e.target.value, preset: null });
+            }}
+          />
+          <Label htmlFor="periodo-hasta" className="text-xs text-muted-foreground">
+            Hasta
+          </Label>
+          <Input
+            id="periodo-hasta"
+            type="date"
+            className="h-8 w-auto"
+            value={draft.to}
+            onChange={(e) => {
+              onChange({ ...draft, to: e.target.value, preset: null });
+            }}
+          />
+        </div>
+      )}
+      {valid && (
+        <span className="text-sm text-muted-foreground">
+          {formatPeriodRange({ from: draft.from, to: draft.to })}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * cc47 (D-615): lo que la línea estándar dice del periodo aplicado, junto al botón «Filtros»: el
+ * rango escrito y, mientras carga otro periodo, «Actualizando…». No es un filtro: solo informa.
+ */
+export function PeriodStatus({
+  state,
+  updating = false,
+}: {
+  state: ReportPeriodState;
+  updating?: boolean;
+}) {
+  return (
+    <>
+      {state.valid && (
+        <span className="text-sm text-muted-foreground" data-testid="periodo-rango">
+          {formatPeriodRange(state.period)}
+        </span>
+      )}
+      {updating && (
+        <span role="status" className="text-sm text-muted-foreground" data-testid="actualizando">
+          Actualizando…
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * cc47 (D-615): el botón «Filtros» de un reporte cuyo único filtro es el periodo. Un reporte con
+ * más filtros arma su propio `FiltersDialog` con `PeriodFields` dentro.
+ */
+export function PeriodFiltersButton({ state }: { state: ReportPeriodState }) {
+  return (
+    <FiltersDialog<PeriodDraft>
+      value={periodDraftOf(state)}
+      empty={defaultPeriodDraft()}
+      activeCount={periodIsFiltered(state) ? 1 : 0}
+      validate={periodDraftError}
+      onApply={(d) => {
+        state.setPeriod({ from: d.from, to: d.to }, d.preset);
+      }}
+    >
+      {(draft, update) => <PeriodFields draft={draft} onChange={update} />}
+    </FiltersDialog>
   );
 }
 

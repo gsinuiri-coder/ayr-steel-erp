@@ -5,6 +5,9 @@ import { useQuery } from '@tanstack/react-query';
 import {
   DEFAULT_PAGE_SIZE,
   FISCAL_DOC_TYPE_LABELS,
+  FISCAL_DOCUMENT_ORIGIN_LABELS,
+  FISCAL_DOCUMENT_ORIGINS,
+  INVOICE_DOC_TYPES,
   Role,
   toDecimal,
   type FiscalDocumentListItemDto,
@@ -19,15 +22,30 @@ import { listXlsxHref } from '@/lib/list-export';
 import { useSession } from '@/lib/session';
 import { HeaderActions } from '@/components/header-actions';
 import { formatDate, formatMoney } from '@/lib/format';
-import { useUrlState } from '@/lib/use-url-state';
+import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
+import { useUrlTab } from '@/lib/use-url-tab';
 import { PaginationBar } from '@/components/pagination-bar';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { RoleGate } from '@/components/role-gate';
 import { ListStateRows } from '@/components/list-state';
+import {
+  FilterField,
+  FiltersDialog,
+  TableToolbar,
+  ToolbarSearch,
+} from '@/components/table-toolbar';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   cn,
   customerSearchHref,
@@ -48,6 +66,9 @@ const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
  * Dos vistas del mismo hecho: el resumen por cliente —para saber a quién llamar— y el
  * detalle por comprobante, que es donde se cobra (D-075: el cobro va contra el
  * comprobante, no contra el pedido).
+ *
+ * cc47 (D-617): una tabla principal por página. Las dos vistas van cada una en su pestaña, con la
+ * pestaña en la URL (`?tab=pendientes`), y cada pestaña lleva su línea estándar (D-615).
  */
 /** D-323: las columnas de «Pendientes» que ordena el servidor (`FISCAL_DOCUMENT_SORT_KEYS`). */
 const PENDING_SERVER_KEYS = {
@@ -63,36 +84,17 @@ const PENDING_SERVER_KEYS = {
 /** Sin orden elegido: `sortRows` deja las filas como llegan. */
 const NO_SORT = { key: null, dir: 'asc' } as const;
 
+const TABS = ['cliente', 'pendientes'] as const;
+type CobranzasTab = (typeof TABS)[number];
+
+const ALL = 'ALL';
+
 export function CobranzasView() {
   const { user } = useSession();
   const isAdmin = user.role === Role.ADMINISTRADOR;
-  // D-289: la página y el tamaño de cada tabla viven en la URL (`rPage`/`rSize`, `pPage`/`pSize`).
-  const [url, setUrl] = useUrlState({
-    rPage: '1',
-    rSize: String(DEFAULT_PAGE_SIZE),
-    pPage: '1',
-    pSize: String(DEFAULT_PAGE_SIZE),
-  });
-  const receivablesPage = {
-    page: Math.max(1, Number(url.rPage) || 1),
-    pageSize: Number(url.rSize) || DEFAULT_PAGE_SIZE,
-    setPage: (p: number) => {
-      setUrl({ rPage: String(p) });
-    },
-    setPageSize: (size: number) => {
-      setUrl({ rSize: String(size), rPage: '1' });
-    },
-  };
-  const pendingPage = {
-    page: Math.max(1, Number(url.pPage) || 1),
-    pageSize: Number(url.pSize) || DEFAULT_PAGE_SIZE,
-    setPage: (p: number) => {
-      setUrl({ pPage: String(p) });
-    },
-    setPageSize: (size: number) => {
-      setUrl({ pSize: String(size), pPage: '1' });
-    },
-  };
+  // «Por cliente» es solo del administrador en el API (el vendedor recibe 403): el vendedor
+  // empieza en sus comprobantes con saldo, la tabla que sí puede ver.
+  const [tab, selectTab] = useUrlTab<CobranzasTab>(TABS, isAdmin ? 'cliente' : 'pendientes');
 
   const totals = useQuery({
     queryKey: ['receivables-summary'],
@@ -100,60 +102,6 @@ export function CobranzasView() {
   });
   /** Regla dura 1: el vencido se compara como `Decimal`, no como número ni como string. */
   const overdue = toDecimal(totals.data?.totalOverduePen ?? '0').gt(0);
-
-  const receivables = useQuery({
-    queryKey: ['receivables', receivablesPage.page, receivablesPage.pageSize],
-    queryFn: () =>
-      api<PaginatedResult<ReceivableSummaryDto>>(
-        `/invoicing/receivables?page=${receivablesPage.page}&pageSize=${receivablesPage.pageSize}`,
-      ),
-  });
-  // D-323: las dos tablas están paginadas por el servidor. «Por cliente» (resumen armado en
-  // memoria) ordena solo las filas de la página y sus encabezados lo dicen; «Pendientes»
-  // (comprobantes) manda al servidor las columnas propias del comprobante y ordena en la página
-  // solo lo derivado (cobrado y saldo). Cada tabla lleva su propio par de parámetros en la URL.
-  const [rSort, toggleRSort] = useSort<'customer' | 'count' | 'next' | 'overdue' | 'balance'>('r');
-  const [pSort, togglePSort] = useSort<
-    'number' | 'customer' | 'issue' | 'due' | 'total' | 'paid' | 'balance'
-  >('p');
-  const receivableRows = sortRows(receivables.data?.items ?? [], rSort, {
-    customer: { text: (r) => r.customerName },
-    count: { decimal: (r) => String(r.documentCount) },
-    next: { text: (r) => r.nextDueDate ?? '' },
-    overdue: { decimal: (r) => r.overduePen },
-    balance: { decimal: (r) => r.balancePen },
-  });
-
-  const serverSort = pSort.key === null ? null : PENDING_SERVER_KEYS[pSort.key];
-  // cc26 M2: los parámetros de la tabla, de los que salen la consulta y su Excel (sin página).
-  const pendingParams = new URLSearchParams({
-    pendingOnly: 'true',
-    page: String(pendingPage.page),
-    pageSize: String(pendingPage.pageSize),
-  });
-  if (serverSort) {
-    pendingParams.set('sort', serverSort);
-    pendingParams.set('dir', pSort.dir);
-  }
-  const pending = useQuery({
-    queryKey: [
-      'fiscal-documents',
-      'pending',
-      pendingPage.page,
-      pendingPage.pageSize,
-      serverSort,
-      pSort.dir,
-    ],
-    queryFn: () =>
-      api<PaginatedResult<FiscalDocumentListItemDto>>(
-        `/invoicing/documents?${pendingParams.toString()}`,
-      ),
-  });
-  // El servidor ya entregó ordenadas las columnas propias; acá solo lo derivado.
-  const pendingRows = sortRows(pending.data?.items ?? [], serverSort ? NO_SORT : pSort, {
-    paid: { decimal: (d) => d.paidPen },
-    balance: { decimal: (d) => d.balancePen },
-  });
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -218,11 +166,69 @@ export function CobranzasView() {
         </Stat>
       </StatStrip>
 
-      <section className="space-y-2">
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-sm font-medium">Por cliente</h2>
-          {/* cc26 M2: todas las filas de la tabla y el total de las tarjetas. Solo ADMINISTRADOR,
-              el mismo permiso de la tabla (MR-1 de menu-por-rol.md sigue como propuesta). */}
+      <Tabs
+        activationMode="manual"
+        value={tab}
+        onValueChange={(next) => {
+          selectTab(next as CobranzasTab);
+        }}
+      >
+        <TabsList aria-label="Vista de cobranzas" data-testid="pestanas-cobranzas">
+          <TabsTrigger value="cliente">Por cliente</TabsTrigger>
+          <TabsTrigger value="pendientes">Comprobantes con saldo</TabsTrigger>
+        </TabsList>
+        <TabsContent value="cliente" className="mt-3 grid gap-2">
+          <ReceivablesTab isAdmin={isAdmin} />
+        </TabsContent>
+        <TabsContent value="pendientes" className="mt-3 grid gap-2">
+          <PendingTab />
+        </TabsContent>
+      </Tabs>
+    </RoleGate>
+  );
+}
+
+/**
+ * «Por cliente»: el resumen armado en memoria por el API, paginado por el servidor. El API no busca
+ * ni filtra esta tabla (`paginationQuerySchema`) y la pantalla no trae todas sus filas, así que no
+ * lleva buscar ni «Filtros» (cc47, D-617: aquí se paró; buscar por cliente pide API).
+ */
+function ReceivablesTab({ isAdmin }: { isAdmin: boolean }) {
+  // D-289: la página y el tamaño viven en la URL (`rPage`/`rSize`).
+  const [url, setUrl] = useUrlState({ rPage: '1', rSize: String(DEFAULT_PAGE_SIZE) });
+  const receivablesPage = {
+    page: Math.max(1, Number(url.rPage) || 1),
+    pageSize: Number(url.rSize) || DEFAULT_PAGE_SIZE,
+    setPage: (p: number) => {
+      setUrl({ rPage: String(p) });
+    },
+    setPageSize: (size: number) => {
+      setUrl({ rSize: String(size), rPage: '1' });
+    },
+  };
+  const receivables = useQuery({
+    queryKey: ['receivables', receivablesPage.page, receivablesPage.pageSize],
+    queryFn: () =>
+      api<PaginatedResult<ReceivableSummaryDto>>(
+        `/invoicing/receivables?page=${receivablesPage.page}&pageSize=${receivablesPage.pageSize}`,
+      ),
+  });
+  // D-323: «Por cliente» ordena solo las filas de la página y sus encabezados lo dicen.
+  const [rSort, toggleRSort] = useSort<'customer' | 'count' | 'next' | 'overdue' | 'balance'>('r');
+  const receivableRows = sortRows(receivables.data?.items ?? [], rSort, {
+    customer: { text: (r) => r.customerName },
+    count: { decimal: (r) => String(r.documentCount) },
+    next: { text: (r) => r.nextDueDate ?? '' },
+    overdue: { decimal: (r) => r.overduePen },
+    balance: { decimal: (r) => r.balancePen },
+  });
+
+  return (
+    <>
+      <TableToolbar
+        aside={
+          // cc26 M2: todas las filas de la tabla y el total de las tarjetas. Solo ADMINISTRADOR,
+          // el mismo permiso de la tabla (MR-1 de menu-por-rol.md sigue como propuesta).
           <HeaderActions
             primary={['xlsx']}
             actions={[
@@ -234,131 +240,277 @@ export function CobranzasView() {
               },
             ]}
           />
-        </div>
-        {receivables.isPending ? (
-          <Skeleton className="h-40 w-full" />
-        ) : (
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background">
-                <TableRow>
-                  <SortHead
-                    sort={rSort}
-                    onSort={toggleRSort}
-                    k="customer"
-                    title="Ordena las filas de esta página"
-                  >
-                    Cliente
-                  </SortHead>
-                  <SortHead
-                    sort={rSort}
-                    onSort={toggleRSort}
-                    k="count"
-                    className="hidden text-right sm:table-cell"
-                    align="right"
-                  >
-                    Comprobantes
-                  </SortHead>
-                  <SortHead
-                    sort={rSort}
-                    onSort={toggleRSort}
-                    k="next"
-                    className="hidden md:table-cell"
-                  >
-                    Vencimiento más próximo
-                  </SortHead>
-                  <SortHead
-                    sort={rSort}
-                    onSort={toggleRSort}
-                    k="overdue"
-                    className="text-right"
-                    align="right"
-                  >
-                    Vencido
-                  </SortHead>
-                  <SortHead
-                    sort={rSort}
-                    onSort={toggleRSort}
-                    k="balance"
-                    className="text-right"
-                    align="right"
-                  >
-                    Saldo
-                  </SortHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {receivableRows.map((r) => (
-                  <TableRow key={r.customerId}>
-                    <TableCell className={CUSTOMER_CELL_CLASSNAME}>
-                      <Link
-                        href={customerSearchHref(r.customerDocNumber)}
-                        className={cn('font-medium', LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
-                        title={r.customerName}
-                      >
-                        {r.customerName}
-                      </Link>
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {r.customerDocNumber}
+        }
+      />
+      {receivables.isPending ? (
+        <Skeleton className="h-40 w-full" />
+      ) : (
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-background">
+              <TableRow>
+                <SortHead
+                  sort={rSort}
+                  onSort={toggleRSort}
+                  k="customer"
+                  title="Ordena las filas de esta página"
+                >
+                  Cliente
+                </SortHead>
+                <SortHead
+                  sort={rSort}
+                  onSort={toggleRSort}
+                  k="count"
+                  className="hidden text-right sm:table-cell"
+                  align="right"
+                >
+                  Comprobantes
+                </SortHead>
+                <SortHead
+                  sort={rSort}
+                  onSort={toggleRSort}
+                  k="next"
+                  className="hidden md:table-cell"
+                >
+                  Vencimiento más próximo
+                </SortHead>
+                <SortHead
+                  sort={rSort}
+                  onSort={toggleRSort}
+                  k="overdue"
+                  className="text-right"
+                  align="right"
+                >
+                  Vencido
+                </SortHead>
+                <SortHead
+                  sort={rSort}
+                  onSort={toggleRSort}
+                  k="balance"
+                  className="text-right"
+                  align="right"
+                >
+                  Saldo
+                </SortHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {receivableRows.map((r) => (
+                <TableRow key={r.customerId}>
+                  <TableCell className={CUSTOMER_CELL_CLASSNAME}>
+                    <Link
+                      href={customerSearchHref(r.customerDocNumber)}
+                      className={cn('font-medium', LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
+                      title={r.customerName}
+                    >
+                      {r.customerName}
+                    </Link>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {r.customerDocNumber}
+                    </span>
+                  </TableCell>
+                  <TableCell className="hidden text-right sm:table-cell">
+                    {r.documentCount}
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    {r.nextDueDate ? (
+                      formatDate(r.nextDueDate)
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {r.creditWithoutDueCount > 0 ? CREDIT_WITHOUT_DUE_LABEL : 'Contado'}
                       </span>
-                    </TableCell>
-                    <TableCell className="hidden text-right sm:table-cell">
-                      {r.documentCount}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell">
-                      {r.nextDueDate ? (
-                        formatDate(r.nextDueDate)
-                      ) : (
-                        <span className="text-muted-foreground">
-                          {r.creditWithoutDueCount > 0 ? CREDIT_WITHOUT_DUE_LABEL : 'Contado'}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {toDecimal(r.overduePen).gt(0) ? (
-                        <span className="font-medium text-destructive">
-                          {formatMoney(r.overduePen)}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatMoney(r.balancePen)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                <ListStateRows
-                  query={receivables}
-                  colSpan={5}
-                  isEmpty={receivableRows.length === 0}
-                  filtered={false}
-                  emptyTitle="No hay nada por cobrar"
-                  emptyHint="Aquí aparece cada cliente con comprobantes que tienen saldo."
-                  noResultsTitle="No hay nada por cobrar"
-                  errorTitle="No se pudo cargar el saldo por cliente"
-                />
-              </TableBody>
-            </Table>
-          </div>
-        )}
-        {!receivables.isPending && (
-          <PaginationBar
-            page={receivablesPage.page}
-            pageSize={receivablesPage.pageSize}
-            total={receivables.data?.total ?? 0}
-            onPageChange={receivablesPage.setPage}
-            onPageSizeChange={receivablesPage.setPageSize}
-            disabled={receivables.isFetching}
-          />
-        )}
-      </section>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {toDecimal(r.overduePen).gt(0) ? (
+                      <span className="font-medium text-destructive">
+                        {formatMoney(r.overduePen)}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatMoney(r.balancePen)}
+                  </TableCell>
+                </TableRow>
+              ))}
+              <ListStateRows
+                query={receivables}
+                colSpan={5}
+                isEmpty={receivableRows.length === 0}
+                filtered={false}
+                emptyTitle="No hay nada por cobrar"
+                emptyHint="Aquí aparece cada cliente con comprobantes que tienen saldo."
+                noResultsTitle="No hay nada por cobrar"
+                errorTitle="No se pudo cargar el saldo por cliente"
+              />
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      {!receivables.isPending && (
+        <PaginationBar
+          page={receivablesPage.page}
+          pageSize={receivablesPage.pageSize}
+          total={receivables.data?.total ?? 0}
+          onPageChange={receivablesPage.setPage}
+          onPageSizeChange={receivablesPage.setPageSize}
+          disabled={receivables.isFetching}
+        />
+      )}
+    </>
+  );
+}
 
-      <section className="space-y-2">
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-sm font-medium">Comprobantes con saldo</h2>
-          {/* cc26 M2: el Excel de comprobantes (M1) con el filtro y el orden de esta tabla; el
-              vendedor recibe solo los suyos, como en la tabla. */}
+interface PendingFilters {
+  docType: string;
+  origin: string;
+}
+
+const NO_PENDING_FILTERS: PendingFilters = { docType: '', origin: '' };
+
+/**
+ * «Comprobantes con saldo»: la lista de comprobantes del API con `pendingOnly`, paginada y ordenada
+ * por el servidor. El buscar y los filtros (tipo y origen) van también al API, los mismos de
+ * `/comprobantes`, y viajan al Excel.
+ */
+function PendingTab() {
+  // D-289: la página, el tamaño, el buscar y los filtros viven en la URL.
+  const [url, setUrl] = useUrlState({
+    pPage: '1',
+    pSize: String(DEFAULT_PAGE_SIZE),
+    search: '',
+    docType: '',
+    origin: '',
+  });
+  const pendingPage = {
+    page: Math.max(1, Number(url.pPage) || 1),
+    pageSize: Number(url.pSize) || DEFAULT_PAGE_SIZE,
+    setPage: (p: number) => {
+      setUrl({ pPage: String(p) });
+    },
+    setPageSize: (size: number) => {
+      setUrl({ pSize: String(size), pPage: '1' });
+    },
+  };
+  // Buscar o filtrar vuelve a la página 1 de esta tabla.
+  const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
+    setUrl({ search: v, pPage: '1' });
+  });
+  const { docType, origin } = url;
+
+  const [pSort, togglePSort] = useSort<
+    'number' | 'customer' | 'issue' | 'due' | 'total' | 'paid' | 'balance'
+  >('p');
+  const serverSort = pSort.key === null ? null : PENDING_SERVER_KEYS[pSort.key];
+  // cc26 M2: los parámetros de la tabla, de los que salen la consulta y su Excel (sin página).
+  const pendingParams = new URLSearchParams({
+    pendingOnly: 'true',
+    page: String(pendingPage.page),
+    pageSize: String(pendingPage.pageSize),
+  });
+  if (docType) pendingParams.set('docType', docType);
+  if (origin) pendingParams.set('origin', origin);
+  if (search) pendingParams.set('search', search);
+  if (serverSort) {
+    pendingParams.set('sort', serverSort);
+    pendingParams.set('dir', pSort.dir);
+  }
+  const pending = useQuery({
+    queryKey: [
+      'fiscal-documents',
+      'pending',
+      pendingPage.page,
+      pendingPage.pageSize,
+      docType,
+      origin,
+      search,
+      serverSort,
+      pSort.dir,
+    ],
+    queryFn: () =>
+      api<PaginatedResult<FiscalDocumentListItemDto>>(
+        `/invoicing/documents?${pendingParams.toString()}`,
+      ),
+  });
+  // El servidor ya entregó ordenadas las columnas propias; aquí solo lo derivado.
+  const pendingRows = sortRows(pending.data?.items ?? [], serverSort ? NO_SORT : pSort, {
+    paid: { decimal: (d) => d.paidPen },
+    balance: { decimal: (d) => d.balancePen },
+  });
+  const filtered = Boolean(search || docType || origin);
+  const activeCount = (docType ? 1 : 0) + (origin ? 1 : 0);
+
+  return (
+    <>
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar comprobantes con saldo"
+            placeholder="Buscar por número, cliente o documento…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <FiltersDialog<PendingFilters>
+            value={{ docType, origin }}
+            empty={NO_PENDING_FILTERS}
+            activeCount={activeCount}
+            onApply={(next) => {
+              setUrl({ ...next, pPage: '1' });
+            }}
+          >
+            {(draft, update) => (
+              <>
+                <FilterField label="Tipo" htmlFor="filtro-tipo">
+                  <Select
+                    value={draft.docType || ALL}
+                    onValueChange={(v) => {
+                      update({ docType: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-tipo" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos los tipos</SelectItem>
+                      {INVOICE_DOC_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {FISCAL_DOC_TYPE_LABELS[t]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Origen" htmlFor="filtro-origen">
+                  <Select
+                    value={draft.origin || ALL}
+                    onValueChange={(v) => {
+                      update({ origin: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-origen" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos los orígenes</SelectItem>
+                      {FISCAL_DOCUMENT_ORIGINS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {FISCAL_DOCUMENT_ORIGIN_LABELS[o]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+              </>
+            )}
+          </FiltersDialog>
+        }
+        aside={
+          // cc26 M2: el Excel de comprobantes (M1) con el buscar, los filtros y el orden de esta
+          // tabla; el vendedor recibe solo los suyos, como en la tabla.
           <HeaderActions
             primary={['xlsx']}
             actions={[
@@ -369,137 +521,139 @@ export function CobranzasView() {
               },
             ]}
           />
-        </div>
-        {pending.isPending ? (
-          <Skeleton className="h-40 w-full" />
-        ) : (
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background">
-                <TableRow>
-                  <SortHead sort={pSort} onSort={togglePSort} k="number">
-                    Número
-                  </SortHead>
-                  <SortHead sort={pSort} onSort={togglePSort} k="customer">
-                    Cliente
-                  </SortHead>
-                  <SortHead
-                    sort={pSort}
-                    onSort={togglePSort}
-                    k="issue"
-                    className="hidden sm:table-cell"
-                  >
-                    Emisión
-                  </SortHead>
-                  <SortHead sort={pSort} onSort={togglePSort} k="due">
-                    Vencimiento
-                  </SortHead>
-                  <SortHead
-                    sort={pSort}
-                    onSort={togglePSort}
-                    k="total"
-                    className="hidden text-right md:table-cell"
-                    align="right"
-                  >
-                    Total
-                  </SortHead>
-                  <SortHead
-                    sort={pSort}
-                    onSort={togglePSort}
-                    k="paid"
-                    className="hidden text-right lg:table-cell"
-                    align="right"
-                  >
-                    Cobrado
-                  </SortHead>
-                  <SortHead
-                    sort={pSort}
-                    onSort={togglePSort}
-                    k="balance"
-                    className="text-right"
-                    align="right"
-                  >
-                    Saldo
-                  </SortHead>
+        }
+      />
+      {pending.isPending ? (
+        <Skeleton className="h-40 w-full" />
+      ) : (
+        <div className="rounded-lg border">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-background">
+              <TableRow>
+                <SortHead sort={pSort} onSort={togglePSort} k="number">
+                  Número
+                </SortHead>
+                <SortHead sort={pSort} onSort={togglePSort} k="customer">
+                  Cliente
+                </SortHead>
+                <SortHead
+                  sort={pSort}
+                  onSort={togglePSort}
+                  k="issue"
+                  className="hidden sm:table-cell"
+                >
+                  Emisión
+                </SortHead>
+                <SortHead sort={pSort} onSort={togglePSort} k="due">
+                  Vencimiento
+                </SortHead>
+                <SortHead
+                  sort={pSort}
+                  onSort={togglePSort}
+                  k="total"
+                  className="hidden text-right md:table-cell"
+                  align="right"
+                >
+                  Total
+                </SortHead>
+                <SortHead
+                  sort={pSort}
+                  onSort={togglePSort}
+                  k="paid"
+                  className="hidden text-right lg:table-cell"
+                  align="right"
+                >
+                  Cobrado
+                </SortHead>
+                <SortHead
+                  sort={pSort}
+                  onSort={togglePSort}
+                  k="balance"
+                  className="text-right"
+                  align="right"
+                >
+                  Saldo
+                </SortHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pendingRows.map((d) => (
+                <TableRow key={d.id}>
+                  <TableCell>
+                    <Link
+                      href={`/comprobantes/${d.id}`}
+                      className={cn('font-medium', LINK_CLASSNAME)}
+                    >
+                      {d.number ?? 'Borrador'}
+                    </Link>
+                    <div className="text-xs text-muted-foreground">
+                      {FISCAL_DOC_TYPE_LABELS[d.docType]}
+                    </div>
+                  </TableCell>
+                  <TableCell className={CUSTOMER_CELL_CLASSNAME}>
+                    <Link
+                      href={customerSearchHref(d.customerDocNumber)}
+                      className={cn(LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
+                      title={d.customerName}
+                    >
+                      {d.customerName}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="hidden sm:table-cell">{formatDate(d.issueDate)}</TableCell>
+                  <TableCell>
+                    {d.dueDate ? (
+                      <span className={d.isOverdue ? 'font-medium text-destructive' : undefined}>
+                        {formatDate(d.dueDate)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">
+                        {noDueDateLabel(d.paymentTerms)}
+                      </span>
+                    )}
+                    {d.isOverdue && (
+                      <Badge variant="outline" className="ml-2">
+                        Vencido
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className="hidden text-right md:table-cell">
+                    {formatMoney(d.totalPen)}
+                  </TableCell>
+                  <TableCell className="hidden text-right lg:table-cell">
+                    {formatMoney(d.paidPen)}
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatMoney(d.balancePen)}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pendingRows.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell>
-                      <Link
-                        href={`/comprobantes/${d.id}`}
-                        className={cn('font-medium', LINK_CLASSNAME)}
-                      >
-                        {d.number ?? 'Borrador'}
-                      </Link>
-                      <div className="text-xs text-muted-foreground">
-                        {FISCAL_DOC_TYPE_LABELS[d.docType]}
-                      </div>
-                    </TableCell>
-                    <TableCell className={CUSTOMER_CELL_CLASSNAME}>
-                      <Link
-                        href={customerSearchHref(d.customerDocNumber)}
-                        className={cn(LINK_CLASSNAME, CUSTOMER_NAME_CLASSNAME)}
-                        title={d.customerName}
-                      >
-                        {d.customerName}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      {formatDate(d.issueDate)}
-                    </TableCell>
-                    <TableCell>
-                      {d.dueDate ? (
-                        <span className={d.isOverdue ? 'font-medium text-destructive' : undefined}>
-                          {formatDate(d.dueDate)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">
-                          {noDueDateLabel(d.paymentTerms)}
-                        </span>
-                      )}
-                      {d.isOverdue && (
-                        <Badge variant="outline" className="ml-2">
-                          Vencido
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden text-right md:table-cell">
-                      {formatMoney(d.totalPen)}
-                    </TableCell>
-                    <TableCell className="hidden text-right lg:table-cell">
-                      {formatMoney(d.paidPen)}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatMoney(d.balancePen)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                <ListStateRows
-                  query={pending}
-                  colSpan={7}
-                  isEmpty={pendingRows.length === 0}
-                  filtered={false}
-                  emptyTitle="Ningún comprobante tiene saldo pendiente"
-                  noResultsTitle="Ningún comprobante tiene saldo pendiente"
-                  errorTitle="No se pudieron cargar los comprobantes con saldo"
-                />
-              </TableBody>
-            </Table>
-          </div>
-        )}
-        {!pending.isPending && (
-          <PaginationBar
-            page={pendingPage.page}
-            pageSize={pendingPage.pageSize}
-            total={pending.data?.total ?? 0}
-            onPageChange={pendingPage.setPage}
-            onPageSizeChange={pendingPage.setPageSize}
-            disabled={pending.isFetching}
-          />
-        )}
-      </section>
-    </RoleGate>
+              ))}
+              <ListStateRows
+                query={pending}
+                colSpan={7}
+                isEmpty={pendingRows.length === 0}
+                filtered={filtered}
+                emptyTitle="Ningún comprobante tiene saldo pendiente"
+                noResultsTitle="Ningún comprobante con saldo coincide con la búsqueda o los filtros"
+                onClearFilters={() => {
+                  setSearchText('');
+                  setUrl({ search: '', ...NO_PENDING_FILTERS, pPage: '1' });
+                }}
+                errorTitle="No se pudieron cargar los comprobantes con saldo"
+              />
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      {!pending.isPending && (
+        <PaginationBar
+          page={pendingPage.page}
+          pageSize={pendingPage.pageSize}
+          total={pending.data?.total ?? 0}
+          onPageChange={pendingPage.setPage}
+          onPageSizeChange={pendingPage.setPageSize}
+          disabled={pending.isFetching}
+        />
+      )}
+    </>
   );
 }

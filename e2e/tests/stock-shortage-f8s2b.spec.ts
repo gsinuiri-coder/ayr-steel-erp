@@ -129,7 +129,7 @@ test.describe('F8-S2b/M1 — cotizaciones sin stock disponible (D-188)', () => {
     }
   });
 
-  test('D-188: el Panel muestra la tarjeta con lo que falta, y navega a la cotización', async ({
+  test('cc47 (D-618): el API sigue avisando el faltante, pero el Panel ya no lo muestra', async ({
     page,
   }) => {
     const s = await setupRoofingScenario(api, { weightKg: '100' });
@@ -159,18 +159,20 @@ test.describe('F8-S2b/M1 — cotizaciones sin stock disponible (D-188)', () => {
       trail.quotationIds.push(rival.id);
       await postJson(api, `/api/sales/quotations/${rival.id}/reserve`);
 
+      // El dato sigue en el API (la limpieza del endpoint queda pendiente).
+      await expect
+        .poll(async () => (await shortages(api)).some((r) => r.quotationId === quotation.id))
+        .toBe(true);
+
       await loginAsAdmin(page);
-      // La tarjeta ES el aviso (sin campana, sin correo): tiene que estar en el Panel mismo.
-      await expect(page.getByText('Cotizaciones sin stock disponible')).toBeVisible({
+      await expect(page.getByRole('heading', { name: 'Para atender hoy' })).toBeVisible({
         timeout: 30_000,
       });
-      const row = page.getByRole('link', { name: new RegExp(quotation.code) });
-      await expect(row).toBeVisible();
-      await expect(row.getByText(/faltan 21\.20 kg/)).toBeVisible();
-
-      await row.click();
-      await expect(page).toHaveURL(new RegExp(`/cotizaciones/${quotation.id}$`));
-      await expect(page.getByRole('heading', { name: quotation.code, level: 1 })).toBeVisible();
+      await expect(page.getByText('Pedidos con faltante')).toBeVisible();
+      // Ni la tarjeta del final ni la del resumen.
+      await expect(page.getByText('Cotizaciones sin stock disponible')).toHaveCount(0);
+      await expect(page.getByText('Cotizaciones sin stock', { exact: true })).toHaveCount(0);
+      await expect(page.getByRole('link', { name: new RegExp(quotation.code) })).toHaveCount(0);
     } finally {
       await purgeRoofingTrail(api, trail);
     }

@@ -27,7 +27,6 @@ import {
   FiscalDocumentStatusBadge,
 } from '@/components/invoicing/status-badges';
 import { HeaderActions } from '@/components/header-actions';
-import { ListFooterRow } from '@/components/list-footer';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -260,14 +259,6 @@ export function DespachosView() {
               errorTitle="No se pudieron cargar los despachos"
             />
           </TableBody>
-          {rows.length > 0 && (
-            <ListFooterRow
-              shown={rows.length}
-              total={dispatches.data?.total ?? rows.length}
-              noun={filterLabel ? `despachos ${filterLabel}` : 'despachos'}
-              colCount={8}
-            />
-          )}
         </Table>
       </div>
       <PaginationBar

@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Decimal,
   QUOTATION_STATUS_LABELS,
   QUOTATION_STATUSES,
   Role,
@@ -17,7 +16,6 @@ import { api } from '@/lib/api';
 import { listXlsxHref } from '@/lib/list-export';
 import { HeaderActions } from '@/components/header-actions';
 import { currencyHeader, formatAmount, formatDate } from '@/lib/format';
-import { ListFooterRow } from '@/components/list-footer';
 import { ListStateRows } from '@/components/list-state';
 import { RoleGate } from '@/components/role-gate';
 import { useSession } from '@/lib/session';
@@ -98,7 +96,6 @@ export function CotizacionesView() {
   } else if (search) {
     filterLabel = 'que coinciden con la búsqueda';
   }
-  const pageTotal = rows.reduce((acc, q) => acc.plus(q.totalPen), new Decimal(0));
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -285,16 +282,6 @@ export function CotizacionesView() {
               errorTitle="No se pudieron cargar las cotizaciones"
             />
           </TableBody>
-          {rows.length > 0 && (
-            <ListFooterRow
-              shown={rows.length}
-              total={quotations.data?.total ?? rows.length}
-              noun={filterLabel ? `cotizaciones ${filterLabel}` : 'cotizaciones'}
-              colCount={8}
-              amountColumn={5}
-              amount={formatAmount(pageTotal)}
-            />
-          )}
         </Table>
       </div>
       <PaginationBar

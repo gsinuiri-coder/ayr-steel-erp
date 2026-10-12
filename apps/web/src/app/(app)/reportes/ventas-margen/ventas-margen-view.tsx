@@ -25,7 +25,13 @@ import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
-import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
+import {
+  PeriodFiltersButton,
+  PeriodStatus,
+  useReportPeriod,
+} from '@/components/reports/report-period';
+import { Section } from '@/components/section';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import {
   BusyRegion,
   DETAIL_ROW_CLASSNAME,
@@ -52,7 +58,6 @@ import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { LINK_CLASSNAME, cn, customerSearchHref } from '@/lib/utils';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -142,30 +147,7 @@ export function VentasMargenView() {
             partialOrderCount={data?.totals.partialOrderCount ?? 0}
           />
         }
-        actions={
-          // Descarga directa contra el API (patrón D-149), con el periodo que se ve.
-          // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve, también por línea.
-          // cc40 (D-588): con la búsqueda de la pantalla, el archivo trae las mismas filas.
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  download: xlsxHref(
-                    '/api/reports/sales-margin/xlsx',
-                    { from: period.from, to: period.to, businessLine: line },
-                    searchText,
-                  ),
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
-
-      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -174,20 +156,27 @@ export function VentasMargenView() {
         onChange={select}
       />
 
-      {periodState.error !== null && (
-        <ListStateMessage tone="error" title={periodState.error} hint="Elige otro periodo." />
+      {periodState.error === null && loading && <Skeleton className="h-14 w-full" />}
+      {periodState.error === null && data && (
+        <BusyRegion busy={updating}>
+          <Figures data={data} line={line} noCost={noCost} included={included} />
+        </BusyRegion>
       )}
 
-      {periodState.error === null && (
-        <>
-          {loading && <Skeleton className="h-14 w-full" />}
-          {data && (
-            <BusyRegion busy={updating}>
-              <Figures data={data} line={line} noCost={noCost} included={included} />
-            </BusyRegion>
-          )}
-
-          <div className="flex flex-wrap items-center gap-3">
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» y el Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar en el reporte"
+            placeholder="Buscar pedido, cliente o comprobante"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={<PeriodFiltersButton state={periodState} />}
+        status={<PeriodStatus state={periodState} updating={updating} />}
+        aside={
+          <>
             <Segmented<SalesMarginView>
               label="Ver por"
               showLabel
@@ -200,18 +189,41 @@ export function VentasMargenView() {
                 setUrl({ ver: v });
               }}
             />
-            <Input
-              type="search"
-              aria-label="Buscar en el reporte"
-              placeholder="Buscar pedido, cliente o comprobante"
-              className="h-8 max-w-xs"
-              value={searchText}
-              onChange={(e) => {
-                setSearchText(e.target.value);
-              }}
-            />
-          </div>
+            {
+              // Descarga directa contra el API (patrón D-149), con el periodo que se ve.
+              // cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve, también por línea.
+              // cc40 (D-588): con la búsqueda de la pantalla, el archivo trae las mismas filas.
+              valid ? (
+                <HeaderActions
+                  primary={['xlsx']}
+                  actions={[
+                    {
+                      key: 'xlsx',
+                      label: 'Descargar Excel',
+                      download: xlsxHref(
+                        '/api/reports/sales-margin/xlsx',
+                        { from: period.from, to: period.to, businessLine: line },
+                        searchText,
+                      ),
+                    },
+                  ]}
+                />
+              ) : undefined
+            }
+          </>
+        }
+      />
 
+      {periodState.error !== null && (
+        <ListStateMessage
+          tone="error"
+          title={periodState.error}
+          hint="Elige otro periodo en «Filtros»."
+        />
+      )}
+
+      {periodState.error === null && (
+        <>
           {view === 'pedido' ? (
             <ReportTable
               // Cambiar de vista vuelve a empezar: las filas abiertas son de la otra vista.
@@ -770,9 +782,9 @@ function GroupDetail({
 
 function TotalsByLine({ data }: { data: SalesMarginDto }) {
   return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-semibold">Totales por línea de negocio</h2>
-      <div className="rounded-md border">
+    // cc47 (D-616): la franja gris separa los totales por línea de la tabla principal.
+    <Section title="Totales por línea de negocio">
+      <div>
         <Table>
           <TableHeader>
             <TableRow>
@@ -828,7 +840,7 @@ function TotalsByLine({ data }: { data: SalesMarginDto }) {
           </TableBody>
         </Table>
       </div>
-    </section>
+    </Section>
   );
 }
 

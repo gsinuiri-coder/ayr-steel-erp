@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Decimal,
   FISCAL_DOC_TYPE_LABELS,
   FISCAL_DOCUMENT_ORIGIN_LABELS,
   FISCAL_DOCUMENT_ORIGINS,
@@ -33,7 +32,6 @@ import {
 } from '@/components/invoicing/reactivate-with-order-lines-dialog';
 import { currencyHeader, formatAmount, formatDate } from '@/lib/format';
 import { FilterChip } from '@/components/filter-chip';
-import { ListFooterRow } from '@/components/list-footer';
 import { ListStateRows } from '@/components/list-state';
 import {
   URL_PAGINATION_DEFAULTS,
@@ -168,12 +166,6 @@ export function ComprobantesView() {
   if (filterParts.length === 0 && search) filterParts.push('que coinciden con la búsqueda');
   const filterLabel = filterParts.join(', ');
   const filtered = Boolean(search || status || docType || origin) || pendingOnly;
-  // El pie suma el saldo, no el total: sumar totales mezclaría notas de crédito (positivas),
-  // guías y anulados con lo facturado. El saldo ya es lo que se debe, documento por documento.
-  const pageBalance = rows.reduce((acc, d) => acc.plus(d.balancePen), new Decimal(0));
-  // Índice de la columna «Saldo» (la siguiente a «Total»): se corre uno con la columna de
-  // pedido de los anulados.
-  const balanceColumn = (showOrderColumn ? 7 : 6) + 1;
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -503,16 +495,6 @@ export function ComprobantesView() {
               errorTitle="No se pudieron cargar los comprobantes"
             />
           </TableBody>
-          {rows.length > 0 && (
-            <ListFooterRow
-              shown={rows.length}
-              total={documents.data?.total ?? rows.length}
-              noun={filterLabel ? `comprobantes ${filterLabel}` : 'comprobantes'}
-              colCount={columnCount}
-              amountColumn={balanceColumn}
-              amount={formatAmount(pageBalance)}
-            />
-          )}
         </Table>
       </div>
       <PaginationBar
