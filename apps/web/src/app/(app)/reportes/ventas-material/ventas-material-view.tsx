@@ -32,7 +32,18 @@ import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
-import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
+import {
+  PeriodFields,
+  PeriodStatus,
+  defaultPeriodDraft,
+  periodDraftError,
+  periodDraftOf,
+  periodIsFiltered,
+  useReportPeriod,
+  type PeriodDraft,
+} from '@/components/reports/report-period';
+import { FiltersDialog, TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
+import { Section } from '@/components/section';
 import { legacyRangePeriod } from '@/lib/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { Stat, StatStrip } from '@/components/stat-strip';
@@ -46,7 +57,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -114,6 +124,9 @@ const UNCLASSIFIED_LABEL: Record<SalesByMaterialLine, string> = {
  * búsqueda y total al pie—. La fila sigue abriendo el diálogo del desglose (D-370). Lo que se le
  * pide al API no cambia.
  */
+/** cc47 (D-615): el modal de filtros, con el periodo y los filtros por material. */
+type MaterialFilters = PeriodDraft & { tipo: string; espesor: string; color: string };
+
 export function VentasMaterialView() {
   const periodState = useReportPeriod();
   const { period, valid } = periodState;
@@ -245,7 +258,102 @@ export function VentasMaterialView() {
             </p>
           </>
         }
-        actions={
+      />
+
+      <LineTabs
+        lines={LINE_TABS.lines}
+        includeAll={LINE_TABS.includeAll}
+        value={tab}
+        onChange={select}
+      />
+
+      {periodState.error === null && (
+        <>
+          {loading && <Skeleton className="h-14 w-full" />}
+          {data && (
+            <BusyRegion busy={updating}>
+              <Figures data={data} />
+            </BusyRegion>
+          )}
+        </>
+      )}
+
+      {/* cc47 (D-615): buscar, «Filtros» (periodo, y tipo, espesor y color en las líneas por
+          material) y, a la derecha, el Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar en el reporte"
+            placeholder={byProduct ? 'Buscar SKU o producto' : 'Buscar tipo, espesor o color'}
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <FiltersDialog<MaterialFilters>
+            value={{
+              ...periodDraftOf(periodState),
+              tipo: url.tipo,
+              espesor: url.espesor,
+              color: url.color,
+            }}
+            empty={{ ...defaultPeriodDraft(), tipo: '', espesor: '', color: '' }}
+            activeCount={
+              (periodIsFiltered(periodState) ? 1 : 0) +
+              (byProduct ? 0 : [url.tipo, url.espesor, url.color].filter(Boolean).length)
+            }
+            validate={periodDraftError}
+            onApply={(next) => {
+              // Un solo `replace`: el periodo y los filtros llegan juntos a la URL.
+              setUrl({
+                from: next.from,
+                to: next.to,
+                tipo: next.tipo,
+                espesor: next.espesor,
+                color: next.color,
+              });
+            }}
+          >
+            {(draft, update) => (
+              <>
+                <PeriodFields draft={draft} onChange={update} />
+                {!byProduct && (
+                  <div className="flex flex-wrap items-center gap-4">
+                    <FilterSelect
+                      label="Tipo"
+                      value={draft.tipo}
+                      onChange={(v) => {
+                        update({ tipo: v });
+                      }}
+                      options={kinds.map((k) => ({
+                        value: k,
+                        label: SALES_MATERIAL_KIND_LABELS[k],
+                      }))}
+                    />
+                    <FilterSelect
+                      label="Espesor"
+                      value={draft.espesor}
+                      onChange={(v) => {
+                        update({ espesor: v });
+                      }}
+                      options={options.thicknesses.map((t) => ({ value: t, label: `${t} mm` }))}
+                    />
+                    <FilterSelect
+                      label="Color"
+                      value={draft.color}
+                      onChange={(v) => {
+                        update({ color: v });
+                      }}
+                      options={options.colors.map((c) => ({ value: c, label: c }))}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </FiltersDialog>
+        }
+        status={<PeriodStatus state={periodState} updating={updating} />}
+        aside={
           // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con el periodo y
           // los filtros (`qs` lleva la línea).
           valid ? (
@@ -268,72 +376,16 @@ export function VentasMaterialView() {
         }
       />
 
-      <PeriodPicker state={periodState} updating={updating} />
-
-      <LineTabs
-        lines={LINE_TABS.lines}
-        includeAll={LINE_TABS.includeAll}
-        value={tab}
-        onChange={select}
-      />
-
       {periodState.error !== null && (
-        <ListStateMessage tone="error" title={periodState.error} hint="Elige otro periodo." />
+        <ListStateMessage
+          tone="error"
+          title={periodState.error}
+          hint="Elige otro periodo en «Filtros»."
+        />
       )}
 
       {periodState.error === null && (
         <>
-          {loading && <Skeleton className="h-14 w-full" />}
-          {data && (
-            <BusyRegion busy={updating}>
-              <Figures data={data} />
-            </BusyRegion>
-          )}
-
-          <div className="flex flex-wrap items-center gap-3">
-            {!byProduct && (
-              <>
-                <FilterSelect
-                  label="Tipo"
-                  value={url.tipo}
-                  onChange={(v) => {
-                    setUrl({ tipo: v });
-                  }}
-                  options={kinds.map((k) => ({
-                    value: k,
-                    label: SALES_MATERIAL_KIND_LABELS[k],
-                  }))}
-                />
-                <FilterSelect
-                  label="Espesor"
-                  value={url.espesor}
-                  onChange={(v) => {
-                    setUrl({ espesor: v });
-                  }}
-                  options={options.thicknesses.map((t) => ({ value: t, label: `${t} mm` }))}
-                />
-                <FilterSelect
-                  label="Color"
-                  value={url.color}
-                  onChange={(v) => {
-                    setUrl({ color: v });
-                  }}
-                  options={options.colors.map((c) => ({ value: c, label: c }))}
-                />
-              </>
-            )}
-            <Input
-              type="search"
-              aria-label="Buscar en el reporte"
-              placeholder={byProduct ? 'Buscar SKU o producto' : 'Buscar tipo, espesor o color'}
-              className="h-8 max-w-xs"
-              value={searchText}
-              onChange={(e) => {
-                setSearchText(e.target.value);
-              }}
-            />
-          </div>
-
           {byProduct ? (
             <ReportTable
               testId="ventas-producto"
@@ -558,9 +610,9 @@ function materialColumns(
 function KindSubtotals({ data }: { data: SalesByMaterialDto }) {
   const columns = figureColumns(() => data.total);
   return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-semibold">Subtotales por tipo</h2>
-      <div className="rounded-md border">
+    // cc47 (D-616): los subtotales, en franja gris como los totales por línea de los reportes.
+    <Section title="Subtotales por tipo">
+      <div>
         <Table data-testid="subtotales-material">
           <TableHeader>
             <TableRow>
@@ -587,7 +639,7 @@ function KindSubtotals({ data }: { data: SalesByMaterialDto }) {
           </TableBody>
         </Table>
       </div>
-    </section>
+    </Section>
   );
 }
 

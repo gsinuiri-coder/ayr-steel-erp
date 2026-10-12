@@ -21,7 +21,12 @@ import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
-import { PeriodPicker, useReportPeriod } from '@/components/reports/report-period';
+import {
+  PeriodFiltersButton,
+  PeriodStatus,
+  useReportPeriod,
+} from '@/components/reports/report-period';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import {
   BusyRegion,
   DETAIL_ROW_CLASSNAME,
@@ -33,7 +38,6 @@ import { Segmented } from '@/components/reports/segmented';
 import { RoleGate } from '@/components/role-gate';
 import { Stat, StatStrip } from '@/components/stat-strip';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
@@ -126,35 +130,7 @@ export function ProduccionView() {
             </p>
           </>
         }
-        actions={
-          // Descarga directa contra el API (patrón D-149), con el periodo y la pestaña que se ven.
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  // cc40 (D-588): con la búsqueda y su «Ver por», el Excel trae lo que se ve.
-                  download: xlsxHref(
-                    '/api/reports/production-summary/xlsx',
-                    {
-                      from: period.from,
-                      to: period.to,
-                      businessLine: line,
-                      // «orden» es la vista por defecto, también para el API.
-                      ver: view === 'pedido' ? view : undefined,
-                    },
-                    searchText,
-                  ),
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
-
-      <PeriodPicker state={periodState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -162,10 +138,6 @@ export function ProduccionView() {
         value={tab}
         onChange={select}
       />
-
-      {periodState.error !== null && (
-        <ListStateMessage tone="error" title={periodState.error} hint="Elige otro periodo." />
-      )}
 
       {periodState.error === null && (
         <>
@@ -192,8 +164,23 @@ export function ProduccionView() {
               </StatStrip>
             </BusyRegion>
           )}
+        </>
+      )}
 
-          <div className="flex flex-wrap items-center gap-3">
+      {/* cc47 (D-615): buscar, «Filtros» (el periodo) y, a la derecha, «Ver por» y el Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar en el reporte"
+            placeholder="Buscar orden, pedido, producto o bobina"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={<PeriodFiltersButton state={periodState} />}
+        status={<PeriodStatus state={periodState} updating={updating} />}
+        aside={
+          <>
             <Segmented<ProductionView>
               label="Ver por"
               showLabel
@@ -206,18 +193,46 @@ export function ProduccionView() {
                 setUrl({ ver: v });
               }}
             />
-            <Input
-              type="search"
-              aria-label="Buscar en el reporte"
-              placeholder="Buscar orden, pedido, producto o bobina"
-              className="h-8 max-w-xs"
-              value={searchText}
-              onChange={(e) => {
-                setSearchText(e.target.value);
-              }}
-            />
-          </div>
+            {
+              // Descarga directa contra el API (patrón D-149), con el periodo y la pestaña que se ven.
+              valid ? (
+                <HeaderActions
+                  primary={['xlsx']}
+                  actions={[
+                    {
+                      key: 'xlsx',
+                      label: 'Descargar Excel',
+                      // cc40 (D-588): con la búsqueda y su «Ver por», el Excel trae lo que se ve.
+                      download: xlsxHref(
+                        '/api/reports/production-summary/xlsx',
+                        {
+                          from: period.from,
+                          to: period.to,
+                          businessLine: line,
+                          // «orden» es la vista por defecto, también para el API.
+                          ver: view === 'pedido' ? view : undefined,
+                        },
+                        searchText,
+                      ),
+                    },
+                  ]}
+                />
+              ) : undefined
+            }
+          </>
+        }
+      />
 
+      {periodState.error !== null && (
+        <ListStateMessage
+          tone="error"
+          title={periodState.error}
+          hint="Elige otro periodo en «Filtros»."
+        />
+      )}
+
+      {periodState.error === null && (
+        <>
           {view === 'orden' ? (
             <ReportTable
               testId="tabla-produccion"

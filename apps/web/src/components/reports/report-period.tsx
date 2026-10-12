@@ -100,88 +100,6 @@ export function useReportPeriod(): ReportPeriodState {
 
 type PickerValue = PeriodPreset | 'custom';
 
-/**
- * cc32: el selector de periodo, igual en todos los reportes: atajos, «Otro periodo…» con dos
- * fechas y el rango escrito al lado. `updating`: se está mostrando el dato del periodo anterior
- * mientras llega el nuevo (`useReportQueryState`), y se dice.
- */
-export function PeriodPicker({
-  state,
-  updating = false,
-}: {
-  state: ReportPeriodState;
-  updating?: boolean;
-}) {
-  const today = businessToday();
-  const { period, complete } = state;
-  // «Otro periodo…» abre las fechas aunque el rango coincida con un atajo.
-  const [customOpen, setCustomOpen] = useState(false);
-  const value: PickerValue | null = !complete
-    ? null
-    : customOpen || state.preset === null
-      ? 'custom'
-      : state.preset;
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="periodo">
-      <Segmented<PickerValue>
-        label="Periodo"
-        value={value}
-        options={[
-          ...PERIOD_PRESETS.map((p) => ({ value: p, label: PERIOD_PRESET_LABELS[p] })),
-          { value: 'custom', label: 'Otro periodo…' },
-        ]}
-        onChange={(next) => {
-          if (next === 'custom') {
-            setCustomOpen(true);
-            return;
-          }
-          setCustomOpen(false);
-          state.setPeriod(presetPeriod(next, today), next);
-        }}
-      />
-      {value === 'custom' && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Label htmlFor="periodo-desde" className="text-xs text-muted-foreground">
-            Desde
-          </Label>
-          <Input
-            id="periodo-desde"
-            type="date"
-            className="h-8 w-auto"
-            value={period.from}
-            onChange={(e) => {
-              if (e.target.value) state.setPeriod({ from: e.target.value, to: period.to });
-            }}
-          />
-          <Label htmlFor="periodo-hasta" className="text-xs text-muted-foreground">
-            Hasta
-          </Label>
-          <Input
-            id="periodo-hasta"
-            type="date"
-            className="h-8 w-auto"
-            value={period.to}
-            onChange={(e) => {
-              if (e.target.value) state.setPeriod({ from: period.from, to: e.target.value });
-            }}
-          />
-        </div>
-      )}
-      {state.valid && (
-        <span className="text-sm text-muted-foreground" data-testid="periodo-rango">
-          {formatPeriodRange(period)}
-        </span>
-      )}
-      {updating && (
-        <span role="status" className="text-sm text-muted-foreground" data-testid="actualizando">
-          Actualizando…
-        </span>
-      )}
-    </div>
-  );
-}
-
 /** cc47 (D-615): el periodo como borrador del modal de filtros. */
 export interface PeriodDraft {
   from: string;
@@ -385,29 +303,29 @@ const MONTH_PRESET_LABELS: Record<MonthPreset, string> = {
 
 type MonthPickerValue = MonthPreset | 'custom';
 
-/** cc32 (corte 2): el selector de mes, con el mismo estilo que el de periodo. */
-export function MonthPicker({
-  state,
-  updating = false,
+/** cc47 (D-615): el mes del reporte como borrador del modal «Filtros». */
+export interface MonthDraft {
+  mes: string;
+}
+
+/**
+ * cc47 (D-615): el mes dentro del modal — «Este mes», «Mes anterior» y «Otro mes…», sobre un
+ * borrador que no cambia la URL hasta «Aplicar».
+ */
+export function MonthFields({
+  draft,
+  onChange,
 }: {
-  state: ReportMonthState;
-  /** Se muestra el mes anterior mientras llega el nuevo (como `PeriodPicker`). */
-  updating?: boolean;
+  draft: MonthDraft;
+  onChange: (next: MonthDraft) => void;
 }) {
   const today = businessToday();
-  const { month, complete, valid } = state;
-  const matched = complete ? matchMonthPreset(month, today) : null;
-  const [customOpen, setCustomOpen] = useState(false);
-  const value: MonthPickerValue | null = !complete
-    ? null
-    : customOpen || matched === null
-      ? 'custom'
-      : matched;
-  // El mes entero, como el corte del API (en el mes en curso, el saldo de fin de mes es el de hoy).
-  const period = valid ? fullMonth(month) : null;
-
+  const matched = draft.mes === '' ? null : matchMonthPreset(draft.mes, today);
+  const [customOpen, setCustomOpen] = useState(matched === null);
+  const value: MonthPickerValue = customOpen || matched === null ? 'custom' : matched;
+  const period = monthError(draft.mes) === null ? fullMonth(draft.mes) : null;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="periodo">
+    <div className="grid gap-2" data-testid="periodo">
       <Segmented<MonthPickerValue>
         label="Mes"
         value={value}
@@ -421,7 +339,7 @@ export function MonthPicker({
             return;
           }
           setCustomOpen(false);
-          state.setMonth(presetMonth(next, today));
+          onChange({ mes: presetMonth(next, today) });
         }}
       />
       {value === 'custom' && (
@@ -434,16 +352,49 @@ export function MonthPicker({
             type="month"
             className="h-8 w-auto"
             max={today.slice(0, 7)}
-            value={month}
+            value={draft.mes}
             onChange={(e) => {
-              if (e.target.value) state.setMonth(e.target.value);
+              onChange({ mes: e.target.value });
             }}
           />
         </div>
       )}
-      {period && (
+      {period && <span className="text-sm text-muted-foreground">{formatPeriodRange(period)}</span>}
+    </div>
+  );
+}
+
+/** cc47 (D-615): el botón «Filtros» de un reporte cuyo único filtro es el mes. */
+export function MonthFiltersButton({ state }: { state: ReportMonthState }) {
+  const thisMonth = presetMonth('this-month', businessToday());
+  return (
+    <FiltersDialog<MonthDraft>
+      value={{ mes: state.month }}
+      empty={{ mes: thisMonth }}
+      activeCount={state.complete && state.month !== thisMonth ? 1 : 0}
+      validate={(d) => (d.mes === '' ? 'Elige un mes.' : monthError(d.mes))}
+      onApply={(d) => {
+        state.setMonth(d.mes);
+      }}
+    >
+      {(draft, update) => <MonthFields draft={draft} onChange={update} />}
+    </FiltersDialog>
+  );
+}
+
+/** cc47 (D-615): el mes aplicado y «Actualizando…», junto al botón «Filtros». */
+export function MonthStatus({
+  state,
+  updating = false,
+}: {
+  state: ReportMonthState;
+  updating?: boolean;
+}) {
+  return (
+    <>
+      {state.valid && (
         <span className="text-sm text-muted-foreground" data-testid="periodo-rango">
-          {formatPeriodRange(period)}
+          {formatPeriodRange(fullMonth(state.month))}
         </span>
       )}
       {updating && (
@@ -451,6 +402,6 @@ export function MonthPicker({
           Actualizando…
         </span>
       )}
-    </div>
+    </>
   );
 }

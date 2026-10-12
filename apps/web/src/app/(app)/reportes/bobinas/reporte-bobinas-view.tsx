@@ -22,7 +22,11 @@ import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
-import { MonthPicker, useReportMonth } from '@/components/reports/report-period';
+import {
+  MonthFiltersButton,
+  MonthStatus,
+  useReportMonth,
+} from '@/components/reports/report-period';
 import { BusyRegion, ReportTable, type ReportColumn } from '@/components/reports/report-table';
 import { useLineTab, type LineTabsConfig } from '@/lib/line-tabs';
 import { filterReportRows, xlsxHref } from '@/lib/report-table';
@@ -30,7 +34,9 @@ import { allRows, coilMonthTotalsOf } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
-import { Input } from '@/components/ui/input';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/lib/use-url-tab';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LINK_CLASSNAME, cn } from '@/lib/utils';
 
@@ -61,16 +67,21 @@ import { LINK_CLASSNAME, cn } from '@/lib/utils';
  * cc24 (D-408, D-418): Coberturas Aluzinc y Drywall, sin «Todas» (D-393), Aluzinc por defecto.
  * El mes y el orden de las dos tablas sobreviven al cambio de pestaña.
  */
+/** cc47 (D-617): las dos tablas del reporte, cada una en su pestaña. */
+const TABLE_TABS = ['selladas', 'abiertas'] as const;
+type TableTab = (typeof TABLE_TABS)[number];
+
 const LINE_TABS: LineTabsConfig = {
   lines: COIL_REPORT_LINES,
   includeAll: false,
-  keep: ['mes', 'selladasort', 'selladadir', 'abiertasort', 'abiertadir'],
+  keep: ['mes', 'selladasort', 'selladadir', 'abiertasort', 'abiertadir', 'tabla'],
 };
 
 export function ReporteBobinasView() {
   const monthState = useReportMonth();
   const { month, valid } = monthState;
   const { tab, select } = useLineTab(LINE_TABS);
+  const [tableTab, selectTableTab] = useUrlTab<TableTab>(TABLE_TABS, 'selladas', 'tabla');
   // Sin «Todas», la pestaña siempre es una línea con bobinas.
   const line = tab as (typeof COIL_REPORT_LINES)[number];
   const [url, setUrl] = useUrlState({ search: '' });
@@ -127,35 +138,7 @@ export function ReporteBobinasView() {
             </p>
           </>
         }
-        actions={
-          // D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve.
-          // D-408/D-418: el PDF y el Excel siguen la pestaña.
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
-                  download: xlsxHref(
-                    '/api/reports/coils/xlsx',
-                    { month, businessLine: line },
-                    searchText,
-                  ),
-                },
-                {
-                  key: 'pdf',
-                  label: 'Descargar PDF',
-                  download: `/api/reports/coils/pdf?${qs}`,
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
-
-      <MonthPicker state={monthState} updating={updating} />
 
       <LineTabs
         lines={LINE_TABS.lines}
@@ -163,10 +146,6 @@ export function ReporteBobinasView() {
         value={tab}
         onChange={select}
       />
-
-      {monthState.error !== null && (
-        <ListStateMessage tone="error" title={monthState.error} hint="Elige otro mes." />
-      )}
 
       {monthState.error === null && (
         <>
@@ -195,46 +174,100 @@ export function ReporteBobinasView() {
               </StatStrip>
             </BusyRegion>
           )}
+        </>
+      )}
 
-          <Input
-            type="search"
-            aria-label="Buscar en el reporte"
+      {/* cc47 (D-615): buscar, «Filtros» (el mes) y, a la derecha, el Excel y el PDF. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar en el reporte"
             placeholder="Buscar bobina, tipo o color"
-            className="h-8 max-w-xs"
             value={searchText}
-            onChange={(e) => {
-              setSearchText(e.target.value);
-            }}
+            onChange={setSearchText}
           />
-
-          <MonthTable
-            title="Selladas"
-            film="SEALED"
-            section={data?.sealed}
-            emptyText="No había bobinas selladas al final de ese mes"
-            search={searchText}
-            onClearSearch={() => {
-              setSearchText('');
-            }}
-            query={query}
-            updating={updating}
-          />
-          {/* Si el reporte no cargó, el error y «Reintentar» van una sola vez, en la primera
-              tabla; la segunda no se pinta. */}
-          {!report.isError && (
-            <MonthTable
-              title="Abiertas"
-              film="OPENED"
-              section={data?.opened}
-              emptyText="No había bobinas abiertas al final de ese mes"
-              search={searchText}
-              onClearSearch={() => {
-                setSearchText('');
-              }}
-              query={query}
-              updating={updating}
+        }
+        filters={<MonthFiltersButton state={monthState} />}
+        status={<MonthStatus state={monthState} updating={updating} />}
+        aside={
+          // D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve.
+          // D-408/D-418: el PDF y el Excel siguen la pestaña.
+          valid ? (
+            <HeaderActions
+              primary={['xlsx']}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
+                  download: xlsxHref(
+                    '/api/reports/coils/xlsx',
+                    { month, businessLine: line },
+                    searchText,
+                  ),
+                },
+                {
+                  key: 'pdf',
+                  label: 'Descargar PDF',
+                  download: `/api/reports/coils/pdf?${qs}`,
+                },
+              ]}
             />
-          )}
+          ) : undefined
+        }
+      />
+
+      {monthState.error !== null && (
+        <ListStateMessage
+          tone="error"
+          title={monthState.error}
+          hint="Elige otro mes en «Filtros»."
+        />
+      )}
+
+      {monthState.error === null && (
+        <>
+          {/* cc47 (D-617): selladas y abiertas, cada tabla en su pestaña (`?tabla=`). */}
+          <Tabs
+            activationMode="manual"
+            value={tableTab}
+            onValueChange={(next) => {
+              selectTableTab(next as TableTab);
+            }}
+          >
+            <TabsList aria-label="Tabla del reporte" data-testid="pestanas-tabla-bobinas">
+              <TabsTrigger value="selladas">Selladas</TabsTrigger>
+              <TabsTrigger value="abiertas">Abiertas</TabsTrigger>
+            </TabsList>
+            <TabsContent value="selladas" className="mt-3">
+              <MonthTable
+                title="Selladas"
+                film="SEALED"
+                section={data?.sealed}
+                emptyText="No había bobinas selladas al final de ese mes"
+                search={searchText}
+                onClearSearch={() => {
+                  setSearchText('');
+                }}
+                query={query}
+                updating={updating}
+              />
+            </TabsContent>
+            <TabsContent value="abiertas" className="mt-3">
+              <MonthTable
+                title="Abiertas"
+                film="OPENED"
+                section={data?.opened}
+                emptyText="No había bobinas abiertas al final de ese mes"
+                search={searchText}
+                onClearSearch={() => {
+                  setSearchText('');
+                }}
+                query={query}
+                updating={updating}
+              />
+            </TabsContent>
+          </Tabs>
           {data && (
             <BusyRegion busy={updating}>
               <MonthSummary report={data} />
