@@ -19,7 +19,8 @@ import {
   useUrlSearchInput,
   useUrlState,
 } from '@/lib/use-url-state';
-import { StatusFilter } from '@/components/status-filter';
+import { StatusFiltersButton } from '@/components/status-filter';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import {
@@ -29,7 +30,6 @@ import {
 import { HeaderActions } from '@/components/header-actions';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
@@ -105,30 +105,32 @@ export function DespachosView() {
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          placeholder="Buscar por cliente, placa o transportista…"
-          className="max-w-sm"
-          value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
-          }}
-        />
-        <StatusFilter
-          value={status}
-          onChange={(v) => {
-            setUrl({ status: v });
-          }}
-          options={DISPATCH_STATUSES.filter((s) => s !== 'REVERSED').map((s) => ({
-            value: s,
-            label: DISPATCH_STATUS_LABELS[s],
-          }))}
-          negativeValue="REVERSED"
-          negativeLabel="Revertidos"
-          allLabel="Todos, sin revertidos"
-          className="w-52"
-        />
-      </div>
+      {/* cc47 (D-615): buscar y «Filtros» (el estado). Despachos no tiene Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar despachos"
+            placeholder="Buscar por cliente, placa o transportista…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <StatusFiltersButton
+            value={status}
+            onApply={(v) => {
+              setUrl({ status: v });
+            }}
+            options={DISPATCH_STATUSES.filter((s) => s !== 'REVERSED').map((s) => ({
+              value: s,
+              label: DISPATCH_STATUS_LABELS[s],
+            }))}
+            negativeValue="REVERSED"
+            negativeLabel="Revertidos"
+            allLabel="Todos, sin revertidos"
+          />
+        }
+      />
 
       <div className="rounded-lg border">
         <Table list>

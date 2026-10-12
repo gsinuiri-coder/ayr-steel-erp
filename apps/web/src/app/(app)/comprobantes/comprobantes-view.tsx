@@ -40,6 +40,12 @@ import {
   useUrlState,
 } from '@/lib/use-url-state';
 import { StatusFilter } from '@/components/status-filter';
+import {
+  FilterField,
+  FiltersDialog,
+  TableToolbar,
+  ToolbarSearch,
+} from '@/components/table-toolbar';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { ContingencyCard } from '@/components/invoicing/contingency-card';
@@ -47,7 +53,6 @@ import { DocumentDispatchLinks } from '@/components/invoicing/document-dispatche
 import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -74,6 +79,21 @@ import { SortableTableHead } from '@/components/sortable-table-head';
 import { useSort } from '@/lib/use-sort';
 
 const ALL = 'ALL';
+
+/** cc47 (D-615): los filtros del modal, con los mismos valores que la URL. */
+interface DocumentFilters {
+  status: string;
+  docType: string;
+  origin: string;
+  pendingOnly: string;
+}
+
+const NO_DOCUMENT_FILTERS: DocumentFilters = {
+  status: '',
+  docType: '',
+  origin: '',
+  pendingOnly: '',
+};
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -183,18 +203,10 @@ export function ComprobantesView() {
         <div className="flex items-center gap-3">
           {/* D-292: el estado del PSE, en un modal (ⓘ) con su badge en la cabecera. */}
           <ContingencyCard />
-          {/* cc31: un solo botón principal y el Excel en «Más opciones». cc26: el Excel lleva
-              los filtros y el orden de la lista (todas las páginas). */}
+          {/* cc31: un solo botón principal. cc47 (D-615): el Excel pasa a la línea de la tabla. */}
           <HeaderActions
             primary={['new']}
-            actions={[
-              { key: 'new', label: 'Nuevo comprobante', href: '/comprobantes/nuevo' },
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/invoicing/documents', params),
-              },
-            ]}
+            actions={[{ key: 'new', label: 'Nuevo comprobante', href: '/comprobantes/nuevo' }]}
           />
         </div>
       </div>
@@ -216,72 +228,113 @@ export function ComprobantesView() {
         </Alert>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          placeholder="Buscar por número, cliente o documento…"
-          className="max-w-sm"
-          value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
-          }}
-        />
-        <Select
-          value={docType || ALL}
-          onValueChange={(v) => {
-            setUrl({ docType: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Tipo" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los tipos</SelectItem>
-            {/* La guía de remisión se ve desde su despacho, no acá. */}
-            {INVOICE_DOC_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                {FISCAL_DOC_TYPE_LABELS[t]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={origin || ALL}
-          onValueChange={(v) => {
-            setUrl({ origin: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Origen" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los orígenes</SelectItem>
-            {FISCAL_DOCUMENT_ORIGINS.map((o) => (
-              <SelectItem key={o} value={o}>
-                {FISCAL_DOCUMENT_ORIGIN_LABELS[o]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <StatusFilter
-          value={status}
-          onChange={(v) => {
-            setUrl({ status: v });
-          }}
-          options={FISCAL_DOCUMENT_STATUSES.filter((s) => s !== 'VOIDED' && s !== 'ANNULLED').map(
-            (s) => ({ value: s, label: FISCAL_DOCUMENT_STATUS_LABELS[s] }),
-          )}
-          negativeValue="VOIDED,ANNULLED"
-          allLabel="Todos, sin anulados"
-        />
-        <FilterChip
-          active={pendingOnly}
-          onToggle={() => {
-            setUrl({ pendingOnly: pendingOnly ? '' : '1' });
-          }}
-        >
-          Solo con saldo
-        </FilterChip>
-      </div>
+      {/* cc47 (D-615): buscar, «Filtros» (tipo, origen, estado y saldo) y, a la derecha, el
+          Excel. cc26: el Excel lleva los filtros y el orden de la lista (todas las páginas). */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar comprobantes"
+            placeholder="Buscar por número, cliente o documento…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <FiltersDialog<DocumentFilters>
+            value={{ status, docType, origin, pendingOnly: url.pendingOnly }}
+            empty={NO_DOCUMENT_FILTERS}
+            activeCount={[status, docType, origin, url.pendingOnly].filter(Boolean).length}
+            onApply={(next) => {
+              setUrl(next);
+            }}
+          >
+            {(draft, update) => (
+              <>
+                <FilterField label="Tipo" htmlFor="filtro-tipo">
+                  <Select
+                    value={draft.docType || ALL}
+                    onValueChange={(v) => {
+                      update({ docType: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-tipo" className="w-full">
+                      <SelectValue placeholder="Tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos los tipos</SelectItem>
+                      {/* La guía de remisión se ve desde su despacho, no aquí. */}
+                      {INVOICE_DOC_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {FISCAL_DOC_TYPE_LABELS[t]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Origen" htmlFor="filtro-origen">
+                  <Select
+                    value={draft.origin || ALL}
+                    onValueChange={(v) => {
+                      update({ origin: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-origen" className="w-full">
+                      <SelectValue placeholder="Origen" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos los orígenes</SelectItem>
+                      {FISCAL_DOCUMENT_ORIGINS.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {FISCAL_DOCUMENT_ORIGIN_LABELS[o]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Estado">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusFilter
+                      value={draft.status}
+                      onChange={(v) => {
+                        update({ status: v });
+                      }}
+                      options={FISCAL_DOCUMENT_STATUSES.filter(
+                        (st) => st !== 'VOIDED' && st !== 'ANNULLED',
+                      ).map((st) => ({ value: st, label: FISCAL_DOCUMENT_STATUS_LABELS[st] }))}
+                      negativeValue="VOIDED,ANNULLED"
+                      allLabel="Todos, sin anulados"
+                    />
+                  </div>
+                </FilterField>
+                <FilterField label="Saldo">
+                  <div>
+                    <FilterChip
+                      active={draft.pendingOnly === '1'}
+                      onToggle={() => {
+                        update({ pendingOnly: draft.pendingOnly === '1' ? '' : '1' });
+                      }}
+                    >
+                      Solo con saldo
+                    </FilterChip>
+                  </div>
+                </FilterField>
+              </>
+            )}
+          </FiltersDialog>
+        }
+        aside={
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/invoicing/documents', params),
+              },
+            ]}
+          />
+        }
+      />
 
       <div className="rounded-lg border">
         <Table list>

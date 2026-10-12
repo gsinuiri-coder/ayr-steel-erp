@@ -22,7 +22,7 @@ import {
 } from '@/lib/use-url-state';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import { PaginationBar } from '@/components/pagination-bar';
 import {
   Table,
@@ -123,8 +123,8 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
           </div>
           <p className="text-xs text-muted-foreground">Alta, edición y baja de clientes.</p>
         </div>
-        {/* cc31: un solo botón principal (solo ADMINISTRADOR) y el Excel en «Más opciones».
-            cc26 M2: el Excel lleva la búsqueda y el orden de la lista (todas las páginas). */}
+        {/* cc31: un solo botón principal (solo ADMINISTRADOR). cc47 (D-615): el Excel pasa a la
+            línea de la tabla. */}
         <HeaderActions
           primary={['new']}
           actions={[
@@ -135,11 +135,6 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
               onSelect: () => {
                 openDialog();
               },
-            },
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              download: listXlsxHref('/customers', params),
             },
           ]}
         />
@@ -154,13 +149,29 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
         </Alert>
       )}
 
-      <Input
-        placeholder="Buscar por nombre o número de documento…"
-        className="max-w-sm"
-        value={searchText}
-        onChange={(e) => {
-          setSearchText(e.target.value);
-        }}
+      {/* cc47 (D-615): buscar y, a la derecha, el Excel (sin filtros, sin botón «Filtros»).
+          cc26 M2: el Excel lleva la búsqueda y el orden de la lista (todas las páginas). */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar clientes"
+            placeholder="Buscar por nombre o número de documento…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        aside={
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/customers', params),
+              },
+            ]}
+          />
+        }
       />
 
       <div className="rounded-lg border">

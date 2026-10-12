@@ -24,8 +24,13 @@ import {
   useUrlState,
 } from '@/lib/use-url-state';
 import { FilterChip } from '@/components/filter-chip';
-import { Input } from '@/components/ui/input';
 import { PaginationBar } from '@/components/pagination-bar';
+import {
+  FilterField,
+  FiltersDialog,
+  TableToolbar,
+  ToolbarSearch,
+} from '@/components/table-toolbar';
 import {
   Select,
   SelectContent,
@@ -79,17 +84,6 @@ export function PedidosView() {
   const stages = url.stage.split(',').filter(Boolean);
   const historyOnly =
     stages.length > 0 && stages.every((s) => s === 'FULFILLED' || s === 'CANCELLED');
-  const selectValue = stages.length === 1 && !historyOnly ? (stages[0] ?? ALL) : ALL;
-  const toggleChip = (stage: 'FULFILLED' | 'CANCELLED') => {
-    // Sobre la URL más reciente, no sobre lo pintado: dos chips pulsados seguidos no se pisan.
-    setUrl((cur) => {
-      const now = cur.stage.split(',').filter(Boolean);
-      const chipsOnly = now.length > 0 && now.every((s) => s === 'FULFILLED' || s === 'CANCELLED');
-      const base = chipsOnly ? now : [];
-      const next = base.includes(stage) ? base.filter((s) => s !== stage) : [...base, stage];
-      return { stage: next.join(',') };
-    });
-  };
 
   // Sin estado elegido: los activos; y buscando, todos (quien pega `PED-000123` lo quiere
   // esté como esté).
@@ -120,7 +114,7 @@ export function PedidosView() {
       ? [...rawRows].sort((x, y) => compareBy(sort.dir, x.stage, y.stage))
       : rawRows;
 
-  // cc31: el filtro activo acompaña al título y al pie («4 de 38 pedidos en curso»).
+  // cc31: el filtro activo acompaña al título («pedidos en curso»).
   let filterLabel = 'en curso';
   if (historyOnly) {
     filterLabel = stages.map((s) => (s === 'FULFILLED' ? 'atendidos' : 'anulados')).join(' y ');
@@ -144,66 +138,49 @@ export function PedidosView() {
             Nacen de confirmar una cotización, o directo en las líneas que no la exigen.
           </p>
         </div>
-        {/* cc31: «Más opciones» (el Excel) y un solo botón principal. cc26 M2: el Excel lleva los
-            filtros y el orden de la lista (todas las páginas); el orden por estado es solo de la
-            página y no viaja. */}
         <HeaderActions
           primary={['new']}
-          actions={[
-            { key: 'new', label: 'Nuevo pedido directo', href: '/pedidos/nuevo' },
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              download: listXlsxHref('/sales/orders', params),
-            },
-          ]}
+          actions={[{ key: 'new', label: 'Nuevo pedido directo', href: '/pedidos/nuevo' }]}
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          placeholder="Buscar por código, cliente o documento…"
-          className="max-w-sm"
-          value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
-          }}
-        />
-        <Select
-          value={selectValue}
-          onValueChange={(v) => {
-            setUrl({ stage: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="w-56" aria-label="Estado">
-            <SelectValue placeholder="Estado" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Pedidos en curso</SelectItem>
-            {ACTIVE_STAGES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {ORDER_STAGE_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <FilterChip
-          active={stages.includes('FULFILLED')}
-          onToggle={() => {
-            toggleChip('FULFILLED');
-          }}
-        >
-          Atendidos
-        </FilterChip>
-        <FilterChip
-          active={stages.includes('CANCELLED')}
-          onToggle={() => {
-            toggleChip('CANCELLED');
-          }}
-        >
-          Anulados
-        </FilterChip>
-      </div>
+      {/* cc47 (D-615): buscar, «Filtros» (el estado) y, a la derecha, el Excel. */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar pedidos"
+            placeholder="Buscar por código, cliente o documento…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <FiltersDialog<{ stage: string }>
+            value={{ stage: url.stage }}
+            empty={{ stage: '' }}
+            activeCount={stages.length > 0 ? 1 : 0}
+            onApply={(next) => {
+              setUrl(next);
+            }}
+          >
+            {(draft, update) => <StageFields stage={draft.stage} onChange={update} />}
+          </FiltersDialog>
+        }
+        aside={
+          // cc26 M2: el Excel lleva los filtros y el orden de la lista (todas las páginas); el
+          // orden por estado es solo de la página y no viaja.
+          <HeaderActions
+            primary={['xlsx']}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/sales/orders', params),
+              },
+            ]}
+          />
+        }
+      />
 
       <div className="rounded-lg border">
         <Table list>
@@ -336,5 +313,68 @@ export function PedidosView() {
         disabled={orders.isFetching}
       />
     </RoleGate>
+  );
+}
+
+/**
+ * cc47 (D-615): el estado dentro del modal «Filtros», con las mismas reglas de antes (D-289): el
+ * selector pide un estado en curso; los chips «Atendidos» y «Anulados» piden solo esa historia y se
+ * combinan entre sí; elegir uno desactiva al otro.
+ */
+function StageFields({
+  stage,
+  onChange,
+}: {
+  stage: string;
+  onChange: (patch: { stage: string }) => void;
+}) {
+  const stages = stage.split(',').filter(Boolean);
+  const historyOnly =
+    stages.length > 0 && stages.every((s) => s === 'FULFILLED' || s === 'CANCELLED');
+  const selectValue = stages.length === 1 && !historyOnly ? (stages[0] ?? ALL) : ALL;
+  const toggle = (chip: 'FULFILLED' | 'CANCELLED') => {
+    const base = historyOnly ? stages : [];
+    const next = base.includes(chip) ? base.filter((s) => s !== chip) : [...base, chip];
+    onChange({ stage: next.join(',') });
+  };
+  return (
+    <FilterField label="Estado">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          value={selectValue}
+          onValueChange={(v) => {
+            onChange({ stage: v === ALL ? '' : v });
+          }}
+        >
+          <SelectTrigger className="w-56" aria-label="Estado">
+            <SelectValue placeholder="Estado" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>Pedidos en curso</SelectItem>
+            {ACTIVE_STAGES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {ORDER_STAGE_LABELS[s]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <FilterChip
+          active={stages.includes('FULFILLED')}
+          onToggle={() => {
+            toggle('FULFILLED');
+          }}
+        >
+          Atendidos
+        </FilterChip>
+        <FilterChip
+          active={stages.includes('CANCELLED')}
+          onToggle={() => {
+            toggle('CANCELLED');
+          }}
+        >
+          Anulados
+        </FilterChip>
+      </div>
+    </FilterField>
   );
 }

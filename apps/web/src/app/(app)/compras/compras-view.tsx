@@ -26,6 +26,12 @@ import {
   useUrlState,
 } from '@/lib/use-url-state';
 import { StatusFilter } from '@/components/status-filter';
+import {
+  FilterField,
+  FiltersDialog,
+  TableToolbar,
+  ToolbarSearch,
+} from '@/components/table-toolbar';
 import { PaginationBar } from '@/components/pagination-bar';
 import { RoleGate } from '@/components/role-gate';
 import { formatDate, formatMoney } from '@/lib/format';
@@ -33,7 +39,6 @@ import { FilterChip } from '@/components/filter-chip';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -57,6 +62,16 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { receiveSequentially, summarizeOutcomes, type ReceiveOutcome } from '@/lib/receive-batch';
 
 const ALL = 'ALL';
+
+/** cc47 (D-615): los filtros del modal, con los mismos valores que la URL. */
+interface PurchaseFilters {
+  line: string;
+  type: string;
+  status: string;
+  balance: string;
+}
+
+const NO_PURCHASE_FILTERS: PurchaseFilters = { line: '', type: '', status: '', balance: '' };
 
 /** Lista central de compras (D-030), filtrable por línea, tipo, estado y saldo. */
 export function ComprasView() {
@@ -153,106 +168,138 @@ export function ComprasView() {
             Bobinas, producto terminado, servicios y gastos, con su saldo por pagar.
           </p>
         </div>
-        {/* cc31: un solo botón principal y lo demás en «Más opciones». cc26 M2: el Excel lleva
-            los filtros y el orden de la lista (todas las páginas); los importes solo van en el
-            del ADMINISTRADOR (D-438). D-351: la carga en tanda desde planilla. */}
+        {/* cc31: un solo botón principal y lo demás en «Más opciones». D-351: la carga en tanda
+            desde planilla. cc47 (D-615): el Excel pasa a la línea de la tabla. */}
         <HeaderActions
           primary={['new']}
           actions={[
             { key: 'new', label: 'Nueva compra', href: '/compras/nueva' },
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              download: listXlsxHref('/purchases', params),
-            },
             { key: 'import', label: 'Importar compras', href: '/compras/importar' },
           ]}
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Select
-          value={businessLine || ALL}
-          onValueChange={(v) => {
-            setUrl({ line: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="w-52" aria-label="Línea de negocio">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todas las líneas</SelectItem>
-            {BUSINESS_LINES.map((line) => (
-              <SelectItem key={line} value={line}>
-                {BUSINESS_LINE_LABELS[line]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={type || ALL}
-          onValueChange={(v) => {
-            setUrl({ type: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="w-52" aria-label="Tipo de compra">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los tipos</SelectItem>
-            {PURCHASE_TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                {PURCHASE_TYPE_LABELS[t]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <StatusFilter
-          value={status}
-          onChange={(v) => {
-            setUrl({ status: v });
-          }}
-          options={PURCHASE_STATUSES.filter((s) => s !== 'CANCELLED').map((s) => ({
-            value: s,
-            label: PURCHASE_STATUS_LABELS[s],
-          }))}
-          negativeValue="CANCELLED"
-          className="w-44"
-        />
-
-        <FilterChip
-          active={onlyWithBalance}
-          onToggle={() => {
-            setUrl({ balance: onlyWithBalance ? '' : '1' });
-          }}
-        >
-          Solo con saldo
-        </FilterChip>
-
-        <Input
-          aria-label="Buscar compras"
-          placeholder="Buscar por comprobante o proveedor…"
-          className="max-w-xs"
-          value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
-          }}
-        />
-        {selectedCount > 0 && (
-          <Button
-            disabled={receiveMany.isPending}
-            pending={receiveMany.isPending}
-            pendingText="Recibiendo…"
-            onClick={() => {
-              receiveMany.mutate();
+      {/* cc47 (D-615): buscar primero, «Filtros» (línea, tipo, estado y saldo) y, a la derecha,
+          la recepción en tanda y el Excel. cc26 M2: el Excel lleva los filtros y el orden de la
+          lista (todas las páginas); los importes solo van en el del ADMINISTRADOR (D-438). */}
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar compras"
+            placeholder="Buscar por comprobante o proveedor…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <FiltersDialog<PurchaseFilters>
+            value={{ line: url.line, type: url.type, status: url.status, balance: url.balance }}
+            empty={NO_PURCHASE_FILTERS}
+            activeCount={[url.line, url.type, url.status, url.balance].filter(Boolean).length}
+            onApply={(next) => {
+              setUrl(next);
             }}
           >
-            Recibir seleccionadas ({selectedCount})
-          </Button>
-        )}
-      </div>
+            {(draft, update) => (
+              <>
+                <FilterField label="Línea de negocio" htmlFor="filtro-linea">
+                  <Select
+                    value={draft.line || ALL}
+                    onValueChange={(v) => {
+                      update({ line: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-linea" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todas las líneas</SelectItem>
+                      {BUSINESS_LINES.map((line) => (
+                        <SelectItem key={line} value={line}>
+                          {BUSINESS_LINE_LABELS[line]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Tipo de compra" htmlFor="filtro-tipo">
+                  <Select
+                    value={draft.type || ALL}
+                    onValueChange={(v) => {
+                      update({ type: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-tipo" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos los tipos</SelectItem>
+                      {PURCHASE_TYPES.map((t) => (
+                        <SelectItem key={t} value={t}>
+                          {PURCHASE_TYPE_LABELS[t]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Estado">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusFilter
+                      value={draft.status}
+                      onChange={(v) => {
+                        update({ status: v });
+                      }}
+                      options={PURCHASE_STATUSES.filter((st) => st !== 'CANCELLED').map((st) => ({
+                        value: st,
+                        label: PURCHASE_STATUS_LABELS[st],
+                      }))}
+                      negativeValue="CANCELLED"
+                    />
+                  </div>
+                </FilterField>
+                <FilterField label="Saldo">
+                  <div>
+                    <FilterChip
+                      active={draft.balance === '1'}
+                      onToggle={() => {
+                        update({ balance: draft.balance === '1' ? '' : '1' });
+                      }}
+                    >
+                      Solo con saldo
+                    </FilterChip>
+                  </div>
+                </FilterField>
+              </>
+            )}
+          </FiltersDialog>
+        }
+        aside={
+          <>
+            {selectedCount > 0 && (
+              <Button
+                disabled={receiveMany.isPending}
+                pending={receiveMany.isPending}
+                pendingText="Recibiendo…"
+                onClick={() => {
+                  receiveMany.mutate();
+                }}
+              >
+                Recibir seleccionadas ({selectedCount})
+              </Button>
+            )}
+            <HeaderActions
+              primary={['xlsx']}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  download: listXlsxHref('/purchases', params),
+                },
+              ]}
+            />
+          </>
+        }
+      />
 
       {outcomes && (
         <Alert>

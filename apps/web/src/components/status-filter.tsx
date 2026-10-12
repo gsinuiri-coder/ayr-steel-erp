@@ -1,6 +1,7 @@
 'use client';
 
 import { FilterChip } from '@/components/filter-chip';
+import { FilterField, FiltersDialog } from '@/components/table-toolbar';
 import {
   Select,
   SelectContent,
@@ -70,5 +71,47 @@ export function StatusFilter({
         {negativeLabel}
       </FilterChip>
     </>
+  );
+}
+
+/**
+ * cc47 (D-615): el botón «Filtros» de una lista cuyo único filtro es el estado. El modal lleva el
+ * mismo `StatusFilter` (selector y chip), sobre un borrador que se aplica con «Aplicar».
+ */
+export function StatusFiltersButton({
+  value,
+  onApply,
+  ...filter
+}: {
+  value: string;
+  onApply: (status: string) => void;
+  options: readonly { value: string; label: string }[];
+  negativeValue: string;
+  negativeLabel?: string;
+  allLabel?: string;
+}) {
+  return (
+    <FiltersDialog<{ status: string }>
+      value={{ status: value }}
+      empty={{ status: '' }}
+      activeCount={value === '' ? 0 : 1}
+      onApply={(next) => {
+        onApply(next.status);
+      }}
+    >
+      {(draft, update) => (
+        <FilterField label="Estado">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusFilter
+              {...filter}
+              value={draft.status}
+              onChange={(status) => {
+                update({ status });
+              }}
+            />
+          </div>
+        </FilterField>
+      )}
+    </FiltersDialog>
   );
 }
