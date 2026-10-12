@@ -24,7 +24,6 @@ import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -43,6 +42,12 @@ import { PriceListCell } from '@/components/catalog/price-list-cell';
 import { PriceListHistoryDialog } from '@/components/catalog/price-list-history-dialog';
 import { RowActions } from '@/components/row-actions';
 import { FilterChip } from '@/components/filter-chip';
+import {
+  FilterField,
+  FiltersDialog,
+  TableToolbar,
+  ToolbarSearch,
+} from '@/components/table-toolbar';
 import { formatKg, unitSymbol } from '@/lib/format';
 
 /** El color solo tiene sentido donde hay material prepintado: coberturas (D-085). */
@@ -216,37 +221,54 @@ export function CatalogoView() {
           });
           return (
             <TabsContent key={line.id} value={line.id} className="grid gap-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Input
-                    aria-label="Buscar productos por SKU o nombre"
+              {/* cc47 (D-615): buscar, «Filtros» (los inactivos) y, a la derecha, el alta. */}
+              <TableToolbar
+                search={
+                  <ToolbarSearch
+                    label="Buscar productos por SKU o nombre"
                     placeholder="Buscar por SKU o nombre…"
-                    className="max-w-xs"
                     value={searchText}
-                    onChange={(e) => {
-                      setSearchText(e.target.value);
-                    }}
+                    onChange={setSearchText}
                   />
-                  <FilterChip
-                    active={showInactive}
-                    onToggle={() => {
-                      setUrl({ inactivos: showInactive ? '' : '1' });
+                }
+                filters={
+                  <FiltersDialog<{ inactivos: string }>
+                    value={{ inactivos: url.inactivos }}
+                    empty={{ inactivos: '' }}
+                    activeCount={showInactive ? 1 : 0}
+                    onApply={(next) => {
+                      setUrl(next);
                     }}
                   >
-                    Inactivos
-                  </FilterChip>
-                </div>
-                {isAdmin && (
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      openDialog(line.id);
-                    }}
-                  >
-                    Nuevo producto
-                  </Button>
-                )}
-              </div>
+                    {(draft, update) => (
+                      <FilterField label="Inactivos">
+                        <div>
+                          <FilterChip
+                            active={draft.inactivos === '1'}
+                            onToggle={() => {
+                              update({ inactivos: draft.inactivos === '1' ? '' : '1' });
+                            }}
+                          >
+                            Incluir inactivos
+                          </FilterChip>
+                        </div>
+                      </FilterField>
+                    )}
+                  </FiltersDialog>
+                }
+                aside={
+                  isAdmin && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        openDialog(line.id);
+                      }}
+                    >
+                      Nuevo producto
+                    </Button>
+                  )
+                }
+              />
               <div className="rounded-lg border">
                 <Table list>
                   <TableHeader className="sticky top-0 z-10 bg-background">

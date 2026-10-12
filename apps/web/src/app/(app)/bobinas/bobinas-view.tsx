@@ -30,6 +30,12 @@ import {
   useUrlState,
 } from '@/lib/use-url-state';
 import { StatusFilter } from '@/components/status-filter';
+import {
+  FilterField,
+  FiltersDialog,
+  TableToolbar,
+  ToolbarSearch,
+} from '@/components/table-toolbar';
 import { compareDecimalBy, useSort } from '@/lib/use-sort';
 import { RoleGate } from '@/components/role-gate';
 import { SortableTableHead } from '@/components/sortable-table-head';
@@ -58,6 +64,17 @@ import {
 } from '@/components/ui/table';
 
 const ALL = 'ALL';
+
+/** cc47 (D-615): los filtros del modal, con los mismos valores que la URL. */
+interface CoilFilters {
+  line: string;
+  finish: string;
+  thickness: string;
+  film: string;
+  status: string;
+}
+
+const NO_COIL_FILTERS: CoilFilters = { line: '', finish: '', thickness: '', film: '', status: '' };
 
 /**
  * Pestañas de la vista (Fase 7e, D-121): el default es lo que planta usa a diario —
@@ -105,9 +122,8 @@ export function BobinasView() {
   const film = (COIL_FILM_STATES as readonly string[]).includes(url.film)
     ? (url.film as CoilFilmState)
     : '';
-  const [thicknessText, setThicknessText, thicknessMm] = useUrlSearchInput(url.thickness, (v) => {
-    setUrl({ thickness: v });
-  });
+  // cc47 (D-615): el espesor se escribe en el modal «Filtros» y llega a la URL con «Aplicar».
+  const thicknessMm = url.thickness.trim();
   const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });
   });
@@ -165,8 +181,7 @@ export function BobinasView() {
         </div>
         {/*
           F8-S3b/M3: principal + «⋯». Principal: la compra de bobinas, que es por donde entra
-          casi todo el alta. T6 (D-173): el PDF es el reporte del conjunto filtrado actual —mismos
-          filtros que la tabla de abajo—, descarga directa contra el API (patrón D-149).
+          casi todo el alta. cc47 (D-615): el PDF pasa a la línea de la tabla.
         */}
         <HeaderActions
           primary={['new-purchase', 'import-purchases']}
@@ -184,128 +199,176 @@ export function BobinasView() {
               href: '/compras/importar',
             },
             { key: 'from-xml', label: 'Desde XML', href: '/bobinas/nueva-xml' },
-            {
-              key: 'pdf',
-              label: 'Descargar PDF',
-              download: `/api/coils/report-pdf?${queryString}`,
-            },
           ]}
         />
       </div>
 
-      {/* Pestañas y filtros comparten fila: son el mismo gesto —acotar la lista— y en dos
-          filas costaban 48 px de alto en todas las pantallas (S11, B1). */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Tabs
-          value={tab}
-          onValueChange={(v) => {
-            setUrl({ tab: v });
-          }}
-        >
-          <TabsList>
-            {VIEW_TABS.map((t) => (
-              <TabsTrigger key={t} value={t}>
-                {VIEW_TAB_LABELS[t]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+      {/* La pestaña de vista es la principal de la página (en la URL, como antes); debajo, la
+          línea estándar (cc47, D-615): buscar, «Filtros» y, a la derecha, el PDF. */}
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          setUrl({ tab: v });
+        }}
+      >
+        <TabsList>
+          {VIEW_TABS.map((t) => (
+            <TabsTrigger key={t} value={t}>
+              {VIEW_TAB_LABELS[t]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
-        <Select
-          value={businessLine || ALL}
-          onValueChange={(v) => {
-            setUrl({ line: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="w-52" aria-label="Línea de negocio">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todas las líneas</SelectItem>
-            {BUSINESS_LINES.map((line) => (
-              <SelectItem key={line} value={line}>
-                {BUSINESS_LINE_LABELS[line]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={finishId || ALL}
-          onValueChange={(v) => {
-            setUrl({ finish: v === ALL ? '' : v });
-          }}
-        >
-          <SelectTrigger className="w-52" aria-label="Acabado">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los acabados</SelectItem>
-            {finishes.data?.map((f) => (
-              <SelectItem key={f.id} value={f.id}>
-                {f.code} — {f.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Input
-          aria-label="Espesor en milímetros"
-          placeholder="Espesor (mm)"
-          className="w-36"
-          inputMode="decimal"
-          value={thicknessText}
-          onChange={(e) => {
-            setThicknessText(e.target.value);
-          }}
-        />
-
-        {(tab === 'disponibles' || tab === 'todas') && (
-          <Select
-            value={film || ALL}
-            onValueChange={(v) => {
-              setUrl({ film: v === ALL ? '' : v });
+      <TableToolbar
+        search={
+          <ToolbarSearch
+            label="Buscar bobinas por código"
+            placeholder="Buscar por código…"
+            value={searchText}
+            onChange={setSearchText}
+          />
+        }
+        filters={
+          <FiltersDialog<CoilFilters>
+            value={{
+              line: url.line,
+              finish: url.finish,
+              thickness: url.thickness,
+              film: url.film,
+              status: url.status,
+            }}
+            empty={NO_COIL_FILTERS}
+            activeCount={
+              [
+                businessLine,
+                finishId,
+                thicknessMm,
+                tab === 'disponibles' || tab === 'todas' ? film : '',
+                tab === 'todas' ? status : '',
+              ].filter(Boolean).length
+            }
+            validate={(d) =>
+              d.thickness.trim() === '' || isPositiveDecimal(d.thickness.trim())
+                ? null
+                : 'El espesor tiene que ser un número mayor que cero, en milímetros.'
+            }
+            onApply={(next) => {
+              setUrl({ ...next, thickness: next.thickness.trim() });
             }}
           >
-            <SelectTrigger className="w-40" aria-label="Film de protección">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>Selladas y abiertas</SelectItem>
-              {COIL_FILM_STATES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s === 'SEALED' ? 'Solo selladas' : 'Solo abiertas'}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-
-        {tab === 'todas' && (
-          <StatusFilter
-            value={status}
-            onChange={(v) => {
-              setUrl({ status: v });
-            }}
-            options={COIL_STATUSES.filter((s) => s !== 'CANCELLED').map((s) => ({
-              value: s,
-              label: COIL_STATUS_LABELS[s],
-            }))}
-            negativeValue="CANCELLED"
-            className="w-44"
+            {(draft, update) => (
+              <>
+                <FilterField label="Línea de negocio" htmlFor="filtro-linea">
+                  <Select
+                    value={draft.line || ALL}
+                    onValueChange={(v) => {
+                      update({ line: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-linea" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todas las líneas</SelectItem>
+                      {BUSINESS_LINES.map((line) => (
+                        <SelectItem key={line} value={line}>
+                          {BUSINESS_LINE_LABELS[line]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Acabado" htmlFor="filtro-acabado">
+                  <Select
+                    value={draft.finish || ALL}
+                    onValueChange={(v) => {
+                      update({ finish: v === ALL ? '' : v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-acabado" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos los acabados</SelectItem>
+                      {finishes.data?.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.code} — {f.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Espesor (mm)" htmlFor="filtro-espesor">
+                  <Input
+                    id="filtro-espesor"
+                    placeholder="Todos"
+                    className="w-36"
+                    inputMode="decimal"
+                    value={draft.thickness}
+                    onChange={(e) => {
+                      update({ thickness: e.target.value });
+                    }}
+                  />
+                </FilterField>
+                {(tab === 'disponibles' || tab === 'todas') && (
+                  <FilterField label="Film de protección" htmlFor="filtro-film">
+                    <Select
+                      value={draft.film || ALL}
+                      onValueChange={(v) => {
+                        update({ film: v === ALL ? '' : v });
+                      }}
+                    >
+                      <SelectTrigger id="filtro-film" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL}>Selladas y abiertas</SelectItem>
+                        {COIL_FILM_STATES.map((st) => (
+                          <SelectItem key={st} value={st}>
+                            {st === 'SEALED' ? 'Solo selladas' : 'Solo abiertas'}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FilterField>
+                )}
+                {tab === 'todas' && (
+                  <FilterField label="Estado">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusFilter
+                        value={draft.status}
+                        onChange={(v) => {
+                          update({ status: v });
+                        }}
+                        options={COIL_STATUSES.filter((st) => st !== 'CANCELLED').map((st) => ({
+                          value: st,
+                          label: COIL_STATUS_LABELS[st],
+                        }))}
+                        negativeValue="CANCELLED"
+                      />
+                    </div>
+                  </FilterField>
+                )}
+              </>
+            )}
+          </FiltersDialog>
+        }
+        aside={
+          // T6 (D-173): el PDF es el reporte del conjunto filtrado actual —mismos filtros que la
+          // tabla de abajo—, descarga directa contra el API (patrón D-149).
+          <HeaderActions
+            primary={['pdf']}
+            actions={[
+              {
+                key: 'pdf',
+                label: 'Descargar PDF',
+                download: `/api/coils/report-pdf?${queryString}`,
+              },
+            ]}
           />
-        )}
-
-        <Input
-          aria-label="Buscar bobinas por código"
-          placeholder="Buscar por código…"
-          className="max-w-xs"
-          value={searchText}
-          onChange={(e) => {
-            setSearchText(e.target.value);
-          }}
-        />
-      </div>
+        }
+      />
 
       <div className="rounded-lg border">
         <Table list>

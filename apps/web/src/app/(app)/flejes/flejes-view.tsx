@@ -25,6 +25,7 @@ import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
+import { FilterField, FiltersDialog, TableToolbar } from '@/components/table-toolbar';
 
 const ALL = 'ALL';
 
@@ -40,9 +41,6 @@ export function FlejesView() {
   const businessLine = (BUSINESS_LINES as readonly string[]).includes(url.line)
     ? (url.line as BusinessLine)
     : ALL;
-  const setBusinessLine = (v: BusinessLine | typeof ALL) => {
-    setUrl({ line: v });
-  };
 
   const queryString = businessLine !== ALL ? `?businessLine=${businessLine}` : '';
   const stock = useQuery({
@@ -66,25 +64,44 @@ export function FlejesView() {
             recepción de corte tercerizado.
           </p>
         </div>
-        <Select
-          value={businessLine}
-          onValueChange={(v) => {
-            setBusinessLine(v as BusinessLine | typeof ALL);
-          }}
-        >
-          <SelectTrigger className="w-52" aria-label="Línea de negocio">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todas las líneas</SelectItem>
-            {BUSINESS_LINES.map((line) => (
-              <SelectItem key={line} value={line}>
-                {BUSINESS_LINE_LABELS[line]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
       </div>
+
+      {/* cc47 (D-615): la línea sale de la cabecera y va a «Filtros». Sin buscar ni Excel. */}
+      <TableToolbar
+        filters={
+          <FiltersDialog<{ line: string }>
+            value={{ line: businessLine }}
+            empty={{ line: ALL }}
+            activeCount={businessLine === ALL ? 0 : 1}
+            onApply={(next) => {
+              setUrl(next);
+            }}
+          >
+            {(draft, update) => (
+              <FilterField label="Línea de negocio" htmlFor="filtro-linea">
+                <Select
+                  value={draft.line}
+                  onValueChange={(v) => {
+                    update({ line: v });
+                  }}
+                >
+                  <SelectTrigger id="filtro-linea" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>Todas las líneas</SelectItem>
+                    {BUSINESS_LINES.map((line) => (
+                      <SelectItem key={line} value={line}>
+                        {BUSINESS_LINE_LABELS[line]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FilterField>
+            )}
+          </FiltersDialog>
+        }
+      />
 
       <div className="rounded-lg border">
         <Table list>

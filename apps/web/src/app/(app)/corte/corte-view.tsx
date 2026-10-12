@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/table';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
+import { FilterField, FiltersDialog, TableToolbar } from '@/components/table-toolbar';
 import { useSort } from '@/lib/use-sort';
 
 const ALL = 'ALL';
@@ -55,12 +56,6 @@ export function CorteView() {
   const status = (CUTTING_ORDER_STATUSES as readonly string[]).includes(url.status)
     ? (url.status as CuttingOrderStatus)
     : ALL;
-  const setBusinessLine = (v: BusinessLine | typeof ALL) => {
-    setUrl({ line: v });
-  };
-  const setStatus = (v: CuttingOrderStatus | typeof ALL) => {
-    setUrl({ status: v });
-  };
 
   const params = new URLSearchParams();
   if (businessLine !== ALL) params.set('businessLine', businessLine);
@@ -88,45 +83,64 @@ export function CorteView() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Select
-          value={businessLine}
-          onValueChange={(v) => {
-            setBusinessLine(v as BusinessLine | typeof ALL);
-          }}
-        >
-          <SelectTrigger className="w-52" aria-label="Línea de negocio">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todas las líneas</SelectItem>
-            {BUSINESS_LINES.map((line) => (
-              <SelectItem key={line} value={line}>
-                {BUSINESS_LINE_LABELS[line]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select
-          value={status}
-          onValueChange={(v) => {
-            setStatus(v as CuttingOrderStatus | typeof ALL);
-          }}
-        >
-          <SelectTrigger className="w-52" aria-label="Estado">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>Todos los estados</SelectItem>
-            {CUTTING_ORDER_STATUSES.map((s) => (
-              <SelectItem key={s} value={s}>
-                {CUTTING_ORDER_STATUS_LABELS[s]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* cc47 (D-615): «Filtros» (línea y estado). La lista no tiene buscar ni Excel. */}
+      <TableToolbar
+        filters={
+          <FiltersDialog<{ line: string; status: string }>
+            value={{ line: businessLine, status }}
+            empty={{ line: ALL, status: ALL }}
+            activeCount={(businessLine === ALL ? 0 : 1) + (status === ALL ? 0 : 1)}
+            onApply={(next) => {
+              setUrl(next);
+            }}
+          >
+            {(draft, update) => (
+              <>
+                <FilterField label="Línea de negocio" htmlFor="filtro-linea">
+                  <Select
+                    value={draft.line}
+                    onValueChange={(v) => {
+                      update({ line: v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-linea" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todas las líneas</SelectItem>
+                      {BUSINESS_LINES.map((line) => (
+                        <SelectItem key={line} value={line}>
+                          {BUSINESS_LINE_LABELS[line]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Estado" htmlFor="filtro-estado">
+                  <Select
+                    value={draft.status}
+                    onValueChange={(v) => {
+                      update({ status: v });
+                    }}
+                  >
+                    <SelectTrigger id="filtro-estado" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={ALL}>Todos los estados</SelectItem>
+                      {CUTTING_ORDER_STATUSES.map((st) => (
+                        <SelectItem key={st} value={st}>
+                          {CUTTING_ORDER_STATUS_LABELS[st]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+              </>
+            )}
+          </FiltersDialog>
+        }
+      />
 
       <div className="rounded-lg border">
         <Table list>
