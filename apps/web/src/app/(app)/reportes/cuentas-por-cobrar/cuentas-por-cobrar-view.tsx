@@ -1,5 +1,6 @@
 'use client';
 
+import { SelectFilterField } from '@/components/select-filter-field';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
@@ -35,20 +36,8 @@ import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { LINK_CLASSNAME, cn } from '@/lib/utils';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
-import {
-  FilterField,
-  FiltersDialog,
-  TableToolbar,
-  ToolbarSearch,
-} from '@/components/table-toolbar';
+import { FiltersDialog, TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -183,26 +172,16 @@ export function CuentasPorCobrarView() {
             }}
           >
             {(draft, update) => (
-              <FilterField label="Vendedor" htmlFor="filtro-vendedor">
-                <Select
-                  value={draft.vendedor || ALL}
-                  onValueChange={(v) => {
-                    update({ vendedor: v === ALL ? '' : v });
-                  }}
-                >
-                  <SelectTrigger id="filtro-vendedor" className="w-full" aria-label="Vendedor">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL}>Todos los vendedores</SelectItem>
-                    {sellers.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FilterField>
+              <SelectFilterField
+                id="filtro-vendedor"
+                label="Vendedor"
+                value={draft.vendedor}
+                onChange={(v) => {
+                  update({ vendedor: v });
+                }}
+                allLabel="Todos los vendedores"
+                options={sellers.map((s) => ({ value: s.id, label: s.name }))}
+              />
             )}
           </FiltersDialog>
         }
@@ -419,5 +398,4 @@ const BUCKET_KEYS: Record<AgingBucket, string> = {
 /** Cliente, comprobantes, los cinco tramos y el saldo. */
 const COLUMN_COUNT = 3 + AGING_BUCKETS.length;
 
-const ALL = '__todos__';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

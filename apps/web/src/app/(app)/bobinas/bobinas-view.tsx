@@ -1,5 +1,6 @@
 'use client';
 
+import { SelectFilterField } from '@/components/select-filter-field';
 import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -44,13 +45,6 @@ import { Badge } from '@/components/ui/badge';
 import { HeaderActions } from '@/components/header-actions';
 import { Input } from '@/components/ui/input';
 import { PaginationBar } from '@/components/pagination-bar';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LINK_CLASSNAME } from '@/lib/utils';
@@ -62,8 +56,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-const ALL = 'ALL';
 
 /** cc47 (D-615): los filtros del modal, con los mismos valores que la URL. */
 interface CoilFilters {
@@ -259,46 +251,32 @@ export function BobinasView() {
           >
             {(draft, update) => (
               <>
-                <FilterField label="Línea de negocio" htmlFor="filtro-linea">
-                  <Select
-                    value={draft.line || ALL}
-                    onValueChange={(v) => {
-                      update({ line: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-linea" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todas las líneas</SelectItem>
-                      {BUSINESS_LINES.map((line) => (
-                        <SelectItem key={line} value={line}>
-                          {BUSINESS_LINE_LABELS[line]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
-                <FilterField label="Acabado" htmlFor="filtro-acabado">
-                  <Select
-                    value={draft.finish || ALL}
-                    onValueChange={(v) => {
-                      update({ finish: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-acabado" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todos los acabados</SelectItem>
-                      {finishes.data?.map((f) => (
-                        <SelectItem key={f.id} value={f.id}>
-                          {f.code} — {f.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
+                <SelectFilterField
+                  id="filtro-linea"
+                  label="Línea de negocio"
+                  value={draft.line}
+                  onChange={(v) => {
+                    update({ line: v });
+                  }}
+                  allLabel="Todas las líneas"
+                  options={BUSINESS_LINES.map((line) => ({
+                    value: line,
+                    label: BUSINESS_LINE_LABELS[line],
+                  }))}
+                />
+                <SelectFilterField
+                  id="filtro-acabado"
+                  label="Acabado"
+                  value={draft.finish}
+                  onChange={(v) => {
+                    update({ finish: v });
+                  }}
+                  allLabel="Todos los acabados"
+                  options={(finishes.data ?? []).map((f) => ({
+                    value: f.id,
+                    label: `${f.code} — ${f.name}`,
+                  }))}
+                />
                 <FilterField label="Espesor (mm)" htmlFor="filtro-espesor">
                   <Input
                     id="filtro-espesor"
@@ -312,26 +290,19 @@ export function BobinasView() {
                   />
                 </FilterField>
                 {(tab === 'disponibles' || tab === 'todas') && (
-                  <FilterField label="Film de protección" htmlFor="filtro-film">
-                    <Select
-                      value={draft.film || ALL}
-                      onValueChange={(v) => {
-                        update({ film: v === ALL ? '' : v });
-                      }}
-                    >
-                      <SelectTrigger id="filtro-film" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={ALL}>Selladas y abiertas</SelectItem>
-                        {COIL_FILM_STATES.map((st) => (
-                          <SelectItem key={st} value={st}>
-                            {st === 'SEALED' ? 'Solo selladas' : 'Solo abiertas'}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FilterField>
+                  <SelectFilterField
+                    id="filtro-film"
+                    label="Film de protección"
+                    value={draft.film}
+                    onChange={(v) => {
+                      update({ film: v });
+                    }}
+                    allLabel="Selladas y abiertas"
+                    options={COIL_FILM_STATES.map((st) => ({
+                      value: st,
+                      label: st === 'SEALED' ? 'Solo selladas' : 'Solo abiertas',
+                    }))}
+                  />
                 )}
                 {tab === 'todas' && (
                   <FilterField label="Estado">

@@ -1,5 +1,6 @@
 'use client';
 
+import { SelectFilterField } from '@/components/select-filter-field';
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
@@ -244,26 +245,17 @@ export function AuditoriaView() {
                       }}
                     />
                   </FilterField>
-                  <FilterField label="Usuario" htmlFor="filtro-usuario">
-                    <Select
-                      value={draft.actorId}
-                      onValueChange={(v) => {
-                        update({ actorId: v });
-                      }}
-                    >
-                      <SelectTrigger id="filtro-usuario" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={ALL}>Todos los usuarios</SelectItem>
-                        {(users.data ?? []).map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </FilterField>
+                  <SelectFilterField
+                    id="filtro-usuario"
+                    label="Usuario"
+                    value={draft.actorId}
+                    onChange={(v) => {
+                      update({ actorId: v });
+                    }}
+                    allLabel="Todos los usuarios"
+                    allValue={ALL}
+                    options={(users.data ?? []).map((u) => ({ value: u.id, label: u.name }))}
+                  />
                   <div className="flex flex-wrap items-end gap-3">
                     <FilterField label="Desde" htmlFor="filtro-desde">
                       <Input

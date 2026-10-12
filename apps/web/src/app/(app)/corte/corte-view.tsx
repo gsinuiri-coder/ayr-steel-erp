@@ -1,5 +1,6 @@
 'use client';
 
+import { SelectFilterField } from '@/components/select-filter-field';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -19,13 +20,6 @@ import { useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import {
@@ -38,7 +32,7 @@ import {
 } from '@/components/ui/table';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
-import { FilterField, FiltersDialog, TableToolbar } from '@/components/table-toolbar';
+import { FiltersDialog, TableToolbar } from '@/components/table-toolbar';
 import { useSort } from '@/lib/use-sort';
 
 const ALL = 'ALL';
@@ -96,46 +90,34 @@ export function CorteView() {
           >
             {(draft, update) => (
               <>
-                <FilterField label="Línea de negocio" htmlFor="filtro-linea">
-                  <Select
-                    value={draft.line}
-                    onValueChange={(v) => {
-                      update({ line: v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-linea" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todas las líneas</SelectItem>
-                      {BUSINESS_LINES.map((line) => (
-                        <SelectItem key={line} value={line}>
-                          {BUSINESS_LINE_LABELS[line]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
-                <FilterField label="Estado" htmlFor="filtro-estado">
-                  <Select
-                    value={draft.status}
-                    onValueChange={(v) => {
-                      update({ status: v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-estado" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todos los estados</SelectItem>
-                      {CUTTING_ORDER_STATUSES.map((st) => (
-                        <SelectItem key={st} value={st}>
-                          {CUTTING_ORDER_STATUS_LABELS[st]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
+                <SelectFilterField
+                  id="filtro-linea"
+                  label="Línea de negocio"
+                  value={draft.line}
+                  onChange={(v) => {
+                    update({ line: v });
+                  }}
+                  allLabel="Todas las líneas"
+                  allValue={ALL}
+                  options={BUSINESS_LINES.map((line) => ({
+                    value: line,
+                    label: BUSINESS_LINE_LABELS[line],
+                  }))}
+                />
+                <SelectFilterField
+                  id="filtro-estado"
+                  label="Estado"
+                  value={draft.status}
+                  onChange={(v) => {
+                    update({ status: v });
+                  }}
+                  allLabel="Todos los estados"
+                  allValue={ALL}
+                  options={CUTTING_ORDER_STATUSES.map((st) => ({
+                    value: st,
+                    label: CUTTING_ORDER_STATUS_LABELS[st],
+                  }))}
+                />
               </>
             )}
           </FiltersDialog>

@@ -1,5 +1,6 @@
 'use client';
 
+import { SelectFilterField } from '@/components/select-filter-field';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
@@ -13,19 +14,12 @@ import { api } from '@/lib/api';
 import { formatMoneyOrDash, formatQty } from '@/lib/format';
 import { useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '@/components/ui/table';
 import { SortHead } from '@/components/sortable-table-head';
 import { sortRows } from '@/lib/sort-rows';
 import { useSort } from '@/lib/use-sort';
-import { FilterField, FiltersDialog, TableToolbar } from '@/components/table-toolbar';
+import { FiltersDialog, TableToolbar } from '@/components/table-toolbar';
 
 const ALL = 'ALL';
 
@@ -78,26 +72,20 @@ export function FlejesView() {
             }}
           >
             {(draft, update) => (
-              <FilterField label="Línea de negocio" htmlFor="filtro-linea">
-                <Select
-                  value={draft.line}
-                  onValueChange={(v) => {
-                    update({ line: v });
-                  }}
-                >
-                  <SelectTrigger id="filtro-linea" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL}>Todas las líneas</SelectItem>
-                    {BUSINESS_LINES.map((line) => (
-                      <SelectItem key={line} value={line}>
-                        {BUSINESS_LINE_LABELS[line]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </FilterField>
+              <SelectFilterField
+                id="filtro-linea"
+                label="Línea de negocio"
+                value={draft.line}
+                onChange={(v) => {
+                  update({ line: v });
+                }}
+                allLabel="Todas las líneas"
+                allValue={ALL}
+                options={BUSINESS_LINES.map((line) => ({
+                  value: line,
+                  label: BUSINESS_LINE_LABELS[line],
+                }))}
+              />
             )}
           </FiltersDialog>
         }

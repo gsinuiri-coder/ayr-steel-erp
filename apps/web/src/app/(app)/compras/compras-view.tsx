@@ -1,5 +1,6 @@
 'use client';
 
+import { SelectFilterField } from '@/components/select-filter-field';
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -39,13 +40,6 @@ import { FilterChip } from '@/components/filter-chip';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { LINK_CLASSNAME } from '@/lib/utils';
 import {
   Table,
@@ -60,8 +54,6 @@ import { useSort } from '@/lib/use-sort';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import { receiveSequentially, summarizeOutcomes, type ReceiveOutcome } from '@/lib/receive-batch';
-
-const ALL = 'ALL';
 
 /** cc47 (D-615): los filtros del modal, con los mismos valores que la URL. */
 interface PurchaseFilters {
@@ -202,46 +194,32 @@ export function ComprasView() {
           >
             {(draft, update) => (
               <>
-                <FilterField label="Línea de negocio" htmlFor="filtro-linea">
-                  <Select
-                    value={draft.line || ALL}
-                    onValueChange={(v) => {
-                      update({ line: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-linea" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todas las líneas</SelectItem>
-                      {BUSINESS_LINES.map((line) => (
-                        <SelectItem key={line} value={line}>
-                          {BUSINESS_LINE_LABELS[line]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
-                <FilterField label="Tipo de compra" htmlFor="filtro-tipo">
-                  <Select
-                    value={draft.type || ALL}
-                    onValueChange={(v) => {
-                      update({ type: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-tipo" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todos los tipos</SelectItem>
-                      {PURCHASE_TYPES.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {PURCHASE_TYPE_LABELS[t]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
+                <SelectFilterField
+                  id="filtro-linea"
+                  label="Línea de negocio"
+                  value={draft.line}
+                  onChange={(v) => {
+                    update({ line: v });
+                  }}
+                  allLabel="Todas las líneas"
+                  options={BUSINESS_LINES.map((line) => ({
+                    value: line,
+                    label: BUSINESS_LINE_LABELS[line],
+                  }))}
+                />
+                <SelectFilterField
+                  id="filtro-tipo"
+                  label="Tipo de compra"
+                  value={draft.type}
+                  onChange={(v) => {
+                    update({ type: v });
+                  }}
+                  allLabel="Todos los tipos"
+                  options={PURCHASE_TYPES.map((t) => ({
+                    value: t,
+                    label: PURCHASE_TYPE_LABELS[t],
+                  }))}
+                />
                 <FilterField label="Estado">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusFilter

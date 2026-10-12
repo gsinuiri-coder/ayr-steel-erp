@@ -1,16 +1,15 @@
 'use client';
 
+import { DocumentFilterFields } from '@/components/invoicing/document-filter-fields';
 import Link from 'next/link';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   FISCAL_DOC_TYPE_LABELS,
   FISCAL_DOCUMENT_ORIGIN_LABELS,
-  FISCAL_DOCUMENT_ORIGINS,
   FISCAL_DOCUMENT_STATUS_LABELS,
   FISCAL_DOCUMENT_STATUSES,
   FiscalDocumentOrigin,
-  INVOICE_DOC_TYPES,
   Role,
   type FiscalDocumentListItemDto,
   type PaginatedResult,
@@ -54,13 +53,6 @@ import { FiscalDocumentStatusBadge } from '@/components/invoicing/status-badges'
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   cn,
   customerSearchHref,
   CUSTOMER_CELL_CLASSNAME,
@@ -77,8 +69,6 @@ import {
 } from '@/components/ui/table';
 import { SortableTableHead } from '@/components/sortable-table-head';
 import { useSort } from '@/lib/use-sort';
-
-const ALL = 'ALL';
 
 /** cc47 (D-615): los filtros del modal, con los mismos valores que la URL. */
 interface DocumentFilters {
@@ -250,47 +240,11 @@ export function ComprobantesView() {
           >
             {(draft, update) => (
               <>
-                <FilterField label="Tipo" htmlFor="filtro-tipo">
-                  <Select
-                    value={draft.docType || ALL}
-                    onValueChange={(v) => {
-                      update({ docType: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-tipo" className="w-full">
-                      <SelectValue placeholder="Tipo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todos los tipos</SelectItem>
-                      {/* La guía de remisión se ve desde su despacho, no aquí. */}
-                      {INVOICE_DOC_TYPES.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {FISCAL_DOC_TYPE_LABELS[t]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
-                <FilterField label="Origen" htmlFor="filtro-origen">
-                  <Select
-                    value={draft.origin || ALL}
-                    onValueChange={(v) => {
-                      update({ origin: v === ALL ? '' : v });
-                    }}
-                  >
-                    <SelectTrigger id="filtro-origen" className="w-full">
-                      <SelectValue placeholder="Origen" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>Todos los orígenes</SelectItem>
-                      {FISCAL_DOCUMENT_ORIGINS.map((o) => (
-                        <SelectItem key={o} value={o}>
-                          {FISCAL_DOCUMENT_ORIGIN_LABELS[o]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
+                <DocumentFilterFields
+                  docType={draft.docType}
+                  origin={draft.origin}
+                  onChange={update}
+                />
                 <FilterField label="Estado">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusFilter
