@@ -2387,3 +2387,30 @@ ya era así antes y es del API.
 `cc47-b-…`), sin P0. En el corte A, los P1 fueron dos E2E que iban a quedar en rojo; en el B no hubo
 P1. Sonar pidió dos cosas: unitarios para `useUrlTab` (su cobertura solo mide `.ts`) y menos
 duplicación en los modales, de donde salieron `SelectFilterField` y `DocumentFilterFields`.
+
+## cc47b — correcciones del UAT de cc47 (D-623..D-626)
+
+**Las descargas (D-623).** cc47 puso el Excel y el PDF a la derecha de la línea del buscar. En el UAT,
+el dueño pidió lo contrario: en todo el sitio las descargas van a «Más opciones» de la cabecera, y
+cada página tiene un solo botón principal. Se impuso en el componente: `HeaderActions` salta como
+principal cualquier acción con `download`, aunque una vista la nombre. Así ninguna página puede volver
+a tener una descarga de principal sin tocar ese componente. Casos que no eran evidentes:
+
+- la cotización cerrada, cuyo principal era el PDF, ahora tiene «Imprimir»;
+- en Compras, con filas marcadas, la principal es la recepción en tanda (D-626);
+- Mostrador conserva «Nueva venta» a la vista, porque D-523 lleva ahí el foco al imprimir.
+
+**Cobranzas (D-624).** La causa no estaba en las pestañas sino en D-547. En cc35, Cobranzas e
+Inventario quedaron fuera del scroll único porque tenían dos tablas por pantalla. Al pasar a pestañas
+en cc47, cada pestaña quedó con una sola tabla, pero esas tablas seguían sin `list`. Lo compartido que
+sí había que tocar estaba en el ancho: `TabsContent` y las grillas de las pestañas estiraban su
+contenido.
+
+**El scroll horizontal (D-625).** El marco de la página y las grillas eran ítems flex o de grilla con
+`min-width: auto`. Una tabla ancha agrandaba todo hacia afuera, en vez de desplazarse dentro de su
+propio contenedor, que ya tenía `overflow-x-auto`. Con `min-w-0` en el marco, en `Section` y en
+`TabsContent`, el ancho lo pone la ventana. Se verificó midiendo `scrollWidth` contra `clientWidth`
+en local, a 1366, a 1920 y forzando 900 px, y lo vigila un E2E.
+
+**Revisiones.** Autorrevisión y segundo modelo, sin P0 ni P1 (`docs/revision/cc47b-segundo-modelo.md`).
+Sonar pidió unitarios para `downloadLabelFor`: su cobertura solo cuenta `.ts`.

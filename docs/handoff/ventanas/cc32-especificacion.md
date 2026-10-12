@@ -25,6 +25,8 @@ Aplica a los siete reportes: Ventas y margen, Ventas por material, Cuentas por c
 
 > **Enmienda cc47 (D-615, D-616).** El periodo (o el mes) se elige dentro del modal «Filtros» de la línea estándar, con los mismos atajos; junto al botón queda escrito el rango aplicado. Las descargas pasan de la cabecera a la derecha de esa línea, y el orden de la página es título, pestaña de línea, cifras, línea estándar, tabla y totales por línea en franja gris.
 
+> **Enmienda cc47b (D-623..D-625; UAT del dueño del 12/10/2026).** Las descargas (Excel, PDF, plantillas) no van en la línea del buscar ni como botón principal: siempre en «Más opciones» de la cabecera, que tiene un solo botón principal; la línea queda con buscar, «Filtros» y «Ver por». Las tablas de las pestañas usan el scroll único, y ninguna página se desplaza en horizontal: una tabla ancha se desplaza dentro de su contenedor.
+
 - Un solo componente para todos: atajos «Este mes», «Mes anterior», «Últimos 3 meses», «Este año» y «Otro periodo…» (rango libre), con el rango escrito al lado.
 - Fechas en hora de Lima, como hoy (`businessToday`, texto AAAA-MM-DD).
 - El periodo va siempre en la URL, también cuando es el predeterminado, para que un enlace guardado muestre el mismo periodo otro día.
