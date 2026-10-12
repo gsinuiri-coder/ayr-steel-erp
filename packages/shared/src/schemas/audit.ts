@@ -188,5 +188,10 @@ export type AuditQuery = z.infer<typeof auditQuerySchema>;
 export const auditPageSchema = z.object({
   items: z.array(auditEventSchema),
   nextCursor: z.string().nullable(),
+  /**
+   * cc48 (D-634): el buscar coincidió con más códigos de los que se buscan por tipo: la lista
+   * puede quedar corta y la pantalla pide acotar el buscar.
+   */
+  searchCapped: z.boolean(),
 });
 export type AuditPageDto = z.infer<typeof auditPageSchema>;

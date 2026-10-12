@@ -1,5 +1,5 @@
 import { auditFieldLabel, auditFieldValueLabel, isPriceListValueField } from './audit-labels';
-import { money, toFixedString } from './decimal';
+import { money } from './decimal';
 import { salePriceFromValue } from './tax';
 
 /** Lo que el detalle de un evento necesita saber de él. */
@@ -25,7 +25,8 @@ export function auditChangedKeys(event: AuditDetailEvent): string[] {
 export function auditValueText(event: AuditDetailEvent, key: string, value: unknown): string {
   if (isPriceListValueField(event.source, event.action, key)) {
     if (value === null || value === undefined) return '—';
-    return `S/ ${toFixedString(money(salePriceFromValue(value as string)), 'MONEY')}`;
+    // Con 2 decimales, como la pantalla y el catálogo.
+    return `S/ ${money(salePriceFromValue(value as string)).toFixed(2)}`;
   }
   const mapped = auditFieldValueLabel(key, value);
   if (mapped) return mapped;

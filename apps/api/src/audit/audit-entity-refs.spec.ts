@@ -16,11 +16,19 @@ import { likePattern } from './audit-query.service';
 
 const U = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
+/** Lo que `findMany` recibe en estas pruebas. */
+interface FindArgs {
+  where?: { id?: { in: string[] } } & Record<string, unknown>;
+  select?: unknown;
+  orderBy?: unknown;
+  take?: number;
+}
+
 function prismaWith(tables: Record<string, Record<string, unknown>[]>) {
-  const calls: Record<string, jest.Mock> = {};
-  const prisma: Record<string, { findMany: jest.Mock }> = {};
+  const calls: Record<string, jest.Mock<Promise<Record<string, unknown>[]>, [FindArgs]>> = {};
+  const prisma: Record<string, { findMany: (typeof calls)[string] }> = {};
   for (const [model, rows] of Object.entries(tables)) {
-    const findMany = jest.fn((args: { where?: { id?: { in: string[] } } }) =>
+    const findMany = jest.fn((args: FindArgs) =>
       Promise.resolve(
         args.where?.id?.in ? rows.filter((r) => args.where!.id!.in.includes(r.id as string)) : rows,
       ),
@@ -51,7 +59,7 @@ describe('resolveEntityRefs — una consulta por tipo, nunca por fila', () => {
       { entityType: 'users', entityId: null },
     ]);
     expect(calls.salesOrder).toHaveBeenCalledTimes(1);
-    expect(calls.salesOrder!.mock.calls[0]![0].where.id.in).toEqual([U(1), U(2)]);
+    expect(calls.salesOrder!.mock.calls[0]![0].where?.id?.in).toEqual([U(1), U(2)]);
     expect(calls.coil).toHaveBeenCalledTimes(1);
     expect(calls.customer).toHaveBeenCalledTimes(1);
     expect(refs.get(refKey('sales_orders', U(1)))).toEqual({
@@ -131,8 +139,31 @@ describe('searchEntityIds — el buscar por código legible', () => {
         select: { id: true },
       });
       expect(calls.coil).not.toHaveBeenCalled();
-      expect(found.get('sales_orders')).toEqual([U(1)]);
+      expect(found.refs.get('sales_orders')).toEqual([U(1)]);
     }
+  });
+
+  it('un correlativo que no existe no deja una lista vacía (que rompería el SQL del buscar)', async () => {
+    const { prisma } = prismaWith({ salesOrder: [] });
+    const found = await searchEntityIds(prisma, 'PED-999999');
+    expect(found.refs.size).toBe(0);
+    expect(found.capped).toBe(false);
+  });
+
+  it('más coincidencias que el tope: corta en el tope, en orden fijo, y lo avisa', async () => {
+    const many = Array.from({ length: SEARCH_IDS_PER_TYPE + 1 }, (_, i) => ({ id: U(i + 1) }));
+    const { prisma } = prismaWith({
+      coil: many,
+      product: [],
+      customer: [],
+      supplier: [],
+      fiscalDocument: [],
+      purchase: [],
+      user: [],
+    });
+    const found = await searchEntityIds(prisma, 'demo');
+    expect(found.refs.get('coils')).toHaveLength(SEARCH_IDS_PER_TYPE);
+    expect(found.capped).toBe(true);
   });
 
   it('otro texto busca «contiene» en códigos y nombres, una consulta por tipo y con tope', async () => {
@@ -151,9 +182,11 @@ describe('searchEntityIds — el buscar por código legible', () => {
     expect(calls.coil!.mock.calls[0]![0]).toEqual({
       where: { code: { contains: 'demo', mode: 'insensitive' } },
       select: { id: true },
-      take: SEARCH_IDS_PER_TYPE,
+      orderBy: { id: 'asc' },
+      take: SEARCH_IDS_PER_TYPE + 1,
     });
-    expect([...found.keys()].sort()).toEqual(['coils', 'customers']);
+    expect([...found.refs.keys()].sort()).toEqual(['coils', 'customers']);
+    expect(found.capped).toBe(false);
   });
 });
 

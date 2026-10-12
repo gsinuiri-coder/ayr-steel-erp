@@ -62,12 +62,19 @@ describe('auditXlsx (cc48, D-634)', () => {
       }),
     ]);
     const header = g[0] as string[];
-    expect(g[1]![header.indexOf('Entidad')]).toBe('Eliminado · 00000000 (eliminado)');
+    // «Eliminado · …» ya lo dice: sin repetirlo.
+    expect(g[1]![header.indexOf('Entidad')]).toBe('Eliminado · 00000000');
     expect(g[1]![header.indexOf('Usuario')]).toBe('Sistema');
     expect(g[1]![header.indexOf('Detalle')]).toBe('Sin detalle registrado.');
   });
 
-  it('el precio de lista se muestra con IGV, como en el catálogo', () => {
+  it('un código guardado de una entidad borrada lleva la marca', () => {
+    const g = grid([event({ entityCode: 'B-VIEJA', entityHref: null, entityDeleted: true })]);
+    const header = g[0] as string[];
+    expect(g[1]![header.indexOf('Entidad')]).toBe('B-VIEJA (eliminado)');
+  });
+
+  it('el precio de lista se muestra con IGV y 2 decimales, como en la pantalla', () => {
     const g = grid([
       event({
         source: 'product_list_price_change',
@@ -77,6 +84,6 @@ describe('auditXlsx (cc48, D-634)', () => {
       }),
     ]);
     const header = g[0] as string[];
-    expect(g[1]![header.indexOf('Detalle')]).toBe('Precio de lista: S/ 118.0000 → S/ 129.8000');
+    expect(g[1]![header.indexOf('Detalle')]).toBe('Precio de lista: S/ 118.00 → S/ 129.80');
   });
 });

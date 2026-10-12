@@ -221,6 +221,11 @@ const RESOLVERS: Record<AuditEntityType, Resolver | { fixed: string; href?: stri
     ),
 };
 
+/** Si el visor sabe resolver este tipo (propio del mapa, nunca del prototipo de `Object`). */
+function isKnownType(entityType: string): entityType is AuditEntityType {
+  return Object.hasOwn(RESOLVERS, entityType);
+}
+
 /** La clave de una entidad en el mapa de resultados. */
 export const refKey = (entityType: string, entityId: string) => `${entityType}:${entityId}`;
 
@@ -234,8 +239,8 @@ export async function resolveEntityRefs(
 ): Promise<Map<string, EntityRef>> {
   const idsByType = new Map<AuditEntityType, Set<string>>();
   for (const r of rows) {
-    if (r.entityId === null || !(r.entityType in RESOLVERS)) continue;
-    const type = r.entityType as AuditEntityType;
+    if (r.entityId === null || !isKnownType(r.entityType)) continue;
+    const type = r.entityType;
     const set = idsByType.get(type) ?? new Set<string>();
     set.add(r.entityId);
     idsByType.set(type, set);
@@ -287,7 +292,7 @@ export function entityDisplay(
   if (event.entityId === null) return { entityCode: null, entityHref: null, entityDeleted: false };
   // Un tipo que el visor no conoce no se puede resolver: se muestra su id tal cual, sin decir
   // que se borró.
-  if (!(event.entityType in RESOLVERS)) {
+  if (!isKnownType(event.entityType)) {
     return { entityCode: event.entityId, entityHref: null, entityDeleted: false };
   }
   const live = refs.get(refKey(event.entityType, event.entityId));
@@ -306,24 +311,45 @@ export const SEARCH_IDS_PER_TYPE = 200;
 /** `PED-000031`, `ped31`, `OP-12`: el prefijo de un correlativo y su número. */
 const SEQ_CODE_RE = /^(COT|PED|OP|DES|CAJA|MOS)-?0*(\d{1,9})$/i;
 
+const SEQ_TYPES: Record<string, AuditEntityType> = {
+  COT: 'quotations',
+  PED: 'sales_orders',
+  OP: 'production_orders',
+  DES: 'dispatches',
+  CAJA: 'cash_sessions',
+  MOS: 'pos_sales',
+};
+
+/** El buscar resuelto a ids: los que coinciden por tipo y si algún tipo llegó al tope. */
+export interface SearchRefs {
+  refs: Map<AuditEntityType, string[]>;
+  /** Algún tipo tenía más de `SEARCH_IDS_PER_TYPE` coincidencias: la pantalla pide acotar. */
+  capped: boolean;
+}
+
 /**
  * cc48 (D-634): el buscar del visor por código legible. La auditoría guarda solo el id, así que el
- * texto se resuelve primero a ids por tipo (una consulta por tipo, con tope) y la página filtra por
- * esos ids. Un correlativo (`PED-000031`) va directo a su tipo; cualquier otro texto busca
- * «contiene» en los códigos y nombres que la fila muestra.
+ * texto se resuelve primero a ids por tipo (una consulta por tipo, con tope y en orden fijo, para
+ * que todas las páginas usen los mismos) y la página filtra por esos ids. Un correlativo
+ * (`PED-000031`) va directo a su tipo; cualquier otro texto busca «contiene» en los códigos y
+ * nombres que la fila muestra. Un tipo sin coincidencias no entra al mapa.
  */
-export async function searchEntityIds(
-  prisma: PrismaService,
-  search: string,
-): Promise<Map<AuditEntityType, string[]>> {
-  const out = new Map<AuditEntityType, string[]>();
-  const take = SEARCH_IDS_PER_TYPE;
-  const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+export async function searchEntityIds(prisma: PrismaService, search: string): Promise<SearchRefs> {
+  const refs = new Map<AuditEntityType, string[]>();
+  let capped = false;
+  const add = (t: AuditEntityType, rows: { id: string }[]) => {
+    if (rows.length > SEARCH_IDS_PER_TYPE) capped = true;
+    if (rows.length > 0)
+      refs.set(
+        t,
+        rows.slice(0, SEARCH_IDS_PER_TYPE).map((r) => r.id),
+      );
+  };
   const seq = SEQ_CODE_RE.exec(search.trim());
   if (seq) {
     const [, prefix = '', digits = ''] = seq;
-    const n = Number(digits);
-    const where = { seq: n };
+    const key = prefix.toUpperCase();
+    const where = { seq: Number(digits) };
     const select = { id: true } as const;
     const found: Record<string, () => Promise<{ id: string }[]>> = {
       COT: () => prisma.quotation.findMany({ where, select }),
@@ -333,42 +359,26 @@ export async function searchEntityIds(
       CAJA: () => prisma.cashSession.findMany({ where, select }),
       MOS: () => prisma.posSale.findMany({ where, select }),
     };
-    const type: Record<string, AuditEntityType> = {
-      COT: 'quotations',
-      PED: 'sales_orders',
-      OP: 'production_orders',
-      DES: 'dispatches',
-      CAJA: 'cash_sessions',
-      MOS: 'pos_sales',
-    };
-    const key = prefix.toUpperCase();
     const fetch = found[key];
-    const t = type[key];
-    if (fetch && t) out.set(t, ids(await fetch()));
-    return out;
+    const t = SEQ_TYPES[key];
+    if (fetch && t) add(t, await fetch());
+    return { refs, capped };
   }
   const text = { contains: search.trim(), mode: 'insensitive' as const };
-  const select = { id: true } as const;
-  const [coils, products, customers, suppliers, documents, purchases, users] = await Promise.all([
-    prisma.coil.findMany({ where: { code: text }, select, take }),
-    prisma.product.findMany({ where: { OR: [{ sku: text }, { name: text }] }, select, take }),
-    prisma.customer.findMany({
-      where: { OR: [{ name: text }, { docNumber: text }] },
-      select,
-      take,
-    }),
-    prisma.supplier.findMany({
-      where: { OR: [{ name: text }, { docNumber: text }] },
-      select,
-      take,
-    }),
-    prisma.fiscalDocument.findMany({ where: { number: text }, select, take }),
-    prisma.purchase.findMany({ where: { OR: [{ number: text }, { series: text }] }, select, take }),
-    prisma.user.findMany({ where: { name: text }, select, take }),
-  ]);
-  const add = (t: AuditEntityType, rows: { id: string }[]) => {
-    if (rows.length > 0) out.set(t, ids(rows));
+  const page = {
+    select: { id: true } as const,
+    orderBy: { id: 'asc' as const },
+    take: SEARCH_IDS_PER_TYPE + 1,
   };
+  const [coils, products, customers, suppliers, documents, purchases, users] = await Promise.all([
+    prisma.coil.findMany({ where: { code: text }, ...page }),
+    prisma.product.findMany({ where: { OR: [{ sku: text }, { name: text }] }, ...page }),
+    prisma.customer.findMany({ where: { OR: [{ name: text }, { docNumber: text }] }, ...page }),
+    prisma.supplier.findMany({ where: { OR: [{ name: text }, { docNumber: text }] }, ...page }),
+    prisma.fiscalDocument.findMany({ where: { number: text }, ...page }),
+    prisma.purchase.findMany({ where: { OR: [{ number: text }, { series: text }] }, ...page }),
+    prisma.user.findMany({ where: { name: text }, ...page }),
+  ]);
   add('coils', coils);
   add('products', products);
   add('customers', customers);
@@ -376,5 +386,5 @@ export async function searchEntityIds(
   add('fiscal_documents', documents);
   add('purchases', purchases);
   add('users', users);
-  return out;
+  return { refs, capped };
 }

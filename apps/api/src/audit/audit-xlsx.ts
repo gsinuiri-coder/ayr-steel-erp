@@ -27,7 +27,12 @@ export const AUDIT_XLSX_COLUMNS: readonly ListColumn<AuditEventDto>[] = [
     header: 'Entidad',
     width: 28,
     cell: (e) =>
-      e.entityCode === null ? null : e.entityDeleted ? `${e.entityCode} (eliminado)` : e.entityCode,
+      // «Eliminado · …» ya lo dice; un código guardado de una entidad borrada, no.
+      e.entityCode === null
+        ? null
+        : e.entityDeleted && !e.entityCode.startsWith('Eliminado')
+          ? `${e.entityCode} (eliminado)`
+          : e.entityCode,
   },
   { header: 'Id', width: 38, cell: (e) => e.entityId },
   {

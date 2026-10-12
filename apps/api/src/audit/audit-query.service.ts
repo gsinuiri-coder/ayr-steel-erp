@@ -90,12 +90,18 @@ function auditLogEvent(r: AuditLogRow): RawEvent {
 /**
  * cc48 (D-634): el buscar ya resuelto. `refs`: los ids cuyo código legible coincide, por tipo de
  * entidad; `text`: el texto, para el detalle y el motivo, o `null` con un periodo de más de 31
- * días (`auditTextSearchApplies`): ahí el buscar encuentra solo por código.
+ * días (`auditTextSearchApplies`): ahí el buscar encuentra solo por código. `uuid`: el buscar
+ * es un id pegado (el que copia «Copiar id»), que se busca tal cual en la entidad de cada fuente.
+ * `capped`: algún tipo llegó al tope de ids, y la pantalla pide acotar.
  */
 interface SearchMatch {
   refs: Map<AuditEntityType, string[]>;
   text: string | null;
+  uuid: string | null;
+  capped: boolean;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface Filters {
   entityType?: string;
@@ -126,11 +132,11 @@ function actionAllows(filters: Filters, source: AuditSource): boolean {
  * El tramo del cursor sobre la columna de fecha de una fuente: el mismo corte para las cuatro, con
  * el desempate por id de la fuente del cursor (`afterCursorWhere`).
  */
-function rangeWhere<T>(
+function rangeWhere(
   filters: Filters,
   boundary: CursorBoundary | null,
   dateField: string,
-  sameSourceId: () => T,
+  sameSourceId: () => bigint | string,
 ): Record<string, unknown> {
   if (boundary === null) return { [dateField]: { gte: filters.fromUtc, lt: filters.toUtc } };
   const at = new Date(boundary.occurredAt);
@@ -157,6 +163,35 @@ export class AuditQueryService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findPage(query: AuditQuery): Promise<AuditPageDto> {
+    return this.findPageWith(query, await this.resolveSearch(query));
+  }
+
+  /**
+   * cc48 (D-634): el buscar resuelto una vez por consulta (no por página: el Excel recorre todas
+   * con los mismos ids).
+   */
+  private async resolveSearch(
+    query: Pick<AuditQuery, 'search' | 'from' | 'to' | 'entityId'>,
+  ): Promise<SearchMatch | undefined> {
+    if (query.search === undefined) return undefined;
+    const search = query.search;
+    const uuid = UUID_RE.test(search) ? search.toLowerCase() : null;
+    const { refs, capped } = uuid
+      ? { refs: new Map<AuditEntityType, string[]>(), capped: false }
+      : await searchEntityIds(this.prisma, search);
+    const textApplies = auditTextSearchApplies(
+      query.from,
+      query.to,
+      businessToday(),
+      query.entityId !== undefined,
+    );
+    return { refs, text: textApplies ? search : null, uuid, capped };
+  }
+
+  private async findPageWith(
+    query: AuditQuery,
+    match: SearchMatch | undefined,
+  ): Promise<AuditPageDto> {
     const cursor = query.cursor ? this.decodeCursorOrThrow(query.cursor) : null;
     // D-635: abierto desde el detalle de un documento (con su id) y sin fechas, el rango es el
     // máximo (12 meses): el «Historial» de un pedido viejo no queda vacío por los 31 días.
@@ -171,20 +206,7 @@ export class AuditQueryService {
       entityId: query.entityId,
       actorId: query.actorId,
       action: query.action,
-      match:
-        query.search === undefined
-          ? undefined
-          : {
-              refs: await searchEntityIds(this.prisma, query.search),
-              text: auditTextSearchApplies(
-                query.from,
-                query.to,
-                businessToday(),
-                query.entityId !== undefined,
-              )
-                ? query.search
-                : null,
-            },
+      match,
       fromUtc,
       toUtc,
     };
@@ -239,6 +261,7 @@ export class AuditQueryService {
     return {
       items: page.map((p) => this.toDto(p, actorNameById, refs)),
       nextCursor,
+      searchCapped: match?.capped ?? false,
     };
   }
 
@@ -248,10 +271,14 @@ export class AuditQueryService {
    */
   async exportAll(query: AuditExportQuery): Promise<AuditEventDto[]> {
     const window = exportWindow();
+    const match = await this.resolveSearch(query);
     const rows: AuditEventDto[] = [];
     let cursor: string | undefined;
     do {
-      const page = await this.findPage({ ...query, cursor, pageSize: AUDIT_MAX_PAGE_SIZE });
+      const page = await this.findPageWith(
+        { ...query, cursor, pageSize: AUDIT_MAX_PAGE_SIZE },
+        match,
+      );
       rows.push(...page.items);
       assertExportable(rows.length, window);
       cursor = page.nextCursor ?? undefined;
@@ -397,9 +424,13 @@ export class AuditQueryService {
             Prisma.sql`after::text ILIKE ${pattern}`,
             Prisma.sql`reason ILIKE ${pattern}`,
           ]),
-      ...[...match.refs.entries()].map(
-        ([type, ids]) => Prisma.sql`(entity = ${type} AND entity_id IN (${Prisma.join(ids)}))`,
-      ),
+      ...(match.uuid === null ? [] : [Prisma.sql`entity_id = ${match.uuid}`]),
+      ...[...match.refs.entries()]
+        // `Prisma.join` no acepta una lista vacía.
+        .filter(([, ids]) => ids.length > 0)
+        .map(
+          ([type, ids]) => Prisma.sql`(entity = ${type} AND entity_id IN (${Prisma.join(ids)}))`,
+        ),
     ];
     // Sin texto (periodo largo) y sin ningún código que coincida, no hay nada que buscar.
     if (any.length === 0) return [];
@@ -429,9 +460,17 @@ export class AuditQueryService {
     ) {
       return [];
     }
-    // cc48 (D-634): sin texto propio, con el buscar solo entra por el código del documento.
-    const orders = filters.match?.refs.get('sales_orders') ?? [];
-    const quotations = filters.match?.refs.get('quotations') ?? [];
+    // cc48 (D-634): sin texto propio, con el buscar solo entra por el código del documento (o su
+    // id pegado), y solo del tipo filtrado si hay uno.
+    const uuid = filters.match?.uuid ?? null;
+    const orders =
+      filters.entityType === 'quotations'
+        ? []
+        : [...(filters.match?.refs.get('sales_orders') ?? []), ...(uuid ? [uuid] : [])];
+    const quotations =
+      filters.entityType === 'sales_orders'
+        ? []
+        : [...(filters.match?.refs.get('quotations') ?? []), ...(uuid ? [uuid] : [])];
     if (filters.match !== undefined && orders.length === 0 && quotations.length === 0) return [];
     const boundary = afterCursorWhere(sourceRank('sales_price_change'), cursor);
     const where: Prisma.SalesPriceChangeWhereInput = {
@@ -487,7 +526,10 @@ export class AuditQueryService {
   ): Promise<RawEvent[]> {
     if (filters.entityType !== undefined && filters.entityType !== 'products') return [];
     if (!actionAllows(filters, 'product_list_price_change')) return [];
-    const products = filters.match?.refs.get('products') ?? [];
+    const products = [
+      ...(filters.match?.refs.get('products') ?? []),
+      ...(filters.match?.uuid ? [filters.match.uuid] : []),
+    ];
     if (filters.match !== undefined && products.length === 0) return [];
     const boundary = afterCursorWhere(sourceRank('product_list_price_change'), cursor);
     const where: Prisma.ProductListPriceChangeWhereInput = {
@@ -533,7 +575,10 @@ export class AuditQueryService {
     if (!actionAllows(filters, 'fiscal_document_issue_date_change')) return [];
     const boundary = afterCursorWhere(sourceRank('fiscal_document_issue_date_change'), cursor);
     // cc48 (D-634): el código del comprobante o, con periodo corto, el texto del motivo.
-    const documents = filters.match?.refs.get('fiscal_documents') ?? [];
+    const documents = [
+      ...(filters.match?.refs.get('fiscal_documents') ?? []),
+      ...(filters.match?.uuid ? [filters.match.uuid] : []),
+    ];
     const text = filters.match?.text ?? null;
     if (filters.match !== undefined && documents.length === 0 && text === null) return [];
     const where: Prisma.FiscalDocumentIssueDateChangeWhereInput = {
