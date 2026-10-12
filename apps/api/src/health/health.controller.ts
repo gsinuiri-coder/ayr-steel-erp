@@ -8,7 +8,8 @@ import { PrismaService } from '../prisma/prisma.service';
  * la instancia que de verdad responde. Sin la variable (local, CI), «dev».
  */
 export function deployedSha(env: NodeJS.ProcessEnv = process.env): string {
-  return env.GIT_SHA?.trim() || 'dev';
+  const sha = env.GIT_SHA?.trim();
+  return sha === undefined || sha === '' ? 'dev' : sha;
 }
 
 @Controller('health')
