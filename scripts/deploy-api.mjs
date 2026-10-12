@@ -89,6 +89,9 @@ const ENV_VARS = {
   JOBS_ENABLED: 'true',
   COMPANY_RUC: '20608427377',
   COMPANY_LEGAL_NAME: 'PERFILES METALICOS A & R E.I.R.L.',
+  // D-636: el mismo valor que el label `git-sha`; `/api/health` lo devuelve y `smoke:prod` lo
+  // compara con `--expect-api-sha`.
+  GIT_SHA: gitSha,
 };
 const envVarsFileDir = mkdtempSync(join(tmpdir(), 'ayr-deploy-api-'));
 const envVarsFilePath = join(envVarsFileDir, 'env-vars.yaml');
