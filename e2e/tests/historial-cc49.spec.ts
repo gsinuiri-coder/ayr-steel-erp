@@ -11,7 +11,7 @@ import { deactivateTrail, setupScenario, type ProductionOrderDto } from '../help
  */
 const isProduction = !!process.env.E2E_BASE_URL;
 test.skip(isProduction, 'Escribe compras, corte y producción: nunca contra producción (D-126).');
-test.describe.configure({ timeout: 180_000 });
+test.describe.configure({ timeout: 300_000 });
 
 let api: APIRequestContext;
 
@@ -44,7 +44,10 @@ async function openHistory(
     `/auditoria?entityType=${entityType}&entityId=${entityId}`,
   );
   await link.click();
-  await expect(page).toHaveURL(new RegExp(`/auditoria\\?entityType=${entityType}&entityId=`));
+  // Con `next dev` la primera visita a /auditoria compila: la navegación puede tardar.
+  await expect(page).toHaveURL(new RegExp(`/auditoria\\?entityType=${entityType}&entityId=`), {
+    timeout: 60_000,
+  });
   await expect(page.getByTestId('filtro-documento')).toBeVisible();
   await expect(page.getByText('Últimos 12 meses')).toBeVisible();
   await expect(page.getByTestId('fila-auditoria').filter({ hasText: rowText }).first()).toBeVisible(
@@ -56,11 +59,14 @@ test('«Historial» en compra, corte y orden de producción abre su auditoría (
   page,
 }) => {
   const scenario = await setupScenario(api);
-  const op = await postJson<ProductionOrderDto>(api, '/api/production', {
-    productId: scenario.product.id,
-  });
+  const productionOrderIds: string[] = [];
 
   try {
+    const op = await postJson<ProductionOrderDto>(api, '/api/production', {
+      productId: scenario.product.id,
+    });
+    productionOrderIds.push(op.id);
+
     await loginAsAdmin(page);
 
     await openHistory(
@@ -70,6 +76,10 @@ test('«Historial» en compra, corte y orden de producción abre su auditoría (
       scenario.purchaseId,
       'Recepción de compra',
     );
+    // Filtra por el documento: el envío a corte de la misma bobina no es de la compra.
+    await expect(
+      page.getByTestId('fila-auditoria').filter({ hasText: 'Envío a corte tercerizado' }),
+    ).toHaveCount(0);
     await openHistory(
       page,
       `/corte/${scenario.cuttingOrderId}`,
@@ -86,7 +96,7 @@ test('«Historial» en compra, corte y orden de producción abre su auditoría (
     );
   } finally {
     await deactivateTrail(api, {
-      productionOrderIds: [op.id],
+      productionOrderIds,
       cuttingOrderId: scenario.cuttingOrderId,
       motherId: scenario.mother.id,
       purchaseId: scenario.purchaseId,

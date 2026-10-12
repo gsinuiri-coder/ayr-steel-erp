@@ -270,12 +270,12 @@ export function CompraDetalleView({ id }: { id: string }) {
           <Badge variant={PURCHASE_TONE[p.status]} className="mt-2">
             {PURCHASE_STATUS_LABELS[p.status]}
           </Badge>
+          {/* cc49 (D-637): Historial al lado de las acciones, como en los demás detalles. */}
+          <AuditHistoryLink entityType="purchases" entityId={p.id} />
           {/*
             F8-S3b/M3: principal + «⋯». Principal: recibir el borrador, con su fecha de
             operación debajo (D-124); corregir el número y anular van al menú.
           */}
-          {/* cc49 (D-637): Historial al lado de las acciones, como en los demás detalles. */}
-          <AuditHistoryLink entityType="purchases" entityId={p.id} />
           <HeaderActions
             primary={['receive']}
             primaryFooter={<OperationDateField value={receiveDate} onChange={setReceiveDate} />}

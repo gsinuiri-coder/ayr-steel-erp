@@ -199,10 +199,10 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             cierre también acá era el segundo camino vivo que la unificación vino a sacar:
             dos botones que hacen lo mismo terminan divergiendo en lo que validan antes.
           */}
-          {/* cc47b (D-623): un principal (producir si está viva, reabrir si está cerrada) y
-              «Anular orden» al final de «Más opciones», en rojo. */}
           {/* cc49 (D-637): Historial al lado de las acciones, como en los demás detalles. */}
           <AuditHistoryLink entityType="production_orders" entityId={o.id} />
+          {/* cc47b (D-623): un principal (producir si está viva, reabrir si está cerrada) y
+              «Anular orden» al final de «Más opciones», en rojo. */}
           <HeaderActions
             primary={['produce', 'reopen']}
             actions={[
