@@ -1,3 +1,4 @@
+import { AUDIT_ENTITY_TYPES } from '@ayr/shared';
 import {
   entityDisplay,
   refKey,
@@ -195,5 +196,44 @@ describe('likePattern — el buscar es texto, no comodines', () => {
     expect(likePattern('50%')).toBe('%50\\%%');
     expect(likePattern('a_b')).toBe('%a\\_b%');
     expect(likePattern('c\\d')).toBe('%c\\\\d%');
+  });
+});
+
+describe('resolveEntityRefs — todos los tipos de la auditoría tienen código', () => {
+  /** Una fila con todo lo que algún resolver lee, para cualquier modelo. */
+  const row = (id: string) => ({
+    id,
+    seq: 7,
+    code: 'COD-1',
+    name: 'Nombre',
+    sku: 'SKU-1',
+    number: '00000012',
+    series: 'F001',
+    docNumber: '20123456789',
+    date: new Date('2026-10-01T00:00:00Z'),
+    operationDate: new Date('2026-10-02T00:00:00Z'),
+    parentCoilId: U(90),
+    parentCoil: { code: 'B-MADRE' },
+    documentId: U(91),
+    document: { number: 'F001-00000012' },
+    supplier: { name: 'Proveedor' },
+    businessLine: { code: 'drywall' },
+    product: { sku: 'SKU-PROD' },
+    salesOrderId: U(92),
+    salesOrder: { seq: 31 },
+    user: { name: 'Usuario' },
+    fiscalDocumentId: U(93),
+  });
+  const anyModel = {
+    findMany: jest.fn((args: FindArgs) => Promise.resolve((args.where?.id?.in ?? []).map(row))),
+  };
+  const prisma = new Proxy({}, { get: () => anyModel }) as never;
+
+  it.each(AUDIT_ENTITY_TYPES)('%s', async (entityType) => {
+    const refs = await resolveEntityRefs(prisma, [{ entityType, entityId: U(1) }]);
+    const found = refs.get(refKey(entityType, U(1)));
+    expect(found?.code).toBeTruthy();
+    expect(found?.code).not.toMatch(/undefined|null/);
+    if (found?.href) expect(found.href).toMatch(/^\/[a-z]/);
   });
 });

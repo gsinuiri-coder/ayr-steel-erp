@@ -733,3 +733,81 @@ describe('AuditQueryService — buscar con periodo largo (cc48, D-634)', () => {
     expect(page.items).toEqual([]);
   });
 });
+
+describe('AuditQueryService — el buscar en cada fuente y con cursor (cc48, D-634)', () => {
+  const ORDER = '00000000-0000-4000-8000-000000000031';
+  function fakeAllSources() {
+    const findMany = () => jest.fn<Promise<unknown[]>, [unknown]>().mockResolvedValue([]);
+    const queryRaw = jest.fn<Promise<unknown[]>, unknown[]>().mockResolvedValue([]);
+    const prisma = {
+      auditLog: { findMany: findMany() },
+      $queryRaw: queryRaw,
+      salesPriceChange: { findMany: findMany() },
+      productListPriceChange: { findMany: findMany() },
+      fiscalDocumentIssueDateChange: { findMany: findMany() },
+      user: { findMany: findMany() },
+      salesOrder: {
+        findMany: jest.fn<Promise<unknown[]>, [unknown]>().mockResolvedValue([{ id: ORDER }]),
+      },
+    };
+    return { prisma, queryRaw };
+  }
+  /** El texto del SQL con sus marcadores `$n`, como lo ve Postgres. */
+  const sqlText = (call: unknown[]) => {
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    return Prisma.sql(strings, ...(values as Prisma.Sql[])).text;
+  };
+
+  it.each([
+    // Un cursor de la misma fuente: misma fecha y desempate por id.
+    ['audit_log', '41', /\(at < \$\d+ OR \(at = \$\d+ AND id < \$\d+\)\)/],
+    // Un cursor de otra fuente (de rango mayor): estrictamente antes de su fecha.
+    ['fiscal_document_issue_date_change', 'x', /at < \$\d+ AND/],
+  ] as const)(
+    'cursor de %s: el SQL corta como la consulta de Prisma',
+    async (source, id, expected) => {
+      const f = fakeAllSources();
+      const cursor = encodeCursor({ occurredAt: NOW.toISOString(), source, id });
+      await new AuditQueryService(f.prisma as never).findPage({
+        pageSize: 50,
+        search: 'PED-31',
+        cursor,
+      });
+      const text = sqlText(f.queryRaw.mock.calls[0]!);
+      expect(text).toMatch(expected);
+      expect(text).toMatch(/ORDER BY at DESC, id DESC/);
+    },
+  );
+
+  it('los cambios de precio: con buscar, solo los del pedido encontrado; con tipo «cotizaciones», ninguno', async () => {
+    const f = fakeAllSources();
+    await new AuditQueryService(f.prisma as never).findPage({ pageSize: 50, search: 'PED-31' });
+    const args = f.prisma.salesPriceChange.findMany.mock.calls[0]![0] as {
+      where: { AND: { OR: Record<string, { in: string[] }>[] }[] };
+    };
+    expect(args.where.AND[0]!.OR[0]).toEqual({ salesOrderId: { in: [ORDER] } });
+    expect(f.prisma.productListPriceChange.findMany).not.toHaveBeenCalled();
+
+    const g = fakeAllSources();
+    await new AuditQueryService(g.prisma as never).findPage({
+      pageSize: 50,
+      search: 'PED-31',
+      entityType: 'quotations',
+    });
+    expect(g.prisma.salesPriceChange.findMany).not.toHaveBeenCalled();
+  });
+
+  it('un id pegado llega a las cuatro fuentes; el motivo de la fecha, con periodo corto', async () => {
+    const f = fakeAllSources();
+    await new AuditQueryService(f.prisma as never).findPage({ pageSize: 50, search: ORDER });
+    expect(f.prisma.salesPriceChange.findMany).toHaveBeenCalledTimes(1);
+    expect(f.prisma.productListPriceChange.findMany).toHaveBeenCalledTimes(1);
+    const issue = f.prisma.fiscalDocumentIssueDateChange.findMany.mock.calls[0]![0] as {
+      where: { AND: { OR: Record<string, unknown>[] }[] };
+    };
+    expect(issue.where.AND[0]!.OR).toEqual([
+      { documentId: { in: [ORDER] } },
+      { reason: { contains: ORDER, mode: 'insensitive' } },
+    ]);
+  });
+});
