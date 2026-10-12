@@ -5,34 +5,42 @@
  */
 export const LINE_TOTALS_COLLAPSE_BELOW_PX = 360;
 
+/** El margen inferior del marco de la página, que queda debajo de la franja. */
+const PAGE_BOTTOM_PX = 24;
+
 /** El selector de la tabla de lista (`Table list`, `components/ui/table.tsx`). */
 const LIST_TABLE_SELECTOR = "[data-slot='table'][data-density='list']";
 
 /**
- * El alto que la tabla de lista tiene hoy: el `max-height` que le fija `useFillViewport`. `null`
- * cuando no hay exactamente una lista en la pantalla (con dos, D-547, no se reparte la ventana) o
- * cuando todavía no se midió.
+ * El contenedor de la tabla de lista de la pantalla: el que se desplaza. `null` cuando no hay
+ * exactamente una (con dos, D-547, no se reparte la ventana y la franja no se pliega).
  */
-export function listRoomPx(root: ParentNode): number | null {
+export function listContainer(root: ParentNode): Element | null {
   const tables = root.querySelectorAll(LIST_TABLE_SELECTOR);
   if (tables.length !== 1) return null;
-  const container = tables[0]?.parentElement;
-  if (!container) return null;
-  const room = Number.parseFloat(container.style.maxHeight);
-  return Number.isFinite(room) ? room : null;
+  return tables[0]?.parentElement ?? null;
+}
+
+export interface LineTotalsLayout {
+  /** Alto de la ventana. */
+  viewportHeight: number;
+  /** Dónde empieza la tabla, desde el borde de arriba de la ventana. */
+  tableTop: number;
+  /** Lo que ocupa, debajo de la tabla, todo hasta el final de la franja **abierta**. */
+  belowWhenOpen: number;
 }
 
 /**
- * Si la franja va plegada. `room` es el alto de la tabla con la franja como está ahora; plegada,
- * abrirla le quitaría `openExtraPx` (lo que la franja abierta ocupa de más), así que se decide con
- * el alto que tendría abierta, y la decisión no oscila al plegar.
+ * El alto que la ventana le deja a la tabla con la franja abierta. No se lee del `max-height` de
+ * la tabla: con pocas filas `useFillViewport` la deja en su alto natural (o en su mínimo de 240 px)
+ * aunque sobre ventana, y la franja se plegaría sin motivo.
  */
-export function shouldCollapseLineTotals(
-  room: number | null,
-  collapsed: boolean,
-  openExtraPx: number,
-): boolean {
-  if (room === null) return false;
-  const roomIfOpen = collapsed ? room - Math.max(openExtraPx, 0) : room;
-  return roomIfOpen < LINE_TOTALS_COLLAPSE_BELOW_PX;
+export function tableRoomWhenOpen(layout: LineTotalsLayout): number {
+  return layout.viewportHeight - layout.tableTop - layout.belowWhenOpen - PAGE_BOTTOM_PX;
+}
+
+/** Si la franja va plegada. Sin una sola lista medida (`null`), abierta. */
+export function shouldCollapseLineTotals(layout: LineTotalsLayout | null): boolean {
+  if (layout === null) return false;
+  return tableRoomWhenOpen(layout) < LINE_TOTALS_COLLAPSE_BELOW_PX;
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { listRoomPx, shouldCollapseLineTotals } from '@/lib/line-totals';
+import { listContainer, shouldCollapseLineTotals } from '@/lib/line-totals';
 import { cn } from '@/lib/utils';
 
 export interface LineTotalsFigure {
@@ -52,15 +52,24 @@ export function LineTotalsStrip({
     const decide = () => {
       const el = ref.current;
       if (!el) return;
-      const h = el.getBoundingClientRect().height;
+      const strip = el.getBoundingClientRect();
+      const table = listContainer(document)?.getBoundingClientRect() ?? null;
       setCollapsed((current) => {
-        if (current) heights.current.closed = h;
-        else heights.current.open = h;
-        const extra = heights.current.open - heights.current.closed;
-        return shouldCollapseLineTotals(listRoomPx(document), current, extra);
+        if (current) heights.current.closed = strip.height;
+        else heights.current.open = strip.height;
+        if (table === null) return false;
+        // Plegada, abrirla sumaría lo que la franja abierta ocupa de más.
+        const extra = current ? Math.max(heights.current.open - heights.current.closed, 0) : 0;
+        return shouldCollapseLineTotals({
+          viewportHeight: window.innerHeight,
+          tableTop: table.top + window.scrollY,
+          belowWhenOpen: strip.bottom - table.bottom + extra,
+        });
       });
     };
     // Dos cuadros: el alto de la lista lo fija `useFillViewport` en el siguiente.
+    // La franja va siempre debajo de la tabla: lo que hay entre las dos (y la franja) es lo que
+    // le quita alto.
     const schedule = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
