@@ -24,7 +24,7 @@ import {
   isPriceListValueField,
 } from '@/lib/audit-labels';
 import { formatMoney, formatDateTime } from '@/lib/format';
-import { useDebouncedValue } from '@/hooks/use-debounced-value';
+import { FilterField, FiltersDialog, TableToolbar } from '@/components/table-toolbar';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -119,26 +119,46 @@ function isAuditEntityType(value: string): value is AuditEntityType {
   return (AUDIT_ENTITY_TYPES as readonly string[]).includes(value);
 }
 
+/** cc47 (D-615): los filtros del modal. */
+interface AuditFilters {
+  entityType: AuditEntityType | typeof ALL;
+  entityId: string;
+  actorId: string;
+  from: string;
+  to: string;
+}
+
+const NO_AUDIT_FILTERS: AuditFilters = {
+  entityType: ALL,
+  entityId: '',
+  actorId: ALL,
+  from: '',
+  to: '',
+};
+
 export function AuditoriaView() {
   // M4/D-218 (sacrificable, se llegó a tiempo): un "Historial" en el detalle de un pedido,
   // cotización, bobina o comprobante enlaza acá con `?entityType=&entityId=` — se lee una
   // sola vez al montar, como el `?item=` de /kardex, no como estado controlado por la URL.
   const initialParams = useSearchParams();
-  const [entityType, setEntityType] = useState<AuditEntityType | typeof ALL>(() => {
+  // cc47 (D-615): los filtros se eligen en el modal «Filtros» y se aplican juntos. Siguen en
+  // estado de la pantalla, como antes (no en la URL).
+  const [filters, setFilters] = useState<AuditFilters>(() => {
     const raw = initialParams.get('entityType');
-    return raw && isAuditEntityType(raw) ? raw : ALL;
+    return {
+      ...NO_AUDIT_FILTERS,
+      entityType: raw && isAuditEntityType(raw) ? raw : ALL,
+      entityId: initialParams.get('entityId') ?? '',
+    };
   });
-  const [entityId, setEntityId] = useState(() => initialParams.get('entityId') ?? '');
-  const [actorId, setActorId] = useState<string>(ALL);
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const debouncedEntityId = useDebouncedValue(entityId);
+  const { entityType, actorId, from, to } = filters;
+  const entityId = filters.entityId.trim();
 
   const users = useQuery({ queryKey: ['users'], queryFn: () => api<UserDto[]>('/users') });
 
   const filterKey = JSON.stringify({
     entityType,
-    entityId: entityType === ALL ? '' : debouncedEntityId.trim(),
+    entityId: entityType === ALL ? '' : entityId,
     actorId,
     from,
     to,
@@ -150,7 +170,7 @@ export function AuditoriaView() {
       const params = new URLSearchParams();
       if (entityType !== ALL) {
         params.set('entityType', entityType);
-        if (debouncedEntityId.trim()) params.set('entityId', debouncedEntityId.trim());
+        if (entityId) params.set('entityId', entityId);
       }
       if (actorId !== ALL) params.set('actorId', actorId);
       if (from) params.set('from', from);
@@ -174,86 +194,113 @@ export function AuditoriaView() {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="grid gap-1 text-sm">
-            <span className="text-muted-foreground">Tipo de entidad</span>
-            <Select
-              value={entityType}
-              onValueChange={(v) => {
-                setEntityType(v as AuditEntityType | typeof ALL);
-                if (v === ALL) setEntityId('');
+        {/* cc47 (D-615): «Filtros» con todos los filtros. Sin buscar ni Excel. */}
+        <TableToolbar
+          filters={
+            <FiltersDialog<AuditFilters>
+              value={filters}
+              empty={NO_AUDIT_FILTERS}
+              activeCount={
+                [entityType !== ALL, actorId !== ALL, from !== '', to !== ''].filter(Boolean).length
+              }
+              onApply={(next) => {
+                setFilters(next.entityType === ALL ? { ...next, entityId: '' } : next);
               }}
             >
-              <SelectTrigger className="w-56" aria-label="Tipo de entidad">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Todos los tipos</SelectItem>
-                {AUDIT_ENTITY_TYPES.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {auditEntityTypeLabel(t)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-
-          <label className="grid gap-1 text-sm">
-            <span className="text-muted-foreground">ID de entidad</span>
-            <Input
-              className="w-48"
-              disabled={entityType === ALL}
-              placeholder={entityType === ALL ? 'elige un tipo primero' : 'id exacto'}
-              value={entityId}
-              onChange={(e) => {
-                setEntityId(e.target.value);
-              }}
-            />
-          </label>
-
-          <label className="grid gap-1 text-sm">
-            <span className="text-muted-foreground">Usuario</span>
-            <Select value={actorId} onValueChange={setActorId}>
-              <SelectTrigger className="w-52" aria-label="Usuario">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>Todos los usuarios</SelectItem>
-                {(users.data ?? []).map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-
-          <label className="grid gap-1 text-sm">
-            <span className="text-muted-foreground">Desde</span>
-            <Input
-              type="date"
-              className="w-40"
-              value={from}
-              onChange={(e) => {
-                setFrom(e.target.value);
-              }}
-            />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-muted-foreground">Hasta</span>
-            <Input
-              type="date"
-              className="w-40"
-              value={to}
-              onChange={(e) => {
-                setTo(e.target.value);
-              }}
-            />
-          </label>
-          <p className="pb-1.5 text-xs text-muted-foreground">
-            Sin fechas: últimos 31 días. Máximo 12 meses de rango.
-          </p>
-        </div>
+              {(draft, update) => (
+                <>
+                  <FilterField label="Tipo de entidad" htmlFor="filtro-entidad">
+                    <Select
+                      value={draft.entityType}
+                      onValueChange={(v) => {
+                        update(
+                          v === ALL
+                            ? { entityType: ALL, entityId: '' }
+                            : { entityType: v as AuditEntityType },
+                        );
+                      }}
+                    >
+                      <SelectTrigger id="filtro-entidad" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL}>Todos los tipos</SelectItem>
+                        {AUDIT_ENTITY_TYPES.map((t) => (
+                          <SelectItem key={t} value={t}>
+                            {auditEntityTypeLabel(t)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FilterField>
+                  <FilterField label="ID de entidad" htmlFor="filtro-id">
+                    <Input
+                      id="filtro-id"
+                      disabled={draft.entityType === ALL}
+                      placeholder={draft.entityType === ALL ? 'elige un tipo primero' : 'id exacto'}
+                      value={draft.entityId}
+                      onChange={(e) => {
+                        update({ entityId: e.target.value });
+                      }}
+                    />
+                  </FilterField>
+                  <FilterField label="Usuario" htmlFor="filtro-usuario">
+                    <Select
+                      value={draft.actorId}
+                      onValueChange={(v) => {
+                        update({ actorId: v });
+                      }}
+                    >
+                      <SelectTrigger id="filtro-usuario" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL}>Todos los usuarios</SelectItem>
+                        {(users.data ?? []).map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FilterField>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <FilterField label="Desde" htmlFor="filtro-desde">
+                      <Input
+                        id="filtro-desde"
+                        type="date"
+                        className="w-40"
+                        value={draft.from}
+                        onChange={(e) => {
+                          update({ from: e.target.value });
+                        }}
+                      />
+                    </FilterField>
+                    <FilterField label="Hasta" htmlFor="filtro-hasta">
+                      <Input
+                        id="filtro-hasta"
+                        type="date"
+                        className="w-40"
+                        value={draft.to}
+                        onChange={(e) => {
+                          update({ to: e.target.value });
+                        }}
+                      />
+                    </FilterField>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Sin fechas: últimos 31 días. Máximo 12 meses de rango.
+                  </p>
+                </>
+              )}
+            </FiltersDialog>
+          }
+          status={
+            from === '' && to === '' ? (
+              <span className="text-sm text-muted-foreground">Últimos 31 días</span>
+            ) : undefined
+          }
+        />
 
         <div className="rounded-lg border">
           <Table list>
