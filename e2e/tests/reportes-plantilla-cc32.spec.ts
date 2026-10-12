@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { businessToday, type SalesMarginDto, type SalesMarginOrderDto } from '@ayr/shared';
 import { adminCredentials } from '../helpers/api';
-import { applyPeriodPreset, expectPeriodPreset } from '../helpers/ui';
+import { applyPeriodPreset, expectPeriodPreset, moreOption } from '../helpers/ui';
 
 /**
  * cc32 (corte 1) — plantilla de reportes, con Ventas y margen como primer reporte que la usa.
@@ -188,10 +188,11 @@ test.describe('Plantilla de reportes (cc32)', () => {
     const prev = previousMonth(today);
     await applyPeriodPreset(page, 'Mes anterior');
     await expect(page).toHaveURL(`/reportes/ventas-margen?from=${prev.from}&to=${prev.to}`);
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/sales-margin/xlsx?from=${prev.from}&to=${prev.to}`,
     );
+    await page.keyboard.press('Escape');
 
     // /reportes: los enlaces llevan el periodo elegido.
     await page.goto('/reportes');
@@ -333,10 +334,11 @@ test.describe('Plantilla de reportes (cc32)', () => {
     await page.getByLabel('Buscar en el reporte').fill('marco');
     await expect(page).toHaveURL(/search=marco/);
     await expect(footer(page).locator('[data-column="sales"]')).toHaveText('8,957.62');
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       '/api/reports/sales-margin/xlsx?from=2026-10-01&to=2026-10-07&search=marco',
     );
+    await page.keyboard.press('Escape');
     for (const view of ['Vendedor', 'Pedido']) {
       await page
         .getByRole('group', { name: 'Ver por' })

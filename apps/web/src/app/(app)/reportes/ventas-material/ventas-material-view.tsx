@@ -81,7 +81,7 @@ import { sumDecimal } from '@/lib/report-table';
 import { allRows, materialFiguresOf } from '@/lib/report-totals';
 import { useSort } from '@/lib/use-sort';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
-import { cn, LINK_CLASSNAME } from '@/lib/utils';
+import { cn, LINK_CLASSNAME, WIDE_DIALOG_CLASSNAME } from '@/lib/utils';
 
 /**
  * cc24 (D-406, D-407): una pestaña por línea, sin «Todas», Coberturas Aluzinc por defecto. Al
@@ -983,7 +983,7 @@ function MaterialBreakdownDialog({
     >
       {/* `sm:max-w-*` con prefijo: `cn()` no desduplica un `max-w-*` sin variante contra el
           `sm:max-w-sm` por defecto de DialogContent, y el modal quedaba en 384px. */}
-      <DialogContent className="sm:max-w-5xl" data-testid="desglose-material">
+      <DialogContent className={WIDE_DIALOG_CLASSNAME} data-testid="desglose-material">
         <DialogHeader>
           <DialogTitle>
             {row === null

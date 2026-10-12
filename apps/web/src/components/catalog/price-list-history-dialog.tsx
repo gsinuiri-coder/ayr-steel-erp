@@ -12,6 +12,7 @@ import { formatMoney, formatDateTime } from '@/lib/format';
 import { AuditHistoryLink } from '@/components/audit-history-link';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { WIDE_DIALOG_CLASSNAME } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -49,7 +50,7 @@ export function PriceListHistoryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className={WIDE_DIALOG_CLASSNAME}>
         <DialogHeader className="flex-row items-center justify-between gap-2 pr-8">
           <DialogTitle>Historial de precio — {productSku}</DialogTitle>
           {/* D-225: el resto de lo que le pasó al producto (ediciones, lotes) vive en el visor. */}

@@ -324,3 +324,17 @@ export async function expectPeriodPreset(page: Page, preset: string): Promise<vo
   await page.keyboard.press('Escape');
   await expect(modal).toBeHidden();
 }
+
+/**
+ * cc47b (D-623): una opción del menú «Más opciones» de la cabecera (las descargas viven ahí).
+ * Abre el menú si hace falta y devuelve el ítem; `scope` acota a un diálogo (Mostrador).
+ */
+export async function moreOption(page: Page, name: string, scope?: Locator): Promise<Locator> {
+  const item = page.getByRole('menuitem', { name, exact: true });
+  if ((await item.count()) === 0) {
+    const root = scope ?? page.locator('[data-slot="header-actions"]');
+    await root.getByRole('button', { name: 'Más opciones', exact: true }).first().click();
+  }
+  await expect(item).toBeVisible();
+  return item;
+}

@@ -259,7 +259,7 @@ export function InventarioValorizadoView() {
             <TabsTrigger value="bobinas">Bobinas con saldo</TabsTrigger>
             <TabsTrigger value="productos">Productos con stock</TabsTrigger>
           </TabsList>
-          <TabsContent value="bobinas" className="mt-3 grid gap-2">
+          <TabsContent value="bobinas" className="mt-3 grid grid-cols-1 gap-2">
             {toolbar}
             <ReportTable
               testId="tabla-inventario-bobinas"
@@ -283,7 +283,7 @@ export function InventarioValorizadoView() {
               errorTitle="No se pudo cargar el reporte"
             />
           </TabsContent>
-          <TabsContent value="productos" className="mt-3 grid gap-2">
+          <TabsContent value="productos" className="mt-3 grid grid-cols-1 gap-2">
             {toolbar}
             <ReportTable
               testId="tabla-inventario-productos"

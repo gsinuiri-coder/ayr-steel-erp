@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { moreOption } from '../helpers/ui';
 import {
   SALES_BY_MATERIAL_LINES,
   businessToday,
@@ -54,16 +55,18 @@ test.describe('Reportes por línea (cc24)', () => {
       'Reventa',
     ]);
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveCount(1);
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveCount(1);
+    await page.keyboard.press('Escape');
 
     await tab(page, 'Drywall').click();
     await expect(page).toHaveURL(`/reportes/ventas-material?from=${FROM}&to=${to}&linea=drywall`);
     await expect(tab(page, 'Drywall')).toHaveAttribute('aria-selected', 'true');
     // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve.
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/sales-by-material/xlsx?from=${FROM}&to=${to}&businessLine=drywall`,
     );
+    await page.keyboard.press('Escape');
     await expect(page.getByTestId('cuadre-ventas-margen')).toContainText('venta de Drywall');
 
     await page.reload();
@@ -101,10 +104,11 @@ test.describe('Reportes por línea (cc24)', () => {
       'Drywall',
     ]);
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       '/api/reports/coils/xlsx?month=2026-09&businessLine=metallic-roofing',
     );
+    await page.keyboard.press('Escape');
 
     await tab(page, 'Drywall').click();
     await expect(page).toHaveURL('/reportes/bobinas?mes=2026-09&linea=drywall');

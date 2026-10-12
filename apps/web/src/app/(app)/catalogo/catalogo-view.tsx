@@ -249,7 +249,7 @@ export function CatalogoView() {
             price: { decimal: (p) => p.listPricePen ?? '' },
           });
           return (
-            <TabsContent key={line.id} value={line.id} className="grid gap-4">
+            <TabsContent key={line.id} value={line.id} className="grid grid-cols-1 gap-4">
               {/* cc47 (D-615): buscar, «Filtros» (los inactivos) y, a la derecha, el alta. */}
               <TableToolbar
                 search={

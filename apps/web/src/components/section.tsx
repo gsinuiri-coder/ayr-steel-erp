@@ -51,7 +51,7 @@ export function Section({
       // cc31: las secciones con contador son las de la plantilla de detalle; solo ellas llevan
       // filas de 34 px (globals.css), no las de pantallas fuera de la pieza.
       data-counted={count !== undefined ? '' : undefined}
-      className={cn('grid content-start gap-1', className)}
+      className={cn('grid min-w-0 content-start gap-1', className)}
     >
       {separated && <Separator className="mb-1" />}
       {/* cc31: banda gris sólida con título, contador, resumen y la acción de la sección. */}
@@ -71,7 +71,7 @@ export function Section({
       {isEmpty ? (
         <p className="px-2.5 py-2 text-muted-foreground">{empty}</p>
       ) : (
-        <div className={bodyClassName}>{children}</div>
+        <div className={cn('min-w-0', bodyClassName)}>{children}</div>
       )}
     </section>
   );

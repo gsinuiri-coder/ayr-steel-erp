@@ -352,7 +352,9 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
         await expect(dialog).toContainText('cerrada', { timeout: 30_000 });
         const print = dialog.getByRole('button', { name: 'Imprimir comprobante' });
         const newSale = dialog.getByRole('button', { name: 'Nueva venta' });
-        await expect(dialog.getByRole('link', { name: 'Descargar PDF' })).toBeVisible();
+        // cc47b (D-623): «Descargar PDF» vive en «Más opciones» del diálogo; el foco sigue en
+        // «Imprimir comprobante».
+        await expect(dialog.getByRole('button', { name: 'Más opciones' })).toBeVisible();
         await expect(print).toBeFocused();
 
         await expectPrintsWithoutDownload(page, downloads, () => page.keyboard.press('Enter'));
@@ -399,7 +401,8 @@ test.describe('cc32 — documentos: imprimir sin descargar', () => {
         // El motivo, a la vista y atado al botón.
         await expect(print).toHaveAccessibleDescription(/se imprime cuando SUNAT lo acepte/i);
         await expect(dialog.getByText(/pendiente de envío al PSE/)).toBeVisible();
-        await expect(dialog.getByRole('link', { name: 'Descargar PDF' })).toHaveCount(0);
+        // Sin aceptar, no hay descarga: «Más opciones» no se muestra.
+        await expect(dialog.getByRole('button', { name: 'Más opciones' })).toHaveCount(0);
         await expect(dialog.getByRole('button', { name: 'Nueva venta' })).toBeFocused();
       } finally {
         await closeSessionQuietly(api, session?.id);

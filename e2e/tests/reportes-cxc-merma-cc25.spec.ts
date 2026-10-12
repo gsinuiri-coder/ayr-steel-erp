@@ -11,7 +11,7 @@ import {
   type ReceivablesAgingDto,
 } from '@ayr/shared';
 import { adminApi, adminCredentials, getJson } from '../helpers/api';
-import { openFilters } from '../helpers/ui';
+import { openFilters, moreOption } from '../helpers/ui';
 
 /**
  * cc25 (D-421..D-426) — reportes de cuentas por cobrar y de merma.
@@ -110,10 +110,11 @@ test.describe('Reportes de CxC y merma (cc25)', () => {
       'Todos los vendedores',
     );
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       '/api/reports/receivables-aging/xlsx',
     );
+    await page.keyboard.press('Escape');
     await expect(page.getByRole('link', { name: 'Cuentas por cobrar' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Merma por bobina' })).toBeVisible();
   });
@@ -159,10 +160,11 @@ test.describe('Reportes de CxC y merma (cc25)', () => {
     ]);
     await expect(tab(page, 'Coberturas Aluzinc')).toHaveAttribute('aria-selected', 'true');
     // cc39 (D-580): con Excel de la pestaña y el periodo que se ven.
-    await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+    await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
       'href',
       `/api/reports/coil-waste/xlsx?from=${FROM}&to=${to}&businessLine=metallic-roofing`,
     );
+    await page.keyboard.press('Escape');
 
     await tab(page, 'Drywall').click();
     await expect(page).toHaveURL(`/reportes/merma?from=${FROM}&to=${to}&linea=drywall`);

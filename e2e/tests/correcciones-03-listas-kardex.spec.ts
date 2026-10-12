@@ -9,7 +9,7 @@ import {
   reportPieces,
   setupRoofingScenario,
 } from '../helpers/roofing';
-import { openFilters, openSidebarGroup, selectOption } from '../helpers/ui';
+import { openFilters, openSidebarGroup, selectOption, moreOption } from '../helpers/ui';
 
 /**
  * Correcciones 03 del cliente (2026-09-25), por pantalla:
@@ -374,10 +374,11 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       // «Descargar Excel» apunta al formato del cliente en el método elegido.
       await page.setViewportSize({ width: 1366, height: 768 });
       await page.screenshot({ path: 'test-results/kardex-hoja-peps.png' });
-      await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
         'href',
         /\/api\/reports\/kardex\/xlsx\?.*method=PEPS/,
       );
+      await page.keyboard.press('Escape');
       await page.reload();
       await expect(page.getByTestId('kardex-sheet').getByText('Saldo inicial')).toBeVisible({
         timeout: 30_000,
@@ -389,10 +390,11 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       );
       await expect(page).not.toHaveURL(/costing=/);
       await expect(page.getByTestId('kardex-sheet').getByText('Saldo inicial')).toHaveCount(0);
-      await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
+      await expect(await moreOption(page, 'Descargar Excel')).toHaveAttribute(
         'href',
         /method=AVERAGE/,
       );
+      await page.keyboard.press('Escape');
 
       // El Excel del cliente baja en los dos métodos (solo ADMINISTRADOR) y es un .xlsx.
       for (const method of ['AVERAGE', 'PEPS']) {

@@ -96,7 +96,7 @@ export function InventarioView() {
           ))}
         </TabsList>
         {STOCK_LINES.map((l) => (
-          <TabsContent key={l} value={l} className="mt-4 grid gap-4">
+          <TabsContent key={l} value={l} className="mt-4 grid grid-cols-1 gap-4">
             <LinePanel line={l} showCosts={showCosts} />
           </TabsContent>
         ))}
@@ -162,7 +162,7 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
             <TabsTrigger value="bobinas">Bobinas por tipo</TabsTrigger>
             <TabsTrigger value="productos">Productos de catálogo</TabsTrigger>
           </TabsList>
-          <TabsContent value="bobinas" className="mt-3 grid gap-2">
+          <TabsContent value="bobinas" className="mt-3 grid grid-cols-1 gap-2">
             <SummaryTable
               emptyLabel="No hay bobinas con saldo en esta línea."
               rows={coils}
@@ -171,7 +171,7 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
               showMeters
             />
           </TabsContent>
-          <TabsContent value="productos" className="mt-3 grid gap-2">
+          <TabsContent value="productos" className="mt-3 grid grid-cols-1 gap-2">
             <SummaryTable
               emptyLabel="No hay productos con saldo en esta línea."
               rows={products}

@@ -227,11 +227,11 @@ export function CobranzasView() {
           <TabsTrigger value="pendientes">Comprobantes con saldo</TabsTrigger>
         </TabsList>
         {isAdmin && (
-          <TabsContent value="cliente" className="mt-3 grid gap-2">
+          <TabsContent value="cliente" className="mt-3 grid grid-cols-1 gap-2">
             <ReceivablesTab />
           </TabsContent>
         )}
-        <TabsContent value="pendientes" className="mt-3 grid gap-2">
+        <TabsContent value="pendientes" className="mt-3 grid grid-cols-1 gap-2">
           <PendingTab />
         </TabsContent>
       </Tabs>

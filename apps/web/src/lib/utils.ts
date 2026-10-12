@@ -36,3 +36,12 @@ export const CUSTOMER_NAME_CLASSNAME = 'inline-block max-w-[17rem] truncate alig
 export function customerSearchHref(docNumber: string): string {
   return `/clientes?search=${encodeURIComponent(docNumber)}`;
 }
+
+/**
+ * cc47b (D-625): el ancho de un modal de **detalle** que muestra tablas (el desglose de Ventas por
+ * material, el historial de precio): hasta el 90 % de la ventana, con tope de 90rem, para que su
+ * tabla entre completa a 1366. Si aun así no entra, el desplazamiento horizontal queda en la tabla
+ * (los hijos de la grilla del modal no estiran el modal: `min-w-0`) y nunca en el modal entero.
+ * No es para los diálogos de operación ni de confirmación.
+ */
+export const WIDE_DIALOG_CLASSNAME = 'sm:max-w-[min(90vw,90rem)] [&>*]:min-w-0';
