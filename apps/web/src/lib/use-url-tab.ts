@@ -24,7 +24,11 @@ export function useUrlTab<T extends string>(
 
   const select = useCallback(
     (next: T) => {
-      const params = new URLSearchParams(searchParams.toString());
+      // La URL del momento del clic: un `replace` del buscar o del periodo que todavía no llegó
+      // al render no se pierde (si no, el buscar se vaciaba al cambiar de pestaña).
+      const params = new URLSearchParams(
+        typeof window === 'undefined' ? searchParams.toString() : window.location.search,
+      );
       if (next === fallback) params.delete(param);
       else params.set(param, next);
       const qs = params.toString();

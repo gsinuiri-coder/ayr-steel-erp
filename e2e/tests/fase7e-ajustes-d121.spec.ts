@@ -55,7 +55,11 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
       'true',
     );
     await expect(page.getByText('No se pudieron cargar las bobinas.')).toHaveCount(0);
-    await expect(page.getByRole('combobox', { name: 'Estado' })).toHaveCount(0);
+    // cc47 (D-615): los filtros viven en el modal; en «Disponibles» hay film y no hay estado.
+    let modal = await openFilters(page);
+    await expect(modal.getByRole('combobox', { name: 'Estado' })).toHaveCount(0);
+    await expect(modal.getByRole('combobox', { name: 'Film de protección' })).toBeVisible();
+    await page.keyboard.press('Escape');
 
     const enCorteRes = page.waitForResponse(
       (r) => r.url().includes('/api/coils?') && r.url().includes('status=IN_THIRD_PARTY'),
@@ -67,7 +71,11 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
     expect(enCorteParams.get('statusNe')).toBeNull();
     expect(enCorteParams.get('availability')).toBeNull();
     await expect(page.getByText('No se pudieron cargar las bobinas.')).toHaveCount(0);
-    await expect(page.getByRole('combobox', { name: 'Estado' })).toHaveCount(0);
+    // En corte: ni estado ni film.
+    modal = await openFilters(page);
+    await expect(modal.getByRole('combobox', { name: 'Estado' })).toHaveCount(0);
+    await expect(modal.getByRole('combobox', { name: 'Film de protección' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
 
     const agotadasRes = page.waitForResponse(
       (r) => r.url().includes('/api/coils?') && r.url().includes('availability=depleted'),
@@ -89,7 +97,7 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
     expect(todasParams.get('availability')).toBeNull();
     await expect(page.getByText('No se pudieron cargar las bobinas.')).toHaveCount(0);
     // cc47 (D-615): el estado vive en el modal «Filtros», solo en «Todas».
-    const modal = await openFilters(page);
+    modal = await openFilters(page);
     await expect(modal.getByRole('combobox', { name: 'Estado' })).toBeVisible();
     await page.keyboard.press('Escape');
   });

@@ -43,6 +43,12 @@ export interface ReportPeriodState {
   error: string | null;
   /** Cambia el periodo; `preset` es el atajo que lo eligió, si fue un atajo. */
   setPeriod: (period: ReportPeriod, preset?: PeriodPreset | null) => void;
+  /**
+   * cc47: recuerda el atajo que eligió el usuario sin escribir la URL. Para la vista que escribe el
+   * periodo junto con sus otros filtros en un solo `replace` (dos instancias de `useUrlState`
+   * en el mismo tick se pisan): en enero «Este año» y «Este mes» dan las mismas fechas.
+   */
+  choosePreset: (preset: PeriodPreset | null) => void;
 }
 
 /**
@@ -91,6 +97,7 @@ export function useReportPeriod(): ReportPeriodState {
     complete,
     valid,
     error,
+    choosePreset: setChosen,
     setPeriod: (next, nextPreset = null) => {
       setChosen(nextPreset);
       setUrl({ from: next.from, to: next.to });

@@ -162,7 +162,7 @@ export function FiltersDialog<D>({
             e.preventDefault();
             setTried(true);
             if (error !== null) return;
-            onApply(draft);
+            if (!sameValues(draft, value)) onApply(draft);
             setOpen(false);
           }}
         >
@@ -185,7 +185,7 @@ export function FiltersDialog<D>({
               type="button"
               variant="outline"
               onClick={() => {
-                onApply(empty);
+                if (!sameValues(empty, value)) onApply(empty);
                 setOpen(false);
               }}
             >
@@ -197,6 +197,14 @@ export function FiltersDialog<D>({
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * Dos juegos de filtros iguales, campo por campo (los filtros son valores simples o planos). Aplicar
+ * lo mismo que ya está no escribe la URL: cualquier escritura vuelve a la página 1.
+ */
+function sameValues<D>(a: D, b: D): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** cc47 (D-615): un campo del modal de filtros, con su rótulo arriba. */

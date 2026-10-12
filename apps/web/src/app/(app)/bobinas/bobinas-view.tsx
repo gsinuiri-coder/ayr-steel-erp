@@ -243,7 +243,7 @@ export function BobinasView() {
               [
                 businessLine,
                 finishId,
-                thicknessMm,
+                isPositiveDecimal(thicknessMm) ? thicknessMm : '',
                 tab === 'disponibles' || tab === 'todas' ? film : '',
                 tab === 'todas' ? status : '',
               ].filter(Boolean).length

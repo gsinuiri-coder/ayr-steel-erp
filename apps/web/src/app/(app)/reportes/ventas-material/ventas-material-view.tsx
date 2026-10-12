@@ -304,7 +304,9 @@ export function VentasMaterialView() {
             }
             validate={periodDraftError}
             onApply={(next) => {
-              // Un solo `replace`: el periodo y los filtros llegan juntos a la URL.
+              // Un solo `replace`: el periodo y los filtros llegan juntos a la URL; el atajo
+              // elegido se recuerda aparte.
+              periodState.choosePreset(next.preset);
               setUrl({
                 from: next.from,
                 to: next.to,

@@ -177,7 +177,9 @@ test.describe('Estándar de tablas (cc47, corte B)', () => {
       await expect(toolbar.getByTestId('boton-filtros'), path).toBeVisible();
       // Fuera del modal no queda ningún selector ni chip de filtro.
       await expect(
-        page.locator('main [role="combobox"]:not([aria-label="Filas por página"])'),
+        page.locator(
+          'main [role="combobox"]:not([aria-label="Filas por página"]), main select:not([aria-hidden="true"])',
+        ),
         path,
       ).toHaveCount(0);
       await expect(page.locator('main button[aria-pressed]:not([role="tab"])'), path).toHaveCount(
