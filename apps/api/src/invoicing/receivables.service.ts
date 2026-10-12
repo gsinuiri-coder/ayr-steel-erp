@@ -13,6 +13,7 @@ import {
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginate,
   toDateOnly,
+  filterBySearch,
   toDecimal,
   toFixedString,
   type CreateCustomerPaymentInput,
@@ -329,18 +330,12 @@ export class ReceivablesService {
 /**
  * cc48 (D-630): el buscar de «Por cliente». El resumen se arma en memoria (está acotado por los
  * clientes con deuda), así que el buscar filtra ese resumen antes de paginar: el total y las
- * páginas son los de las filas que coinciden. Mismo criterio que la lista de clientes: contiene,
- * sin distinguir mayúsculas, en el nombre o en el documento.
+ * páginas son los de las filas que coinciden. El mismo buscar de los reportes (`filterBySearch`):
+ * cada palabra en el nombre o en el documento, sin distinguir mayúsculas ni tildes.
  */
 export function filterReceivablesBySearch(
   rows: ReceivableSummaryDto[],
   search: string | undefined,
 ): ReceivableSummaryDto[] {
-  const needle = search?.trim().toLocaleLowerCase('es');
-  if (!needle) return rows;
-  return rows.filter(
-    (r) =>
-      r.customerName.toLocaleLowerCase('es').includes(needle) ||
-      r.customerDocNumber.toLocaleLowerCase('es').includes(needle),
-  );
+  return filterBySearch(rows, (r) => [r.customerName, r.customerDocNumber], search ?? '');
 }

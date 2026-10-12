@@ -115,7 +115,9 @@ function receivablesParamsOf(url: typeof RECEIVABLES_URL_DEFAULTS): URLSearchPar
     page: String(Math.max(1, Number(url.rPage) || 1)),
     pageSize: String(Number(url.rSize) || DEFAULT_PAGE_SIZE),
   });
-  if (url.rSearch) params.set('search', url.rSearch);
+  // El API acepta hasta 80 caracteres (`receivablesQuerySchema`): una URL más larga no da 400.
+  const search = url.rSearch.trim().slice(0, 80);
+  if (search) params.set('search', search);
   return params;
 }
 

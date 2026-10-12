@@ -422,7 +422,7 @@ export class InvoicingController {
     @Res() res: Response,
   ): Promise<void> {
     const rows = await this.receivablesService.exportReceivables(query);
-    sendXlsx(res, receivablesXlsx(rows, actor.role, businessToday()));
+    sendXlsx(res, receivablesXlsx(rows, actor.role, businessToday(), query.search));
   }
 
   /**
