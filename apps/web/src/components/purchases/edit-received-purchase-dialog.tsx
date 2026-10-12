@@ -502,7 +502,7 @@ export function EditReceivedPurchaseDialog({
         </section>
 
         {editsLines ? (
-          <section className="grid gap-2">
+          <section className="grid grid-cols-1 gap-2">
             <h3 className="text-sm font-medium">
               {isCoil ? 'Bobinas' : 'Detalle'} — precios en {CURRENCY_LABELS[p.currency]}, sin IGV
             </h3>
@@ -692,7 +692,7 @@ export function EditReceivedPurchaseDialog({
         )}
 
         {currentPlan && (
-          <section className="grid gap-2" data-testid="received-edit-preview">
+          <section className="grid grid-cols-1 gap-2" data-testid="received-edit-preview">
             <h3 className="text-sm font-medium">Cambios a aplicar</h3>
             {currentPlan.changes.length === 0 ? (
               <p className="text-xs text-muted-foreground">

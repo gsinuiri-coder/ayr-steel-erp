@@ -127,7 +127,7 @@ export function OrderHistory() {
   };
 
   return (
-    <div className="grid min-w-0 gap-3">
+    <div className="grid grid-cols-1 min-w-0 gap-3">
       <div className="flex flex-wrap items-center gap-3">
         <StatusFilter
           value={url.hstatus}

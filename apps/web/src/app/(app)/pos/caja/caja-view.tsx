@@ -184,7 +184,7 @@ export function CajaView() {
                 {open.code} · {CASH_SESSION_STATUS_LABELS[open.status]} · {open.userName}
               </CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-3">
+            <CardContent className="grid grid-cols-1 gap-3">
               <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div>
                   <dt className="text-muted-foreground">Apertura</dt>

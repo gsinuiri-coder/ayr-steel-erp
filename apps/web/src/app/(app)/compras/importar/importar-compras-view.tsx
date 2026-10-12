@@ -694,7 +694,7 @@ function DocumentCard({
       )}
 
       {open && (
-        <div className="grid gap-3 border-t px-4 py-3">
+        <div className="grid grid-cols-1 gap-3 border-t px-4 py-3">
           <HeaderFields doc={doc} disabled={disabled} onEdit={onEdit} />
           <div
             className="overflow-x-auto"

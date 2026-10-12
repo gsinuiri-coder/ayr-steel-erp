@@ -316,7 +316,7 @@ export function ProductStockPickerDialog({
             no está bloqueado: la línea avisa si no alcanza, y no reserva nada hasta confirmar.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid min-w-0 gap-3">
+        <div className="grid grid-cols-1 min-w-0 gap-3">
           <Input
             autoFocus
             aria-label="Filtrar productos"

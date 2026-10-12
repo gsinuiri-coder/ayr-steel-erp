@@ -66,7 +66,7 @@ function PlantDashboardBody({ d }: { d: PlantDashboardDto }) {
       .join(' · ');
 
   return (
-    <section className="grid gap-3" aria-labelledby="plant-dashboard-title">
+    <section className="grid grid-cols-1 gap-3" aria-labelledby="plant-dashboard-title">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="plant-dashboard-title" className="text-sm font-semibold">
           Planta hoy
@@ -203,10 +203,13 @@ function PlantDashboardBody({ d }: { d: PlantDashboardDto }) {
                 Ninguna bajo el {LOW_COIL_THRESHOLD_PCT} %.
               </p>
             ) : (
-              <ul className="grid gap-2">
+              <ul className="grid grid-cols-1 gap-2">
                 {d.lowCoils.map((c) => (
                   <li key={c.id}>
-                    <Link href={`/bobinas/${c.id}`} className="group grid gap-1 text-sm">
+                    <Link
+                      href={`/bobinas/${c.id}`}
+                      className="group grid grid-cols-1 gap-1 text-sm"
+                    >
                       <span className="flex items-baseline justify-between gap-2">
                         <span className="truncate font-medium group-hover:underline">
                           {c.code}
