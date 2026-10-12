@@ -133,7 +133,12 @@ export function ReporteBobinasView() {
                 {
                   key: 'pdf',
                   label: downloadLabelFor('Descargar PDF', line),
-                  download: `/api/reports/coils/pdf?${qs}`,
+                  // cc48 (D-631): el PDF también trae las bobinas de la búsqueda.
+                  download: xlsxHref(
+                    '/api/reports/coils/pdf',
+                    { month, businessLine: line },
+                    searchText,
+                  ),
                 },
               ]}
             />

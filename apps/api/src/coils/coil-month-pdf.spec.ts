@@ -1,5 +1,10 @@
 import type { CoilMonthReportDto } from '@ayr/shared';
-import { buildCoilMonthReportPdf, coilMonthPdfSummary, coilMonthPdfTable } from './coil-pdf';
+import {
+  buildCoilMonthReportPdf,
+  coilMonthPdfSearchNotes,
+  coilMonthPdfSummary,
+  coilMonthPdfTable,
+} from './coil-pdf';
 
 /** D-355 — el reporte mensual de bobinas en PDF: mismas tablas, lo no listado y el cuadre. */
 function report(withCosts: boolean): CoilMonthReportDto {
@@ -72,6 +77,21 @@ describe('PDF del reporte mensual de bobinas (D-355)', () => {
       'Valor fin de mes: S/ 1100.0000.',
     ]);
     expect(coilMonthPdfSummary(report(false)).at(-1)).toMatch(/^Saldo inicio/);
+  });
+
+  it('cc48 (D-631): con búsqueda, el PDF lo dice arriba de las tablas y antes del cuadre', () => {
+    expect(coilMonthPdfSearchNotes('')).toEqual({ tables: null, summary: null });
+    expect(coilMonthPdfSearchNotes('   ')).toEqual({ tables: null, summary: null });
+    const notes = coilMonthPdfSearchNotes(' rojo ');
+    expect(notes.tables).toMatch(/^Búsqueda «rojo»: las mismas bobinas que la pantalla/);
+    expect(notes.summary).toMatch(
+      /^Sin la búsqueda «rojo»: las cifras de abajo son de toda la pestaña/,
+    );
+  });
+
+  it('arma un PDF con búsqueda', async () => {
+    const buffer = await buildCoilMonthReportPdf(report(true), '2026-09-27', 'rojo');
+    expect(buffer.subarray(0, 4).toString()).toBe('%PDF');
   });
 
   it('arma un PDF', async () => {

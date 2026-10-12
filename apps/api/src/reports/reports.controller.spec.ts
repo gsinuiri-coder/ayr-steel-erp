@@ -8,6 +8,7 @@ import type { InventoryValuationService } from './inventory-valuation.service';
 import type { KardexPepsService } from './kardex-peps.service';
 import type { DocumentProfitabilityService } from './document-profitability.service';
 import type { KardexSheetService } from './kardex-sheet.service';
+import * as coilPdf from '../coils/coil-pdf';
 import { ReportsController } from './reports.controller';
 import type { AdminDashboardService } from './admin-dashboard.service';
 import type { PlantDashboardService } from './plant-dashboard.service';
@@ -282,12 +283,60 @@ describe('ReportsController', () => {
     const { controller, reports } = build();
     reports.coilsByMonth.mockResolvedValue(COIL_MONTH);
     const res = fakeResponse();
-    await controller.coilsPdfFile(actor(Role.VENDEDOR), { month: '2026-08' }, res);
+    await controller.coilsPdfFile(actor(Role.VENDEDOR), { month: '2026-08' }, {}, res);
     expect(reports.coilsByMonth).toHaveBeenCalledWith({ month: '2026-08' }, false);
     expect(res.headers['Content-Type']).toBe('application/pdf');
     expect(res.headers['Content-Disposition']).toBe(
       'attachment; filename="reporte-bobinas-2026-08.pdf"',
     );
+  });
+
+  it('cc48 (D-631): el PDF del reporte mensual trae las bobinas de la búsqueda, como el Excel', async () => {
+    const { controller, reports } = build();
+    const row = (code: string, typeKey: string) => ({
+      id: code,
+      code,
+      typeKey,
+      finishName: 'Rojo',
+      kind: 'COIL' as const,
+      businessLine: 'metallic-roofing' as const,
+      colorName: 'ROJO',
+      widthMm: '1000.00',
+      openingKg: '100.000',
+      weightKg: '100.000',
+      closingKg: '50.000',
+      unitCostPerKg: '2.0000',
+      closingValuePen: '100.0000',
+      status: 'OPEN' as const,
+      operationDate: '2026-08-01',
+    });
+    reports.coilsByMonth.mockResolvedValue({
+      ...COIL_MONTH,
+      opened: {
+        rows: [row('B-ALAMOS-1', 'ALZ-ROJO-0.30'), row('B-OTRA-2', 'ALZ-AZUL-0.40')],
+        totals: {
+          openingKg: '200.000',
+          weightKg: '200.000',
+          closingKg: '100.000',
+          closingValuePen: '200.0000',
+        },
+      },
+    });
+    const pdf = jest.spyOn(coilPdf, 'buildCoilMonthReportPdf');
+    try {
+      await controller.coilsPdfFile(
+        actor(Role.ADMINISTRADOR),
+        { month: '2026-08' },
+        { search: 'alamos' },
+        fakeResponse(),
+      );
+      const [report, , search] = pdf.mock.calls[0]!;
+      expect(search).toBe('alamos');
+      expect(report.opened.rows.map((r) => r.code)).toEqual(['B-ALAMOS-1']);
+      expect(Number(report.opened.totals.closingKg)).toBe(50);
+    } finally {
+      pdf.mockRestore();
+    }
   });
 
   it('las rutas JSON devuelven el DTO del servicio tal cual', async () => {
