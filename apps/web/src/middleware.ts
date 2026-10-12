@@ -3,6 +3,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 const REFRESH_COOKIE = 'ayr_refresh';
 const ACCESS_COOKIE = 'ayr_access';
 const PUBLIC_PATHS = ['/login'];
+/**
+ * D-636: abiertas con o sin sesión. `/version` no va en `PUBLIC_PATHS` porque esas, con sesión,
+ * redirigen al inicio.
+ */
+const OPEN_PATHS = ['/version'];
 
 /**
  * Redirección rápida por presencia de cookie. La validación real la hace el API
@@ -10,6 +15,7 @@ const PUBLIC_PATHS = ['/login'];
  */
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
+  if (OPEN_PATHS.includes(pathname)) return NextResponse.next();
   const hasSession = req.cookies.has(REFRESH_COOKIE) || req.cookies.has(ACCESS_COOKIE);
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
