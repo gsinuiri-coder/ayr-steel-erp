@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, getItems } from '../helpers/api';
 import { createCustomer } from '../helpers/sales';
 import {
@@ -9,7 +9,7 @@ import {
   reportPieces,
   setupRoofingScenario,
 } from '../helpers/roofing';
-import { openSidebarGroup, selectOption } from '../helpers/ui';
+import { openFilters, openSidebarGroup, selectOption } from '../helpers/ui';
 
 /**
  * Correcciones 03 del cliente (2026-09-25), por pantalla:
@@ -187,32 +187,41 @@ test.describe('Correcciones 03 — pedidos: chips y URL (D-289)', () => {
         timeout: 60_000,
       });
       const rowOf = () => page.getByRole('row').filter({ hasText: order.code });
-      const chipAnulados = page.getByRole('button', { name: 'Anulados', exact: true });
-      const chipAtendidos = page.getByRole('button', { name: 'Atendidos', exact: true });
-      await expect(chipAnulados).toHaveAttribute('aria-pressed', 'false');
-      await expect(chipAtendidos).toHaveAttribute('aria-pressed', 'false');
+      // cc47 (D-615): los chips viven en el modal «Filtros» y se aplican con «Aplicar».
+      const chip = (modal: Locator, name: string) =>
+        modal.getByRole('button', { name, exact: true });
+      let modal = await openFilters(page);
+      await expect(chip(modal, 'Anulados')).toHaveAttribute('aria-pressed', 'false');
+      await expect(chip(modal, 'Atendidos')).toHaveAttribute('aria-pressed', 'false');
+      await page.keyboard.press('Escape');
       await expect(rowOf()).toHaveCount(0);
 
       // El chip «Anulados» lo muestra y lo escribe en la URL.
-      await chipAnulados.click();
+      modal = await openFilters(page);
+      await chip(modal, 'Anulados').click();
+      await expect(chip(modal, 'Anulados')).toHaveAttribute('aria-pressed', 'true');
+      await modal.getByRole('button', { name: 'Aplicar' }).click();
       await expect(page).toHaveURL(/stage=CANCELLED/);
-      await expect(chipAnulados).toHaveAttribute('aria-pressed', 'true');
       await expect(rowOf()).toHaveCount(1, { timeout: 30_000 });
 
       // Recargar conserva el filtro: mismo chip, misma fila.
       await page.reload();
       await expect(page).toHaveURL(/stage=CANCELLED/);
-      await expect(chipAnulados).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByRole('button', { name: 'Filtros, 1 activo' })).toBeVisible();
       await expect(rowOf()).toHaveCount(1, { timeout: 30_000 });
 
       // «Atendidos» se suma a los chips (la lista pide los dos estados) y también queda en la URL.
-      await chipAtendidos.click();
-      await expect(chipAtendidos).toHaveAttribute('aria-pressed', 'true');
+      modal = await openFilters(page);
+      await expect(chip(modal, 'Anulados')).toHaveAttribute('aria-pressed', 'true');
+      await chip(modal, 'Atendidos').click();
+      await expect(chip(modal, 'Atendidos')).toHaveAttribute('aria-pressed', 'true');
+      await modal.getByRole('button', { name: 'Aplicar' }).click();
       await expect(page).toHaveURL(
         /stage=(FULFILLED%2CCANCELLED|FULFILLED,CANCELLED|CANCELLED%2CFULFILLED|CANCELLED,FULFILLED)/,
       );
-      await chipAtendidos.click();
-      await chipAnulados.click();
+      // «Limpiar» los quita.
+      modal = await openFilters(page);
+      await modal.getByRole('button', { name: 'Limpiar' }).click();
       await expect(page).not.toHaveURL(/stage=/);
 
       // Buscar por código lo encuentra aunque ningún chip esté activo, y la búsqueda vive en la URL.
@@ -281,10 +290,18 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       await expect(page).toHaveURL(new RegExp(`itemType=COIL&item=${scenario.coil.id}`));
       await expect(page.getByTestId('kardex-empty')).toBeHidden();
       // Mes en curso por defecto: la entrada de la compra y la salida de producción son de hoy.
-      await expect(page.getByRole('button', { name: 'Mes actual' })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      );
+      // cc47 (D-615): el rango vive en el modal «Filtros».
+      const rangeChip = (modal: Locator, name: string) =>
+        modal.getByRole('button', { name, exact: true });
+      const applyRange = async (name: string) => {
+        const modal = await openFilters(page);
+        await rangeChip(modal, name).click();
+        await modal.getByRole('button', { name: 'Aplicar' }).click();
+        await expect(modal).toBeHidden();
+      };
+      let modal = await openFilters(page);
+      await expect(rangeChip(modal, 'Mes actual')).toHaveAttribute('aria-pressed', 'true');
+      await page.keyboard.press('Escape');
       // D-298: la hoja del cliente —cabecera Producto / Código / Método y las columnas Fecha,
       // Detalle, ENTRADAS, SALIDAS y SALDO—, igual para los dos métodos.
       const header = page.getByTestId('kardex-header');
@@ -304,34 +321,35 @@ test.describe('Correcciones 03 — kardex por ítem, catálogo, columna de bobin
       );
 
       // Mes anterior: vacío, y el rango queda en la URL.
-      await page.getByRole('button', { name: 'Mes anterior' }).click();
+      await applyRange('Mes anterior');
       await expect(page).toHaveURL(/range=prev/);
       await expect(page.getByText(/No hay movimientos en este rango/)).toBeVisible({
         timeout: 30_000,
       });
       // Todo: vuelve el historial completo, y recargar conserva ítem y rango.
-      await page.getByRole('button', { name: 'Todo', exact: true }).click();
+      await applyRange('Todo');
       await expect(page).toHaveURL(/range=all/);
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
       await page.reload();
       await expect(page).toHaveURL(
         new RegExp(`item=${scenario.coil.id}.*range=all|range=all.*item=`),
       );
-      await expect(page.getByRole('button', { name: 'Todo', exact: true })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      );
+      modal = await openFilters(page);
+      await expect(rangeChip(modal, 'Todo')).toHaveAttribute('aria-pressed', 'true');
+      await page.keyboard.press('Escape');
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
 
-      // M0.1 (correcciones 04): «Desde» y «Hasta» escritos uno tras otro, sin pausa, se conservan
-      // los dos. Antes la segunda escritura reenviaba el «Desde» viejo y dejaba el rango al revés.
-      await page.getByLabel('Desde').fill('2026-08-01');
-      await page.getByLabel('Hasta').fill('2026-08-31');
+      // M0.1 (correcciones 04): «Desde» y «Hasta» escritos uno tras otro se conservan los dos.
+      // cc47: en el modal son un borrador y llegan juntos a la URL con «Aplicar».
+      modal = await openFilters(page);
+      await modal.getByLabel('Desde').fill('2026-08-01');
+      await modal.getByLabel('Hasta').fill('2026-08-31');
+      await modal.getByRole('button', { name: 'Aplicar' }).click();
       await expect
         .poll(() => Object.fromEntries(new URL(page.url()).searchParams), { timeout: 15_000 })
         .toMatchObject({ range: 'custom', from: '2026-08-01', to: '2026-08-31' });
       await expect(page.getByText(/La fecha «Desde» es posterior a «Hasta»/)).toBeHidden();
-      await page.getByRole('button', { name: 'Todo', exact: true }).click();
+      await applyRange('Todo');
       await expect(movementRows.first()).toBeVisible({ timeout: 30_000 });
 
       // D-323: sin filtros por columna; la fecha ordena (la más reciente primero) y el saldo

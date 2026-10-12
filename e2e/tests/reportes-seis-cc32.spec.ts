@@ -7,7 +7,7 @@ import {
   previousMonth,
   uuid,
 } from '../helpers/report-fixtures';
-import { applyPeriodPreset } from '../helpers/ui';
+import { applyPeriodPreset, expectPeriodPreset, openFilters } from '../helpers/ui';
 
 /**
  * cc32 (corte 2) — los otros seis reportes sobre la plantilla del corte 1: Ventas por material,
@@ -43,10 +43,8 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
     for (const path of ['/reportes/merma', '/reportes/produccion']) {
       await page.goto(path);
       await expect(page).toHaveURL(`${path}?from=${firstOfMonth(today)}&to=${today}`);
-      await expect(page.getByRole('button', { name: 'Este mes' })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      );
+      // cc47 (D-615): el periodo se elige en «Filtros».
+      await expectPeriodPreset(page, 'Este mes');
     }
     // Producción ofrece el Excel con el periodo y la pestaña puestos.
     await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
@@ -78,10 +76,7 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
 
     await page.goto('/reportes/merma');
     await expect(page).toHaveURL(`/reportes/merma?from=${prev.from}&to=${prev.to}`);
-    await expect(page.getByRole('button', { name: 'Mes anterior' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await expectPeriodPreset(page, 'Mes anterior');
 
     await page.goto('/reportes/produccion');
     await expect(page).toHaveURL(`/reportes/produccion?from=${prev.from}&to=${prev.to}`);
@@ -255,9 +250,15 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
     await expect(page.getByTestId('periodo')).toHaveCount(0);
     await expect(page).toHaveURL('/reportes/inventario-valorizado');
     await expect(total(page, 'tabla-inventario-bobinas', 'qty')).toHaveText('1,000.00');
-    await expect(total(page, 'tabla-inventario-productos', 'value')).toHaveText('250.00');
     // El acabado con su nombre.
     await expect(page.getByTestId('grupo-bobinas')).toContainText('Rojo teja · RAL 3002 (AZR3002)');
+    // cc47 (D-617): los productos están en su propia pestaña, en la URL.
+    await page
+      .getByTestId('pestanas-tabla-inventario')
+      .getByRole('tab', { name: 'Productos con stock' })
+      .click();
+    await expect(page).toHaveURL(/tabla=productos/);
+    await expect(total(page, 'tabla-inventario-productos', 'value')).toHaveText('250.00');
   });
 
   test('Bobinas: el mes va en la URL y el Excel lo lleva', async ({ page }) => {
@@ -268,11 +269,9 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
 
     await page.goto('/reportes/bobinas');
     await expect(page).toHaveURL(`/reportes/bobinas?mes=${today.slice(0, 7)}`);
-    await expect(page.getByRole('button', { name: 'Este mes' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    await page.getByRole('button', { name: 'Mes anterior' }).click();
+    // cc47 (D-615): el mes se elige en «Filtros».
+    await expectPeriodPreset(page, 'Este mes');
+    await applyPeriodPreset(page, 'Mes anterior');
     await expect(page).toHaveURL(`/reportes/bobinas?mes=${prev.month}`);
     await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
       'href',
@@ -352,9 +351,14 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
     // Un enlace guardado de antes de cc32: `range=prev` sin fechas pasa al mes anterior.
     await page.goto('/reportes/ventas-material?range=prev');
     await expect(page).toHaveURL(`/reportes/ventas-material?from=${prev.from}&to=${prev.to}`);
-    await expect(page.getByRole('button', { name: 'Mes anterior' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await expectPeriodPreset(page, 'Mes anterior');
+    // cc47 (D-615): tipo, espesor y color también viven en el modal, y se aplican con el periodo.
+    await page.goto('/reportes/ventas-material?from=2026-09-01&to=2026-09-30&linea=drywall');
+    const modal = await openFilters(page);
+    await modal.getByLabel('Tipo').selectOption('PERFIL');
+    await modal.getByRole('button', { name: 'Aplicar' }).click();
+    await expect(page).toHaveURL(/tipo=PERFIL/);
+    await expect(page).toHaveURL(/from=2026-09-01&to=2026-09-30/);
+    await expect(page.getByRole('button', { name: 'Filtros, 2 activos' })).toBeVisible();
   });
 });

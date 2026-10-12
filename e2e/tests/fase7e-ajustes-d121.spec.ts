@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { adminApi, adminCredentials, postJson } from '../helpers/api';
 import { deactivateTrail, purgeProductionOrder, setupScenario } from '../helpers/production';
+import { openFilters } from '../helpers/ui';
 
 /**
  * Verificación puntual de D-121 (ajustes de alcance pedidos por el dueño sobre Fase 7e):
@@ -87,7 +88,10 @@ test.describe('D-121 — pestañas de bobinas y piezas teóricas en planta', () 
     expect(todasParams.get('statusNe')).toBeNull();
     expect(todasParams.get('availability')).toBeNull();
     await expect(page.getByText('No se pudieron cargar las bobinas.')).toHaveCount(0);
-    await expect(page.getByRole('combobox', { name: 'Estado' })).toBeVisible();
+    // cc47 (D-615): el estado vive en el modal «Filtros», solo en «Todas».
+    const modal = await openFilters(page);
+    await expect(modal.getByRole('combobox', { name: 'Estado' })).toBeVisible();
+    await page.keyboard.press('Escape');
   });
 
   test('una OP de drywall en curso muestra "Piezas teóricas" en el espacio de producción y en /produccion/[id]', async ({
