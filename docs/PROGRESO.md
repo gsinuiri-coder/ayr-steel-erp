@@ -2,6 +2,40 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-11 — cc47: estándar de tablas, reportes, Cobranzas, menú y Panel (D-612..D-622; PR #182 y #183)
+
+Solo web: sin API, sin migraciones y sin SQL. Detalle en `docs/handoff/ventana-cc47.md`; revisiones en
+`docs/revision/cc47-{a,b}-segundo-modelo.md`; UAT en `docs/uat/cc47.md`.
+
+- **En producción:** web de `3d9fde52` (corte A, la muestra) y de `ed70858a` (corte B, el resto). El
+  `smoke:prod` dio verde en los dos dominios después de cada corte. La API no cambió (`00117-7pm`).
+- **D-612/D-619:** «Órdenes de producción» y «Colores» salieron del menú. Siguen en la ruta y en «Ir a».
+  El menú por rol queda en 31, 15 y 12 entradas.
+- **D-613:** sin la franja gris con la suma de la página en las 7 listas.
+- **D-614:** «Bobinas» solo en las líneas que manejan bobinas. En Reventa y UPVC no podía haber
+  ninguna.
+- **D-615/D-620:** línea estándar en todas las listas y reportes: buscar, «Filtros» (un modal con
+  borrador, «Aplicar», «Limpiar» y contador) y, a la derecha, «Ver por» y el Excel o PDF. El
+  componente es `components/table-toolbar.tsx`.
+- **D-616:** estructura única de los reportes; los totales por línea van en franja gris.
+- **D-617/D-621:** una tabla por página, en pestañas con la URL, en Cobranzas, Inventario, Inventario
+  valorizado y Reporte mensual de bobinas. «Por cliente» de Cobranzas queda sin buscar porque el API no
+  lo permite.
+- **D-618:** el Panel sin «Cotizaciones sin stock disponible». El endpoint queda para una limpieza de
+  API.
+- **D-622:** fuera de la línea estándar quedan Caja, el historial de Planta y las listas sin nada que
+  filtrar.
+- **Pruebas:**
+  - CI en verde en los dos PR: E2E en 2 shards, smoke de Neon `ci`, drift y Sonar.
+  - E2E locales en modo dev: corte A 38/41 y 20/21 al repetir; corte B 51/54 y 27/27 al repetir. Los
+    rojos son de compilación en frío y de la carrera de URL inválida, que pasan en la CI.
+  - Unitarios de la web: 323.
+- **Registro de riesgo:** no toca kardex ni datos.
+- **Pendiente de decisión del dueño:** ratificar D-612 a D-622. También qué hacer con:
+  - las listas sin nada que filtrar;
+  - Caja;
+  - el alto de la tabla con «Totales por línea» a 1366×768.
+
 ## 2026-10-11 — cc46: hooks de React en el lint, borde del partido con costo y objetos de base (D-606..D-611; PR #178, #179 y #180)
 
 Sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc46.md`; revisiones en

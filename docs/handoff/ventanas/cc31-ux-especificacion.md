@@ -79,6 +79,8 @@ Orden fijo: ruta, cabecera, resumen, etapas, secciones, sección vacía.
 
 Tablero: `Tablas`.
 
+> **Enmienda cc47 (D-613, D-615, D-617; decisión del dueño del 11/10/2026).** El pie con la suma de la página se quitó: los totales que valen son los de arriba, que suman todo el filtro. Encima de toda tabla va la línea estándar —buscar, «Filtros» (modal con todos los filtros, «Aplicar», «Limpiar» y contador) y, a la derecha, «Ver por» y las descargas—, con un solo componente (`components/table-toolbar.tsx`). Una tabla principal por página: si hay más, cada una en su pestaña, en la URL. Lo de abajo que contradiga esto quedó reemplazado.
+
 - Título con el filtro activo, «Más opciones» y un botón principal.
 - La unidad va en el encabezado («Total (S/)»), no en cada celda. Vacío con palabra («Sin emitir»), no con raya.
 - Pie con cuántas filas se ven y la suma de la columna de importe.
