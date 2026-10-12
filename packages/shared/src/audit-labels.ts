@@ -244,3 +244,14 @@ export function isPriceListValueField(source: string, action: string, key: strin
   }
   return false;
 }
+
+/**
+ * cc48 (D-634): las opciones del filtro «Acción» del visor, ordenadas por rótulo: las de
+ * `audit_log` y las de los tres changelogs (su `action` es el nombre de la fuente).
+ */
+export function auditActionOptions(): { value: string; label: string }[] {
+  return [
+    ...Object.entries(AUDIT_ACTION_LABELS).map(([value, label]) => ({ value, label })),
+    ...Object.entries(CHANGELOG_ACTION_LABELS).map(([value, label]) => ({ value, label })),
+  ].sort((a, b) => a.label.localeCompare(b.label, 'es'));
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { auditFieldLabel, auditFieldValueLabel, isPriceListValueField } from './audit-labels';
+import { auditFieldLabel, auditFieldValueLabel, isPriceListValueField } from '@ayr/shared';
 
 describe('auditFieldLabel', () => {
   it('traduce las claves conocidas de los tres changelogs dedicados', () => {
