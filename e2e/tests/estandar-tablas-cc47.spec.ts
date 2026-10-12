@@ -28,7 +28,7 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
       'active',
       { timeout: 60_000 },
     );
-    // «Por cliente» no se busca ni se filtra en el API: sin buscar ni «Filtros». cc47b (D-623): su
+    // «Por cliente» no se filtra en el API: sin «Filtros» (cc48, D-630: sí lleva buscar). cc47b (D-623): su
     // Excel, en «Más opciones» de la cabecera y con la pestaña en el rótulo.
     await expect(page.getByTestId('boton-filtros')).toHaveCount(0);
     await expect(await moreOption(page, 'Descargar Excel · Por cliente')).toHaveAttribute(

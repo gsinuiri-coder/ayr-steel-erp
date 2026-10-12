@@ -45,6 +45,16 @@ export function LineTotalsStrip({
   const [collapsed, setCollapsed] = useState(false);
   const [manual, setManual] = useState(false);
   const heights = useRef({ open: 0, closed: COLLAPSED_GUESS_PX });
+  // El estado que se ve, para medir fuera del render (la decisión corre en un cuadro aparte).
+  const collapsedRef = useRef(collapsed);
+  useEffect(() => {
+    collapsedRef.current = collapsed;
+  }, [collapsed]);
+  // Cifras nuevas (otro periodo, una línea más) pueden cambiar el alto de la franja abierta:
+  // vuelve a decidir con ellas.
+  const signature = items
+    .map((i) => `${i.key}:${i.figures.map((f) => f.value).join(',')}`)
+    .join('|');
 
   useEffect(() => {
     if (manual) return;
@@ -53,19 +63,20 @@ export function LineTotalsStrip({
       const el = ref.current;
       if (!el) return;
       const strip = el.getBoundingClientRect();
+      const current = collapsedRef.current;
+      if (current) heights.current.closed = strip.height;
+      else heights.current.open = strip.height;
       const table = listContainer(document)?.getBoundingClientRect() ?? null;
-      setCollapsed((current) => {
-        if (current) heights.current.closed = strip.height;
-        else heights.current.open = strip.height;
-        if (table === null) return false;
-        // Plegada, abrirla sumaría lo que la franja abierta ocupa de más.
-        const extra = current ? Math.max(heights.current.open - heights.current.closed, 0) : 0;
-        return shouldCollapseLineTotals({
-          viewportHeight: window.innerHeight,
-          tableTop: table.top + window.scrollY,
-          belowWhenOpen: strip.bottom - table.bottom + extra,
-        });
-      });
+      // Plegada, abrirla sumaría lo que la franja abierta ocupa de más.
+      const extra = current ? Math.max(heights.current.open - heights.current.closed, 0) : 0;
+      setCollapsed(
+        table !== null &&
+          shouldCollapseLineTotals({
+            viewportHeight: window.innerHeight,
+            tableTop: table.top + window.scrollY,
+            belowWhenOpen: strip.bottom - table.bottom + extra,
+          }),
+      );
     };
     // Dos cuadros: el alto de la lista lo fija `useFillViewport` en el siguiente.
     // La franja va siempre debajo de la tabla: lo que hay entre las dos (y la franja) es lo que
@@ -79,13 +90,14 @@ export function LineTotalsStrip({
     schedule();
     const observer = new ResizeObserver(schedule);
     observer.observe(document.body);
+    if (ref.current) observer.observe(ref.current);
     window.addEventListener('resize', schedule);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener('resize', schedule);
     };
-  }, [manual]);
+  }, [manual, signature]);
 
   const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (

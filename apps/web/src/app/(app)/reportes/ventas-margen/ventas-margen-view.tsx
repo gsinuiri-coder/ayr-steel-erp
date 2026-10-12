@@ -810,8 +810,10 @@ function TotalsByLine({ data }: { data: SalesMarginDto }) {
     items.push({
       key: 'redondeo',
       label: 'Redondeo al céntimo',
-      title: 'Comprobantes con líneas de más de dos decimales (precio con IGV)',
-      figures: [{ label: '', value: formatAmount(data.totals.roundingPen, 4) }],
+      figures: [
+        { label: '', value: formatAmount(data.totals.roundingPen, 4) },
+        { label: '', value: 'comprobantes con líneas de más de dos decimales (precio con IGV)' },
+      ],
     });
   }
   if (items.length === 0) {
