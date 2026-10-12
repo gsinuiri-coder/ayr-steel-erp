@@ -9,7 +9,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
  * Como la pestaña de línea de los reportes (`useLineTab`): cambiar de pestaña **entra al
  * historial** (`router.push`), así retroceder vuelve a la pestaña anterior, y la pestaña por defecto
  * no se escribe (URL limpia). Un valor que no es una pestaña cae en la de defecto. Los demás
- * parámetros se conservan: cada tabla lleva los suyos con su propio prefijo.
+ * parámetros se conservan tal cual; la vista elige nombres que no choquen entre sus pestañas.
  */
 export function useUrlTab<T extends string>(
   tabs: readonly T[],

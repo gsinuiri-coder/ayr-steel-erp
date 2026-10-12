@@ -92,9 +92,10 @@ const ALL = 'ALL';
 export function CobranzasView() {
   const { user } = useSession();
   const isAdmin = user.role === Role.ADMINISTRADOR;
-  // «Por cliente» es solo del administrador en el API (el vendedor recibe 403): el vendedor
-  // empieza en sus comprobantes con saldo, la tabla que sí puede ver.
-  const [tab, selectTab] = useUrlTab<CobranzasTab>(TABS, isAdmin ? 'cliente' : 'pendientes');
+  // «Por cliente» es solo del administrador en el API (el vendedor recibe 403): el vendedor no
+  // ve esa pestaña y queda en sus comprobantes con saldo, la tabla que sí puede ver.
+  const tabs: readonly CobranzasTab[] = isAdmin ? TABS : ['pendientes'];
+  const [tab, selectTab] = useUrlTab<CobranzasTab>(tabs, tabs[0] ?? 'pendientes');
 
   const totals = useQuery({
     queryKey: ['receivables-summary'],
@@ -174,12 +175,14 @@ export function CobranzasView() {
         }}
       >
         <TabsList aria-label="Vista de cobranzas" data-testid="pestanas-cobranzas">
-          <TabsTrigger value="cliente">Por cliente</TabsTrigger>
+          {isAdmin && <TabsTrigger value="cliente">Por cliente</TabsTrigger>}
           <TabsTrigger value="pendientes">Comprobantes con saldo</TabsTrigger>
         </TabsList>
-        <TabsContent value="cliente" className="mt-3 grid gap-2">
-          <ReceivablesTab isAdmin={isAdmin} />
-        </TabsContent>
+        {isAdmin && (
+          <TabsContent value="cliente" className="mt-3 grid gap-2">
+            <ReceivablesTab />
+          </TabsContent>
+        )}
         <TabsContent value="pendientes" className="mt-3 grid gap-2">
           <PendingTab />
         </TabsContent>
@@ -193,7 +196,7 @@ export function CobranzasView() {
  * ni filtra esta tabla (`paginationQuerySchema`) y la pantalla no trae todas sus filas, así que no
  * lleva buscar ni «Filtros» (cc47, D-617: aquí se paró; buscar por cliente pide API).
  */
-function ReceivablesTab({ isAdmin }: { isAdmin: boolean }) {
+function ReceivablesTab() {
   // D-289: la página y el tamaño viven en la URL (`rPage`/`rSize`).
   const [url, setUrl] = useUrlState({ rPage: '1', rSize: String(DEFAULT_PAGE_SIZE) });
   const receivablesPage = {
@@ -228,14 +231,13 @@ function ReceivablesTab({ isAdmin }: { isAdmin: boolean }) {
       <TableToolbar
         aside={
           // cc26 M2: todas las filas de la tabla y el total de las tarjetas. Solo ADMINISTRADOR,
-          // el mismo permiso de la tabla (MR-1 de menu-por-rol.md sigue como propuesta).
+          // el mismo permiso de la pestaña (MR-1 de menu-por-rol.md sigue como propuesta).
           <HeaderActions
             primary={['xlsx']}
             actions={[
               {
                 key: 'xlsx',
                 label: 'Excel por cliente',
-                show: isAdmin,
                 download: '/api/invoicing/receivables/xlsx',
               },
             ]}

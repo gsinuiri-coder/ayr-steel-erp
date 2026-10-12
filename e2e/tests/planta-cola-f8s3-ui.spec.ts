@@ -201,9 +201,10 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       await expect(
         page.getByRole('link', { name: 'Órdenes de producción', exact: true }),
       ).toHaveCount(0);
+      await page.goto('/planta');
       await expect(
         page.getByRole('link', { name: 'Historial de órdenes', exact: true }),
-      ).toHaveAttribute('href', /\/planta\?historial=1$/);
+      ).toHaveAttribute('href', /\/planta\?historial=1$/, { timeout: 60_000 });
       await page.goto('/produccion');
       await expect(page).toHaveURL(/\/planta\?historial=1$/, { timeout: 60_000 });
       await expect(

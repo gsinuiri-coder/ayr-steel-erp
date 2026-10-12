@@ -168,7 +168,11 @@ test.describe('F8-S2b/M1 — cotizaciones sin stock disponible (D-188)', () => {
       await expect(page.getByRole('heading', { name: 'Para atender hoy' })).toBeVisible({
         timeout: 30_000,
       });
-      await expect(page.getByText('Pedidos con faltante')).toBeVisible();
+      await expect(
+        page
+          .getByRole('region', { name: 'Para atender hoy' })
+          .getByText('Pedidos con faltante', { exact: true }),
+      ).toBeVisible();
       // Ni la tarjeta del final ni la del resumen.
       await expect(page.getByText('Cotizaciones sin stock disponible')).toHaveCount(0);
       await expect(page.getByText('Cotizaciones sin stock', { exact: true })).toHaveCount(0);

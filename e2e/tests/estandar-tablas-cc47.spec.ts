@@ -94,7 +94,7 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
     page,
   }) => {
     await loginAsAdmin(page);
-    await page.goto('/reportes/ventas-margen?from=2026-10-01&to=2026-10-07');
+    await page.goto('/reportes/ventas-margen?from=2025-01-01&to=2025-01-07');
     const toolbar = page.getByTestId('linea-tabla');
     await expect(toolbar.getByRole('searchbox', { name: 'Buscar en el reporte' })).toBeVisible({
       timeout: 60_000,
@@ -105,23 +105,23 @@ test.describe('Estándar de tablas (cc47, corte A)', () => {
     await expect(page.getByRole('group', { name: 'Periodo' })).toHaveCount(0);
     // Un periodo distinto de «Este mes» cuenta como filtro activo.
     await expect(page.getByRole('button', { name: 'Filtros, 1 activo' })).toBeVisible();
-    await expect(page.getByTestId('periodo-rango')).toHaveText('Del 01/10/2026 al 07/10/2026');
+    await expect(page.getByTestId('periodo-rango')).toHaveText('Del 01/01/2025 al 07/01/2025');
 
     // Un rango al revés no se aplica: el modal lo dice y la URL no cambia.
     const modal = await openFilters(page);
-    await modal.getByLabel('Desde').fill('2026-10-10');
+    await modal.getByLabel('Desde').fill('2025-01-10');
     await modal.getByRole('button', { name: 'Aplicar' }).click();
     await expect(modal.getByRole('alert')).toContainText('El periodo no es válido');
-    await expect(page).toHaveURL(/from=2026-10-01&to=2026-10-07/);
+    await expect(page).toHaveURL(/from=2025-01-01&to=2025-01-07/);
     await page.keyboard.press('Escape');
 
     // «Este mes» desde el modal: la URL, el rango y el Excel siguen el periodo.
     await applyPeriodPreset(page, 'Este mes');
     await expect(page.getByRole('button', { name: 'Filtros', exact: true })).toBeVisible();
-    await expect(page).not.toHaveURL(/from=2026-10-01&to=2026-10-07/);
+    await expect(page).not.toHaveURL(/from=2025-01-01&to=2025-01-07/);
     await expect(toolbar.getByRole('link', { name: 'Descargar Excel' })).not.toHaveAttribute(
       'href',
-      /to=2026-10-07/,
+      /to=2025-01-07/,
     );
   });
 
