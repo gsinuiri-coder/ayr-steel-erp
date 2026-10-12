@@ -2,6 +2,33 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-12 — cc49: qué commit está publicado e «Historial» en compra, corte y OP (D-636, D-637; PR #190 y #191)
+
+API y web, sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc49.md`;
+revisiones en `docs/revision/cc49-{a,b}-*.md`; UAT en `docs/uat/cc49.md`.
+
+- **En producción:**
+  - Corte A: API `00120-clh` (`9cf2a91b`) y web de `a0efee22`.
+  - Corte B: web de `9e3f0bcc` (la API no cambió).
+  - `smoke:prod` en verde en los dos dominios tras cada corte, ya con la verificación nueva:
+    `/version` publicó el sha del merge en unos 2 minutos y `/api/health` dio `9cf2a91b`.
+- **Decisiones del dueño (12/10):** D-632 no se aplica (las columnas del Reporte mensual de bobinas
+  quedan como están) y PED-000049 queda sin acción.
+- **D-636:**
+  - La web publica `/version` y la API, `sha` en `/api/health`.
+  - `smoke:prod` espera hasta 10 minutos a que los dos dominios publiquen el commit de `main` o
+    `--expect-sha`, y compara la API con `--expect-api-sha`.
+  - El flujo de cierre (AGENTS.md §3.2 y las skills) usa esta verificación en lugar de la caché de
+    `/login`.
+- **Vercel en GitHub:** registra producción. En cc48 el aviso se atrasó 31 y 58 minutos; en cc49 llegó
+  en unos 2. No había nada que corregir en la integración.
+- **D-637:** «Historial» en el detalle de compra, corte y OP, al lado de las acciones.
+- **Registro de riesgo:** no toca kardex ni datos.
+- **Pendiente de decisión del dueño:**
+  - Ratificar D-636 y D-637.
+  - Decidir si se auditan con el id del documento las acciones listadas en el handoff de cc49:
+    pagos a proveedor, factura del corte, borradores de reporte y OP cambiadas desde el pedido.
+
 ## 2026-10-12 — cc48: cierre de cc47 y auditoría legible (D-627..D-635; PR #187 y #188)
 
 API y web, sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc48.md`;
@@ -37,8 +64,8 @@ revisiones en `docs/revision/cc48-{a,b}-*.md`; UAT en `docs/uat/cc48.md`.
   (`$queryRaw` parametrizado sobre `audit_log`).
 - **Pendiente de decisión del dueño:**
   - Ratificar D-627 a D-632, D-634 y D-635.
-  - Decidir la propuesta de columnas de D-632.
-  - Decidir si se agrega el «Historial» en compra, corte y OP.
+  - Decidir la propuesta de columnas de D-632 (cc49: no se aplica).
+  - Decidir si se agrega el «Historial» en compra, corte y OP (cc49: sí, D-637).
 
 ## 2026-10-12 — cc47b: correcciones del UAT de cc47 (D-623..D-626; PR #185)
 

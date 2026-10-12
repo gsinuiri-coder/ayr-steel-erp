@@ -2483,3 +2483,40 @@ defecto.
 **Lo que se resolvió sin decisión nueva.** «Cotizaciones sin stock» queda vivo (lo usan el smoke y
 cinco E2E; decisión del dueño). `.claude/settings.json` no se toca: las reglas que citaba el brief no
 existen y las que hay funcionan por prefijo.
+
+## cc49 — qué commit está publicado e «Historial» en compra, corte y OP (D-636, D-637)
+
+**Decisiones del dueño (12/10) sin pieza propia.** La propuesta de columnas del Reporte mensual de
+bobinas (D-632) **no se aplica**: el reporte queda como está. **PED-000049 queda sin acción**: el metro
+de más del accesorio (cc45, «6.00 m de 5.00 m») no se corrige ni por merma ni con una venta aparte.
+
+**El commit publicado (D-636).** Hasta cc48 la web se verificaba mirando cuándo cambiaba la caché de
+`/login`, porque los despliegues de Vercel en GitHub no aparecían a tiempo. Eso no decía qué build
+respondía. La web dice ahora su commit en `/version`, y la API en `/api/health`. Decisiones de forma:
+
+- **El sha se fija en el build** (`next.config.ts#env`, leído con referencias literales en la ruta),
+  no se lee en tiempo de ejecución: es el del código que se compiló. Se probó con un `next build` con
+  un sha falso, y en producción `/version` dio el commit del merge.
+- **`turbo.json` mete `VERCEL_GIT_COMMIT_SHA` en el hash del build.** Sin eso, un commit que no toca
+  la web podía sacar de la caché un `.next` con el sha anterior y dejar el smoke en rojo para siempre.
+- **`/version` no va en `PUBLIC_PATHS`:** esas rutas, con sesión, redirigen al inicio. Va aparte y se
+  compara exacta (`/version/x` sigue cerrada).
+- **El sha de la API va en el health** y no se lee con `gcloud`, por decisión del dueño: así se verifica
+  la instancia que de verdad responde, sin depender de `gcloud` en el equipo.
+- **El smoke acepta un commit posterior que contiene al esperado** (`git merge-base --is-ancestor`) y
+  los dos dominios comparten un tope de 10 minutos (autorrevisión): si otra sesión mergea mientras se
+  espera, no es un rojo. «dev» falla al instante, y cada lectura tiene su propio tope de 10 s.
+
+**Por qué Vercel «no registraba» producción.** Sí registra: 37 de los últimos 100 despliegues en GitHub
+son de `Production`, todos con su `success`. Los dos merges de código de cc48 tuvieron el aviso tarde
+(31 y 58 minutos, sin el `pending`); los demás llegan en 20 s a 2,3 minutos, y los de cc49 en unos 2
+minutos. No hay ajuste de la integración que corregir. El porqué del atraso solo se ve en el panel de
+Vercel; los pasos quedan en el handoff de cc49. Con D-636 la verificación ya no depende de ese aviso.
+
+**«Historial» en compra, corte y OP (D-637).** Va donde lo tienen los demás detalles, al lado de
+`HeaderActions` y fuera de «Más opciones»: D-623 manda las descargas al menú, no los enlaces a otra
+pantalla. El barrido de qué se audita mostró que todo endpoint propio de los tres documentos deja su
+registro con el id del documento, salvo los borradores de reporte de la OP. Lo que estos documentos
+cambian desde otros módulos (pagos a proveedor, factura y costo del corte, OP anuladas o
+replanificadas desde el pedido) queda en otra entidad. Por pedido del brief no se agregó auditoría; la
+lista, con archivo y función, está en el handoff.
