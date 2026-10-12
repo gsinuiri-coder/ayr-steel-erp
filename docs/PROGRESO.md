@@ -2,6 +2,25 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-12 — cc47b: correcciones del UAT de cc47 (D-623..D-626; PR #185)
+
+Solo web: sin API, sin migraciones y sin SQL. Detalle en `docs/handoff/ventana-cc47b.md`; revisión en
+`docs/revision/cc47b-segundo-modelo.md`; UAT en `docs/uat/cc47b.md`.
+
+- **En producción:** web de `9c6ef22a`; `smoke:prod` verde en los dos dominios. La API no cambió
+  (`00117-7pm`).
+- **D-623/D-626:** las descargas van siempre a «Más opciones» de la cabecera; `HeaderActions` no deja
+  que una descarga sea la principal. Cada página queda con una sola principal. Con filas marcadas en
+  Compras, la principal es «Recibir seleccionadas».
+- **D-624:** Cobranzas e Inventario usan el scroll único. La causa era que D-547 los había dejado como
+  detalle por tener dos tablas, y las pestañas de cc47 no los volvieron lista.
+- **D-625:** sin scroll horizontal de página. Se agregó `min-w-0` en el marco, `Section` y
+  `TabsContent`. Los modales de detalle con tablas son anchos.
+- **Pruebas:** CI en verde (E2E en 2 shards, Sonar) y 325 unitarios de la web. La suite E2E local y
+  parte de las capturas no se completaron por falta de memoria del equipo.
+- **Registro de riesgo:** no toca kardex ni datos.
+- **Pendiente de decisión del dueño:** ratificar D-612 a D-626.
+
 ## 2026-10-11 — cc47: estándar de tablas, reportes, Cobranzas, menú y Panel (D-612..D-622; PR #182 y #183)
 
 Solo web: sin API, sin migraciones y sin SQL. Detalle en `docs/handoff/ventana-cc47.md`; revisiones en
