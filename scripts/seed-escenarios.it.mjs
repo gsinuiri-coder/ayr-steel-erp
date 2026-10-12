@@ -50,8 +50,11 @@ function runSeed(round) {
     /No se pudo anular/,
     `La corrida ${String(round)} dejó algo sin anular`,
   );
-  const ops = [...res.stdout.matchAll(/\| (P1|P2|M1|M2|A1|A2|C1|C2) \| (PED-\d+) \| (OP-\d+) \|/g)];
-  assert.equal(ops.length, 8, `La corrida ${String(round)} no imprimió los ocho casos`);
+  // cc48: V1 (la venta a crédito) también tiene pedido y OP, cerrada.
+  const ops = [
+    ...res.stdout.matchAll(/\| (P1|P2|M1|M2|A1|A2|C1|C2|V1) \| (PED-\d+) \| (OP-\d+) \|/g),
+  ];
+  assert.equal(ops.length, 9, `La corrida ${String(round)} no imprimió los nueve casos`);
   return Object.fromEntries(ops.map((m) => [m[1], m[3]]));
 }
 
