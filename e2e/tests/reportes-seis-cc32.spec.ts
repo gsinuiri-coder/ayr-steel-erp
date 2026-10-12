@@ -7,6 +7,7 @@ import {
   previousMonth,
   uuid,
 } from '../helpers/report-fixtures';
+import { applyPeriodPreset } from '../helpers/ui';
 
 /**
  * cc32 (corte 2) — los otros seis reportes sobre la plantilla del corte 1: Ventas por material,
@@ -71,7 +72,8 @@ test.describe('Los seis reportes con la plantilla (cc32, corte 2)', () => {
 
     await page.goto('/reportes/ventas-margen');
     await expect(page).toHaveURL(/from=.*&to=/);
-    await page.getByRole('button', { name: 'Mes anterior' }).click();
+    // cc47 (D-615): en Ventas y margen el periodo se elige en «Filtros».
+    await applyPeriodPreset(page, 'Mes anterior');
     await expect(page).toHaveURL(`/reportes/ventas-margen?from=${prev.from}&to=${prev.to}`);
 
     await page.goto('/reportes/merma');

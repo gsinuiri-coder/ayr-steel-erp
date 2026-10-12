@@ -196,11 +196,15 @@ test.describe('F8-S3 — cola de producción y órdenes en el pedido (pantalla)'
       // cc35 (modelo M): la banda «Plan y avance» dice lo que falta.
       await expect(panel.getByText('Plan y avance')).toBeVisible();
 
-      // D-326: «Órdenes de producción» volvió al menú (grupo Planta) y `/produccion` redirige al
-      // historial, que es vista propia.
+      // cc47 (D-612): «Órdenes de producción» salió del menú; se llega desde Planta («Historial de
+      // órdenes») y `/produccion` sigue redirigiendo al historial, que es vista propia.
       await expect(
         page.getByRole('link', { name: 'Órdenes de producción', exact: true }),
-      ).toHaveAttribute('href', '/produccion');
+      ).toHaveCount(0);
+      await page.goto('/planta');
+      await expect(
+        page.getByRole('link', { name: 'Historial de órdenes', exact: true }),
+      ).toHaveAttribute('href', /\/planta\?historial=1$/, { timeout: 60_000 });
       await page.goto('/produccion');
       await expect(page).toHaveURL(/\/planta\?historial=1$/, { timeout: 60_000 });
       await expect(

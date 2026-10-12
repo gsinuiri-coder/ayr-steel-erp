@@ -45,13 +45,12 @@ test('una lista larga tiene una sola barra y el pie queda visible', async ({ pag
     .toBeLessThanOrEqual(1);
   expect(await container.evaluate((el) => el.scrollHeight > el.clientHeight + 1)).toBe(true);
 
-  // El pie de la tabla y la paginación quedan dentro de la ventana.
+  // La paginación queda dentro de la ventana. cc47 (D-613): la lista ya no lleva pie gris.
   const viewport = page.viewportSize()!;
-  const footer = container.locator('tfoot');
   const pager = page.getByText(/^Mostrando \d+–\d+ de \d+$/);
-  await expect(footer).toHaveCount(1);
+  await expect(container.locator('tfoot')).toHaveCount(0);
   await expect(pager).toBeVisible();
-  for (const el of [footer, pager]) {
+  for (const el of [pager]) {
     const box = await el.boundingBox({ timeout: 5_000 });
     expect(box).not.toBeNull();
     expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height + 1);

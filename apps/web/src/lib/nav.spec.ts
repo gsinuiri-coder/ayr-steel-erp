@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Role } from '@ayr/shared';
-import { INVOICE_LINK_ROLES, NAV, REF_TARGET_ROLES, navForRole } from './nav';
+import { INVOICE_LINK_ROLES, NAV, OFF_MENU_SCREENS, REF_TARGET_ROLES, navForRole } from './nav';
 
 /**
  * D-326 — el mapa del menú lateral por tarea (enmienda a D-175) y su filtro por rol (§3.4).
@@ -39,8 +39,8 @@ describe('mapa del menú (D-326)', () => {
       ],
       Compras: ['Compras', 'Proveedores'],
       Almacén: ['Bobinas', 'Flejes', 'Corte tercerizado', 'Inventario', 'Kardex'],
-      Planta: ['Producción', 'Órdenes de producción'],
-      Catálogo: ['Productos', 'Líneas', 'Acabados', 'Colores'],
+      Planta: ['Producción'],
+      Catálogo: ['Productos', 'Líneas', 'Acabados'],
       Reportes: [
         'Ventas y margen',
         'Ventas por material',
@@ -63,17 +63,38 @@ describe('mapa del menú (D-326)', () => {
   it('planta ve almacén, compras, producción, el reporte mensual y el de producción, y solo esos reportes', () => {
     const planta = titles(Role.SUPERVISOR_PLANTA);
     expect(planta.Reportes).toEqual(['Reporte mensual de bobinas', 'Reporte de producción']);
-    expect(planta.Planta).toEqual(['Producción', 'Órdenes de producción']);
+    expect(planta.Planta).toEqual(['Producción']);
     expect(planta['Administración']).toBeUndefined();
     expect(planta.Comercial).toEqual(['Despachos']);
   });
 
-  it('ninguna ruta se repite salvo la pestaña de colores, que comparte /catalogo', () => {
+  it('ninguna ruta se repite', () => {
     const hrefs = NAV.flatMap((g) => g.items.map((i) => i.href));
     const duplicated = hrefs.filter((h, i) => hrefs.indexOf(h) !== i);
     expect(duplicated).toEqual([]);
-    expect(hrefs).toContain('/catalogo?tab=colores');
     expect(hrefs).toContain('/catalogo');
+  });
+
+  it('cc47 (D-612): órdenes de producción y colores salen del menú, con los mismos roles', () => {
+    const hrefs = NAV.flatMap((g) => g.items.map((i) => i.href));
+    expect(hrefs).not.toContain('/produccion');
+    expect(hrefs).not.toContain('/catalogo?tab=colores');
+    expect(OFF_MENU_SCREENS.map((s) => [s.group, s.item.href, s.item.roles])).toEqual([
+      ['Planta', '/produccion', [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]],
+      [
+        'Catálogo',
+        '/catalogo?tab=colores',
+        [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR],
+      ],
+    ]);
+    // Los roles que abren las órdenes llegan a Planta, donde está «Historial de órdenes»; los que
+    // abren colores llegan a Catálogo, donde está su pestaña.
+    const reach = (href: string) =>
+      [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR].filter((r) =>
+        navForRole(r).some((g) => g.items.some((i) => i.href === href)),
+      );
+    expect(reach('/planta')).toEqual(OFF_MENU_SCREENS[0]?.item.roles);
+    expect(reach('/catalogo')).toEqual(OFF_MENU_SCREENS[1]?.item.roles);
   });
 
   it('«Márgenes y tipo de cambio» sigue activo en las dos pestañas', () => {

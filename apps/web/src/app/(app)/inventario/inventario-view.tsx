@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   BUSINESS_LINE_LABELS,
+  COIL_BUSINESS_LINES,
   NOOP_INVENTORY_LINES,
   BUSINESS_LINES,
   Decimal,
@@ -98,6 +99,13 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
   }
 
   const { coils, products, totalValuePen } = summary.data;
+  // cc47 (D-614): «Bobinas» solo en las líneas que manejan bobinas (D-116). UPVC no tiene bobina y
+  // Reventa vende la bobina entera sin comprarla ni registrarla: la bobina es inventario de su línea
+  // (Drywall o Coberturas Aluzinc) hasta que se vende, y mostrarla también aquí la contaría dos
+  // veces. El saldo de esas pestañas sale de `inventory_balances` por la línea dueña del ítem
+  // (D-119), así que la tabla siempre estaba vacía. Si alguna vez llegara una bobina con saldo en
+  // otra línea (la regla vive en la aplicación), la tabla se muestra igual: no se oculta un saldo.
+  const showCoils = COIL_BUSINESS_LINES.includes(line) || coils.length > 0;
 
   return (
     <>
@@ -112,20 +120,24 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
             </p>
           )}
           <p className="text-sm text-muted-foreground">
-            {coils.length} tipo(s) de bobina y {products.length} producto(s) con saldo.
+            {showCoils
+              ? `${String(coils.length)} tipo(s) de bobina y ${String(products.length)} producto(s) con saldo.`
+              : `${String(products.length)} producto(s) con saldo.`}
           </p>
         </CardContent>
       </Card>
 
-      <SummaryTable
-        title="Bobinas por tipo"
-        emptyLabel="No hay bobinas con saldo en esta línea."
-        rows={coils}
-        keyHeader="Tipo (acabado-espesor)"
-        showCosts={showCosts}
-        showMeters
-        xlsxHref={`/api/inventory/summary/coils-xlsx?businessLine=${line}`}
-      />
+      {showCoils && (
+        <SummaryTable
+          title="Bobinas por tipo"
+          emptyLabel="No hay bobinas con saldo en esta línea."
+          rows={coils}
+          keyHeader="Tipo (acabado-espesor)"
+          showCosts={showCosts}
+          showMeters
+          xlsxHref={`/api/inventory/summary/coils-xlsx?businessLine=${line}`}
+        />
+      )}
       <SummaryTable
         title="Productos de catálogo"
         emptyLabel="No hay productos con saldo en esta línea."

@@ -23,7 +23,6 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { ListFooterRow } from '@/components/list-footer';
 import { PaginationBar } from '@/components/pagination-bar';
 import {
   Table,
@@ -279,14 +278,6 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
               errorTitle="No se pudieron cargar los clientes"
             />
           </TableBody>
-          {rows.length > 0 && (
-            <ListFooterRow
-              shown={rows.length}
-              total={customers.data?.total ?? rows.length}
-              noun={debouncedSearch ? 'clientes que coinciden con la búsqueda' : 'clientes'}
-              colCount={columnCount}
-            />
-          )}
         </Table>
       </div>
       <PaginationBar

@@ -8,7 +8,6 @@ import {
   ROLE_LABELS,
   Role,
   type PaginatedResult,
-  type QuotationStockShortageDto,
   type SalesOrderListItemDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
@@ -117,12 +116,6 @@ export function PanelToday() {
     enabled: isAdmin || isSeller,
     refetchInterval: 60_000,
   });
-  const stockShortages = useQuery({
-    queryKey: ['quotation-stock-shortages'],
-    queryFn: () => api<QuotationStockShortageDto[]>('/sales/quotations/stock-shortages'),
-    enabled: isAdmin,
-  });
-
   if (!isAdmin && !isSeller) return null;
 
   const expiring =
@@ -172,17 +165,6 @@ export function PanelToday() {
     ...(isAdmin
       ? [
           {
-            key: 'stock',
-            count: stockShortages.data?.length ?? null,
-            failed: stockShortages.isError && stockShortages.data === undefined,
-            retry: () => void stockShortages.refetch(),
-            label: 'Cotizaciones sin stock',
-            detail: 'evaluar compra',
-            href: '#cotizaciones-sin-stock',
-            attention: true,
-            anchor: true,
-          },
-          {
             key: 'shortfall',
             count: pending.shortfallOrders?.length ?? null,
             failed: pending.failed.shortfallOrders,
@@ -213,7 +195,13 @@ export function PanelToday() {
       <h2 id="panel-today" className="text-sm font-semibold">
         Para atender hoy
       </h2>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+      {/* cc47 (D-618): una columna por tarjeta, sin hueco (5 del administrador, 4 del vendedor). */}
+      <div
+        className={cn(
+          'grid grid-cols-2 gap-2',
+          tiles.length >= 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4',
+        )}
+      >
         {tiles.map((t) => {
           const body = (
             <>

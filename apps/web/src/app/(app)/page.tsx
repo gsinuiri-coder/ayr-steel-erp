@@ -4,7 +4,6 @@ import { PanelHeader, PanelToday } from './panel-today';
 import { PlantDashboard } from './plant-dashboard';
 import { PriceFloorSummaryCard } from './price-floor-summary-card';
 import { OrdersShortfallCard } from './orders-shortfall-card';
-import { StockShortagesCard } from './stock-shortages-card';
 import { SellerSalesCard } from './seller-sales-card';
 
 export const metadata: Metadata = { title: 'Panel' };
@@ -24,10 +23,10 @@ export default function HomePage() {
       <AdminDashboard />
       {/* cc26 (D-440): la planta del día, solo SUPERVISOR_PLANTA. */}
       <PlantDashboard />
-      {/* D-188: solo se pinta si hay algo que avisar — la tarjeta ES el aviso. Las de
-          «Para atender hoy» del administrador llevan aquí (`#cotizaciones-sin-stock`…). */}
-      <StockShortagesCard />
-      {/* D-341: pedidos confirmados con faltante por un administrador; mismo criterio. */}
+      {/* D-341: pedidos confirmados con faltante por un administrador; solo se pinta si hay algo
+          que avisar — la tarjeta ES el aviso (D-188). Las de «Para atender hoy» del administrador
+          llevan aquí (`#pedidos-con-faltante`…). cc47 (D-618): «Cotizaciones sin stock
+          disponible» salió del Panel para todos los roles. */}
       <OrdersShortfallCard />
       {/* RF-S3/M4 (D-224): mismo criterio, solo ADMINISTRADOR. */}
       <PriceFloorSummaryCard />

@@ -295,3 +295,32 @@ export async function saveQtyChange(
   await expect(save).toBeEnabled({ timeout: 30_000 });
   await save.click();
 }
+
+/**
+ * cc47 (D-615): abre el modal «Filtros» de la línea estándar de la tabla y devuelve el diálogo.
+ */
+export async function openFilters(page: Page): Promise<Locator> {
+  await page.getByTestId('boton-filtros').click();
+  const modal = page.getByRole('dialog', { name: 'Filtros' });
+  await expect(modal).toBeVisible();
+  return modal;
+}
+
+/** cc47 (D-615): elige un atajo de periodo en el modal «Filtros» y lo aplica. */
+export async function applyPeriodPreset(page: Page, preset: string): Promise<void> {
+  const modal = await openFilters(page);
+  await modal.getByRole('button', { name: preset, exact: true }).click();
+  await modal.getByRole('button', { name: 'Aplicar' }).click();
+  await expect(modal).toBeHidden();
+}
+
+/** cc47 (D-615): el atajo de periodo marcado en el modal «Filtros»; lo cierra sin aplicar. */
+export async function expectPeriodPreset(page: Page, preset: string): Promise<void> {
+  const modal = await openFilters(page);
+  await expect(modal.getByRole('button', { name: preset, exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.keyboard.press('Escape');
+  await expect(modal).toBeHidden();
+}

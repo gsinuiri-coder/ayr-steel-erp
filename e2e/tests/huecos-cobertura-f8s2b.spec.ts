@@ -114,35 +114,31 @@ test.describe('F8-S2b — huecos de cobertura', () => {
     await api.dispose();
   });
 
-  test('D-188: sin cotizaciones con faltante, la tarjeta del Panel no pinta nada (ni una vacía)', async ({
+  test('cc47 (D-618): el Panel ya no pide ni pinta «Cotizaciones sin stock disponible»; el API sigue respondiendo', async ({
     page,
   }) => {
-    // La base **no** está recién reseteada cuando corre la suite completa: el reset es uno por
-    // corrida y los specs anteriores pueden dejar cotizaciones EMITTED con faltante (F8-S3 lo
-    // vio dos veces, con cotizaciones distintas). Lo que este caso prueba es la pantalla con
-    // una lista vacía, así que la respuesta vacía se fija con `page.route`; del API real solo se
-    // comprueba que responde bien y con la forma esperada, para no confundir "no cargó" con
-    // "cargó y no había nada".
-    await page.route('**/api/sales/quotations/stock-shortages', (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
-    );
+    // D-618: la tarjeta y su resumen salieron del Panel para todos los roles. El endpoint sigue
+    // (su limpieza queda pendiente): se comprueba que responde bien y con la forma esperada, y que
+    // el Panel ya no lo consulta.
+    const requested: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/api/sales/quotations/stock-shortages')) requested.push(r.url());
+    });
     await page.goto('/login');
     await page.getByLabel('Correo electrónico').fill(adminCredentials().email);
     await page.getByLabel('Contraseña', { exact: true }).fill(adminCredentials().password);
-    const shortagesResponse = page.waitForResponse((r) =>
-      r.url().includes('/api/sales/quotations/stock-shortages'),
-    );
     await page.getByRole('button', { name: 'Ingresar' }).click();
     await expect(page).toHaveURL(/\/$/, { timeout: 60_000 });
 
-    const resp = await shortagesResponse;
-    expect(await resp.json()).toEqual([]);
+    await expect(page.getByRole('heading', { name: 'Panel', level: 1 })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Para atender hoy' })).toBeVisible();
+    await expect(page.getByText('Cotizaciones sin stock disponible')).toHaveCount(0);
+    await expect(page.getByText('Cotizaciones sin stock', { exact: true })).toHaveCount(0);
+
     const real = await page.request.get('/api/sales/quotations/stock-shortages');
     expect(real.ok(), await real.text()).toBe(true);
     expect(Array.isArray(await real.json())).toBe(true);
-
-    await expect(page.getByRole('heading', { name: 'Panel', level: 1 })).toBeVisible();
-    await expect(page.getByText('Cotizaciones sin stock disponible')).toHaveCount(0);
+    expect(requested).toEqual([]);
   });
 
   test('D-188: el picker de producto en una línea sin pool de bobinas muestra solo el disponible del SKU', async ({
@@ -351,7 +347,7 @@ test.describe('F8-S2b — huecos de cobertura', () => {
     }
   });
 
-  test('D-188: un VENDEDOR también ve la tarjeta de cotizaciones sin stock disponible', async ({
+  test('D-188/cc47: un VENDEDOR no ve la tarjeta de cotizaciones sin stock disponible', async ({
     page,
   }) => {
     const s = await setupRoofingScenario(api, { weightKg: '100' });

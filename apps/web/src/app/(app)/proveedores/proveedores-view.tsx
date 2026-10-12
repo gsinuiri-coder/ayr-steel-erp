@@ -8,7 +8,6 @@ import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { HeaderActions } from '@/components/header-actions';
-import { ListFooterRow } from '@/components/list-footer';
 import { ListStateRows } from '@/components/list-state';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -232,14 +231,6 @@ export function ProveedoresView() {
               errorTitle="No se pudieron cargar los proveedores"
             />
           </TableBody>
-          {shownCount > 0 && (
-            <ListFooterRow
-              shown={shownCount}
-              total={suppliers.data?.length ?? shownCount}
-              noun={searching ? 'proveedores que coinciden con la búsqueda' : 'proveedores'}
-              colCount={7}
-            />
-          )}
         </Table>
       </div>
 

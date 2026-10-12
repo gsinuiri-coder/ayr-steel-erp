@@ -1,5 +1,5 @@
 import { CREATE_ENTRIES } from '@/lib/go-to';
-import { NAV } from '@/lib/nav';
+import { NAV, OFF_MENU_SCREENS } from '@/lib/nav';
 
 /**
  * cc31: la ruta de la barra superior —grupo / lista / documento— que reemplaza al botón
@@ -50,7 +50,9 @@ export function crumbsFor(
   // (`/catalogo?tab=colores`) solo cuenta si la pantalla tiene esa query, y entonces gana.
   let best: { group: string; title: string; path: string; prefix: string; score: number } | null =
     null;
-  for (const g of NAV) {
+  // cc47 (D-612): las pantallas que salieron del menú conservan su ruta con grupo.
+  const groups = [...NAV, ...OFF_MENU_SCREENS.map((s) => ({ label: s.group, items: [s.item] }))];
+  for (const g of groups) {
     for (const item of g.items) {
       const query = [...new URLSearchParams(item.href.split('?')[1] ?? '').entries()];
       if (!query.every(([key, value]) => search.get(key) === value)) continue;

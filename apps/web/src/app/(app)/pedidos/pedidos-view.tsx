@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Decimal,
   ORDER_STAGE_LABELS,
   Role,
   type PaginatedResult,
@@ -14,7 +13,6 @@ import { api } from '@/lib/api';
 import { listXlsxHref } from '@/lib/list-export';
 import { HeaderActions } from '@/components/header-actions';
 import { currencyHeader, formatAmount, formatDate } from '@/lib/format';
-import { ListFooterRow } from '@/components/list-footer';
 import { ListStateRows } from '@/components/list-state';
 import { RoleGate } from '@/components/role-gate';
 import { OrderDocumentLinks } from '@/components/sales/order-documents';
@@ -133,7 +131,6 @@ export function PedidosView() {
   } else if (search) {
     filterLabel = 'que coinciden con la búsqueda';
   }
-  const pageTotal = rows.reduce((acc, o) => acc.plus(o.totalPen), new Decimal(0));
 
   return (
     <RoleGate allow={SALES_ROLES}>
@@ -328,16 +325,6 @@ export function PedidosView() {
               errorTitle="No se pudieron cargar los pedidos"
             />
           </TableBody>
-          {rows.length > 0 && (
-            <ListFooterRow
-              shown={rows.length}
-              total={orders.data?.total ?? rows.length}
-              noun={`pedidos ${filterLabel}`}
-              colCount={8}
-              amountColumn={5}
-              amount={formatAmount(pageTotal)}
-            />
-          )}
         </Table>
       </div>
       <PaginationBar

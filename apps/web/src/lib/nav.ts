@@ -187,19 +187,14 @@ export const NAV: NavGroup[] = [
       /*
         D-160: **dos** sitios de producción y no tres: `/planta` es la única entrada a
         **producir** y `/produccion` sirve para **gestionar** las órdenes (historial, costos y
-        correcciones). D-190 sacó «Órdenes de producción» del menú; D-326 lo devuelve porque el
-        cliente lo pidió en su mapa — `/produccion` redirige al historial de `/planta`.
+        correcciones). D-190 sacó «Órdenes de producción» del menú, D-326 lo devolvió y cc47
+        (D-612) lo vuelve a sacar: las órdenes se abren desde Planta («Historial de órdenes») y
+        desde el pedido. La ruta sigue en `OFF_MENU_SCREENS`.
       */
       {
         title: 'Producción',
         href: '/planta',
         icon: Hammer,
-        roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
-      },
-      {
-        title: 'Órdenes de producción',
-        href: '/produccion',
-        icon: History,
         roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
       },
     ],
@@ -210,8 +205,6 @@ export const NAV: NavGroup[] = [
       { title: 'Productos', href: '/catalogo', icon: PackageSearch, roles: ALL },
       { title: 'Líneas', href: '/lineas', icon: Layers, roles: ALL },
       { title: 'Acabados', href: '/acabados', icon: Palette, roles: ALL },
-      // Los colores son una pestaña de `/catalogo` (D-273): el ítem abre esa pestaña.
-      { title: 'Colores', href: '/catalogo?tab=colores', icon: Paintbrush, roles: ALL },
     ],
   },
   {
@@ -297,6 +290,28 @@ export const NAV: NavGroup[] = [
         roles: [Role.ADMINISTRADOR],
       },
     ],
+  },
+];
+
+/**
+ * cc47 (D-612): pantallas que salieron del menú lateral sin dejar de existir. La ruta, la página y
+ * los permisos no cambian: la barra de ruta las sigue nombrando con su grupo («Planta / Órdenes de
+ * producción») e «Ir a» las sigue ofreciendo al rol que puede abrirlas. Se llega a las órdenes
+ * desde Planta y desde el pedido, y a los colores desde la pestaña «Colores» de Catálogo (D-273).
+ */
+export const OFF_MENU_SCREENS: { group: string; item: NavItem }[] = [
+  {
+    group: 'Planta',
+    item: {
+      title: 'Órdenes de producción',
+      href: '/produccion',
+      icon: History,
+      roles: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+    },
+  },
+  {
+    group: 'Catálogo',
+    item: { title: 'Colores', href: '/catalogo?tab=colores', icon: Paintbrush, roles: ALL },
   },
 ];
 

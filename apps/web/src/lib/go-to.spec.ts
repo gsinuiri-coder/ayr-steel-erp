@@ -39,6 +39,15 @@ describe('Ir a', () => {
     expect(filterGoTo(all, '   ')).toHaveLength(all.length);
   });
 
+  it('cc47 (D-612): órdenes de producción y colores siguen en «Ir a», con su rol', () => {
+    const admin = goToEntries(Role.ADMINISTRADOR).map((e) => e.href);
+    expect(admin).toContain('/produccion');
+    expect(admin).toContain('/catalogo?tab=colores');
+    const seller = goToEntries(Role.VENDEDOR).map((e) => e.href);
+    expect(seller).not.toContain('/produccion');
+    expect(seller).toContain('/catalogo?tab=colores');
+  });
+
   it('normaliza tildes y mayúsculas', () => {
     expect(normalize('  Línea Órdenes ')).toBe('linea ordenes');
   });

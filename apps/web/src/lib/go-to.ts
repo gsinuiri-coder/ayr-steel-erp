@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import { Plus } from 'lucide-react';
 import { Role } from '@ayr/shared';
-import { navForRole } from '@/lib/nav';
+import { navForRole, OFF_MENU_SCREENS } from '@/lib/nav';
 
 /**
  * cc31: lo que ofrece «Ir a» (Ctrl K): las pantallas del menú y las acciones de crear, siempre
@@ -72,6 +72,16 @@ export function goToEntries(role: Role): GoToEntry[] {
         icon: i.icon,
       })),
   );
+  // cc47 (D-612): lo que salió del menú sigue en «Ir a», con su grupo, para el rol que lo abre.
+  const offMenu = OFF_MENU_SCREENS.filter((s) => s.item.roles.includes(role)).map(
+    (s): GoToEntry => ({
+      kind: 'screen',
+      title: s.item.title,
+      group: s.group,
+      href: s.item.href,
+      icon: s.item.icon,
+    }),
+  );
   const creates = CREATE_ENTRIES.filter((c) => c.roles.includes(role)).map((c): GoToEntry => ({
     kind: 'create',
     title: c.title,
@@ -79,7 +89,7 @@ export function goToEntries(role: Role): GoToEntry[] {
     href: c.href,
     icon: Plus,
   }));
-  return [...screens, ...creates];
+  return [...screens, ...offMenu, ...creates];
 }
 
 /** Minúsculas y sin tildes: «bobina» encuentra «Bobinas» y «cotizacion», «Nueva cotización». */

@@ -72,13 +72,13 @@ describe('docs/manual/menu-por-rol.md (D-439)', () => {
     }
   });
 
-  it('los conteos del documento son los del mapa: 33, 17 y 13 entradas', () => {
+  it('los conteos del documento son los del mapa: 31, 15 y 12 entradas', () => {
     const count = (role: Role) => navForRole(role).flatMap((g) => g.items).length;
-    expect(count(Role.ADMINISTRADOR)).toBe(33);
-    expect(count(Role.SUPERVISOR_PLANTA)).toBe(17);
-    expect(count(Role.VENDEDOR)).toBe(13);
+    expect(count(Role.ADMINISTRADOR)).toBe(31);
+    expect(count(Role.SUPERVISOR_PLANTA)).toBe(15);
+    expect(count(Role.VENDEDOR)).toBe(12);
     expect(readFileSync(DOC, 'utf8')).toContain(
-      'el administrador ve 33 entradas; el supervisor de planta, 17; el vendedor, 13.',
+      'el administrador ve 31 entradas; el supervisor de planta, 15; el vendedor, 12.',
     );
   });
 

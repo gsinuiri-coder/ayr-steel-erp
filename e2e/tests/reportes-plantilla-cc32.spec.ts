@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { businessToday, type SalesMarginDto, type SalesMarginOrderDto } from '@ayr/shared';
 import { adminCredentials } from '../helpers/api';
+import { applyPeriodPreset, expectPeriodPreset } from '../helpers/ui';
 
 /**
  * cc32 (corte 1) — plantilla de reportes, con Ventas y margen como primer reporte que la usa.
@@ -173,10 +174,8 @@ test.describe('Plantilla de reportes (cc32)', () => {
     // Sin parámetros, la URL se completa con el mes en curso.
     await page.goto('/reportes/ventas-margen');
     await expect(page).toHaveURL(`/reportes/ventas-margen?from=${firstOfMonth(today)}&to=${today}`);
-    await expect(page.getByRole('button', { name: 'Este mes' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    // cc47 (D-615): el periodo se elige en «Filtros»; el rango aplicado queda a la vista.
+    await expectPeriodPreset(page, 'Este mes');
     await expect(page.getByTestId('periodo-rango')).toHaveText(
       `Del 01/${today.slice(5, 7)}/${today.slice(0, 4)} al ${today.slice(8, 10)}/${today.slice(5, 7)}/${today.slice(0, 4)}`,
     );
@@ -187,7 +186,7 @@ test.describe('Plantilla de reportes (cc32)', () => {
 
     // Otro periodo: queda en la URL y se recuerda.
     const prev = previousMonth(today);
-    await page.getByRole('button', { name: 'Mes anterior' }).click();
+    await applyPeriodPreset(page, 'Mes anterior');
     await expect(page).toHaveURL(`/reportes/ventas-margen?from=${prev.from}&to=${prev.to}`);
     await expect(page.getByRole('link', { name: 'Descargar Excel' })).toHaveAttribute(
       'href',
@@ -203,10 +202,7 @@ test.describe('Plantilla de reportes (cc32)', () => {
     );
     await card.click();
     await expect(page).toHaveURL(`/reportes/ventas-margen?from=${prev.from}&to=${prev.to}`);
-    await expect(page.getByRole('button', { name: 'Mes anterior' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await expectPeriodPreset(page, 'Mes anterior');
 
     // Y al abrir el reporte sin parámetros, se completa con el periodo recordado.
     await page.goto('/reportes/ventas-margen');
@@ -363,7 +359,7 @@ test.describe('Plantilla de reportes (cc32)', () => {
     await expect(table).not.toHaveAttribute('aria-busy', 'true');
 
     // Otro periodo en la misma pestaña: el dato anterior queda, atenuado y ocupado.
-    await page.getByRole('button', { name: 'Mes anterior' }).click();
+    await applyPeriodPreset(page, 'Mes anterior');
     await expect(table).toHaveAttribute('aria-busy', 'true');
     await expect(page.getByTestId('actualizando')).toHaveText('Actualizando…');
     await expect(rows).toHaveCount(4);

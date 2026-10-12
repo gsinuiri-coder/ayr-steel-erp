@@ -79,7 +79,7 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
     await expect(headerButton('Almacén')).toHaveAttribute('aria-expanded', 'false');
   });
 
-  test('D-326: el mapa del menú del administrador, grupo por grupo, y la pestaña «Colores»', async ({
+  test('D-326/D-612: el mapa del menú del administrador, grupo por grupo, y la pestaña «Colores»', async ({
     page,
   }) => {
     await loginAsAdmin(page);
@@ -96,8 +96,9 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
       ],
       Compras: ['Compras', 'Proveedores'],
       Almacén: ['Bobinas', 'Flejes', 'Corte tercerizado', 'Inventario', 'Kardex'],
-      Planta: ['Producción', 'Órdenes de producción'],
-      Catálogo: ['Productos', 'Líneas', 'Acabados', 'Colores'],
+      // cc47 (D-612): «Órdenes de producción» y «Colores» salieron del menú.
+      Planta: ['Producción'],
+      Catálogo: ['Productos', 'Líneas', 'Acabados'],
       Reportes: [
         'Ventas y margen',
         'Ventas por material',
@@ -118,30 +119,23 @@ test.describe('Correcciones 03 — sidebar acordeón (D-292)', () => {
       await expect(content.getByRole('link')).toHaveText(items);
     }
 
-    // «Colores» abre la pestaña de colores del catálogo, y «Productos» vuelve a las líneas.
+    // cc47 (D-612): a los colores se llega desde Catálogo, por su pestaña, que queda en la URL.
     await openSidebarGroup(page, 'Catálogo');
-    await page.getByRole('link', { name: 'Colores', exact: true }).click();
+    await page.getByRole('link', { name: 'Productos', exact: true }).click();
+    await page.getByRole('tab', { name: 'Colores' }).click();
     await expect(page).toHaveURL(/\/catalogo\?tab=colores/);
     await expect(page.getByRole('tab', { name: 'Colores' })).toHaveAttribute(
       'data-state',
       'active',
       { timeout: 60_000 },
     );
-    // Solo «Colores» está marcado: «Productos» apunta a la misma ruta, sin la pestaña.
-    const active = (name: string) =>
+    // «Productos» sigue marcado en el menú (es la misma pantalla) y la ruta dice «Colores».
+    await expect(
       page
-        .getByRole('link', { name, exact: true })
-        .locator('xpath=ancestor-or-self::*[@data-active][1]');
-    await expect(active('Colores')).toHaveAttribute('data-active', 'true');
-    await expect(active('Productos')).toHaveAttribute('data-active', 'false');
-    await page.getByRole('link', { name: 'Productos', exact: true }).click();
-    await expect(page).not.toHaveURL(/tab=colores/);
-    await expect(active('Productos')).toHaveAttribute('data-active', 'true');
-    await expect(active('Colores')).toHaveAttribute('data-active', 'false');
-    await expect(page.getByRole('tab', { name: 'Colores' })).toHaveAttribute(
-      'data-state',
-      'inactive',
-    );
+        .getByRole('link', { name: 'Productos', exact: true })
+        .locator('xpath=ancestor-or-self::*[@data-active][1]'),
+    ).toHaveAttribute('data-active', 'true');
+    await expect(page.getByRole('navigation', { name: 'Ruta' })).toContainText('Colores');
   });
 });
 

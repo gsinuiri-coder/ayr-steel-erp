@@ -35,11 +35,9 @@ menú solo ordena lo que cada uno usa.
 | Almacén        | Inventario                 | `/inventario`                     | Sí   | Sí   | —     | Almacén. La pantalla y la API también admiten al vendedor, sin costos: ver la propuesta P3.                            |
 | Almacén        | Kardex                     | `/kardex`                         | Sí   | Sí   | —     | Almacén; el kardex lleva costos.                                                                                       |
 | Planta         | Producción                 | `/planta`                         | Sí   | Sí   | —     | La única entrada para producir (D-160).                                                                                |
-| Planta         | Órdenes de producción      | `/produccion`                     | Sí   | Sí   | —     | Gestionar las órdenes; redirige al historial de `/planta` (D-326).                                                     |
 | Catálogo       | Productos                  | `/catalogo`                       | Sí   | Sí   | Sí    | Todos consultan el catálogo; solo el administrador lo edita.                                                           |
 | Catálogo       | Líneas                     | `/lineas`                         | Sí   | Sí   | Sí    | Igual que productos.                                                                                                   |
 | Catálogo       | Acabados                   | `/acabados`                       | Sí   | Sí   | Sí    | Igual que productos.                                                                                                   |
-| Catálogo       | Colores                    | `/catalogo?tab=colores`           | Sí   | Sí   | Sí    | Pestaña de `/catalogo` (D-273).                                                                                        |
 | Reportes       | Ventas y margen            | `/reportes/ventas-margen`         | Sí   | —    | —     | Lleva costos y márgenes (D-244).                                                                                       |
 | Reportes       | Ventas por material        | `/reportes/ventas-material`       | Sí   | —    | —     | Lleva costos por kilo (D-354).                                                                                         |
 | Reportes       | Cuentas por cobrar         | `/reportes/cuentas-por-cobrar`    | Sí   | —    | —     | La cartera de todos los vendedores (D-426).                                                                            |
@@ -54,7 +52,9 @@ menú solo ordena lo que cada uno usa.
 
 <!-- matriz:fin -->
 
-En números: el administrador ve 33 entradas; el supervisor de planta, 17; el vendedor, 13.
+En números: el administrador ve 31 entradas; el supervisor de planta, 15; el vendedor, 12.
+
+cc47 (D-612): «Órdenes de producción» (`/produccion`) y «Colores» (`/catalogo?tab=colores`) salieron del menú; la página, la ruta y los permisos no cambiaron. Las órdenes se abren desde Planta («Historial de órdenes») y desde el pedido; los colores, desde la pestaña «Colores» de Catálogo. Las dos siguen en «Ir a» y en la barra de ruta.
 
 ## Cómo se comprobó
 
