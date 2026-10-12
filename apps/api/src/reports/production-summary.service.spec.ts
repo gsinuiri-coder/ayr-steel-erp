@@ -1,3 +1,4 @@
+import * as XLSX from 'xlsx';
 import { Prisma } from '@prisma/client';
 import { productionSummaryQuerySchema } from '@ayr/shared';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -237,5 +238,29 @@ describe('ProductionSummaryService', () => {
     expect(admin.filename).toBe('produccion-metallic-roofing-2026-10-01-2026-10-06.xlsx');
     expect(admin.buffer.length).toBeGreaterThan(0);
     expect(plant.buffer.length).toBeGreaterThan(0);
+  });
+
+  it('cc48: los subtotales por pedido van en «Por pedido»; sumar «Por OP» cuenta cada OP una vez', async () => {
+    const { service } = build();
+    const report = await service.report(RANGE, true);
+    const book = XLSX.read(productionSummaryXlsx(report).buffer, { type: 'buffer' });
+    expect(book.SheetNames).toEqual(['Por OP', 'Por pedido', 'Por bobina']);
+    const rowsOf = (name: string) =>
+      XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[name]!, { header: 1 }).slice(1);
+    const byOp = rowsOf('Por OP');
+    const kgCol = 7; // «Kg salido»
+    const opRows = byOp.slice(0, -1);
+    expect(opRows.some((r) => String(r[0]).startsWith('Subtotal'))).toBe(false);
+    const cents = (rows: unknown[][]) =>
+      rows.reduce((acc, r) => acc + Math.round(Number(r[kgCol] ?? 0) * 1000), 0);
+    expect(cents(opRows)).toBe(Math.round(Number(report.totals.consumedKg) * 1000));
+    const byOrder = rowsOf('Por pedido');
+    expect(byOrder).toHaveLength(report.groups.length + 1);
+    expect(byOrder.at(-1)?.[0]).toBe(byOp.at(-1)?.[0]);
+    // «Kg salido» es la cuarta columna de «Por pedido».
+    const orderKg = byOrder
+      .slice(0, -1)
+      .reduce<number>((acc, r) => acc + Math.round(Number(r[3] ?? 0) * 1000), 0);
+    expect(orderKg).toBe(Math.round(Number(report.totals.consumedKg) * 1000));
   });
 });
