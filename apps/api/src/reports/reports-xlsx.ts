@@ -427,29 +427,8 @@ export function salesMarginXlsx(
             ...stats,
           ]
         : [
-            ...report.totalsByLine.map((t) => {
-              const label =
-                t.businessLine === null
-                  ? 'Sin línea (servicios y ajustes)'
-                  : BUSINESS_LINE_LABELS[t.businessLine];
-              // D-392/D-409/D-419: Servicios y «Sin línea» no tienen costo registrado y quedan fuera del margen; su fila
-              // no muestra un costo 0 con margen del 100 %, igual que en la pantalla.
-              return t.businessLine === null || NO_COST_REPORT_LINES.includes(t.businessLine)
-                ? [label, num(t.salesPen), null, null, null]
-                : [label, num(t.salesPen), num(t.costPen), num(t.marginPen), num(t.marginPct)];
-            }),
-            // cc28 (D-461): la misma fila que la pantalla, para que la columna sume el total.
-            ...(toDecimal(report.totals.roundingPen).isZero()
-              ? []
-              : [
-                  [
-                    'Redondeo al céntimo de los comprobantes',
-                    num(report.totals.roundingPen),
-                    null,
-                    null,
-                    null,
-                  ],
-                ]),
+            // cc48: las filas por línea van en su hoja («Por línea»); aquí solo los totales, para
+            // que una suma de la columna no cuente cada línea dos veces.
             [
               'Total del rango (margen sin Servicios ni líneas sin producto)',
               num(report.totals.salesPen),
@@ -473,8 +452,52 @@ export function salesMarginXlsx(
           ],
   };
 
+  // cc48 (cierre de cc40): en «Todas», las filas de «Totales por línea» van en su propia hoja, con
+  // el redondeo de los comprobantes (D-461) y **sin** fila de total: sumar la columna de la venta
+  // da exactamente la venta de la franja, que está en «Totales». Antes compartían la columna con
+  // «Total del rango», la venta sin costo y los conteos, y sumarla contaba dos veces.
+  const byLine: Sheet | null =
+    line !== undefined
+      ? null
+      : {
+          name: 'Por línea',
+          header: ['Línea', 'Venta sin IGV (S/)', 'Costo (S/)', 'Margen (S/)', 'Margen %'],
+          widths: [44, 18, 14, 14, 10],
+          rows: [
+            ...report.totalsByLine.map((t) => {
+              const label =
+                t.businessLine === null
+                  ? 'Sin línea (servicios y ajustes)'
+                  : BUSINESS_LINE_LABELS[t.businessLine];
+              // D-392/D-409/D-419: Servicios y «Sin línea» no tienen costo registrado y quedan fuera del margen; su fila
+              // no muestra un costo 0 con margen del 100 %, igual que en la pantalla.
+              return t.businessLine === null || NO_COST_REPORT_LINES.includes(t.businessLine)
+                ? [label, num(t.salesPen), null, null, null]
+                : [label, num(t.salesPen), num(t.costPen), num(t.marginPen), num(t.marginPct)];
+            }),
+            // cc28 (D-461): la misma fila que la pantalla, para que la columna sume el total.
+            ...(toDecimal(report.totals.roundingPen).isZero()
+              ? []
+              : [
+                  [
+                    'Redondeo al céntimo de los comprobantes',
+                    num(report.totals.roundingPen),
+                    null,
+                    null,
+                    null,
+                  ],
+                ]),
+          ],
+        };
+
   return {
-    buffer: build([ordersSheet, documentsSheet, excludedSheet, totals]),
+    buffer: build([
+      ordersSheet,
+      documentsSheet,
+      excludedSheet,
+      ...(byLine ? [byLine] : []),
+      totals,
+    ]),
     filename: `ventas-margen-${report.from}-a-${report.to}${line === undefined ? '' : `-${line}`}.xlsx`,
   };
 }

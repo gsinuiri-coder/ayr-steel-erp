@@ -4,6 +4,8 @@ import { Prisma } from '@prisma/client';
 import {
   LIST_XLSX_MAX_ROWS,
   paginationQuerySchema,
+  receivablesExportQuerySchema,
+  receivablesQuerySchema,
   Role,
   type ReceivableSummaryDto,
 } from '@ayr/shared';
@@ -104,6 +106,91 @@ describe('ReceivablesService.exportReceivables — el Excel es la tabla entera (
   it(`más de ${String(LIST_XLSX_MAX_ROWS)} clientes: 400, nunca un archivo recortado`, async () => {
     docs = Array.from({ length: LIST_XLSX_MAX_ROWS + 1 }, (_, k) => doc(k, k, '50.0000', null));
     await expect(svc.exportReceivables()).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('ReceivablesService — buscar en «Por cliente» (cc48, D-630)', () => {
+  let svc: ReceivablesService;
+
+  beforeEach(() => {
+    // Doce clientes: «Cliente 0» … «Cliente 11», documento 20100000000 + n.
+    const docs = Array.from({ length: 12 }, (_, k) => doc(k, k, `${String(100 + k)}.0000`, null));
+    svc = Object.create(ReceivablesService.prototype) as ReceivablesService;
+    Object.assign(svc, {
+      prisma: { fiscalDocument: { findMany: jest.fn(() => Promise.resolve(docs)) } },
+    });
+  });
+
+  it('cada palabra en el nombre o el documento, sin mayúsculas; el total es el de las que coinciden', async () => {
+    const result = await svc.receivables(
+      receivablesQuerySchema.parse({ page: '1', pageSize: '50', search: 'cliente 0000001' }),
+    );
+    // «cliente» en el nombre y «0000001» en el documento: 20100000001, …010 y …011.
+    expect(result.items.map((r) => r.customerName).sort()).toEqual([
+      'Cliente 1',
+      'Cliente 10',
+      'Cliente 11',
+    ]);
+    expect(result.total).toBe(3);
+  });
+
+  it('no distingue tildes ni mayúsculas, como el buscar de los reportes', async () => {
+    const result = await svc.receivables(
+      receivablesQuerySchema.parse({ page: '1', pageSize: '50', search: 'CLÍENTE 7' }),
+    );
+    expect(result.items.map((r) => r.customerName)).toEqual(['Cliente 7']);
+  });
+
+  it('con buscar, el Excel lo dice: su total no es el de las tarjetas', () => {
+    const row: ReceivableSummaryDto = {
+      customerId: '00000000-0000-4000-8000-000000000001',
+      customerName: 'Cliente',
+      customerDocNumber: '20123456789',
+      documentCount: 1,
+      balancePen: '100.0000',
+      overduePen: '0.0000',
+      nextDueDate: null,
+      creditWithoutDueCount: 0,
+    };
+    const sheetOf = (search?: string) => {
+      const book = XLSX.read(
+        receivablesXlsx([row], Role.ADMINISTRADOR, '2026-10-12', search).buffer,
+        { type: 'buffer' },
+      );
+      return XLSX.utils.sheet_to_json<unknown[]>(book.Sheets['Por cliente']!, { header: 1 });
+    };
+    expect(sheetOf().at(-1)?.[0]).toBe('Total (1 cliente)');
+    expect(String(sheetOf('clien').at(-1)?.[0])).toMatch(/^Búsqueda «clien»: solo los clientes/);
+  });
+
+  it('busca por documento', async () => {
+    const result = await svc.receivables(
+      receivablesQuerySchema.parse({ page: '1', pageSize: '50', search: '20100000007' }),
+    );
+    expect(result.items.map((r) => r.customerName)).toEqual(['Cliente 7']);
+  });
+
+  it('pagina sobre las filas que coinciden', async () => {
+    const page2 = await svc.receivables(
+      receivablesQuerySchema.parse({ page: '2', pageSize: '2', search: 'cliente 0000001' }),
+    );
+    expect(page2.total).toBe(3);
+    expect(page2.items).toHaveLength(1);
+  });
+
+  it('el Excel recibe el mismo buscar; las tarjetas no', async () => {
+    const exported = await svc.exportReceivables(
+      receivablesExportQuerySchema.parse({ search: 'CLIENTE 0000001' }),
+    );
+    expect(exported).toHaveLength(3);
+    expect((await svc.totals()).customerCount).toBe(12);
+  });
+
+  it('un buscar vacío o de espacios no filtra', async () => {
+    const result = await svc.receivables(
+      receivablesQuerySchema.parse({ page: '1', pageSize: '50', search: '   ' }),
+    );
+    expect(result.total).toBe(12);
   });
 });
 

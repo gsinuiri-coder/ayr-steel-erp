@@ -5,6 +5,7 @@ import {
   coilStateLabel,
   INVENTORY_MOVEMENT_TYPE_LABELS,
   INVENTORY_REF_TYPE_LABELS,
+  searchWords,
   type BusinessLine,
   type CoilConsumptionDto,
   type CoilDto,
@@ -332,7 +333,9 @@ function drawHeaderRow(
 export function buildCoilMonthReportPdf(
   report: CoilMonthReportDto,
   generatedAt: string,
+  search = '',
 ): Promise<Buffer> {
+  const notes = coilMonthPdfSearchNotes(search);
   // cc24 (D-408): el PDF sigue la pestaña; la línea va en el título.
   const line =
     report.businessLine === null ? '' : ` — ${BUSINESS_LINE_LABELS[report.businessLine]}`;
@@ -343,6 +346,10 @@ export function buildCoilMonthReportPdf(
     `Reporte mensual de bobinas${line} — del ${report.from} al ${report.to} — generado ${generatedAt}`,
   );
   let y = MARGIN + 40;
+  if (notes.tables !== null) {
+    doc.font('Helvetica').fontSize(9).text(notes.tables, MARGIN, y, { width: CONTENT_WIDTH });
+    y = doc.y + 8;
+  }
   for (const [title, film, section] of [
     ['Selladas', CoilFilmState.SEALED, report.sealed],
     ['Abiertas', CoilFilmState.OPENED, report.opened],
@@ -364,12 +371,32 @@ export function buildCoilMonthReportPdf(
     y = MARGIN;
   }
   doc.font('Helvetica').fontSize(9);
-  for (const line of coilMonthPdfSummary(report)) {
+  for (const line of [
+    ...(notes.summary === null ? [] : [notes.summary]),
+    ...coilMonthPdfSummary(report),
+  ]) {
     doc.text(line, MARGIN, y, { width: CONTENT_WIDTH });
     y = doc.y + 4;
   }
   doc.end();
   return result;
+}
+
+/**
+ * cc48 (D-631): con la búsqueda de la pantalla, el PDF lo dice dos veces, como el Excel (D-588):
+ * arriba, que las tablas traen solo las bobinas que coinciden y su subtotal suma esas filas; y antes
+ * del cuadre, que esas cifras son de toda la pestaña. Sin búsqueda, ninguna nota.
+ */
+export function coilMonthPdfSearchNotes(search: string): {
+  tables: string | null;
+  summary: string | null;
+} {
+  if (searchWords(search).length === 0) return { tables: null, summary: null };
+  const term = search.trim();
+  return {
+    tables: `Búsqueda «${term}»: las mismas bobinas que la pantalla. El subtotal de cada tabla suma solo esas filas.`,
+    summary: `Sin la búsqueda «${term}»: las cifras de abajo son de toda la pestaña, como en la pantalla.`,
+  };
 }
 
 /** Columnas de una tabla del PDF mensual (sin costos si el rol no los ve). */

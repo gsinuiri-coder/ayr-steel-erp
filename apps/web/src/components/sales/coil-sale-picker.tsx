@@ -91,7 +91,7 @@ export function CoilSalePickerDialog({
             reservado; debajo se listan las bobinas con saldo que no se ofrecen y por qué.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid min-w-0 gap-3">
+        <div className="grid grid-cols-1 min-w-0 gap-3">
           <Input
             autoFocus
             aria-label="Filtrar bobinas"

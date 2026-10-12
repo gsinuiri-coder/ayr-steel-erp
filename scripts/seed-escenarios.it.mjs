@@ -50,8 +50,11 @@ function runSeed(round) {
     /No se pudo anular/,
     `La corrida ${String(round)} dejó algo sin anular`,
   );
-  const ops = [...res.stdout.matchAll(/\| (P1|P2|M1|M2|A1|A2|C1|C2) \| (PED-\d+) \| (OP-\d+) \|/g)];
-  assert.equal(ops.length, 8, `La corrida ${String(round)} no imprimió los ocho casos`);
+  // cc48: V1 (la venta a crédito) también tiene pedido y OP, cerrada.
+  const ops = [
+    ...res.stdout.matchAll(/\| (P1|P2|M1|M2|A1|A2|C1|C2|V1) \| (PED-\d+) \| (OP-\d+) \|/g),
+  ];
+  assert.equal(ops.length, 9, `La corrida ${String(round)} no imprimió los nueve casos`);
   return Object.fromEntries(ops.map((m) => [m[1], m[3]]));
 }
 
@@ -83,7 +86,7 @@ async function useCases(ops) {
     await api.post(`/production/${order.id}/report`, { pieces: 50, idempotencyKey: randomUUID() });
     await api.post(`/production/${order.id}/close`, { reason: 'Prueba: el resto del fleje queda' });
     const closed = (await api.list('/production')).filter((o) => o.status === 'CLOSED');
-    assert.equal(closed.length, 3, 'P2, C2 y la OP de drywall quedaron cerradas');
+    assert.equal(closed.length, 4, 'P2, C2, V1 y la OP de drywall quedaron cerradas');
 
     const reason = 'El cliente cambió el pedido';
     const lineOf = async (opCode) => {
@@ -163,7 +166,11 @@ try {
     (c) => c.docNumber === DEMO.customer.docNumber,
   );
   const orders = (await api.list('/sales/orders')).filter((o) => o.customerId === customer.id);
-  assert.equal(orders.filter((o) => o.status !== 'CANCELLED').length, 8, 'ocho pedidos vivos');
+  assert.equal(
+    orders.filter((o) => o.status !== 'CANCELLED').length,
+    9,
+    'nueve pedidos vivos (con V1, cc48)',
+  );
 
   const suppliers = await api.list('/suppliers');
   const supplierIds = new Set(
@@ -172,7 +179,11 @@ try {
       .map((s) => s.id),
   );
   const purchases = (await api.list('/purchases')).filter((p) => supplierIds.has(p.supplierId));
-  assert.equal(purchases.filter((p) => p.status !== 'CANCELLED').length, 10, 'diez compras vivas');
+  assert.equal(
+    purchases.filter((p) => p.status !== 'CANCELLED').length,
+    11,
+    'once compras vivas (con V1, cc48)',
+  );
 
   const cuts = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
   assert.equal(cuts.filter((o) => o.status === 'RECEIVED').length, 1, 'un corte recibido vivo');

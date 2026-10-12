@@ -100,7 +100,7 @@ export function ClosePreviewDialog({
         </DialogHeader>
 
         {preview !== null && (
-          <div className="grid gap-3 text-sm">
+          <div className="grid grid-cols-1 gap-3 text-sm">
             <Table aria-label="Consumo por bobina">
               <TableHeader>
                 <TableRow>

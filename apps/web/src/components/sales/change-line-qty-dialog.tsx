@@ -256,7 +256,7 @@ export function ChangeLineQtyDialog({
             <AlertDescription>{ctx.blocked}</AlertDescription>
           </Alert>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <div className="flex gap-2">
               {ctx.hasProduction && (
                 <Button

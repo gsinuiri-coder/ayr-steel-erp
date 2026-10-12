@@ -13,7 +13,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 /**
  * RF-S3/M4 (sacrificable, D-224/D-228): «SKUs con lista bajo piso», en el Panel.
  *
- * Mismo espíritu que `StockShortagesCard` (D-188): la tarjeta ES el aviso, recalculada en
+ * Mismo espíritu que la tarjeta de faltantes de D-188 (retirada del Panel en cc47, D-618): la
+ * tarjeta ES el aviso, recalculada en
  * cada carga contra `GET /catalog/price-list/floor-summary` — sin flag guardado ni job. Solo
  * ADMINISTRADOR: el ajuste que corresponde (el margen mínimo por línea) vive en
  * Administración → Márgenes, que ya es de ese rol (D-175).

@@ -134,16 +134,24 @@ export class ReportsController {
     sendXlsx(res, coilMonthXlsx(report, searchNoteRows(search), unsearchedNoteRows(search)));
   }
 
-  /** D-355. El PDF del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. */
+  /**
+   * D-355. El PDF del reporte mensual, del mismo DTO y con el mismo enmascarado por rol. cc48
+   * (D-631): recibe la búsqueda de la pantalla, igual que su Excel, y trae las mismas bobinas; el
+   * mes y la línea ya llegaban en `query`.
+   */
   @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   @Get('coils/pdf')
   async coilsPdfFile(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(coilMonthReportQuerySchema)) query: CoilMonthReportQuery,
+    @Query(new ZodValidationPipe(reportXlsxSearchSchema)) { search = '' }: ReportXlsxSearch,
     @Res() res: Response,
   ): Promise<void> {
-    const report = await this.reports.coilsByMonth(query, canSeeCosts(actor));
-    const buffer = await buildCoilMonthReportPdf(report, businessToday());
+    const report = searchCoilMonth(
+      await this.reports.coilsByMonth(query, canSeeCosts(actor)),
+      search,
+    );
+    const buffer = await buildCoilMonthReportPdf(report, businessToday(), search);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',

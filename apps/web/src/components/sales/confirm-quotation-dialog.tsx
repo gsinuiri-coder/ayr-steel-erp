@@ -132,7 +132,7 @@ export function ConfirmQuotationDialog({
             <AlertDescription>No se pudo calcular la vista previa.</AlertDescription>
           </Alert>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid grid-cols-1 gap-3">
             {data.temporaryReservationExpiresAt && (
               <p className="text-sm text-muted-foreground">
                 La reserva temporal vigente (vence{' '}

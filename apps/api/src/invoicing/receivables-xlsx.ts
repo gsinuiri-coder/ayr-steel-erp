@@ -1,6 +1,6 @@
 import { CREDIT_WITHOUT_DUE_LABEL, type ReceivableSummaryDto, type Role } from '@ayr/shared';
-import { listXlsx, type ListColumn } from '../common/list-xlsx';
-import { num } from '../reports/reports-xlsx';
+import { columnsFor, listSheet, type ListColumn } from '../common/list-xlsx';
+import { build, num } from '../reports/reports-xlsx';
 
 /**
  * cc26 M2 (D-provisional): las columnas del Excel de «Por cliente» en /cobranzas, las de la
@@ -8,8 +8,9 @@ import { num } from '../reports/reports-xlsx';
  * pantalla muestra al lado del nombre.
  *
  * La ruta es solo de ADMINISTRADOR (la misma que su GET); igual, la tabla no trae costos ni
- * márgenes: ninguna columna es `adminOnly`. La fila de total suma vencido y saldo: es lo que
- * dicen las tarjetas «Vencido» y «Por cobrar» (`GET /invoicing/receivables/summary`).
+ * márgenes: ninguna columna es `adminOnly`. La fila de total suma vencido y saldo: sin buscar,
+ * es lo que dicen las tarjetas «Vencido» y «Por cobrar» (`GET /invoicing/receivables/summary`);
+ * con buscar (cc48, D-630), suma solo los clientes que coinciden, y el archivo lo dice.
  */
 export const RECEIVABLE_LIST_COLUMNS: readonly ListColumn<ReceivableSummaryDto>[] = [
   { header: 'Cliente', width: 36, cell: (r) => r.customerName },
@@ -40,13 +41,25 @@ export function receivablesXlsx(
   rows: readonly ReceivableSummaryDto[],
   role: Role,
   today: string,
+  search = '',
 ): { buffer: Buffer; filename: string } {
-  return listXlsx({
-    sheetName: 'Por cliente',
-    columns: RECEIVABLE_LIST_COLUMNS,
-    rows,
-    role,
-    noun: { singular: 'cliente', plural: 'clientes' },
-    filename: `cobranzas-por-cliente-${today}.xlsx`,
+  const sheet = listSheet('Por cliente', columnsFor(RECEIVABLE_LIST_COLUMNS, role), rows, {
+    singular: 'cliente',
+    plural: 'clientes',
   });
+  const term = search.trim();
+  // cc48 (D-630): un Excel con buscar no se puede leer como el total por cobrar.
+  const note =
+    term === ''
+      ? []
+      : [
+          [],
+          [
+            `Búsqueda «${term}»: solo los clientes que coinciden. Las tarjetas «Por cobrar» y «Vencido» de la pantalla suman a todos.`,
+          ],
+        ];
+  return {
+    buffer: build([{ ...sheet, rows: [...sheet.rows, ...note] }]),
+    filename: `cobranzas-por-cliente-${today}.xlsx`,
+  };
 }

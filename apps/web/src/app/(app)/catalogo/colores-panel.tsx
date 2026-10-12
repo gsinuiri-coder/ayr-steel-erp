@@ -112,7 +112,7 @@ export function ColoresPanel({
   if (colors.isError) return <p className="text-destructive">No se pudieron cargar los colores.</p>;
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <div className="flex items-start justify-between gap-4">
         <p className="text-sm text-muted-foreground">
           Cada color es un <strong>color comercial</strong> (Rojo, Azul), sin RAL: el RAL va en el

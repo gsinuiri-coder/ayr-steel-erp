@@ -230,6 +230,7 @@ describe('reports-xlsx', () => {
         'Por pedido',
         'Comprobantes',
         'Facturación parcial',
+        'Por línea',
         'Totales',
       ]);
       expect(filename).toBe('ventas-margen-2026-09-01-a-2026-09-30.xlsx');
@@ -264,15 +265,16 @@ describe('reports-xlsx', () => {
       const { buffer } = salesMarginXlsx(margin);
       const sheet = sheetOf(buffer, 'Totales');
 
-      expect(cell(sheet, 'A3')?.v).toBe(
+      // cc48: las filas por línea están en «Por línea»; aquí arranca el total.
+      expect(cell(sheet, 'A2')?.v).toBe(
         'Total del rango (margen sin Servicios ni líneas sin producto)',
       );
-      expect(cell(sheet, 'A4')?.v).toBe(
+      expect(cell(sheet, 'A3')?.v).toBe(
         'Sin costo registrado (Servicios y líneas sin producto), fuera del margen',
       );
-      expect(cell(sheet, 'A6')?.v).toBe('Pedidos con costo parcial');
-      expect(cell(sheet, 'B7')?.v).toBe(1);
-      expect(cell(sheet, 'B8')?.v).toBe(400);
+      expect(cell(sheet, 'A5')?.v).toBe('Pedidos con costo parcial');
+      expect(cell(sheet, 'B6')?.v).toBe(1);
+      expect(cell(sheet, 'B7')?.v).toBe(400);
     });
 
     it('D-409: Servicios va sin costo ni margen y su venta aparte del margen del total', () => {
@@ -294,16 +296,50 @@ describe('reports-xlsx', () => {
           noCostSalesPen: '100.0000',
         },
       });
+      const lines = sheetOf(buffer, 'Por línea');
+      expect(cell(lines, 'A3')?.v).toBe('Servicios');
+      expect(cell(lines, 'B3')?.v).toBe(100);
+      expect(cell(lines, 'C3')).toBeUndefined();
+      expect(cell(lines, 'D3')).toBeUndefined();
       const sheet = sheetOf(buffer, 'Totales');
-
-      expect(cell(sheet, 'A3')?.v).toBe('Servicios');
-      expect(cell(sheet, 'B3')?.v).toBe(100);
-      expect(cell(sheet, 'C3')).toBeUndefined();
-      expect(cell(sheet, 'D3')).toBeUndefined();
-      expect(cell(sheet, 'A5')?.v).toBe(
+      expect(cell(sheet, 'A3')?.v).toBe(
         'Sin costo registrado (Servicios y líneas sin producto), fuera del margen',
       );
-      expect(cell(sheet, 'B5')?.v).toBe(100);
+      expect(cell(sheet, 'B3')?.v).toBe(100);
+    });
+
+    it('cc48: «Por línea» suma la venta de la franja una sola vez, con el redondeo y sin fila de total', () => {
+      const { buffer } = salesMarginXlsx({
+        ...margin,
+        totalsByLine: [
+          ...margin.totalsByLine,
+          {
+            businessLine: 'services',
+            salesPen: '100.0000',
+            costPen: '0.0000',
+            marginPen: '100.0000',
+            marginPct: '100.00',
+          },
+        ],
+        totals: {
+          ...margin.totals,
+          salesPen: '1100.0100',
+          noCostSalesPen: '100.0000',
+          roundingPen: '0.0100',
+        },
+      });
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(sheetOf(buffer, 'Por línea'), {
+        header: 1,
+      });
+      const body = rows.slice(1);
+      expect(body.map((r) => r[0])).toContain('Redondeo al céntimo de los comprobantes');
+      expect(body.map((r) => r[0])).not.toContain('Total');
+      // Sumar la columna entera da la venta de la franja, una vez.
+      const sum = body.reduce((acc, r) => acc + Math.round(Number(r[1] ?? 0) * 100), 0);
+      expect(sum).toBe(110001);
+      // Ninguna fila de «Totales» repite la venta por línea.
+      const totals = XLSX.utils.sheet_to_json<unknown[]>(sheetOf(buffer, 'Totales'), { header: 1 });
+      expect(totals.map((r) => r[0])).not.toContain('Servicios');
     });
   });
 });

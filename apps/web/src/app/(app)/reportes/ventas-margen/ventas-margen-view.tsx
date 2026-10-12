@@ -30,7 +30,7 @@ import {
   PeriodStatus,
   useReportPeriod,
 } from '@/components/reports/report-period';
-import { Section } from '@/components/section';
+import { LineTotalsStrip, type LineTotalsItem } from '@/components/reports/line-totals-strip';
 import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
 import {
   BusyRegion,
@@ -782,67 +782,44 @@ function GroupDetail({
 }
 
 function TotalsByLine({ data }: { data: SalesMarginDto }) {
-  return (
-    // cc47 (D-616): la franja gris separa los totales por línea de la tabla principal.
-    <Section title="Totales por línea de negocio">
-      <div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Línea</TableHead>
-              <TableHead className="text-right">Venta (S/)</TableHead>
-              <TableHead className="text-right">Costo (S/)</TableHead>
-              <TableHead className="text-right">Margen (S/)</TableHead>
-              <TableHead className="text-right">Margen %</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.totalsByLine.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
-                  Sin ventas en el periodo.
-                </TableCell>
-              </TableRow>
-            )}
-            {data.totalsByLine.map((t) => (
-              <TableRow key={t.businessLine ?? 'sin-linea'}>
-                <TableCell>
-                  {t.businessLine === null
-                    ? 'Sin línea (servicios y ajustes)'
-                    : BUSINESS_LINE_LABELS[t.businessLine]}
-                </TableCell>
-                <TableCell className="text-right">{formatAmount(t.salesPen)}</TableCell>
-                {t.businessLine === null || NO_COST_REPORT_LINES.includes(t.businessLine) ? (
-                  // D-392/D-419: Servicios y «Sin línea» suman igual; su costo no está registrado.
-                  <TableCell colSpan={3} className="text-right text-muted-foreground">
-                    {NO_COST_LABEL}
-                  </TableCell>
-                ) : (
-                  <>
-                    <TableCell className="text-right">{formatAmount(t.costPen)}</TableCell>
-                    <TableCell className="text-right">{formatAmount(t.marginPen)}</TableCell>
-                    <TableCell className="text-right">{pctText(t.marginPct)}</TableCell>
-                  </>
-                )}
-              </TableRow>
-            ))}
-            {/* cc28 (D-461): lo que separa sumar comprobantes de sumar sus líneas. */}
-            {!toDecimal(data.totals.roundingPen).isZero() && (
-              <TableRow>
-                <TableCell>Redondeo al céntimo de los comprobantes</TableCell>
-                <TableCell className="text-right">
-                  {formatAmount(data.totals.roundingPen, 4)}
-                </TableCell>
-                <TableCell colSpan={3} className="text-right text-muted-foreground">
-                  Comprobantes con líneas de más de dos decimales (precio con IGV)
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
-    </Section>
-  );
+  // cc48 (D-629): una franja compacta, plegable, con las mismas cifras que la tabla de antes.
+  const items: LineTotalsItem[] = data.totalsByLine.map((t) => ({
+    key: t.businessLine ?? 'sin-linea',
+    label:
+      t.businessLine === null
+        ? 'Sin línea (servicios y ajustes)'
+        : BUSINESS_LINE_LABELS[t.businessLine],
+    figures:
+      t.businessLine === null || NO_COST_REPORT_LINES.includes(t.businessLine)
+        ? // D-392/D-419: Servicios y «Sin línea» suman igual; su costo no está registrado.
+          [
+            { label: 'Venta', value: formatAmount(t.salesPen) },
+            { label: '', value: NO_COST_LABEL.toLowerCase() },
+          ]
+        : [
+            { label: 'Venta', value: formatAmount(t.salesPen) },
+            { label: 'Costo', value: formatAmount(t.costPen) },
+            {
+              label: 'Margen',
+              value: `${formatAmount(t.marginPen)} (${pctText(t.marginPct)})`,
+            },
+          ],
+  }));
+  // cc28 (D-461): lo que separa sumar comprobantes de sumar sus líneas.
+  if (!toDecimal(data.totals.roundingPen).isZero()) {
+    items.push({
+      key: 'redondeo',
+      label: 'Redondeo al céntimo',
+      figures: [
+        { label: '', value: formatAmount(data.totals.roundingPen, 4) },
+        { label: '', value: 'comprobantes con líneas de más de dos decimales (precio con IGV)' },
+      ],
+    });
+  }
+  if (items.length === 0) {
+    items.push({ key: 'vacio', label: 'Sin ventas en el periodo.', figures: [] });
+  }
+  return <LineTotalsStrip items={items} />;
 }
 
 function CostStatusBadge({ status }: { status: MarginCostStatus }) {

@@ -75,7 +75,7 @@ export function Side({
   side: ReactivationSideDto;
 }) {
   return (
-    <section aria-label={title} className="grid gap-1">
+    <section aria-label={title} className="grid grid-cols-1 gap-1">
       <h3 className="text-sm font-medium">{title}</h3>
       <Table>
         <TableHeader>

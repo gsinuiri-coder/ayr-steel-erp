@@ -173,7 +173,7 @@ export function SearchSelectModal({
           <DialogTitle>{title}</DialogTitle>
           {description !== undefined && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <Input
             autoFocus
             aria-label="Filtrar opciones"

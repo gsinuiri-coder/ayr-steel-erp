@@ -65,7 +65,7 @@ export function DocumentProfitability({ documentId }: { documentId: string }) {
           <p className="px-2.5 text-sm text-muted-foreground">{data.notApplicableReason}</p>
         )}
         {data?.applies && (
-          <div className="mt-2 grid gap-3">
+          <div className="mt-2 grid grid-cols-1 gap-3">
             <ProfitTable
               lines={data.lines}
               total={data.total}

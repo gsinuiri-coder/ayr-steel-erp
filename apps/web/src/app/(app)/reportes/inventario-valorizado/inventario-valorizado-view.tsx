@@ -44,18 +44,11 @@ import { useUrlSearchInput, useUrlState } from '@/lib/use-url-state';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
-import { Section } from '@/components/section';
+import { LineTotalsStrip } from '@/components/reports/line-totals-strip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUrlTab } from '@/lib/use-url-tab';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { TableCell, TableRow } from '@/components/ui/table';
 import { LINK_CLASSNAME, cn } from '@/lib/utils';
 
 /**
@@ -335,44 +328,32 @@ export function InventarioValorizadoView() {
 
       {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
       {data && line === undefined && (
-        // cc47 (D-616): los totales por línea, en franja gris que separa de la tabla.
+        // cc47 (D-616): los totales por línea, en franja gris que separa de la tabla. cc48 (D-629):
+        // una sola fila compacta que se pliega si la tabla queda baja.
         <BusyRegion busy={updating}>
-          <Section title="Totales por línea de negocio">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Línea</TableHead>
-                  <TableHead className="text-right">Bobinas (S/)</TableHead>
-                  <TableHead className="text-right">Productos (S/)</TableHead>
-                  <TableHead className="text-right">Total (S/)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.totalsByLine.map((t) => (
-                  <TableRow key={t.businessLine}>
-                    <TableCell>{BUSINESS_LINE_LABELS[t.businessLine]}</TableCell>
-                    <TableCell className="text-right">{formatAmount(t.coilValuePen)}</TableCell>
-                    <TableCell className="text-right">{formatAmount(t.productValuePen)}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatAmount(t.totalValuePen)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                <TableRow className="border-t-2">
-                  <TableCell className="font-semibold">Total general</TableCell>
-                  <TableCell className="text-right font-semibold">
-                    {formatAmount(data.totals.coilValuePen)}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold">
-                    {formatAmount(data.totals.productValuePen)}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold">
-                    {formatAmount(data.totals.totalValuePen)}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </Section>
+          <LineTotalsStrip
+            items={[
+              ...data.totalsByLine.map((t) => ({
+                key: t.businessLine,
+                label: BUSINESS_LINE_LABELS[t.businessLine],
+                figures: [
+                  { label: 'Bobinas', value: formatAmount(t.coilValuePen) },
+                  { label: 'Productos', value: formatAmount(t.productValuePen) },
+                  { label: 'Total', value: formatAmount(t.totalValuePen) },
+                ],
+              })),
+              {
+                key: 'total',
+                label: 'Total general',
+                strong: true,
+                figures: [
+                  { label: 'Bobinas', value: formatAmount(data.totals.coilValuePen) },
+                  { label: 'Productos', value: formatAmount(data.totals.productValuePen) },
+                  { label: 'Total', value: formatAmount(data.totals.totalValuePen) },
+                ],
+              },
+            ]}
+          />
         </BusyRegion>
       )}
     </RoleGate>

@@ -316,7 +316,7 @@ export function CoilPicker({
               }}
             />
           ) : (
-            <div className="grid gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div className="relative">
                 <Search
                   className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
@@ -378,7 +378,7 @@ export function CoilPicker({
               ajuste se va a revertir.
             */}
               {closedOptions.length > 0 && (
-                <div className="grid gap-2">
+                <div className="grid grid-cols-1 gap-2">
                   <Button
                     variant="link"
                     className="justify-self-start px-0"

@@ -444,7 +444,11 @@ export async function voidPrevious(api, masters) {
           await api.post(`/invoicing/documents/${d.id}/payments/${p.id}/reverse`, reason);
         }
         if (d.status === 'DRAFT') await api.del(`/invoicing/documents/${d.id}`, reason);
-        else await api.post(`/invoicing/documents/${d.id}/void`, reason);
+        // cc48: el manual de V1 (y uno importado) se anula por dentro (D-153); la baja es solo
+        // de lo que emitió el ERP.
+        else if (detail.origin === 'ISSUED_HERE')
+          await api.post(`/invoicing/documents/${d.id}/void`, reason);
+        else await api.post(`/invoicing/documents/${d.id}/annul`, reason);
       });
     }
   });
@@ -558,6 +562,13 @@ export async function voidPrevious(api, masters) {
 // ---------------------------------------------------------------------------
 // Los casos
 // ---------------------------------------------------------------------------
+
+/** La fecha `YYYY-MM-DD` más `days` días (sin hora: no depende del huso). */
+function addDaysIso(iso, days) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 /** `OP-000123` → 123: el orden de creación, aunque el correlativo pase los seis dígitos. */
 const opNumber = (code) => Number(String(code).replace(/\D/g, ''));
@@ -760,6 +771,41 @@ export async function seedCases(api, masters) {
     abrir: `${PREVIEW_WEB}/pedidos/${c2.orderId}`,
     probar:
       'línea 1 → «Cambiar cantidad» a 26 m: reserva 6 m más y nace una OP por la diferencia; la tarjeta dice «20.00 m de 20.00 m»',
+  });
+
+  // V1 · venta a crédito con saldo (cc48): un pedido propio de accesorio, producido y cerrado, con
+  // su boleta manual (D-153; el cliente DEMO tiene DNI) a 15 días. Le da filas a Cobranzas «Por
+  // cliente», a «Ventas y margen» y a «Totales por línea». Va aparte de C2: un pedido con
+  // comprobante ya no admite «Cambiar cantidad», que es lo que C2 prueba.
+  const v1Order = await orderFor(
+    'V1',
+    accessory,
+    { qty: '20.000', unitPricePen: '15.0000' },
+    await buyCoils(roofing, white, '0.25', ['62', '63'], 'caso V1'),
+  );
+  await report(v1Order, { coilId: v1Order.coils[0].id, meters: '20.000' });
+  await api.post(`/production/roofing/${v1Order.opId}/close`, {});
+  const v1Detail = await api.get(`/sales/orders/${v1Order.orderId}`);
+  const invoice = await api.post('/invoicing/documents', {
+    docType: 'BOLETA',
+    customerId: masters.customer.id,
+    salesOrderId: v1Order.orderId,
+    issueDate: today,
+    paymentTerms: 'CREDITO',
+    dueDate: addDaysIso(today, 15),
+    notes: 'DEMO · caso V1',
+    items: [{ salesOrderItemId: v1Detail.items[0].id, qty: '20.000' }],
+  });
+  const v1 = await api.post(`/invoicing/documents/${invoice.id}/register-manual`, {
+    series: 'B900',
+    correlative: (seq += 1),
+  });
+  cases.push({
+    key: 'V1',
+    order: v1Order.order,
+    op: v1Order.op,
+    abrir: `${PREVIEW_WEB}/cobranzas`,
+    probar: `boleta ${v1.number} a crédito con saldo: Cobranzas «Por cliente» y Ventas y margen`,
   });
 
   // Drywall: dos bobinas; la 1 cortada en 5 flejes de 244 mm (parante) y recibida, la 2 libre.
