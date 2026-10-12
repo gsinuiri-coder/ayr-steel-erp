@@ -191,6 +191,13 @@ export function BobinasView() {
               href: '/compras/importar',
             },
             { key: 'from-xml', label: 'Desde XML', href: '/bobinas/nueva-xml' },
+            // T6 (D-173): el PDF es el reporte del conjunto filtrado actual —mismos filtros que la
+            // tabla de abajo—, descarga directa contra el API (patrón D-149).
+            {
+              key: 'pdf',
+              label: 'Descargar PDF',
+              download: `/api/coils/report-pdf?${queryString}`,
+            },
           ]}
         />
       </div>
@@ -324,20 +331,6 @@ export function BobinasView() {
               </>
             )}
           </FiltersDialog>
-        }
-        aside={
-          // T6 (D-173): el PDF es el reporte del conjunto filtrado actual —mismos filtros que la
-          // tabla de abajo—, descarga directa contra el API (patrón D-149).
-          <HeaderActions
-            primary={['pdf']}
-            actions={[
-              {
-                key: 'pdf',
-                label: 'Descargar PDF',
-                download: `/api/coils/report-pdf?${queryString}`,
-              },
-            ]}
-          />
         }
       />
 

@@ -112,6 +112,33 @@ export function ReporteBobinasView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve.
+          // D-408/D-418: el PDF y el Excel siguen la pestaña.
+          valid ? (
+            <HeaderActions
+              primary={[]}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
+                  download: xlsxHref(
+                    '/api/reports/coils/xlsx',
+                    { month, businessLine: line },
+                    searchText,
+                  ),
+                },
+                {
+                  key: 'pdf',
+                  label: 'Descargar PDF',
+                  download: `/api/reports/coils/pdf?${qs}`,
+                },
+              ]}
+            />
+          ) : undefined
+        }
         title="Reporte mensual de bobinas"
         subtitle="Saldo de cada bobina al inicio y al fin del mes."
         howItWorks={
@@ -189,32 +216,6 @@ export function ReporteBobinasView() {
         }
         filters={<MonthFiltersButton state={monthState} />}
         status={<MonthStatus state={monthState} updating={updating} />}
-        aside={
-          // D-355: descargas directas contra el API (patrón D-149), del mismo mes que se ve.
-          // D-408/D-418: el PDF y el Excel siguen la pestaña.
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
-                  download: xlsxHref(
-                    '/api/reports/coils/xlsx',
-                    { month, businessLine: line },
-                    searchText,
-                  ),
-                },
-                {
-                  key: 'pdf',
-                  label: 'Descargar PDF',
-                  download: `/api/reports/coils/pdf?${qs}`,
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
 
       {monthState.error !== null && (

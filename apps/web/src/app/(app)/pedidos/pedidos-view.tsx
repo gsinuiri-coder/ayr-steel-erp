@@ -140,7 +140,16 @@ export function PedidosView() {
         </div>
         <HeaderActions
           primary={['new']}
-          actions={[{ key: 'new', label: 'Nuevo pedido directo', href: '/pedidos/nuevo' }]}
+          actions={[
+            { key: 'new', label: 'Nuevo pedido directo', href: '/pedidos/nuevo' },
+            // cc26 M2: el Excel lleva los filtros y el orden de la lista (todas las páginas); el
+            // orden por estado es solo de la página y no viaja.
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/sales/orders', params),
+            },
+          ]}
         />
       </div>
 
@@ -165,20 +174,6 @@ export function PedidosView() {
           >
             {(draft, update) => <StageFields stage={draft.stage} onChange={update} />}
           </FiltersDialog>
-        }
-        aside={
-          // cc26 M2: el Excel lleva los filtros y el orden de la lista (todas las páginas); el
-          // orden por estado es solo de la página y no viaja.
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/sales/orders', params),
-              },
-            ]}
-          />
         }
       />
 

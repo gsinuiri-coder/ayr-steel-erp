@@ -196,7 +196,14 @@ export function ComprobantesView() {
           {/* cc31: un solo botón principal. cc47 (D-615): el Excel pasa a la línea de la tabla. */}
           <HeaderActions
             primary={['new']}
-            actions={[{ key: 'new', label: 'Nuevo comprobante', href: '/comprobantes/nuevo' }]}
+            actions={[
+              { key: 'new', label: 'Nuevo comprobante', href: '/comprobantes/nuevo' },
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                download: listXlsxHref('/invoicing/documents', params),
+              },
+            ]}
           />
         </div>
       </div>
@@ -275,18 +282,6 @@ export function ComprobantesView() {
               </>
             )}
           </FiltersDialog>
-        }
-        aside={
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/invoicing/documents', params),
-              },
-            ]}
-          />
         }
       />
 

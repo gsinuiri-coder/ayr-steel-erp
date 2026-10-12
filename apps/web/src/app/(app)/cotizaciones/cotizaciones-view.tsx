@@ -122,6 +122,11 @@ export function CotizacionesView() {
               href: '/cotizaciones/importar',
               show: isAdmin,
             },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/sales/quotations', params),
+            },
           ]}
         />
       </div>
@@ -148,18 +153,6 @@ export function CotizacionesView() {
               label: QUOTATION_STATUS_LABELS[s],
             }))}
             negativeValue="CANCELLED"
-          />
-        }
-        aside={
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/sales/quotations', params),
-              },
-            ]}
           />
         }
       />

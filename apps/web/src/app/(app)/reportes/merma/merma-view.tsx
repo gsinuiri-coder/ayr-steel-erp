@@ -93,6 +93,27 @@ export function MermaView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // cc39 (D-580): el Excel de la pestaña y el periodo que se ven (descarga directa, D-149).
+          valid ? (
+            <HeaderActions
+              primary={[]}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
+                  download: xlsxHref(
+                    '/api/reports/coil-waste/xlsx',
+                    { from: period.from, to: period.to, businessLine: line },
+                    searchText,
+                  ),
+                },
+              ]}
+            />
+          ) : undefined
+        }
         title="Merma por bobina"
         subtitle={`${BUSINESS_LINE_LABELS[line]}. Merma sobre el estándar de cada bobina, con el kardex del periodo.`}
         howItWorks={
@@ -195,26 +216,6 @@ export function MermaView() {
         }
         filters={<PeriodFiltersButton state={periodState} />}
         status={<PeriodStatus state={periodState} updating={updating} />}
-        aside={
-          // cc39 (D-580): el Excel de la pestaña y el periodo que se ven (descarga directa, D-149).
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  // cc40 (D-588): con la búsqueda, el Excel trae las bobinas que se ven.
-                  download: xlsxHref(
-                    '/api/reports/coil-waste/xlsx',
-                    { from: period.from, to: period.to, businessLine: line },
-                    searchText,
-                  ),
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
 
       {periodState.error !== null && (

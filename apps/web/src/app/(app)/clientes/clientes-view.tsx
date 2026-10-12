@@ -136,6 +136,11 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
                 openDialog();
               },
             },
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel',
+              download: listXlsxHref('/customers', params),
+            },
           ]}
         />
       </div>
@@ -158,18 +163,6 @@ export function ClientesView({ autoOpenNew = false }: { autoOpenNew?: boolean })
             placeholder="Buscar por nombre o número de documento…"
             value={searchText}
             onChange={setSearchText}
-          />
-        }
-        aside={
-          <HeaderActions
-            primary={['xlsx']}
-            actions={[
-              {
-                key: 'xlsx',
-                label: 'Descargar Excel',
-                download: listXlsxHref('/customers', params),
-              },
-            ]}
           />
         }
       />

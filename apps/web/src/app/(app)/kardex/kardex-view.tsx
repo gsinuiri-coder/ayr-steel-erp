@@ -213,11 +213,30 @@ export function KardexView() {
             Saldo corrido de un producto o de una bobina.
           </p>
         </div>
+        {/* cc47b (D-623): las descargas, en «Más opciones» (sin botón principal). Con el rango al
+            revés el API respondería 400, así que no se ofrecen. */}
+        <HeaderActions
+          primary={[]}
+          actions={[
+            {
+              key: 'excel',
+              label: 'Descargar Excel',
+              download: excelHref,
+              show: hasItem && isAdmin && validRange,
+            },
+            {
+              key: 'sunat',
+              label: 'Descargar PEPS (SUNAT 13.1)',
+              download: sunatHref,
+              show: hasItem && isAdmin && validRange,
+            },
+          ]}
+        />
       </div>
 
       {/*
         cc47 (D-615): primero el ítem (el kardex es el de un ítem: hace de buscar), después
-        «Filtros» con el rango de fechas, el rango aplicado y, a la derecha, las descargas. El
+        «Filtros» con el rango de fechas y el rango aplicado; las descargas van a la cabecera. El
         método va en la cabecera de la hoja (formato del cliente, D-298): no es un filtro.
       */}
       <TableToolbar
@@ -270,30 +289,6 @@ export function KardexView() {
           <span className="text-sm text-muted-foreground" data-testid="kardex-rango">
             {rangeText(range, dates)}
           </span>
-        }
-        aside={
-          hasItem &&
-          isAdmin && (
-            <HeaderActions
-              primary={['excel']}
-              actions={[
-                {
-                  key: 'excel',
-                  label: 'Descargar Excel',
-                  download: excelHref,
-                  // Una descarga principal es un enlace y no se deshabilita: con el rango al
-                  // revés el API respondería 400, así que el botón no se ofrece.
-                  show: validRange,
-                },
-                {
-                  key: 'sunat',
-                  label: 'Descargar PEPS (SUNAT 13.1)',
-                  download: sunatHref,
-                  show: validRange,
-                },
-              ]}
-            />
-          )
         }
       />
       {range === 'custom' &&

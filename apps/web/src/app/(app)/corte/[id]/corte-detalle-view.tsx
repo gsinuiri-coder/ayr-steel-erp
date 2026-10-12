@@ -20,6 +20,7 @@ import { formatMoney, formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -112,21 +113,26 @@ export function CorteDetalleView({ id }: { id: string }) {
           <Badge variant={CUTTING_ORDER_TONE[o.status]}>
             {CUTTING_ORDER_STATUS_LABELS[o.status]}
           </Badge>
-          <Button variant="outline" asChild>
-            <Link href={`/compras/nueva?tipo=SERVICE&ordenCorte=${o.id}&linea=${o.businessLine}`}>
-              Vincular factura del corte
-            </Link>
-          </Button>
-          {canCancel && (
-            <Button
-              variant="destructive"
-              onClick={() => {
-                setCancelling(true);
-              }}
-            >
-              Cancelar lo pendiente
-            </Button>
-          )}
+          {/* cc47b (D-623): un principal y lo que anula al final de «Más opciones», en rojo. */}
+          <HeaderActions
+            primary={['link-invoice']}
+            actions={[
+              {
+                key: 'link-invoice',
+                label: 'Vincular factura del corte',
+                href: `/compras/nueva?tipo=SERVICE&ordenCorte=${o.id}&linea=${o.businessLine}`,
+              },
+              {
+                key: 'cancel',
+                label: 'Cancelar lo pendiente',
+                show: canCancel,
+                destructive: true,
+                onSelect: () => {
+                  setCancelling(true);
+                },
+              },
+            ]}
+          />
         </div>
       </div>
 

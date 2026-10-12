@@ -79,12 +79,23 @@ type FormValues = z.infer<ReturnType<typeof formSchemaFor>>;
  * maestro de apoyo del catálogo, como los acabados: se abre cuando hace falta dar de alta un
  * color y no es una pantalla de trabajo diario.
  */
-export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
+/**
+ * cc47b (D-623): «Nuevo color» es el botón principal de la cabecera de Catálogo cuando se ve esta
+ * pestaña; la cabecera abre el alta con `creating`/`onCreatingChange`.
+ */
+export function ColoresPanel({
+  isAdmin,
+  creating,
+  onCreatingChange: setCreating,
+}: {
+  isAdmin: boolean;
+  creating: boolean;
+  onCreatingChange: (creating: boolean) => void;
+}) {
   // D-323: la tabla muestra su lista entera; el orden por columna es sobre todas las filas.
   const [sort, toggleSort] = useSort<'code' | 'name' | 'status'>('c');
   const colors = useColors();
   const [editing, setEditing] = useState<ColorDto | null>(null);
-  const [creating, setCreating] = useState(false);
   const queryClient = useQueryClient();
 
   const toggleActive = useMutation({
@@ -108,16 +119,6 @@ export function ColoresPanel({ isAdmin }: { isAdmin: boolean }) {
           acabado de cada bobina. La orden de producción monta cualquier bobina del mismo color
           comercial y espesor, y ofrece primero las del acabado exacto del producto.
         </p>
-        {isAdmin && (
-          <Button
-            size="sm"
-            onClick={() => {
-              setCreating(true);
-            }}
-          >
-            Nuevo color
-          </Button>
-        )}
       </div>
 
       <div className="rounded-lg border">

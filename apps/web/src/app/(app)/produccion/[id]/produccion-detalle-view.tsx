@@ -36,6 +36,7 @@ import { ReasonDialog } from '@/components/reason-dialog';
 import { ANNUL_REASONS } from '@/lib/reasons';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
+import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Section } from '@/components/section';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -197,39 +198,39 @@ export function ProduccionDetalleView({ id }: { id: string }) {
             cierre también acá era el segundo camino vivo que la unificación vino a sacar:
             dos botones que hacen lo mismo terminan divergiendo en lo que validan antes.
           */}
-          {isLive && (
-            <Button asChild variant="outline">
-              <Link
-                href={
+          {/* cc47b (D-623): un principal (producir si está viva, reabrir si está cerrada) y
+              «Anular orden» al final de «Más opciones», en rojo. */}
+          <HeaderActions
+            primary={['produce', 'reopen']}
+            actions={[
+              {
+                key: 'produce',
+                label: 'Producir esta orden',
+                show: isLive,
+                href:
                   o.salesOrderId === null
                     ? `/planta?op=${o.id}`
-                    : `/planta?pedido=${o.salesOrderId}&op=${o.id}`
-                }
-              >
-                Producir esta orden
-              </Link>
-            </Button>
-          )}
-          {o.status === 'CLOSED' && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                setReopening(true);
-              }}
-            >
-              Reabrir orden
-            </Button>
-          )}
-          {isLive && user.role === Role.ADMINISTRADOR && (
-            <Button
-              variant="destructive"
-              onClick={() => {
-                setCancelling(true);
-              }}
-            >
-              Anular orden
-            </Button>
-          )}
+                    : `/planta?pedido=${o.salesOrderId}&op=${o.id}`,
+              },
+              {
+                key: 'reopen',
+                label: 'Reabrir orden',
+                show: o.status === 'CLOSED',
+                onSelect: () => {
+                  setReopening(true);
+                },
+              },
+              {
+                key: 'cancel',
+                label: 'Anular orden',
+                show: isLive && user.role === Role.ADMINISTRADOR,
+                destructive: true,
+                onSelect: () => {
+                  setCancelling(true);
+                },
+              },
+            ]}
+          />
         </div>
       </div>
 

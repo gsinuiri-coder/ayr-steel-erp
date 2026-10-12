@@ -223,6 +223,28 @@ export function VentasMaterialView() {
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con el periodo y
+          // los filtros (`qs` lleva la línea).
+          valid ? (
+            <HeaderActions
+              primary={[]}
+              actions={[
+                {
+                  key: 'xlsx',
+                  label: 'Descargar Excel',
+                  // cc40 (D-588): con la búsqueda, el Excel trae las filas que se ven.
+                  download: `/api/reports/sales-by-material/xlsx?${qs}${
+                    searchWords(searchText).length === 0
+                      ? ''
+                      : `&search=${encodeURIComponent(searchText.trim().slice(0, 200))}`
+                  }`,
+                },
+              ]}
+            />
+          ) : undefined
+        }
         title="Ventas por material"
         subtitle={
           byProduct
@@ -355,27 +377,6 @@ export function VentasMaterialView() {
           </FiltersDialog>
         }
         status={<PeriodStatus state={periodState} updating={updating} />}
-        aside={
-          // cc39 (D-580, reemplaza a D-416): el Excel de la pestaña que se ve, con el periodo y
-          // los filtros (`qs` lleva la línea).
-          valid ? (
-            <HeaderActions
-              primary={['xlsx']}
-              actions={[
-                {
-                  key: 'xlsx',
-                  label: 'Descargar Excel',
-                  // cc40 (D-588): con la búsqueda, el Excel trae las filas que se ven.
-                  download: `/api/reports/sales-by-material/xlsx?${qs}${
-                    searchWords(searchText).length === 0
-                      ? ''
-                      : `&search=${encodeURIComponent(searchText.trim().slice(0, 200))}`
-                  }`,
-                },
-              ]}
-            />
-          ) : undefined
-        }
       />
 
       {periodState.error !== null && (

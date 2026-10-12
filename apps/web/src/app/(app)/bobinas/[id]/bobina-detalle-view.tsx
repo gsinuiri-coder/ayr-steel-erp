@@ -211,7 +211,7 @@ export function BobinaDetalleView({ id }: { id: string }) {
             bobina con saldo; sin saldo o cerrada, cerrarla o reabrirla; anulada, el PDF.
           */}
           <HeaderActions
-            primary={canOperate ? ['split'] : ['close-open', 'pdf']}
+            primary={canOperate ? ['split'] : ['close-open']}
             actions={[
               // T6 (D-173): igual que el PDF de planta (D-149), descarga directa contra el API.
               { key: 'pdf', label: 'Descargar PDF', download: `/api/coils/${id}/pdf` },

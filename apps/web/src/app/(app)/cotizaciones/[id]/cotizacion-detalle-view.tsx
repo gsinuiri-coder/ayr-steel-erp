@@ -200,7 +200,7 @@ export function CotizacionDetalleView({ id }: { id: string }) {
         <div className="flex items-center gap-2">
           <AuditHistoryLink entityType="quotations" entityId={q.id} />
           <HeaderActions
-            primary={['confirm', 'edit', 'pdf']}
+            primary={['confirm', 'edit']}
             actions={[
               // cc32: imprimir el mismo PDF sin descargarlo, en «Más opciones»; la principal sigue
               // siendo la del estado.

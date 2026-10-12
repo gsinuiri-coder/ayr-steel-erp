@@ -149,31 +149,32 @@ export function InventarioValorizadoView() {
           onChange={setSearchText}
         />
       }
-      aside={
-        // Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que esta
-        // pantalla. cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
-        <HeaderActions
-          primary={['xlsx']}
-          actions={[
-            {
-              key: 'xlsx',
-              label: 'Descargar Excel',
-              // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
-              download: xlsxHref(
-                '/api/reports/inventory-valuation/xlsx',
-                { businessLine: line },
-                searchText,
-              ),
-            },
-          ]}
-        />
-      }
     />
   );
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR]}>
       <ReportHeader
+        // cc47b (D-623): las descargas, en «Más opciones» de la cabecera.
+        actions={
+          // Descarga directa contra el API (patrón D-149): el archivo sale del mismo DTO que esta
+          // pantalla. cc39 (D-580, reemplaza a D-396): el Excel de la pestaña que se ve.
+          <HeaderActions
+            primary={[]}
+            actions={[
+              {
+                key: 'xlsx',
+                label: 'Descargar Excel',
+                // cc40 (D-588): con la búsqueda, el Excel trae los grupos y productos que se ven.
+                download: xlsxHref(
+                  '/api/reports/inventory-valuation/xlsx',
+                  { businessLine: line },
+                  searchText,
+                ),
+              },
+            ]}
+          />
+        }
         title="Inventario valorizado"
         subtitle={
           data

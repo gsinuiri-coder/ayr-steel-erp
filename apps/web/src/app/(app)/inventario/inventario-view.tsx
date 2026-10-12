@@ -17,7 +17,6 @@ import { api } from '@/lib/api';
 import { useSession } from '@/lib/session';
 import { useUrlState } from '@/lib/use-url-state';
 import { useUrlTab } from '@/lib/use-url-tab';
-import { TableToolbar } from '@/components/table-toolbar';
 import { formatMoneyOrDash, formatQty, unitSymbol } from '@/lib/format';
 import { HeaderActions } from '@/components/header-actions';
 import { RoleGate } from '@/components/role-gate';
@@ -55,15 +54,32 @@ export function InventarioView() {
   const setLine = (v: BusinessLine) => {
     setUrl({ line: v });
   };
+  // cc47b (D-623): la pestaña de tabla (la lee también `LinePanel`) decide qué descarga se ofrece.
+  const [tableTab] = useUrlTab<TableTab>(TABLE_TABS, 'bobinas', 'tabla');
+  const coilsTab = COIL_BUSINESS_LINES.includes(line) && tableTab === 'bobinas';
 
   return (
     <RoleGate allow={[Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR]}>
-      <div>
-        <h1 className="text-xl font-semibold">Inventario</h1>
-        <p className="text-xs text-muted-foreground">
-          Stock valorizado en soles por línea de negocio. Las bobinas se agrupan por tipo: mismo
-          acabado y espesor, sin importar el ancho.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold">Inventario</h1>
+          <p className="text-xs text-muted-foreground">
+            Stock valorizado en soles por línea de negocio. Las bobinas se agrupan por tipo: mismo
+            acabado y espesor, sin importar el ancho.
+          </p>
+        </div>
+        {/* cc47b (D-623): el Excel de la pestaña «Bobinas por tipo» (D-356), en «Más opciones». */}
+        <HeaderActions
+          primary={[]}
+          actions={[
+            {
+              key: 'xlsx',
+              label: 'Descargar Excel · Bobinas por tipo',
+              show: coilsTab,
+              download: `/api/inventory/summary/coils-xlsx?businessLine=${line}`,
+            },
+          ]}
+        />
       </div>
 
       <Tabs
@@ -147,21 +163,6 @@ function LinePanel({ line, showCosts }: { line: BusinessLine; showCosts: boolean
             <TabsTrigger value="productos">Productos de catálogo</TabsTrigger>
           </TabsList>
           <TabsContent value="bobinas" className="mt-3 grid gap-2">
-            {/* cc47 (D-615): sin buscar ni filtros; a la derecha, el Excel (D-356). */}
-            <TableToolbar
-              aside={
-                <HeaderActions
-                  primary={['xlsx']}
-                  actions={[
-                    {
-                      key: 'xlsx',
-                      label: 'Descargar Excel',
-                      download: `/api/inventory/summary/coils-xlsx?businessLine=${line}`,
-                    },
-                  ]}
-                />
-              }
-            />
             <SummaryTable
               emptyLabel="No hay bobinas con saldo en esta línea."
               rows={coils}
@@ -214,7 +215,8 @@ function SummaryTable({
   const columnCount = (showCosts ? 8 : 6) + (showMeters ? 1 : 0);
   return (
     <div className="rounded-lg border">
-      <Table>
+      {/* cc47b (D-624): una tabla por pestaña (D-617): lista con el scroll único de D-547. */}
+      <Table list>
         <TableHeader>
           <TableRow>
             <TableHead>{keyHeader}</TableHead>
