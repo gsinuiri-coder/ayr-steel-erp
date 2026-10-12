@@ -2288,3 +2288,48 @@ cerrada con 6 m registrados de 5 pedidos) muestra «6.00 m de 5.00 m».
 
 **Revisiones.** Autorrevisión y segundo modelo (`docs/revision/cc45-segundo-modelo.md`): sin P0;
 los P1 y P2 se corrigieron antes del deploy (ver la sección de atención del informe).
+
+## Ratificación del dueño (2026-10-11, después de cc45)
+
+El dueño ratificó D-603 a D-605 (cc45: «Cambiar cantidad» de una línea del pedido con producción,
+la OP y la reserva que siguen a la cantidad nueva, y el avance del accesorio medido contra los
+metros del pedido). Sus filas de `ARQUITECTURA.md` §0.2 lo dicen.
+
+## cc46 — hooks de React en el lint, borde del partido con costo y objetos de base (D-606..D-611)
+
+**Hooks (D-606, D-607).** El plugin estaba instalado desde hace tiempo, pero la forma del preset
+cambió en la v6 y la línea que lo esparcía no activaba nada. Activar `exhaustive-deps` como error
+sin mirar cada caso habría metido bucles: en «Ajustar el plan», agregar las dependencias que pedía
+la regla hacía que cada refetch de la orden pisara las filas que el usuario estaba escribiendo. Por
+eso el criterio fue el comportamiento, no la regla: cuando el efecto tiene que correr en un momento
+(al abrir, cuando cambia `range`), lo demás se lee por ref. La autorrevisión encontró uno que la
+primera pasada había resuelto mal (la traducción del `?range=` heredado volvía a correr con un
+`replace` intermedio de `useReportPeriod` y perdía el enlace guardado) y se corrigió igual.
+
+**Borde (D-608).** D-597 decidió el corte tercerizado y dejó el partido interno explícitamente
+igual. El dueño lo extiende al partido con la misma regla. Se pasa a las hijas **todo**
+`kerfLossKg` (kerf declarado más borde), porque es la única lectura que cumple «lo que sale de la
+madre entra a las hijas, al céntimo». Ejemplo (datos inventados): bobina de 2 000 kg y 1 220 mm a
+S/ 4,1234 el kg, partida entera en 600 + 560 mm con 20 mm de kerf (40 mm de borde). Salen
+S/ 8 246,80; las hijas pesan 983,607 y 918,032 kg y quedan 98,361 kg de kerf y borde. Antes
+entraban a 4,1234 (S/ 7 841,22) y se perdían S/ 405,58; ahora la liviana entra con su parte
+truncada a 4 decimales y la pesada con el resto, y suman S/ 8 246,80 (≈ S/ 4,3367 el kg, igual que
+su documento). Efecto: sube el costo por kg de las hijas, y con él su valor en el inventario
+valorizado (el total no cambia), el piso de la reventa de esa bobina y el costo de lo que se
+produzca con ella. El sobrante de D-164 con saldo en cero (valorizado al documento × TC) ahora
+coincide con el kardex de la hija; antes quedaba por debajo.
+
+**El recosteo.** La autorrevisión vio que un recosteo de una hija (D-045) reingresaba
+`peso × unitario`, que no es el valor repartido: se corrige para el caso sin cambio de costo (el
+formulario puede reenviar los mismos valores). Si el administrador baja el costo a la cifra de la
+factura, el valor del kerf y el borde se va: es una corrección explícita y queda en el UAT.
+
+**Objetos de base (D-610, D-611).** Producción corre Postgres 18 y el Docker del repo 17: la
+referencia no podía armarse en el Docker de siempre, así que el script levanta un contenedor de la
+versión de producción. Las dos revisiones encontraron que la primera normalización (minúsculas y
+sin comillas) ocultaba diferencias reales (`'ACTIVE'` contra `'Active'` en un CHECK de enum) y que
+un trigger deshabilitado a mano daba la misma definición; las dos cosas se corrigieron antes del
+merge. Resultado: ninguna diferencia.
+
+**Revisiones.** Autorrevisión y segundo modelo por corte (`docs/revision/cc46-a-segundo-modelo.md`,
+`cc46-b-…`, `cc46-c-…`): sin P0; los P1 y P2 corregidos antes de cada merge.
