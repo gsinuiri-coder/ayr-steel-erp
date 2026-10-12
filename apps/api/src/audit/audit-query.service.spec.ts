@@ -520,3 +520,175 @@ describe('AuditQueryService.findPage — paginación completa sin pérdidas (D-2
     );
   });
 });
+
+describe('AuditQueryService — cc48 (D-633, D-634, D-635)', () => {
+  /** Un fake con todo lo que la página nueva toca: las fuentes, el SQL del buscar y los códigos. */
+  function fakeAll(rows: Record<string, unknown>[] = []) {
+    const auditLogFindMany = jest.fn().mockResolvedValue(rows);
+    const queryRaw = jest.fn().mockResolvedValue(rows);
+    const empty = () => ({ findMany: jest.fn().mockResolvedValue([]) });
+    const salesOrderFindMany = jest
+      .fn()
+      .mockResolvedValue([{ id: '00000000-0000-4000-8000-000000000031', seq: 31 }]);
+    const prisma = {
+      auditLog: { findMany: auditLogFindMany },
+      $queryRaw: queryRaw,
+      salesPriceChange: empty(),
+      productListPriceChange: empty(),
+      fiscalDocumentIssueDateChange: empty(),
+      user: empty(),
+      salesOrder: { findMany: salesOrderFindMany },
+      coil: empty(),
+      product: empty(),
+      customer: empty(),
+      supplier: empty(),
+      fiscalDocument: empty(),
+      purchase: empty(),
+    };
+    return { prisma, auditLogFindMany, queryRaw, salesOrderFindMany };
+  }
+
+  const orderRow = {
+    id: 7n,
+    at: NOW,
+    actorId: null,
+    actorKind: 'SYSTEM',
+    action: 'sales.order.cancel',
+    entity: 'sales_orders',
+    entityId: '00000000-0000-4000-8000-000000000031',
+    before: null,
+    after: null,
+    reason: null,
+  };
+
+  it('D-633: cada fila trae el código legible y su enlace, resueltos en una consulta por tipo', async () => {
+    const f = fakeAll([orderRow]);
+    const page = await new AuditQueryService(f.prisma as never).findPage({ pageSize: 50 });
+    expect(page.items[0]).toMatchObject({
+      entityCode: 'PED-000031',
+      entityHref: '/pedidos/00000000-0000-4000-8000-000000000031',
+      entityDeleted: false,
+    });
+    expect(f.salesOrderFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('D-634: con buscar, audit_log va por una sola consulta SQL (no por Prisma) y el código se resuelve antes', async () => {
+    const f = fakeAll([orderRow]);
+    await new AuditQueryService(f.prisma as never).findPage({ pageSize: 50, search: 'PED-31' });
+    expect(f.queryRaw).toHaveBeenCalledTimes(1);
+    expect(f.auditLogFindMany).not.toHaveBeenCalled();
+    // El correlativo: una consulta a su tipo para el buscar, otra para el código de la fila.
+    expect(f.salesOrderFindMany.mock.calls[0]![0]).toEqual({
+      where: { seq: 31 },
+      select: { id: true },
+    });
+    // El SQL lleva el texto como parámetro, nunca pegado en la consulta.
+    // `$queryRaw` es una plantilla etiquetada: se rearma la consulta con sus partes.
+    const [strings, ...values] = f.queryRaw.mock.calls[0]! as [TemplateStringsArray, ...unknown[]];
+    const sql = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    expect(sql.values).toContain('%PED-31%');
+    expect(sql.sql).not.toContain('PED-31');
+  });
+
+  it('D-634: una acción de audit_log deja fuera a los changelogs, sin consultarlos', async () => {
+    const f = fakeAll();
+    await new AuditQueryService(f.prisma as never).findPage({
+      pageSize: 50,
+      action: 'sales.order.cancel',
+    });
+    expect(f.auditLogFindMany.mock.calls[0]![0].where.action).toBe('sales.order.cancel');
+    expect(f.prisma.salesPriceChange.findMany).not.toHaveBeenCalled();
+    expect(f.prisma.productListPriceChange.findMany).not.toHaveBeenCalled();
+    expect(f.prisma.fiscalDocumentIssueDateChange.findMany).not.toHaveBeenCalled();
+  });
+
+  it('D-635: abierta desde un documento (con su id) y sin fechas, el rango son los 12 meses', async () => {
+    const f = fakeAll();
+    await new AuditQueryService(f.prisma as never).findPage({
+      pageSize: 50,
+      entityType: 'sales_orders',
+      entityId: '00000000-0000-4000-8000-000000000031',
+    });
+    const { at } = f.auditLogFindMany.mock.calls[0]![0].where as { at: { gte: Date; lt: Date } };
+    const days = (at.lt.getTime() - at.gte.getTime()) / 86_400_000;
+    expect(days).toBe(360);
+    const g = fakeAll();
+    await new AuditQueryService(g.prisma as never).findPage({ pageSize: 50 });
+    const other = g.auditLogFindMany.mock.calls[0]![0].where as { at: { gte: Date; lt: Date } };
+    expect((other.at.lt.getTime() - other.at.gte.getTime()) / 86_400_000).toBe(32);
+  });
+
+  it('D-634: el Excel recorre todas las páginas con los mismos filtros', async () => {
+    const service = new AuditQueryService(fakeAll().prisma as never);
+    const findPage = jest
+      .spyOn(service, 'findPage')
+      .mockResolvedValueOnce({ items: [{ id: '1' } as never], nextCursor: 'c1' })
+      .mockResolvedValueOnce({ items: [{ id: '2' } as never], nextCursor: null });
+    const rows = await service.exportAll({ action: 'sales.order.cancel' });
+    expect(rows).toHaveLength(2);
+    expect(findPage.mock.calls[1]![0]).toMatchObject({
+      action: 'sales.order.cancel',
+      cursor: 'c1',
+      pageSize: 200,
+    });
+  });
+});
+
+describe('AuditQueryService — buscar con periodo largo (cc48, D-634)', () => {
+  function fakeSearch() {
+    const empty = () => ({ findMany: jest.fn().mockResolvedValue([]) });
+    const queryRaw = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      auditLog: empty(),
+      $queryRaw: queryRaw,
+      salesPriceChange: empty(),
+      productListPriceChange: empty(),
+      fiscalDocumentIssueDateChange: empty(),
+      user: empty(),
+      coil: {
+        findMany: jest.fn().mockResolvedValue([{ id: '00000000-0000-4000-8000-000000000001' }]),
+      },
+      product: empty(),
+      customer: empty(),
+      supplier: empty(),
+      fiscalDocument: empty(),
+      purchase: empty(),
+    };
+    return { prisma, queryRaw };
+  }
+  const sqlOf = (call: unknown[]) => {
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    return Prisma.sql(strings, ...(values as Prisma.Sql[]));
+  };
+
+  it('con 31 días o menos busca el texto del detalle; con más, solo el código', async () => {
+    const short = fakeSearch();
+    await new AuditQueryService(short.prisma as never).findPage({ pageSize: 50, search: 'galv' });
+    expect(sqlOf(short.queryRaw.mock.calls[0]!).values).toContain('%galv%');
+
+    const long = fakeSearch();
+    await new AuditQueryService(long.prisma as never).findPage({
+      pageSize: 50,
+      search: 'galv',
+      from: '2026-01-01',
+      to: '2026-10-12',
+    });
+    const sql = sqlOf(long.queryRaw.mock.calls[0]!);
+    expect(sql.values).not.toContain('%galv%');
+    expect(sql.sql).not.toContain('ILIKE');
+    expect(sql.values).toContain('00000000-0000-4000-8000-000000000001');
+  });
+
+  it('con periodo largo y ningún código que coincida, ni siquiera consulta audit_log', async () => {
+    const f = fakeSearch();
+    f.prisma.coil.findMany.mockResolvedValue([]);
+    const page = await new AuditQueryService(f.prisma as never).findPage({
+      pageSize: 50,
+      search: 'nada',
+      from: '2026-01-01',
+      to: '2026-10-12',
+    });
+    expect(f.queryRaw).not.toHaveBeenCalled();
+    expect(page.items).toEqual([]);
+  });
+});
