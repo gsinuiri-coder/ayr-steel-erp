@@ -249,7 +249,11 @@ Reglas de convivencia, sin excepción:
   merge, `pnpm smoke:prod` espera, hasta 10 minutos, a que `/version` de **los dos dominios**
   publique `origin/main` (o `--expect-sha <sha>`), y falla con el sha esperado, el publicado y el
   dominio si no llega. Tras un `deploy:api`, se le pasa además `--expect-api-sha <sha-corto>` con
-  el sha recién desplegado; sin esa bandera solo muestra el de la API. Esto reemplaza la
+  el sha recién desplegado; sin esa bandera solo muestra el de la API. Si después del merge ya
+  entró otro commit a `main`, se pasa `--expect-sha <sha del merge>`: con `origin/main` esperaría
+  un commit que Vercel quizá todavía no publicó (falso rojo); un commit posterior que ya trae el
+  esperado se acepta. Una revisión de la API anterior a D-636 no trae `sha` en `/api/health`:
+  tras volver a ella, no se pasa `--expect-api-sha`. Esto reemplaza la
   verificación por la caché de `/login` y por los despliegues de Vercel en GitHub.
 - Un `migrate diff` no vacío solo se admite si coincide **exactamente** con el drift aprobado en
   `apps/api/prisma/drift-esperado.sql` (D-593, clasificado en `docs/analisis/drift-schema.md`);

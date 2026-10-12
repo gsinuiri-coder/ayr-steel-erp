@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   argValue,
   fetchShaField,
+  gitContains,
   mismatchMessage,
   shaMatches,
   waitForSha,
@@ -99,6 +100,83 @@ test('no coincide hasta el tope: falla con el último sha leído', async () => {
   assert.ok(clock.now() <= 10 * 60_000);
 });
 
+test('acepta un commit posterior que contiene al esperado (otra sesión mergeó)', async () => {
+  const clock = fakeClock();
+  const seen = [];
+  const r = await waitForSha({
+    expected: '4cc9fc21',
+    readSha: async () => 'b65e396b',
+    contains: async (exp, pub) => {
+      seen.push([exp, pub]);
+      return true;
+    },
+    ...clock,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.newer, true);
+  assert.deepEqual(seen, [['4cc9fc21', 'b65e396b']]);
+});
+
+test('un commit que no contiene al esperado sigue esperando', async () => {
+  const clock = fakeClock();
+  const r = await waitForSha({
+    expected: '4cc9fc21',
+    readSha: async () => '31adda6f',
+    contains: async () => false,
+    timeoutMs: 30_000,
+    intervalMs: 15_000,
+    ...clock,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.attempts, 3);
+});
+
+test('dos esperas comparten el tope absoluto', async () => {
+  const clock = fakeClock();
+  const deadline = 60_000;
+  const first = await waitForSha({
+    expected: '4cc9fc21',
+    readSha: async () => '31adda6f',
+    deadline,
+    intervalMs: 15_000,
+    ...clock,
+  });
+  assert.equal(first.ok, false);
+  const second = await waitForSha({
+    expected: '4cc9fc21',
+    readSha: async () => '31adda6f',
+    deadline,
+    intervalMs: 15_000,
+    ...clock,
+  });
+  // La segunda ya no tiene tiempo: una sola lectura.
+  assert.equal(second.attempts, 1);
+  assert.ok(clock.now() <= deadline);
+});
+
+test('gitContains pregunta a git si el esperado es ancestro del publicado', () => {
+  const calls = [];
+  const spawn = (cmd, args) => {
+    calls.push([cmd, ...args]);
+    return { status: 0 };
+  };
+  assert.equal(gitContains('/repo', spawn)('4cc9fc21', 'b65e396b'), true);
+  assert.deepEqual(calls[1], ['git', 'merge-base', '--is-ancestor', '4cc9fc21', 'b65e396b']);
+  const no = () => ({ status: 1 });
+  assert.equal(gitContains('/repo', no)('4cc9fc21', 'b65e396b'), false);
+});
+
+test('--expect-sha=<sha> se rechaza en vez de ignorarse', () => {
+  assert.throws(() => argValue(['--expect-sha=abcdef12'], '--expect-sha'), /espacio/);
+});
+
+test('un build «dev» falla al instante, sin esperar el tope', async () => {
+  const clock = fakeClock();
+  const r = await waitForSha({ expected: '4cc9fc21', readSha: async () => 'dev', ...clock });
+  assert.deepEqual(r, { ok: false, published: 'dev', attempts: 1, error: null });
+  assert.equal(clock.now(), 0);
+});
+
 test('el mensaje dice dónde, sha esperado y sha publicado', () => {
   const msg = mismatchMessage({
     where: 'https://v2.mareliac.pe/version',
@@ -120,4 +198,15 @@ test('fetchShaField lee el campo y trata un HTTP no 200 como error', async () =>
   await assert.rejects(fetchShaField(notFound, 'u', 'sha'), /HTTP 404/);
   const noField = async () => ({ ok: true, json: async () => ({ status: 'ok' }) });
   assert.equal(await fetchShaField(noField, 'u', 'sha'), null);
+});
+
+test('fetchShaField corta una lectura colgada en su tope', async () => {
+  // Un fetch que nunca responde salvo que lo aborten.
+  const hang = (_url, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(init.signal.reason));
+    });
+  const started = Date.now();
+  await assert.rejects(fetchShaField(hang, 'u', 'sha', 50), /timeout|abort/i);
+  assert.ok(Date.now() - started < 5000);
 });

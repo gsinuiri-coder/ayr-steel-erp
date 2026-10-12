@@ -25,6 +25,7 @@ import {
   VERSION_TIMEOUT_MS,
   argValue,
   fetchShaField,
+  gitContains,
   mismatchMessage,
   waitForSha,
 } from './smoke-version.mjs';
@@ -104,19 +105,30 @@ const ok = (label, detail = '') => {
 console.log(`Smoke de solo lectura contra ${baseUrl}`);
 
 // 0. D-636: el commit publicado. La web, en los dos dominios, hasta que coincida o hasta el tope;
-// la API, con su sha a la vista y comparado solo si se pidió.
+// la API, con su sha a la vista y comparado solo si se pidió. Los dos dominios comparten un solo
+// tope de 10 minutos, y vale también un commit posterior que ya trae el esperado.
+const webDeadline = Date.now() + VERSION_TIMEOUT_MS;
+const contains = gitContains(ROOT);
 for (const host of PRODUCTION_WEB_HOSTS) {
   const url = `https://${host}/version`;
   const label = `web publicada (${host})`;
   const result = await waitForSha({
     expected: expectedWebSha,
+    deadline: webDeadline,
+    contains,
     readSha: () => fetchShaField(fetch, url, 'sha'),
     onAttempt: ({ attempts, published, error }) =>
       console.log(
         `  …      ${label}: intento ${attempts}, publicado ${published ?? '—'}${error ? ` (${error})` : ''}; esperado ${expectedWebSha.slice(0, 8)}`,
       ),
   });
-  if (result.ok) ok(label, `sha ${result.published.slice(0, 8)}`);
+  if (result.ok)
+    ok(
+      label,
+      result.newer
+        ? `sha ${result.published.slice(0, 8)}, posterior a ${expectedWebSha.slice(0, 8)} y lo contiene`
+        : `sha ${result.published.slice(0, 8)}`,
+    );
   else
     fail(
       label,
