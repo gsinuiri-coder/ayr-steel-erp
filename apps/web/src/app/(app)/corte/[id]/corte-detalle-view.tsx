@@ -20,6 +20,7 @@ import { formatMoney, formatQty } from '@/lib/format';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
+import { AuditHistoryLink } from '@/components/audit-history-link';
 import { HeaderActions } from '@/components/header-actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -113,6 +114,8 @@ export function CorteDetalleView({ id }: { id: string }) {
           <Badge variant={CUTTING_ORDER_TONE[o.status]}>
             {CUTTING_ORDER_STATUS_LABELS[o.status]}
           </Badge>
+          {/* cc49 (D-637): Historial al lado de las acciones, como en los demás detalles. */}
+          <AuditHistoryLink entityType="cutting_orders" entityId={o.id} />
           {/* cc47b (D-623): un principal y lo que anula al final de «Más opciones», en rojo. */}
           <HeaderActions
             primary={['link-invoice']}
