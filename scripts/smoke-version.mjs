@@ -116,6 +116,19 @@ export function gitContains(cwd, spawn = spawnSync) {
 /** Tope de cada lectura: una conexión colgada no puede estirar el tope de la espera. */
 export const FETCH_TIMEOUT_MS = 10 * 1000;
 
+/** El aviso de una respuesta que no es JSON (HTML): todavía no está publicado. */
+export function notJsonMessage(url) {
+  let path = String(url);
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // Una URL relativa (las pruebas) se muestra tal cual.
+  }
+  return path.endsWith('/version')
+    ? 'la web aún no publica /version; reintentando…'
+    : `${path} todavía no responde JSON; reintentando…`;
+}
+
 /** Lee un JSON sin caché y devuelve `body[field]` si es texto. */
 export async function fetchShaField(fetchImpl, url, field, timeoutMs = FETCH_TIMEOUT_MS) {
   const res = await fetchImpl(url, {
@@ -124,6 +137,14 @@ export async function fetchShaField(fetchImpl, url, field, timeoutMs = FETCH_TIM
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
+  let body;
+  try {
+    body = await res.json();
+  } catch (err) {
+    // cc50: mientras Vercel sirve el build anterior, `/version` no existe y responde la página
+    // HTML: es un «todavía no», no un error de JSON.
+    if (!(err instanceof SyntaxError)) throw err;
+    throw new Error(notJsonMessage(url));
+  }
   return typeof body?.[field] === 'string' ? body[field] : null;
 }
