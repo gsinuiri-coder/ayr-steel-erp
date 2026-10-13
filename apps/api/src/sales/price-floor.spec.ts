@@ -242,7 +242,7 @@ describe('assertPriceFloor (D-163)', () => {
       const tx = fakeTx({ productCost: COST });
       const err = await assertPriceFloor(tx, [candidate('1.0000', { atCost: true })], '0.05', {
         opaqueAtCost: true,
-      }).catch((e: Error) => e);
+      }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain('Pide a un administrador');
       expect((err as Error).message).not.toMatch(/\d+\.\d{2}/);

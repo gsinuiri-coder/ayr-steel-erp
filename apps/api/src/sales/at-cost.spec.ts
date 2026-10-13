@@ -85,15 +85,23 @@ describe('changedAtCostLines', () => {
 
 describe('assertAtCostActor', () => {
   it('el ADMINISTRADOR siempre', () => {
-    expect(() => assertAtCostActor(ADMIN, [line()], [])).not.toThrow();
+    expect(() => {
+      assertAtCostActor(ADMIN, [line()], []);
+    }).not.toThrow();
   });
   it('otro rol: 403 si marca o cambia; pasa si la línea queda igual o no hay marcas', () => {
-    expect(() => assertAtCostActor(SELLER, [line()], [])).toThrow(ForbiddenException);
-    expect(() => assertAtCostActor(SELLER, [line()], [stored()])).not.toThrow();
-    expect(() => assertAtCostActor(SELLER, [line({ atCostReason: null })], [])).not.toThrow();
-    expect(() => assertAtCostActor({ role: Role.SUPERVISOR_PLANTA }, [line()], [])).toThrow(
-      'Solo un administrador puede vender a costo',
-    );
+    expect(() => {
+      assertAtCostActor(SELLER, [line()], []);
+    }).toThrow(ForbiddenException);
+    expect(() => {
+      assertAtCostActor(SELLER, [line()], [stored()]);
+    }).not.toThrow();
+    expect(() => {
+      assertAtCostActor(SELLER, [line({ atCostReason: null })], []);
+    }).not.toThrow();
+    expect(() => {
+      assertAtCostActor({ role: Role.SUPERVISOR_PLANTA }, [line()], []);
+    }).toThrow('Solo un administrador puede vender a costo');
   });
 });
 
@@ -163,30 +171,38 @@ describe('atCostReasonText', () => {
 describe('assertAtCostRequest (antes del piso)', () => {
   const marked = { productId: 'p-1', qty: '1', atCost: { reason: 'LIQUIDACION' as const } };
   it('el ADMINISTRADOR siempre; otro rol, solo sobre una línea que ya estaba a costo', () => {
-    expect(() => assertAtCostRequest(ADMIN, [marked], [])).not.toThrow();
-    expect(() => assertAtCostRequest(SELLER, [marked], [])).toThrow(ForbiddenException);
-    expect(() => assertAtCostRequest(SELLER, [marked], [stored()])).not.toThrow();
-    expect(() => assertAtCostRequest(SELLER, [{ productId: 'p-1', qty: '1' }], [])).not.toThrow();
+    expect(() => {
+      assertAtCostRequest(ADMIN, [marked], []);
+    }).not.toThrow();
+    expect(() => {
+      assertAtCostRequest(SELLER, [marked], []);
+    }).toThrow(ForbiddenException);
+    expect(() => {
+      assertAtCostRequest(SELLER, [marked], [stored()]);
+    }).not.toThrow();
+    expect(() => {
+      assertAtCostRequest(SELLER, [{ productId: 'p-1', qty: '1' }], []);
+    }).not.toThrow();
   });
   it('otro producto, otro motivo o una segunda línea: 403', () => {
-    expect(() =>
-      assertAtCostRequest(SELLER, [{ ...marked, productId: 'p-2' }], [stored()]),
-    ).toThrow(ForbiddenException);
-    expect(() =>
-      assertAtCostRequest(SELLER, [{ ...marked, atCost: { reason: 'FRECUENTE' } }], [stored()]),
-    ).toThrow(ForbiddenException);
-    expect(() => assertAtCostRequest(SELLER, [marked, marked], [stored()])).toThrow(
-      ForbiddenException,
-    );
+    expect(() => {
+      assertAtCostRequest(SELLER, [{ ...marked, productId: 'p-2' }], [stored()]);
+    }).toThrow(ForbiddenException);
+    expect(() => {
+      assertAtCostRequest(SELLER, [{ ...marked, atCost: { reason: 'FRECUENTE' } }], [stored()]);
+    }).toThrow(ForbiddenException);
+    expect(() => {
+      assertAtCostRequest(SELLER, [marked, marked], [stored()]);
+    }).toThrow(ForbiddenException);
   });
   it('una bobina entera se reconoce por la bobina', () => {
     const coil = { saleCoilId: 'c-1', qty: '1', atCost: { reason: 'LIQUIDACION' as const } };
-    expect(() =>
-      assertAtCostRequest(SELLER, [coil], [{ ...stored(), reserveItemId: 'c-1' }]),
-    ).not.toThrow();
-    expect(() =>
-      assertAtCostRequest(SELLER, [coil], [{ ...stored(), reserveItemId: 'c-2' }]),
-    ).toThrow(ForbiddenException);
+    expect(() => {
+      assertAtCostRequest(SELLER, [coil], [{ ...stored(), reserveItemId: 'c-1' }]);
+    }).not.toThrow();
+    expect(() => {
+      assertAtCostRequest(SELLER, [coil], [{ ...stored(), reserveItemId: 'c-2' }]);
+    }).toThrow(ForbiddenException);
   });
 });
 

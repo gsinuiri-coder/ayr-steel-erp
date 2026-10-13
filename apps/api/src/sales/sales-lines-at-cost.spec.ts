@@ -22,36 +22,38 @@ describe('assertAtCostAllowed', () => {
   const floor = { toleranceMm: '0.05' };
   const notPaper = () => false;
   it('sin marca, cualquier ruta', () => {
-    expect(() => assertAtCostAllowed([{ productId: 'p', qty: '1' }], notPaper, {})).not.toThrow();
+    expect(() => {
+      assertAtCostAllowed([{ productId: 'p', qty: '1' }], notPaper, {});
+    }).not.toThrow();
   });
   it('fuera de la cotización (sin allowAtCost) es un 400 que dice dónde se marca', () => {
-    expect(() =>
-      assertAtCostAllowed([{ qty: '1', atCost: MARK }], notPaper, { priceFloor: floor }),
-    ).toThrow(/se marca en la cotización/);
+    expect(() => {
+      assertAtCostAllowed([{ qty: '1', atCost: MARK }], notPaper, { priceFloor: floor });
+    }).toThrow(/se marca en la cotización/);
   });
   it('sin piso (importador o importada del ADMINISTRADOR) o en la línea del papel, 400', () => {
-    expect(() =>
-      assertAtCostAllowed([{ qty: '1', atCost: MARK }], notPaper, { allowAtCost: true }),
-    ).toThrow(/comprobante importado/);
-    expect(() =>
+    expect(() => {
+      assertAtCostAllowed([{ qty: '1', atCost: MARK }], notPaper, { allowAtCost: true });
+    }).toThrow(/comprobante importado/);
+    expect(() => {
       assertAtCostAllowed([{ qty: '1', atCost: MARK }], () => true, {
         allowAtCost: true,
         priceFloor: floor,
-      }),
-    ).toThrow(BadRequestException);
+      });
+    }).toThrow(BadRequestException);
   });
   it('en la cotización con piso, pasa; el rechazo nombra la línea con su número', () => {
-    expect(() =>
+    expect(() => {
       assertAtCostAllowed([{ qty: '1', atCost: MARK }], notPaper, {
         allowAtCost: true,
         priceFloor: floor,
-      }),
-    ).not.toThrow();
-    expect(() =>
+      });
+    }).not.toThrow();
+    expect(() => {
       assertAtCostAllowed([{ qty: '1' }, { qty: '1', atCost: MARK }], notPaper, {
         firstLineNumber: 5,
-      }),
-    ).toThrow(/^Línea 6:/);
+      });
+    }).toThrow(/^Línea 6:/);
   });
 });
 
@@ -67,9 +69,9 @@ describe('markAtCostCandidates', () => {
     expect(candidates[0]?.atCost).toBe(true);
   });
   it('una línea a costo sin candidato (servicio o sin costo) es un 400', () => {
-    expect(() => markAtCostCandidates([{ atCost: MARK }], [], 1)).toThrow(
-      /no tiene costo de referencia/,
-    );
+    expect(() => {
+      markAtCostCandidates([{ atCost: MARK }], [], 1);
+    }).toThrow(/no tiene costo de referencia/);
   });
 });
 

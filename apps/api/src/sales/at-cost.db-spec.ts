@@ -425,7 +425,7 @@ describe('cc51 (D-641) — vender a costo en la cotización', () => {
     ).toBe(403);
     const order = await salesOrders.confirm(admin, q.id, {});
     const r = await rejection(
-      edits.updateItemQty(seller, order.id, order.items[0]?.id ?? '', { qty: '5.000' } as never),
+      edits.updateItemQty(seller, order.id, order.items[0]?.id ?? '', { qty: '5.000' }),
     );
     expect(r.status).toBe(403);
   });
