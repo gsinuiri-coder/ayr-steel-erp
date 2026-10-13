@@ -45,6 +45,8 @@ export const AUDIT_ENTITY_TYPES = [
   'product_boms',
   'production_orders',
   'products',
+  // cc50 (D-638): el resumen de un lote del importador de compras (su id es el del lote).
+  'purchase_import_batches',
   'purchases',
   'quotations',
   'reservations',

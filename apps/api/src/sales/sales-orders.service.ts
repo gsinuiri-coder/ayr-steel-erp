@@ -2648,6 +2648,23 @@ export class SalesOrdersService {
         });
       }
 
+      // cc50 (D-638): cada OP que la anulación arrastra lo dice también en su «Historial».
+      for (const op of liveOrders.filter((o) => idleIds.includes(o.id))) {
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'production.cancel-by-sales-order',
+          entity: 'production_orders',
+          entityId: op.id,
+          before: { code: productionOrderCode(op.seq), status: op.status },
+          after: {
+            status: ProductionOrderStatus.CANCELLED,
+            salesOrderId: id,
+            salesOrder: orderCode,
+          },
+          reason,
+        });
+      }
+
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'sales.order.cancel',

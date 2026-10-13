@@ -333,8 +333,27 @@ export class PurchasesService {
           document: `${purchase.series}-${purchase.number}`,
           total: purchase.total.toFixed(4),
           currency: purchase.currency,
+          // cc50 (D-638): el lote del importador, en el registro de cada compra que creó.
+          ...(purchase.importBatchId ? { importBatchId: purchase.importBatchId } : {}),
         },
       });
+      // cc50 (D-638): la factura de un corte tercerizado queda también en el «Historial» de la
+      // orden de corte. Solo existe al vincular: una compra no cambia de orden después.
+      if (purchase.relatedCuttingOrderId) {
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'cutting.invoice-linked',
+          entity: 'cutting_orders',
+          entityId: purchase.relatedCuttingOrderId,
+          after: {
+            purchaseId: purchase.id,
+            document: `${purchase.series}-${purchase.number}`,
+            supplierId: purchase.supplierId,
+            subtotal: purchase.subtotal.toFixed(4),
+            currency: purchase.currency,
+          },
+        });
+      }
       return purchase;
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -971,7 +990,12 @@ export class PurchasesService {
     purchase: Purchase,
     actor: RequestUser,
     operationDate: string,
-  ): Promise<{ amountPen: string; coils: number; imputed: boolean } | null> {
+  ): Promise<{
+    amountPen: string;
+    coils: number;
+    imputed: boolean;
+    relatedDocument: string;
+  } | null> {
     if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedPurchaseId) return null;
     if (!purchase.serviceKind || !LANDED_COST_SERVICE_KINDS.includes(purchase.serviceKind)) {
       return null;
@@ -983,6 +1007,7 @@ export class PurchasesService {
     });
     if (!related) throw new NotFoundException('La compra de bobinas vinculada no existe');
     const service = SERVICE_KIND_LABELS[purchase.serviceKind].toLowerCase();
+    const relatedDocument = `${related.series}-${related.number}`;
     if (related.status === PurchaseStatus.CANCELLED) {
       throw new BadRequestException(
         `La compra ${related.series}-${related.number} está anulada: registra el ${service} sin vincularlo a ella`,
@@ -999,7 +1024,8 @@ export class PurchasesService {
       select: { id: true, code: true, businessLineId: true },
       orderBy: { code: 'asc' },
     });
-    if (coils.length === 0) return { amountPen: '0.0000', coils: 0, imputed: false };
+    if (coils.length === 0)
+      return { amountPen: '0.0000', coils: 0, imputed: false, relatedDocument };
 
     // Se bloquean las bobinas antes de leer sus saldos: sin esto, entre la lectura y el
     // `FOR UPDATE` interno de `adjustCost` alguien puede consumir la bobina y el ajuste
@@ -1027,7 +1053,7 @@ export class PurchasesService {
       // La recepción NO se aborta: la deuda con el proveedor del servicio existe igual
       // y tiene que llegar a la cuenta por pagar (D-030). Solo no hay dónde imputar el
       // costo, y eso queda dicho en la auditoría de la recepción.
-      return { amountPen: '0.0000', coils: 0, imputed: false };
+      return { amountPen: '0.0000', coils: 0, imputed: false, relatedDocument };
     }
 
     const amountPen = toDecimal(purchase.subtotal.toString()).times(
@@ -1089,10 +1115,31 @@ export class PurchasesService {
       }
     }
 
+    // cc50 (D-638): el costo también queda en el «Historial» de la compra de bobinas que lo
+    // recibe. La compra del servicio ya lo muestra en su «Recepción de compra» (`landedCost`).
+    if (imputedCoils > 0) {
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'purchases.landed-cost',
+        entity: 'purchases',
+        entityId: related.id,
+        after: {
+          document: relatedDocument,
+          servicePurchaseId: purchase.id,
+          serviceDocument: `${purchase.series}-${purchase.number}`,
+          serviceKind: purchase.serviceKind,
+          amountPen: toFixedString(amountPen, 'MONEY'),
+          coils: imputedCoils,
+          operationDate,
+        },
+      });
+    }
+
     return {
       amountPen: toFixedString(amountPen, 'MONEY'),
       coils: imputedCoils,
       imputed: imputedCoils > 0,
+      relatedDocument,
     };
   }
 
@@ -1341,13 +1388,17 @@ export class PurchasesService {
           createdById: actor.id,
         },
       });
+      // cc50 (D-638): el pago se audita en su compra (un pago es siempre de una sola), con el id
+      // del pago y el proveedor en el detalle, para que salga en el «Historial» de la compra.
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'purchases.payment',
-        entity: 'supplier_payments',
-        entityId: payment.id,
+        entity: 'purchases',
+        entityId: purchaseId,
         after: {
-          purchaseId,
+          paymentId: payment.id,
+          supplierId: current.supplierId,
+          document: `${current.series}-${current.number}`,
           amount: payment.amount.toFixed(4),
           currency: payment.currency,
           method: payment.method,
@@ -1405,13 +1456,16 @@ export class PurchasesService {
         throw new ConflictException('Ese pago ya fue anulado');
       }
 
+      // cc50 (D-638): igual que el pago, la reversa queda en la compra.
       await this.audit.write(tx, {
         actorId: actor.id,
         action: 'purchases.payment-reverse',
-        entity: 'supplier_payments',
-        entityId: paymentId,
+        entity: 'purchases',
+        entityId: purchaseId,
         before: {
-          purchaseId,
+          paymentId,
+          supplierId: purchase.supplierId,
+          document: `${purchase.series}-${purchase.number}`,
           amount: payment.amount.toFixed(4),
           currency: payment.currency,
           method: payment.method,

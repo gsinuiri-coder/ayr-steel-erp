@@ -251,6 +251,42 @@ async function scenario(
   };
 }
 
+/** cc50: un pedido de una línea confirmado, con su OP en borrador (sin bobina montada). */
+async function confirmed(
+  productId: string,
+  thicknessMm: string,
+  line: { qty: string; pieces?: { lengthMm: string; qty: number }[] },
+): Promise<Omit<Scenario, 'coilId'>> {
+  await coil(thicknessMm);
+  const quotation = await quotations.create(
+    admin,
+    createQuotationSchema.parse({
+      customerId,
+      issueDate: businessToday(),
+      items: [{ productId, unitPricePen: '60', ...line }],
+    }),
+  );
+  const order = await salesOrders.confirm(admin, quotation.id, {});
+  const raw = order.reservations.find((r) => r.itemType === 'RAW_MATERIAL');
+  if (!raw?.productionOrderId) throw new Error('La confirmación no dejó la OP de la línea');
+  return {
+    salesOrderId: order.id,
+    itemId: order.items[0]?.id ?? '',
+    opId: raw.productionOrderId,
+  };
+}
+
+/** cc50 (D-638): los registros del cambio de cantidad en el «Historial» de la OP. */
+function opPlanAudits(opId: string) {
+  return prisma.auditLog.findMany({
+    where: {
+      action: 'production.plan-by-sales-order',
+      entity: 'production_orders',
+      entityId: opId,
+    },
+  });
+}
+
 function qty(input: Partial<UpdateSalesOrderItemQtyInput> & { qty: string }) {
   return updateSalesOrderItemQtySchema.parse({ reason: 'El cliente cambió el pedido', ...input });
 }
@@ -372,6 +408,18 @@ describe('cc45 (D-603, D-604) — cambiar la cantidad con producción', () => {
     });
     expect(audit.reason).toBe('El cliente cambió el pedido');
     expect(audit.before).toMatchObject({ qty: '20', pieces: '2 × 6.00 m, 2 × 4.00 m' });
+
+    // cc50 (D-638): la OP lo dice en su «Historial», una sola vez: la vista previa y los dos
+    // rechazos de arriba no dejaron registro.
+    const opAudit = await opPlanAudits(s.opId);
+    expect(opAudit).toHaveLength(1);
+    expect(opAudit[0]?.reason).toBe('El cliente cambió el pedido');
+    expect(opAudit[0]?.before).toMatchObject({ planMeters: '20.000' });
+    expect(opAudit[0]?.after).toMatchObject({
+      planMeters: '12.000',
+      salesOrderId: s.salesOrderId,
+      lineNumber: 1,
+    });
   });
 
   it('a medida: subir con material reserva lo nuevo y el plan crece con el largo nuevo', async () => {
@@ -593,5 +641,67 @@ describe('cc45 (D-603, D-604) — cambiar la cantidad con producción', () => {
     );
     expect(rejected.status).toBe(400);
     expect(rejected.message).toContain('comprobante');
+    // cc50 (D-638): rechazado, la OP no tiene registro del cambio.
+    expect(await opPlanAudits(s.opId)).toHaveLength(0);
+  });
+
+  it('cc50 (D-638): sin producción, el cambio queda en el pedido y en la OP', async () => {
+    const productId = await product('A_MEDIDA', '0.75');
+    const s = await confirmed(productId, '0.75', { qty: '12.000', pieces: [m(6, 2)] });
+    await edits.updateItemQty(
+      admin,
+      s.salesOrderId,
+      s.itemId,
+      qty({ qty: '6.000', pieces: [m(6, 1)] }),
+    );
+    const orderAudit = await prisma.auditLog.findMany({
+      where: { action: 'sales.order.item-qty', entity: 'sales_orders', entityId: s.salesOrderId },
+    });
+    expect(orderAudit).toHaveLength(1);
+    const opAudit = await opPlanAudits(s.opId);
+    expect(opAudit).toHaveLength(1);
+    expect(opAudit[0]?.before).toMatchObject({ planMeters: '12.000' });
+    expect(opAudit[0]?.after).toMatchObject({ planMeters: '6.000', salesOrderId: s.salesOrderId });
+  });
+
+  it('cc50 (D-638): anular el pedido deja un registro en el pedido y uno por OP anulada', async () => {
+    const productId = await product('A_MEDIDA', '0.75');
+    const s = await confirmed(productId, '0.75', { qty: '6.000', pieces: [m(6, 1)] });
+    await salesOrders.cancel(admin, s.salesOrderId, { reason: 'El cliente desistió' });
+    const orderAudit = await prisma.auditLog.findMany({
+      where: { action: 'sales.order.cancel', entity: 'sales_orders', entityId: s.salesOrderId },
+    });
+    expect(orderAudit).toHaveLength(1);
+    const opAudit = await prisma.auditLog.findMany({
+      where: { entity: 'production_orders', entityId: s.opId },
+      orderBy: { id: 'asc' },
+    });
+    const cancelled = opAudit.filter((a) => a.action === 'production.cancel-by-sales-order');
+    expect(cancelled).toHaveLength(1);
+    expect(cancelled[0]?.reason).toBe('El cliente desistió');
+    expect(cancelled[0]?.after).toMatchObject({
+      status: ProductionOrderStatus.CANCELLED,
+      salesOrderId: s.salesOrderId,
+    });
+  });
+
+  it('cc50 (D-638): si la anulación falla, ni el pedido ni la OP quedan con registro', async () => {
+    const productId = await product('A_MEDIDA', '0.75');
+    // Con bobina montada, la OP está en curso y bloquea la anulación.
+    const s = await scenario(productId, '0.75', { qty: '6.000', pieces: [m(6, 1)] });
+    const rejected = await rejection(
+      salesOrders.cancel(admin, s.salesOrderId, { reason: 'El cliente desistió' }),
+    );
+    expect(rejected.status).toBe(400);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'sales.order.cancel', entityId: s.salesOrderId },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'production.cancel-by-sales-order', entityId: s.opId },
+      }),
+    ).toBe(0);
   });
 });

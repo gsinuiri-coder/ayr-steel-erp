@@ -174,6 +174,10 @@ const RESOLVERS: Record<AuditEntityType, Resolver | { fixed: string; href?: stri
       await p.product.findMany({ where: { id: { in: ids } }, select: { id: true, sku: true } }),
       (r) => ref(r.sku),
     ),
+  // cc50 (D-638): un lote no tiene tabla ni se borra; su código es el mismo que muestra el
+  // importador (los 8 primeros del id), sin consulta.
+  purchase_import_batches: (_p, ids) =>
+    Promise.resolve(new Map(ids.map((id) => [id, ref(`Lote ${id.slice(0, 8)}`)]))),
   purchases: async (p, ids) =>
     byId(
       await p.purchase.findMany({
