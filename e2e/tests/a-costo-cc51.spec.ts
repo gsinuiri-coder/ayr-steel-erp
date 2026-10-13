@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { adminApi, adminCredentials, createUser, getJson, postJson } from '../helpers/api';
 import { setupPosStock } from '../helpers/pos';
-import { apiAs, deactivateTrail, ROLE_PASSWORD } from '../helpers/production';
+import { apiAs, deactivateTrail, ROLE_PASSWORD, today } from '../helpers/production';
 import { createCustomer, purgeSalesTrail } from '../helpers/sales';
 
 /**
@@ -49,7 +49,7 @@ test('el ADMINISTRADOR vende una línea a costo; el VENDEDOR no ve la opción', 
     // La cotización es del vendedor, con una línea a un precio normal (sobre el piso).
     const quotation = await postJson<QuotationDto>(sellerApi, '/api/sales/quotations', {
       customerId: customer.id,
-      issueDate: new Date().toISOString().slice(0, 10),
+      issueDate: today(),
       items: [{ productId: stock.product.id, qty: '2.000', unitPriceWithIgvPen: '40.00' }],
     });
     quotationIds.push(quotation.id);
