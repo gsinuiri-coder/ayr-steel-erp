@@ -111,6 +111,7 @@ const margin: SalesMarginDto = {
       marginPct: '40.00',
       costStatus: 'COMPLETO',
       inTotals: true,
+      atCost: false,
       documents: [
         {
           id: '44444444-4444-4444-4444-444444444444',
@@ -141,6 +142,7 @@ const margin: SalesMarginDto = {
       marginPct: null,
       costStatus: 'NO_COMPARABLE',
       inTotals: false,
+      atCost: false,
       documents: [],
     },
   ],

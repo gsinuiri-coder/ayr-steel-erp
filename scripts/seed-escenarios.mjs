@@ -909,6 +909,70 @@ export async function seedCases(api, masters) {
   });
   const h1Purchase = await api.get(`/purchases/${h1PurchaseId}`);
 
+  // AC · venta a costo (cc51, D-641): una bobina vendida entera a costo («Liquidación de stock»),
+  // confirmada y con su boleta. La línea dice «A costo» en la cotización, el pedido y el
+  // comprobante, y el pedido sale en Ventas y margen con el filtro «A costo».
+  const [acCoil] = await buyCoils('drywall', galv, '0.45', ['600'], 'caso AC');
+  const acSellable = (await api.get('/sales/sellable-coils')).find((c) => c.coilId === acCoil.id);
+  if (!acSellable?.atCostPricePen)
+    throw new Error('La bobina del caso AC no trae su precio a costo');
+  const acQuotation = await api.post('/sales/quotations', {
+    customerId: masters.customer.id,
+    issueDate: today,
+    notes: 'DEMO · caso AC',
+    items: [
+      {
+        saleCoilId: acCoil.id,
+        qty: acSellable.availableQty,
+        unitPriceWithIgvPen: acSellable.atCostPricePen,
+        atCost: { reason: 'LIQUIDACION' },
+      },
+    ],
+  });
+  const acOrder = await api.post(`/sales/quotations/${acQuotation.id}/confirm`, {});
+  const acDetail = await api.get(`/sales/orders/${acOrder.id}`);
+  const acInvoice = await api.post('/invoicing/documents', {
+    docType: 'BOLETA',
+    customerId: masters.customer.id,
+    salesOrderId: acOrder.id,
+    issueDate: today,
+    paymentTerms: 'CONTADO',
+    notes: 'DEMO · caso AC',
+    items: [{ salesOrderItemId: acDetail.items[0].id, qty: acDetail.items[0].qty }],
+  });
+  const ac = await api.post(`/invoicing/documents/${acInvoice.id}/register-manual`, {
+    series: 'B900',
+    correlative: (seq += 1),
+  });
+  // El despacho saca la bobina del kardex: es lo que le da a Ventas y margen su costo (margen ~0).
+  await api.post('/dispatches', {
+    salesOrderId: acOrder.id,
+    dispatchDate: today,
+    originAddress: 'Av. Almacén DEMO 100, Lima',
+    destinationAddress: 'Av. Cliente DEMO 200, Lima',
+    originUbigeo: '150101',
+    destinationUbigeo: '150132',
+    transferMode: 'PRIVATE',
+    totalWeightKg: acDetail.items[0].qty,
+    packageCount: 1,
+    vehiclePlate: 'DEM-001',
+    driverGivenNames: 'Chofer',
+    driverFamilyNames: 'Demo',
+    driverDocType: 'DNI',
+    driverDocNumber: '99999902',
+    driverLicense: 'Q99999902',
+    notes: 'DEMO · caso AC',
+    items: [{ salesOrderItemId: acDetail.items[0].id, qty: acDetail.items[0].qty }],
+  });
+  const acCase = {
+    quotationId: acQuotation.id,
+    quotation: acQuotation.code,
+    orderId: acOrder.id,
+    order: acDetail.code,
+    invoiceId: acInvoice.id,
+    invoice: ac.number,
+  };
+
   // S1 · partido con borde (cc46, D-608): 1 000 kg de 1 220 mm en 600 + 560 con 20 mm de kerf.
   // Quedan 40 mm de borde: el valor del kerf y el borde entra a las hijas (sube su costo por kg).
   const [s1] = await buyCoils('drywall', galv, '0.50', ['1000'], 'partido S1');
@@ -929,10 +993,11 @@ export async function seedCases(api, masters) {
     },
     drywall: { cuttingId: cutting.id, cut: dw1, free: dw2 },
     split: { mother: s1, children: s1Children },
+    acCase,
   };
 }
 
-export function casesTable({ cases, history, drywall, split }, masters) {
+export function casesTable({ cases, history, drywall, split, acCase }, masters) {
   const lines = [
     '| Caso | Pedido | OP | Abrir | Qué probar |',
     '|---|---|---|---|---|',
@@ -942,6 +1007,7 @@ export function casesTable({ cases, history, drywall, split }, masters) {
     ),
     `| Drywall | — | — | ${PREVIEW_WEB}/corte/${drywall.cuttingId} | ${drywall.cut.code} cortada en 5 flejes de 244 mm (${masters.products.stud.sku}); ${drywall.free.code} libre para tu orden de corte con ${DEMO.cuttingSupplier.name}; perfiles en «Nueva orden de perfiles» (${PREVIEW_WEB}/planta) |`,
     `| H1 | — | — | ${PREVIEW_WEB}/compras/${history.purchaseId} | «Historial» de la compra ${history.purchase}: pago y su reversa, y el flete imputado; en la orden de corte (${PREVIEW_WEB}/corte/${history.cuttingId}), la factura vinculada y la duplicada anulada (D-639); en la auditoría, el «Lote de importación» ${history.batchId.slice(0, 8)} (D-638) |`,
+    `| AC | ${acCase.order} | — | ${PREVIEW_WEB}/cotizaciones/${acCase.quotationId} | la línea «A costo · Liquidación de stock» en la cotización ${acCase.quotation}, el pedido (${PREVIEW_WEB}/pedidos/${acCase.orderId}) y la boleta ${acCase.invoice} (${PREVIEW_WEB}/comprobantes/${acCase.invoiceId}); Ventas y margen con el filtro «A costo» (D-641) |`,
     `| S1 | — | — | ${PREVIEW_WEB}/bobinas/${split.mother.id} | ${split.mother.code} partida en ${split.children.map((c) => c.code).join(' y ')} con 20 mm de kerf y 40 mm de borde: las hijas suman el valor que salió de la madre (D-608); «Revertir» la devuelve exacta |`,
   ];
   return lines.join('\n');

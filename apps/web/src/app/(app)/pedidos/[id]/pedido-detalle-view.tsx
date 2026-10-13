@@ -74,6 +74,7 @@ import { OrderStageBadge } from '@/components/sales/status-badges';
 import { customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
 import { RowActions } from '@/components/row-actions';
 import { RESTORE_RESERVATION_PARAM } from '@/lib/restore-reservation';
+import { AtCostBadge } from '@/components/sales/at-cost-control';
 
 function reservationBadge(r: ReservationDto) {
   return <Badge variant={RESERVATION_TONE[r.status]}>{RESERVATION_STATUS_LABELS[r.status]}</Badge>;
@@ -647,6 +648,8 @@ export function PedidoDetalleView({ id }: { id: string }) {
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground">{item.description}</div>
+                  {/* cc51 (D-641): la línea vendida a costo, solo en pantalla. */}
+                  <AtCostBadge reason={item.atCostReason} note={item.atCostNote} />
                   {isAdmin && <LineProductionInfo orders={lineOrders.get(item.id) ?? []} />}
                 </TableCell>
                 <TableCell className="text-right">

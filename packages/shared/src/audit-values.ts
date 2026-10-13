@@ -37,6 +37,7 @@ import { FINISH_KIND_LABELS } from './schemas/finish';
 import { CASH_SESSION_STATUS_LABELS, POS_SALE_STATUS_LABELS } from './schemas/pos';
 import { DRYWALL_TOLERANCE_OVERRIDE_REASON_LABELS } from './schemas/production';
 import { TOLERANCE_OVERRIDE_REASON_LABELS } from './schemas/roofing';
+import { AT_COST_REASON_LABELS } from './schemas/sales';
 
 /**
  * cc51 (D-640): los valores de la auditoría que el código guarda como código en inglés (estados,
@@ -193,6 +194,7 @@ const TOP_LEVEL_LABELS: Readonly<Record<string, ValueLabels>> = {
   statusBeforeAnnul: FISCAL_DOCUMENT_STATUS_LABELS,
   orderStatus: SALES_ORDER_STATUS_LABELS,
   parentStatus: COIL_STATUS_LABELS,
+  atCostReason: AT_COST_REASON_LABELS,
 };
 
 const BY_ACTION: Readonly<Record<string, readonly (readonly [string, ValueLabels])[]>> = {

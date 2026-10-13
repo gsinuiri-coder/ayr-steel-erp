@@ -95,6 +95,7 @@ import {
   ReactivateWithOrderLinesDialog,
 } from '@/components/invoicing/reactivate-with-order-lines-dialog';
 import { DocumentProfitability } from './document-profitability';
+import { AtCostBadge } from '@/components/sales/at-cost-control';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -1059,6 +1060,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   {item.productSku && (
                     <div className="text-xs text-muted-foreground">{item.description}</div>
                   )}
+                  {/* cc51 (D-641): la línea vendida a costo, solo en pantalla. */}
+                  <AtCostBadge reason={item.atCostReason} note={item.atCostNote} />
                 </TableCell>
                 <TableCell className="text-right">
                   {formatQty(item.qty, unitSymbol(item.unit))}

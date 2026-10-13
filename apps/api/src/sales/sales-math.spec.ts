@@ -49,6 +49,9 @@ function line(overrides: Partial<ResolvedSalesLine>): ResolvedSalesLine {
     productName: 'Perfil',
     pieces: [],
     reserveItemLabel: 'SKU',
+    atCostReason: null,
+    atCostNote: null,
+    atCostFloor: null,
     ...overrides,
   };
 }

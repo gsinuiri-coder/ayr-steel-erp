@@ -98,7 +98,7 @@ describe('assertPriceFloor (D-163)', () => {
     const tx = fakeTx({ productCost: COST });
     const min = minAllowedValue(COST, MIN_MARGIN);
     expect(min).toBe('19.4444');
-    await expect(assertPriceFloor(tx, [candidate(min)], '0.05')).resolves.toBeUndefined();
+    await expect(assertPriceFloor(tx, [candidate(min)], '0.05')).resolves.toBeInstanceOf(Map);
   });
 
   it('un céntimo abajo bloquea', async () => {
@@ -152,7 +152,7 @@ describe('assertPriceFloor (D-163)', () => {
           [candidate(typed)],
           '0.05',
         ),
-      ).resolves.toBeUndefined();
+      ).resolves.toBeInstanceOf(Map);
     });
 
     it('un céntimo por debajo del mínimo mostrado sí bloquea', async () => {
@@ -192,7 +192,7 @@ describe('assertPriceFloor (D-163)', () => {
       );
       await expect(
         assertPriceFloor(fakeTx({ productCost: COST }), [candidate(unitValue, { basis })], '0.05'),
-      ).resolves.toBeUndefined();
+      ).resolves.toBeInstanceOf(Map);
     });
   });
 
@@ -203,7 +203,7 @@ describe('assertPriceFloor (D-163)', () => {
     // tiene que pasar, y es justo el caso que rebotaba comparando precios en vez de valores.
     const tx = fakeTx({ productCost: '7.6271' });
     expect(minAllowedValue('7.6271', MIN_MARGIN)).toBe('8.4746');
-    await expect(assertPriceFloor(tx, [candidate('8.4746')], '0.05')).resolves.toBeUndefined();
+    await expect(assertPriceFloor(tx, [candidate('8.4746')], '0.05')).resolves.toBeInstanceOf(Map);
     await expect(assertPriceFloor(tx, [candidate('8.4745')], '0.05')).rejects.toBeInstanceOf(
       BadRequestException,
     );
@@ -211,12 +211,57 @@ describe('assertPriceFloor (D-163)', () => {
 
   it('sin costo en el kardex no hay piso: un SKU nuevo se puede cotizar', async () => {
     const tx = fakeTx({});
-    await expect(assertPriceFloor(tx, [candidate('0.0100')], '0.05')).resolves.toBeUndefined();
+    await expect(assertPriceFloor(tx, [candidate('0.0100')], '0.05')).resolves.toBeInstanceOf(Map);
   });
 
   it('sin márgenes configurados para la línea de negocio tampoco hay piso', async () => {
     const tx = fakeTx({ minMarginPct: null, productCost: COST });
-    await expect(assertPriceFloor(tx, [candidate('0.0100')], '0.05')).resolves.toBeUndefined();
+    await expect(assertPriceFloor(tx, [candidate('0.0100')], '0.05')).resolves.toBeInstanceOf(Map);
+  });
+
+  describe('cc51 (D-641): la línea a costo', () => {
+    it('su piso es el costo: en el costo pasa y devuelve el costo y el precio a costo', async () => {
+      const tx = fakeTx({ productCost: COST });
+      const floors = await assertPriceFloor(tx, [candidate(COST, { atCost: true })], '0.05');
+      expect(floors.get('Línea 1')).toMatchObject({
+        costPen: COST,
+        minValuePen: COST,
+        minPricePen: '20.65',
+        minMarginPct: '0.0000',
+      });
+    });
+
+    it('una diezmilésima bajo el costo rebota, con su propio mensaje', async () => {
+      const tx = fakeTx({ productCost: COST });
+      await expect(
+        assertPriceFloor(tx, [candidate('17.4999', { atCost: true })], '0.05'),
+      ).rejects.toThrow(/a costo el precio es S\/ 20\.65 .*Por debajo del costo no se vende/);
+    });
+
+    it('no depende del margen configurado: sin margen de la línea, igual tiene piso', async () => {
+      const tx = fakeTx({ minMarginPct: null, productCost: COST });
+      await expect(
+        assertPriceFloor(tx, [candidate('17.0000', { atCost: true })], '0.05'),
+      ).rejects.toThrow(/Por debajo del costo/);
+    });
+
+    it('sin costo de referencia no se puede marcar', async () => {
+      const tx = fakeTx({});
+      await expect(
+        assertPriceFloor(tx, [candidate('5.0000', { atCost: true })], '0.05'),
+      ).rejects.toThrow(/no tiene costo de referencia/);
+    });
+
+    it('la marca solo baja el piso de su línea: la de al lado sigue con el margen mínimo', async () => {
+      const tx = fakeTx({ productCost: COST });
+      await expect(
+        assertPriceFloor(
+          tx,
+          [candidate(COST, { atCost: true }), candidate(COST, { at: 'Línea 2' })],
+          '0.05',
+        ),
+      ).rejects.toThrow(/Línea 2: .*margen mínimo/);
+    });
   });
 
   it('un margen mínimo de 100% rebota con un mensaje legible, no con un 500', async () => {

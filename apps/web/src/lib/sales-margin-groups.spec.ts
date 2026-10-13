@@ -42,6 +42,7 @@ function order(
     marginPct: margin === null ? null : marginPctOf(toDecimal(sales), toDecimal(margin)),
     costStatus: cost === null ? 'NO_COMPARABLE' : 'COMPLETO',
     inTotals: true,
+    atCost: false,
     documents: [],
   };
 }

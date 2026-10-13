@@ -320,6 +320,10 @@ export class SalesOrderEditsService {
           subtotalPen: next.subtotalPen,
           igvPen: next.igvPen,
           totalPen: next.totalPen,
+          // cc51 (D-641): cambiar el precio en el pedido pasa por el piso de siempre, así que la
+          // línea deja de estar «a costo».
+          atCostReason: null,
+          atCostNote: null,
         },
       });
       const totals = await this.refreshTotals(tx, orderId);
@@ -334,8 +338,10 @@ export class SalesOrderEditsService {
           lineNumber: item.lineNumber,
           unitPricePen: item.unitPricePen.toFixed(4),
           valuePerMeterPen: item.valuePerMeterPen?.toFixed(4) ?? null,
+          ...(item.atCostReason === null ? {} : { atCostReason: item.atCostReason }),
         },
         after: {
+          ...(item.atCostReason === null ? {} : { atCostReason: null }),
           unitPricePen: next.unitPricePen,
           valuePerMeterPen: next.valuePerMeterPen,
           subtotalPen: next.subtotalPen,

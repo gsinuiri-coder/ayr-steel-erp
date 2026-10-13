@@ -17,6 +17,7 @@ import {
   InventoryItemType,
 } from '@prisma/client';
 import {
+  type AtCostReason,
   businessToday,
   defaultValidUntil,
   EXTERNAL_INVOICE_NOTES_PREFIX,
@@ -83,6 +84,7 @@ import {
 } from './coil-sale-product';
 import { paperPoolOfLine } from './paper-coil-assignment';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
+import { assertAtCostActor, atCostAuditEntries } from './at-cost';
 import { orderByInvoiceNumber, quotationOrderBy } from '../common/list-orderings';
 import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { searchSeqOf } from '../common/search-seq';
@@ -227,7 +229,10 @@ export class QuotationsService {
         : {}),
       // D-310: el importador de históricos trae hechos consumados y no compite por bobinas.
       ...(options.exactAmounts ? {} : { coilTies: { viewer: actor } }),
+      // cc51 (D-641): la cotización es donde se marca «A costo».
+      allowAtCost: true,
     });
+    assertAtCostActor(actor, lines, []);
     const totals = documentTotals(lines);
     // D-157: `null` es **sin vencimiento** y se guarda como `NULL`, no como una fecha lejana.
     const validUntil = quotationValidUntil(input.issueDate, input.validityDays);
@@ -264,6 +269,10 @@ export class QuotationsService {
         items: lines.length,
       },
     });
+    // cc51 (D-641): cada línea a costo, con su costo de ese momento, en la misma transacción.
+    for (const entry of atCostAuditEntries(actor.id, quotation.id, lines, [])) {
+      await this.audit.write(tx, entry);
+    }
     return quotation.id;
   }
 
@@ -349,6 +358,7 @@ export class QuotationsService {
             viewer: actor,
             keepCoilIds: await this.storedCoilIds(tx, id),
           },
+          allowAtCost: true,
         });
         const totals = documentTotals(lines);
         // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al
@@ -370,10 +380,15 @@ export class QuotationsService {
           select: {
             lineNumber: true,
             productId: true,
+            qty: true,
             unitPricePen: true,
             valuePerMeterPen: true,
+            atCostReason: true,
+            atCostNote: true,
           },
         });
+        // cc51 (D-641): un VENDEDOR puede guardar una línea que ya estaba a costo si queda igual.
+        assertAtCostActor(actor, lines, previousLines);
         await tx.quotationItem.deleteMany({ where: { quotationId: id } });
         await tx.quotation.update({
           where: { id },
@@ -414,6 +429,9 @@ export class QuotationsService {
           },
           ...(options.auditReason ? { reason: options.auditReason } : {}),
         });
+        for (const entry of atCostAuditEntries(actor.id, id, lines, previousLines)) {
+          await this.audit.write(tx, entry);
+        }
 
         // D-185: con reserva temporal vigente, lo reservado sigue a las líneas nuevas — o la
         // edición entera se deshace si ya no alcanza.
@@ -1014,6 +1032,16 @@ export class QuotationsService {
         ...(pieces ? { pieces } : {}),
         // D-343: el duplicado conserva las piezas informativas de un accesorio.
         ...(i.piecesHint === null ? {} : { piecesHint: i.piecesHint }),
+        // cc51 (D-641): la marca «A costo» la copia solo un ADMINISTRADOR; otro rol duplica la línea
+        // y la cotización nueva pasa por el piso de siempre.
+        ...(i.atCostReason !== null && actor.role === Role.ADMINISTRADOR
+          ? {
+              atCost: {
+                reason: i.atCostReason as AtCostReason,
+                ...(i.atCostNote === null ? {} : { note: i.atCostNote }),
+              },
+            }
+          : {}),
         ...(i.reserveItemType === 'COIL'
           ? { reserveFromCoilId: i.reserveItemId, reserveKg: i.reserveQty.toFixed(3) }
           : {}),
@@ -1031,6 +1059,7 @@ export class QuotationsService {
         // la que sí viaja se vuelve a comprobar por si se ató entre la lectura y la escritura.
         coilTies: { viewer: actor },
         unassignedCoilProducts,
+        allowAtCost: true,
       });
       const totals = documentTotals(lines);
       const issueDate = businessToday();
@@ -1070,6 +1099,9 @@ export class QuotationsService {
           totalPen: totals.totalPen,
         },
       });
+      for (const entry of atCostAuditEntries(actor.id, quotation.id, lines, [])) {
+        await this.audit.write(tx, entry);
+      }
       return quotation.id;
     });
 
@@ -1736,6 +1768,9 @@ function toItemCreate(
     valuePerMeterPen: line.valuePerMeterPen,
     // D-343: las piezas informativas de un accesorio; no entran a ningún cálculo.
     piecesHint: line.piecesHint,
+    // cc51 (D-641): la marca «A costo» y su motivo.
+    atCostReason: line.atCostReason,
+    atCostNote: line.atCostNote,
     subtotalPen: line.subtotalPen,
     igvPen: line.igvPen,
     totalPen: line.totalPen,

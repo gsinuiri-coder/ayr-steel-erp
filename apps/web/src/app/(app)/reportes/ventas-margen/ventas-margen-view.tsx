@@ -26,12 +26,20 @@ import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
 import {
-  PeriodFiltersButton,
+  defaultPeriodDraft,
+  periodDraftError,
+  periodDraftOf,
+  PeriodFields,
+  periodIsFiltered,
   PeriodStatus,
   useReportPeriod,
+  type PeriodDraft,
+  type ReportPeriodState,
 } from '@/components/reports/report-period';
 import { LineTotalsStrip, type LineTotalsItem } from '@/components/reports/line-totals-strip';
-import { TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
+import { FiltersDialog, TableToolbar, ToolbarSearch } from '@/components/table-toolbar';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import {
   BusyRegion,
   DETAIL_ROW_CLASSNAME,
@@ -85,7 +93,9 @@ export function VentasMargenView() {
   const periodState = useReportPeriod();
   const { period, valid } = periodState;
   const { tab, line, select } = useLineTab(LINE_TABS);
-  const [url, setUrl] = useUrlState({ ver: 'pedido', search: '' });
+  // cc51 (D-641): `aCosto=1` deja solo los pedidos con alguna línea vendida a costo.
+  const [url, setUrl] = useUrlState({ ver: 'pedido', search: '', aCosto: '' });
+  const atCost = url.aCosto === '1';
   const view = parseSalesMarginView(url.ver);
   const [sort, toggleSort] = useSort<string>();
   const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
@@ -93,10 +103,10 @@ export function VentasMargenView() {
   });
   // D-392: Servicios no tiene costo registrado; su pestaña muestra solo la venta.
   const noCost = line !== undefined && NO_COST_REPORT_LINES.includes(line);
-  const qs = `from=${period.from}&to=${period.to}${line === undefined ? '' : `&businessLine=${line}`}`;
+  const qs = `from=${period.from}&to=${period.to}${line === undefined ? '' : `&businessLine=${line}`}${atCost ? '&atCost=true' : ''}`;
 
   // El alcance es el reporte y su pestaña; el periodo va después (`keepPreviousInScope`).
-  const scope = ['report', 'sales-margin', line ?? 'todas'];
+  const scope = ['report', 'sales-margin', line ?? 'todas', atCost ? 'a-costo' : 'todo'];
   const report = useQuery({
     queryKey: [...scope, period.from, period.to],
     queryFn: () => api<SalesMarginDto>(`/reports/sales-margin?${qs}`),
@@ -152,7 +162,12 @@ export function VentasMargenView() {
                   label: downloadLabelFor('Descargar Excel', line),
                   download: xlsxHref(
                     '/api/reports/sales-margin/xlsx',
-                    { from: period.from, to: period.to, businessLine: line },
+                    {
+                      from: period.from,
+                      to: period.to,
+                      businessLine: line,
+                      ...(atCost ? { atCost: 'true' } : {}),
+                    },
                     searchText,
                   ),
                 },
@@ -195,7 +210,15 @@ export function VentasMargenView() {
             onChange={setSearchText}
           />
         }
-        filters={<PeriodFiltersButton state={periodState} />}
+        filters={
+          <SalesMarginFilters
+            state={periodState}
+            atCost={atCost}
+            onAtCost={(next) => {
+              setUrl({ aCosto: next ? '1' : '' });
+            }}
+          />
+        }
         status={<PeriodStatus state={periodState} updating={updating} />}
         aside={
           <>
@@ -540,12 +563,68 @@ function pctText(pct: string | null): string {
 }
 
 /** Las columnas de la vista por pedido. `cost`: sin costo en Servicios (D-392). */
+/**
+ * cc51 (D-641): el modal «Filtros» de Ventas y margen: el periodo y «A costo» (los pedidos con al
+ * menos una línea vendida a costo). Se aplican juntos.
+ */
+function SalesMarginFilters({
+  state,
+  atCost,
+  onAtCost,
+}: {
+  state: ReportPeriodState;
+  atCost: boolean;
+  onAtCost: (next: boolean) => void;
+}) {
+  return (
+    <FiltersDialog<{ period: PeriodDraft; atCost: boolean }>
+      value={{ period: periodDraftOf(state), atCost }}
+      empty={{ period: defaultPeriodDraft(), atCost: false }}
+      activeCount={(periodIsFiltered(state) ? 1 : 0) + (atCost ? 1 : 0)}
+      validate={(d) => periodDraftError(d.period)}
+      onApply={(d) => {
+        state.setPeriod({ from: d.period.from, to: d.period.to }, d.period.preset);
+        onAtCost(d.atCost);
+      }}
+    >
+      {(draft, update) => (
+        <div className="grid gap-4">
+          <PeriodFields
+            draft={draft.period}
+            onChange={(period) => {
+              update({ period });
+            }}
+          />
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="filtro-a-costo"
+              checked={draft.atCost}
+              onCheckedChange={(checked) => {
+                update({ atCost: checked === true });
+              }}
+            />
+            <Label htmlFor="filtro-a-costo">
+              A costo (pedidos con alguna línea vendida a costo)
+            </Label>
+          </div>
+        </div>
+      )}
+    </FiltersDialog>
+  );
+}
+
 function orderColumns(cost: boolean): ReportColumn<SalesMarginOrderDto>[] {
   const columns: ReportColumn<SalesMarginOrderDto>[] = [
     {
       key: 'order',
       header: 'Pedido',
-      cell: (o) => <OrderCode order={o} />,
+      cell: (o) => (
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          <OrderCode order={o} />
+          {/* cc51 (D-641): el pedido tiene alguna línea vendida a costo. */}
+          {o.atCost && <Badge variant="warning">A costo</Badge>}
+        </span>
+      ),
       sortValue: { text: (o) => o.orderCode ?? '' },
       searchText: (o) => salesMarginSearchText(o),
     },
