@@ -15,7 +15,7 @@ import {
 } from '@ayr/shared';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
 import { AppModule } from '../app.module';
-import { AuditService } from '../audit/audit.service';
+import { AuditService, type AuditEntry } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
@@ -163,6 +163,16 @@ function service(over: Partial<CreatePurchaseInput>) {
   );
 }
 
+/** Hace fallar solo el registro de `action`; el resto se escribe de verdad. */
+function failAudit(action: string) {
+  const original = audit.write.bind(audit);
+  return jest
+    .spyOn(audit, 'write')
+    .mockImplementation((tx, entry: AuditEntry) =>
+      entry.action === action ? Promise.reject(new Error('auditoría caída')) : original(tx, entry),
+    );
+}
+
 function auditsOf(entity: string, entityId: string, action: string) {
   return prisma.auditLog.findMany({ where: { entity, entityId, action }, orderBy: { id: 'asc' } });
 }
@@ -273,6 +283,36 @@ describe('cc50 (D-638) — costo de importación, en las dos compras', () => {
     });
   });
 
+  it('anular el servicio deja la reversa en la compra de bobinas', async () => {
+    const coils = await coilPurchase();
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    await purchases.cancel(admin, freight.id, { reason: 'Flete equivocado' });
+    const reversed = await auditsOf('purchases', coils.id, 'purchases.landed-cost-reverse');
+    expect(reversed).toHaveLength(1);
+    expect(reversed[0]?.before).toMatchObject({ amountPen: '100.0000', coils: 1 });
+    expect(reversed[0]?.after).toMatchObject({ servicePurchaseId: freight.id });
+    expect(reversed[0]?.reason).toBe('Flete equivocado');
+  });
+
+  it('si el registro de la recepción falla, el costo y su registro se deshacen', async () => {
+    const coils = await coilPurchase();
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    // `purchases.receive` se escribe después de `purchases.landed-cost`.
+    const spy = failAudit('purchases.receive');
+    try {
+      await expect(purchases.receive(admin, freight.id)).rejects.toThrow('auditoría caída');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await auditsOf('purchases', coils.id, 'purchases.landed-cost')).toHaveLength(0);
+    const after = await prisma.purchase.findUniqueOrThrow({ where: { id: freight.id } });
+    expect(after.status).toBe('DRAFT');
+    expect(
+      await prisma.inventoryMovement.count({ where: { refType: 'PURCHASE', refId: freight.id } }),
+    ).toBe(0);
+  });
+
   it('si la recepción del servicio falla, ninguna compra queda con registro', async () => {
     const coils = await coilPurchase(false);
     const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
@@ -314,6 +354,20 @@ describe('cc50 (D-638) — factura del corte, en el «Historial» de la orden de
       subtotal: '100.0000',
       currency: 'PEN',
     });
+  });
+
+  it('si el registro de la factura falla, la compra no se crea', async () => {
+    const orderId = await sentOrder();
+    const number = digits(8);
+    const spy = failAudit('cutting.invoice-linked');
+    try {
+      await expect(
+        service({ serviceKind: 'CUTTING', relatedCuttingOrderId: orderId, number }),
+      ).rejects.toThrow('auditoría caída');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await prisma.purchase.count({ where: { relatedCuttingOrderId: orderId } })).toBe(0);
   });
 
   it('una factura que no se puede vincular no deja registro', async () => {
@@ -371,6 +425,26 @@ describe('cc50 (D-638) — lote del importador, con su tipo propio', () => {
     for (const p of result.purchases) {
       expect(await auditsOf('purchases', p.id, 'purchases.cancel')).toHaveLength(1);
     }
+  });
+
+  it('si el resumen del lote falla, ninguna compra del lote queda', async () => {
+    const number = `9${digits(7)}`;
+    const spy = failAudit('imports.purchases');
+    try {
+      await expect(
+        imports.confirm(
+          admin,
+          confirmPurchaseImportSchema.parse({ documents: [document(number)] }),
+        ),
+      ).rejects.toThrow('auditoría caída');
+    } finally {
+      spy.mockRestore();
+    }
+    const created = await prisma.purchase.findMany({
+      where: { supplierId, series: 'F003', number },
+      select: { id: true },
+    });
+    expect(created).toHaveLength(0);
   });
 
   it('un lote que no entra no deja resumen', async () => {

@@ -370,10 +370,15 @@ async function datesVersusAudit(tx: Tx) {
   // (`after.operationDate`, D-124), que es el texto del body una vez validado: lo que se compara es
   // ese texto contra la columna `date`. Un día inexistente que el schema dejó pasar aparece acá.
   const paymentAudits = await tx.auditLog.findMany({
-    where: { action: 'purchases.payment', entity: 'supplier_payments' },
-    select: { entityId: true, after: true, at: true },
+    // cc50 (D-638): desde entonces el registro va en la compra y el pago queda en `after.paymentId`.
+    where: { action: 'purchases.payment' },
+    select: { entity: true, entityId: true, after: true, at: true },
   });
-  const paymentIds = paymentAudits.map((a) => a.entityId).filter((x): x is string => !!x);
+  const paymentIdOf = (a: (typeof paymentAudits)[number]): string | null =>
+    a.entity === 'supplier_payments'
+      ? a.entityId
+      : ((a.after as { paymentId?: string } | null)?.paymentId ?? null);
+  const paymentIds = paymentAudits.map(paymentIdOf).filter((x): x is string => !!x);
   const payments = await tx.supplierPayment.findMany({
     where: { id: { in: paymentIds } },
     select: { id: true, date: true, purchase: { select: { series: true, number: true } } },
@@ -382,7 +387,8 @@ async function datesVersusAudit(tx: Tx) {
   const paymentMismatches = paymentAudits
     .map((a) => {
       const typed = (a.after as { operationDate?: string } | null)?.operationDate;
-      const p = a.entityId ? paymentById.get(a.entityId) : undefined;
+      const id = paymentIdOf(a);
+      const p = id ? paymentById.get(id) : undefined;
       if (!typed || !p) return null;
       const stored = day(p.date);
       if (typed === stored && isCalendarDate(typed)) return null;

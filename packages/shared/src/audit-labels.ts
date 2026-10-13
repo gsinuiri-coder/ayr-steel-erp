@@ -105,6 +105,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'purchases.cancel': 'Anulación de compra',
   'purchases.create': 'Compra registrada',
   'purchases.landed-cost': 'Costo de importación recibido de otra compra',
+  'purchases.landed-cost-reverse': 'Costo de importación de otra compra revertido',
   'purchases.payment': 'Pago a proveedor registrado',
   'purchases.payment-reverse': 'Reversa de pago a proveedor',
   'purchases.receive': 'Recepción de compra',

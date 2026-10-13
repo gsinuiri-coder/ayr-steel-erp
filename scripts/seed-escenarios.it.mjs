@@ -181,8 +181,9 @@ try {
   const purchases = (await api.list('/purchases')).filter((p) => supplierIds.has(p.supplierId));
   assert.equal(
     purchases.filter((p) => p.status !== 'CANCELLED').length,
-    11,
-    'once compras vivas (con V1, cc48)',
+    15,
+    // cc50 (D-638): H1 suma la compra de bobinas, el flete, la factura del corte y la del lote.
+    'quince compras vivas (con V1, cc48, y H1, cc50)',
   );
 
   const cuts = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));

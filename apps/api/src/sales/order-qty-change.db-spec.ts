@@ -20,6 +20,7 @@ import {
 } from '@ayr/shared';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
 import { AppModule } from '../app.module';
+import { AuditService, type AuditEntry } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { CatalogService } from '../catalog/catalog.service';
 import { CustomersService } from '../customers/customers.service';
@@ -664,6 +665,40 @@ describe('cc45 (D-603, D-604) — cambiar la cantidad con producción', () => {
     expect(opAudit[0]?.after).toMatchObject({ planMeters: '6.000', salesOrderId: s.salesOrderId });
   });
 
+  it('cc50 (D-638): si el registro de la OP falla, la cantidad no cambia', async () => {
+    const productId = await product('A_MEDIDA', '0.75');
+    const s = await confirmed(productId, '0.75', { qty: '12.000', pieces: [m(6, 2)] });
+    const audit = moduleRef.get(AuditService);
+    const original = audit.write.bind(audit);
+    const spy = jest
+      .spyOn(audit, 'write')
+      .mockImplementation((tx, entry: AuditEntry) =>
+        entry.action === 'production.plan-by-sales-order'
+          ? Promise.reject(new Error('auditoría caída'))
+          : original(tx, entry),
+      );
+    try {
+      await expect(
+        edits.updateItemQty(
+          admin,
+          s.salesOrderId,
+          s.itemId,
+          qty({ qty: '6.000', pieces: [m(6, 1)] }),
+        ),
+      ).rejects.toThrow('auditoría caída');
+    } finally {
+      spy.mockRestore();
+    }
+    const item = await prisma.salesOrderItem.findUniqueOrThrow({ where: { id: s.itemId } });
+    expect(item.qty.toFixed(3)).toBe('12.000');
+    expect(await plan(s.opId)).toEqual(['2 × 6000.00']);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'sales.order.item-qty', entityId: s.salesOrderId },
+      }),
+    ).toBe(0);
+  });
+
   it('cc50 (D-638): anular el pedido deja un registro en el pedido y uno por OP anulada', async () => {
     const productId = await product('A_MEDIDA', '0.75');
     const s = await confirmed(productId, '0.75', { qty: '6.000', pieces: [m(6, 1)] });
@@ -683,6 +718,37 @@ describe('cc45 (D-603, D-604) — cambiar la cantidad con producción', () => {
       status: ProductionOrderStatus.CANCELLED,
       salesOrderId: s.salesOrderId,
     });
+  });
+
+  it('cc50 (D-638): si el registro del pedido falla, la anulación entera se deshace', async () => {
+    const productId = await product('A_MEDIDA', '0.75');
+    const s = await confirmed(productId, '0.75', { qty: '6.000', pieces: [m(6, 1)] });
+    // Falla el último registro, después de los de cada OP: todo vuelve atrás junto.
+    const audit = moduleRef.get(AuditService);
+    const original = audit.write.bind(audit);
+    const spy = jest
+      .spyOn(audit, 'write')
+      .mockImplementation((tx, entry: AuditEntry) =>
+        entry.action === 'sales.order.cancel'
+          ? Promise.reject(new Error('auditoría caída'))
+          : original(tx, entry),
+      );
+    try {
+      await expect(
+        salesOrders.cancel(admin, s.salesOrderId, { reason: 'El cliente desistió' }),
+      ).rejects.toThrow('auditoría caída');
+    } finally {
+      spy.mockRestore();
+    }
+    const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: s.salesOrderId } });
+    expect(order.status).not.toBe('CANCELLED');
+    const op = await prisma.productionOrder.findUniqueOrThrow({ where: { id: s.opId } });
+    expect(op.status).toBe(ProductionOrderStatus.DRAFT);
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'production.cancel-by-sales-order', entityId: s.opId },
+      }),
+    ).toBe(0);
   });
 
   it('cc50 (D-638): si la anulación falla, ni el pedido ni la OP quedan con registro', async () => {

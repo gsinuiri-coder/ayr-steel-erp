@@ -54,6 +54,7 @@ import {
   type UpdateSalesOrderItemQtyInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
+import { productionPlanBySalesOrderEntry } from '../audit/document-audit-entries';
 import type { RequestUser } from '../auth/auth.types';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { ENV, type Env } from '../config/env';
@@ -1638,20 +1639,16 @@ export class SalesOrderEditsService {
     planMetersAfter: Decimal,
     reason: string | undefined,
   ): Promise<void> {
-    await this.audit.write(tx, {
-      actorId: actor.id,
-      action: 'production.plan-by-sales-order',
-      entity: 'production_orders',
-      entityId: op.id,
-      before: { code: productionOrderCode(op.seq), planMeters: op.planMeters.toFixed(3) },
-      after: {
-        planMeters: planMetersAfter.toFixed(3),
-        salesOrderId: item.salesOrderId,
-        salesOrder: salesOrderCode(order.seq),
-        lineNumber: item.lineNumber,
-      },
-      ...(reason !== undefined ? { reason } : {}),
-    });
+    await this.audit.write(
+      tx,
+      productionPlanBySalesOrderEntry(
+        actor.id,
+        { ...op, planMeters: op.planMeters.toFixed(3) },
+        { salesOrderId: item.salesOrderId, salesOrderSeq: order.seq, lineNumber: item.lineNumber },
+        planMetersAfter.toFixed(3),
+        reason,
+      ),
+    );
   }
 
   /** Qué reserva la línea, en palabras: el agregado de materia prima o el SKU. */
