@@ -2520,3 +2520,44 @@ registro con el id del documento, salvo los borradores de reporte de la OP. Lo q
 cambian desde otros módulos (pagos a proveedor, factura y costo del corte, OP anuladas o
 replanificadas desde el pedido) queda en otra entidad. Por pedido del brief no se agregó auditoría; la
 lista, con archivo y función, está en el handoff.
+
+## Ratificación del dueño (2026-10-12, pieza cc50)
+
+El dueño ratificó D-627 a D-632, D-634 y D-635 (cc48) y D-636 y D-637 (cc49). D-632 queda ratificada
+como «no se aplica»: el Reporte mensual de bobinas sigue con sus columnas. Con el aviso tardío de
+Vercel de cc48 no se hace nada. Su fila de `ARQUITECTURA.md` §0.2 lo dice.
+
+## cc50 — la auditoría que faltaba en el «Historial» (D-638)
+
+**Qué cambia.** cc49 listó lo que compra, orden de corte y OP sufren desde otros módulos sin dejar
+registro con su id. El dueño decidió auditar seis acciones (D-638) y dejar fuera los borradores de
+reporte de la OP: son ruido, lo que vale es el reporte confirmado.
+
+Decisiones de forma:
+
+- **Sin migración.** `audit_log.entity` y `action` son texto; el tipo nuevo `purchase_import_batches`
+  solo se suma a la lista cerrada del visor (`AUDIT_ENTITY_TYPES`) y a sus rótulos. Su código legible
+  son los 8 primeros del id, sin consulta (un lote no tiene tabla ni se borra).
+- **El pago va a la compra, no a un registro aparte.** Un pago es siempre de una sola compra
+  (`supplier_payments.purchase_id`), así que hay un registro por pago, en la compra, con el id del pago
+  y el proveedor en el detalle. `supplier_payments` deja de usarse como entidad de auditoría.
+- **El costo de importación en las dos compras sin duplicar.** La compra del servicio ya lo decía en su
+  «Recepción de compra» (`landedCost`, ahora con el documento relacionado); la de bobinas suma
+  `purchases.landed-cost`. La autorrevisión pidió la reversa: anular el servicio deja
+  `purchases.landed-cost-reverse` en la compra de bobinas.
+- **Anular y cambiar cantidad ya estaban en el pedido**: se suma un registro por cada OP anulada o
+  cuyo plan cambia. La OP que nace por la diferencia ya registra su creación; la vista previa se
+  deshace con su rollback y no deja nada.
+- **Una sola excepción a «misma transacción»:** el resumen del deshacer del lote. El deshacer es
+  parcial a propósito (las compras recibidas o con pagos se quedan) y cada anulación corre en su
+  transacción con su propia «Anulación de compra»; el resumen va después, en la suya.
+- **No retroactivo.** Los pagos anteriores siguen en `supplier_payments` (fuera del visor) y los lotes
+  anteriores en `purchases` con el id del lote, que el visor muestra como «Eliminado · …».
+- **Funciones puras** (`apps/api/src/audit/document-audit-entries.ts`): Sonar solo mide los unitarios,
+  y así cada registro tiene su prueba sin base; la transacción la prueban los db-spec, con el registro
+  forzado a fallar **después** de los demás.
+
+**Menores de cc49.** El smoke dice «la web aún no publica /version; reintentando…» mientras Vercel
+sirve el build anterior (el error dice solo el hecho; «reintentando…» lo agrega quien reintenta). Un
+SUPERVISOR_PLANTA no ve «Historial» (E2E). «Historial» toma la altura de «Más opciones»: con `sm`
+medía 28 px y, en las cabeceras alineadas arriba (compra, bobina), quedaba 2 px fuera de centro.
