@@ -13,19 +13,25 @@ import { Button } from '@/components/ui/button';
  * una entidad puntual — sin `entityId` filtra solo por tipo. Solo
  * ADMINISTRADOR: es el único rol que puede entrar a `/auditoria` (`RoleGate` ahí corta al
  * resto), así que mostrarlo a otro rol sería un link que su propio destino rebota.
+ *
+ * cc50: en la cabecera de un detalle va con la altura de «Más opciones» (`size` por defecto):
+ * con `sm` quedaba 4 px más bajo y, en las cabeceras alineadas arriba, 2 px descentrado. En un
+ * diálogo, junto al título, sigue chico.
  */
 export function AuditHistoryLink({
   entityType,
   entityId,
+  size = 'default',
 }: {
   entityType: AuditEntityType;
   entityId?: string;
+  size?: 'default' | 'sm';
 }) {
   const { user } = useSession();
   if (user.role !== Role.ADMINISTRADOR) return null;
 
   return (
-    <Button variant="outline" size="sm" asChild>
+    <Button variant="outline" size={size} asChild>
       <Link
         href={
           entityId === undefined

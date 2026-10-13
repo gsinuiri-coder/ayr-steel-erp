@@ -54,7 +54,7 @@ export function PriceListHistoryDialog({
         <DialogHeader className="flex-row items-center justify-between gap-2 pr-8">
           <DialogTitle>Historial de precio — {productSku}</DialogTitle>
           {/* D-225: el resto de lo que le pasó al producto (ediciones, lotes) vive en el visor. */}
-          <AuditHistoryLink entityType="products" entityId={productId} />
+          <AuditHistoryLink entityType="products" entityId={productId} size="sm" />
         </DialogHeader>
         {changes.isPending ? (
           <Skeleton className="h-32 w-full" />

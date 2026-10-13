@@ -200,6 +200,29 @@ test('fetchShaField lee el campo y trata un HTTP no 200 como error', async () =>
   assert.equal(await fetchShaField(noField, 'u', 'sha'), null);
 });
 
+test('fetchShaField: una página HTML es «todavía no publica /version», no un error de JSON', async () => {
+  const html = async () => ({
+    ok: true,
+    json: async () => JSON.parse('<!DOCTYPE html><html></html>'),
+  });
+  await assert.rejects(
+    fetchShaField(html, 'https://v2.example.pe/version', 'sha'),
+    (err) => err.message === 'la web aún no publica /version',
+  );
+  await assert.rejects(
+    fetchShaField(html, 'https://api.example.pe/api/health', 'sha'),
+    (err) => err.message === '/api/health todavía no responde JSON',
+  );
+  // Otro error (no de JSON) sale tal cual.
+  const broken = async () => ({
+    ok: true,
+    json: async () => {
+      throw new TypeError('cuerpo ya leído');
+    },
+  });
+  await assert.rejects(fetchShaField(broken, 'u', 'sha'), /cuerpo ya leído/);
+});
+
 test('fetchShaField corta una lectura colgada en su tope', async () => {
   // Un fetch que nunca responde salvo que lo aborten.
   const hang = (_url, init) =>

@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { adminApi, adminCredentials, postJson } from '../helpers/api';
+import { adminApi, adminCredentials, createUser, postJson } from '../helpers/api';
 import { deactivateTrail, setupScenario, type ProductionOrderDto } from '../helpers/production';
+import { loginAndSetPassword } from '../helpers/ui';
 
 /**
  * cc49 (D-637): «Historial» en el detalle de compra, de orden de corte y de orden de producción,
@@ -57,6 +58,7 @@ async function openHistory(
 
 test('«Historial» en compra, corte y orden de producción abre su auditoría (D-637)', async ({
   page,
+  browser,
 }) => {
   const scenario = await setupScenario(api);
   const productionOrderIds: string[] = [];
@@ -94,6 +96,26 @@ test('«Historial» en compra, corte y orden de producción abre su auditoría (
       op.id,
       'Orden de producción creada',
     );
+
+    // cc50: otro rol que sí entra a los tres detalles (SUPERVISOR_PLANTA) no ve «Historial»: su
+    // destino, `/auditoria`, es solo de ADMINISTRADOR.
+    const supervisor = await createUser(api, 'SUPERVISOR_PLANTA');
+    const context = await browser.newContext();
+    try {
+      const other = await context.newPage();
+      await loginAndSetPassword(other, supervisor, 'ClaveSupervisorE2E-2026');
+      for (const path of [
+        `/compras/${scenario.purchaseId}`,
+        `/corte/${scenario.cuttingOrderId}`,
+        `/produccion/${op.id}`,
+      ]) {
+        await other.goto(path);
+        await expect(other.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 30_000 });
+        await expect(other.getByRole('link', { name: 'Historial' })).toHaveCount(0);
+      }
+    } finally {
+      await context.close();
+    }
   } finally {
     await deactivateTrail(api, {
       productionOrderIds,

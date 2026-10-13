@@ -119,7 +119,7 @@ for (const host of PRODUCTION_WEB_HOSTS) {
     readSha: () => fetchShaField(fetch, url, 'sha'),
     onAttempt: ({ attempts, published, error }) =>
       console.log(
-        `  …      ${label}: intento ${attempts}, publicado ${published ?? '—'}${error ? ` (${error})` : ''}; esperado ${expectedWebSha.slice(0, 8)}`,
+        `  …      ${label}: intento ${attempts}, ${attemptState(published, error)}; esperado ${expectedWebSha.slice(0, 8)}`,
       ),
   });
   if (result.ok)
@@ -142,6 +142,14 @@ for (const host of PRODUCTION_WEB_HOSTS) {
     );
 }
 
+/**
+ * cc50: qué dice un intento que no coincidió. Con un error (p. ej. «la web aún no publica
+ * /version»), el error y «reintentando…»; si no, el sha publicado.
+ */
+function attemptState(published, error, prefix = 'publicado') {
+  return error ? `${error}; reintentando…` : `${prefix} ${published ?? '—'}`;
+}
+
 // 1. Salud del API, sin sesión, con el commit desplegado.
 const healthUrl = `${baseUrl}/api/health`;
 if (expectedApiSha === null) {
@@ -157,7 +165,7 @@ if (expectedApiSha === null) {
     readSha: () => fetchShaField(fetch, healthUrl, 'sha'),
     onAttempt: ({ attempts, published, error }) =>
       console.log(
-        `  …      health: intento ${attempts}, API en ${published ?? '—'}${error ? ` (${error})` : ''}; esperado ${expectedApiSha}`,
+        `  …      health: intento ${attempts}, ${attemptState(published, error, 'API en')}; esperado ${expectedApiSha}`,
       ),
   });
   if (result.ok) ok('health', `API en ${result.published}, el esperado`);

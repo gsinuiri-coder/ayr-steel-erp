@@ -380,7 +380,7 @@ export function ProductDialog({
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-hidden sm:max-w-2xl">
         <DialogHeader className="flex-row items-center justify-between gap-2 pr-8">
           <DialogTitle>{editing ? 'Editar producto' : 'Nuevo producto'}</DialogTitle>
-          {product && <AuditHistoryLink entityType="products" entityId={product.id} />}
+          {product && <AuditHistoryLink entityType="products" entityId={product.id} size="sm" />}
         </DialogHeader>
         <Form {...form}>
           <form
