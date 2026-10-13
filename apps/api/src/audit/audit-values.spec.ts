@@ -114,6 +114,13 @@ const INVENTORY: readonly (readonly [key: string, action: string, values: readon
   ['reserveItemType', 'sales.order.item-coil', ['PRODUCT', 'COIL', 'RAW_MATERIAL']],
 ];
 
+const event = (action: string, after: Record<string, unknown>) => ({
+  source: 'audit_log',
+  action,
+  before: null,
+  after,
+});
+
 describe('cc51 (D-640) — cada código del inventario tiene su traducción', () => {
   it.each(INVENTORY.flatMap(([key, action, values]) => values.map((v) => [key, action, v])))(
     '%s de %s: %s',
@@ -150,6 +157,14 @@ describe('cc51 (D-640) — la misma clave según la acción', () => {
     expect(auditFieldValueLabel('document', 'F001-123', 'purchases.payment')).toBeNull();
   });
 
+  it('una clave o un valor que coincide con algo del objeto no es un rótulo', () => {
+    expect(auditFieldValueLabel('constructor', 'x', 'coils.close')).toBeNull();
+    expect(auditFieldValueLabel('status', 'constructor', 'coils.close')).toBeNull();
+    expect(
+      auditValueText(event('purchases.update-received', {}), 'changes', [{ value: 'toString' }]),
+    ).toBe('[{"value":"toString"}]');
+  });
+
   it('sí y no', () => {
     expect(auditFieldValueLabel('isActive', true, 'catalog.update')).toBe('Sí');
     expect(auditFieldValueLabel('isActive', false, 'catalog.update')).toBe('No');
@@ -164,13 +179,6 @@ describe('cc51 (D-640) — la misma clave según la acción', () => {
 });
 
 describe('cc51 (D-640) — lo anidado, dentro del JSON', () => {
-  const event = (action: string, after: Record<string, unknown>) => ({
-    source: 'audit_log',
-    action,
-    before: null,
-    after,
-  });
-
   it('el ajuste de un cierre y la causa de una terminación', () => {
     expect(
       auditValueText(event('coils.close', {}), 'adjustment', { kind: 'SHORTAGE', kg: '1.000' }),

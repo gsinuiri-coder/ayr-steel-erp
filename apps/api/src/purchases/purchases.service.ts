@@ -939,7 +939,8 @@ export class PurchasesService {
         }
 
         // cc51 (D-639): anular la factura de un corte tercerizado queda también en el «Historial» de
-        // la orden de corte, con lo que se les quitó a los flejes (cero si nunca se recibió).
+        // la orden de corte, con lo que se les quitó a los flejes (cero si nunca se recibió o si al
+        // recibirla no había flejes con saldo donde imputarla).
         if (purchase.relatedCuttingOrderId) {
           await this.audit.write(
             tx,

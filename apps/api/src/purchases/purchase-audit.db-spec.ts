@@ -552,16 +552,15 @@ describe('cc51 (D-639) — anular la factura del corte, en el «Historial» de l
     expect(await auditsOf('cutting_orders', orderId, 'cutting.invoice-cancelled')).toHaveLength(1);
   });
 
-  it('anular una compra que no es factura de corte no escribe en ninguna orden de corte', async () => {
-    const purchase = await coilPurchase(false);
-    await purchases.cancel(admin, purchase.id, { reason: 'Prueba' });
-    expect(
-      await prisma.auditLog.count({
-        where: {
-          action: 'cutting.invoice-cancelled',
-          before: { path: ['purchaseId'], equals: purchase.id },
-        },
-      }),
-    ).toBe(0);
+  it('anular un flete recibido no escribe en ninguna orden de corte', async () => {
+    const coils = await coilPurchase();
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    const before = await prisma.auditLog.count({ where: { action: 'cutting.invoice-cancelled' } });
+    await purchases.cancel(admin, freight.id, { reason: 'Prueba' });
+    expect(await prisma.auditLog.count({ where: { action: 'cutting.invoice-cancelled' } })).toBe(
+      before,
+    );
+    expect(await auditsOf('purchases', coils.id, 'purchases.landed-cost-reverse')).toHaveLength(1);
   });
 });

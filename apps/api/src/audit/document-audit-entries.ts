@@ -151,7 +151,7 @@ export function cuttingInvoiceAuditEntry(
 
 /**
  * cc51 (D-639): anular la factura del corte, en la orden de corte. El monto es lo que la anulación
- * les quitó a los flejes (en soles); cero si la factura nunca se recibió.
+ * les quitó a los flejes (en soles); cero si la factura nunca se recibió o no imputó nada.
  */
 export function cuttingInvoiceCancelledAuditEntry(
   actorId: string,

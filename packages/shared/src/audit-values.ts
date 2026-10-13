@@ -225,10 +225,15 @@ function byAction(
   return table.find(([prefix]) => action.startsWith(prefix))?.[1];
 }
 
+/** Solo las propiedades propias: una clave o un valor como `constructor` no es un rótulo. */
+function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 function labelsFor(key: string, action: string, nested: boolean): ValueLabels | undefined {
-  if (nested) return NESTED_LABELS[key];
-  const table = BY_ACTION[key];
-  return table ? byAction(table, action) : TOP_LEVEL_LABELS[key];
+  if (nested) return own(NESTED_LABELS, key);
+  const table = own(BY_ACTION, key);
+  return table ? byAction(table, action) : own(TOP_LEVEL_LABELS, key);
 }
 
 /**
@@ -243,7 +248,8 @@ export function auditEnumValueLabel(
 ): string | null {
   if (typeof value === 'boolean') return YES_NO[`${value}`];
   if (typeof value !== 'string') return null;
-  const mapped = labelsFor(key, action, options.nested === true)?.[value];
+  const labels = labelsFor(key, action, options.nested === true);
+  const mapped = labels ? own(labels, value) : undefined;
   if (mapped !== undefined) return mapped;
   if (key === 'origin' && options.actionLabel) return options.actionLabel(value);
   return null;
