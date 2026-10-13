@@ -44,7 +44,7 @@ describe('auditXlsx (cc48, D-634)', () => {
     expect(at('Id')).toBe('00000000-0000-4000-8000-000000000031');
     expect(at('Usuario')).toBe('Administrador');
     expect(at('Motivo')).toBe('El cliente lo pidió');
-    expect(at('Detalle')).toBe('Status: CONFIRMED → CANCELLED');
+    expect(at('Detalle')).toBe('Estado: Confirmado → Anulado');
     expect(g.at(-1)?.[0]).toBe('Total (1 evento)');
   });
 

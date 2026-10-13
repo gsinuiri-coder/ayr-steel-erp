@@ -1,4 +1,5 @@
 import { auditFieldLabel, auditFieldValueLabel, isPriceListValueField } from './audit-labels';
+import { auditTranslateNested } from './audit-values';
 import { money } from './decimal';
 import { salePriceFromValue } from './tax';
 
@@ -28,14 +29,15 @@ export function auditValueText(event: AuditDetailEvent, key: string, value: unkn
     // Con 2 decimales, como la pantalla y el catálogo.
     return `S/ ${money(salePriceFromValue(value as string)).toFixed(2)}`;
   }
-  const mapped = auditFieldValueLabel(key, value);
+  const mapped = auditFieldValueLabel(key, value, event.action);
   if (mapped) return mapped;
   if (value === null || value === undefined) return '—';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
     return String(value);
   }
-  return JSON.stringify(value);
+  // cc51 (D-640): dentro de un objeto anidado, los códigos también salen en castellano.
+  return JSON.stringify(auditTranslateNested(value, event.action));
 }
 
 /**

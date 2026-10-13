@@ -11,7 +11,7 @@ import {
   auditChangedKeys,
   auditEntityTypeLabel,
   auditFieldLabel,
-  auditFieldValueLabel,
+  auditValueText,
   businessToday,
   isPriceListValueField,
   money,
@@ -66,14 +66,8 @@ function formatPriceListValue(value: unknown): string {
 
 function formatFieldValue(event: AuditEventDto, key: string, value: unknown): string {
   if (isPriceListValueField(event.source, event.action, key)) return formatPriceListValue(value);
-  const mapped = auditFieldValueLabel(key, value);
-  if (mapped) return mapped;
-  if (value === null || value === undefined) return '—';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-    return String(value);
-  }
-  return JSON.stringify(value);
+  // cc51 (D-640): el resto, igual que el Excel (códigos en castellano, también los anidados).
+  return auditValueText(event, key, value);
 }
 
 /**

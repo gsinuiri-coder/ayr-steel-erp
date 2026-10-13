@@ -149,6 +149,32 @@ export function cuttingInvoiceAuditEntry(
   };
 }
 
+/**
+ * cc51 (D-639): anular la factura del corte, en la orden de corte. El monto es lo que la anulación
+ * les quitó a los flejes (en soles); cero si la factura nunca se recibió o no imputó nada.
+ */
+export function cuttingInvoiceCancelledAuditEntry(
+  actorId: string,
+  cuttingOrderId: string,
+  invoice: PurchaseRef & { supplierId: string },
+  reversed: { amountPen: string; strips: number },
+  reason: string,
+): AuditEntry {
+  return {
+    actorId,
+    action: 'cutting.invoice-cancelled',
+    entity: 'cutting_orders',
+    entityId: cuttingOrderId,
+    before: {
+      purchaseId: invoice.id,
+      document: documentOf(invoice),
+      supplierId: invoice.supplierId,
+    },
+    after: { amountPen: reversed.amountPen, strips: reversed.strips },
+    reason,
+  };
+}
+
 interface OrderOpRef {
   id: string;
   seq: number;

@@ -10,6 +10,7 @@ import {
   createPurchaseSchema,
   createSupplierPaymentSchema,
   createSupplierSchema,
+  receiveCuttingOrderCoilSchema,
   reversePaymentSchema,
   type CreatePurchaseInput,
 } from '@ayr/shared';
@@ -464,5 +465,102 @@ describe('cc50 (D-638) — lote del importador, con su tipo propio', () => {
         where: { entity: 'purchase_import_batches', action: 'imports.purchases' },
       }),
     ).toBe(before);
+  });
+});
+
+describe('cc51 (D-639) — anular la factura del corte, en el «Historial» de la orden de corte', () => {
+  /** Una orden de corte con sus dos flejes ya recibidos (990 kg). */
+  async function receivedOrder(): Promise<string> {
+    const purchase = await coilPurchase();
+    const mother = await prisma.coil.findFirstOrThrow({ where: { purchaseId: purchase.id } });
+    const order = await cutting.send(
+      admin,
+      createCuttingOrderSchema.parse({
+        supplierId: cutterId,
+        coils: [
+          {
+            coilId: mother.id,
+            widthPlanMm: [{ widthMm: '600.00', stripsCount: 2 }],
+            expectedKerfLossMm: '20.00',
+          },
+        ],
+      }),
+    );
+    await cutting.receive(
+      admin,
+      order.id,
+      mother.id,
+      receiveCuttingOrderCoilSchema.parse({
+        receivedWidthsMm: [{ widthMm: '600.00', stripsCount: 2 }],
+        receivedWeightKg: '990',
+        kerfLossMm: '20',
+      }),
+    );
+    return order.id;
+  }
+
+  it('anular la factura recibida deja un registro en la orden de corte, con lo que se quitó a los flejes', async () => {
+    const orderId = await receivedOrder();
+    const invoice = await service({ serviceKind: 'CUTTING', relatedCuttingOrderId: orderId });
+    await purchases.receive(admin, invoice.id);
+    await purchases.cancel(admin, invoice.id, { reason: 'Factura duplicada' });
+    const cancelled = await auditsOf('cutting_orders', orderId, 'cutting.invoice-cancelled');
+    expect(cancelled).toHaveLength(1);
+    expect(cancelled[0]?.before).toMatchObject({
+      purchaseId: invoice.id,
+      document: `${invoice.series}-${invoice.number}`,
+      supplierId: cutterId,
+    });
+    expect(cancelled[0]?.after).toEqual({ amountPen: '100.0000', strips: 2 });
+    expect(cancelled[0]?.reason).toBe('Factura duplicada');
+  });
+
+  it('anular la factura en borrador también lo dice, sin monto', async () => {
+    const orderId = await receivedOrder();
+    const invoice = await service({ serviceKind: 'CUTTING', relatedCuttingOrderId: orderId });
+    await purchases.cancel(admin, invoice.id, { reason: 'No era de este corte' });
+    const cancelled = await auditsOf('cutting_orders', orderId, 'cutting.invoice-cancelled');
+    expect(cancelled).toHaveLength(1);
+    expect(cancelled[0]?.after).toEqual({ amountPen: '0.0000', strips: 0 });
+  });
+
+  it('si el registro de la orden de corte falla, la anulación entera se deshace', async () => {
+    const orderId = await receivedOrder();
+    const invoice = await service({ serviceKind: 'CUTTING', relatedCuttingOrderId: orderId });
+    await purchases.receive(admin, invoice.id);
+    const before = await prisma.inventoryMovement.count({ where: { refId: invoice.id } });
+    const spy = failAudit('cutting.invoice-cancelled');
+    try {
+      await expect(
+        purchases.cancel(admin, invoice.id, { reason: 'Factura duplicada' }),
+      ).rejects.toThrow('auditoría caída');
+    } finally {
+      spy.mockRestore();
+    }
+    const after = await prisma.purchase.findUniqueOrThrow({ where: { id: invoice.id } });
+    expect(after.status).toBe('RECEIVED');
+    expect(await prisma.inventoryMovement.count({ where: { refId: invoice.id } })).toBe(before);
+    expect(await auditsOf('purchases', invoice.id, 'purchases.cancel')).toHaveLength(0);
+    expect(await auditsOf('cutting_orders', orderId, 'cutting.invoice-cancelled')).toHaveLength(0);
+  });
+
+  it('una anulación rechazada no deja registro', async () => {
+    const orderId = await receivedOrder();
+    const invoice = await service({ serviceKind: 'CUTTING', relatedCuttingOrderId: orderId });
+    await purchases.cancel(admin, invoice.id, { reason: 'Primera' });
+    expect(await rejection(purchases.cancel(admin, invoice.id, { reason: 'Otra vez' }))).toBe(400);
+    expect(await auditsOf('cutting_orders', orderId, 'cutting.invoice-cancelled')).toHaveLength(1);
+  });
+
+  it('anular un flete recibido no escribe en ninguna orden de corte', async () => {
+    const coils = await coilPurchase();
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    const before = await prisma.auditLog.count({ where: { action: 'cutting.invoice-cancelled' } });
+    await purchases.cancel(admin, freight.id, { reason: 'Prueba' });
+    expect(await prisma.auditLog.count({ where: { action: 'cutting.invoice-cancelled' } })).toBe(
+      before,
+    );
+    expect(await auditsOf('purchases', coils.id, 'purchases.landed-cost-reverse')).toHaveLength(1);
   });
 });

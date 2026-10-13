@@ -871,6 +871,20 @@ export async function seedCases(api, masters) {
     notes: 'DEMO · factura del corte del caso H1',
     items: [{ description: 'Corte DEMO caso H1', qty: '1', unit: 'ZZ', unitPrice: '50' }],
   });
+  // cc51 (D-639): una segunda factura del corte, recibida (su costo entra a los flejes) y anulada:
+  // la orden de corte muestra la anulación con lo que se les quitó.
+  const wrongCutInvoice = await service({
+    supplierId: masters.cuttingSupplier.id,
+    series: 'F995',
+    serviceKind: 'CUTTING',
+    relatedCuttingOrderId: cutting.id,
+    notes: 'DEMO · factura del corte duplicada (caso H1)',
+    items: [{ description: 'Corte DEMO duplicado caso H1', qty: '1', unit: 'ZZ', unitPrice: '30' }],
+  });
+  await api.post(`/purchases/${wrongCutInvoice.id}/receive`, {});
+  await api.post(`/purchases/${wrongCutInvoice.id}/cancel`, {
+    reason: 'DEMO · factura del corte duplicada (caso H1)',
+  });
   const batch = await api.post('/imports/purchases', {
     fileName: 'DEMO-caso-H1.xlsx',
     documents: [
@@ -927,7 +941,7 @@ export function casesTable({ cases, history, drywall, split }, masters) {
         `| ${c.key} | ${c.order} | ${c.op} | ${c.abrir ?? `${PREVIEW_WEB}/planta?op=${c.opId}`} | ${c.probar} |`,
     ),
     `| Drywall | — | — | ${PREVIEW_WEB}/corte/${drywall.cuttingId} | ${drywall.cut.code} cortada en 5 flejes de 244 mm (${masters.products.stud.sku}); ${drywall.free.code} libre para tu orden de corte con ${DEMO.cuttingSupplier.name}; perfiles en «Nueva orden de perfiles» (${PREVIEW_WEB}/planta) |`,
-    `| H1 | — | — | ${PREVIEW_WEB}/compras/${history.purchaseId} | «Historial» de la compra ${history.purchase}: pago y su reversa, y el flete imputado; en la orden de corte (${PREVIEW_WEB}/corte/${history.cuttingId}), la factura vinculada; en la auditoría, el «Lote de importación» ${history.batchId.slice(0, 8)} (D-638) |`,
+    `| H1 | — | — | ${PREVIEW_WEB}/compras/${history.purchaseId} | «Historial» de la compra ${history.purchase}: pago y su reversa, y el flete imputado; en la orden de corte (${PREVIEW_WEB}/corte/${history.cuttingId}), la factura vinculada y la duplicada anulada (D-639); en la auditoría, el «Lote de importación» ${history.batchId.slice(0, 8)} (D-638) |`,
     `| S1 | — | — | ${PREVIEW_WEB}/bobinas/${split.mother.id} | ${split.mother.code} partida en ${split.children.map((c) => c.code).join(' y ')} con 20 mm de kerf y 40 mm de borde: las hijas suman el valor que salió de la madre (D-608); «Revertir» la devuelve exacta |`,
   ];
   return lines.join('\n');

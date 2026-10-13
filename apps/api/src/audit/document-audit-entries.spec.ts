@@ -1,5 +1,6 @@
 import {
   cuttingInvoiceAuditEntry,
+  cuttingInvoiceCancelledAuditEntry,
   landedCostAuditEntry,
   landedCostReverseAuditEntry,
   paymentAuditEntry,
@@ -159,5 +160,25 @@ describe('lo que el pedido le hace a sus OP', () => {
     expect(
       productionPlanBySalesOrderEntry('u-1', op, line, '12.000', undefined),
     ).not.toHaveProperty('reason');
+  });
+});
+
+it('anular la factura del corte también va a la orden de corte, con el motivo', () => {
+  expect(
+    cuttingInvoiceCancelledAuditEntry(
+      'u-1',
+      'co-1',
+      purchase,
+      { amountPen: '120.5000', strips: 3 },
+      'Factura duplicada',
+    ),
+  ).toEqual({
+    actorId: 'u-1',
+    action: 'cutting.invoice-cancelled',
+    entity: 'cutting_orders',
+    entityId: 'co-1',
+    before: { purchaseId: 'p-1', document: 'F001-123', supplierId: 's-1' },
+    after: { amountPen: '120.5000', strips: 3 },
+    reason: 'Factura duplicada',
   });
 });
