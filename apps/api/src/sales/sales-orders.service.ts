@@ -4076,7 +4076,8 @@ export class SalesOrdersService {
     return out.map((row) => {
       const outcome = outcomes.get(row.productId);
       const atCost = outcomes.get(`${row.productId}|a-costo`);
-      const atCostPricePen = atCost !== undefined && 'minPricePen' in atCost ? atCost.minPricePen : null;
+      const atCostPricePen =
+        atCost !== undefined && 'minPricePen' in atCost ? atCost.minPricePen : null;
       if (outcome !== undefined && 'minValuePen' in outcome) {
         return {
           ...row,
