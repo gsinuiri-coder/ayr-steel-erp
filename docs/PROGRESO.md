@@ -2,6 +2,28 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-12 — cc50: la auditoría que faltaba en el «Historial», y menores de cc49 (D-638; PR #193 y #194)
+
+API y web, sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc50.md`;
+revisiones en `docs/revision/cc50-{a,b}-*.md`; UAT en `docs/uat/cc50.md`.
+
+- **En producción:**
+  - Corte A: API `00121-jql` (`700092ba`) y web de `5985df62`.
+  - Corte B: web de `bd1d545d` (la API no cambió).
+  - `smoke:prod` en verde en los dos dominios tras cada corte, con `--expect-api-sha 700092ba`.
+- **Ratificadas por el dueño (12/10):** D-627 a D-632 (D-632 como «no se aplica»), D-634, D-635, D-636
+  y D-637.
+- **D-638:** el «Historial» de compra, orden de corte, lote y OP muestra lo que otro documento les
+  hizo: pagos y reversas, costo de importación y su reversa, factura del corte, lote del importador
+  (tipo propio), anular el pedido y cambiar la cantidad (un registro por OP). Misma transacción salvo
+  el resumen del deshacer del lote. Fuera: borradores de reporte de la OP. No retroactivo.
+- **Menores de cc49:** aviso claro del smoke mientras `/version` responde HTML; un rol que no es
+  ADMINISTRADOR no ve «Historial» (E2E); «Historial» alineado con «Más opciones».
+- **Registro de riesgo:** toca transacciones de pagos, recepción y anulación de compras, anular pedido
+  y cambiar cantidad, solo para sumar un `audit.write` con el mismo `tx`; no cambia kardex, montos
+  ni bloqueos (los db-spec lo prueban con el registro forzado a fallar).
+- **Pendiente de decisión del dueño:** ratificar D-638.
+
 ## 2026-10-12 — cc49: qué commit está publicado e «Historial» en compra, corte y OP (D-636, D-637; PR #190 y #191)
 
 API y web, sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc49.md`;
@@ -28,6 +50,8 @@ revisiones en `docs/revision/cc49-{a,b}-*.md`; UAT en `docs/uat/cc49.md`.
   - Ratificar D-636 y D-637.
   - Decidir si se auditan con el id del documento las acciones listadas en el handoff de cc49:
     pagos a proveedor, factura del corte, borradores de reporte y OP cambiadas desde el pedido.
+  - **Resuelto en cc50 (12/10):** D-636 y D-637 ratificadas; las acciones se auditan (D-638), salvo
+    los borradores de reporte.
 
 ## 2026-10-12 — cc48: cierre de cc47 y auditoría legible (D-627..D-635; PR #187 y #188)
 
