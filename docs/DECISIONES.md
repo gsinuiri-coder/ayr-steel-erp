@@ -2561,3 +2561,55 @@ Decisiones de forma:
 sirve el build anterior (el error dice solo el hecho; «reintentando…» lo agrega quien reintenta). Un
 SUPERVISOR_PLANTA no ve «Historial» (E2E). «Historial» toma la altura de «Más opciones»: con `sm`
 medía 28 px y, en las cabeceras alineadas arriba (compra, bobina), quedaba 2 px fuera de centro.
+
+## Ratificación del dueño (2026-10-13, pieza cc51)
+
+El dueño ratificó D-638 y aprobó el UAT de cc50. Las 67 reglas del React Compiler (D-606) salen del
+backlog: no se hacen salvo que algún día se active el React Compiler. Las cuentas de vendedores esperan
+al dueño.
+
+## cc51 — anular la factura del corte, detalle en castellano y vender a costo (D-639..D-641)
+
+**D-639 · anular la factura del corte.** Con el mismo criterio que la reversa del costo de importación
+de cc50: `cutting.invoice-cancelled` en la orden de corte, en la transacción de la anulación, con el
+documento, el proveedor, lo que se les quitó a los flejes (S/ y cuántos) y el motivo. Se escribe
+también en borrador (monto 0): la factura deja de estar vinculada igual.
+
+**D-640 · traducciones.** El detalle (pantalla y Excel) pasa por la misma función
+(`auditValueText`), y la pantalla dejó de tener su copia. Una clave como `status` trae el estado de
+una bobina, una compra o un pedido según la acción, así que se resuelve por prefijo de la acción
+(`audit-values.ts`); las que significan lo mismo en todas (medio de pago, moneda, unidad) van por
+clave. Se reutilizan los rótulos de la app; los que no existían (motivos de la auto-terminación,
+resultado del PSE, forma del precio, camino del mostrador) se escribieron. El texto libre nunca se
+traduce: un `reason` se traduce solo en las cinco acciones que guardan un código. Lo anidado se
+traduce por valor dentro del JSON (las claves anidadas siguen en inglés). Los booleanos dicen Sí/No.
+La búsqueda es por propiedad propia (`Object.hasOwn`): un valor como «constructor» no es un rótulo.
+
+**D-641 · vender a costo.** El Paso 0 mostró que la línea no tenía dónde guardar la marca: el dueño
+autorizó la migración `20261013_sales_line_at_cost` (dos columnas opcionales en `quotation_items` y
+`sales_order_items`). Decisiones de forma:
+
+- **Mismo piso, margen 0.** La línea marcada pasa por `assertPriceFloor` con margen mínimo 0: el piso
+  es el costo de referencia de siempre (costo promedio del kardex, de la bobina, del agregado o de los
+  flejes), sin otro costo inventado. `assertPriceFloor` sigue sin mirar el rol (centinela de D-163):
+  quién puede marcar lo valida el servicio, como D-256.
+- **Quién.** Solo ADMINISTRADOR. Otro rol recibe 403 **antes** de pasar por el piso: el rechazo a costo
+  dice el costo, que un VENDEDOR no ve (revisión, P1). Puede guardar una cotización con una línea que
+  ya estaba a costo si queda igual (producto, cantidad, precio y motivo); si el costo subió, el rechazo
+  sale sin cifras y pide a un administrador. No puede cambiar el cliente de una cotización con líneas
+  a costo ni la cantidad de una línea a costo en el pedido.
+- **Dónde.** Solo en la cotización; el pedido hereda la marca al confirmar. Pedido directo, agregar
+  ítems y mostrador la rechazan. Cambiar el precio en el pedido pasa por el piso de siempre y quita la
+  marca; una línea a costo no cambia de bobina (la otra bobina puede costar más; autorrevisión, P1).
+  Duplicar como ADMINISTRADOR conserva la marca; otro rol duplica sin ella.
+- **Auditoría** en la cotización, misma transacción: `sales.quotation.line-at-cost` (línea, SKU,
+  valor, costo de ese momento, precio a costo, motivo; el usuario es el actor) y
+  `sales.quotation.line-at-cost-removed`.
+- **Etiqueta** «A costo · motivo» en cotización, pedido y detalle del comprobante; el comprobante la
+  toma de su línea de pedido (sin columna propia). PDF y XML no cambian.
+- **Ventas y margen.** El margen sale del kardex al despachar (no del costo del piso), así que una
+  venta a costo despachada da un margen cercano a 0, no exacto. Filtro «A costo» en el modal (pedidos
+  con al menos una línea a costo) y etiqueta en la fila; periodo y filtro se escriben en un solo
+  `replace`.
+- **Fuera:** el mostrador (sin piso para nadie, pendiente antes de las cuentas de vendedores) y volver a
+  comprobar el costo al confirmar (el piso normal tampoco lo hace, D-163).

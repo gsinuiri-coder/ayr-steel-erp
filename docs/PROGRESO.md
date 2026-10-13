@@ -2,6 +2,40 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-13 — cc51: anular la factura del corte, detalle de la auditoría en castellano y vender a costo (D-639..D-641; PR #196 y #197)
+
+API y web. **Una migración** (`20261013_sales_line_at_cost`, OK del dueño por nombre; respaldo
+`respaldo-pre-cc51-20261013`). Sin SQL contra producción. Detalle en `docs/handoff/ventana-cc51.md`;
+revisiones en `docs/revision/cc51-{a,b}-*.md`; UAT en `docs/uat/cc51.md`.
+
+- **En producción:**
+  - Corte A: API `00122-rft` (`a22d09aa`) y web de `3954ce6d`; `smoke:prod` en verde en los dos
+    dominios.
+  - Corte B: migración aplicada; API `00123-crm` (`99601795`). **Vercel no inició el despliegue de
+    producción del merge `fe275849`** (sin estado ni despliegue en GitHub para ese commit): el smoke
+    falló solo en «web publicada» (10 min) con la API y todas las lecturas en verde. No se hizo vuelta
+    atrás (web anterior y API nueva son compatibles; ver el handoff); la web del corte B sale con el
+    merge de este cierre de docs, verificado con el smoke.
+- **Registros del dueño (13/10):** D-638 ratificada y UAT de cc50 OK. Las 67 reglas del React Compiler
+  salen del backlog (no se hacen salvo que algún día se active el React Compiler). Cuentas de
+  vendedores: esperan al dueño.
+- **D-639:** anular la factura del corte deja «Factura de corte anulada» en la orden de corte, en la
+  misma transacción (documento, flejes, monto quitado, motivo).
+- **D-640:** los códigos en inglés del detalle de la auditoría se leen en castellano (pantalla y Excel),
+  por clave y por acción, también los anidados; los registros no cambian.
+- **D-641:** vender a costo, solo ADMINISTRADOR, por línea de cotización con motivo de lista; nunca bajo
+  el costo; etiqueta «A costo» en cotización, pedido y comprobante; filtro en Ventas y margen.
+- **Pendiente (decisión del dueño):** hoy cualquier rol puede vender bajo costo en el mostrador;
+  resolverlo antes de habilitar las cuentas de vendedores. Y confirmar una cotización no vuelve a
+  comprobar el costo de una línea a costo (como el piso normal, D-163).
+- **Registro de riesgo:** toca el piso de precio (`price-floor.ts`, `sales-lines.ts`), el alta, la
+  edición y el duplicado de cotización, la confirmación (copia la marca), el cambio de precio, cantidad
+  y bobina de una línea de pedido, y la anulación de compras (solo un `audit.write` más). No toca
+  kardex ni montos de las líneas normales (prueba de regresión del redondeo).
+- **Neon:** 8 ramas de 10. Con `respaldo-pre-cc51-20261013`, los dos respaldos post-día-D más recientes
+  son `respaldo-pre-cc41-20261010` y este; `respaldo-pre-cc08-20261001` queda proponible para borrar
+  (solo con OK del dueño por nombre).
+
 ## 2026-10-12 — cc50: la auditoría que faltaba en el «Historial», y menores de cc49 (D-638; PR #193 y #194)
 
 API y web, sin migraciones ni SQL contra producción. Detalle en `docs/handoff/ventana-cc50.md`;
