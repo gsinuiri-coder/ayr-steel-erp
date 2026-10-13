@@ -51,6 +51,7 @@ function order(over: Partial<SalesMarginDto['orders'][number]>): SalesMarginDto[
     marginPct: null,
     costStatus: 'COMPLETO',
     inTotals: true,
+    atCost: false,
     documents: [],
     ...over,
   };

@@ -37,6 +37,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'customers.create': 'Alta de cliente',
   'cutting.invoice-linked': 'Factura de corte vinculada',
   'cutting.invoice-cancelled': 'Factura de corte anulada',
+  'sales.quotation.line-at-cost': 'Línea vendida a costo',
+  'sales.quotation.line-at-cost-removed': 'Línea a costo quitada',
   'customers.update': 'Edición de cliente',
   'cutting.cancel': 'Anulación de orden de corte',
   'cutting.receive': 'Recepción de corte',
@@ -260,6 +262,17 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   reserveItemType: 'Tipo de reserva',
   paymentTerms: 'Condición de pago',
   isActive: 'Activo',
+  // cc51 (D-641): la línea vendida a costo.
+  sku: 'SKU',
+  costPen: 'Costo (S/, sin IGV)',
+  atCostPricePen: 'Precio a costo (S/, con IGV)',
+  priceUnit: 'Unidad del precio',
+  atCostReason: 'A costo (motivo)',
+  atCostNote: 'Motivo (texto)',
+  code: 'Código',
+  totalPen: 'Total (S/)',
+  customerId: 'Cliente (id)',
+  items: 'Líneas',
   active: 'Activo',
 };
 

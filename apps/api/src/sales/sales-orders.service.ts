@@ -588,6 +588,8 @@ export class SalesOrdersService {
                     unitPricePen: i.unitPricePen,
                     valuePerMeterPen: i.valuePerMeterPen,
                     piecesHint: i.piecesHint,
+                    atCostReason: i.atCostReason,
+                    atCostNote: i.atCostNote,
                     subtotalPen: i.subtotalPen,
                     igvPen: i.igvPen,
                     totalPen: i.totalPen,
@@ -609,6 +611,9 @@ export class SalesOrdersService {
                   valuePerMeterPen: i.valuePerMeterPen,
                   // D-343: el pedido congela las piezas informativas de un accesorio.
                   piecesHint: i.piecesHint,
+                  // cc51 (D-641): el pedido hereda la marca «A costo» de la cotización.
+                  atCostReason: i.atCostReason,
+                  atCostNote: i.atCostNote,
                   subtotalPen: i.subtotalPen,
                   igvPen: i.igvPen,
                   totalPen: i.totalPen,
@@ -3747,7 +3752,7 @@ export class SalesOrdersService {
       query.businessLine === undefined
         ? Promise.resolve<RawMaterialStockDto[]>([])
         : this.rawMaterialStock(query.businessLine),
-      this.productStock(query.productIds),
+      this.productStock(query.productIds, actor),
     ]);
     return { rawMaterial, products };
   }
@@ -3874,7 +3879,10 @@ export class SalesOrdersService {
   }
 
   /** Disponible por SKU, en su unidad de venta, más el agregado de las coberturas a medida. */
-  private async productStock(productIds: string[]): Promise<ProductStockDto[]> {
+  private async productStock(
+    productIds: string[],
+    actor: Pick<RequestUser, 'role'>,
+  ): Promise<ProductStockDto[]> {
     if (productIds.length === 0) return [];
     const products = await this.prisma.product.findMany({
       where: { id: { in: productIds } },
@@ -4046,20 +4054,37 @@ export class SalesOrdersService {
         // una tanda para no repetir por SKU la consulta de márgenes y la de costos.
         minPricePen: null,
         minValuePen: null,
+        atCostPricePen: null,
         noFloorReason: null,
         carriesInventory: carriesInventory(product.businessLine),
       });
     }
 
+    // cc51 (D-641): el ADMINISTRADOR ve además el precio a costo de cada SKU, con la misma
+    // función y en la misma tanda (los costos se consultan una vez por clave).
+    const admin = actor.role === Role.ADMINISTRADOR;
     const outcomes = await computePriceFloorOutcomes(
       this.prisma,
-      floorCandidates,
+      admin
+        ? [
+            ...floorCandidates,
+            ...floorCandidates.map((c) => ({ ...c, at: `${c.at}|a-costo`, atCost: true })),
+          ]
+        : floorCandidates,
       roofingToleranceMm(this.env),
     );
     return out.map((row) => {
       const outcome = outcomes.get(row.productId);
+      const atCost = outcomes.get(`${row.productId}|a-costo`);
+      const atCostPricePen =
+        atCost !== undefined && 'minPricePen' in atCost ? atCost.minPricePen : null;
       if (outcome !== undefined && 'minValuePen' in outcome) {
-        return { ...row, minPricePen: outcome.minPricePen, minValuePen: outcome.minValuePen };
+        return {
+          ...row,
+          minPricePen: outcome.minPricePen,
+          minValuePen: outcome.minValuePen,
+          atCostPricePen,
+        };
       }
       // D-342/D-344: sin piso porque al perfil de drywall le falta espesor, ancho o peso en el SKU,
       // o —con el SKU completo— porque no hay flejes compatibles con costo, o porque la línea no
@@ -4069,7 +4094,9 @@ export class SalesOrdersService {
         (outcome !== undefined && stripSkuProductIds.has(row.productId)
           ? stripSkuNoFloorReason(outcome.missing)
           : null);
-      return reason === null ? row : { ...row, noFloorReason: reason };
+      return reason === null
+        ? { ...row, atCostPricePen }
+        : { ...row, atCostPricePen, noFloorReason: reason };
     });
   }
 
@@ -4177,17 +4204,25 @@ export class SalesOrdersService {
       ).map((t) => t.coilId),
     );
     const sellable = coils.filter((c) => !assignedIds.has(c.id) && !tiedIds.has(c.id));
+    const coilCandidates = sellable.map((c) => ({
+      at: c.id,
+      sku: c.code,
+      businessLineId: c.businessLineId,
+      basis: { kind: 'UNIT' as const, unitLabel: 'kg' },
+      // La lectura no compara contra nada: el valor propuesto es irrelevante y va en cero.
+      unitValuePen: '0.0000',
+      cost: { kind: 'COIL' as const, coilId: c.id },
+    }));
+    const admin = actor.role === Role.ADMINISTRADOR;
     const floors = await computePriceFloors(
       this.prisma,
-      sellable.map((c) => ({
-        at: c.id,
-        sku: c.code,
-        businessLineId: c.businessLineId,
-        basis: { kind: 'UNIT' as const, unitLabel: 'kg' },
-        // La lectura no compara contra nada: el valor propuesto es irrelevante y va en cero.
-        unitValuePen: '0.0000',
-        cost: { kind: 'COIL' as const, coilId: c.id },
-      })),
+      // cc51 (D-641): el precio a costo, solo para el ADMINISTRADOR.
+      admin
+        ? [
+            ...coilCandidates,
+            ...coilCandidates.map((c) => ({ ...c, at: `${c.at}|a-costo`, atCost: true })),
+          ]
+        : coilCandidates,
       roofingToleranceMm(this.env),
     );
 
@@ -4209,6 +4244,7 @@ export class SalesOrdersService {
           status: c.status as 'OPEN' | 'CLOSED',
           availableQty: qty.minus(res).toFixed(3),
           minPricePen: floors.get(c.id)?.minPricePen ?? null,
+          atCostPricePen: floors.get(`${c.id}|a-costo`)?.minPricePen ?? null,
           ...(actor.role === Role.ADMINISTRADOR
             ? { avgCostPen: avgCostById.get(c.id) ?? null }
             : {}),

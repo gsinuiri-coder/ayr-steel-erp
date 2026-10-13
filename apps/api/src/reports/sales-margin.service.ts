@@ -40,6 +40,8 @@ interface DocumentRow {
   subtotal_pen: Prisma.Decimal;
   sales_order_id: string | null;
   order_seq: number | null;
+  /** cc51 (D-641): el pedido tiene alguna línea vendida a costo. */
+  at_cost: boolean;
   customer_id: string;
   customer_name: string;
   customer_doc_number: string;
@@ -118,6 +120,10 @@ export class SalesMarginService {
         fd."subtotal_pen",
         fd."sales_order_id",
         so."seq"  AS "order_seq",
+        EXISTS (
+          SELECT 1 FROM "sales_order_items" soi
+          WHERE soi."sales_order_id" = fd."sales_order_id" AND soi."at_cost_reason" IS NOT NULL
+        ) AS "at_cost",
         cu."id"   AS "customer_id",
         cu."name" AS "customer_name",
         cu."doc_number" AS "customer_doc_number",
@@ -132,6 +138,11 @@ export class SalesMarginService {
         AND fd."status"::text IN (${live})
         AND fd."issue_date" >= ${from}::date
         AND fd."issue_date" <= ${to}::date
+        -- cc51 (D-641): con el filtro «A costo», solo los pedidos con alguna línea a costo.
+        AND (${query.atCost !== 'true'} OR EXISTS (
+          SELECT 1 FROM "sales_order_items" soi
+          WHERE soi."sales_order_id" = fd."sales_order_id" AND soi."at_cost_reason" IS NOT NULL
+        ))
       ORDER BY fd."issue_date" ASC, fd."number" ASC
     `;
 
@@ -530,6 +541,7 @@ export class SalesMarginService {
         marginPct: cost === null ? null : marginPct(sales, cost),
         costStatus,
         inTotals,
+        atCost: docs.some((d) => d.at_cost),
         documents: documentDtos,
       });
 

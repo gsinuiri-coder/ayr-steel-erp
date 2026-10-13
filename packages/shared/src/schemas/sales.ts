@@ -422,6 +422,51 @@ export type RestoreReservationInput = z.infer<typeof restoreReservationSchema>;
  * stock. El campo `reserveFromCoilId` existió hasta D-134 y le pedía al vendedor que
  * eligiera el rollo físico: una decisión que es de planta y que se toma semanas después.
  */
+/**
+ * cc51 (D-641): **vender a costo**. Solo ADMINISTRADOR y solo en una línea de cotización (el pedido
+ * la hereda al confirmar): el piso de la línea deja de ser el margen mínimo de su línea de negocio
+ * y pasa a ser el costo (margen 0, `costo × 1.18` con IGV). Nunca por debajo del costo. Márgenes no
+ * cambia.
+ */
+export const AT_COST_REASONS = ['FRECUENTE', 'LIQUIDACION', 'OTRO'] as const;
+export type AtCostReason = (typeof AT_COST_REASONS)[number];
+export const AT_COST_REASON_LABELS: Record<AtCostReason, string> = {
+  FRECUENTE: 'Cliente frecuente',
+  LIQUIDACION: 'Liquidación de stock',
+  OTRO: 'Otro',
+};
+export const AT_COST_NOTE_MAX = 200;
+export const atCostInputSchema = z
+  .object({
+    reason: z.enum(AT_COST_REASONS),
+    /** El texto del motivo «Otro». Solo con ese motivo. */
+    note: z.string().trim().max(AT_COST_NOTE_MAX).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.reason === 'OTRO' && !v.note) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['note'],
+        message: 'Con el motivo «Otro», escribe cuál',
+      });
+    }
+    if (v.reason !== 'OTRO' && v.note) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['note'],
+        message: 'El texto del motivo va solo con «Otro»',
+      });
+    }
+  });
+export type AtCostInput = z.infer<typeof atCostInputSchema>;
+
+/** «Cliente frecuente», o el texto de «Otro». */
+export function atCostReasonText(reason: string | null, note: string | null): string | null {
+  if (reason === null) return null;
+  if (reason === 'OTRO') return note ? `Otro: ${note}` : 'Otro';
+  return AT_COST_REASON_LABELS[reason as AtCostReason] ?? reason;
+}
+
 export const salesItemInputSchema = z.object({
   /**
    * Obligatorio salvo con `saleCoilId` (D-116): ahí el producto es siempre el SKU `trading`
@@ -516,6 +561,12 @@ export const salesItemInputSchema = z.object({
    * el caso de un perfil, de una plancha de catálogo y de todo lo de trading.
    */
   pieces: roofingPiecesSchema.optional(),
+  /**
+   * cc51 (D-641): la línea se vende a costo, con su motivo. Solo ADMINISTRADOR y solo en una
+   * cotización; en cualquier otra ruta es un 400, y un VENDEDOR recibe 403 (salvo que deje igual
+   * una línea que ya estaba a costo).
+   */
+  atCost: atCostInputSchema.optional(),
 });
 export type SalesItemInput = z.infer<typeof salesItemInputSchema>;
 
@@ -656,6 +707,10 @@ export const salesItemSchema = z.object({
   reserveItemLabel: z.string(),
   reserveQty: z.string(),
   reserveUnit: unitStringSchema,
+  /** cc51 (D-641): la línea se vendió a costo (FRECUENTE, LIQUIDACION u OTRO). Null si no. */
+  atCostReason: z.enum(AT_COST_REASONS).nullable(),
+  /** cc51 (D-641): el texto del motivo «Otro». */
+  atCostNote: z.string().nullable(),
 });
 export type SalesItemDto = z.infer<typeof salesItemSchema>;
 
@@ -1754,6 +1809,11 @@ export const productStockSchema = z.object({
    * sin eso el piso solo se descubre chocando contra el 400.
    */
   minPricePen: z.string().nullable(),
+  /**
+   * cc51 (D-641): el precio a costo (margen 0, con IGV), en la misma unidad que `minPricePen`. Solo
+   * para ADMINISTRADOR, que es quien puede vender a costo; null para los demás o sin costo.
+   */
+  atCostPricePen: z.string().nullable(),
   minValuePen: z.string().nullable(),
   /**
    * D-342: por qué un **perfil de drywall** no tiene piso —sin receta activa, sin peso por pieza
@@ -1826,6 +1886,11 @@ export const sellableCoilSchema = z.object({
    * mínimo a la vista, lo único que le dice que se pasó es el 400 al guardar.
    */
   minPricePen: z.string().nullable(),
+  /**
+   * cc51 (D-641): el precio a costo (margen 0, con IGV), en la misma unidad que `minPricePen`. Solo
+   * para ADMINISTRADOR, que es quien puede vender a costo; null para los demás o sin costo.
+   */
+  atCostPricePen: z.string().nullable(),
   /**
    * D-170: el **costo promedio por kilo** de este rollo, que es a lo que el kardex lo va a
    * dar de baja cuando la venta lo despache.

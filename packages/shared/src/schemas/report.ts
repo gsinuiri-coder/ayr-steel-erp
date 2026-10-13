@@ -292,6 +292,11 @@ export const salesMarginQuerySchema = z
     to: operationDateSchema,
     /** cc23 (D-391): la pestaña de la línea; sin ella, «Todas». */
     businessLine: z.enum(SALES_MARGIN_LINES).optional(),
+    /**
+     * cc51 (D-641): solo los pedidos con al menos una línea vendida a costo. `true` en la URL; sin
+     * él, todos.
+     */
+    atCost: z.enum(['true']).optional(),
   })
   .refine((v) => v.from <= v.to, { message: 'El rango termina antes de empezar' });
 export type SalesMarginQuery = z.infer<typeof salesMarginQuerySchema>;
@@ -346,6 +351,8 @@ export const salesMarginOrderSchema = z.object({
    * venta no depende del costo de las otras líneas del pedido.
    */
   inTotals: z.boolean(),
+  /** cc51 (D-641): el pedido tiene al menos una línea vendida a costo. */
+  atCost: z.boolean(),
   documents: z.array(salesMarginDocumentSchema),
 });
 export type SalesMarginOrderDto = z.infer<typeof salesMarginOrderSchema>;

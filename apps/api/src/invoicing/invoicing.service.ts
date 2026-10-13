@@ -3470,10 +3470,26 @@ export class InvoicingService {
     const settings = await this.settingsRow();
     const actors = await this.resolveActorNames(this.actorIdsOf(row));
     const credited = await this.creditedQtyByItem(row.items.map((i) => i.id));
-    const dto = this.toDto(row, settings.alertAfterHours, actors, credited);
+    const dto = await this.withAtCostMarks(
+      this.toDto(row, settings.alertAfterHours, actors, credited),
+    );
     // Correcciones 05 / M5: su despacho declarado o, si no tiene, los del pedido (D-205).
     const links = await dispatchLinksByDocument(this.prisma, [dto]);
     return { ...dto, ...links.get(dto.id) };
+  }
+
+  /**
+   * cc51 (D-641): la marca «A costo» de las líneas que facturan una línea de pedido vendida a
+   * costo. Solo el detalle, y solo si alguna línea sale de un pedido: una consulta.
+   */
+  private async withAtCostMarks(dto: FiscalDocumentDto): Promise<FiscalDocumentDto> {
+    const orderItemIds = dto.items.flatMap((i) => (i.salesOrderItemId ? [i.salesOrderItemId] : []));
+    if (orderItemIds.length === 0) return dto;
+    const marked = await this.prisma.salesOrderItem.findMany({
+      where: { id: { in: orderItemIds }, atCostReason: { not: null } },
+      select: { id: true, atCostReason: true, atCostNote: true },
+    });
+    return applyAtCostMarks(dto, marked);
   }
 
   /**
@@ -3705,6 +3721,9 @@ export class InvoicingService {
         salesOrderItemId: i.salesOrderItemId,
         affectedItemId: i.affectedItemId,
         creditedQty: (creditedByItem.get(i.id) ?? new Decimal(0)).toFixed(3),
+        // cc51 (D-641): lo completa `withAtCostMarks` (el detalle); el listado no lo muestra.
+        atCostReason: null,
+        atCostNote: null,
       })),
       payments: row.payments.map((p) => ({
         id: p.id,
@@ -3736,4 +3755,20 @@ export class InvoicingService {
       })),
     };
   }
+}
+
+/** cc51 (D-641): la marca «A costo» de la línea de pedido, en la línea del comprobante que la factura. */
+export function applyAtCostMarks(
+  dto: FiscalDocumentDto,
+  marked: readonly { id: string; atCostReason: string | null; atCostNote: string | null }[],
+): FiscalDocumentDto {
+  if (marked.length === 0) return dto;
+  const byId = new Map(marked.map((m) => [m.id, m]));
+  return {
+    ...dto,
+    items: dto.items.map((i) => {
+      const mark = i.salesOrderItemId ? byId.get(i.salesOrderItemId) : undefined;
+      return mark ? { ...i, atCostReason: mark.atCostReason, atCostNote: mark.atCostNote } : i;
+    }),
+  };
 }

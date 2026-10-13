@@ -8,6 +8,7 @@ import { errorMessage, toast } from '@/lib/notify';
 import {
   BUSINESS_LINE_LABELS,
   BusinessLine,
+  Role,
   COIL_SKU_PREFIX,
   Decimal,
   DEFAULT_QUOTATION_VALIDITY_DAYS,
@@ -58,6 +59,8 @@ import {
   RawMaterialPoolList,
 } from '@/components/sales/product-stock-picker';
 import { CoilSalePickerDialog } from '@/components/sales/coil-sale-picker';
+import { AtCostControl, type AtCostDraft } from '@/components/sales/at-cost-control';
+import { useSession } from '@/lib/session';
 import {
   DocumentActions,
   DocumentFieldsRow,
@@ -217,6 +220,11 @@ interface LineDraft {
    * Opcional en el tipo para que las filas nuevas no tengan que declararla; ausente = vacío.
    */
   piecesHint?: string;
+  /**
+   * cc51 (D-641): la línea se vende a costo, con su motivo. Solo la marca un ADMINISTRADOR en una
+   * cotización; el pedido la hereda. Cambiar de producto o de bobina la quita.
+   */
+  atCost?: AtCostDraft;
 }
 
 /**
@@ -512,6 +520,7 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
       pricePen,
       original: { ...stored, kind: 'BOBINA', productId: '', saleCoilId: item.reserveItemId },
       ...descriptionFromStored(item.description, item.productName, ''),
+      ...atCostOf(item),
     };
   }
   return {
@@ -529,6 +538,7 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
     netAmountPen: '',
     original: { ...stored, kind: 'PRODUCT', productId: item.productId, saleCoilId: '' },
     piecesHint: item.piecesHint === null ? '' : String(item.piecesHint),
+    ...atCostOf(item),
     pieces:
       item.pieces.length > 0
         ? item.pieces.map((p) => ({ lengthM: mmToMetersShort(p.lengthMm), qty: String(p.qty) }))
@@ -539,6 +549,23 @@ function lineFromItem(item: QuotationDto['items'][number], key: number): LineDra
       item.productName,
       item.pieces.length > 0 ? describePieces(item.pieces) : '',
     ),
+  };
+}
+
+/** cc51 (D-641): la marca «A costo» guardada de una línea. */
+function atCostOf(item: QuotationDto['items'][number]): Pick<LineDraft, 'atCost'> {
+  return item.atCostReason === null
+    ? {}
+    : { atCost: { reason: item.atCostReason, note: item.atCostNote ?? '' } };
+}
+
+/** cc51 (D-641): la marca como la pide el API. */
+function atCostPayload(l: LineDraft): {
+  atCost?: { reason: AtCostDraft['reason']; note?: string };
+} {
+  if (!l.atCost) return {};
+  return {
+    atCost: { reason: l.atCost.reason, ...(l.atCost.note === '' ? {} : { note: l.atCost.note }) },
   };
 }
 
@@ -618,7 +645,7 @@ function focusLineQty(index: number): void {
  */
 type FloorStatus =
   | { kind: 'none'; reason: NonNullable<ProductStockDto['noFloorReason']> }
-  | { kind: 'floor'; minPricePen: string; below: boolean };
+  | { kind: 'floor'; minPricePen: string; below: boolean; atCost?: boolean };
 
 function floorStatus(
   l: LineDraft,
@@ -630,6 +657,18 @@ function floorStatus(
   // Una venta de bobina entera es a precio negociado y el vendedor tipea el número a mano, así
   // que es **la línea que más necesita ver su piso**: dejarla sin aviso hacía que el único que
   // le dijera que se pasó fuera el 400 al guardar, con el resto del documento ya lleno.
+  // cc51 (D-641): la línea a costo tiene por piso el costo con IGV, en la unidad del campo. Se
+  // compara precio contra precio; sin el dato (un VENDEDOR no lo recibe) decide el API.
+  if (l.atCost) {
+    const atCostPricePen =
+      l.kind === 'BOBINA' ? (coil?.atCostPricePen ?? null) : (stock?.atCostPricePen ?? null);
+    if (atCostPricePen === null) return null;
+    const below =
+      l.amountMode === 'PRICE' &&
+      isPositiveDecimal(l.pricePen) &&
+      toDecimal(l.pricePen.trim()).lt(toDecimal(atCostPricePen));
+    return { kind: 'floor', minPricePen: atCostPricePen, below, atCost: true };
+  }
   const minPricePen =
     l.kind === 'BOBINA' ? (coil?.minPricePen ?? null) : (stock?.minPricePen ?? null);
   const minValuePen = l.kind === 'BOBINA' ? minPricePen : (stock?.minValuePen ?? null);
@@ -692,6 +731,9 @@ export function SalesDocumentForm({
   const imported = initial !== undefined && isImportedQuotation(initial.notes);
   // F8-S1/M2: agregar ítems es una creación repetible; el mismo envío no agrega dos veces.
   const submitKey = useIdempotencyKey();
+  // cc51 (D-641): solo el ADMINISTRADOR vende a costo, y solo en una cotización.
+  const { user } = useSession();
+  const canMarkAtCost = isQuotation && !imported && user?.role === Role.ADMINISTRADOR;
 
   const [customerId, setCustomerId] = useState(initial?.customerId ?? addTo?.customerId ?? '');
   // D-184: editar una vencida es renovarla, y la vigencia se cuenta desde la emisión: con la
@@ -821,6 +863,8 @@ export function SalesDocumentForm({
           : null;
     patchLine(key, {
       productId,
+      // cc51 (D-641): otro producto, otro costo: la marca «A costo» no se hereda.
+      atCost: undefined,
       // D-283: la descripción se autocompleta con el nombre del producto nuevo.
       description: product?.name ?? '',
       descriptionEdited: false,
@@ -843,6 +887,7 @@ export function SalesDocumentForm({
   function setLineKind(key: number, kind: LineDraft['kind']): void {
     patchLine(key, {
       kind,
+      atCost: undefined,
       businessLine: '',
       productId: '',
       saleCoilId: '',
@@ -866,6 +911,7 @@ export function SalesDocumentForm({
     const keepQty = imported && current !== undefined && current.qty !== '';
     patchLine(key, {
       saleCoilId: coilId,
+      atCost: undefined,
       ...(keepQty ? {} : { qty: coil?.availableQty ?? '' }),
     });
   }
@@ -1033,7 +1079,18 @@ export function SalesDocumentForm({
           l.amountMode === 'PRICE' && !untouched
             ? toDecimal(l.pricePen.trim())
             : salePriceFromValue(pricing.amounts.unitValue);
-        if (!imported && coil?.minPricePen && typedPrice.lt(toDecimal(coil.minPricePen))) {
+        // cc51 (D-641): la bobina a costo tiene por piso su costo con IGV.
+        if (l.atCost && coil?.atCostPricePen && typedPrice.lt(toDecimal(coil.atCostPricePen))) {
+          return {
+            error: `${at}: el precio está por debajo del costo. A costo, ${coil.code} es ${formatMoney(coil.atCostPricePen, 'PEN', 2)} por kg (con IGV).`,
+          };
+        }
+        if (
+          !imported &&
+          !l.atCost &&
+          coil?.minPricePen &&
+          typedPrice.lt(toDecimal(coil.minPricePen))
+        ) {
           return {
             error:
               `${at}: el precio está por debajo del mínimo. El mínimo de ${coil.code} es ` +
@@ -1048,6 +1105,7 @@ export function SalesDocumentForm({
           saleCoilId: l.saleCoilId,
           qty: toFixedString(qty, 'KG'),
           ...pricing.payload,
+          ...atCostPayload(l),
         });
         continue;
       }
@@ -1108,8 +1166,21 @@ export function SalesDocumentForm({
       // suelto arriba del formulario. D-255: contra el unitario **derivado**, que es el que
       // compara el API; lo importado está exento, igual que allá.
       const stock = stockByProductId.get(l.productId);
+      // cc51 (D-641): la línea a costo se compara con su costo con IGV, en la unidad del campo.
+      if (
+        l.atCost &&
+        stock?.atCostPricePen &&
+        l.amountMode === 'PRICE' &&
+        isPositiveDecimal(l.pricePen) &&
+        toDecimal(l.pricePen.trim()).lt(toDecimal(stock.atCostPricePen))
+      ) {
+        return {
+          error: `${at}: el precio está por debajo del costo. A costo, ${product.sku} es ${formatMoney(stock.atCostPricePen, 'PEN', 2)} (con IGV).`,
+        };
+      }
       if (
         !imported &&
+        !l.atCost &&
         stock?.minValuePen &&
         stock.minPricePen &&
         pricing.amounts.unitValue.lt(toDecimal(stock.minValuePen))
@@ -1159,6 +1230,7 @@ export function SalesDocumentForm({
         ...(pieces ? { pieces: pieces.map((p) => ({ lengthMm: p.lengthMm, qty: p.qty })) } : {}),
         ...(description.value === undefined ? {} : { description: description.value }),
         ...(isAccessory(product) && hintText !== '' ? { piecesHint: Number(hintText) } : {}),
+        ...atCostPayload(l),
       });
     }
     return { items };
@@ -1236,7 +1308,10 @@ export function SalesDocumentForm({
     const stock = l.productId === '' ? undefined : stockByProductId.get(l.productId);
     const floor = imported ? null : floorStatus(l, product, stock, pricing, coil);
     if (floor?.kind === 'floor' && floor.below) {
-      return { label: `${at} · precio bajo el mínimo`, target: lineFieldId(index, 'price') };
+      return {
+        label: `${at} · precio bajo el ${floor.atCost ? 'costo' : 'mínimo'}`,
+        target: lineFieldId(index, 'price'),
+      };
     }
     return null;
   }
@@ -1475,6 +1550,7 @@ export function SalesDocumentForm({
               stock={l.productId === '' ? undefined : stockByProductId.get(l.productId)}
               pricing={pricingOf(l)}
               imported={imported}
+              canMarkAtCost={canMarkAtCost}
               quotationId={initial?.id ?? null}
               canRemove={lines.length > 1}
               autoOpenPicker={l.key === pickerFor}
@@ -1602,6 +1678,7 @@ function LineRow({
   stock,
   pricing,
   imported,
+  canMarkAtCost,
   quotationId,
   canRemove,
   autoOpenPicker,
@@ -1627,6 +1704,8 @@ function LineRow({
   pricing: LinePricing | null;
   /** D-254/D-255: la cotización que se edita viene del importador. */
   imported: boolean;
+  /** cc51 (D-641): ADMINISTRADOR en una cotización: puede marcar la línea «A costo». */
+  canMarkAtCost: boolean;
   /** La cotización que se edita, para que su propia reserva no le quite bobinas al pool. */
   quotationId: string | null;
   canRemove: boolean;
@@ -1968,6 +2047,33 @@ function LineRow({
               coil={saleCoil}
               imported={imported}
               onPatch={onPatch}
+            />
+            <AtCostControl
+              atCost={l.atCost}
+              canMark={
+                canMarkAtCost &&
+                (l.kind === 'BOBINA' ? saleCoil !== undefined : product !== undefined)
+              }
+              atCostPricePen={
+                l.pricePerPiece && byFixedLength(product)
+                  ? null
+                  : l.kind === 'BOBINA'
+                    ? (saleCoil?.atCostPricePen ?? null)
+                    : (stock?.atCostPricePen ?? null)
+              }
+              unitLabel={
+                l.kind === 'BOBINA'
+                  ? 'por kg'
+                  : byFixedLength(product)
+                    ? 'por metro'
+                    : `por ${unitSymbol(product?.unit ?? '') || 'unidad'}`
+              }
+              onMark={(mark, pricePen) => {
+                onPatch({ atCost: mark, pricePen, amountMode: 'PRICE' });
+              }}
+              onClear={() => {
+                onPatch({ atCost: undefined });
+              }}
             />
             {/*
             D-255 (R2): en la venta de una bobina entera, que no tiene panel de línea, cargar el
@@ -2505,7 +2611,7 @@ function PriceFloorHint({
     return (
       <span className="mt-1 flex flex-wrap items-center justify-end gap-x-2 text-right text-xs tabular-nums">
         <span className="font-medium text-destructive">
-          Bajo el mínimo de {min}
+          {status.atCost ? 'Bajo el costo de' : 'Bajo el mínimo de'} {min}
           {unit}
         </span>
         {canUse && (
@@ -2526,7 +2632,7 @@ function PriceFloorHint({
   }
   return (
     <span className="mt-1 block text-right text-xs text-muted-foreground tabular-nums">
-      Mín. {min}
+      {status.atCost ? 'A costo' : 'Mín.'} {min}
       {unit}
       {l.kind === 'PRODUCT' &&
         !byAmount &&

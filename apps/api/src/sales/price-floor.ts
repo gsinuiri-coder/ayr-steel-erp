@@ -95,6 +95,12 @@ export interface PriceFloorCandidate {
   /** El **valor** de venta (sin IGV) por unidad de venta que la línea propone. */
   unitValuePen: string;
   cost: PriceFloorCost;
+  /**
+   * cc51 (D-641): la línea se vende a costo. Su piso es el costo (margen 0) en vez del margen
+   * mínimo de su línea de negocio, y sin costo de referencia no se puede marcar. Quién puede
+   * marcarla lo decide el servicio que arma la línea, nunca esta función.
+   */
+  atCost?: boolean;
 }
 
 /** El piso de una línea, ya calculado. Ausente cuando esa línea no tiene piso que aplicar. */
@@ -159,7 +165,8 @@ export async function computePriceFloorOutcomes(
   const costByKey = await unitCosts(tx, candidates, toleranceMm);
 
   for (const candidate of candidates) {
-    const minMarginPct = minMarginByLineId.get(candidate.businessLineId);
+    const minMarginPct =
+      candidate.atCost === true ? '0.0000' : minMarginByLineId.get(candidate.businessLineId);
     // Sin fila en `pricing_settings` no hay margen que aplicar. El seed crea una por línea,
     // así que esto solo alcanza a una línea de negocio agregada a mano sin su configuración;
     // dejar pasar es preferible a trabar la venta por un maestro incompleto.
@@ -218,11 +225,26 @@ export async function assertPriceFloor(
   tx: Prisma.TransactionClient,
   candidates: PriceFloorCandidate[],
   toleranceMm: string,
-): Promise<void> {
+  /**
+   * cc51 (D-641, revisión P1): el rechazo de una línea a costo **sin cifras**. El precio a costo
+   * es el costo más IGV, y quien no puede ver costos no lo recibe por un mensaje de error. Lo
+   * decide quien arma la línea; esta función no sabe quién escribe.
+   */
+  options: { opaqueAtCost?: boolean } = {},
+): Promise<Map<string, PriceFloor>> {
   const floors = await computePriceFloors(tx, candidates, toleranceMm);
   for (const candidate of candidates) {
     const floor = floors.get(candidate.at);
-    if (!floor) continue;
+    if (!floor) {
+      // cc51 (D-641): «a costo» necesita un costo; sin él no hay contra qué comparar.
+      if (candidate.atCost === true) {
+        throw new BadRequestException(
+          `${candidate.at}: ${candidate.sku} no tiene costo de referencia en el kardex: no se puede ` +
+            'vender a costo. Quita la marca «A costo».',
+        );
+      }
+      continue;
+    }
     if (toDecimal(candidate.unitValuePen).gte(toDecimal(floor.minValuePen))) continue;
 
     // El precio propuesto se nombra **en la misma unidad** que el mínimo, o el vendedor lee
@@ -232,6 +254,20 @@ export async function assertPriceFloor(
       candidate.basis.kind === 'PER_METER'
         ? fixedLengthValuePerMeter(candidate.basis.lengthMm, candidate.unitValuePen)
         : toDecimal(candidate.unitValuePen);
+    if (candidate.atCost === true && options.opaqueAtCost === true) {
+      throw new BadRequestException(
+        `${candidate.at}: ${candidate.sku} quedó por debajo de su precio a costo (el costo cambió o ` +
+          'el precio se movió). Pide a un administrador que la revise.',
+      );
+    }
+    if (candidate.atCost === true) {
+      throw new BadRequestException(
+        `${candidate.at}: ${candidate.sku} se está vendiendo a ` +
+          `S/ ${salePriceFromValue(proposedValue).toFixed(2)} por ${floor.priceUnitLabel} y a costo ` +
+          `el precio es S/ ${floor.minPricePen} por ${floor.priceUnitLabel} (costo promedio ` +
+          `S/ ${toDecimal(floor.costPen).toFixed(2)} más IGV). Por debajo del costo no se vende.`,
+      );
+    }
     throw new BadRequestException(
       `${candidate.at}: ${candidate.sku} se está vendiendo a ` +
         `S/ ${salePriceFromValue(proposedValue).toFixed(2)} por ${floor.priceUnitLabel} y el precio ` +
@@ -241,6 +277,7 @@ export async function assertPriceFloor(
         'línea de negocio en Configuración → Márgenes.',
     );
   }
+  return floors;
 }
 
 /** El margen mínimo vigente de cada línea de negocio, en puntos porcentuales. */

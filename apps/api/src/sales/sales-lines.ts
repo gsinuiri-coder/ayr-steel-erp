@@ -8,6 +8,7 @@ import {
   type Role,
 } from '@prisma/client';
 import {
+  type AtCostReason,
   carriesInventory,
   Decimal,
   describePieces,
@@ -50,7 +51,7 @@ import {
   type CoilPoolKey,
 } from './coil-sale-product';
 import { findLiveStripAssignments } from '../production/production-assignments';
-import { assertPriceFloor, type PriceFloorCandidate } from './price-floor';
+import { assertPriceFloor, type PriceFloor, type PriceFloorCandidate } from './price-floor';
 import { productFloorCost } from './price-floor-cost';
 import { resolveRawMaterialSpec, type RawMaterialSpecRef } from './raw-material';
 import { reservedByItem, type ReservedScope } from './reserved-ledger';
@@ -98,6 +99,14 @@ export interface ResolvedSalesLine {
   productSku: string;
   productName: string;
   reserveItemLabel: string;
+  /** cc51 (D-641): la marca «A costo» y su motivo. Null en una línea normal. */
+  atCostReason: AtCostReason | null;
+  atCostNote: string | null;
+  /**
+   * cc51 (D-641): el piso a costo con el que pasó la línea (costo y precio a costo), para la
+   * auditoría. No se persiste: es el costo **de ese momento**.
+   */
+  atCostFloor: { costPen: string; minPricePen: string; priceUnitLabel: string } | null;
 }
 
 /**
@@ -208,6 +217,14 @@ export interface ResolveSalesLinesOptions {
    * esto, un `BOB…` suelto es un 400 (D-254 R1).
    */
   unassignedCoilProducts?: ReadonlySet<string>;
+  /**
+   * cc51 (D-641): esta llamada admite líneas «A costo». Solo la cotización (alta, edición y
+   * duplicado): el pedido la hereda al confirmar, y el pedido directo, agregar ítems y el
+   * mostrador la rechazan con 400. Quién puede marcarla (ADMINISTRADOR) lo comprueba el servicio.
+   */
+  allowAtCost?: boolean;
+  /** cc51 (D-641, revisión P1): el rechazo de una línea a costo, sin cifras (otro rol). */
+  opaqueAtCost?: boolean;
 }
 
 export async function resolveSalesLines(
@@ -292,6 +309,7 @@ export async function resolveSalesLines(
   // D-254 (revisión cruzada RF-S4b, P2-1): la bobina de una línea del papel se valida contra
   // su pool **en el servidor**, en todo camino —importador y edición de cotización, no solo el
   // pedido—. Asíncrono, así que va antes del `.map` que arma las líneas.
+  assertAtCostAllowed(items, isPaperLine, options);
   await assertPaperCoilsInPool(tx, items, saleCoilById, productById, isPaperLine, options);
   await assertCoilsNotTied(tx, items, saleCoilById, isPaperLine, options);
 
@@ -686,6 +704,9 @@ export async function resolveSalesLines(
   // D-163: al final y no línea por línea, para que el vendedor vea el primer rechazo con el
   // documento entero ya validado — un 400 por precio sobre una línea que además tenía el
   // producto desactivado lo mandaría a corregir dos veces.
+  // cc51 (D-641): la línea «A costo» tiene por piso su costo.
+  markAtCostCandidates(items, floorCandidates, options.firstLineNumber ?? 1);
+  let floors = new Map<string, PriceFloor>();
   if (options.priceFloor) {
     // D-256 (aclaración): las líneas que representan al comprobante no pasan por el piso; las
     // demás del mismo documento, sí.
@@ -694,16 +715,17 @@ export async function resolveSalesLines(
         isPaperLine(index) ? [`Línea ${String((options.firstLineNumber ?? 1) + index)}`] : [],
       ),
     );
-    await assertPriceFloor(
+    floors = await assertPriceFloor(
       tx,
       floorCandidates.filter((c) => !paperAt.has(c.at)),
       options.priceFloor.toleranceMm,
+      { opaqueAtCost: options.opaqueAtCost === true },
     );
   }
   if (options.exactAmounts !== undefined) {
     assertWithinRoundingTolerance(adjustments, options.exactAmounts);
   }
-  return lines;
+  return attachAtCost(lines, items, floors, options.firstLineNumber ?? 1);
 }
 
 /**
@@ -1043,6 +1065,9 @@ export function toSalesItemDto(
     reserveItemId: string;
     reserveQty: Prisma.Decimal;
     reserveUnit: string;
+    /** cc51 (D-641): ausente en las filas armadas a mano (pruebas, vistas que no la leen). */
+    atCostReason?: string | null;
+    atCostNote?: string | null;
     pieces?: { lineNumber: number; lengthMm: Prisma.Decimal; qty: number }[];
     product: {
       sku: string;
@@ -1088,6 +1113,8 @@ export function toSalesItemDto(
     reserveItemType: row.reserveItemType,
     reserveItemId: row.reserveItemId,
     reserveItemLabel,
+    atCostReason: (row.atCostReason ?? null) as AtCostReason | null,
+    atCostNote: row.atCostNote ?? null,
     reserveQty: row.reserveQty.toFixed(3),
     reserveUnit: row.reserveUnit,
   };
@@ -1365,4 +1392,81 @@ export function assertUsableFixedLength(
       `${PIECE_LENGTH_RANGE_LABEL}. Corrígelo en el catálogo —el campo va en milímetros, una ` +
       'plancha de 3 metros son 3000— antes de cotizarlo.',
   );
+}
+
+/**
+ * cc51 (D-641): dónde **no** se puede marcar una línea «A costo»: fuera de la cotización, en un
+ * documento sin piso (el importador y la edición del ADMINISTRADOR de uno importado: no hay costo
+ * contra el que comprobarla) y en la línea que representa al comprobante.
+ */
+export function assertAtCostAllowed(
+  items: SalesItemInput[],
+  isPaperLine: (index: number) => boolean,
+  options: ResolveSalesLinesOptions,
+): void {
+  items.forEach((item, index) => {
+    if (item.atCost === undefined) return;
+    const at = `Línea ${String((options.firstLineNumber ?? 1) + index)}`;
+    if (options.allowAtCost !== true) {
+      throw new BadRequestException(
+        `${at}: la venta a costo se marca en la cotización; el pedido la hereda al confirmarla`,
+      );
+    }
+    if (options.priceFloor === undefined || isPaperLine(index)) {
+      throw new BadRequestException(
+        `${at}: una línea de un comprobante importado no se marca a costo`,
+      );
+    }
+  });
+}
+
+/**
+ * cc51 (D-641): marca los candidatos de las líneas «A costo» (su piso pasa a ser el costo). Toda
+ * línea marcada necesita un candidato: un servicio o un producto sin costo no se vende «a costo».
+ */
+export function markAtCostCandidates(
+  items: readonly Pick<SalesItemInput, 'atCost'>[],
+  candidates: PriceFloorCandidate[],
+  firstLineNumber: number,
+): void {
+  const atCostAt = new Set(
+    items.flatMap((item, index) =>
+      item.atCost !== undefined ? [`Línea ${String(firstLineNumber + index)}`] : [],
+    ),
+  );
+  for (const candidate of candidates) {
+    if (atCostAt.has(candidate.at)) candidate.atCost = true;
+  }
+  for (const at of atCostAt) {
+    if (!candidates.some((c) => c.at === at)) {
+      throw new BadRequestException(
+        `${at}: este producto no tiene costo de referencia en el kardex: no se puede vender a costo. Quita la marca «A costo».`,
+      );
+    }
+  }
+}
+
+/** cc51 (D-641): la marca y el piso a costo con el que pasó cada línea, para guardar y auditar. */
+export function attachAtCost<L extends object>(
+  lines: readonly L[],
+  items: readonly Pick<SalesItemInput, 'atCost'>[],
+  floors: ReadonlyMap<string, PriceFloor>,
+  firstLineNumber: number,
+): (L & Pick<ResolvedSalesLine, 'atCostReason' | 'atCostNote' | 'atCostFloor'>)[] {
+  return lines.map((line, index) => {
+    const atCost = items[index]?.atCost;
+    const floor = atCost ? floors.get(`Línea ${String(firstLineNumber + index)}`) : undefined;
+    return {
+      ...line,
+      atCostReason: atCost?.reason ?? null,
+      atCostNote: atCost?.note ?? null,
+      atCostFloor: floor
+        ? {
+            costPen: floor.costPen,
+            minPricePen: floor.minPricePen,
+            priceUnitLabel: floor.priceUnitLabel,
+          }
+        : null,
+    };
+  });
 }

@@ -320,6 +320,10 @@ export class SalesOrderEditsService {
           subtotalPen: next.subtotalPen,
           igvPen: next.igvPen,
           totalPen: next.totalPen,
+          // cc51 (D-641): cambiar el precio en el pedido pasa por el piso de siempre, así que la
+          // línea deja de estar «a costo».
+          atCostReason: null,
+          atCostNote: null,
         },
       });
       const totals = await this.refreshTotals(tx, orderId);
@@ -334,8 +338,10 @@ export class SalesOrderEditsService {
           lineNumber: item.lineNumber,
           unitPricePen: item.unitPricePen.toFixed(4),
           valuePerMeterPen: item.valuePerMeterPen?.toFixed(4) ?? null,
+          ...(item.atCostReason === null ? {} : { atCostReason: item.atCostReason }),
         },
         after: {
+          ...(item.atCostReason === null ? {} : { atCostReason: null }),
           unitPricePen: next.unitPricePen,
           valuePerMeterPen: next.valuePerMeterPen,
           subtotalPen: next.subtotalPen,
@@ -493,6 +499,13 @@ export class SalesOrderEditsService {
     });
     if (dispatched) {
       throw new BadRequestException(`${at}: ya tiene despachos, así que su bobina no se cambia`);
+    }
+    // cc51 (D-641, autorrevisión P1): el precio a costo es el costo de **esa** bobina; otra puede
+    // costar más. Para cambiarla, primero se cambia el precio (pasa por el piso y quita la marca).
+    if (item.atCostReason) {
+      throw new BadRequestException(
+        `${at}: la línea se vendió a costo de esta bobina, así que no cambia de bobina. Cambia antes su precio (quita «A costo»).`,
+      );
     }
     const pool = await lineCoilPool(tx, item);
     if (pool === null) {
@@ -837,6 +850,9 @@ export class SalesOrderEditsService {
     if (blocked === null && item.reserveItemType === InventoryItemType.COIL) {
       blocked = 'La venta de una bobina entera vende su saldo completo; la cantidad no se edita';
     }
+    if (blocked === null && item.atCostReason && actor.role !== Role.ADMINISTRADOR) {
+      blocked = 'La línea se vendió a costo: solo un administrador cambia su cantidad';
+    }
     const facts = await this.readQtyFacts(tx, item);
     const adminOnly = facts.hasProduction || facts.hasDispatches;
     if (blocked === null && adminOnly && actor.role !== Role.ADMINISTRADOR) {
@@ -893,6 +909,13 @@ export class SalesOrderEditsService {
     this.assertOwner(actor, order, 'cambiarle cantidades');
     const item = await this.requireItem(tx, orderId, itemId);
     const at = `Línea ${item.lineNumber}`;
+    // cc51 (D-641, autorrevisión P2): la cantidad de una línea a costo la cambia solo un
+    // ADMINISTRADOR, como en la cotización.
+    if (item.atCostReason && actor.role !== Role.ADMINISTRADOR) {
+      throw new ForbiddenException(
+        `${at}: la línea se vendió a costo; solo un administrador cambia su cantidad`,
+      );
+    }
     if (item.reserveItemType === InventoryItemType.COIL) {
       throw new BadRequestException(
         `${at}: la venta de una bobina entera vende su saldo completo; la cantidad no se edita`,

@@ -1635,6 +1635,11 @@ model QuotationItem {
   /// D-343: cantidad de piezas de un accesorio, **solo para información del usuario**. No entra a
   /// ningún cálculo —ni kilos, ni importe, ni reserva, ni piso— y solo la lleva un accesorio.
   piecesHint       Int?              @map("pieces_hint")
+  /// cc51 (D-641): venta a costo, solo ADMINISTRADOR. FRECUENTE, LIQUIDACION u OTRO; vacío en una
+  /// línea normal. El piso de la línea es el costo (margen 0) en vez del margen mínimo.
+  atCostReason     String?           @map("at_cost_reason") @db.VarChar(20)
+  /// cc51 (D-641): el texto del motivo «Otro».
+  atCostNote       String?           @map("at_cost_note") @db.VarChar(200)
   subtotalPen      Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen           Decimal           @map("igv_pen") @db.Decimal(18, 4)
   totalPen         Decimal           @map("total_pen") @db.Decimal(18, 4)
@@ -1743,6 +1748,9 @@ model SalesOrderItem {
   valuePerMeterPen Decimal?          @map("value_per_meter_pen") @db.Decimal(18, 4)
   /// D-343: copia congelada de las piezas informativas de un accesorio (`QuotationItem.piecesHint`).
   piecesHint       Int?              @map("pieces_hint")
+  /// cc51 (D-641): copia congelada de la marca «A costo» de la línea de la cotización.
+  atCostReason     String?           @map("at_cost_reason") @db.VarChar(20)
+  atCostNote       String?           @map("at_cost_note") @db.VarChar(200)
   subtotalPen      Decimal           @map("subtotal_pen") @db.Decimal(18, 4)
   igvPen           Decimal           @map("igv_pen") @db.Decimal(18, 4)
   totalPen         Decimal           @map("total_pen") @db.Decimal(18, 4)

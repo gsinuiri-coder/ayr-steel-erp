@@ -698,6 +698,12 @@ export const fiscalDocumentItemSchema = z.object({
   affectedItemId: z.string().uuid().nullable(),
   /** Cantidad de esta línea ya acreditada por notas de crédito vigentes. */
   creditedQty: z.string(),
+  /**
+   * cc51 (D-641): la línea del pedido que factura se vendió a costo (solo pantalla; el PDF y el XML
+   * no cambian). Null si no, o si la línea no sale de un pedido.
+   */
+  atCostReason: z.string().nullable(),
+  atCostNote: z.string().nullable(),
 });
 export type FiscalDocumentItemDto = z.infer<typeof fiscalDocumentItemSchema>;
 

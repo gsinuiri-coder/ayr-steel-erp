@@ -54,6 +54,7 @@ import {
 import { PriceChangesCard } from '@/components/sales/price-changes-card';
 import { QuotationCoilLineActions } from '@/components/sales/quotation-coil-actions';
 import { cn, customerSearchHref, LINK_CLASSNAME } from '@/lib/utils';
+import { AtCostBadge } from '@/components/sales/at-cost-control';
 
 /** §3.4: el módulo comercial es de ADMINISTRADOR y VENDEDOR. */
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -414,6 +415,8 @@ export function CotizacionDetalleView({ id }: { id: string }) {
                       </div>
                     )}
                     <div className="text-xs text-muted-foreground">{item.description}</div>
+                    {/* cc51 (D-641): la línea vendida a costo, solo en pantalla. */}
+                    <AtCostBadge reason={item.atCostReason} note={item.atCostNote} />
                     {/* D-385 (B): la bobina sugerida por el importador se quita o se cambia. */}
                     {coilEditable &&
                       (item.reserveItemType === 'COIL' ||

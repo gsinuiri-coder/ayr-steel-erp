@@ -168,8 +168,8 @@ try {
   const orders = (await api.list('/sales/orders')).filter((o) => o.customerId === customer.id);
   assert.equal(
     orders.filter((o) => o.status !== 'CANCELLED').length,
-    9,
-    'nueve pedidos vivos (con V1, cc48)',
+    10,
+    'diez pedidos vivos (con V1, cc48, y AC, cc51)',
   );
 
   const suppliers = await api.list('/suppliers');
@@ -181,9 +181,10 @@ try {
   const purchases = (await api.list('/purchases')).filter((p) => supplierIds.has(p.supplierId));
   assert.equal(
     purchases.filter((p) => p.status !== 'CANCELLED').length,
-    15,
-    // cc50 (D-638): H1 suma la compra de bobinas, el flete, la factura del corte y la del lote.
-    'quince compras vivas (con V1, cc48, y H1, cc50)',
+    16,
+    // cc50 (D-638): H1 suma la compra de bobinas, el flete, la factura del corte y la del lote; cc51
+    // (D-641): AC, la bobina vendida a costo (la factura del corte duplicada de H1 queda anulada).
+    'dieciséis compras vivas (con V1, cc48, H1, cc50, y AC, cc51)',
   );
 
   const cuts = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
