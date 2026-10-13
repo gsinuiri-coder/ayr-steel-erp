@@ -116,7 +116,10 @@ export function gitContains(cwd, spawn = spawnSync) {
 /** Tope de cada lectura: una conexión colgada no puede estirar el tope de la espera. */
 export const FETCH_TIMEOUT_MS = 10 * 1000;
 
-/** El aviso de una respuesta que no es JSON (HTML): todavía no está publicado. */
+/**
+ * El aviso de una respuesta que no es JSON (HTML): todavía no está publicado. Solo el hecho; el
+ * «reintentando…» lo agrega quien de verdad reintenta (`onAttempt` de `smoke-prod.mjs`).
+ */
 export function notJsonMessage(url) {
   let path = String(url);
   try {
@@ -125,8 +128,8 @@ export function notJsonMessage(url) {
     // Una URL relativa (las pruebas) se muestra tal cual.
   }
   return path.endsWith('/version')
-    ? 'la web aún no publica /version; reintentando…'
-    : `${path} todavía no responde JSON; reintentando…`;
+    ? 'la web aún no publica /version'
+    : `${path} todavía no responde JSON`;
 }
 
 /** Lee un JSON sin caché y devuelve `body[field]` si es texto. */

@@ -207,11 +207,11 @@ test('fetchShaField: una página HTML es «todavía no publica /version», no un
   });
   await assert.rejects(
     fetchShaField(html, 'https://v2.example.pe/version', 'sha'),
-    (err) => err.message === 'la web aún no publica /version; reintentando…',
+    (err) => err.message === 'la web aún no publica /version',
   );
   await assert.rejects(
     fetchShaField(html, 'https://api.example.pe/api/health', 'sha'),
-    //api/health todavía no responde JSON; reintentando…/,
+    (err) => err.message === '/api/health todavía no responde JSON',
   );
   // Otro error (no de JSON) sale tal cual.
   const broken = async () => ({
