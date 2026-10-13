@@ -67,15 +67,19 @@ describe('createInTx — la factura del corte, en la orden de corte', () => {
       rate: new Decimal(1),
       source: ExchangeRateSource.MANUAL,
     });
-    const linked = write.mock.calls.find(
-      (c) => (c[1] as { action: string }).action === 'cutting.invoice-linked',
+    expect(write).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        action: 'cutting.invoice-linked',
+        entity: 'cutting_orders',
+        entityId: 'co-1',
+        after: expect.objectContaining({
+          purchaseId: 'pu-9',
+          document: 'F002-7',
+          subtotal: '300.0000',
+        }),
+      }),
     );
-    expect(linked?.[0]).toBe(tx);
-    expect(linked?.[1]).toMatchObject({
-      entity: 'cutting_orders',
-      entityId: 'co-1',
-      after: { purchaseId: 'pu-9', document: 'F002-7', subtotal: '300.0000' },
-    });
   });
 });
 
