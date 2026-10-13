@@ -99,14 +99,14 @@ describe('auditDetailText (cc48, el detalle del Excel)', () => {
         before: { status: 'OPEN', weightKg: '1' },
         after: { status: 'CLOSED', weightKg: '1' },
       }),
-    ).toBe('Status: OPEN → CLOSED');
+    ).toBe('Estado: Vigente → Terminada');
     expect(
       auditDetailText({
         ...base,
         before: null,
         after: { origin: 'IMPORT', n: 3, ok: true, x: { a: 1 } },
       }),
-    ).toBe('Origen: Carga masiva\nN: 3\nOk: true\nX: {"a":1}');
+    ).toBe('Origen: Carga masiva\nN: 3\nOk: Sí\nX: {"a":1}');
     expect(auditDetailText({ ...base, before: { reason: null }, after: null })).toBe('Motivo: —');
     expect(auditDetailText({ ...base, before: null, after: null })).toBe('Sin detalle registrado.');
   });

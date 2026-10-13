@@ -1,3 +1,5 @@
+import { auditEnumValueLabel } from './audit-values';
+
 /**
  * Etiquetas legibles para las acciones de `audit_log` (D-218/RF-S2/M3). Lista cerrada de lo
  * que el código escribe hoy (censo por grep de `action: '...'` en `apps/api/src`); lo que no
@@ -34,6 +36,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'colors.update': 'Edición de color',
   'customers.create': 'Alta de cliente',
   'cutting.invoice-linked': 'Factura de corte vinculada',
+  'cutting.invoice-cancelled': 'Factura de corte anulada',
   'customers.update': 'Edición de cliente',
   'cutting.cancel': 'Anulación de orden de corte',
   'cutting.receive': 'Recepción de corte',
@@ -228,19 +231,36 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   servicePurchaseId: 'Compra del servicio (id)',
   subtotal: 'Subtotal (sin IGV)',
   coils: 'Bobinas',
+  strips: 'Flejes',
   operationDate: 'Fecha de operación',
   importBatchId: 'Lote de importación',
   planMeters: 'Plan (m)',
   salesOrder: 'Pedido',
   salesOrderId: 'Pedido (id)',
-};
-
-/** Valores de campo que también llegan como código en inglés (p.ej. `origin: 'INLINE'`). */
-const AUDIT_FIELD_VALUE_LABELS: Record<string, Record<string, string>> = {
-  origin: {
-    INLINE: 'Edición en catálogo',
-    IMPORT: 'Carga masiva',
-  },
+  // cc51 (D-640): las claves cuyos valores ahora se traducen, para que el renglón entero se lea
+  // en castellano.
+  status: 'Estado',
+  parentStatus: 'Estado de la bobina madre',
+  orderStatus: 'Estado del pedido',
+  statusBeforeAnnul: 'Estado antes de anular',
+  type: 'Tipo',
+  kind: 'Tipo',
+  docType: 'Tipo de documento',
+  role: 'Rol',
+  unit: 'Unidad',
+  outputUnit: 'Unidad producida',
+  source: 'Origen del producto',
+  roofingKind: 'Subtipo de cobertura',
+  businessLine: 'Línea de negocio',
+  film: 'Film',
+  mode: 'Modo',
+  outcome: 'Resultado',
+  priceForm: 'Forma del precio',
+  fiscalPath: 'Camino del comprobante',
+  reserveItemType: 'Tipo de reserva',
+  paymentTerms: 'Condición de pago',
+  isActive: 'Activo',
+  active: 'Activo',
 };
 
 /** `"valuePerMeterPen"` → `"Value per meter pen"`: separa por mayúscula/`_` cuando la clave no
@@ -254,10 +274,14 @@ export function auditFieldLabel(key: string): string {
   return AUDIT_FIELD_LABELS[key] ?? humanizeFieldKey(key);
 }
 
-/** `null` cuando el valor no tiene una traducción conocida — el llamador decide el formato. */
-export function auditFieldValueLabel(key: string, value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  return AUDIT_FIELD_VALUE_LABELS[key]?.[value] ?? null;
+/**
+ * `null` cuando el valor no tiene una traducción conocida — el llamador decide el formato. Con la
+ * acción, también los códigos que dependen de ella (cc51, D-640: `status`, `kind`, `reason`…).
+ */
+export function auditFieldValueLabel(key: string, value: unknown, action = ''): string | null {
+  return auditEnumValueLabel(key, value, action, {
+    actionLabel: (code) => AUDIT_ACTION_LABELS[code] ?? null,
+  });
 }
 
 /**

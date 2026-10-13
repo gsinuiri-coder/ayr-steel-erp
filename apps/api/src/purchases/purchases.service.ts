@@ -70,6 +70,7 @@ import { assertStripsNotAssigned } from '../production/production-assignments';
 import { prorateByWeight } from './landed-cost';
 import {
   cuttingInvoiceAuditEntry,
+  cuttingInvoiceCancelledAuditEntry,
   landedCostAuditEntry,
   landedCostReverseAuditEntry,
   paymentAuditEntry,
@@ -816,6 +817,8 @@ export class PurchasesService {
         }
 
         let cancelledCoils = 0;
+        // El costo que la anulación les quita a bobinas o flejes ajenos (landed cost o corte).
+        const landedReversed = { coils: 0, amountPen: new Decimal(0) };
         if (purchase.status === PurchaseStatus.RECEIVED) {
           const own = await tx.inventoryMovement.findMany({
             where: { refType: 'PURCHASE', refId: id },
@@ -857,7 +860,6 @@ export class PurchasesService {
           // con el precio entero: no se descuenta de la ficha. El landed cost (un ajuste de una
           // compra de servicio, sin ingreso propio sobre la bobina) sí.
           const ownInItems = new Set(movements.filter((m) => m.type === 'IN').map((m) => m.itemId));
-          const landedReversed = { coils: 0, amountPen: new Decimal(0) };
 
           // Del más nuevo al más viejo: si una compra generó un ingreso y luego un
           // ajuste de costo sobre el mismo ítem, el ajuste tiene que deshacerse primero.
@@ -934,6 +936,24 @@ export class PurchasesService {
               ),
             );
           }
+        }
+
+        // cc51 (D-639): anular la factura de un corte tercerizado queda también en el «Historial» de
+        // la orden de corte, con lo que se les quitó a los flejes (cero si nunca se recibió).
+        if (purchase.relatedCuttingOrderId) {
+          await this.audit.write(
+            tx,
+            cuttingInvoiceCancelledAuditEntry(
+              actor.id,
+              purchase.relatedCuttingOrderId,
+              purchase,
+              {
+                amountPen: toFixedString(landedReversed.amountPen, 'MONEY'),
+                strips: landedReversed.coils,
+              },
+              reason,
+            ),
+          );
         }
 
         await this.audit.write(tx, {
