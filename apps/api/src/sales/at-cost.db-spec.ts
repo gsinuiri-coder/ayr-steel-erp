@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import {
   businessToday,
   createCustomerSchema,
+  createInvoiceSchema,
   createProductSchema,
   createPurchaseSchema,
   createQuotationSchema,
@@ -19,6 +20,7 @@ import { AuditService, type AuditEntry } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { CatalogService } from '../catalog/catalog.service';
 import { CustomersService } from '../customers/customers.service';
+import { InvoicingService } from '../invoicing/invoicing.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PurchasesService } from '../purchases/purchases.service';
 import { SalesMarginService } from '../reports/sales-margin.service';
@@ -204,6 +206,11 @@ describe('cc51 (D-641) — vender a costo en la cotización', () => {
     const r = await rejection(quote(seller, [line('23.60', atCost)]));
     expect(r.status).toBe(403);
     expect(await prisma.quotation.count()).toBe(before);
+    // Revisión P1: con un precio bajo el costo también es 403, sin pasar por el piso: el rechazo
+    // a costo diría el costo, que un VENDEDOR no ve.
+    const low = await rejection(quote(seller, [line('0.01', atCost)]));
+    expect(low.status).toBe(403);
+    expect(low.message).not.toMatch(/\d+\.\d{2}/);
   });
 
   it('el VENDEDOR sigue con el piso de hoy en una línea normal', async () => {
@@ -277,9 +284,29 @@ describe('cc51 (D-641) — vender a costo en la cotización', () => {
         )
       ).status,
     ).toBe(403);
+    // El VENDEDOR tampoco «mueve» la marca a otro producto ni la agrega en otra línea.
+    expect(
+      (
+        await rejection(
+          quotations.update(seller, q.id, body([line('23.60', atCost), line('23.60', atCost)])),
+        )
+      ).status,
+    ).toBe(403);
     // El ADMINISTRADOR sí la cambia, y queda un registro más.
     await quotations.update(admin, q.id, body([line('23.70', atCost)]));
     expect(await atCostAudits(q.id)).toHaveLength(2);
+    // Revisión P2: quitar la marca también queda en la cotización.
+    await quotations.update(admin, q.id, body([line('30.00')]));
+    const removed = await prisma.auditLog.findMany({
+      where: {
+        entity: 'quotations',
+        entityId: q.id,
+        action: 'sales.quotation.line-at-cost-removed',
+      },
+    });
+    expect(removed).toHaveLength(1);
+    expect(removed[0]?.actorId).toBe(admin.id);
+    expect(removed[0]?.before).toMatchObject({ productId, atCostReason: 'LIQUIDACION' });
   });
 
   it('el pedido hereda la marca al confirmar; cambiarle el precio la quita y pasa por el piso', async () => {
@@ -325,13 +352,90 @@ describe('cc51 (D-641) — vender a costo en la cotización', () => {
   });
 
   it('Ventas y margen: el filtro «A costo» deja los pedidos con alguna línea a costo', async () => {
+    const invoicing = moduleRef.get(InvoicingService);
+    let correlative = Math.floor(Math.random() * 50_000) + 10_000;
+    /** Cotiza, confirma y factura (manual) una línea; devuelve el pedido. */
+    async function sold(item: SalesItemInput): Promise<string> {
+      const q = await quote(admin, [item]);
+      const order = await salesOrders.confirm(admin, q.id, {});
+      const draft = await invoicing.create(
+        admin,
+        createInvoiceSchema.parse({
+          docType: 'FACTURA',
+          customerId,
+          salesOrderId: order.id,
+          issueDate: businessToday(),
+          items: order.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+        }),
+      );
+      const invoice = await invoicing.registerManual(admin, draft.id, {
+        series: 'F951',
+        correlative: (correlative += 1),
+      });
+      // El detalle del comprobante lleva la marca de su línea de pedido (solo pantalla).
+      const detail = await invoicing.findOne(invoice.id);
+      expect(detail.items[0]?.atCostReason).toBe(item.atCost ? 'LIQUIDACION' : null);
+      return order.id;
+    }
+    const atCostOrder = await sold(line('23.60', atCost));
+    const normalOrder = await sold(line('30.00'));
+
     const margin = moduleRef.get(SalesMarginService);
     const today = businessToday();
     const all = await margin.salesMargin(salesMarginQuerySchema.parse({ from: today, to: today }));
     const only = await margin.salesMargin(
       salesMarginQuerySchema.parse({ from: today, to: today, atCost: 'true' }),
     );
+    const ids = (r: typeof all) => r.orders.map((o) => o.salesOrderId);
+    expect(ids(all)).toEqual(expect.arrayContaining([atCostOrder, normalOrder]));
+    expect(ids(only)).toContain(atCostOrder);
+    expect(ids(only)).not.toContain(normalOrder);
     expect(only.orders.every((o) => o.atCost)).toBe(true);
-    expect(only.orders.length).toBeLessThanOrEqual(all.orders.length);
+    expect(all.orders.find((o) => o.salesOrderId === normalOrder)?.atCost).toBe(false);
+  });
+
+  it('autorrevisión: el VENDEDOR no cambia la cantidad de una línea a costo ni el cliente', async () => {
+    const q = await quote(admin, [line('23.60', atCost)]);
+    // La cotización pasa a ser del vendedor (mismo usuario con otro rol, ver arriba).
+    const otherCustomer = (
+      await moduleRef.get(CustomersService).create(
+        admin,
+        createCustomerSchema.parse({
+          docType: 'RUC',
+          docNumber: `20${digits(9)}`,
+          name: 'Otro cliente cc51',
+          creditDays: 0,
+        }),
+      )
+    ).id;
+    expect(
+      (
+        await rejection(
+          quotations.update(
+            seller,
+            q.id,
+            createQuotationSchema.parse({
+              customerId: otherCustomer,
+              issueDate: businessToday(),
+              items: [line('23.60', atCost)],
+            }),
+          ),
+        )
+      ).status,
+    ).toBe(403);
+    const order = await salesOrders.confirm(admin, q.id, {});
+    const r = await rejection(
+      edits.updateItemQty(seller, order.id, order.items[0]?.id ?? '', { qty: '5.000' } as never),
+    );
+    expect(r.status).toBe(403);
+  });
+
+  it('autorrevisión: duplicar como ADMINISTRADOR conserva la marca; como VENDEDOR, no', async () => {
+    const q = await quote(admin, [line('23.60', atCost)]);
+    const copy = await quotations.duplicate(admin, q.id);
+    const copied = await quotations.findOne(copy.id, admin);
+    expect(copied.items[0]?.atCostReason).toBe('LIQUIDACION');
+    // El vendedor duplica sin la marca: la línea pasa por el piso de siempre y rebota.
+    expect((await rejection(quotations.duplicate(seller, q.id))).status).toBe(400);
   });
 });

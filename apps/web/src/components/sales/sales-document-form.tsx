@@ -2055,7 +2055,7 @@ function LineRow({
                 (l.kind === 'BOBINA' ? saleCoil !== undefined : product !== undefined)
               }
               atCostPricePen={
-                l.pricePerPiece
+                l.pricePerPiece && byFixedLength(product)
                   ? null
                   : l.kind === 'BOBINA'
                     ? (saleCoil?.atCostPricePen ?? null)

@@ -238,6 +238,16 @@ describe('assertPriceFloor (D-163)', () => {
       ).rejects.toThrow(/a costo el precio es S\/ 20\.65 .*Por debajo del costo no se vende/);
     });
 
+    it('con opaqueAtCost el rechazo no dice cifras (quien no ve costos)', async () => {
+      const tx = fakeTx({ productCost: COST });
+      const err = await assertPriceFloor(tx, [candidate('1.0000', { atCost: true })], '0.05', {
+        opaqueAtCost: true,
+      }).catch((e: Error) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('Pide a un administrador');
+      expect((err as Error).message).not.toMatch(/\d+\.\d{2}/);
+    });
+
     it('no depende del margen configurado: sin margen de la línea, igual tiene piso', async () => {
       const tx = fakeTx({ minMarginPct: null, productCost: COST });
       await expect(

@@ -94,7 +94,9 @@ export function VentasMargenView() {
   const { period, valid } = periodState;
   const { tab, line, select } = useLineTab(LINE_TABS);
   // cc51 (D-641): `aCosto=1` deja solo los pedidos con alguna línea vendida a costo.
-  const [url, setUrl] = useUrlState({ ver: 'pedido', search: '', aCosto: '' });
+  // Con `from`/`to`: el modal escribe el periodo y «A costo» en un solo `replace` (dos
+  // instancias de `useUrlState` en el mismo tick se pisan, cc47).
+  const [url, setUrl] = useUrlState({ ver: 'pedido', search: '', aCosto: '', from: '', to: '' });
   const atCost = url.aCosto === '1';
   const view = parseSalesMarginView(url.ver);
   const [sort, toggleSort] = useSort<string>();
@@ -214,8 +216,8 @@ export function VentasMargenView() {
           <SalesMarginFilters
             state={periodState}
             atCost={atCost}
-            onAtCost={(next) => {
-              setUrl({ aCosto: next ? '1' : '' });
+            onApply={(next, nextAtCost) => {
+              setUrl({ from: next.from, to: next.to, aCosto: nextAtCost ? '1' : '' });
             }}
           />
         }
@@ -570,11 +572,12 @@ function pctText(pct: string | null): string {
 function SalesMarginFilters({
   state,
   atCost,
-  onAtCost,
+  onApply,
 }: {
   state: ReportPeriodState;
   atCost: boolean;
-  onAtCost: (next: boolean) => void;
+  /** El periodo y «A costo», escritos juntos en la URL. */
+  onApply: (period: { from: string; to: string }, atCost: boolean) => void;
 }) {
   return (
     <FiltersDialog<{ period: PeriodDraft; atCost: boolean }>
@@ -583,8 +586,8 @@ function SalesMarginFilters({
       activeCount={(periodIsFiltered(state) ? 1 : 0) + (atCost ? 1 : 0)}
       validate={(d) => periodDraftError(d.period)}
       onApply={(d) => {
-        state.setPeriod({ from: d.period.from, to: d.period.to }, d.period.preset);
-        onAtCost(d.atCost);
+        state.choosePreset(d.period.preset);
+        onApply({ from: d.period.from, to: d.period.to }, d.atCost);
       }}
     >
       {(draft, update) => (

@@ -3,6 +3,7 @@ import { Role } from '@prisma/client';
 import { atCostReasonText, toDecimal } from '@ayr/shared';
 import type { AuditEntry } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import type { SalesItemInput } from '@ayr/shared';
 import type { ResolvedSalesLine } from './sales-lines';
 
 /**
@@ -14,6 +15,9 @@ import type { ResolvedSalesLine } from './sales-lines';
 /** Una línea a costo que la cotización ya tenía guardada. */
 export interface StoredAtCostLine {
   productId: string;
+  /** En una venta de bobina entera, la bobina (la línea de entrada no trae producto). */
+  reserveItemId?: string;
+  lineNumber?: number;
   qty: { toString(): string };
   unitPricePen: { toString(): string };
   valuePerMeterPen: { toString(): string } | null;
@@ -32,7 +36,7 @@ const sameDecimal = (a: { toString(): string } | null, b: { toString(): string }
 /** La misma línea a costo: mismo producto, cantidad, precio y motivo. */
 function sameAtCostLine(line: AtCostLine, stored: StoredAtCostLine): boolean {
   return (
-    stored.atCostReason !== null &&
+    Boolean(stored.atCostReason) &&
     line.productId === stored.productId &&
     sameDecimal(line.qty, stored.qty) &&
     sameDecimal(line.unitPricePen, stored.unitPricePen) &&
@@ -52,12 +56,44 @@ export function changedAtCostLines<T extends AtCostLine>(
 ): T[] {
   const unused = [...stored];
   return lines.filter((line) => {
-    if (line.atCostReason === null) return false;
+    if (!line.atCostReason) return false;
     const match = unused.findIndex((s) => sameAtCostLine(line, s));
     if (match === -1) return true;
     unused.splice(match, 1);
     return false;
   });
+}
+
+const FORBIDDEN =
+  'Solo un administrador puede vender a costo. Una línea que ya estaba a costo puede quedar igual, pero no cambiarse.';
+
+/**
+ * Antes de resolver las líneas (revisión de cc51, P1): otro rol que no sea ADMINISTRADOR solo
+ * puede mandar la marca en una línea que ya la tenía guardada (mismo producto o bobina y mismo
+ * motivo). Si no, 403 **sin pasar por el piso**: el rechazo del piso a costo diría el costo, que
+ * un VENDEDOR no ve. Que la línea quede igual en precio y cantidad lo comprueba después
+ * `assertAtCostActor`.
+ */
+export function assertAtCostRequest(
+  actor: Pick<RequestUser, 'role'>,
+  items: readonly SalesItemInput[],
+  stored: readonly StoredAtCostLine[],
+): void {
+  if (actor.role === Role.ADMINISTRADOR) return;
+  const unused = stored.filter((s) => Boolean(s.atCostReason));
+  for (const item of items) {
+    if (item.atCost === undefined) continue;
+    const match = unused.findIndex(
+      (s) =>
+        (item.saleCoilId !== undefined
+          ? s.reserveItemId === item.saleCoilId
+          : s.productId === item.productId) &&
+        s.atCostReason === item.atCost?.reason &&
+        (s.atCostNote ?? null) === (item.atCost.note ?? null),
+    );
+    if (match === -1) throw new ForbiddenException(FORBIDDEN);
+    unused.splice(match, 1);
+  }
 }
 
 /**
@@ -71,9 +107,7 @@ export function assertAtCostActor(
 ): void {
   if (actor.role === Role.ADMINISTRADOR) return;
   if (changedAtCostLines(lines, stored).length > 0) {
-    throw new ForbiddenException(
-      'Solo un administrador puede vender a costo. Una línea que ya estaba a costo puede quedar igual, pero no cambiarse.',
-    );
+    throw new ForbiddenException(FORBIDDEN);
   }
 }
 
@@ -105,4 +139,33 @@ export function atCostAuditEntries(
     },
     reason: atCostReasonText(line.atCostReason, line.atCostNote) ?? undefined,
   }));
+}
+
+/**
+ * Revisión de cc51 (P2): la marca que se quita también queda en la cotización. Una línea guardada
+ * a costo cuyo producto ya no tiene ninguna línea a costo en la edición: se quitó la marca o la
+ * línea.
+ */
+export function removedAtCostAuditEntries(
+  actorId: string,
+  quotationId: string,
+  stored: readonly StoredAtCostLine[],
+  lines: readonly Pick<ResolvedSalesLine, 'productId' | 'atCostReason'>[],
+): AuditEntry[] {
+  const stillAtCost = new Set(lines.filter((l) => Boolean(l.atCostReason)).map((l) => l.productId));
+  return stored
+    .filter((s) => Boolean(s.atCostReason) && !stillAtCost.has(s.productId))
+    .map((s) => ({
+      actorId,
+      action: 'sales.quotation.line-at-cost-removed',
+      entity: 'quotations',
+      entityId: quotationId,
+      before: {
+        ...(s.lineNumber === undefined ? {} : { lineNumber: s.lineNumber }),
+        productId: s.productId,
+        unitValuePen: s.unitPricePen.toString(),
+        atCostReason: s.atCostReason,
+        ...(s.atCostNote === null ? {} : { atCostNote: s.atCostNote }),
+      },
+    }));
 }

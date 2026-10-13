@@ -223,6 +223,8 @@ export interface ResolveSalesLinesOptions {
    * mostrador la rechazan con 400. Quién puede marcarla (ADMINISTRADOR) lo comprueba el servicio.
    */
   allowAtCost?: boolean;
+  /** cc51 (D-641, revisión P1): el rechazo de una línea a costo, sin cifras (otro rol). */
+  opaqueAtCost?: boolean;
 }
 
 export async function resolveSalesLines(
@@ -702,22 +704,8 @@ export async function resolveSalesLines(
   // D-163: al final y no línea por línea, para que el vendedor vea el primer rechazo con el
   // documento entero ya validado — un 400 por precio sobre una línea que además tenía el
   // producto desactivado lo mandaría a corregir dos veces.
-  // cc51 (D-641): la línea «A costo» tiene por piso su costo. Toda línea marcada necesita un
-  // candidato: un servicio o un producto sin costo no se puede vender «a costo».
-  const atOf = (index: number) => `Línea ${String((options.firstLineNumber ?? 1) + index)}`;
-  const atCostAt = new Set(
-    items.flatMap((item, index) => (item.atCost !== undefined ? [atOf(index)] : [])),
-  );
-  for (const candidate of floorCandidates) {
-    if (atCostAt.has(candidate.at)) candidate.atCost = true;
-  }
-  for (const at of atCostAt) {
-    if (!floorCandidates.some((c) => c.at === at)) {
-      throw new BadRequestException(
-        `${at}: este producto no tiene costo de referencia en el kardex: no se puede vender a costo. Quita la marca «A costo».`,
-      );
-    }
-  }
+  // cc51 (D-641): la línea «A costo» tiene por piso su costo.
+  markAtCostCandidates(items, floorCandidates, options.firstLineNumber ?? 1);
   let floors = new Map<string, PriceFloor>();
   if (options.priceFloor) {
     // D-256 (aclaración): las líneas que representan al comprobante no pasan por el piso; las
@@ -731,27 +719,13 @@ export async function resolveSalesLines(
       tx,
       floorCandidates.filter((c) => !paperAt.has(c.at)),
       options.priceFloor.toleranceMm,
+      { opaqueAtCost: options.opaqueAtCost === true },
     );
   }
   if (options.exactAmounts !== undefined) {
     assertWithinRoundingTolerance(adjustments, options.exactAmounts);
   }
-  return lines.map((line, index) => {
-    const atCost = items[index]?.atCost;
-    const floor = atCost ? floors.get(atOf(index)) : undefined;
-    return {
-      ...line,
-      atCostReason: atCost?.reason ?? null,
-      atCostNote: atCost?.note ?? null,
-      atCostFloor: floor
-        ? {
-            costPen: floor.costPen,
-            minPricePen: floor.minPricePen,
-            priceUnitLabel: floor.priceUnitLabel,
-          }
-        : null,
-    };
-  });
+  return attachAtCost(lines, items, floors, options.firstLineNumber ?? 1);
 }
 
 /**
@@ -1425,7 +1399,7 @@ export function assertUsableFixedLength(
  * documento sin piso (el importador y la edición del ADMINISTRADOR de uno importado: no hay costo
  * contra el que comprobarla) y en la línea que representa al comprobante.
  */
-function assertAtCostAllowed(
+export function assertAtCostAllowed(
   items: SalesItemInput[],
   isPaperLine: (index: number) => boolean,
   options: ResolveSalesLinesOptions,
@@ -1443,5 +1417,56 @@ function assertAtCostAllowed(
         `${at}: una línea de un comprobante importado no se marca a costo`,
       );
     }
+  });
+}
+
+/**
+ * cc51 (D-641): marca los candidatos de las líneas «A costo» (su piso pasa a ser el costo). Toda
+ * línea marcada necesita un candidato: un servicio o un producto sin costo no se vende «a costo».
+ */
+export function markAtCostCandidates(
+  items: readonly Pick<SalesItemInput, 'atCost'>[],
+  candidates: PriceFloorCandidate[],
+  firstLineNumber: number,
+): void {
+  const atCostAt = new Set(
+    items.flatMap((item, index) =>
+      item.atCost !== undefined ? [`Línea ${String(firstLineNumber + index)}`] : [],
+    ),
+  );
+  for (const candidate of candidates) {
+    if (atCostAt.has(candidate.at)) candidate.atCost = true;
+  }
+  for (const at of atCostAt) {
+    if (!candidates.some((c) => c.at === at)) {
+      throw new BadRequestException(
+        `${at}: este producto no tiene costo de referencia en el kardex: no se puede vender a costo. Quita la marca «A costo».`,
+      );
+    }
+  }
+}
+
+/** cc51 (D-641): la marca y el piso a costo con el que pasó cada línea, para guardar y auditar. */
+export function attachAtCost<L extends object>(
+  lines: readonly L[],
+  items: readonly Pick<SalesItemInput, 'atCost'>[],
+  floors: ReadonlyMap<string, PriceFloor>,
+  firstLineNumber: number,
+): (L & Pick<ResolvedSalesLine, 'atCostReason' | 'atCostNote' | 'atCostFloor'>)[] {
+  return lines.map((line, index) => {
+    const atCost = items[index]?.atCost;
+    const floor = atCost ? floors.get(`Línea ${String(firstLineNumber + index)}`) : undefined;
+    return {
+      ...line,
+      atCostReason: atCost?.reason ?? null,
+      atCostNote: atCost?.note ?? null,
+      atCostFloor: floor
+        ? {
+            costPen: floor.costPen,
+            minPricePen: floor.minPricePen,
+            priceUnitLabel: floor.priceUnitLabel,
+          }
+        : null,
+    };
   });
 }

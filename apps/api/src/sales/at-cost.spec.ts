@@ -1,7 +1,13 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { atCostReasonText } from '@ayr/shared';
-import { assertAtCostActor, atCostAuditEntries, changedAtCostLines } from './at-cost';
+import {
+  assertAtCostActor,
+  assertAtCostRequest,
+  atCostAuditEntries,
+  changedAtCostLines,
+  removedAtCostAuditEntries,
+} from './at-cost';
 import type { ResolvedSalesLine } from './sales-lines';
 
 /** cc51 (D-641): quién marca una línea a costo y qué queda en la auditoría. */
@@ -151,5 +157,75 @@ describe('atCostReasonText', () => {
     expect(atCostReasonText('OTRO', null)).toBe('Otro');
     expect(atCostReasonText(null, null)).toBeNull();
     expect(atCostReasonText('RARO', null)).toBe('RARO');
+  });
+});
+
+describe('assertAtCostRequest (antes del piso)', () => {
+  const marked = { productId: 'p-1', qty: '1', atCost: { reason: 'LIQUIDACION' as const } };
+  it('el ADMINISTRADOR siempre; otro rol, solo sobre una línea que ya estaba a costo', () => {
+    expect(() => assertAtCostRequest(ADMIN, [marked], [])).not.toThrow();
+    expect(() => assertAtCostRequest(SELLER, [marked], [])).toThrow(ForbiddenException);
+    expect(() => assertAtCostRequest(SELLER, [marked], [stored()])).not.toThrow();
+    expect(() => assertAtCostRequest(SELLER, [{ productId: 'p-1', qty: '1' }], [])).not.toThrow();
+  });
+  it('otro producto, otro motivo o una segunda línea: 403', () => {
+    expect(() =>
+      assertAtCostRequest(SELLER, [{ ...marked, productId: 'p-2' }], [stored()]),
+    ).toThrow(ForbiddenException);
+    expect(() =>
+      assertAtCostRequest(SELLER, [{ ...marked, atCost: { reason: 'FRECUENTE' } }], [stored()]),
+    ).toThrow(ForbiddenException);
+    expect(() => assertAtCostRequest(SELLER, [marked, marked], [stored()])).toThrow(
+      ForbiddenException,
+    );
+  });
+  it('una bobina entera se reconoce por la bobina', () => {
+    const coil = { saleCoilId: 'c-1', qty: '1', atCost: { reason: 'LIQUIDACION' as const } };
+    expect(() =>
+      assertAtCostRequest(SELLER, [coil], [{ ...stored(), reserveItemId: 'c-1' }]),
+    ).not.toThrow();
+    expect(() =>
+      assertAtCostRequest(SELLER, [coil], [{ ...stored(), reserveItemId: 'c-2' }]),
+    ).toThrow(ForbiddenException);
+  });
+});
+
+describe('removedAtCostAuditEntries', () => {
+  it('la marca quitada de un producto deja su registro; la que sigue, no', () => {
+    const entries = removedAtCostAuditEntries(
+      'u-1',
+      'q-1',
+      [
+        { ...stored(), lineNumber: 1 },
+        { ...stored({ productId: 'p-2' }), lineNumber: 2 },
+      ],
+      [line({ productId: 'p-2' })],
+    );
+    expect(entries).toEqual([
+      {
+        actorId: 'u-1',
+        action: 'sales.quotation.line-at-cost-removed',
+        entity: 'quotations',
+        entityId: 'q-1',
+        before: {
+          lineNumber: 1,
+          productId: 'p-1',
+          unitValuePen: '20.0000',
+          atCostReason: 'LIQUIDACION',
+        },
+      },
+    ]);
+  });
+  it('una guardada normal no cuenta; «Otro» lleva su texto', () => {
+    expect(removedAtCostAuditEntries('u-1', 'q-1', [stored({ atCostReason: null })], [])).toEqual(
+      [],
+    );
+    const [entry] = removedAtCostAuditEntries(
+      'u-1',
+      'q-1',
+      [stored({ atCostReason: 'OTRO', atCostNote: 'Obra' })],
+      [],
+    );
+    expect(entry?.before).toMatchObject({ atCostNote: 'Obra' });
   });
 });

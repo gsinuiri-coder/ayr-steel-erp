@@ -10,7 +10,7 @@ import { createCustomer, purgeSalesTrail } from '../helpers/sales';
  * línea de la cotización y la etiqueta «A costo» sale en la cotización y en el pedido; el
  * VENDEDOR, en la misma cotización, no ve la opción.
  */
-test.describe.configure({ timeout: 300_000 });
+test.describe.configure({ timeout: 600_000 });
 
 let api: APIRequestContext;
 

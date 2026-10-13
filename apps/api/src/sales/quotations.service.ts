@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   FiscalDocType,
@@ -84,7 +85,12 @@ import {
 } from './coil-sale-product';
 import { paperPoolOfLine } from './paper-coil-assignment';
 import { documentTotals, resolveSalesLines, toSalesItemDto } from './sales-lines';
-import { assertAtCostActor, atCostAuditEntries } from './at-cost';
+import {
+  assertAtCostActor,
+  assertAtCostRequest,
+  atCostAuditEntries,
+  removedAtCostAuditEntries,
+} from './at-cost';
 import { orderByInvoiceNumber, quotationOrderBy } from '../common/list-orderings';
 import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { searchSeqOf } from '../common/search-seq';
@@ -221,6 +227,8 @@ export class QuotationsService {
     } = {},
   ): Promise<string> {
     const customer = await this.requireActiveCustomer(tx, input.customerId);
+    // cc51 (D-641): otro rol que no sea ADMINISTRADOR no marca «A costo» (403 antes del piso).
+    assertAtCostRequest(actor, input.items, []);
     const lines = await resolveSalesLines(tx, input.items, {
       ...((options.enforcePriceFloor ?? true) ? { priceFloor: this.priceFloor() } : {}),
       ...(options.exactAmounts ? { exactAmounts: options.exactAmounts } : {}),
@@ -314,6 +322,35 @@ export class QuotationsService {
           );
         }
         const customer = await this.requireActiveCustomer(tx, input.customerId);
+        // D-187: lo cotizado antes de reescribir las líneas, para registrar qué precio se movió.
+        // cc51 (D-641): y qué estaba a costo, que se lee antes de resolver las líneas nuevas.
+        const previousLines = await tx.quotationItem.findMany({
+          where: { quotationId: id },
+          select: {
+            lineNumber: true,
+            productId: true,
+            qty: true,
+            unitPricePen: true,
+            valuePerMeterPen: true,
+            reserveItemId: true,
+            atCostReason: true,
+            atCostNote: true,
+          },
+        });
+        assertAtCostRequest(actor, input.items, previousLines);
+        // cc51 (D-641, autorrevisión P2): la venta a costo se decidió para ese cliente; otro rol
+        // que no sea ADMINISTRADOR no se la pasa a otro.
+        if (
+          actor.role !== Role.ADMINISTRADOR &&
+          previousLines.some((l) => Boolean(l.atCostReason)) &&
+          input.customerId !==
+            (await tx.quotation.findUniqueOrThrow({ where: { id }, select: { customerId: true } }))
+              .customerId
+        ) {
+          throw new ForbiddenException(
+            'La cotización tiene líneas a costo: solo un administrador le cambia el cliente.',
+          );
+        }
         // D-163: una cotización que trajo el importador (D-152) **nace exenta del piso**, y
         // editarla tiene que seguir estando exenta. Sin esto, corregir el producto de una línea
         // en una de las 71 de agosto rebotaba con "el precio mínimo es S/ X" sobre una línea que
@@ -359,6 +396,7 @@ export class QuotationsService {
             keepCoilIds: await this.storedCoilIds(tx, id),
           },
           allowAtCost: true,
+          opaqueAtCost: actor.role !== Role.ADMINISTRADOR,
         });
         const totals = documentTotals(lines);
         // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al
@@ -374,19 +412,6 @@ export class QuotationsService {
             ? QuotationStatus.EXPIRED
             : QuotationStatus.EMITTED;
 
-        // D-187: lo cotizado antes de reescribir las líneas, para registrar qué precio se movió.
-        const previousLines = await tx.quotationItem.findMany({
-          where: { quotationId: id },
-          select: {
-            lineNumber: true,
-            productId: true,
-            qty: true,
-            unitPricePen: true,
-            valuePerMeterPen: true,
-            atCostReason: true,
-            atCostNote: true,
-          },
-        });
         // cc51 (D-641): un VENDEDOR puede guardar una línea que ya estaba a costo si queda igual.
         assertAtCostActor(actor, lines, previousLines);
         await tx.quotationItem.deleteMany({ where: { quotationId: id } });
@@ -429,7 +454,10 @@ export class QuotationsService {
           },
           ...(options.auditReason ? { reason: options.auditReason } : {}),
         });
-        for (const entry of atCostAuditEntries(actor.id, id, lines, previousLines)) {
+        for (const entry of [
+          ...atCostAuditEntries(actor.id, id, lines, previousLines),
+          ...removedAtCostAuditEntries(actor.id, id, previousLines, lines),
+        ]) {
           await this.audit.write(tx, entry);
         }
 
@@ -976,6 +1004,17 @@ export class QuotationsService {
       }
     }
 
+    // cc51 (D-641): la marca «A costo» la copia solo un ADMINISTRADOR; otro rol duplica la línea y la
+    // cotización nueva pasa por el piso de siempre.
+    const atCostCopy = (i: { atCostReason: string | null; atCostNote: string | null }) =>
+      i.atCostReason !== null && actor.role === Role.ADMINISTRADOR
+        ? {
+            atCost: {
+              reason: i.atCostReason as AtCostReason,
+              ...(i.atCostNote === null ? {} : { note: i.atCostNote }),
+            },
+          }
+        : {};
     const items: SalesItemInput[] = source.items.map((i) => {
       // D-161: si la línea se cotizó por metro (una plancha de catálogo), el duplicado se
       // vuelve a cotizar por metro y el unitario se recalcula. Mandar los dos es un 400 del
@@ -1023,6 +1062,8 @@ export class QuotationsService {
           unitPricePen: derivedUnitValue(i.qty.toString(), i.subtotalPen.toString()).toFixed(
             DERIVED_UNIT_VALUE_DECIMALS,
           ),
+          // cc51 (D-641, autorrevisión P2): también la bobina entera conserva la marca (ADMIN).
+          ...atCostCopy(i),
         };
       }
       return {
@@ -1034,14 +1075,7 @@ export class QuotationsService {
         ...(i.piecesHint === null ? {} : { piecesHint: i.piecesHint }),
         // cc51 (D-641): la marca «A costo» la copia solo un ADMINISTRADOR; otro rol duplica la línea
         // y la cotización nueva pasa por el piso de siempre.
-        ...(i.atCostReason !== null && actor.role === Role.ADMINISTRADOR
-          ? {
-              atCost: {
-                reason: i.atCostReason as AtCostReason,
-                ...(i.atCostNote === null ? {} : { note: i.atCostNote }),
-              },
-            }
-          : {}),
+        ...atCostCopy(i),
         ...(i.reserveItemType === 'COIL'
           ? { reserveFromCoilId: i.reserveItemId, reserveKg: i.reserveQty.toFixed(3) }
           : {}),

@@ -3489,15 +3489,7 @@ export class InvoicingService {
       where: { id: { in: orderItemIds }, atCostReason: { not: null } },
       select: { id: true, atCostReason: true, atCostNote: true },
     });
-    if (marked.length === 0) return dto;
-    const byId = new Map(marked.map((m) => [m.id, m]));
-    return {
-      ...dto,
-      items: dto.items.map((i) => {
-        const mark = i.salesOrderItemId ? byId.get(i.salesOrderItemId) : undefined;
-        return mark ? { ...i, atCostReason: mark.atCostReason, atCostNote: mark.atCostNote } : i;
-      }),
-    };
+    return applyAtCostMarks(dto, marked);
   }
 
   /**
@@ -3763,4 +3755,20 @@ export class InvoicingService {
       })),
     };
   }
+}
+
+/** cc51 (D-641): la marca «A costo» de la línea de pedido, en la línea del comprobante que la factura. */
+export function applyAtCostMarks(
+  dto: FiscalDocumentDto,
+  marked: readonly { id: string; atCostReason: string | null; atCostNote: string | null }[],
+): FiscalDocumentDto {
+  if (marked.length === 0) return dto;
+  const byId = new Map(marked.map((m) => [m.id, m]));
+  return {
+    ...dto,
+    items: dto.items.map((i) => {
+      const mark = i.salesOrderItemId ? byId.get(i.salesOrderItemId) : undefined;
+      return mark ? { ...i, atCostReason: mark.atCostReason, atCostNote: mark.atCostNote } : i;
+    }),
+  };
 }

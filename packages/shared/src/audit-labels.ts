@@ -38,6 +38,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'cutting.invoice-linked': 'Factura de corte vinculada',
   'cutting.invoice-cancelled': 'Factura de corte anulada',
   'sales.quotation.line-at-cost': 'Línea vendida a costo',
+  'sales.quotation.line-at-cost-removed': 'Línea a costo quitada',
   'customers.update': 'Edición de cliente',
   'cutting.cancel': 'Anulación de orden de corte',
   'cutting.receive': 'Recepción de corte',

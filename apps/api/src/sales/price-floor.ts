@@ -225,6 +225,12 @@ export async function assertPriceFloor(
   tx: Prisma.TransactionClient,
   candidates: PriceFloorCandidate[],
   toleranceMm: string,
+  /**
+   * cc51 (D-641, revisión P1): el rechazo de una línea a costo **sin cifras**. El precio a costo
+   * es el costo más IGV, y quien no puede ver costos no lo recibe por un mensaje de error. Lo
+   * decide quien arma la línea; esta función no sabe quién escribe.
+   */
+  options: { opaqueAtCost?: boolean } = {},
 ): Promise<Map<string, PriceFloor>> {
   const floors = await computePriceFloors(tx, candidates, toleranceMm);
   for (const candidate of candidates) {
@@ -248,6 +254,12 @@ export async function assertPriceFloor(
       candidate.basis.kind === 'PER_METER'
         ? fixedLengthValuePerMeter(candidate.basis.lengthMm, candidate.unitValuePen)
         : toDecimal(candidate.unitValuePen);
+    if (candidate.atCost === true && options.opaqueAtCost === true) {
+      throw new BadRequestException(
+        `${candidate.at}: ${candidate.sku} quedó por debajo de su precio a costo (el costo cambió o ` +
+          'el precio se movió). Pide a un administrador que la revise.',
+      );
+    }
     if (candidate.atCost === true) {
       throw new BadRequestException(
         `${candidate.at}: ${candidate.sku} se está vendiendo a ` +
