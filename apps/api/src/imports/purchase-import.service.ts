@@ -465,7 +465,8 @@ export class PurchaseImportService {
         await this.audit.write(tx, {
           actorId: actor.id,
           action: 'imports.purchases',
-          entity: 'purchases',
+          // cc50 (D-638): el lote es su propio tipo; con `purchases` su id no era de ninguna compra.
+          entity: 'purchase_import_batches',
           entityId: batchId,
           after: {
             batchId,
@@ -607,11 +608,13 @@ export class PurchaseImportService {
       }
     }
     // D-219: la auditoría de dominio va en una transacción real, aunque sea la única escritura.
+    // cc50 (D-638, excepción anotada): este resumen va en su propia transacción, después de las
+    // anulaciones, porque el deshacer es parcial a propósito; cada anulación audita la suya.
     await this.prisma.$transaction((tx) =>
       this.audit.write(tx, {
         actorId: actor.id,
         action: 'imports.purchases.undo',
-        entity: 'purchases',
+        entity: 'purchase_import_batches',
         entityId: batchId,
         after: { batchId, reason, cancelled, kept },
       }),

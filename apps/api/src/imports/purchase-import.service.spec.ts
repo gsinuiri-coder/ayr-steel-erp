@@ -180,6 +180,8 @@ describe('PurchaseImportService.confirm (D-351)', () => {
       s.tx,
       expect.objectContaining({
         action: 'imports.purchases',
+        // cc50 (D-638): el lote tiene su tipo propio.
+        entity: 'purchase_import_batches',
         entityId: result.batchId,
         after: expect.objectContaining({ purchases: 2, fileName: 'compras.xlsx' }),
       }),
@@ -329,7 +331,10 @@ describe('PurchaseImportService.undo (D-351)', () => {
     ]);
     expect(s.audit.write).toHaveBeenCalledWith(
       s.tx,
-      expect.objectContaining({ action: 'imports.purchases.undo' }),
+      expect.objectContaining({
+        action: 'imports.purchases.undo',
+        entity: 'purchase_import_batches',
+      }),
     );
   });
 

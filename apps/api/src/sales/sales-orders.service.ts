@@ -109,6 +109,7 @@ import {
   unassignedPaperCoilLines,
 } from './paper-coil-assignment';
 import { AuditService } from '../audit/audit.service';
+import { productionCancelledBySalesOrderEntry } from '../audit/document-audit-entries';
 import { ENV, type Env } from '../config/env';
 import type { RequestUser } from '../auth/auth.types';
 import {
@@ -2646,6 +2647,14 @@ export class SalesOrdersService {
             expiredAt: back === QuotationStatus.EXPIRED ? new Date() : null,
           },
         });
+      }
+
+      // cc50 (D-638): cada OP que la anulación arrastra lo dice también en su «Historial».
+      for (const op of liveOrders.filter((o) => idleIds.includes(o.id))) {
+        await this.audit.write(
+          tx,
+          productionCancelledBySalesOrderEntry(actor.id, op, { id, code: orderCode }, reason),
+        );
       }
 
       await this.audit.write(tx, {

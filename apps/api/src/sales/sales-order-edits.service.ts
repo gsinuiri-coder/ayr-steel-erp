@@ -54,6 +54,7 @@ import {
   type UpdateSalesOrderItemQtyInput,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
+import { productionPlanBySalesOrderEntry } from '../audit/document-audit-entries';
 import type { RequestUser } from '../auth/auth.types';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { ENV, type Env } from '../config/env';
@@ -1187,11 +1188,13 @@ export class SalesOrderEditsService {
         data: plan.map((p) => ({ productionOrderId: op.id, ...p })),
       });
       adjustedOrders.push(productionOrderCode(op.seq));
+      const planMetersAfter = facts.kind === 'METERS' ? toDecimal(line.qty) : piecesMeters(plan);
       effects.push(
         facts.kind === 'METERS'
-          ? `El plan de ${productionOrderCode(op.seq)} pasa a ${toDecimal(line.qty).toFixed(3)} m.`
-          : `El plan de ${productionOrderCode(op.seq)} pasa de ${op.planMeters.toFixed(3)} m a ${piecesMeters(plan).toFixed(3)} m.`,
+          ? `El plan de ${productionOrderCode(op.seq)} pasa a ${planMetersAfter.toFixed(3)} m.`
+          : `El plan de ${productionOrderCode(op.seq)} pasa de ${op.planMeters.toFixed(3)} m a ${planMetersAfter.toFixed(3)} m.`,
       );
+      await this.auditOrderPlan(tx, actor, order, item, op, planMetersAfter, input.reason);
     }
 
     const reservedAfter = await tx.reservation.aggregate({
@@ -1429,6 +1432,8 @@ export class SalesOrderEditsService {
       reservationId,
       rising,
       preview,
+      order,
+      input.reason,
     );
     effects.unshift(...orderEffects.effects);
 
@@ -1519,6 +1524,8 @@ export class SalesOrderEditsService {
     reservationId: string | null,
     rising: boolean,
     preview: boolean,
+    order: LockedOrder,
+    reason: string | undefined,
   ): Promise<{ effects: string[]; audit: Record<string, string>[] }> {
     if (facts.kind === 'QTY') return { effects: [], audit: [] };
     const at = `Línea ${item.lineNumber}`;
@@ -1563,6 +1570,7 @@ export class SalesOrderEditsService {
         );
       }
       const ready = planAfter.equals(op.registeredMeters);
+      await this.auditOrderPlan(tx, actor, order, item, op, planAfter, reason);
       return {
         effects: [
           `El plan de ${code} pasa de ${op.planMeters.toFixed(3)} m a ${planAfter.toFixed(3)} m${
@@ -1616,6 +1624,31 @@ export class SalesOrderEditsService {
       ],
       audit: [{ code, action: 'CREATED', planMeters: meters.toFixed(3) }],
     };
+  }
+
+  /**
+   * cc50 (D-638): el cambio de cantidad de la línea, en el «Historial» de la OP cuyo plan sigue a
+   * la línea (el pedido ya tiene su `sales.order.item-qty`). Misma transacción que el cambio.
+   */
+  private async auditOrderPlan(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    order: { seq: number },
+    item: QtyItem,
+    op: { id: string; seq: number; planMeters: Prisma.Decimal },
+    planMetersAfter: Decimal,
+    reason: string | undefined,
+  ): Promise<void> {
+    await this.audit.write(
+      tx,
+      productionPlanBySalesOrderEntry(
+        actor.id,
+        { ...op, planMeters: op.planMeters.toFixed(3) },
+        { salesOrderId: item.salesOrderId, salesOrderSeq: order.seq, lineNumber: item.lineNumber },
+        planMetersAfter.toFixed(3),
+        reason,
+      ),
+    );
   }
 
   /** Qué reserva la línea, en palabras: el agregado de materia prima o el SKU. */

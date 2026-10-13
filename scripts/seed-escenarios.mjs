@@ -536,9 +536,10 @@ export async function voidPrevious(api, masters) {
   });
 
   await attempt('compras', async () => {
-    const purchases = (await api.list('/purchases')).filter(
-      (p) => supplierIds.has(p.supplierId) && p.status !== 'CANCELLED',
-    );
+    // cc50: los servicios primero: un flete imputado a una compra de bobinas frena su anulación.
+    const purchases = (await api.list('/purchases'))
+      .filter((p) => supplierIds.has(p.supplierId) && p.status !== 'CANCELLED')
+      .sort((a, b) => Number(b.type === 'SERVICE') - Number(a.type === 'SERVICE'));
     for (const p of purchases) {
       await attempt(`compra ${p.documentLabel ?? p.id}`, async () => {
         const detail = await api.get(`/purchases/${p.id}`);
@@ -827,6 +828,73 @@ export async function seedCases(api, masters) {
     kerfLossMm: '0',
   });
 
+  // H1 · «Historial» de compra y de orden de corte (cc50, D-638): un pago y su reversa, un flete
+  // imputado a la compra de bobinas, la factura del corte vinculada y un lote del importador.
+  const [h1Coil] = await buyCoils('drywall', galv, '0.45', ['800'], 'caso H1');
+  const h1PurchaseId = h1Coil.purchaseId;
+  const paid = await api.post(`/purchases/${h1PurchaseId}/payments`, {
+    date: today,
+    amount: '100.00',
+    currency: 'PEN',
+    method: 'TRANSFER',
+  });
+  const h1Payment = paid.payments.at(-1);
+  await api.post(`/purchases/${h1PurchaseId}/payments/${h1Payment.id}/reverse`, {
+    reason: 'DEMO · pago de prueba revertido (caso H1)',
+  });
+  const service = (body) =>
+    api.post('/purchases', {
+      businessLine: 'drywall',
+      type: 'SERVICE',
+      docType: 'FACTURA',
+      number: docNumber(),
+      issueDate: today,
+      currency: 'PEN',
+      igvRate: '18',
+      paymentTerms: 'CONTADO',
+      ...body,
+    });
+  const freight = await service({
+    supplierId: masters.steelSupplier.id,
+    series: 'F998',
+    serviceKind: 'FREIGHT',
+    relatedPurchaseId: h1PurchaseId,
+    notes: 'DEMO · flete del caso H1',
+    items: [{ description: 'Flete DEMO caso H1', qty: '1', unit: 'ZZ', unitPrice: '80' }],
+  });
+  await api.post(`/purchases/${freight.id}/receive`, {});
+  await service({
+    supplierId: masters.cuttingSupplier.id,
+    series: 'F997',
+    serviceKind: 'CUTTING',
+    relatedCuttingOrderId: cutting.id,
+    notes: 'DEMO · factura del corte del caso H1',
+    items: [{ description: 'Corte DEMO caso H1', qty: '1', unit: 'ZZ', unitPrice: '50' }],
+  });
+  const batch = await api.post('/imports/purchases', {
+    fileName: 'DEMO-caso-H1.xlsx',
+    documents: [
+      {
+        key: `DEMO-H1-${String(seq)}`,
+        type: 'Gasto',
+        businessLine: 'Servicios',
+        docType: 'Factura',
+        series: 'F996',
+        number: docNumber(),
+        issueDate: today,
+        supplierRuc: DEMO.steelSupplier.docNumber,
+        currency: 'PEN',
+        paymentTerms: 'Contado',
+        igvRate: '18',
+        notes: 'DEMO · lote del caso H1',
+        lines: [
+          { rowNumber: 2, description: 'Luz DEMO caso H1', qty: '1', unit: 'NIU', unitPrice: '40' },
+        ],
+      },
+    ],
+  });
+  const h1Purchase = await api.get(`/purchases/${h1PurchaseId}`);
+
   // S1 · partido con borde (cc46, D-608): 1 000 kg de 1 220 mm en 600 + 560 con 20 mm de kerf.
   // Quedan 40 mm de borde: el valor del kerf y el borde entra a las hijas (sube su costo por kg).
   const [s1] = await buyCoils('drywall', galv, '0.50', ['1000'], 'partido S1');
@@ -839,12 +907,18 @@ export async function seedCases(api, masters) {
   });
   return {
     cases,
+    history: {
+      purchaseId: h1PurchaseId,
+      purchase: h1Purchase.documentLabel ?? `${h1Purchase.series}-${h1Purchase.number}`,
+      cuttingId: cutting.id,
+      batchId: batch.batchId,
+    },
     drywall: { cuttingId: cutting.id, cut: dw1, free: dw2 },
     split: { mother: s1, children: s1Children },
   };
 }
 
-export function casesTable({ cases, drywall, split }, masters) {
+export function casesTable({ cases, history, drywall, split }, masters) {
   const lines = [
     '| Caso | Pedido | OP | Abrir | Qué probar |',
     '|---|---|---|---|---|',
@@ -853,6 +927,7 @@ export function casesTable({ cases, drywall, split }, masters) {
         `| ${c.key} | ${c.order} | ${c.op} | ${c.abrir ?? `${PREVIEW_WEB}/planta?op=${c.opId}`} | ${c.probar} |`,
     ),
     `| Drywall | — | — | ${PREVIEW_WEB}/corte/${drywall.cuttingId} | ${drywall.cut.code} cortada en 5 flejes de 244 mm (${masters.products.stud.sku}); ${drywall.free.code} libre para tu orden de corte con ${DEMO.cuttingSupplier.name}; perfiles en «Nueva orden de perfiles» (${PREVIEW_WEB}/planta) |`,
+    `| H1 | — | — | ${PREVIEW_WEB}/compras/${history.purchaseId} | «Historial» de la compra ${history.purchase}: pago y su reversa, y el flete imputado; en la orden de corte (${PREVIEW_WEB}/corte/${history.cuttingId}), la factura vinculada; en la auditoría, el «Lote de importación» ${history.batchId.slice(0, 8)} (D-638) |`,
     `| S1 | — | — | ${PREVIEW_WEB}/bobinas/${split.mother.id} | ${split.mother.code} partida en ${split.children.map((c) => c.code).join(' y ')} con 20 mm de kerf y 40 mm de borde: las hijas suman el valor que salió de la madre (D-608); «Revertir» la devuelve exacta |`,
   ];
   return lines.join('\n');
