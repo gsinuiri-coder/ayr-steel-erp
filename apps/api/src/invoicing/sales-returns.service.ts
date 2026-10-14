@@ -133,17 +133,15 @@ export class SalesReturnsService {
       lines.flatMap((l) => (l.orderItemId === null ? [] : [l.orderItemId])),
     );
     // Dos líneas de la NC sobre la misma línea de pedido consumen del mismo despachado.
-    const used = new Map<
-      string,
-      Map<string, { qty: Decimal; reserveQty: Decimal; cost: Decimal }>
-    >();
+    type Used = Map<string, { qty: Decimal; reserveQty: Decimal; cost: Decimal }>;
+    const used = new Map<string, Used>();
     return lines.map((line) => {
       if (line.orderItemId === null) {
         throw new BadRequestException(
           `Línea ${String(line.lineNumber)}: no viene de un pedido, no hay despacho que devolver`,
         );
       }
-      const usedHere = used.get(line.orderItemId) ?? new Map();
+      const usedHere: Used = used.get(line.orderItemId) ?? (new Map() as Used);
       used.set(line.orderItemId, usedHere);
       const available = (stock.get(line.orderItemId) ?? []).map((s) => {
         const u = usedHere.get(s.dispatchItemId);
@@ -388,7 +386,7 @@ export class SalesReturnsService {
         },
       },
     });
-    if (found === null || found.status !== SalesReturnStatus.ACTIVE) return null;
+    if (found?.status !== SalesReturnStatus.ACTIVE) return null;
     const code = salesReturnCode(found.seq);
     await this.inventory.lockInOrder(tx, {
       items: found.items.map((i) => ({
