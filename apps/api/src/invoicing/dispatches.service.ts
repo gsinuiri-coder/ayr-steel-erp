@@ -411,7 +411,6 @@ export class DispatchesService {
             actorId: actor.id,
             viewer: actor,
             confirmBackdate: input.confirmBackdate,
-            acceptBackdatedCost: input.acceptBackdatedCost,
             // D-124: la salida de kardex se fecha con la **fecha del despacho**, no con hoy.
             // `dispatchDate` ya era la fecha de negocio de esta operación desde Fase 5b; lo
             // que faltaba era que el kardex la usara en vez de fecharse por su cuenta.
@@ -489,7 +488,6 @@ export class DispatchesService {
     actor: RequestUser,
     dispatchItemId: string,
     reason: string,
-    options: { acceptBackdatedCost?: boolean } = {},
   ): Promise<{ movementId: bigint; totalCost: string; terminatedCoils: string[] }> {
     const item = await tx.dispatchItem.findUniqueOrThrow({
       where: { id: dispatchItemId },
@@ -523,7 +521,6 @@ export class DispatchesService {
       actorId: actor.id,
       viewer: actor,
       confirmBackdate: true,
-      acceptBackdatedCost: options.acceptBackdatedCost,
       operationDate,
     });
     if (movement === null) throw new BadRequestException('La línea no lleva inventario');
@@ -784,6 +781,7 @@ export class DispatchesService {
     );
     const reversedMovements = await tx.inventoryMovement.findMany({
       where: {
+        recostOfId: null,
         id: { in: dispatch.items.flatMap((i) => (i.movementId === null ? [] : [i.movementId])) },
       },
       select: { businessLineId: true, itemType: true, itemId: true, unit: true },

@@ -85,6 +85,8 @@ export function laterMovementsWhere(
         : { itemId, id: { gt: id } },
     ),
     reversalOfId: null,
+    // cc53 (D-649): un recosteo corrige el costo de otra fila; no es un movimiento posterior.
+    recostOfId: null,
     reversals: { none: {} },
     id: { notIn: movements.map((m) => m.id) },
   };

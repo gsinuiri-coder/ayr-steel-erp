@@ -722,7 +722,6 @@ export class PurchasesService {
               actorId: actor.id,
               operationDate,
               confirmBackdate: input.confirmBackdate,
-              acceptBackdatedCost: input.acceptBackdatedCost,
             });
           }
           // SERVICE y EXPENSE no mueven inventario (D-030): solo generan cuenta por pagar.
@@ -822,7 +821,7 @@ export class PurchasesService {
         const landedReversed = { coils: 0, amountPen: new Decimal(0) };
         if (purchase.status === PurchaseStatus.RECEIVED) {
           const own = await tx.inventoryMovement.findMany({
-            where: { refType: 'PURCHASE', refId: id },
+            where: { recostOfId: null, refType: 'PURCHASE', refId: id },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },
           });

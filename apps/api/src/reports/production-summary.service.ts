@@ -46,6 +46,8 @@ export class ProductionSummaryService {
         businessLine: { code: toPrismaLineCode(businessLine) },
         reversalOfId: null,
         reversals: { none: {} },
+        // cc53 (D-649): el recosteo de una salida ya anulada sale con ella.
+        OR: [{ recostOfId: null }, { recostOf: { reversalOfId: null, reversals: { none: {} } } }],
       },
       select: { itemId: true, type: true, qty: true, totalCost: true, refType: true, refId: true },
       orderBy: { id: 'asc' },

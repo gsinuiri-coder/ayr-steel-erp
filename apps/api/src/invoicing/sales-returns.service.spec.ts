@@ -4,7 +4,8 @@ import type { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import type { InventoryService } from '../inventory/inventory.service';
 import type { PrismaService } from '../prisma/prisma.service';
-import { SalesReturnsService, toSalesReturnDto } from './sales-returns.service';
+import { Decimal } from '@ayr/shared';
+import { effectiveOutCost, SalesReturnsService, toSalesReturnDto } from './sales-returns.service';
 
 /**
  * cc52 (D-646) — la devolución de una NC, con un `tx` falso. Lo mismo contra una base real vive en
@@ -56,6 +57,8 @@ function setup(options: {
       findMany: jest.fn().mockResolvedValue(options.dispatchItems ?? [dispatchItem()]),
     },
     inventoryMovement: {
+      // cc53 (D-649): sin recosteos sobre la salida del despacho.
+      groupBy: jest.fn().mockResolvedValue([]),
       findMany: jest.fn().mockResolvedValue([
         {
           id: 10n,
@@ -302,5 +305,20 @@ describe('SalesReturnsService (cc52, D-646)', () => {
       affectedDocumentNumber: 'F001-1',
     });
     expect(dto.items[0]).toMatchObject({ dispatchCode: 'DES-000007', movementId: '99' });
+  });
+});
+
+describe('effectiveOutCost (cc53, D-649)', () => {
+  const out = { qty: '4', unitCost: '10.0000', totalCost: '40.0000' };
+
+  it('sin recosteo devuelve lo grabado', () => {
+    const r = effectiveOutCost(out, undefined);
+    expect([r.unitCost.toFixed(4), r.totalCost.toFixed(4)]).toEqual(['10.0000', '40.0000']);
+    expect(effectiveOutCost(out, new Decimal(0)).totalCost.toFixed(4)).toBe('40.0000');
+  });
+
+  it('un recosteo que saca valor del saldo es más costo de la salida', () => {
+    const r = effectiveOutCost(out, new Decimal('-60'));
+    expect([r.unitCost.toFixed(4), r.totalCost.toFixed(4)]).toEqual(['25.0000', '100.0000']);
   });
 });

@@ -444,7 +444,7 @@ export class SalesByMaterialService {
         SELECT d."invoice_id", di."product_id",
           SUM(CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END) AS "cost_pen"
         FROM "inventory_movements" m
-        JOIN "dispatch_items" di ON di."movement_id" = COALESCE(m."reversal_of_id", m."id")
+        JOIN "dispatch_items" di ON di."movement_id" = COALESCE(m."reversal_of_id", (SELECT t."reversal_of_id" FROM "inventory_movements" t WHERE t."id" = m."recost_of_id"), m."recost_of_id", m."id")
         JOIN "dispatches" d ON d."id" = di."dispatch_id"
         WHERE m."ref_type" = 'SALE' AND d."invoice_id" = ANY(${documentIds}::uuid[])
         GROUP BY d."invoice_id", di."product_id"
@@ -595,7 +595,7 @@ export class SalesByMaterialService {
         UNION ALL
         SELECT di."sales_order_item_id", m."item_id", m."type", m."qty", m."total_cost"
         FROM "inventory_movements" m
-        JOIN "dispatch_items" di ON di."movement_id" = COALESCE(m."reversal_of_id", m."id")
+        JOIN "dispatch_items" di ON di."movement_id" = COALESCE(m."reversal_of_id", (SELECT t."reversal_of_id" FROM "inventory_movements" t WHERE t."id" = m."recost_of_id"), m."recost_of_id", m."id")
         WHERE m."ref_type" = 'SALE' AND m."item_type" = 'COIL'
           AND di."sales_order_item_id" = ANY(${itemIds}::uuid[])
       ),

@@ -174,6 +174,15 @@ export function KardexView() {
           {m.type === 'ADJUST' && (
             <span className="ml-2 text-xs text-muted-foreground">ajuste de costo</span>
           )}
+          {/* cc53 (D-649): el costo de la fila ya es el corregido por fecha. */}
+          {m.recosted && (
+            <span
+              className="ml-2 text-xs text-muted-foreground"
+              title="Costo corregido por el recosteo por fecha: la salida toma el promedio vigente a su fecha"
+            >
+              recosteado
+            </span>
+          )}
           {/* D-205: solo una venta puede llevar factura enlazada, y solo desde el mostrador. */}
           {m.refType === 'SALE' && (
             <span className="ml-2 text-xs text-muted-foreground">

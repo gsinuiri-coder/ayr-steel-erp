@@ -84,6 +84,7 @@ describe('laterMovementsWhere', () => {
         { itemId: 'coil', id: { gt: 11n } },
       ],
       reversalOfId: null,
+      recostOfId: null,
       reversals: { none: {} },
       id: { notIn: [10n, 11n] },
     });

@@ -269,12 +269,7 @@ export class OpeningDateMoveService {
     const terminatedCoils: string[] = [];
     for (const out of plan.added.filter((a) => a.action === 'ADD')) {
       const added = await this.prisma.$transaction(
-        // cc52 (D-648): la herramienta (de un solo uso, solo ADMINISTRADOR) fecha estas salidas a
-        // propósito; «Registrar igual» va explícito y el kardex lo audita con los dos costos.
-        (tx) =>
-          this.dispatches.addMissingMovementInTx(tx, actor, out.id, ADDED_OUT_REASON, {
-            acceptBackdatedCost: true,
-          }),
+        (tx) => this.dispatches.addMissingMovementInTx(tx, actor, out.id, ADDED_OUT_REASON),
         { timeout: 60_000 },
       );
       terminatedCoils.push(...added.terminatedCoils);
@@ -285,10 +280,7 @@ export class OpeningDateMoveService {
     for (const inv of plan.dispatch.invoices) {
       if (!inv.lines.some((l) => l.action !== 'REVIEW')) continue;
       await this.prisma.$transaction(
-        (tx) =>
-          this.invoiceDispatch.executeInTx(tx, actor, inv.invoiceId, inv, undefined, {
-            acceptBackdatedCost: true,
-          }),
+        (tx) => this.invoiceDispatch.executeInTx(tx, actor, inv.invoiceId, inv),
         { timeout: 120_000 },
       );
     }

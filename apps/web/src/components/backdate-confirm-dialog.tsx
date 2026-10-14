@@ -1,8 +1,6 @@
 'use client';
 
-import { Role } from '@ayr/shared';
 import { Button } from '@/components/ui/button';
-import { useSession } from '@/lib/session';
 import {
   Dialog,
   DialogContent,
@@ -16,9 +14,8 @@ import {
  * Advertencia de retrofecha fuera de orden (D-124).
  *
  * El API corta cuando lo que se está registrando queda **por detrás** de movimientos que el
- * ítem ya tiene, porque el saldo corrido del kardex se construye en el orden en que las
- * cosas se grabaron y ahí las dos vistas dejan de coincidir. La regla de la casa es cargar
- * el histórico en orden cronológico; esto es la salida de emergencia, y por eso repite el
+ * ítem ya tiene. Desde cc53 (D-649, D-650) registrarlo igual ya no deja el costo equivocado: el
+ * kardex recalcula el costo de los movimientos posteriores a su fecha. El diálogo repite el
  * detalle que mandó el API en vez de resumirlo: quien confirma tiene que ver contra qué.
  */
 export function BackdateConfirmDialog({
@@ -26,7 +23,6 @@ export function BackdateConfirmDialog({
   onOpenChange,
   detail,
   pending = false,
-  costMismatch = false,
   onConfirm,
 }: {
   open: boolean;
@@ -34,34 +30,19 @@ export function BackdateConfirmDialog({
   /** El mensaje tal cual lo mandó el API: ítem, fecha pedida y fecha del más reciente. */
   detail: string;
   pending?: boolean;
-  /**
-   * cc52 (D-648): lo que se confirma es una **salida atrasada que cambiaría de costo**: sale al
-   * promedio de hoy y no al que el ítem tenía a esa fecha. Solo un ADMINISTRADOR la registra igual.
-   */
-  costMismatch?: boolean;
   onConfirm: () => void;
 }) {
-  const { user } = useSession();
-  // cc52 (D-648): solo un ADMINISTRADOR registra igual una salida que cambia de costo; a otro rol
-  // el botón le daría un 403 (revisión de cc52, P2).
-  const canConfirm = !costMismatch || user.role === Role.ADMINISTRADOR;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>
-            {costMismatch ? 'La salida cambiaría de costo' : 'La fecha queda fuera de orden'}
-          </DialogTitle>
+          <DialogTitle>La fecha queda fuera de orden</DialogTitle>
           <DialogDescription>{detail}</DialogDescription>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          {costMismatch
-            ? 'Hasta que exista el recosteo por fecha, el kardex valoriza la salida al promedio de hoy: el costo de ventas de esa fecha quedaría con el promedio equivocado. Solo un administrador puede registrarla igual, y queda en la auditoría con los dos costos.'
-            : 'Registrarlo igual deja el kardex ordenado por fecha mostrando, para ese día, un saldo que no fue el de ese día. Lo recomendable es cancelar y cargar primero lo más antiguo.'}
+          El sistema recalcula el costo de los movimientos posteriores a su fecha (recosteo por
+          fecha); queda en la auditoría.
         </p>
-        {!canConfirm && (
-          <p className="text-sm font-medium">Pídele a un administrador que la registre.</p>
-        )}
         <DialogFooter>
           <Button
             variant="outline"
@@ -71,22 +52,20 @@ export function BackdateConfirmDialog({
           >
             Cancelar
           </Button>
-          {canConfirm && (
-            <Button
-              variant="destructive"
-              disabled={pending}
-              pending={pending}
-              pendingText="Procesando…"
-              onClick={() => {
-                // F8-S1/M1: mismo guard que ReasonDialog — cubre el doble Enter, que el
-                // `disabled` del DOM no atrapa si llega antes del repintado.
-                if (pending) return;
-                onConfirm();
-              }}
-            >
-              Registrar igual
-            </Button>
-          )}
+          <Button
+            variant="destructive"
+            disabled={pending}
+            pending={pending}
+            pendingText="Procesando…"
+            onClick={() => {
+              // F8-S1/M1: mismo guard que ReasonDialog — cubre el doble Enter, que el
+              // `disabled` del DOM no atrapa si llega antes del repintado.
+              if (pending) return;
+              onConfirm();
+            }}
+          >
+            Registrar igual
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -65,6 +65,11 @@ export const inventoryMovementSchema = z.object({
   balanceAvgCost: z.string().nullable().optional(),
   /** D-298: el valor del saldo corrido (cantidad × promedio), para la hoja del cliente. */
   balanceTotalCost: z.string().nullable().optional(),
+  /**
+   * cc53 (D-649): el costo de esta fila se corrigió por el recosteo por fecha. `unitCost` y
+   * `totalCost` ya traen el costo corregido (con los ajustes de recosteo plegados en la fila).
+   */
+  recosted: z.boolean().optional(),
 });
 export type InventoryMovementDto = z.infer<typeof inventoryMovementSchema>;
 

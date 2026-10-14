@@ -394,7 +394,7 @@ export class ReceivedPurchaseEditService {
         const coil = coilByItem.get(item.id) ?? null;
         const movements = coil
           ? await tx.inventoryMovement.findMany({
-              where: { itemType: 'COIL', itemId: coil.id },
+              where: { itemType: 'COIL', itemId: coil.id, recostOfId: null },
               orderBy: { id: 'asc' },
               include: { reversals: { select: { id: true } } },
             })
@@ -473,6 +473,7 @@ export class ReceivedPurchaseEditService {
             where: {
               itemType: 'PRODUCT',
               itemId: ownIn.itemId,
+              recostOfId: null,
               OR: [{ id: { gt: ownIn.id } }, { operationDate: { gt: ownIn.operationDate } }],
             },
             orderBy: { id: 'asc' },
@@ -579,7 +580,7 @@ export class ReceivedPurchaseEditService {
     const newQty = toDecimal(edit.qty);
     if (!newQty.lt(origQty)) return null;
     const all = await tx.inventoryMovement.findMany({
-      where: { itemType: ownIn.itemType, itemId: ownIn.itemId },
+      where: { itemType: ownIn.itemType, itemId: ownIn.itemId, recostOfId: null },
       orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
       select: { type: true, qty: true, operationDate: true },
     });
@@ -706,6 +707,7 @@ export class ReceivedPurchaseEditService {
         if (receiptDate !== null) {
           const later = await tx.inventoryMovement.count({
             where: {
+              recostOfId: null,
               itemType: 'PRODUCT',
               itemId: edit.productId,
               operationDate: { gt: toDateOnly(receiptDate) },
@@ -1111,7 +1113,7 @@ export class ReceivedPurchaseEditService {
     );
     const movements = liveMovements(
       await tx.inventoryMovement.findMany({
-        where: { itemType: ownIn.itemType, itemId: ownIn.itemId },
+        where: { itemType: ownIn.itemType, itemId: ownIn.itemId, recostOfId: null },
         orderBy: [{ operationDate: 'asc' }, { at: 'asc' }, { id: 'asc' }],
         include: { reversals: { select: { id: true } } },
       }),

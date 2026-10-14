@@ -145,13 +145,12 @@ export function CompraDetalleView({ id }: { id: string }) {
   // de operación es la de todo lo que crea. Por defecto hoy; solo un administrador la mueve.
   const [receiveDate, setReceiveDate] = useState<string | undefined>(undefined);
   const receive = useMutation({
-    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: ({ confirmBackdate }: BackdateAck) =>
       api<PurchaseDto>(`/purchases/${id}/receive`, {
         method: 'POST',
         body: {
           operationDate: receiveDate,
           confirmBackdate: confirmBackdate || undefined,
-          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: () => {
@@ -160,8 +159,8 @@ export function CompraDetalleView({ id }: { id: string }) {
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo recibir')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await receive.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await receive.mutateAsync({ confirmBackdate });
   });
 
   const cancel = useMutation({
@@ -654,7 +653,6 @@ export function CompraDetalleView({ id }: { id: string }) {
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
-        costMismatch={backdate.costMismatch}
         pending={receive.isPending}
         onConfirm={() => {
           void backdate.confirm();

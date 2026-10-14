@@ -50,6 +50,10 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'imports.initial-inventory': 'Carga de inventario inicial de bobinas',
   // cc52 (D-648): la salida con fecha atrasada que cambiaba de costo, aceptada por el administrador.
   'inventory.backdated-cost-accepted': 'Salida con fecha atrasada registrada con otro costo',
+  // cc53 (D-649): recosteo del promedio por fecha.
+  'inventory.recost': 'Recosteo por fecha',
+  'inventory.recost-pending': 'Recosteo por fecha pendiente (supera el tope)',
+  'inventory.recost-historic': 'Recosteo histórico cc53',
   'imports.initial-inventory-products': 'Carga de inventario inicial de productos',
   'invoicing.credit-note.create': 'Nota de crédito creada',
   'invoicing.dispatch.create': 'Despacho creado',
@@ -299,6 +303,17 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   costUsed: 'Costo usado (S/)',
   costAtDate: 'Costo a esa fecha (S/)',
   laterCount: 'Movimientos posteriores',
+  // cc53 (D-649): recosteo por fecha.
+  recostedMovements: 'Movimientos recosteados',
+  triggerMovementId: 'Movimiento que lo disparó',
+  movementId: 'Movimiento de kardex',
+  costBefore: 'Costo antes (S/)',
+  costAfter: 'Costo después (S/)',
+  costDelta: 'Diferencia de costo (S/)',
+  adjustments: 'Ajustes de recosteo',
+  rowsReplayed: 'Movimientos recalculados',
+  maxRows: 'Tope de movimientos',
+  recostItems: 'Ítems',
   item: 'Ítem',
   itemType: 'Tipo de ítem',
   itemId: 'Ítem (id)',

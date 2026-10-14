@@ -223,6 +223,7 @@ describe('undo de lote', () => {
         itemType: 'PRODUCT',
         itemId: 'product-1',
         id: { gt: 3n },
+        recostOfId: null,
         NOT: { id: { in: [4n] } },
       },
       select: { id: true },

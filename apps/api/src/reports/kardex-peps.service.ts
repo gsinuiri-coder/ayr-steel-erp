@@ -125,6 +125,8 @@ export class KardexPepsService {
         itemType: query.itemType,
         itemId: query.itemId,
         operationDate: { lte: toDateOnly(query.to) },
+        // cc53 (D-649): PEPS valoriza con sus capas; el recosteo es del promedio y no entra.
+        recostOfId: null,
       },
       // El mismo orden que el saldo corrido del kardex (D-124): fecha de operación, instante
       // de grabación y el id bigserial para desempatar.

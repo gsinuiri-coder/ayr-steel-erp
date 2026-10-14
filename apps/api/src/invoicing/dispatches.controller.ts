@@ -95,9 +95,7 @@ export class DispatchesController {
     @Param('invoiceId', ParseUUIDPipe) invoiceId: string,
     @Body(new ZodValidationPipe(invoiceDispatchDateSchema)) body: InvoiceDispatchDateInput,
   ): Promise<InvoiceDispatchResultDto> {
-    return this.invoiceDispatch.executeForInvoice(actor, invoiceId, body.dispatchDate, {
-      acceptBackdatedCost: body.acceptBackdatedCost,
-    });
+    return this.invoiceDispatch.executeForInvoice(actor, invoiceId, body.dispatchDate);
   }
 
   @Get()

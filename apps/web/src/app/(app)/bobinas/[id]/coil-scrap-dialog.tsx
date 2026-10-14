@@ -68,7 +68,7 @@ export function CoilScrapDialog({
   // D-124: día de negocio de la merma, con su acuse de orden cronológico.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const scrap = useMutation({
-    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: ({ confirmBackdate }: BackdateAck) =>
       api<CoilDto>(`/coils/${coil.id}/scrap`, {
         method: 'POST',
         body: {
@@ -76,7 +76,6 @@ export function CoilScrapDialog({
           reason,
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
-          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: () => {
@@ -88,8 +87,8 @@ export function CoilScrapDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo registrar la merma')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await scrap.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await scrap.mutateAsync({ confirmBackdate });
   });
 
   const validQty = isPositiveDecimal(qtyKg);
@@ -228,7 +227,6 @@ export function CoilScrapDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
-        costMismatch={backdate.costMismatch}
         pending={scrap.isPending}
         onConfirm={() => {
           void backdate.confirm();

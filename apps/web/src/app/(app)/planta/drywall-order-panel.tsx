@@ -131,19 +131,16 @@ export function DrywallOrderPanel({
     mutationFn: ({
       count,
       confirmBackdate,
-      acceptBackdatedCost,
       toleranceOverride,
     }: {
       count: number;
       confirmBackdate: boolean;
-      acceptBackdatedCost: boolean;
       toleranceOverride: DrywallToleranceOverrideInput | null;
     }) => {
       const body = {
         pieces: count,
         operationDate,
         confirmBackdate: confirmBackdate || undefined,
-        acceptBackdatedCost: acceptBackdatedCost || undefined,
         // D-465: la casilla y el motivo, solo cuando lo reportado pasa la tolerancia.
         ...(toleranceOverride === null ? {} : { toleranceOverride }),
       };
@@ -168,11 +165,10 @@ export function DrywallOrderPanel({
       toast.error(errorMessage(err, 'No se pudieron reportar las piezas'));
     },
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
     await report.mutateAsync({
       count: Number(pieces.trim()),
       confirmBackdate,
-      acceptBackdatedCost,
       toleranceOverride: toleranceToSend.current,
     });
   });
@@ -550,7 +546,6 @@ export function DrywallOrderPanel({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
-        costMismatch={backdate.costMismatch}
         pending={report.isPending}
         onConfirm={() => {
           void backdate.confirm();

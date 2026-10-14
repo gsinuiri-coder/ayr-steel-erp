@@ -149,10 +149,12 @@ Reglas de convivencia, sin excepción:
    criterio, porque el daño lo hace un comando que la shell arma sola.
 8. **Todo movimiento de stock pasa por `InventoryService`, y solo por sus puertas:** `record()`
    (una entrada o una salida), `reverse()` (el movimiento inverso de uno existente),
-   `adjustCost()` (un ajuste de valor sin cantidad) y `replaceEntry()` (la reversa de un ingreso
+   `adjustCost()` (un ajuste de valor sin cantidad), `replaceEntry()` (la reversa de un ingreso
    y su reingreso en la misma fecha, como una sola operación; solo sobre ítems sin salidas ni
    ajustes posteriores a ese ingreso, y con las reservas —D-066— y la materia prima —D-134—
-   comprobadas sobre el estado final, nunca a mitad). Cambiar una fecha es reversa más movimiento
+   comprobadas sobre el estado final, nunca a mitad) y `recostForward()` (cc53, D-649: el
+   recosteo por fecha; escribe `ADJUST` con `recost_of_id` hacia la fila cuyo costo corrige, con
+   su fecha y su `ref`). Cambiar una fecha es reversa más movimiento
    nuevo (D-364, D-374, D-376/D-288), nunca editar `operation_date`. Ningún otro código escribe
    `inventory_movements` ni `inventory_balances`, salvo estas excepciones, nombradas con su
    decisión en el test centinela (`apps/api/src/inventory/kardex-writers.sentinel.spec.ts`):
@@ -160,9 +162,15 @@ Reglas de convivencia, sin excepción:
    trigger y auditoría) y el reset de la base de pruebas (D-018, `TRUNCATE` con el guard de
    D-181). La limpia de V-4 (D-208) se retiró del repo (D-384). El centinela barre `apps/api/src`,
    `apps/api/prisma`, `scripts/`, `packages/` y `e2e/`, y falla si aparece un escritor nuevo. El
-   kardex es append-only: las reversas son movimientos inversos, nunca edición de saldos. **D-648 (cc52):** una salida con fecha anterior a
-   entradas o ajustes ya registrados que cambiaría de costo se rechaza (`BACKDATE_COST_MISMATCH`); solo un
-   ADMINISTRADOR la registra igual y queda auditada. Se quita con el recosteo por fecha (cc53).
+   kardex es append-only: las reversas son movimientos inversos, nunca edición de saldos.
+   **D-649/D-650 (cc53):** cada salida toma el promedio vigente **a su fecha** (`operationDate` y,
+   a igual fecha, orden de registro); un movimiento fechado antes de otros del mismo ítem recostea
+   hacia adelante (y en cascada lo fabricado, partido o cortado con él) en la misma transacción,
+   con tope de 500 movimientos (encima queda «recosteo pendiente» para `pnpm recosteo:historico`).
+   El costo efectivo de una fila es su `total_cost` más sus recosteos; nunca se edita una fila.
+   **D-652:** un movimiento atrasado que saca stock no puede dejar el kardex en negativo en ninguna
+   fecha (se rechaza con la primera fecha válida, criterio de D-374; no es retroactivo). El
+   bloqueo de D-648 se quitó.
 9. **`Decimal`, nunca `number`,** para dinero, pesos y dimensiones.
 10. **Sin creación silenciosa de entidades.**
 11. **Orden de deploy siempre:** migraciones Prisma → deploy API → push web.

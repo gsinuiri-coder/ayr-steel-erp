@@ -668,7 +668,7 @@ describe('D-288 — re-fechar el despacho a la fecha del comprobante', () => {
       redateInvoiceId: 'F1',
     });
     // Con el plan como `expected`: la ejecución lo vuelve a comparar antes de escribir.
-    expect(execute).toHaveBeenCalledWith(tx, ADMIN, 'F1', planned.invoices[0], undefined, {});
+    expect(execute).toHaveBeenCalledWith(tx, ADMIN, 'F1', planned.invoices[0], undefined);
     expect(done).toEqual({ reversed: ['DES-000019'], created: ['nuevo'] });
     expect(audit.write).toHaveBeenCalledWith(
       tx,

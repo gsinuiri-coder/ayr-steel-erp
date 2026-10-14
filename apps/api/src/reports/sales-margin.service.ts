@@ -224,8 +224,9 @@ export class SalesMarginService {
    *
    * El signo sigue al kardex: un `OUT` es valor que salió del almacén y por lo tanto costo;
    * la reversa de ese despacho es un `IN` con el mismo `total_cost` y lo devuelve. Un
-   * `ADJUST` bajo `refType='SALE'` no existe hoy, y se firma al revés que el `OUT` para que
-   * el día que exista siga cerrando contra el valorizado en vez de sumarse dos veces.
+   * `ADJUST` bajo `refType='SALE'` es un **recosteo por fecha** (cc53, D-649): se firma al revés que
+   * el `OUT` (un ajuste que saca valor del saldo es más costo) y se ata a la línea de la fila que
+   * corrige por `recost_of_id`. Lo mismo en la rama de devoluciones.
    *
    * **La línea de negocio sale del producto de la línea despachada, no del movimiento**
    * (D-247). El movimiento lleva la línea del ítem que de verdad salió del almacén (D-119), y
@@ -261,7 +262,7 @@ export class SalesMarginService {
       -- La reversa de un despacho es un movimiento nuevo: el ítem lo tiene el original, así
       -- que se lo busca por el movimiento que anula.
       LEFT JOIN "dispatch_items" di
-        ON di."movement_id" = COALESCE(m."reversal_of_id", m."id")
+        ON di."movement_id" = COALESCE(m."reversal_of_id", (SELECT t."reversal_of_id" FROM "inventory_movements" t WHERE t."id" = m."recost_of_id"), m."recost_of_id", m."id")
       LEFT JOIN "products" p ON p."id" = di."product_id"
       LEFT JOIN "business_lines" blp ON blp."id" = p."business_line_id"
       JOIN "business_lines" blm ON blm."id" = m."business_line_id"
@@ -277,13 +278,13 @@ export class SalesMarginService {
         sr."credit_note_id" AS "invoice_id",
         COALESCE(blp."code", blm."code")::text AS "business_line_code",
         COALESCE(SUM(
-          CASE m."type" WHEN 'IN' THEN -m."total_cost" ELSE m."total_cost" END
+          CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END
         ), 0) AS "cost_pen",
         'RETURN' AS "kind"
       FROM "inventory_movements" m
       JOIN "sales_returns" sr ON sr."id"::text = m."ref_id"
       LEFT JOIN "sales_return_items" sri
-        ON sri."movement_id" = COALESCE(m."reversal_of_id", m."id")
+        ON sri."movement_id" = COALESCE(m."reversal_of_id", (SELECT t."reversal_of_id" FROM "inventory_movements" t WHERE t."id" = m."recost_of_id"), m."recost_of_id", m."id")
       LEFT JOIN "dispatch_items" di ON di."id" = sri."dispatch_item_id"
       LEFT JOIN "products" p ON p."id" = di."product_id"
       LEFT JOIN "business_lines" blp ON blp."id" = p."business_line_id"
@@ -307,7 +308,8 @@ export class SalesMarginService {
       SELECT
         r."sales_order_id",
         COALESCE(SUM(
-          CASE m."type" WHEN 'OUT' THEN m."total_cost" WHEN 'IN' THEN -m."total_cost" ELSE 0 END
+          -- cc53 (D-649): un recosteo (ADJUST) es costo del consumo: saca valor del saldo.
+          CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END
         ), 0) AS "material_pen"
       FROM "inventory_movements" m
       JOIN "production_reports" pr ON pr."id"::text = m."ref_id"
