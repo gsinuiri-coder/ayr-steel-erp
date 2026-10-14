@@ -10,7 +10,7 @@ import {
 import {
   closeSessionQuietly,
   openCashSession,
-  posSell,
+  posSellExpectingError,
   setupPosStock,
   POS_LINE,
   type CashSessionDto,
@@ -718,16 +718,11 @@ test.describe('D-163 — piso duro de precio', () => {
     }
   });
 
-  test('el mostrador no tiene piso: la venta de caja por debajo del mínimo se completa', async () => {
+  test('cc52 (D-643): el mostrador tiene el piso de la cotización: por debajo del mínimo, 400 y sin venta', async () => {
     /**
-     * **Exención deliberada de D-163.** El carrito de caja no tiene dónde mostrar el mínimo: el
-     * cajero lo descubriría al cobrar, con el cliente delante, y el rechazo tiraría abajo la
-     * transacción entera de D-099 (pedido, despacho, comprobante y cobro). Antes de esta
-     * sesión el mostrador tampoco tenía piso, así que dejarlo afuera no abre nada nuevo.
-     *
-     * Se comprueba con un precio **por debajo del costo**, no solo por debajo del margen: si
-     * alguien pusiera el piso también en el mostrador, este caso se cae y hay que decidirlo a
-     * propósito, no descubrirlo en caja.
+     * Hasta cc52 el mostrador era una exención deliberada de D-163 (el carrito no mostraba el
+     * mínimo). D-643 la quita: el carrito muestra el mínimo y la caja aplica el mismo
+     * `assertPriceFloor` a todos los roles. Se comprueba con un precio por debajo del costo.
      */
     const stock = await setupPosStock(api, { qty: '40', unitPrice: '20' });
     let session: CashSessionDto | undefined;
@@ -740,13 +735,11 @@ test.describe('D-163 — piso duro de precio', () => {
       expect(Number(floor.minValuePen)).toBeGreaterThan(5);
 
       session = await openCashSession(api, '0.00');
-      const sale = await posSell(api, {
+      const rejected = await posSellExpectingError(api, {
         items: [{ productId: stock.product.id, qty: '2.000', unitPricePen: '5.0000' }],
       });
-      orderIds.push(sale.salesOrderId);
-      expect(sale.status).toBe('ACTIVE');
-      // 2 × 5.00 = 10.00 + IGV.
-      expect(sale.totalPen).toBe('11.8000');
+      expect(rejected.status).toBe(400);
+      expect(rejected.message).toContain('el precio mínimo es S/ 26.23');
     } finally {
       await closeSessionQuietly(api, session?.id);
       await purgeSalesTrail(api, { orderIds });

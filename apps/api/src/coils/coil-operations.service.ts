@@ -156,6 +156,7 @@ export class CoilOperationsService {
           actorId: actor.id,
           operationDate,
           confirmBackdate: input.confirmBackdate,
+          acceptBackdatedCost: input.acceptBackdatedCost,
         });
         if (!out) {
           throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
@@ -467,6 +468,7 @@ export class CoilOperationsService {
         actorId: actor.id,
         operationDate,
         confirmBackdate: input.confirmBackdate,
+        acceptBackdatedCost: input.acceptBackdatedCost,
       });
       if (!movement) {
         throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');
@@ -960,6 +962,7 @@ export class CoilOperationsService {
       actorId: actor.id,
       operationDate,
       confirmBackdate: input.confirmBackdate,
+      acceptBackdatedCost: input.acceptBackdatedCost,
     });
     if (!movement) {
       throw new BadRequestException('La línea de negocio de la bobina no lleva inventario');

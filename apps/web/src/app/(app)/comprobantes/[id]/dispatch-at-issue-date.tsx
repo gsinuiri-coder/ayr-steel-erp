@@ -13,6 +13,9 @@ import { restoreReservationHref } from '@/lib/restore-reservation';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
+import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
+import { BACKDATE_COST_MISMATCH } from '@ayr/shared';
 
 const ACTION_LABELS: Record<InvoiceDispatchPlanDto['lines'][number]['action'], string> = {
   DISPATCH: 'Sale del almacén',
@@ -67,10 +70,15 @@ export function DispatchAtIssueDate({
     retry: (count, err) => !isClientError(err) && count < 2,
   });
   const execute = useMutation({
-    mutationFn: () =>
+    // cc52 (D-648): «Registrar igual» las salidas atrasadas que cambian de costo, solo si el API
+    // lo pidió y el ADMINISTRADOR lo confirmó.
+    mutationFn: ({ acceptBackdatedCost }: BackdateAck) =>
       api<InvoiceDispatchResultDto>(`/dispatches/at-issue-date/${documentId}`, {
         method: 'POST',
-        body: dispatchDate ? { dispatchDate } : {},
+        body: {
+          ...(dispatchDate ? { dispatchDate } : {}),
+          ...(acceptBackdatedCost ? { acceptBackdatedCost: true } : {}),
+        },
       }),
     onSuccess: (result) => {
       const moved = result.lines.filter((l) => l.action !== 'REVIEW').length;
@@ -83,8 +91,13 @@ export function DispatchAtIssueDate({
       invalidateInvoicing(queryClient, { documentId, orderId: salesOrderId });
     },
     onError: (err: unknown) => {
+      // El rechazo por costo lo muestra el diálogo, con los dos costos.
+      if (err instanceof ApiError && err.code === BACKDATE_COST_MISMATCH) return;
       toast.error(errorMessage(err, 'No se pudo despachar'));
     },
+  });
+  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+    await execute.mutateAsync({ confirmBackdate, acceptBackdatedCost });
   });
 
   const defaultLines = defaultPlan.data?.lines ?? [];
@@ -187,12 +200,24 @@ export function DispatchAtIssueDate({
             pending={execute.isPending}
             pendingText="Despachando…"
             onClick={() => {
-              execute.mutate();
+              void backdate.attempt();
             }}
           >
             Despachar en la fecha seleccionada
           </Button>
         )}
+        <BackdateConfirmDialog
+          open={backdate.open}
+          onOpenChange={(open) => {
+            if (!open) backdate.close();
+          }}
+          detail={backdate.detail ?? ''}
+          costMismatch={backdate.costMismatch}
+          pending={execute.isPending}
+          onConfirm={() => {
+            void backdate.confirm();
+          }}
+        />
       </AlertDescription>
     </Alert>
   );

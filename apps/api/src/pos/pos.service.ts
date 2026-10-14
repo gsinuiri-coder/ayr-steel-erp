@@ -47,6 +47,7 @@ import { ReceivablesService } from '../invoicing/receivables.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { SalesOrdersService } from '../sales/sales-orders.service';
+import { assertAtCostRequest } from '../sales/at-cost';
 import { CashSessionsService } from './cash-sessions.service';
 
 /**
@@ -219,6 +220,9 @@ export class PosService {
    * comprobante no.
    */
   async sell(actor: RequestUser, input: CreatePosSaleInput): Promise<PosSaleListItemDto> {
+    // cc52 (D-643): solo un ADMINISTRADOR vende a costo en caja. 403 antes del piso, que diría el
+    // costo (revisión de cc51, P1). El mostrador no tiene líneas guardadas: nada queda «igual».
+    assertAtCostRequest(actor, input.items, []);
     const today = businessToday();
     const { saleId, documentId } = await this.prisma.$transaction(
       async (tx) => {
@@ -254,6 +258,8 @@ export class PosService {
               unitPricePen: i.unitPricePen,
               // cc27 (D-452): el precio con IGV tipeado en caja, como en la cotización (D-255).
               unitPriceWithIgvPen: i.unitPriceWithIgvPen,
+              // cc52 (D-643): «A costo», solo ADMINISTRADOR (comprobado arriba, antes del piso).
+              ...(i.atCost ? { atCost: i.atCost } : {}),
             })),
           },
           { counterSale: true },

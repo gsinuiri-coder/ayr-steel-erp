@@ -227,12 +227,15 @@ describe('OpeningDateMoveService (D-285)', () => {
       ADMIN,
       'di-1',
       ADDED_OUT_REASON,
+      { acceptBackdatedCost: true },
     );
     expect(invoiceDispatch.executeInTx).toHaveBeenCalledWith(
       tx,
       ADMIN,
       'F1',
       expect.objectContaining({ number: 'FFA1-1' }),
+      undefined,
+      { acceptBackdatedCost: true },
     );
   });
 

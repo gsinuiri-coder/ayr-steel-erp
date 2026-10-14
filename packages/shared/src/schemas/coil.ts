@@ -12,7 +12,7 @@ import {
   PRODUCTION_ORDER_KINDS,
   PRODUCTION_ORDER_STATUSES,
 } from '../enums';
-import { backdatableFields } from './operation';
+import { backdatableFields, operationDateSchema } from './operation';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
 
@@ -109,34 +109,45 @@ export type CoilDto = z.infer<typeof coilSchema>;
 /** D-323: columnas de la lista de bobinas que se ordenan en el servidor (el disponible no: vive en el kardex). */
 export const COIL_SORT_KEYS = ['code', 'status'] as const;
 
-export const coilQuerySchema = paginationQuerySchema.extend({
-  ...sortQueryFields(COIL_SORT_KEYS),
-  businessLine: z.enum(BUSINESS_LINES).optional(),
-  finishId: z.string().uuid().optional(),
-  thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
-  status: statusListSchema(COIL_STATUSES),
-  /**
-   * Exclusión puntual de un estado (Fase 7e, D-121). La pestaña "Disponibles" de la vista
-   * necesita "cualquier estado salvo en corte tercerizado"; agregar un segundo eje de
-   * filtro es más simple que convertir `status` en lista y tener que decidir qué hace la
-   * combinación de las dos formas.
-   */
-  statusNe: z.enum(COIL_STATUSES).optional(),
-  /** D-328: solo las selladas o solo las abiertas (implica `status = OPEN`). */
-  film: z.enum(COIL_FILM_STATES).optional(),
-  supplierId: z.string().uuid().optional(),
-  /** D-049: filtra bobinas (`COIL`) o flejes (`STRIP`); sin filtro trae ambos. */
-  kind: z.enum(COIL_KINDS).optional(),
-  /** D-085: filtra por color. `sin-color` trae las que no lo tienen (galvanizadas). */
-  colorId: z.union([z.literal('sin-color'), z.string().uuid()]).optional(),
-  /**
-   * Saldo disponible según el kardex (Fase 7e, D-121): `available` es saldo > 0,
-   * `depleted` es saldo ≤ 0 (incluye anuladas, que quedan en cero por la reversa de
-   * RF-21). Sin filtro trae ambas.
-   */
-  availability: z.enum(['available', 'depleted']).optional(),
-  search: z.string().trim().max(80).optional(),
-});
+export const coilQuerySchema = paginationQuerySchema
+  .extend({
+    ...sortQueryFields(COIL_SORT_KEYS),
+    businessLine: z.enum(BUSINESS_LINES).optional(),
+    finishId: z.string().uuid().optional(),
+    thicknessMm: decimalStringSchema('MM', { positive: true }).optional(),
+    status: statusListSchema(COIL_STATUSES),
+    /**
+     * Exclusión puntual de un estado (Fase 7e, D-121). La pestaña "Disponibles" de la vista
+     * necesita "cualquier estado salvo en corte tercerizado"; agregar un segundo eje de
+     * filtro es más simple que convertir `status` en lista y tener que decidir qué hace la
+     * combinación de las dos formas.
+     */
+    statusNe: z.enum(COIL_STATUSES).optional(),
+    /** D-328: solo las selladas o solo las abiertas (implica `status = OPEN`). */
+    film: z.enum(COIL_FILM_STATES).optional(),
+    supplierId: z.string().uuid().optional(),
+    /** D-049: filtra bobinas (`COIL`) o flejes (`STRIP`); sin filtro trae ambos. */
+    kind: z.enum(COIL_KINDS).optional(),
+    /** D-085: filtra por color. `sin-color` trae las que no lo tienen (galvanizadas). */
+    colorId: z.union([z.literal('sin-color'), z.string().uuid()]).optional(),
+    /**
+     * Saldo disponible según el kardex (Fase 7e, D-121): `available` es saldo > 0,
+     * `depleted` es saldo ≤ 0 (incluye anuladas, que quedan en cero por la reversa de
+     * RF-21). Sin filtro trae ambas.
+     */
+    availability: z.enum(['available', 'depleted']).optional(),
+    search: z.string().trim().max(80).optional(),
+    /**
+     * cc52 (D-642): «Fecha de ingreso», desde y hasta (inclusive), por el día de negocio en que
+     * la bobina entró (`operationDate`), no por el instante de grabación (D-124).
+     */
+    receivedFrom: operationDateSchema.optional(),
+    receivedTo: operationDateSchema.optional(),
+  })
+  .refine((q) => !q.receivedFrom || !q.receivedTo || q.receivedFrom <= q.receivedTo, {
+    message: 'La fecha de ingreso «Desde» es posterior a «Hasta»',
+    path: ['receivedTo'],
+  });
 export type CoilQuery = z.infer<typeof coilQuerySchema>;
 
 // --------------------------------------------------------------------------

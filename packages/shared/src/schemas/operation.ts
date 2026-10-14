@@ -56,9 +56,19 @@ export const DEFAULT_HISTORICAL_LOAD_START = '2026-08-01';
  */
 export const BACKDATE_OUT_OF_ORDER = 'BACKDATE_OUT_OF_ORDER';
 
+/**
+ * cc52 (D-648): código del rechazo de una **salida** con fecha atrasada que el kardex valorizaría
+ * al promedio de hoy cuando a su fecha el promedio era otro (porque después de esa fecha ya hay
+ * entradas o ajustes registrados). Un ADMINISTRADOR puede registrarla igual con
+ * `acceptBackdatedCost`; queda en la auditoría con los dos costos. Se quita con el recosteo (cc53).
+ */
+export const BACKDATE_COST_MISMATCH = 'BACKDATE_COST_MISMATCH';
+
 export const backdatableFields = {
   operationDate: operationDateSchema.optional(),
   confirmBackdate: z.boolean().optional(),
+  /** cc52 (D-648): «Registrar igual» una salida atrasada que cambia de costo. Solo ADMINISTRADOR. */
+  acceptBackdatedCost: z.boolean().optional(),
 } as const;
 
 export const backdatableSchema = z.object(backdatableFields);

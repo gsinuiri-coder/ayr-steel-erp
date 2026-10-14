@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { Currency, Prisma } from '@prisma/client';
-import { coilCode, coilSku, coilSkuFromTypeKey, coilTypeKey } from '@ayr/shared';
+import { coilCode, coilQuerySchema, coilSku, coilSkuFromTypeKey, coilTypeKey } from '@ayr/shared';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoilsService, type CreateCoilInput } from './coils.service';
@@ -198,6 +198,36 @@ describe('CoilsService — film de protección (D-328)', () => {
     await service.findAll({ page: 1, pageSize: 20 });
     const where = (count.mock.calls as { where: Record<string, unknown> }[][])[0]![0]!.where;
     expect(where.AND).toBeUndefined();
+    expect(where.operationDate).toBeUndefined();
+  });
+
+  it.each([
+    [
+      { receivedFrom: '2026-09-01', receivedTo: '2026-09-30' },
+      { gte: '2026-09-01', lte: '2026-09-30' },
+    ],
+    [{ receivedFrom: '2026-09-01' }, { gte: '2026-09-01' }],
+    [{ receivedTo: '2026-09-30' }, { lte: '2026-09-30' }],
+  ])(
+    'cc52 (D-642): la fecha de ingreso %j filtra por el día de negocio',
+    async (range, expected) => {
+      const count = jest.fn().mockResolvedValue(0);
+      const service = serviceWith({ coil: { count, findMany: jest.fn().mockResolvedValue([]) } });
+      await service.findAll({ ...range, page: 1, pageSize: 20 });
+      const where = (count.mock.calls as { where: Record<string, unknown> }[][])[0]![0]!.where;
+      const asDates = Object.fromEntries(
+        Object.entries(expected).map(([k, v]) => [k, new Date(`${v}T00:00:00.000Z`)]),
+      );
+      expect(where.operationDate).toEqual(asDates);
+    },
+  );
+
+  it('cc52 (D-642): «Desde» posterior a «Hasta» no pasa la validación', () => {
+    const parsed = coilQuerySchema.safeParse({
+      receivedFrom: '2026-10-01',
+      receivedTo: '2026-09-01',
+    });
+    expect(parsed.success).toBe(false);
   });
 });
 

@@ -123,7 +123,11 @@ Reglas de convivencia, sin excepción:
    el cliente no usa la app (como D-437 y D-458). Sin SQL directo contra producción; una migración detiene la sesión y se
    pregunta (y en una sesión desatendida no se hace); credenciales nunca en argv; y si falla el
    deploy, el merge o el smoke, la vuelta atrás es automática (API a la revisión anterior y revert
-   del merge), otro smoke y el registro escrito, sin arreglos en caliente.
+   del merge), otro smoke y el registro escrito, sin arreglos en caliente. **D-644 (cc52): si `smoke:prod` falla SOLO en «web publicada» y la API (`health` con el sha
+   esperado) y todas las lecturas están en verde, no se hace vuelta atrás**: se reintenta el
+   despliegue de la web (un PR que vuelva a disparar Vercel, p. ej. el de docs o uno con un commit
+   vacío; o el «Redeploy» del dueño en Vercel), se vuelve a correr el smoke y se avisa al dueño.
+   Cualquier otra falla del smoke sigue exigiendo la vuelta atrás.
 
 2. **Credenciales nunca en argv ni impresas.** Los comandos que podrían imprimirlas (p. ej.
    `neonctl`) van en modo silencioso y con `--output json`. Las cadenas de conexión viajan por

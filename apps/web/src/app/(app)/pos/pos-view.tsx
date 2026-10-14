@@ -17,6 +17,7 @@ import {
   type PosPaymentMethod,
   type PosProductDto,
   type PosSaleListItemDto,
+  type StockPanelDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { errorMessage } from '@/lib/notify';
@@ -25,6 +26,7 @@ import { invalidatePos } from '@/lib/pos-queries';
 import {
   listPriceWithIgv,
   posCartTotals,
+  posFloorStatus,
   posLineAmounts,
   posLinePayload,
   seededPriceWithIgv,
@@ -32,6 +34,7 @@ import {
 import { useDebounced } from '@/lib/use-debounced';
 import { useSession } from '@/lib/session';
 import { RoleGate } from '@/components/role-gate';
+import { AtCostControl, type AtCostDraft } from '@/components/sales/at-cost-control';
 import { ContingencyNotice } from '@/components/pos/contingency-notice';
 import { CustomerPicker } from '@/components/pos/customer-picker';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +61,8 @@ interface CartLine {
   qty: string;
   /** Precio unitario **con IGV** (D-452): el que se muestra y se tipea, como en el catálogo. */
   priceWithIgvPen: string;
+  /** cc52 (D-643): la línea a costo, con su motivo (solo ADMINISTRADOR, D-641). */
+  atCost?: AtCostDraft;
 }
 
 function linePrice(line: CartLine) {
@@ -84,6 +89,7 @@ function linePrice(line: CartLine) {
 export function PosView() {
   const queryClient = useQueryClient();
   const { user } = useSession();
+  const isAdmin = user.role === Role.ADMINISTRADOR;
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounced(search.trim(), 300);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -151,6 +157,14 @@ export function PosView() {
             productId: l.product.productId,
             qty: l.qty,
             ...posLinePayload(linePrice(l)),
+            ...(l.atCost
+              ? {
+                  atCost: {
+                    reason: l.atCost.reason,
+                    ...(l.atCost.note === '' ? {} : { note: l.atCost.note }),
+                  },
+                }
+              : {}),
           })),
         },
       }),
@@ -205,12 +219,37 @@ export function PosView() {
     );
   }
 
+  // cc52 (D-643): el piso del mostrador es el de la cotización, y se ve en el carrito: el mínimo
+  // con IGV de cada producto sale del panel de stock (el precio a costo, solo para el
+  // ADMINISTRADOR). Sin esto el cajero lo descubría al cobrar, con el cliente delante.
+  const cartProductIds = cart.map((l) => l.product.productId);
+  const floors = useQuery({
+    queryKey: ['stock-panel', '', cartProductIds.join(',')],
+    queryFn: () =>
+      api<StockPanelDto>(
+        `/sales/stock-panel?${new URLSearchParams({ productIds: cartProductIds.join(',') }).toString()}`,
+      ),
+    enabled: cartProductIds.length > 0,
+  });
+  const floorByProductId = new Map(
+    (floors.data?.products ?? []).map((row) => [row.productId, row]),
+  );
+  const floorOf = (l: CartLine) =>
+    posFloorStatus(l.priceWithIgvPen, floorByProductId.get(l.product.productId), Boolean(l.atCost));
+  const belowFloor = cart.some((l) => floorOf(l)?.below === true);
+
   const missingPrice = cart.some((l) => posLinePayload(linePrice(l)) === null);
   const badQty = cart.some(
     (l) =>
       !isPositiveDecimal(l.qty) || toDecimal(l.qty.trim()).gt(new Decimal(l.product.availableQty)),
   );
-  const canSell = cart.length > 0 && method !== null && !missingPrice && !badQty && !sell.isPending;
+  const canSell =
+    cart.length > 0 &&
+    method !== null &&
+    !missingPrice &&
+    !badQty &&
+    !belowFloor &&
+    !sell.isPending;
 
   if (context.isPending) return <Skeleton className="h-64 w-full" />;
 
@@ -418,6 +457,7 @@ export function PosView() {
                       isPositiveDecimal(line.qty) &&
                       toDecimal(line.qty.trim()).gt(new Decimal(line.product.availableQty));
                     const amounts = lineAmounts[i] ?? null;
+                    const floor = floorOf(line);
                     return (
                       <li key={line.product.productId} className="grid gap-1.5">
                         <div className="flex items-baseline justify-between gap-2">
@@ -457,6 +497,7 @@ export function PosView() {
                               id={`price-${line.product.productId}`}
                               inputMode="decimal"
                               value={line.priceWithIgvPen}
+                              aria-invalid={floor?.below === true}
                               onChange={(e) => {
                                 setLine(line.product.productId, {
                                   priceWithIgvPen: e.target.value,
@@ -464,6 +505,42 @@ export function PosView() {
                               }}
                             />
                           </div>
+                        </div>
+                        {floor && (
+                          <p
+                            className={
+                              floor.below
+                                ? 'text-right text-xs text-destructive'
+                                : 'text-right text-xs text-muted-foreground'
+                            }
+                            data-testid={`pos-line-floor-${line.product.sku}`}
+                          >
+                            {floor.atCost ? 'A costo' : 'Mínimo'}: {formatMoney(floor.minPricePen)}{' '}
+                            con IGV
+                            {floor.below &&
+                              (floor.atCost
+                                ? ' · por debajo del costo no se vende'
+                                : ' · por debajo del piso')}
+                          </p>
+                        )}
+                        <div className="flex justify-end">
+                          <AtCostControl
+                            atCost={line.atCost}
+                            canMark={isAdmin}
+                            atCostPricePen={
+                              floorByProductId.get(line.product.productId)?.atCostPricePen ?? null
+                            }
+                            unitLabel={`por ${unitSymbol(line.product.unit)}`}
+                            onMark={(mark, pricePen) => {
+                              setLine(line.product.productId, {
+                                atCost: mark,
+                                priceWithIgvPen: pricePen,
+                              });
+                            }}
+                            onClear={() => {
+                              setLine(line.product.productId, { atCost: undefined });
+                            }}
+                          />
                         </div>
                         <div className="flex justify-between text-xs text-muted-foreground">
                           <span>Importe (con IGV)</span>

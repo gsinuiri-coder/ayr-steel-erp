@@ -1,3 +1,4 @@
+import type { AuditService } from '../audit/audit.service';
 import { Prisma } from '@prisma/client';
 import { Decimal, equivalentMeters } from '@ayr/shared';
 import type { Env } from '../config/env';
@@ -42,7 +43,11 @@ function service(): InventoryService {
       ]),
     },
   } as unknown as PrismaService;
-  const svc = new InventoryService(prisma, { ROOFING_THICKNESS_TOLERANCE_MM: '' } as Env);
+  const svc = new InventoryService(
+    prisma,
+    { ROOFING_THICKNESS_TOLERANCE_MM: '' } as Env,
+    {} as AuditService,
+  );
   const internals = svc as unknown as {
     resolveItemLabels: () => Promise<Map<string, { name: string; code: string }>>;
     reservedByItem: () => Promise<Map<string, Decimal>>;

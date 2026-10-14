@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
 
 /**
  * Terminar una bobina con saldo (RF-19, **D-164**; en pantalla «terminar», antes «cerrar», D-328):
@@ -92,7 +92,7 @@ export function CoilCloseDialog({
   const exceedsIntake = physical?.gt(new Decimal(coil.weightKg)) ?? false;
 
   const close = useMutation({
-    mutationFn: (confirmBackdate: boolean) =>
+    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
       api<CoilDto>(`/coils/${coil.id}/status`, {
         method: 'POST',
         body: {
@@ -101,6 +101,7 @@ export function CoilCloseDialog({
           reason: reason.trim() || undefined,
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
+          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: () => {
@@ -110,8 +111,8 @@ export function CoilCloseDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo terminar la bobina')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await close.mutateAsync(confirmBackdate);
+  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+    await close.mutateAsync({ confirmBackdate, acceptBackdatedCost });
   });
 
   return (
@@ -227,6 +228,7 @@ export function CoilCloseDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
+        costMismatch={backdate.costMismatch}
         pending={close.isPending}
         onConfirm={() => {
           void backdate.confirm();

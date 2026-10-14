@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { InventoryStrategy, type Prisma } from '@prisma/client';
@@ -158,6 +159,7 @@ describe('InventoryService (§3.2, D-028)', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         InventoryService,
+        { provide: AuditService, useValue: { write: jest.fn() } },
         { provide: PrismaService, useValue: {} },
         // D-134: el servicio lee la tolerancia de espesor para la invariante del agregado.
         // El doble solo necesita la clave que `roofingToleranceMm` mira.
@@ -265,6 +267,7 @@ describe('InventoryService (§3.2, D-028)', () => {
       const moduleRef = await Test.createTestingModule({
         providers: [
           InventoryService,
+          { provide: AuditService, useValue: { write: jest.fn() } },
           { provide: PrismaService, useValue: prisma },
           { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
         ],
@@ -667,6 +670,7 @@ describe('InventoryService.replaceEntry (D-382)', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         InventoryService,
+        { provide: AuditService, useValue: { write: jest.fn() } },
         { provide: PrismaService, useValue: {} },
         { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
       ],
@@ -848,6 +852,7 @@ describe('InventoryService.lockInOrder', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         InventoryService,
+        { provide: AuditService, useValue: { write: jest.fn() } },
         { provide: PrismaService, useValue: {} },
         { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
       ],
@@ -945,6 +950,7 @@ describe('InventoryService.reverse — valor negativo (D-382, camino compartido)
     const moduleRef = await Test.createTestingModule({
       providers: [
         InventoryService,
+        { provide: AuditService, useValue: { write: jest.fn() } },
         { provide: PrismaService, useValue: {} },
         { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
       ],

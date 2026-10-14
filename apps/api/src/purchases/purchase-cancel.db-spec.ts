@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service';
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import type { Env } from '../config/env';
@@ -20,6 +21,7 @@ const inventory = new InventoryService(
   {
     ROOFING_THICKNESS_TOLERANCE_MM: '0.02',
   } as Env,
+  new AuditService(prisma as unknown as PrismaService),
 );
 
 let businessLineId = '';

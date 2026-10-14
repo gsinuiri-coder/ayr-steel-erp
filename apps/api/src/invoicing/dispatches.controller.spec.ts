@@ -50,6 +50,8 @@ describe('DispatchesController — roles del despacho a la fecha del comprobante
       actor,
       '00000000-0000-4000-8000-000000000001',
       '2026-09-29',
+      // cc52 (D-648): sin «Registrar igual» salvo que el cuerpo lo pida.
+      { acceptBackdatedCost: undefined },
     );
   });
 

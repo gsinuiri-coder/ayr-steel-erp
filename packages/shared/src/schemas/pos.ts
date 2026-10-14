@@ -9,6 +9,7 @@ import {
 } from '../decimal';
 import { BUSINESS_LINES, DOC_TYPES, PaymentMethod, type PaymentMethod as Method } from '../enums';
 import { reasonSchema } from './coil';
+import { atCostInputSchema } from './sales';
 
 /**
  * Punto de venta de mostrador (RF-60; D-098..D-104).
@@ -204,6 +205,11 @@ export const posSaleItemInputSchema = z
      * deriva; lo guardado sigue sin IGV. Se manda uno de los dos precios, nunca ambos.
      */
     unitPriceWithIgvPen: positiveMoneySchema.optional(),
+    /**
+     * cc52 (D-643): vender la línea a costo, con motivo; solo ADMINISTRADOR (D-641). El API la
+     * comprueba con el mismo piso a margen cero.
+     */
+    atCost: atCostInputSchema.optional(),
   })
   // cc28 (A-2 de cc27): un campo que el API no conoce es un 400, nunca un precio de lista
   // silencioso. Un web más nuevo que el API mandaba `unitPriceWithIgvPen` a un API que lo

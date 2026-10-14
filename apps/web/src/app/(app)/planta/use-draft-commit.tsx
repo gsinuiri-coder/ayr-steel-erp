@@ -84,6 +84,8 @@ export function useDraftCommit(input: {
   const reason = useRef<string | null>(null);
   const closing = useRef(false);
   const backdate = useRef(false);
+  /** cc52 (D-648): «Registrar igual» una salida atrasada que cambia de costo. */
+  const acceptCost = useRef(false);
 
   const submitKey = useIdempotencyKey();
   const body = (close: boolean) => {
@@ -94,6 +96,7 @@ export function useDraftCommit(input: {
       ...(toleranceOverrides.length > 0 ? { toleranceOverrides } : {}),
       operationDate,
       confirmBackdate: backdate.current || undefined,
+      acceptBackdatedCost: acceptCost.current || undefined,
       // D-182: la clave va atada a lo que se registra, no solo a si cierra.
       idempotencyKey: submitKey.current(
         JSON.stringify({
@@ -162,8 +165,9 @@ export function useDraftCommit(input: {
     onError,
   });
 
-  const run = useBackdateConfirm(async (confirmBackdate) => {
+  const run = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
     backdate.current = confirmBackdate;
+    acceptCost.current = acceptBackdatedCost;
     if (closing.current) await previewClose.mutateAsync();
     else await commit.mutateAsync(false);
   });
@@ -181,6 +185,7 @@ export function useDraftCommit(input: {
     setAskingReason,
     reason,
     backdate,
+    acceptCost,
     closing,
   };
 }
