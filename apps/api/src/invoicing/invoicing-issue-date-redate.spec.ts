@@ -82,7 +82,9 @@ describe('InvoicingService.updateManualIssueDate — despachos a la fecha del co
   it('con «sí»: re-fecha después de mover la fecha, en la misma transacción (60 s)', async () => {
     const { svc, tx, prisma, invoiceDispatch } = build(AUTO);
     await svc.updateManualIssueDate(ADMIN, 'F1', { ...input, redateDispatches: true });
-    expect(invoiceDispatch.redateInTx).toHaveBeenCalledWith(tx, ADMIN, 'F1');
+    expect(invoiceDispatch.redateInTx).toHaveBeenCalledWith(tx, ADMIN, 'F1', {
+      acceptBackdatedCost: undefined,
+    });
     expect(tx.fiscalDocument.update.mock.invocationCallOrder[0]).toBeLessThan(
       invoiceDispatch.redateInTx.mock.invocationCallOrder[0]!,
     );
