@@ -101,6 +101,10 @@ function fakeClient(rows: Row[]) {
   });
   return {
     fiscalDocumentItem: { groupBy } as unknown as Prisma.TransactionClient['fiscalDocumentItem'],
+    // cc52 (D-646): sin devoluciones vigentes.
+    salesReturnItem: {
+      findMany: jest.fn().mockResolvedValue([]),
+    } as unknown as Prisma.TransactionClient['salesReturnItem'],
     groupBy,
   };
 }
@@ -352,6 +356,7 @@ async function resolve(rows: Row[], qty: string, order = orderItem): Promise<Res
   const tx = {
     salesOrderItem: { findMany: jest.fn().mockResolvedValue([order]) },
     fiscalDocumentItem: client.fiscalDocumentItem,
+    salesReturnItem: client.salesReturnItem,
   };
   return service.resolveLines(tx, {
     salesOrderId: 'o-1',
@@ -497,6 +502,7 @@ describe('orderProgress y la reválida al emitir usan la misma función — D-34
         },
         dispatchItem: { groupBy: jest.fn().mockResolvedValue([]) },
         fiscalDocumentItem: client.fiscalDocumentItem,
+        salesReturnItem: client.salesReturnItem,
       },
       itemLabels: jest.fn().mockResolvedValue(new Map()),
     });
@@ -557,6 +563,7 @@ describe('orderProgress y la reválida al emitir usan la misma función — D-34
           ]),
         },
         fiscalDocumentItem: client.fiscalDocumentItem,
+        salesReturnItem: client.salesReturnItem,
       };
       return service.assertStillAvailable(tx, {
         id: 'draft-1',
@@ -592,6 +599,7 @@ describe('orderProgress y la reválida al emitir usan la misma función — D-34
           },
           salesOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
           fiscalDocumentItem: fakeClient([]).fiscalDocumentItem,
+          salesReturnItem: fakeClient([]).salesReturnItem,
         };
         return service.assertStillAvailable(tx, {
           id: 'draft-1',

@@ -222,6 +222,7 @@ export class InvoicingController {
     @CurrentUser() actor: RequestUser,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<SalesReturnDto> {
+    await this.salesReturns.assertSellerAccessTo(actor, id);
     const dto = await this.salesReturns.findOne(id);
     if (actor.role === Role.ADMINISTRADOR) return dto;
     return {

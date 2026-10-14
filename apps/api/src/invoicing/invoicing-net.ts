@@ -56,3 +56,29 @@ export async function invoicedByOrderItem(
   ]);
   return netInvoicedByItem(emitted, credited);
 }
+
+/**
+ * cc52 (D-646): lo **devuelto** por una NC de devolución vigente se deshizo como venta: no vuelve a
+ * quedar pendiente de facturar (se refacturaría mercadería que ya volvió al almacén). La NC lo restó
+ * de lo facturado; el tope de facturación y el avance del pedido lo suman como consumido, solo en
+ * cantidad. La anulación del pedido no lo usa: para ella, lo acreditado no factura nada.
+ */
+export async function withReturnedQty(
+  client: Pick<Prisma.TransactionClient, 'salesReturnItem'>,
+  net: Map<string, NetInvoiced>,
+  itemIds: readonly string[],
+): Promise<Map<string, NetInvoiced>> {
+  if (itemIds.length === 0) return net;
+  const returned = await client.salesReturnItem.findMany({
+    where: {
+      dispatchItem: { salesOrderItemId: { in: [...itemIds] } },
+      salesReturn: { status: 'ACTIVE' },
+    },
+    select: { qty: true, dispatchItem: { select: { salesOrderItemId: true } } },
+  });
+  for (const r of returned) {
+    const entry = net.get(r.dispatchItem.salesOrderItemId);
+    if (entry) entry.qty = entry.qty.plus(r.qty.toString());
+  }
+  return net;
+}

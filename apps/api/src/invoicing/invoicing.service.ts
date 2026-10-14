@@ -93,7 +93,7 @@ import {
   partKind,
   pendingWithDrafts,
 } from './invoicing-math';
-import { invoicedByOrderItem } from './invoicing-net';
+import { invoicedByOrderItem, withReturnedQty } from './invoicing-net';
 import { dispatchLinksByDocument } from './document-dispatches';
 import {
   ELECTRONIC_INVOICING_PROVIDER,
@@ -824,7 +824,11 @@ export class InvoicingService {
     // comprobantes vivos. Un rechazado nunca existió para SUNAT y un anulado dejó de existir;
     // ninguno de los dos consume pedido, y lo que una NC viva devolvió se puede facturar de nuevo.
     // Es la misma función que alimenta `orderProgress`.
-    const invoicedNet = await invoicedByOrderItem(tx, orderItemIds);
+    const invoicedNet = await withReturnedQty(
+      tx,
+      await invoicedByOrderItem(tx, orderItemIds),
+      orderItemIds,
+    );
     const invoicedByItem = new Map(
       [...invoicedNet].map(([id, net]) => [id, net.qty] as [string, Decimal]),
     );
@@ -1163,6 +1167,13 @@ export class InvoicingService {
       // comprueba ya acá para no dejar un borrador que después no se pueda registrar; el registro
       // lo vuelve a comprobar con los despachos bloqueados.
       if (isReturnCreditNoteReason(input.reason)) {
+        // Revisión de cc52 (P2): sobre un comprobante emitido por el ERP la NC se enviaría al PSE,
+        // y la de devolución solo se registra a mano: se avisa ya, no con un borrador atascado.
+        if (affected.origin !== FiscalDocumentOrigin.MANUAL) {
+          throw new BadRequestException(
+            'La devolución de mercadería se registra con una nota de crédito manual: este comprobante no es manual',
+          );
+        }
         await this.salesReturns.planForLines(
           tx,
           lines.map((l) => ({
@@ -1170,6 +1181,7 @@ export class InvoicingService {
             orderItemId: l.original.salesOrderItemId,
             qty: l.qty,
           })),
+          { affectedInvoiceId: affected.id, asOf: input.issueDate },
         );
       }
 
@@ -1311,12 +1323,16 @@ export class InvoicingService {
       const returning =
         document.docType === FiscalDocType.NOTA_CREDITO &&
         isReturnCreditNoteReason(document.creditNoteReason);
+      const returnDispatchIds = returning
+        ? await this.salesReturns.dispatchIdsForCreditNote(tx, id)
+        : [];
       await lockDocuments(tx, {
-        ...(returning
-          ? { dispatches: await this.salesReturns.dispatchIdsForCreditNote(tx, id) }
-          : {}),
+        ...(returning ? { dispatches: returnDispatchIds } : {}),
         salesOrders: [document.salesOrderId],
       });
+      // Revisión de cc52 (P2): la fecha de la NC es la del reingreso al kardex; quien la registra
+      // tiene que poder fechar así (solo ADMINISTRADOR fecha otro día que hoy, D-124/D-133).
+      if (returning) this.operationDate.assertIssueDate(actor, fromDateOnly(document.issueDate));
       await this.assertStillAvailable(tx, document);
 
       const number = fiscalDocumentNumber(input.series, input.correlative);
@@ -1355,7 +1371,9 @@ export class InvoicingService {
       }
       // cc52 (D-646): la NC de devolución, ya aceptada, genera su devolución en la misma
       // transacción: si el reingreso no se puede, la NC tampoco queda registrada.
-      if (returning) await this.salesReturns.createForCreditNoteInTx(tx, actor, id);
+      if (returning) {
+        await this.salesReturns.createForCreditNoteInTx(tx, actor, id, returnDispatchIds);
+      }
     });
 
     return this.findOne(id);
@@ -1628,6 +1646,19 @@ export class InvoicingService {
           },
         });
         // Después de mover la fecha: el plan del despacho nuevo lee la emisión corregida.
+        // Revisión de cc52 (P2): re-fechar revierte el despacho, del que una devolución ya tomó su
+        // costo y su enlace: con una devolución vigente, primero se anula su NC.
+        if (input.redateDispatches === true && atIssueDate.length > 0) {
+          const withReturn = await tx.salesReturn.findFirst({
+            where: { status: 'ACTIVE', creditNote: { affectedDocumentId: id } },
+            select: { seq: true },
+          });
+          if (withReturn) {
+            throw new ConflictException(
+              `La devolución ${salesReturnCode(withReturn.seq)} salió de estos despachos: anula su nota de crédito antes de re-fecharlos`,
+            );
+          }
+        }
         if (input.redateDispatches === true && atIssueDate.length > 0) {
           try {
             await this.invoiceDispatch.redateInTx(tx, actor, id, {
@@ -2115,7 +2146,11 @@ export class InvoicingService {
     }
     // D-346: la misma función neta de NC que el guard de creación; con otra, un borrador que
     // pasó la creación después de una NC se rechazaba justo al emitir.
-    const invoicedById = await invoicedByOrderItem(tx, ids, { excludeDocumentId: document.id });
+    const invoicedById = await withReturnedQty(
+      tx,
+      await invoicedByOrderItem(tx, ids, { excludeDocumentId: document.id }),
+      ids,
+    );
     for (const item of document.items) {
       if (!item.salesOrderItemId) continue;
       const orderItem = orderItems.find((o) => o.id === item.salesOrderItemId);
@@ -3339,7 +3374,11 @@ export class InvoicingService {
     // (D-346, deuda de D-223): lo que una NC devolvió vuelve a quedar pendiente de facturar.
     // Es la misma función que usa el guard de `resolveLines`, para que la pantalla y el tope
     // no puedan discrepar.
-    const invoicedByItem = await invoicedByOrderItem(this.prisma, itemIds);
+    const invoicedByItem = await withReturnedQty(
+      this.prisma,
+      await invoicedByOrderItem(this.prisma, itemIds),
+      itemIds,
+    );
 
     const labels = await this.itemLabels(order.items);
 

@@ -24,6 +24,7 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { assertSellerAccess } from '../auth/seller-scope';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -77,7 +78,7 @@ export class SalesReturnsService {
         qty: true,
         reserveQty: true,
         movementId: true,
-        dispatch: { select: { seq: true, dispatchDate: true } },
+        dispatch: { select: { seq: true, dispatchDate: true, invoiceId: true } },
         salesReturnItems: {
           where: { salesReturn: { status: SalesReturnStatus.ACTIVE } },
           select: { qty: true, reserveQty: true, totalCost: true },
@@ -102,6 +103,7 @@ export class SalesReturnsService {
         dispatchCode: dispatchCode(r.dispatch.seq),
         dispatchDate: fromDateOnly(r.dispatch.dispatchDate),
         dispatchSeq: r.dispatch.seq,
+        invoiceId: r.dispatch.invoiceId,
         itemType: r.itemType,
         itemId: r.itemId,
         qty: toDecimal(r.qty.toString()),
@@ -127,6 +129,7 @@ export class SalesReturnsService {
   async planForLines(
     tx: Prisma.TransactionClient,
     lines: readonly { lineNumber: number; orderItemId: string | null; qty: string }[],
+    options: { affectedInvoiceId?: string | null; asOf?: string } = {},
   ): Promise<ReturnAllocation[][]> {
     const stock = await this.stockByOrderItem(
       tx,
@@ -154,7 +157,7 @@ export class SalesReturnsService {
             }
           : s;
       });
-      const plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available);
+      const plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available, options);
       for (const a of plan) {
         const prev = usedHere.get(a.stock.dispatchItemId);
         usedHere.set(a.stock.dispatchItemId, {
@@ -194,6 +197,8 @@ export class SalesReturnsService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     noteId: string,
+    /** Los despachos que el llamador bloqueó: el plan no puede salir de otro (P2 de cc52). */
+    lockedDispatchIds: readonly string[],
   ): Promise<string | null> {
     const note = await tx.fiscalDocument.findUniqueOrThrow({
       where: { id: noteId },
@@ -225,7 +230,14 @@ export class SalesReturnsService {
         orderItemId: i.salesOrderItemId,
         qty: i.qty.toString(),
       })),
+      { affectedInvoiceId: note.affectedDocument?.id ?? null, asOf: operationDate },
     );
+    const locked = new Set(lockedDispatchIds);
+    if (plans.flat().some((a) => !locked.has(a.stock.dispatchId))) {
+      throw new ConflictException(
+        'Entró un despacho nuevo de este pedido mientras se registraba la nota de crédito: vuelve a intentarlo',
+      );
+    }
     // Regla dura 17: bobinas y saldos de toda la operación, en orden, antes de escribir.
     await this.inventory.lockInOrder(tx, {
       items: plans.flat().map((a) => ({
@@ -541,6 +553,16 @@ export class SalesReturnsService {
       });
     }
     return coils.map((c) => c.code);
+  }
+
+  /** RF-S3c (revisión de cc52, P3): el vendedor solo ve las devoluciones de sus pedidos. */
+  async assertSellerAccessTo(actor: RequestUser, id: string): Promise<void> {
+    const found = await this.prisma.salesReturn.findUnique({
+      where: { id },
+      select: { salesOrder: { select: { sellerId: true } } },
+    });
+    if (found === null) throw new NotFoundException('Devolución no encontrada');
+    assertSellerAccess(actor, found.salesOrder.sellerId, 'Devolución');
   }
 
   /** El documento de devolución, para su pantalla. */

@@ -9,6 +9,7 @@ function stock(over: Partial<DispatchLineStock> & { dispatchCode: string }): Dis
     dispatchId: `d-${over.dispatchCode}`,
     dispatchDate: '2026-09-10',
     dispatchSeq: 1,
+    invoiceId: null,
     itemType: 'PRODUCT',
     itemId: 'p-1',
     qty: D('5'),
@@ -100,6 +101,22 @@ describe('planReturnAllocation (cc52, D-646)', () => {
       'una bobina se devuelve entera',
     );
     expect(planReturnAllocation(1, D('1'), [coil])[0]?.reserveQty.toFixed(3)).toBe('2000.000');
+  });
+
+  it('primero los despachos del comprobante acreditado; nunca uno posterior a la NC', () => {
+    const stock3 = [
+      stock({ dispatchCode: 'DES-1', dispatchDate: '2026-09-10', invoiceId: 'F1' }),
+      stock({ dispatchCode: 'DES-2', dispatchDate: '2026-09-15', dispatchSeq: 2, invoiceId: 'F2' }),
+      stock({ dispatchCode: 'DES-3', dispatchDate: '2026-09-30', dispatchSeq: 3, invoiceId: 'F1' }),
+    ];
+    const plan = planReturnAllocation(1, D('2'), stock3, {
+      affectedInvoiceId: 'F1',
+      asOf: '2026-09-20',
+    });
+    expect(plan.map((p) => p.stock.dispatchCode)).toEqual(['DES-1']);
+    expect(() =>
+      planReturnAllocation(1, D('11'), stock3, { affectedInvoiceId: 'F1', asOf: '2026-09-20' }),
+    ).toThrow('hay 10.000 despachado sin devolver');
   });
 
   it('una cantidad cero o negativa no se devuelve', () => {

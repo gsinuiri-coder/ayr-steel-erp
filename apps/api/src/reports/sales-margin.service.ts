@@ -4,7 +4,6 @@ import {
   CREDIT_NOTE_KIND_REASONS,
   Decimal,
   LIVE_DOCUMENT_STATUSES,
-  RETURN_CREDIT_NOTE_REASONS,
   NO_COST_REPORT_LINES,
   salesOrderCode,
   toDateOnly,
@@ -206,7 +205,14 @@ export class SalesMarginService {
         -- vuelve «no comparable» al pedido en el otro periodo: su efecto es solo del suyo.
         AND NOT (
           fd."doc_type" = 'NOTA_CREDITO'
-          AND fd."credit_note_reason"::text = ANY(${COST_DECLARED_CREDIT_REASONS}::text[])
+          AND (
+            fd."credit_note_reason"::text = ANY(${DISCOUNT_CREDIT_REASONS}::text[])
+            -- Una de devolución, solo si de verdad generó su devolución (revisión de cc52, P2).
+            OR EXISTS (
+              SELECT 1 FROM "sales_returns" sr
+              WHERE sr."credit_note_id" = fd."id" AND sr."status" = 'ACTIVE'
+            )
+          )
         )
       GROUP BY fd."sales_order_id"
     `;
@@ -710,11 +716,7 @@ const ZERO = new Decimal(0);
  * mueven mercadería) y las de devolución (el reingreso, imputado a la NC). Su efecto cae entero
  * en su periodo y no vuelven «no comparable» al pedido en el periodo del comprobante.
  */
-const DISCOUNT_CREDIT_REASONS: readonly string[] = CREDIT_NOTE_KIND_REASONS.DISCOUNT;
-const COST_DECLARED_CREDIT_REASONS: string[] = [
-  ...DISCOUNT_CREDIT_REASONS,
-  ...RETURN_CREDIT_NOTE_REASONS,
-];
+const DISCOUNT_CREDIT_REASONS: string[] = [...CREDIT_NOTE_KIND_REASONS.DISCOUNT];
 /** Clave interna del grupo sin línea de negocio. No es un código de línea y no se serializa. */
 const SIN_LINEA = '__sin_linea__';
 

@@ -14,6 +14,8 @@ export interface DispatchLineStock {
   /** `YYYY-MM-DD`. */
   dispatchDate: string;
   dispatchSeq: number;
+  /** El comprobante que declara el despacho (D-205), si lo tiene. */
+  invoiceId: string | null;
   itemType: InventoryItemType;
   itemId: string;
   /** En la unidad de venta. */
@@ -54,13 +56,25 @@ export function planReturnAllocation(
   lineNumber: number,
   qty: Decimal,
   stock: readonly DispatchLineStock[],
+  /**
+   * Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado; y ninguno
+   * posterior a la fecha de la NC (no se devuelve lo que todavía no había salido).
+   */
+  options: { affectedInvoiceId?: string | null; asOf?: string } = {},
 ): ReturnAllocation[] {
   const at = `Línea ${String(lineNumber)}`;
   if (qty.lte(0))
     throw new BadRequestException(`${at}: la cantidad a devolver debe ser mayor a cero`);
-  const ordered = [...stock].sort(
-    (a, b) => b.dispatchDate.localeCompare(a.dispatchDate) || b.dispatchSeq - a.dispatchSeq,
-  );
+  const preferred = (s: DispatchLineStock) =>
+    options.affectedInvoiceId && s.invoiceId === options.affectedInvoiceId ? 0 : 1;
+  const ordered = stock
+    .filter((s) => options.asOf === undefined || s.dispatchDate <= options.asOf)
+    .sort(
+      (a, b) =>
+        preferred(a) - preferred(b) ||
+        b.dispatchDate.localeCompare(a.dispatchDate) ||
+        b.dispatchSeq - a.dispatchSeq,
+    );
   const available = ordered.reduce(
     (acc, s) => acc.plus(Decimal.max(s.qty.minus(s.returnedQty), ZERO)),
     ZERO,

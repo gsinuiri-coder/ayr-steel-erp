@@ -332,6 +332,25 @@ describe('cc52: nota de crédito con devolución', () => {
     expect(r.message).toContain('anula primero su nota de crédito');
   });
 
+  it('lo devuelto no vuelve a quedar pendiente de facturar', async () => {
+    const { invoiceId, orderId } = await sold();
+    await creditNote(invoiceId, 'DEVOLUCION_ITEM', '2');
+    const order = await moduleRef.get(SalesOrdersService).findOne(orderId, admin);
+    const r = await rejection(
+      invoicing.create(
+        admin,
+        createInvoiceSchema.parse({
+          docType: 'FACTURA',
+          customerId,
+          salesOrderId: orderId,
+          issueDate: TODAY,
+          items: [{ salesOrderItemId: order.items[0]?.id ?? '', qty: '2' }],
+        }),
+      ),
+    );
+    expect(r.status).toBe(400);
+  });
+
   it('descuento: solo monto, no mueve el almacén ni crea devolución', async () => {
     const { productId, invoiceId } = await sold();
     const note = await creditNote(invoiceId, 'DESCUENTO_ITEM', '1');

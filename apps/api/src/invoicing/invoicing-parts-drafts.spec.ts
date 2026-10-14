@@ -77,6 +77,7 @@ describe('InvoicingService — la parte que cierra con las otras en borrador (D-
       const tx = {
         salesOrderItem: { findMany: jest.fn().mockResolvedValue([orderItem]) },
         fiscalDocumentItem: { groupBy: groupByWith('salesOrderItemId', drafts) },
+        salesReturnItem: { findMany: jest.fn().mockResolvedValue([]) },
       };
       return service.resolveLines(tx, {
         salesOrderId: 'o-1',
@@ -124,7 +125,8 @@ describe('InvoicingService — la parte que cierra con las otras en borrador (D-
             id: 'f-1',
             number: 'F001-1',
             docType: FiscalDocType.FACTURA,
-            origin: FiscalDocumentOrigin.ISSUED_HERE,
+            // cc52 (D-646): la NC de devolución es sobre un comprobante manual.
+            origin: FiscalDocumentOrigin.MANUAL,
             status: FiscalDocumentStatus.ACCEPTED,
             customerId: 'c-1',
             salesOrderId: 'o-1',
