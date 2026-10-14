@@ -39,6 +39,8 @@ export const AUDIT_ENTITY_TYPES = [
   'finishes',
   'fiscal_documents',
   'fiscal_series',
+  // cc52 (D-648): la excepción «Registrar igual» de una salida atrasada (su id es el del movimiento).
+  'inventory_movements',
   'invoicing_settings',
   'pos_sales',
   'pricing_settings',
@@ -51,6 +53,8 @@ export const AUDIT_ENTITY_TYPES = [
   'quotations',
   'reservations',
   'sales_orders',
+  // cc52 (D-646): el documento de devolución de una nota de crédito.
+  'sales_returns',
   'sales_settings',
   'sessions',
   'suppliers',

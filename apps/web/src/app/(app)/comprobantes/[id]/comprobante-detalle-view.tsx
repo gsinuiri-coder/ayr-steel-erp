@@ -6,8 +6,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import {
+  CREDIT_NOTE_KIND_LABELS,
+  CREDIT_NOTE_KIND_REASONS,
+  CREDIT_NOTE_KINDS,
   CREDIT_NOTE_REASON_LABELS,
-  CREDIT_NOTE_REASONS,
   FISCAL_DOC_TYPE_LABELS,
   FISCAL_DOCUMENT_ORIGIN_LABELS,
   FULL_CREDIT_NOTE_REASONS,
@@ -24,6 +26,7 @@ import {
   hasCollectibleBalance,
   payableBalance,
   toDecimal,
+  type CreditNoteKind,
   type CreditNoteReason,
   type CustomerPaymentDto,
   type FiscalDocumentDto,
@@ -99,6 +102,8 @@ import {
 } from '@/components/invoicing/reactivate-with-order-lines-dialog';
 import { DocumentProfitability } from './document-profitability';
 import { AtCostBadge } from '@/components/sales/at-cost-control';
+import { creditNoteDateError, defaultReasonOfKind } from '@/lib/credit-note-form';
+import { SalesReturnLink } from '@/components/invoicing/sales-return-link';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -121,7 +126,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const [reactivateLinesOpen, setReactivateLinesOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [creditOpen, setCreditOpen] = useState(false);
+  // cc52 (D-646): primero el tipo de nota, después el motivo SUNAT de ese tipo.
+  const [creditKind, setCreditKind] = useState<CreditNoteKind>('ANNUL');
   const [creditReason, setCreditReason] = useState<CreditNoteReason>('ANULACION_OPERACION');
+  // cc52 (D-645): la fecha de la NC, hoy por defecto; solo el ADMINISTRADOR la mueve.
+  const [creditDate, setCreditDate] = useState(businessToday());
   const [creditQty, setCreditQty] = useState<Record<string, string>>({});
   const [payOpen, setPayOpen] = useState(false);
   const [payDate, setPayDate] = useState(businessToday());
@@ -378,7 +387,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         method: 'POST',
         body: {
           reason: creditReason,
-          issueDate: businessToday(),
+          issueDate: creditDate,
           // Sin líneas es total; con líneas, parcial (RF-76).
           ...(items.length > 0 ? { items } : {}),
         },
@@ -588,8 +597,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       : toDecimal(payAmount.trim()).gt(payable)
         ? `Excede el saldo pendiente (${formatMoney(payable.toFixed(4))})`
         : null;
+  const creditDateError = creditNoteDateError(creditDate, d.issueDate, businessToday(), isAdmin);
   const canCreateCreditNote =
-    typedCreditQty.length === validCreditQty.length && (isFullReason || validCreditQty.length > 0);
+    creditDateError === null &&
+    typedCreditQty.length === validCreditQty.length &&
+    (isFullReason || validCreditQty.length > 0);
 
   // F8-S1/M1: un solo `busy` para toda mutación que cambia este comprobante (estado, saldo o
   // cobros). Antes cada botón miraba solo su propio `isPending`, así que "Descartar borrador"
@@ -1194,6 +1206,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                 <TableHead>Número</TableHead>
                 <TableHead>Fecha</TableHead>
                 <TableHead>Estado</TableHead>
+                <TableHead>Devolución</TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
@@ -1208,6 +1221,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   <TableCell>{formatDate(n.issueDate)}</TableCell>
                   <TableCell>
                     <FiscalDocumentStatusBadge status={n.status} />
+                  </TableCell>
+                  {/* cc52 (D-646): la devolución que generó una NC de devolución. */}
+                  <TableCell>
+                    {n.salesReturn ? <SalesReturnLink salesReturn={n.salesReturn} /> : '—'}
                   </TableCell>
                   <TableCell className="text-right">{formatMoney(n.totalPen)}</TableCell>
                 </TableRow>
@@ -1262,6 +1279,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             {d.affectedDocumentNumber}
           </Link>
           {d.creditNoteReason && <> · {CREDIT_NOTE_REASON_LABELS[d.creditNoteReason]}</>}
+          {/* cc52 (D-646): la NC de devolución, con el documento de devolución que generó. */}
+          {d.salesReturn && (
+            <>
+              {' · '}Devolución <SalesReturnLink salesReturn={d.salesReturn} />
+            </>
+          )}
         </div>
       )}
 
@@ -1643,7 +1666,9 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           // `ReasonDialog`.
           if (!open) {
             setCreditQty({});
+            setCreditKind('ANNUL');
             setCreditReason('ANULACION_OPERACION');
+            setCreditDate(businessToday());
           }
         }}
       >
@@ -1657,19 +1682,72 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </DialogHeader>
 
           <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="credit-kind">Tipo de nota</Label>
+                <Select
+                  value={creditKind}
+                  onValueChange={(v) => {
+                    const kind = v as CreditNoteKind;
+                    setCreditKind(kind);
+                    setCreditReason(defaultReasonOfKind(kind));
+                  }}
+                >
+                  <SelectTrigger id="credit-kind" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CREDIT_NOTE_KINDS.map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {CREDIT_NOTE_KIND_LABELS[k]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="credit-date">Fecha de la nota</Label>
+                <Input
+                  id="credit-date"
+                  type="date"
+                  min={d.issueDate}
+                  max={businessToday()}
+                  value={creditDate}
+                  // D-645: solo el ADMINISTRADOR elige otra fecha que hoy; el API rechaza al resto.
+                  disabled={!isAdmin}
+                  onChange={(e) => {
+                    setCreditDate(e.target.value);
+                  }}
+                />
+                {creditDateError !== null && (
+                  <p className="text-destructive text-xs">{creditDateError}</p>
+                )}
+              </div>
+            </div>
+            {creditKind === 'RETURN' && (
+              <p className="text-xs text-muted-foreground">
+                Al registrarla, la mercadería vuelve al almacén con la fecha de la nota y al costo
+                con que salió (documento de devolución). Solo lo despachado y no devuelto.
+              </p>
+            )}
+            {creditKind === 'DISCOUNT' && (
+              <p className="text-xs text-muted-foreground">
+                Solo ajusta el monto; no mueve el almacén.
+              </p>
+            )}
             <div className="space-y-1">
-              <Label>Motivo (catálogo 09 de SUNAT)</Label>
+              <Label htmlFor="credit-reason">Motivo (catálogo 09 de SUNAT)</Label>
               <Select
                 value={creditReason}
                 onValueChange={(v) => {
                   setCreditReason(v as CreditNoteReason);
                 }}
               >
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="credit-reason" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CREDIT_NOTE_REASONS.map((r) => (
+                  {CREDIT_NOTE_KIND_REASONS[creditKind].map((r) => (
                     <SelectItem key={r} value={r}>
                       {CREDIT_NOTE_REASON_LABELS[r]}
                     </SelectItem>

@@ -51,6 +51,7 @@ function build(linked: { id: string; seq: number; atIssueDate: boolean }[]) {
     {} as never,
     { PSE_ENABLED: false } as never,
     invoiceDispatch as never,
+    {} as never,
   );
   jest.spyOn(svc, 'findOne').mockResolvedValue({ id: 'F1' } as never);
   return { svc, tx, prisma, audit, invoiceDispatch };

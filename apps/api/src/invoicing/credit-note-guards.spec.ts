@@ -54,6 +54,7 @@ function invoicing(prisma: unknown, pse = provider()): InvoicingService {
     {} as never,
     { PSE_ENABLED: true } as never,
     {} as never,
+    {} as never,
   );
 }
 
@@ -177,7 +178,11 @@ describe('anular o dar de baja con una NC en borrador (cc33 N3)', () => {
       customerPayment: { count: jest.fn().mockResolvedValue(0) },
     };
     const prisma = { $transaction: (fn: (t: unknown) => Promise<unknown>) => fn(tx) };
-    const service = new FiscalImportService(prisma as never, { write: jest.fn() } as never);
+    const service = new FiscalImportService(
+      prisma as never,
+      { write: jest.fn() } as never,
+      { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+    );
     await expect(service.annulExternal(ACTOR, 'inv-1', 'Prueba')).rejects.toThrow(
       'una nota de crédito en borrador',
     );

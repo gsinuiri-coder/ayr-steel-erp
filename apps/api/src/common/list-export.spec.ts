@@ -90,6 +90,7 @@ describe('los controladores entregan el archivo con el rol del usuario', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const actor = { id: 'u-1', role: Role.VENDEDOR } as never;
     const res = response();

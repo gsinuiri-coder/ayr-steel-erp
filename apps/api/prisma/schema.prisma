@@ -153,6 +153,8 @@ enum InventoryRefType {
   ADJUSTMENT
   /// Carga inicial por importación de planilla (RF-12).
   IMPORT
+  /// cc52 (D-646): reingreso por la devolución de una nota de crédito «Devolución de mercadería».
+  SALES_RETURN
 }
 
 /// Tipo de compra (D-030). Determina qué formulario se usa y qué pasa al recibirla.
@@ -473,20 +475,22 @@ enum ImportBatchStatus {
 }
 
 model User {
-  id                 String        @id @default(uuid()) @db.Uuid
-  email              String        @unique @db.VarChar(160)
-  name               String        @db.VarChar(120)
-  passwordHash       String        @map("password_hash")
-  role               Role
-  active             Boolean       @default(true)
-  mustChangePassword Boolean       @default(false) @map("must_change_password")
-  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
-  sessions           Session[]
+  id                   String        @id @default(uuid()) @db.Uuid
+  email                String        @unique @db.VarChar(160)
+  name                 String        @db.VarChar(120)
+  passwordHash         String        @map("password_hash")
+  role                 Role
+  active               Boolean       @default(true)
+  mustChangePassword   Boolean       @default(false) @map("must_change_password")
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sessions             Session[]
   /// Turnos de caja del punto de venta (Fase 7b, D-101).
-  cashSessions       CashSession[] @relation("CashSessionUser")
-  sellerQuotations   Quotation[]   @relation("QuotationSeller")
-  sellerOrders       SalesOrder[]  @relation("SalesOrderSeller")
+  cashSessions         CashSession[] @relation("CashSessionUser")
+  sellerQuotations     Quotation[]   @relation("QuotationSeller")
+  sellerOrders         SalesOrder[]  @relation("SalesOrderSeller")
+  salesReturnsCreated  SalesReturn[] @relation("SalesReturnCreatedBy")
+  salesReturnsReversed SalesReturn[] @relation("SalesReturnReversedBy")
 
   @@map("users")
 }
@@ -873,34 +877,36 @@ model ImportRow {
 /// es emitir el movimiento inverso apuntando al original con `reversalOfId`.
 /// El único escritor es `InventoryService.record`; ningún módulo inserta aquí directo.
 model InventoryMovement {
-  id             BigInt                @id @default(autoincrement())
-  businessLineId String                @map("business_line_id") @db.Uuid
-  businessLine   BusinessLine          @relation(fields: [businessLineId], references: [id])
-  itemType       InventoryItemType     @map("item_type")
-  itemId         String                @map("item_id") @db.Uuid
-  type           InventoryMovementType
+  id              BigInt                @id @default(autoincrement())
+  businessLineId  String                @map("business_line_id") @db.Uuid
+  businessLine    BusinessLine          @relation(fields: [businessLineId], references: [id])
+  itemType        InventoryItemType     @map("item_type")
+  itemId          String                @map("item_id") @db.Uuid
+  type            InventoryMovementType
   /// Siempre positiva: el sentido lo da `type`. Escala kg (3) sirve también para unidades.
-  qty            Decimal               @db.Decimal(16, 3)
+  qty             Decimal               @db.Decimal(16, 3)
   /// Unidad SUNAT catálogo 03 (KGM, NIU...). Ver `docs/referencias/ubl21-factura.md`.
-  unit           String                @db.VarChar(20)
-  unitCost       Decimal               @map("unit_cost") @db.Decimal(18, 4)
-  totalCost      Decimal               @map("total_cost") @db.Decimal(18, 4)
-  refType        InventoryRefType      @map("ref_type")
-  refId          String?               @map("ref_id") @db.VarChar(80)
+  unit            String                @db.VarChar(20)
+  unitCost        Decimal               @map("unit_cost") @db.Decimal(18, 4)
+  totalCost       Decimal               @map("total_cost") @db.Decimal(18, 4)
+  refType         InventoryRefType      @map("ref_type")
+  refId           String?               @map("ref_id") @db.VarChar(80)
   /// Motivo escrito por el usuario: merma (RF-17), anulación (RF-18, RF-21) o ajuste
   /// de costo (D-043). El kardex lo muestra tal cual; no participa de ningún cálculo.
-  notes          String?               @db.VarChar(240)
-  reversalOfId   BigInt?               @map("reversal_of_id")
-  reversalOf     InventoryMovement?    @relation("MovementReversal", fields: [reversalOfId], references: [id])
-  reversals      InventoryMovement[]   @relation("MovementReversal")
-  actorId        String?               @map("actor_id") @db.Uuid
-  at             DateTime              @default(now()) @db.Timestamptz(3)
+  notes           String?               @db.VarChar(240)
+  reversalOfId    BigInt?               @map("reversal_of_id")
+  reversalOf      InventoryMovement?    @relation("MovementReversal", fields: [reversalOfId], references: [id])
+  reversals       InventoryMovement[]   @relation("MovementReversal")
+  /// cc52 (D-646): la línea de devolución que generó este reingreso.
+  salesReturnItem SalesReturnItem?
+  actorId         String?               @map("actor_id") @db.Uuid
+  at              DateTime              @default(now()) @db.Timestamptz(3)
   /// D-124: **día de negocio** del movimiento, en zona de Lima. `at` sigue siendo el
   /// instante en que se grabó (auditoría) y no se toca nunca; `operationDate` es la fecha
   /// que el kardex ordena y que todo reporte filtra y agrupa. Por defecto hoy: el flujo
   /// normal no cambia. Solo un ADMINISTRADOR la puede retrofechar (carga histórica).
   // D-594: la base le pone un DEFAULT (día de Lima, D-124) que este schema no declara a propósito.
-  operationDate  DateTime              @map("operation_date") @db.Date
+  operationDate   DateTime              @map("operation_date") @db.Date
 
   /// Un movimiento se anula una sola vez (Postgres permite varios NULL en un índice único).
   @@unique([reversalOfId])
@@ -1716,6 +1722,7 @@ model SalesOrder {
   reservations    Reservation[]
   fiscalDocuments FiscalDocument[]
   dispatches      Dispatch[]
+  salesReturns    SalesReturn[]
   /// Venta de mostrador que creó este pedido (Fase 7b, D-100). Null en el resto.
   posSale         PosSale?
   /// D-187: cambios de precio de sus líneas después de confirmado.
@@ -2084,6 +2091,8 @@ model FiscalDocument {
   affectedDocumentId String?           @map("affected_document_id") @db.Uuid
   affectedDocument   FiscalDocument?   @relation("AffectedDocument", fields: [affectedDocumentId], references: [id])
   creditNotes        FiscalDocument[]  @relation("AffectedDocument")
+  /// cc52 (D-646): la devolución que generó esta nota de crédito, si es de devolución.
+  salesReturn        SalesReturn?
   creditNoteReason   CreditNoteReason? @map("credit_note_reason")
 
   /// Si este documento nació de corregir uno **rechazado**, apunta al rechazado (D-072).
@@ -2258,6 +2267,7 @@ model FiscalDocumentItem {
   affectedItemId   String?              @map("affected_item_id") @db.Uuid
   affectedItem     FiscalDocumentItem?  @relation("AffectedItem", fields: [affectedItemId], references: [id])
   creditedBy       FiscalDocumentItem[] @relation("AffectedItem")
+  salesReturnItems SalesReturnItem[]
 
   @@unique([documentId, lineNumber])
   @@index([documentId])
@@ -2376,11 +2386,13 @@ model DispatchItem {
 
   /// El par del kardex del que salió el material: el mismo que usan `inventory_balances`
   /// y `reservations` (D-066).
-  itemType   InventoryItemType @map("item_type")
-  itemId     String            @map("item_id") @db.Uuid
+  itemType         InventoryItemType @map("item_type")
+  itemId           String            @map("item_id") @db.Uuid
   /// Movimiento `OUT` que generó esta línea. Null solo en líneas de negocio sin
   /// inventario (`NOOP`, §2.2), donde `InventoryService.record` devuelve null a propósito.
-  movementId BigInt?           @map("movement_id")
+  movementId       BigInt?           @map("movement_id")
+  /// cc52 (D-646): lo devuelto de esta línea por notas de crédito de devolución.
+  salesReturnItems SalesReturnItem[]
 
   @@unique([dispatchId, lineNumber])
   @@index([dispatchId])
@@ -2690,4 +2702,65 @@ model PosSale {
 
   @@index([cashSessionId, status])
   @@map("pos_sales")
+}
+
+/// cc52 (D-646) — estado de una devolución: vigente o revertida (al anular su nota de crédito).
+enum SalesReturnStatus {
+  ACTIVE
+  REVERSED
+}
+
+/// cc52 (D-646) — **devolución de mercadería** que genera una nota de crédito con motivo SUNAT
+/// 06/07 al registrarse. Reingresa al kardex con la fecha de la NC y al costo con que salió cada
+/// línea; se revierte con movimientos inversos al anular la NC (nunca se edita ni se reactiva).
+model SalesReturn {
+  id            String            @id @default(uuid()) @db.Uuid
+  /// `DEV-000001`.
+  seq           Int               @unique @default(autoincrement())
+  creditNoteId  String            @unique @map("credit_note_id") @db.Uuid
+  creditNote    FiscalDocument    @relation(fields: [creditNoteId], references: [id])
+  salesOrderId  String            @map("sales_order_id") @db.Uuid
+  salesOrder    SalesOrder        @relation(fields: [salesOrderId], references: [id])
+  /// La fecha de la NC: la de todo lo que la devolución genera.
+  operationDate DateTime          @map("operation_date") @db.Date
+  status        SalesReturnStatus @default(ACTIVE)
+  createdById   String            @map("created_by_id") @db.Uuid
+  createdBy     User              @relation("SalesReturnCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  reversedAt    DateTime?         @map("reversed_at") @db.Timestamptz(3)
+  reversedById  String?           @map("reversed_by_id") @db.Uuid
+  reversedBy    User?             @relation("SalesReturnReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
+  reverseReason String?           @map("reverse_reason") @db.VarChar(240)
+  items         SalesReturnItem[]
+
+  @@index([salesOrderId])
+  @@map("sales_returns")
+}
+
+/// cc52 (D-646) — una línea devuelta: de qué línea de la NC y de qué línea de despacho sale, cuánto
+/// (en la unidad de venta y en la del kardex) y a qué costo reingresó (el de la salida).
+model SalesReturnItem {
+  id               String             @id @default(uuid()) @db.Uuid
+  salesReturnId    String             @map("sales_return_id") @db.Uuid
+  salesReturn      SalesReturn        @relation(fields: [salesReturnId], references: [id], onDelete: Cascade)
+  lineNumber       Int                @map("line_number")
+  creditNoteItemId String             @map("credit_note_item_id") @db.Uuid
+  creditNoteItem   FiscalDocumentItem @relation(fields: [creditNoteItemId], references: [id])
+  dispatchItemId   String             @map("dispatch_item_id") @db.Uuid
+  dispatchItem     DispatchItem       @relation(fields: [dispatchItemId], references: [id])
+  itemType         InventoryItemType  @map("item_type")
+  itemId           String             @map("item_id") @db.Uuid
+  /// En la unidad de venta.
+  qty              Decimal            @db.Decimal(16, 3)
+  /// En la unidad del kardex.
+  reserveQty       Decimal            @map("reserve_qty") @db.Decimal(16, 3)
+  unitCost         Decimal            @map("unit_cost") @db.Decimal(18, 4)
+  totalCost        Decimal            @map("total_cost") @db.Decimal(18, 4)
+  movementId       BigInt             @unique @map("movement_id")
+  movement         InventoryMovement  @relation(fields: [movementId], references: [id])
+
+  @@unique([salesReturnId, lineNumber])
+  @@index([dispatchItemId])
+  @@index([creditNoteItemId])
+  @@map("sales_return_items")
 }

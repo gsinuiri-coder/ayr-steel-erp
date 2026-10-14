@@ -129,6 +129,7 @@ describe('InvoicingService — la parte que cierra con las otras en borrador (D-
             customerId: 'c-1',
             salesOrderId: 'o-1',
             createdById: ACTOR.id,
+            issueDate: new Date('2026-09-20T00:00:00.000Z'),
             items: [affectedItem],
             salesOrder: { sellerId: ACTOR.id },
             dispatch: null,
@@ -142,6 +143,8 @@ describe('InvoicingService — la parte que cierra con las otras en borrador (D-
         operationDate: { assertIssueDate: jest.fn() },
         prisma: { $transaction: (cb: (t: unknown) => unknown) => cb(tx) },
         audit: { write: jest.fn() },
+        // cc52 (D-646): la devolución se comprueba al crear la NC; acá no es lo que se prueba.
+        salesReturns: { planForLines: jest.fn().mockResolvedValue([]) },
         findOne: jest.fn().mockResolvedValue({ id: 'nc-1' }),
       });
       await service.createCreditNote(ACTOR, 'f-1', {

@@ -82,6 +82,7 @@ describe('InvoicingService.assignInTx — una nota de crédito de un afectado MA
       {} as never,
       { PSE_ENABLED: true } as never,
       {} as never,
+      {} as never,
     );
     const tx = fakeTx(FiscalDocumentOrigin.MANUAL);
 
@@ -105,6 +106,7 @@ describe('InvoicingService.assignInTx — una nota de crédito de un afectado MA
       {} as never,
       {} as never,
       { PSE_ENABLED: true } as never,
+      {} as never,
       {} as never,
     );
     const tx = fakeTx(FiscalDocumentOrigin.ISSUED_HERE);
@@ -143,6 +145,7 @@ describe('InvoicingService.send — PSE_ENABLED (D-216)', () => {
       {} as never,
       {} as never,
       { PSE_ENABLED: false } as never,
+      {} as never,
       {} as never,
     );
 

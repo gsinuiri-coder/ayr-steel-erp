@@ -105,6 +105,8 @@ export const NAV: NavGroup[] = [
       {
         title: 'Comprobantes',
         href: '/comprobantes',
+        // cc52 (D-646): el documento de devolución cuelga de su nota de crédito.
+        activePrefix: ['/comprobantes', '/devoluciones'],
         icon: ReceiptText,
         roles: [Role.ADMINISTRADOR, Role.VENDEDOR],
       },
@@ -347,6 +349,9 @@ export const REF_TARGET_ROLES: Record<RefTargetType, readonly Role[]> = {
   cutting: rolesOfNavItem('/corte'),
   salesOrder: rolesOfNavItem('/pedidos'),
   productionOrder: [Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA],
+  // cc52 (D-646): `/devoluciones` no es ítem de menú; su detalle lo sirve `/invoicing/returns`,
+  // que es comercial: los mismos roles que `/comprobantes`.
+  salesReturn: rolesOfNavItem('/comprobantes'),
 };
 
 /** El comprobante de una venta (D-205): mismos roles que `/comprobantes` en `NAV`. */

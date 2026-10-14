@@ -187,6 +187,7 @@ describe('InvoicingService.exportAll — el Excel es la lista entera (cc26)', ()
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
   });
 

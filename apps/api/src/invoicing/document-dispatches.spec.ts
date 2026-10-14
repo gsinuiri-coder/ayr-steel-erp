@@ -147,6 +147,7 @@ describe('InvoicingService.findAll — despachos del comprobante sin N+1 (Correc
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
   });
 

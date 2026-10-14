@@ -841,8 +841,17 @@ export const fiscalDocumentSchema = z.object({
       status: z.enum(FISCAL_DOCUMENT_STATUSES),
       issueDate: z.string(),
       totalPen: z.string(),
+      /** cc52 (D-646): la devolución que generó, si es una NC de devolución. */
+      salesReturn: z
+        .object({ id: z.string().uuid(), code: z.string(), status: z.enum(['ACTIVE', 'REVERSED']) })
+        .nullable(),
     }),
   ),
+  /** cc52 (D-646): en una NC de devolución, el documento de devolución que generó. */
+  salesReturn: z
+    .object({ id: z.string().uuid(), code: z.string(), status: z.enum(['ACTIVE', 'REVERSED']) })
+    .nullable()
+    .optional(),
   /**
    * F8-S7/M1: correcciones de la fecha de emisión, más reciente primero. Siempre vacío en un
    * comprobante que no sea manual. Se muestra en el detalle y no solo en `audit_log` porque
@@ -1428,3 +1437,53 @@ export const discardDraftSchema = z.object({
   reason: z.string().trim().min(3, 'Explicá el motivo').max(200),
 });
 export type DiscardDraftInput = z.infer<typeof discardDraftSchema>;
+
+// --------------------------------------------------------------------------
+// cc52 (D-646) — devolución de mercadería de una nota de crédito
+// --------------------------------------------------------------------------
+
+export const salesReturnItemSchema = z.object({
+  lineNumber: z.number().int(),
+  /** Línea de la nota de crédito de la que sale. */
+  creditNoteLine: z.number().int(),
+  description: z.string(),
+  /** En la unidad de venta. */
+  qty: z.string(),
+  unit: z.string(),
+  itemType: z.enum(INVENTORY_ITEM_TYPES),
+  itemId: z.string().uuid(),
+  /** Lo que reingresó al kardex, en su unidad. */
+  reserveQty: z.string(),
+  kardexUnit: z.string(),
+  /** El costo con que salió esa mercadería (el del despacho), no el promedio de hoy. Null para quien no ve costos. */
+  unitCostPen: z.string().nullable(),
+  totalCostPen: z.string().nullable(),
+  dispatchId: z.string().uuid(),
+  dispatchCode: z.string(),
+  movementId: z.string(),
+});
+export type SalesReturnItemDto = z.infer<typeof salesReturnItemSchema>;
+
+export const salesReturnSchema = z.object({
+  id: z.string().uuid(),
+  /** `DEV-000001`. */
+  code: z.string(),
+  status: z.enum(['ACTIVE', 'REVERSED']),
+  /** La fecha de la NC: la de todo lo que la devolución genera. */
+  operationDate: z.string(),
+  creditNoteId: z.string().uuid(),
+  creditNoteNumber: z.string().nullable(),
+  creditNoteReason: z.string().nullable(),
+  affectedDocumentId: z.string().uuid().nullable(),
+  affectedDocumentNumber: z.string().nullable(),
+  salesOrderId: z.string().uuid(),
+  salesOrderCode: z.string(),
+  createdAt: z.string(),
+  createdByName: z.string(),
+  reversedAt: z.string().nullable(),
+  reversedByName: z.string().nullable(),
+  reverseReason: z.string().nullable(),
+  totalCostPen: z.string().nullable(),
+  items: z.array(salesReturnItemSchema),
+});
+export type SalesReturnDto = z.infer<typeof salesReturnSchema>;

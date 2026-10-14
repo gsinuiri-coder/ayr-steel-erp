@@ -130,7 +130,11 @@ describe('FiscalImportService.annulledOfOrder (cc13)', () => {
       customer: { findUnique: jest.fn().mockResolvedValue({ isSystem: false }) },
     };
     const audit = { write: jest.fn() };
-    const service = new FiscalImportService(prisma as never, audit as never);
+    const service = new FiscalImportService(
+      prisma as never,
+      audit as never,
+      { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+    );
     return { service, prisma, audit };
   }
 

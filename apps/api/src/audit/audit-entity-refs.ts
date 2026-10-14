@@ -2,6 +2,7 @@ import {
   BUSINESS_LINE_LABELS,
   cashSessionCode,
   dispatchCode,
+  salesReturnCode,
   posSaleCode,
   productionOrderCode,
   quotationCode,
@@ -101,6 +102,14 @@ const RESOLVERS: Record<AuditEntityType, Resolver | { fixed: string; href?: stri
           `Corte · ${r.supplier.name} · ${r.operationDate.toISOString().slice(0, 10)}`,
           `/corte/${r.id}`,
         ),
+    ),
+  // cc52 (D-648): el id es el del movimiento (bigint); se muestra como tal.
+  inventory_movements: { fixed: 'Movimiento de kardex' },
+  // cc52 (D-646): el documento de devolución.
+  sales_returns: async (p, ids) =>
+    byId(
+      await p.salesReturn.findMany({ where: { id: { in: ids } }, select: { id: true, seq: true } }),
+      (r) => ref(salesReturnCode(r.seq), `/devoluciones/${r.id}`),
     ),
   dispatches: async (p, ids) =>
     byId(
@@ -313,13 +322,14 @@ export function entityDisplay(
 export const SEARCH_IDS_PER_TYPE = 200;
 
 /** `PED-000031`, `ped31`, `OP-12`: el prefijo de un correlativo y su número. */
-const SEQ_CODE_RE = /^(COT|PED|OP|DES|CAJA|MOS)-?0*(\d{1,9})$/i;
+const SEQ_CODE_RE = /^(COT|PED|OP|DES|DEV|CAJA|MOS)-?0*(\d{1,9})$/i;
 
 const SEQ_TYPES: Record<string, AuditEntityType> = {
   COT: 'quotations',
   PED: 'sales_orders',
   OP: 'production_orders',
   DES: 'dispatches',
+  DEV: 'sales_returns',
   CAJA: 'cash_sessions',
   MOS: 'pos_sales',
 };
@@ -360,6 +370,7 @@ export async function searchEntityIds(prisma: PrismaService, search: string): Pr
       PED: () => prisma.salesOrder.findMany({ where, select }),
       OP: () => prisma.productionOrder.findMany({ where, select }),
       DES: () => prisma.dispatch.findMany({ where, select }),
+      DEV: () => prisma.salesReturn.findMany({ where, select }),
       CAJA: () => prisma.cashSession.findMany({ where, select }),
       MOS: () => prisma.posSale.findMany({ where, select }),
     };

@@ -105,6 +105,7 @@ describe('mapa del menú (D-326)', () => {
   it('los destinos que arma el kardex conservan sus roles', () => {
     expect(REF_TARGET_ROLES.purchase).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(REF_TARGET_ROLES.salesOrder).toEqual([Role.ADMINISTRADOR, Role.VENDEDOR]);
+    expect(REF_TARGET_ROLES.salesReturn).toEqual([Role.ADMINISTRADOR, Role.VENDEDOR]);
     expect(INVOICE_LINK_ROLES).toEqual([Role.ADMINISTRADOR, Role.VENDEDOR]);
   });
 });

@@ -145,6 +145,7 @@ function voidScenario(
     {} as never,
     { PSE_ENABLED: true } as never,
     {} as never,
+    {} as never,
   );
   jest.spyOn(service, 'findOne').mockResolvedValue({} as never);
   return { service, state, statusAtCall, writes, audits, pse };
@@ -288,6 +289,7 @@ describe('baja en trámite (cc34, D-536 de fondo)', () => {
       { assertIssueDate: jest.fn() } as never,
       {} as never,
       { PSE_ENABLED: true } as never,
+      {} as never,
       {} as never,
     );
     await expect(

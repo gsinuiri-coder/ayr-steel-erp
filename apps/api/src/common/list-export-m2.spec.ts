@@ -132,6 +132,7 @@ describe('los controladores de M2 entregan el archivo con el rol del usuario', (
       receivables as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const res = response();
     const query = { search: 'acero' } as never;

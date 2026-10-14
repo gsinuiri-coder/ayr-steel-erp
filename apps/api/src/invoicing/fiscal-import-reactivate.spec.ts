@@ -147,7 +147,11 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
     const prisma = {
       $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     };
-    const service = new FiscalImportService(prisma as never, audit as never);
+    const service = new FiscalImportService(
+      prisma as never,
+      audit as never,
+      { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+    );
     return { service, tx, audit, prisma };
   }
 
