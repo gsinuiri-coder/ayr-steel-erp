@@ -343,6 +343,10 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
 - Ningún texto largo pasa por shell: nunca `node -e`, `python -c`, `echo` ni interpolación para
   escribir docs, código o mensajes multilínea. Si un heredoc fuera imprescindible, el
   delimitador va entre comillas simples (`<<'EOF'`) para desactivar expansión.
+- **La hora de Lima se mira con Node**, no con `date`: `TZ=America/Lima date` en Git Bash devuelve
+  UTC sin avisar. Usar
+  `node -e "console.log(new Date().toLocaleString('es-PE',{timeZone:'America/Lima'}))"` (una línea
+  sin texto multilínea ni interpolación, compatible con la regla 7).
 - Si un comando externo falla tres veces, documentar el bloqueo en `docs/PROGRESO.md` y seguir
   con lo que no dependa de él.
 - **Worktrees con nombre corto: `../ayr-<corto>`, de no más de ~25 caracteres** (p. ej.

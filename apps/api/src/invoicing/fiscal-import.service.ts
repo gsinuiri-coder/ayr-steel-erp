@@ -32,6 +32,7 @@ import { invoicedByOrderItem } from './invoicing-net';
 import { paperTotalDifference, planOrderLines } from './reactivate-order-lines';
 import { lockDocuments } from '../inventory/document-locks';
 import { draftCreditNoteBlock } from './credit-note-guards';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * La anulación **interna** de un comprobante que el ERP no emitió electrónicamente
@@ -174,7 +175,7 @@ export class FiscalImportService {
         },
       });
       return updated;
-    });
+    }, KARDEX_TX_OPTIONS);
   }
 
   /**

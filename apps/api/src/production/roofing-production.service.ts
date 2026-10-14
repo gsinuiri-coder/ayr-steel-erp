@@ -130,6 +130,7 @@ import {
 } from './roofing-math';
 import { allocateRoofingScrap } from './roofing-scrap';
 import { sumReportedMeters } from './reported-meters';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * Producción de coberturas metálicas contra pedido (RF-30..RF-33; D-082..D-091).
@@ -978,7 +979,7 @@ export class RoofingProductionService {
         },
         operationDate: this.operationDate.resolve(actor, undefined),
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.production.findOne(orderId);
   }
