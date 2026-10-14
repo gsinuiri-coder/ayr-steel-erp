@@ -70,6 +70,7 @@
     "inspect:cc44": "node scripts/inspect-cc44.mjs",
     "inspect:cc46": "node scripts/inspect-cc46.mjs",
     "inspect:cc52": "node scripts/inspect-cc52.mjs",
+    "recosteo:historico": "node scripts/recost-historic.mjs",
     "restore:cancelled-coils": "node scripts/restore-cancelled-coils.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },
