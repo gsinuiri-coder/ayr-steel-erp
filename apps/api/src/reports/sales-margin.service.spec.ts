@@ -32,6 +32,7 @@ interface DocSeed {
   issueDate?: string;
   customer?: string;
   seller?: string | null;
+  creditReason?: string | null;
 }
 
 function docRow(seed: DocSeed): Record<string, unknown> {
@@ -41,6 +42,7 @@ function docRow(seed: DocSeed): Record<string, unknown> {
     doc_type: seed.docType ?? 'FACTURA',
     status: 'ACCEPTED',
     origin: 'ISSUED_HERE',
+    credit_note_reason: seed.creditReason ?? null,
     issue_date: new Date(`${seed.issueDate ?? '2026-09-10'}T00:00:00.000Z`),
     subtotal_pen: decimal(seed.subtotal),
     sales_order_id: seed.orderId === undefined ? 'o1' : seed.orderId,
@@ -53,7 +55,13 @@ function docRow(seed: DocSeed): Record<string, unknown> {
 interface Seeds {
   documents?: DocSeed[];
   outside?: { orderId: string; count: number }[];
-  costs?: { orderId: string; invoiceId?: string | null; line?: string; cost: string }[];
+  costs?: {
+    orderId: string;
+    invoiceId?: string | null;
+    line?: string;
+    cost: string;
+    kind?: 'SALE' | 'RETURN';
+  }[];
   opMaterial?: { orderId: string; material: string }[];
   salesByLine?: { documentId: string; line: string | null; subtotal: string }[];
   pending?: { orderId: string; pending: boolean; untraceable?: boolean }[];
@@ -92,6 +100,7 @@ async function buildService(
           invoice_id: c.invoiceId ?? null,
           business_line_code: c.line ?? 'drywall',
           cost_pen: decimal(c.cost),
+          kind: c.kind ?? 'SALE',
         })),
       );
     }
@@ -239,6 +248,59 @@ describe('SalesMarginService', () => {
       expect(report.totals.costPen).toBe('0.0000');
       expect(report.totals.excludedOrderCount).toBe(1);
       expect(report.totals.excludedSalesPen).toBe('400.0000');
+    });
+
+    it('cc52 (D-647): la devolución resta costo en el periodo de su NC y no vuelve «no comparable» al pedido', async () => {
+      const { service } = await buildService({
+        documents: [
+          {
+            id: 'nc1',
+            docType: 'NOTA_CREDITO',
+            subtotal: '100.0000',
+            creditReason: 'DEVOLUCION_ITEM',
+          },
+        ],
+        outside: [{ orderId: 'o1', count: 1 }],
+        costs: [
+          { orderId: 'o1', invoiceId: 'f1', cost: '250.0000' },
+          { orderId: 'o1', invoiceId: 'nc1', cost: '-40.0000', kind: 'RETURN' },
+        ],
+      });
+      const order = (await service.salesMargin(RANGE)).orders[0]!;
+      expect(order.costStatus).not.toBe('NO_COMPARABLE');
+      expect(order.costPen).toBe('-40.0000');
+      expect(order.salesPen).toBe('-100.0000');
+    });
+
+    it('cc52 (D-647): una devolución cuya NC está fuera del rango no toca el periodo del comprobante', async () => {
+      const { service } = await buildService({
+        documents: [{ id: 'f1', subtotal: '400.0000' }],
+        costs: [
+          { orderId: 'o1', invoiceId: 'f1', cost: '250.0000' },
+          { orderId: 'o1', invoiceId: 'nc1', cost: '-40.0000', kind: 'RETURN' },
+        ],
+      });
+      const order = (await service.salesMargin(RANGE)).orders[0]!;
+      expect(order.costPen).toBe('250.0000');
+    });
+
+    it('cc52 (D-647): una NC de descuento declara costo cero', async () => {
+      const { service } = await buildService({
+        documents: [
+          { id: 'f2', subtotal: '400.0000' },
+          {
+            id: 'nc2',
+            docType: 'NOTA_CREDITO',
+            subtotal: '50.0000',
+            creditReason: 'DESCUENTO_ITEM',
+          },
+        ],
+        outside: [{ orderId: 'o1', count: 1 }],
+        costs: [{ orderId: 'o1', invoiceId: 'f2', cost: '250.0000' }],
+      });
+      const order = (await service.salesMargin(RANGE)).orders[0]!;
+      expect(order.costStatus).not.toBe('NO_COMPARABLE');
+      expect(order.costPen).toBe('250.0000');
     });
 
     it('con comprobantes fuera del rango pero todos los del rango declaran su despacho: entra con su porción exacta', async () => {

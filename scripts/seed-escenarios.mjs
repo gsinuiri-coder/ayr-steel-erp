@@ -434,9 +434,11 @@ export async function voidPrevious(api, masters) {
 
   // Comprobantes (cobros primero) y despachos: lo que el dueño pudo haber emitido probando.
   await attempt('comprobantes', async () => {
-    const documents = (await api.list('/invoicing/documents')).filter(
-      (d) => isCustomer(d) && !['VOIDED', 'REJECTED', 'ANNULLED'].includes(d.status),
-    );
+    // cc52 (D-646): las notas de crédito primero (anular una de devolución revierte su
+    // devolución); un comprobante con NC vivas no se anula.
+    const documents = (await api.list('/invoicing/documents'))
+      .filter((d) => isCustomer(d) && !['VOIDED', 'REJECTED', 'ANNULLED'].includes(d.status))
+      .sort((a, b) => Number(b.docType === 'NOTA_CREDITO') - Number(a.docType === 'NOTA_CREDITO'));
     for (const d of documents) {
       await attempt(`comprobante ${d.number ?? d.id}`, async () => {
         const detail = await api.get(`/invoicing/documents/${d.id}`);
@@ -973,6 +975,79 @@ export async function seedCases(api, masters) {
     invoice: ac.number,
   };
 
+  // NC · nota de crédito con devolución (cc52, D-645..D-647): una bobina vendida entera, con su
+  // boleta y su despacho, devuelta con una NC «Devolución total» de hoy. La bobina vuelve con su
+  // peso al costo con que salió y se reabre; la NC genera el documento DEV- y el kardex muestra el
+  // reingreso.
+  const [ncCoil] = await buyCoils('drywall', galv, '0.40', ['500'], 'caso NC');
+  const ncSellable = (await api.get('/sales/sellable-coils')).find((c) => c.coilId === ncCoil.id);
+  if (!ncSellable?.minPricePen) throw new Error('La bobina del caso NC no trae su precio mínimo');
+  const ncQuotation = await api.post('/sales/quotations', {
+    customerId: masters.customer.id,
+    issueDate: today,
+    notes: 'DEMO · caso NC',
+    items: [
+      {
+        saleCoilId: ncCoil.id,
+        qty: ncSellable.availableQty,
+        unitPriceWithIgvPen: ncSellable.minPricePen,
+      },
+    ],
+  });
+  const ncOrder = await api.post(`/sales/quotations/${ncQuotation.id}/confirm`, {});
+  const ncDetail = await api.get(`/sales/orders/${ncOrder.id}`);
+  await api.post('/dispatches', {
+    salesOrderId: ncOrder.id,
+    dispatchDate: today,
+    originAddress: 'Av. Almacén DEMO 100, Lima',
+    destinationAddress: 'Av. Cliente DEMO 200, Lima',
+    originUbigeo: '150101',
+    destinationUbigeo: '150132',
+    transferMode: 'PRIVATE',
+    totalWeightKg: ncDetail.items[0].qty,
+    packageCount: 1,
+    vehiclePlate: 'DEM-001',
+    driverGivenNames: 'Chofer',
+    driverFamilyNames: 'Demo',
+    driverDocType: 'DNI',
+    driverDocNumber: '99999902',
+    driverLicense: 'Q99999902',
+    notes: 'DEMO · caso NC',
+    items: [{ salesOrderItemId: ncDetail.items[0].id, qty: ncDetail.items[0].qty }],
+  });
+  const ncInvoiceDraft = await api.post('/invoicing/documents', {
+    docType: 'BOLETA',
+    customerId: masters.customer.id,
+    salesOrderId: ncOrder.id,
+    issueDate: today,
+    paymentTerms: 'CONTADO',
+    notes: 'DEMO · caso NC',
+    items: [{ salesOrderItemId: ncDetail.items[0].id, qty: ncDetail.items[0].qty }],
+  });
+  const ncInvoice = await api.post(`/invoicing/documents/${ncInvoiceDraft.id}/register-manual`, {
+    series: 'B900',
+    correlative: (seq += 1),
+  });
+  const ncDraft = await api.post(`/invoicing/documents/${ncInvoice.id}/credit-note`, {
+    reason: 'DEVOLUCION_TOTAL',
+    issueDate: today,
+    notes: 'DEMO · caso NC',
+  });
+  const ncNote = await api.post(`/invoicing/documents/${ncDraft.id}/register-manual`, {
+    series: 'BC90',
+    correlative: (seq += 1),
+  });
+  const ncCase = {
+    invoiceId: ncInvoice.id,
+    invoice: ncInvoice.number,
+    noteId: ncNote.id,
+    note: ncNote.number,
+    returnId: ncNote.salesReturn?.id,
+    returnCode: ncNote.salesReturn?.code,
+    coilId: ncCoil.id,
+    coil: ncCoil.code,
+  };
+
   // S1 · partido con borde (cc46, D-608): 1 000 kg de 1 220 mm en 600 + 560 con 20 mm de kerf.
   // Quedan 40 mm de borde: el valor del kerf y el borde entra a las hijas (sube su costo por kg).
   const [s1] = await buyCoils('drywall', galv, '0.50', ['1000'], 'partido S1');
@@ -994,10 +1069,11 @@ export async function seedCases(api, masters) {
     drywall: { cuttingId: cutting.id, cut: dw1, free: dw2 },
     split: { mother: s1, children: s1Children },
     acCase,
+    ncCase,
   };
 }
 
-export function casesTable({ cases, history, drywall, split, acCase }, masters) {
+export function casesTable({ cases, history, drywall, split, acCase, ncCase }, masters) {
   const lines = [
     '| Caso | Pedido | OP | Abrir | Qué probar |',
     '|---|---|---|---|---|',
@@ -1007,6 +1083,7 @@ export function casesTable({ cases, history, drywall, split, acCase }, masters) 
     ),
     `| Drywall | — | — | ${PREVIEW_WEB}/corte/${drywall.cuttingId} | ${drywall.cut.code} cortada en 5 flejes de 244 mm (${masters.products.stud.sku}); ${drywall.free.code} libre para tu orden de corte con ${DEMO.cuttingSupplier.name}; perfiles en «Nueva orden de perfiles» (${PREVIEW_WEB}/planta) |`,
     `| H1 | — | — | ${PREVIEW_WEB}/compras/${history.purchaseId} | «Historial» de la compra ${history.purchase}: pago y su reversa, y el flete imputado; en la orden de corte (${PREVIEW_WEB}/corte/${history.cuttingId}), la factura vinculada y la duplicada anulada (D-639); en la auditoría, el «Lote de importación» ${history.batchId.slice(0, 8)} (D-638) |`,
+    `| NC | — | — | ${PREVIEW_WEB}/devoluciones/${ncCase.returnId} | la boleta ${ncCase.invoice} con la NC ${ncCase.note} «Devolución total» de hoy (${PREVIEW_WEB}/comprobantes/${ncCase.noteId}); el documento ${ncCase.returnCode}; la bobina ${ncCase.coil} vuelve con su peso y se reabre (${PREVIEW_WEB}/bobinas/${ncCase.coilId}); el kardex muestra el reingreso al costo de salida (D-645..D-647) |`,
     `| AC | ${acCase.order} | — | ${PREVIEW_WEB}/cotizaciones/${acCase.quotationId} | la línea «A costo · Liquidación de stock» en la cotización ${acCase.quotation}, el pedido (${PREVIEW_WEB}/pedidos/${acCase.orderId}) y la boleta ${acCase.invoice} (${PREVIEW_WEB}/comprobantes/${acCase.invoiceId}); Ventas y margen con el filtro «A costo» (D-641) |`,
     `| S1 | — | — | ${PREVIEW_WEB}/bobinas/${split.mother.id} | ${split.mother.code} partida en ${split.children.map((c) => c.code).join(' y ')} con 20 mm de kerf y 40 mm de borde: las hijas suman el valor que salió de la madre (D-608); «Revertir» la devuelve exacta |`,
   ];

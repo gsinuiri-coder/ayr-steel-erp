@@ -12,6 +12,8 @@ const ADMIN = { id: 'admin', role: 'ADMINISTRADOR' } as RequestUser;
 
 function build(linked: { id: string; seq: number; atIssueDate: boolean }[]) {
   const tx = {
+    // cc52 (D-646): sin devoluciones vigentes de sus NC.
+    salesReturn: { findFirst: jest.fn().mockResolvedValue(null) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     fiscalDocument: {
       findUnique: jest.fn().mockResolvedValue({
@@ -51,6 +53,7 @@ function build(linked: { id: string; seq: number; atIssueDate: boolean }[]) {
     {} as never,
     { PSE_ENABLED: false } as never,
     invoiceDispatch as never,
+    {} as never,
   );
   jest.spyOn(svc, 'findOne').mockResolvedValue({ id: 'F1' } as never);
   return { svc, tx, prisma, audit, invoiceDispatch };

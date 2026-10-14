@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  CREDIT_NOTE_KIND_REASONS,
   Decimal,
   LIVE_DOCUMENT_STATUSES,
   NO_COST_REPORT_LINES,
@@ -36,6 +37,8 @@ interface DocumentRow {
   doc_type: string;
   status: string;
   origin: string;
+  /** cc52 (D-647): el motivo de una NC (decide si declara su costo). */
+  credit_note_reason: string | null;
   issue_date: Date;
   subtotal_pen: Prisma.Decimal;
   sales_order_id: string | null;
@@ -59,6 +62,11 @@ interface CostRow {
   invoice_id: string | null;
   business_line_code: string;
   cost_pen: Prisma.Decimal;
+  /**
+   * cc52 (D-647): `RETURN` es el reingreso de una devolución, imputado a su **nota de crédito**
+   * (`invoice_id` es la NC): cuenta en el periodo de la NC y nunca en el del comprobante.
+   */
+  kind: 'SALE' | 'RETURN';
 }
 
 interface OpMaterialRow {
@@ -116,6 +124,7 @@ export class SalesMarginService {
         fd."doc_type"::text AS "doc_type",
         fd."status"::text   AS "status",
         fd."origin"::text   AS "origin",
+        fd."credit_note_reason"::text AS "credit_note_reason",
         fd."issue_date",
         fd."subtotal_pen",
         fd."sales_order_id",
@@ -192,6 +201,19 @@ export class SalesMarginService {
         AND fd."doc_type" <> 'GUIA_REMISION_REMITENTE'
         AND fd."status"::text IN (${live})
         AND (fd."issue_date" < ${from}::date OR fd."issue_date" > ${to}::date)
+        -- cc52 (D-647): una NC de descuento (sin costo) o de devolución (con su propio costo) no
+        -- vuelve «no comparable» al pedido en el otro periodo: su efecto es solo del suyo.
+        AND NOT (
+          fd."doc_type" = 'NOTA_CREDITO'
+          AND (
+            fd."credit_note_reason"::text = ANY(${DISCOUNT_CREDIT_REASONS}::text[])
+            -- Una de devolución, solo si de verdad generó su devolución (revisión de cc52, P2).
+            OR EXISTS (
+              SELECT 1 FROM "sales_returns" sr
+              WHERE sr."credit_note_id" = fd."id" AND sr."status" = 'ACTIVE'
+            )
+          )
+        )
       GROUP BY fd."sales_order_id"
     `;
   }
@@ -232,7 +254,8 @@ export class SalesMarginService {
             WHEN 'IN'  THEN -m."total_cost"
             ELSE -m."total_cost"
           END
-        ), 0) AS "cost_pen"
+        ), 0) AS "cost_pen",
+        'SALE' AS "kind"
       FROM "inventory_movements" m
       JOIN "dispatches" d ON d."id"::text = m."ref_id"
       -- La reversa de un despacho es un movimiento nuevo: el ítem lo tiene el original, así
@@ -245,6 +268,29 @@ export class SalesMarginService {
       WHERE m."ref_type" = 'SALE'
         AND d."sales_order_id" = ANY(${orderIds}::uuid[])
       GROUP BY d."sales_order_id", d."invoice_id", COALESCE(blp."code", blm."code")
+      UNION ALL
+      -- cc52 (D-647): el reingreso de una devolución resta costo **en la NC** que la generó; su
+      -- reversa (al anular la NC) lo vuelve a sumar. La línea de negocio, la del producto
+      -- despachado, como el costo de la venta (D-247).
+      SELECT
+        sr."sales_order_id",
+        sr."credit_note_id" AS "invoice_id",
+        COALESCE(blp."code", blm."code")::text AS "business_line_code",
+        COALESCE(SUM(
+          CASE m."type" WHEN 'IN' THEN -m."total_cost" ELSE m."total_cost" END
+        ), 0) AS "cost_pen",
+        'RETURN' AS "kind"
+      FROM "inventory_movements" m
+      JOIN "sales_returns" sr ON sr."id"::text = m."ref_id"
+      LEFT JOIN "sales_return_items" sri
+        ON sri."movement_id" = COALESCE(m."reversal_of_id", m."id")
+      LEFT JOIN "dispatch_items" di ON di."id" = sri."dispatch_item_id"
+      LEFT JOIN "products" p ON p."id" = di."product_id"
+      LEFT JOIN "business_lines" blp ON blp."id" = p."business_line_id"
+      JOIN "business_lines" blm ON blm."id" = m."business_line_id"
+      WHERE m."ref_type" = 'SALES_RETURN'
+        AND sr."sales_order_id" = ANY(${orderIds}::uuid[])
+      GROUP BY sr."sales_order_id", sr."credit_note_id", COALESCE(blp."code", blm."code")
     `;
   }
 
@@ -382,10 +428,24 @@ export class SalesMarginService {
       rows.push(row);
       costRowsByOrder.set(row.sales_order_id, rows);
       if (row.invoice_id !== null) {
+        // cc52 (D-647): la devolución solo cuenta si su NC está en el rango (abajo); acá se anota
+        // igual, porque la NC «declara» su costo.
         costByDocument.set(
           row.invoice_id,
           (costByDocument.get(row.invoice_id) ?? ZERO).plus(toDecimal(row.cost_pen.toString())),
         );
+      }
+    }
+
+    // cc52 (D-647): una NC de descuento declara costo cero: no movió mercadería.
+    for (const doc of documents) {
+      if (
+        doc.doc_type === 'NOTA_CREDITO' &&
+        doc.credit_note_reason !== null &&
+        DISCOUNT_CREDIT_REASONS.includes(doc.credit_note_reason) &&
+        !costByDocument.has(doc.id)
+      ) {
+        costByDocument.set(doc.id, ZERO);
       }
     }
 
@@ -461,10 +521,13 @@ export class SalesMarginService {
       const orderCostRows =
         orderId === null
           ? []
-          : (costRowsByOrder.get(orderId) ?? []).filter(
-              (r) =>
-                !hasOutside.has(orderId) ||
-                (r.invoice_id !== null && inRangeDocIds.has(r.invoice_id)),
+          : (costRowsByOrder.get(orderId) ?? []).filter((r) =>
+              // cc52 (D-647): el reingreso de una devolución cuenta **solo** en el periodo de su
+              // NC; el mes del comprobante original no se reescribe.
+              r.kind === 'RETURN'
+                ? r.invoice_id !== null && inRangeDocIds.has(r.invoice_id)
+                : !hasOutside.has(orderId) ||
+                  (r.invoice_id !== null && inRangeDocIds.has(r.invoice_id)),
             );
 
       // cc23 (D-391): con una línea elegida, la fila del pedido es **su porción de esa línea**:
@@ -647,6 +710,13 @@ export class SalesMarginService {
 }
 
 const ZERO = new Decimal(0);
+
+/**
+ * cc52 (D-647): las NC que **declaran su costo**: las de descuento o corrección (costo cero: no
+ * mueven mercadería) y las de devolución (el reingreso, imputado a la NC). Su efecto cae entero
+ * en su periodo y no vuelven «no comparable» al pedido en el periodo del comprobante.
+ */
+const DISCOUNT_CREDIT_REASONS: string[] = [...CREDIT_NOTE_KIND_REASONS.DISCOUNT];
 /** Clave interna del grupo sin línea de negocio. No es un código de línea y no se serializa. */
 const SIN_LINEA = '__sin_linea__';
 

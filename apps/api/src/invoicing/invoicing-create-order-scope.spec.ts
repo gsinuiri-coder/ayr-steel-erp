@@ -50,6 +50,7 @@ function build(order: { sellerId: string | null; status: string; customerId: str
     {} as never,
     { PSE_ENABLED: false } as never,
     {} as never,
+    {} as never,
   );
   return { svc, tx, create, customerFind };
 }

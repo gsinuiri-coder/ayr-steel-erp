@@ -1,0 +1,306 @@
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Prisma, Role } from '@prisma/client';
+import type { AuditService } from '../audit/audit.service';
+import type { RequestUser } from '../auth/auth.types';
+import type { InventoryService } from '../inventory/inventory.service';
+import type { PrismaService } from '../prisma/prisma.service';
+import { SalesReturnsService, toSalesReturnDto } from './sales-returns.service';
+
+/**
+ * cc52 (D-646) — la devolución de una NC, con un `tx` falso. Lo mismo contra una base real vive en
+ * `sales-returns.db-spec.ts`.
+ */
+const D = (v: string) => new Prisma.Decimal(v);
+const ADMIN = { id: 'u-1', role: Role.ADMINISTRADOR } as RequestUser;
+const SELLER = { id: 'u-2', role: Role.VENDEDOR } as RequestUser;
+
+function dispatchItem(over: Record<string, unknown> = {}) {
+  return {
+    id: 'di-1',
+    dispatchId: 'd-1',
+    salesOrderItemId: 'soi-1',
+    itemType: 'PRODUCT',
+    itemId: 'p-1',
+    qty: D('5'),
+    reserveQty: D('5'),
+    movementId: 10n,
+    dispatch: { seq: 7, dispatchDate: new Date('2026-09-10T00:00:00.000Z'), invoiceId: 'f-1' },
+    salesReturnItems: [],
+    ...over,
+  };
+}
+
+function setup(options: {
+  note?: Record<string, unknown> | null;
+  dispatchItems?: Record<string, unknown>[];
+  salesReturn?: Record<string, unknown> | null;
+  reverseError?: Error;
+  coilClosed?: boolean;
+}) {
+  const audit = {
+    write: jest.fn<Promise<void>, [unknown, { entityId?: string; action: string }]>(),
+  };
+  const inventory = {
+    record: jest.fn().mockResolvedValue({ id: 99n }),
+    reverse: options.reverseError
+      ? jest.fn().mockRejectedValue(options.reverseError)
+      : jest.fn().mockResolvedValue({ id: 100n }),
+    lockInOrder: jest.fn().mockResolvedValue([]),
+  };
+  const tx = {
+    fiscalDocument: { findUniqueOrThrow: jest.fn().mockResolvedValue(options.note) },
+    fiscalDocumentItem: {
+      findMany: jest.fn().mockResolvedValue([{ salesOrderItemId: 'soi-1' }]),
+    },
+    dispatchItem: {
+      findMany: jest.fn().mockResolvedValue(options.dispatchItems ?? [dispatchItem()]),
+    },
+    inventoryMovement: {
+      findMany: jest.fn().mockResolvedValue([
+        {
+          id: 10n,
+          unitCost: D('20.0000'),
+          totalCost: D('100.0000'),
+          unit: 'NIU',
+          businessLineId: 'bl-1',
+        },
+      ]),
+    },
+    salesReturn: {
+      create: jest.fn().mockResolvedValue({ id: 'sr-1', seq: 3 }),
+      findUnique: jest.fn().mockResolvedValue(options.salesReturn ?? null),
+      update: jest.fn(),
+    },
+    salesReturnItem: { create: jest.fn() },
+    salesOrder: { findUniqueOrThrow: jest.fn().mockResolvedValue({ seq: 12 }) },
+    coil: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue(options.coilClosed ? [{ id: 'c-1', code: 'BOB-1' }] : []),
+      update: jest.fn(),
+    },
+    inventoryBalance: { findMany: jest.fn().mockResolvedValue([{ itemId: 'c-1', qty: D('0') }]) },
+    auditLog: {
+      findMany: jest
+        .fn()
+        .mockResolvedValue([{ entityId: 'c-1', after: { reopenedBySalesReturn: 'DEV-000003' } }]),
+    },
+  };
+  const prisma = {
+    salesReturn: {
+      findUnique: jest.fn().mockResolvedValue({ salesOrder: { sellerId: 'u-1' } }),
+    },
+  };
+  const service = new SalesReturnsService(
+    prisma as unknown as PrismaService,
+    inventory as unknown as InventoryService,
+    audit as unknown as AuditService,
+  );
+  return { service, tx: tx as never, rawTx: tx, inventory, audit };
+}
+
+const NOTE = {
+  id: 'nc-1',
+  number: 'FC90-1',
+  issueDate: new Date('2026-10-14T00:00:00.000Z'),
+  creditNoteReason: 'DEVOLUCION_ITEM',
+  salesOrderId: 'o-1',
+  affectedDocument: { id: 'f-1', number: 'F001-1' },
+  items: [{ id: 'nci-1', lineNumber: 1, qty: D('2'), salesOrderItemId: 'soi-1' }],
+};
+
+describe('SalesReturnsService (cc52, D-646)', () => {
+  it('una NC que no es de devolución no crea nada', async () => {
+    const { service, tx, inventory } = setup({
+      note: { ...NOTE, creditNoteReason: 'DESCUENTO_ITEM' },
+    });
+    await expect(service.createForCreditNoteInTx(tx, ADMIN, 'nc-1', ['d-1'])).resolves.toBeNull();
+    expect(inventory.record).not.toHaveBeenCalled();
+  });
+
+  it('sin pedido no hay despacho que devolver: 400', async () => {
+    const { service, tx } = setup({ note: { ...NOTE, salesOrderId: null } });
+    await expect(service.createForCreditNoteInTx(tx, ADMIN, 'nc-1', ['d-1'])).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('el plan no sale de un despacho que no se bloqueó: 409', async () => {
+    const { service, tx } = setup({ note: NOTE });
+    await expect(service.createForCreditNoteInTx(tx, ADMIN, 'nc-1', [])).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it('reingresa al costo del despacho con la fecha de la NC y audita en los cuatro historiales', async () => {
+    const { service, tx, rawTx, inventory, audit } = setup({ note: NOTE });
+    await expect(service.createForCreditNoteInTx(tx, ADMIN, 'nc-1', ['d-1'])).resolves.toBe('sr-1');
+    expect(inventory.lockInOrder).toHaveBeenCalled();
+    expect(inventory.record).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        type: 'IN',
+        qty: '2.000',
+        unitCost: '20.0000',
+        totalCost: '40.0000',
+        refType: 'SALES_RETURN',
+        refId: 'sr-1',
+        operationDate: '2026-10-14',
+      }),
+    );
+    expect(rawTx.salesReturnItem.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ movementId: 99n, dispatchItemId: 'di-1' }),
+    });
+    const targets = audit.write.mock.calls.map((c) => c[1].entityId);
+    expect(targets).toEqual(['sr-1', 'nc-1', 'f-1', 'o-1']);
+  });
+
+  it('una bobina terminada que vuelve se reabre', async () => {
+    const { service, tx, rawTx, audit } = setup({
+      note: { ...NOTE, items: [{ ...NOTE.items[0], qty: D('1') }] },
+      dispatchItems: [
+        dispatchItem({ itemType: 'COIL', itemId: 'c-1', qty: D('1'), reserveQty: D('500') }),
+      ],
+      coilClosed: true,
+    });
+    await service.createForCreditNoteInTx(tx, ADMIN, 'nc-1', ['d-1']);
+    expect(rawTx.coil.update).toHaveBeenCalledWith({
+      where: { id: 'c-1' },
+      data: { status: 'OPEN' },
+    });
+    expect(audit.write.mock.calls.some((c) => c[1].action === 'coils.open')).toBe(true);
+  });
+
+  it('dos líneas de la NC sobre la misma línea de pedido consumen del mismo despachado', async () => {
+    const { service, tx } = setup({ note: NOTE });
+    await expect(
+      service.planForLines(tx, [
+        { lineNumber: 1, orderItemId: 'soi-1', qty: '3' },
+        { lineNumber: 2, orderItemId: 'soi-1', qty: '3' },
+      ]),
+    ).rejects.toThrow('hay 2.000 despachado sin devolver');
+  });
+
+  it('una línea sin pedido no se devuelve', async () => {
+    const { service, tx } = setup({ note: NOTE });
+    await expect(
+      service.planForLines(tx, [{ lineNumber: 1, orderItemId: null, qty: '1' }]),
+    ).rejects.toThrow('no viene de un pedido');
+  });
+
+  it('los despachos de una NC, ordenados, sin repetir', async () => {
+    const { service, tx, rawTx } = setup({ note: NOTE });
+    rawTx.dispatchItem.findMany.mockResolvedValueOnce([
+      { dispatchId: 'd-2' },
+      { dispatchId: 'd-1' },
+      { dispatchId: 'd-2' },
+    ]);
+    await expect(service.dispatchIdsForCreditNote(tx, 'nc-1')).resolves.toEqual(['d-1', 'd-2']);
+  });
+
+  const ACTIVE_RETURN = {
+    id: 'sr-1',
+    seq: 3,
+    status: 'ACTIVE',
+    salesOrderId: 'o-1',
+    creditNote: { id: 'nc-1', number: 'FC90-1', affectedDocument: { id: 'f-1', number: 'F001-1' } },
+    items: [
+      {
+        movementId: 99n,
+        itemType: 'COIL',
+        itemId: 'c-1',
+        reserveQty: D('500'),
+        totalCost: D('2100'),
+        movement: { businessLineId: 'bl-1', unit: 'KGM' },
+        dispatchItem: { dispatch: { seq: 7 } },
+      },
+    ],
+  };
+
+  it('anular sin devolución vigente no hace nada', async () => {
+    const { service, tx, inventory } = setup({ note: NOTE, salesReturn: null });
+    await expect(service.reverseForCreditNoteInTx(tx, ADMIN, 'nc-1', 'x')).resolves.toBeNull();
+    expect(inventory.reverse).not.toHaveBeenCalled();
+  });
+
+  it('anular revierte cada reingreso, marca la devolución y cierra la bobina que había reabierto', async () => {
+    const { service, tx, rawTx, inventory } = setup({ note: NOTE, salesReturn: ACTIVE_RETURN });
+    rawTx.coil.findMany.mockResolvedValueOnce([{ id: 'c-1', code: 'BOB-1' }]);
+    await expect(service.reverseForCreditNoteInTx(tx, ADMIN, 'nc-1', 'motivo')).resolves.toBe(
+      'sr-1',
+    );
+    expect(inventory.reverse).toHaveBeenCalledWith(
+      tx,
+      99n,
+      'u-1',
+      expect.stringContaining('DEV-000003'),
+    );
+    expect(rawTx.salesReturn.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'REVERSED' }) }),
+    );
+    expect(rawTx.coil.update).toHaveBeenCalledWith({
+      where: { id: 'c-1' },
+      data: { status: 'CLOSED' },
+    });
+  });
+
+  it('si la mercadería ya se volvió a vender, 409', async () => {
+    const { service, tx } = setup({
+      note: NOTE,
+      salesReturn: ACTIVE_RETURN,
+      reverseError: new BadRequestException('Stock insuficiente'),
+    });
+    await expect(service.reverseForCreditNoteInTx(tx, ADMIN, 'nc-1', 'x')).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it('el vendedor solo ve las devoluciones de sus pedidos', async () => {
+    const { service } = setup({ note: NOTE });
+    await expect(service.assertSellerAccessTo(ADMIN, 'sr-1')).resolves.toBeUndefined();
+    await expect(service.assertSellerAccessTo(SELLER, 'sr-1')).rejects.toThrow(NotFoundException);
+  });
+
+  it('el DTO suma el costo y nombra NC, comprobante, pedido y despacho', () => {
+    const dto = toSalesReturnDto({
+      id: 'sr-1',
+      seq: 3,
+      status: 'ACTIVE',
+      operationDate: new Date('2026-10-14T00:00:00.000Z'),
+      creditNote: {
+        id: 'nc-1',
+        number: 'FC90-1',
+        creditNoteReason: 'DEVOLUCION_TOTAL',
+        affectedDocument: { id: 'f-1', number: 'F001-1' },
+      },
+      salesOrder: { id: 'o-1', seq: 12 },
+      createdAt: new Date('2026-10-14T15:00:00.000Z'),
+      createdBy: { name: 'Admin' },
+      reversedAt: null,
+      reversedBy: null,
+      reverseReason: null,
+      items: [
+        {
+          lineNumber: 1,
+          creditNoteItem: { lineNumber: 1, description: 'Bobina', unit: 'NIU' },
+          qty: D('1'),
+          itemType: 'COIL',
+          itemId: 'c-1',
+          reserveQty: D('500'),
+          movement: { unit: 'KGM' },
+          unitCost: D('4.2'),
+          totalCost: D('2100'),
+          dispatchItem: { dispatchId: 'd-1', dispatch: { seq: 7 } },
+          movementId: 99n,
+        },
+      ],
+    } as never);
+    expect(dto).toMatchObject({
+      code: 'DEV-000003',
+      salesOrderCode: 'PED-000012',
+      totalCostPen: '2100.0000',
+      affectedDocumentNumber: 'F001-1',
+    });
+    expect(dto.items[0]).toMatchObject({ dispatchCode: 'DES-000007', movementId: '99' });
+  });
+});

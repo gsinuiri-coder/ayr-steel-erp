@@ -42,6 +42,7 @@ import {
   type RegisterManualInput,
   type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
+  type SalesReturnDto,
   type FiscalDocumentListItemDto,
   type FiscalDocumentExportQuery,
   type FiscalDocumentQuery,
@@ -76,6 +77,7 @@ import { MoveDocumentToOrderService } from './move-to-order.service';
 import { InvoicingService } from './invoicing.service';
 import { receivablesXlsx } from './receivables-xlsx';
 import { ReceivablesService } from './receivables.service';
+import { SalesReturnsService } from './sales-returns.service';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76).
@@ -93,6 +95,7 @@ export class InvoicingController {
     private readonly receivablesService: ReceivablesService,
     private readonly fiscalImport: FiscalImportService,
     private readonly moveToOrder: MoveDocumentToOrderService,
+    private readonly salesReturns: SalesReturnsService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -211,6 +214,22 @@ export class InvoicingController {
   ): Promise<void> {
     const rows = await this.invoicing.exportAll(query, actor);
     sendXlsx(res, fiscalDocumentsXlsx(rows, actor.role, businessToday()));
+  }
+
+  /** cc52 (D-646): el documento de devolución de una NC de devolución. El costo, solo ADMINISTRADOR. */
+  @Get('returns/:id')
+  async findReturn(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<SalesReturnDto> {
+    await this.salesReturns.assertSellerAccessTo(actor, id);
+    const dto = await this.salesReturns.findOne(id);
+    if (actor.role === Role.ADMINISTRADOR) return dto;
+    return {
+      ...dto,
+      totalCostPen: null,
+      items: dto.items.map((i) => ({ ...i, unitCostPen: null, totalCostPen: null })),
+    };
   }
 
   @Get('documents/:id')

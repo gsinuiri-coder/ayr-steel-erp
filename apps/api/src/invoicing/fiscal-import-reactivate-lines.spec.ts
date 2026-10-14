@@ -180,7 +180,11 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
     const prisma = {
       $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     };
-    const service = new FiscalImportService(prisma as never, audit as never);
+    const service = new FiscalImportService(
+      prisma as never,
+      audit as never,
+      { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+    );
     return { service, tx: models, audit, prisma, touched };
   }
 

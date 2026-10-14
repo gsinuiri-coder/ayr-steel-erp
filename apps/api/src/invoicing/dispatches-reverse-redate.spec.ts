@@ -45,6 +45,8 @@ function lockedTables(calls: unknown[][]): string[] {
 function build(declaring: { id: string; number: string } | null = null) {
   const tx = {
     $queryRaw: jest.fn(lockedIds),
+    // cc52 (D-646): sin devoluciones vigentes del despacho.
+    salesReturnItem: { findFirst: jest.fn().mockResolvedValue(null) },
     dispatch: {
       findUnique: jest.fn().mockResolvedValue({ salesOrderId: 'ped' }),
       findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -162,6 +164,15 @@ describe('DispatchesService.reverseInTx (D-288)', () => {
     await expect(
       svc.reverseInTx(tx as never, ADMIN, 'd-1', 'corrección', { redateInvoiceId: 'F1' }),
     ).rejects.toThrow(BadRequestException);
+    expect(inventory.reverse).not.toHaveBeenCalled();
+  });
+
+  it('cc52 (D-646): con una devolución vigente del despacho, 409 y nada revertido', async () => {
+    const { svc, tx, inventory } = build();
+    tx.salesReturnItem.findFirst.mockResolvedValueOnce({ salesReturn: { seq: 3 } });
+    await expect(
+      svc.reverseInTx(tx as never, ADMIN, 'd-1', 'corrección', { operationDate: '2026-09-15' }),
+    ).rejects.toThrow('DEV-000003');
     expect(inventory.reverse).not.toHaveBeenCalled();
   });
 });

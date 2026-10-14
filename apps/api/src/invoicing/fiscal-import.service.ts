@@ -27,6 +27,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { SalesReturnsService } from './sales-returns.service';
 import { invoicedByOrderItem } from './invoicing-net';
 import { paperTotalDifference, planOrderLines } from './reactivate-order-lines';
 import { lockDocuments } from '../inventory/document-locks';
@@ -55,6 +56,8 @@ export class FiscalImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    // cc52 (D-646): anular una NC de devolución revierte su devolución.
+    private readonly salesReturns: SalesReturnsService,
   ) {}
 
   /**
@@ -142,6 +145,10 @@ export class FiscalImportService {
       const draftBlock = await draftCreditNoteBlock(tx, id, 'antes de anularlo');
       if (draftBlock) throw new BadRequestException(draftBlock);
 
+      // cc52 (D-646): una NC de devolución se anula revirtiendo su devolución, con movimientos
+      // inversos al mismo costo (nunca editando saldos). 409 si esa mercadería ya se vendió.
+      const salesReturnId = await this.salesReturns.reverseForCreditNoteInTx(tx, actor, id, reason);
+
       const updated = await tx.fiscalDocument.update({
         where: { id },
         data: {
@@ -159,7 +166,12 @@ export class FiscalImportService {
         entity: 'fiscal_documents',
         entityId: id,
         before: { status: document.status, totalPen: document.totalPen.toFixed(4) },
-        after: { status: FiscalDocumentStatus.ANNULLED, reason, number: document.number },
+        after: {
+          status: FiscalDocumentStatus.ANNULLED,
+          reason,
+          number: document.number,
+          ...(salesReturnId === null ? {} : { salesReturnReversed: salesReturnId }),
+        },
       });
       return updated;
     });

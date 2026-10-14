@@ -87,6 +87,9 @@ function operationOf(
       return { code: '28', label: 'AJUSTE POR DIFERENCIA DE INVENTARIO' };
     case 'IMPORT':
       return inbound ? { code: '16', label: 'SALDO INICIAL' } : other;
+    // cc52 (D-646): el reingreso por la devolución de una nota de crédito.
+    case 'SALES_RETURN':
+      return inbound ? { code: '24', label: 'ENTRADA POR DEVOLUCIÓN DEL CLIENTE' } : other;
     default:
       return other;
   }

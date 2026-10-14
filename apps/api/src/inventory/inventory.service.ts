@@ -1674,6 +1674,10 @@ export class InventoryService {
         invoiceId: d.invoiceId,
       });
     }
+    // cc52 (D-646): el reingreso de una devolución (y su reversa) enlaza a su documento.
+    for (const id of refIdsOf('SALES_RETURN')) {
+      targets.set(refTargetKey('SALES_RETURN', id), { type: RefTargetType.SALES_RETURN, id });
+    }
     for (const c of cuttingOrderCoils) {
       targets.set(refTargetKey('CUTTING', c.id), {
         type: RefTargetType.CUTTING,

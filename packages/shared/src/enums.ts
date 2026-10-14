@@ -217,6 +217,8 @@ export const InventoryRefType = {
   CUTTING: 'CUTTING',
   ADJUSTMENT: 'ADJUSTMENT',
   IMPORT: 'IMPORT',
+  /** cc52 (D-646): reingreso por la devolución de una nota de crédito. */
+  SALES_RETURN: 'SALES_RETURN',
 } as const;
 export type InventoryRefType = (typeof InventoryRefType)[keyof typeof InventoryRefType];
 export const INVENTORY_REF_TYPES = Object.values(InventoryRefType) as [
@@ -233,6 +235,7 @@ export const INVENTORY_REF_TYPE_LABELS: Record<InventoryRefType, string> = {
   CUTTING: 'Corte tercerizado',
   ADJUSTMENT: 'Ajuste manual',
   IMPORT: 'Carga inicial',
+  SALES_RETURN: 'Devolución de venta',
 };
 
 /**
@@ -248,6 +251,8 @@ export const RefTargetType = {
   SALES_ORDER: 'salesOrder',
   PRODUCTION_ORDER: 'productionOrder',
   CUTTING: 'cutting',
+  /** cc52 (D-646): el documento de devolución de una nota de crédito. */
+  SALES_RETURN: 'salesReturn',
 } as const;
 export type RefTargetType = (typeof RefTargetType)[keyof typeof RefTargetType];
 export const REF_TARGET_TYPES = Object.values(RefTargetType) as [RefTargetType, ...RefTargetType[]];
@@ -258,6 +263,7 @@ export const REF_TARGET_ROUTES: Record<RefTargetType, string> = {
   salesOrder: '/pedidos',
   productionOrder: '/produccion',
   cutting: '/corte',
+  salesReturn: '/devoluciones',
 };
 
 /** Tipo de compra (D-030). Determina el formulario y qué pasa al recibirla. */
@@ -1084,6 +1090,40 @@ export const FULL_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
   CreditNoteReason.DEVOLUCION_TOTAL,
 ];
 
+/**
+ * cc52 (D-646): los motivos SUNAT de una NC que **devuelven mercadería** (06 total, 07 por ítem).
+ * Registrar una de estas genera la devolución que reingresa al kardex. Los de descuento o
+ * corrección (03, 04, 05, 13) solo ajustan el monto; los de anulación (01, 02) siguen como antes
+ * (la mercadería vuelve revirtiendo el despacho).
+ */
+export const RETURN_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
+  CreditNoteReason.DEVOLUCION_TOTAL,
+  CreditNoteReason.DEVOLUCION_ITEM,
+];
+
+export function isReturnCreditNoteReason(reason: string | null | undefined): boolean {
+  return RETURN_CREDIT_NOTE_REASONS.includes(reason as CreditNoteReason);
+}
+
+/** cc52 (D-646): los grupos del motivo de una NC, como los elige el usuario. */
+export const CREDIT_NOTE_KINDS = ['RETURN', 'DISCOUNT', 'ANNUL'] as const;
+export type CreditNoteKind = (typeof CREDIT_NOTE_KINDS)[number];
+export const CREDIT_NOTE_KIND_LABELS: Record<CreditNoteKind, string> = {
+  RETURN: 'Devolución de mercadería',
+  DISCOUNT: 'Descuento / corrección de precio',
+  ANNUL: 'Anulación de la operación',
+};
+export const CREDIT_NOTE_KIND_REASONS: Record<CreditNoteKind, readonly CreditNoteReason[]> = {
+  RETURN: RETURN_CREDIT_NOTE_REASONS,
+  DISCOUNT: [
+    CreditNoteReason.DESCUENTO_GLOBAL,
+    CreditNoteReason.DESCUENTO_ITEM,
+    CreditNoteReason.CORRECCION_DESCRIPCION,
+    CreditNoteReason.OTROS_AJUSTES,
+  ],
+  ANNUL: [CreditNoteReason.ANULACION_OPERACION, CreditNoteReason.ANULACION_ERROR_RUC],
+};
+
 /** Modalidad de traslado (catálogo 18 de SUNAT, D-078). Se elige por despacho. */
 export const TransferMode = {
   PRIVATE: 'PRIVATE',
@@ -1141,6 +1181,11 @@ export const DISPATCH_STATUS_LABELS: Record<DispatchStatus, string> = {
  */
 export function fiscalDocumentNumber(series: string, correlative: number): string {
   return `${series}-${String(correlative).padStart(8, '0')}`;
+}
+
+/** cc52 (D-646): `12` → `DEV-000012`. Correlativo interno de una devolución de mercadería. */
+export function salesReturnCode(seq: number): string {
+  return `DEV-${String(seq).padStart(6, '0')}`;
 }
 
 /** `123` → `DES-000123`. Correlativo interno de un despacho; no es un número fiscal. */

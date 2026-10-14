@@ -195,6 +195,9 @@ const TOP_LEVEL_LABELS: Readonly<Record<string, ValueLabels>> = {
   orderStatus: SALES_ORDER_STATUS_LABELS,
   parentStatus: COIL_STATUS_LABELS,
   atCostReason: AT_COST_REASON_LABELS,
+  // cc52 (D-648): la salida con fecha atrasada aceptada guarda el ítem y el origen del movimiento.
+  itemType: INVENTORY_ITEM_TYPE_LABELS,
+  refType: INVENTORY_REF_TYPE_LABELS,
 };
 
 const BY_ACTION: Readonly<Record<string, readonly (readonly [string, ValueLabels])[]>> = {
