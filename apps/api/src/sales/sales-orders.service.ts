@@ -196,6 +196,7 @@ import {
   type RawMaterialSpecRef,
 } from './raw-material';
 import { lockDocuments } from '../inventory/document-locks';
+import { atCostLineAuditEntries } from './at-cost';
 import { UNITS_SYMBOL } from '../common/unit-symbol';
 
 function toDateOnly(value: string): Date {
@@ -1411,17 +1412,12 @@ export class SalesOrdersService {
       // cotización. Confirmar una cotización ya validada no vuelve a pasar por acá: copia las
       // líneas tal como se cotizaron, y el precio se congeló cuando el piso ya lo había visto.
       //
-      // **El mostrador queda fuera, y a propósito.** El alcance de D-163 es la cotización, y
-      // el carrito de caja no tiene dónde mostrar el mínimo: el cajero lo descubriría al
-      // cobrar, con el cliente delante, y el rechazo tira abajo la transacción entera de
-      // D-099 —pedido, despacho, comprobante y cobro—. Como además el piso nuevo es **más
-      // alto** que el de D-032, todo SKU cuyo precio de lista quedó entre los dos dejaría de
-      // venderse en caja sin aviso. Antes de esta sesión el mostrador tampoco tenía piso, así
-      // que dejarlo afuera no abre nada que no estuviera abierto; ponerlo sí rompería algo
-      // que hoy funciona. Queda anotado para el dueño en `docs/PROGRESO.md`.
-      ...(options.counterSale === true
-        ? {}
-        : { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }),
+      // cc52 (D-643): **el mostrador también**, para todos los roles, con el mismo
+      // `assertPriceFloor`. Antes quedaba fuera porque el carrito no mostraba el mínimo; ahora
+      // lo muestra (panel de stock) y el ADMINISTRADOR puede marcar la línea «A costo» con motivo,
+      // como en la cotización (D-641). El rol lo comprueba `PosService` antes del piso.
+      priceFloor: { toleranceMm: roofingToleranceMm(this.env) },
+      ...(options.counterSale === true ? { allowAtCost: true } : {}),
       // D-310: una bobina entera atada a una cotización abierta ajena no se vende por el lado.
       coilTies: { viewer: actor },
     });
@@ -1502,6 +1498,9 @@ export class SalesOrdersService {
             reserveItemId: l.reserveItemId,
             reserveQty: l.reserveQty,
             reserveUnit: l.reserveUnit,
+            // cc52 (D-643): solo el mostrador marca una línea directa «A costo».
+            atCostReason: l.atCostReason,
+            atCostNote: l.atCostNote,
             ...(l.pieces.length > 0
               ? {
                   pieces: {
@@ -1531,6 +1530,14 @@ export class SalesOrdersService {
         totalPen: totals.totalPen,
       },
     });
+    // cc52 (D-643): cada línea de mostrador a costo queda en el pedido, misma transacción.
+    for (const entry of atCostLineAuditEntries(actor.id, 'pos.order.line-at-cost', {
+      entity: 'sales_orders',
+      entityId: order.id,
+      lines: lines.filter((l) => Boolean(l.atCostReason)),
+    })) {
+      await this.audit.write(tx, entry);
+    }
     return order.id;
   }
 

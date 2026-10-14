@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   listPriceWithIgv,
   posCartTotals,
+  posFloorStatus,
   posLineAmounts,
   posLinePayload,
   seededPriceWithIgv,
@@ -79,5 +80,37 @@ describe('precios del mostrador', () => {
     const totals = posCartTotals([line, null]);
     expect(totals.total.toFixed(2)).toBe('14679.00');
     expect(totals.subtotal.plus(totals.igv).toFixed(2)).toBe('14679.00');
+  });
+});
+
+describe('posFloorStatus (cc52, D-643)', () => {
+  const floor = { minPricePen: '26.23', atCostPricePen: '23.60' };
+
+  it('compara contra el mínimo con IGV', () => {
+    expect(posFloorStatus('26.22', floor, false)).toEqual({
+      minPricePen: '26.23',
+      below: true,
+      atCost: false,
+    });
+    expect(posFloorStatus('26.23', floor, false)?.below).toBe(false);
+  });
+
+  it('a costo compara contra el precio a costo', () => {
+    expect(posFloorStatus('23.60', floor, true)).toEqual({
+      minPricePen: '23.60',
+      below: false,
+      atCost: true,
+    });
+    expect(posFloorStatus('23.59', floor, true)?.below).toBe(true);
+  });
+
+  it('sin dato no hay piso (servicio, o a costo sin el precio a costo)', () => {
+    expect(posFloorStatus('1.00', undefined, false)).toBeNull();
+    expect(posFloorStatus('1.00', { minPricePen: null, atCostPricePen: null }, false)).toBeNull();
+    expect(posFloorStatus('1.00', { minPricePen: '26.23', atCostPricePen: null }, true)).toBeNull();
+  });
+
+  it('un precio a medio escribir no queda «debajo»', () => {
+    expect(posFloorStatus('', floor, false)?.below).toBe(false);
   });
 });

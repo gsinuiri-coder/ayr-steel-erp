@@ -121,11 +121,27 @@ export function atCostAuditEntries(
   lines: readonly ResolvedSalesLine[],
   stored: readonly StoredAtCostLine[],
 ): AuditEntry[] {
-  return changedAtCostLines(lines, stored).map((line) => ({
-    actorId,
-    action: 'sales.quotation.line-at-cost',
+  return atCostLineAuditEntries(actorId, 'sales.quotation.line-at-cost', {
     entity: 'quotations',
     entityId: quotationId,
+    lines: changedAtCostLines(lines, stored),
+  });
+}
+
+/**
+ * El registro de cada línea a costo: la línea, el precio, el costo de ese momento, el motivo y
+ * quién. Lo usan la cotización (D-641) y el mostrador (cc52, D-643, sobre el pedido).
+ */
+export function atCostLineAuditEntries(
+  actorId: string,
+  action: string,
+  target: { entity: string; entityId: string; lines: readonly ResolvedSalesLine[] },
+): AuditEntry[] {
+  return target.lines.map((line) => ({
+    actorId,
+    action,
+    entity: target.entity,
+    entityId: target.entityId,
     after: {
       lineNumber: line.lineNumber,
       sku: line.productSku,

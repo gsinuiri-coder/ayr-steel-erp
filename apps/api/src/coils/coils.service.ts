@@ -397,6 +397,15 @@ export class CoilsService {
         ? { AND: [{ status: CoilStatus.OPEN }, { filmSealed: query.film === 'SEALED' }] }
         : {}),
       ...(availabilityIds ? { id: { in: availabilityIds } } : {}),
+      // cc52 (D-642): fecha de ingreso por día de negocio (D-124), los dos extremos inclusive.
+      ...(query.receivedFrom || query.receivedTo
+        ? {
+            operationDate: {
+              ...(query.receivedFrom ? { gte: toDateOnly(query.receivedFrom) } : {}),
+              ...(query.receivedTo ? { lte: toDateOnly(query.receivedTo) } : {}),
+            },
+          }
+        : {}),
       // `sin-color` es un filtro real y no la ausencia de filtro: es como se listan las
       // galvanizadas, que son justo las que un producto sin color puede montar (D-086).
       ...(query.colorId === undefined

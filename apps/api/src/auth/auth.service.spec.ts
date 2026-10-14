@@ -6,7 +6,7 @@ import argon2 from 'argon2';
 import { AuditService } from '../audit/audit.service';
 import { ENV, loadEnv } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthService } from './auth.service';
+import { AuthService, DUMMY_PASSWORD_HASH } from './auth.service';
 
 const env = loadEnv({
   NODE_ENV: 'test',
@@ -134,9 +134,18 @@ describe('AuthService', () => {
 
     it('rechaza correo inexistente con 401 (mismo mensaje)', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
+      // Lo que se prueba es que igual se verifica contra el hash de relleno (anti-enumeración),
+      // no el costo de argon2: con el de producción esta prueba pasaba los 5 s bajo carga (cc52).
+      const verify = jest.spyOn(argon2, 'verify').mockResolvedValueOnce(false);
       await expect(service.login({ email: 'nadie@ayr.test', password: 'x' })).rejects.toThrow(
         'Credenciales inválidas',
       );
+      expect(verify).toHaveBeenCalledWith(DUMMY_PASSWORD_HASH, 'x');
+      verify.mockRestore();
+    });
+
+    it('el hash de relleno tiene el costo de producción (el correo inexistente tarda lo mismo)', () => {
+      expect(DUMMY_PASSWORD_HASH).toMatch(/^\$argon2id\$v=19\$m=65536,p=4,t=3\$/);
     });
 
     it('usuario desactivado no entra aunque la contraseña sea correcta', async () => {

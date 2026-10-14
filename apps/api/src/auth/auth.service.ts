@@ -27,8 +27,16 @@ const REFRESH_GRACE_MS = 30_000;
 const hashToken = (raw: string): string => createHash('sha256').update(raw).digest('hex');
 const newRefreshToken = (): string => randomBytes(48).toString('base64url');
 
-/** Hash de relleno para que un correo inexistente tarde lo mismo que uno real (anti-enumeración). */
-const DUMMY_HASH_PROMISE = argon2.hash(randomBytes(16).toString('hex'), { type: argon2.argon2id });
+/**
+ * Hash de relleno para que un correo inexistente tarde lo mismo que uno real (anti-enumeración):
+ * argon2id con los parámetros por defecto de `hashPassword` (64 MiB, t=3, p=4), de 32 bytes al
+ * azar que nadie conoce. Es una constante y no un `argon2.hash` al importar el módulo: ese hash
+ * de costo de producción corría en cada proceso que importaba el servicio (también en cada
+ * worker de jest) y, sumado al `verify` del caso, pasaba los 5 s de una prueba con la máquina
+ * cargada (cc52). `verify` lee los parámetros del propio hash, así que el tiempo es el mismo.
+ */
+export const DUMMY_PASSWORD_HASH =
+  '$argon2id$v=19$m=65536,p=4,t=3$OGdHjPja3cut/tl2ocuS6g$MqEAZBIp3IIml/E3Ij5JGpBp8GICIKRigJS39RabLGs';
 
 @Injectable()
 export class AuthService {
@@ -42,10 +50,7 @@ export class AuthService {
   /** RF-01: login con correo y contraseña. Crea una sesión con refresh token. */
   async login(input: LoginInput, meta: ClientMeta = {}): Promise<IssuedTokens> {
     const user = await this.prisma.user.findUnique({ where: { email: input.email } });
-    const ok = await argon2.verify(
-      user?.passwordHash ?? (await DUMMY_HASH_PROMISE),
-      input.password,
-    );
+    const ok = await argon2.verify(user?.passwordHash ?? DUMMY_PASSWORD_HASH, input.password);
     if (!user || !ok) {
       await this.audit.log({
         actorId: user?.id ?? null,

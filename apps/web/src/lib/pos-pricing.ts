@@ -97,3 +97,29 @@ export function posCartTotals(lines: readonly (LineAmounts | null)[]): SalesLine
     valid.reduce((acc, l) => acc.plus(l.igv), new Decimal(0)),
   );
 }
+
+/** El piso de una línea del carrito (cc52, D-643): el mínimo con IGV y si el precio queda debajo. */
+export interface PosFloorStatus {
+  /** El precio mínimo con IGV por unidad de venta (a costo, en una línea «A costo»). */
+  minPricePen: string;
+  below: boolean;
+  atCost: boolean;
+}
+
+/**
+ * cc52 (D-643): el mismo piso que la cotización, con los datos del panel de stock
+ * (`minPricePen`, y `atCostPricePen` solo para el ADMINISTRADOR). Precio contra precio, con IGV.
+ * `null` sin dato: un producto sin costo de referencia (un servicio) no tiene piso, y una línea a
+ * costo sin el precio a costo la decide el API.
+ */
+export function posFloorStatus(
+  priceWithIgvPen: string,
+  floor: { minPricePen: string | null; atCostPricePen: string | null } | undefined,
+  atCost: boolean,
+): PosFloorStatus | null {
+  const min = atCost ? (floor?.atCostPricePen ?? null) : (floor?.minPricePen ?? null);
+  if (min === null) return null;
+  const price = priceWithIgvPen.trim();
+  const below = isPositiveDecimal(price) && toDecimal(price).lt(toDecimal(min));
+  return { minPricePen: min, below, atCost };
+}

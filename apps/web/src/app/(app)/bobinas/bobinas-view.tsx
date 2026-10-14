@@ -44,6 +44,7 @@ import { formatMoneyOrDash, formatQty, isPositiveDecimal } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { HeaderActions } from '@/components/header-actions';
 import { Input } from '@/components/ui/input';
+import { isIsoDate } from '@/lib/kardex-range';
 import { PaginationBar } from '@/components/pagination-bar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -64,9 +65,20 @@ interface CoilFilters {
   thickness: string;
   film: string;
   status: string;
+  /** cc52 (D-642): fecha de ingreso, desde y hasta. */
+  from: string;
+  to: string;
 }
 
-const NO_COIL_FILTERS: CoilFilters = { line: '', finish: '', thickness: '', film: '', status: '' };
+const NO_COIL_FILTERS: CoilFilters = {
+  line: '',
+  finish: '',
+  thickness: '',
+  film: '',
+  status: '',
+  from: '',
+  to: '',
+};
 
 /**
  * Pestañas de la vista (Fase 7e, D-121): el default es lo que planta usa a diario —
@@ -102,6 +114,9 @@ export function BobinasView() {
     status: '',
     // D-328: solo las selladas o solo las abiertas (las vigentes se rotulan por su film).
     film: '',
+    // cc52 (D-642): fecha de ingreso (día de negocio de la bobina), desde y hasta.
+    from: '',
+    to: '',
     search: '',
   });
   const { page, pageSize, setPage, setPageSize } = useUrlPagination(url, setUrl);
@@ -116,6 +131,8 @@ export function BobinasView() {
     : '';
   // cc47 (D-615): el espesor se escribe en el modal «Filtros» y llega a la URL con «Aplicar».
   const thicknessMm = url.thickness.trim();
+  const receivedFrom = isIsoDate(url.from) ? url.from : '';
+  const receivedTo = isIsoDate(url.to) ? url.to : '';
   const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });
   });
@@ -131,6 +148,8 @@ export function BobinasView() {
   // Se manda solo cuando ya es un decimal válido: a medio escribir el API responde 400.
   if (isPositiveDecimal(thicknessMm)) params.set('thicknessMm', thicknessMm);
   if (search) params.set('search', search);
+  if (receivedFrom) params.set('receivedFrom', receivedFrom);
+  if (receivedTo) params.set('receivedTo', receivedTo);
   if (tab === 'disponibles') {
     params.set('statusNe', 'IN_THIRD_PARTY');
     params.set('availability', 'available');
@@ -236,6 +255,8 @@ export function BobinasView() {
               thickness: url.thickness,
               film: url.film,
               status: url.status,
+              from: receivedFrom,
+              to: receivedTo,
             }}
             empty={NO_COIL_FILTERS}
             activeCount={
@@ -245,13 +266,18 @@ export function BobinasView() {
                 isPositiveDecimal(thicknessMm) ? thicknessMm : '',
                 tab === 'disponibles' || tab === 'todas' ? film : '',
                 tab === 'todas' ? status : '',
+                receivedFrom || receivedTo ? 'fecha' : '',
               ].filter(Boolean).length
             }
-            validate={(d) =>
-              d.thickness.trim() === '' || isPositiveDecimal(d.thickness.trim())
-                ? null
-                : 'El espesor tiene que ser un número mayor que cero, en milímetros.'
-            }
+            validate={(d) => {
+              if (d.thickness.trim() !== '' && !isPositiveDecimal(d.thickness.trim())) {
+                return 'El espesor tiene que ser un número mayor que cero, en milímetros.';
+              }
+              if (d.from && d.to && d.from > d.to) {
+                return 'La fecha de ingreso «Desde» es posterior a «Hasta».';
+              }
+              return null;
+            }}
             onApply={(next) => {
               setUrl({ ...next, thickness: next.thickness.trim() });
             }}
@@ -284,6 +310,30 @@ export function BobinasView() {
                     label: `${f.code} — ${f.name}`,
                   }))}
                 />
+                <div className="flex flex-wrap items-end gap-3">
+                  <FilterField label="Fecha de ingreso desde" htmlFor="filtro-ingreso-desde">
+                    <Input
+                      id="filtro-ingreso-desde"
+                      type="date"
+                      className="w-40"
+                      value={draft.from}
+                      onChange={(e) => {
+                        update({ from: e.target.value });
+                      }}
+                    />
+                  </FilterField>
+                  <FilterField label="Hasta" htmlFor="filtro-ingreso-hasta">
+                    <Input
+                      id="filtro-ingreso-hasta"
+                      type="date"
+                      className="w-40"
+                      value={draft.to}
+                      onChange={(e) => {
+                        update({ to: e.target.value });
+                      }}
+                    />
+                  </FilterField>
+                </div>
                 <FilterField label="Espesor (mm)" htmlFor="filtro-espesor">
                   <Input
                     id="filtro-espesor"
