@@ -92,7 +92,7 @@ export function CoilCloseDialog({
   const exceedsIntake = physical?.gt(new Decimal(coil.weightKg)) ?? false;
 
   const close = useMutation({
-    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: ({ confirmBackdate }: BackdateAck) =>
       api<CoilDto>(`/coils/${coil.id}/status`, {
         method: 'POST',
         body: {
@@ -101,7 +101,6 @@ export function CoilCloseDialog({
           reason: reason.trim() || undefined,
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
-          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: () => {
@@ -111,8 +110,8 @@ export function CoilCloseDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo terminar la bobina')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await close.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await close.mutateAsync({ confirmBackdate });
   });
 
   return (
@@ -228,7 +227,6 @@ export function CoilCloseDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
-        costMismatch={backdate.costMismatch}
         pending={close.isPending}
         onConfirm={() => {
           void backdate.confirm();

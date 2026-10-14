@@ -87,9 +87,29 @@ export class SalesReturnsService {
     });
     const movements = await tx.inventoryMovement.findMany({
       where: { id: { in: rows.flatMap((r) => (r.movementId === null ? [] : [r.movementId])) } },
-      select: { id: true, unitCost: true, totalCost: true, unit: true, businessLineId: true },
+      select: {
+        id: true,
+        qty: true,
+        unitCost: true,
+        totalCost: true,
+        unit: true,
+        businessLineId: true,
+      },
     });
     const movementById = new Map(movements.map((m) => [m.id.toString(), m]));
+    // cc53 (D-649): la devolución sale al costo **efectivo** de la salida (con sus recosteos por
+    // fecha). Un recosteo de una salida saca valor del saldo: su total negativo es más costo.
+    const recosts =
+      movements.length === 0
+        ? []
+        : await tx.inventoryMovement.groupBy({
+            by: ['recostOfId'],
+            where: { recostOfId: { in: movements.map((m) => m.id) } },
+            _sum: { totalCost: true },
+          });
+    const recostById = new Map(
+      recosts.map((g) => [String(g.recostOfId), toDecimal(g._sum.totalCost?.toString() ?? '0')]),
+    );
     for (const r of rows) {
       const movement =
         r.movementId === null ? undefined : movementById.get(r.movementId.toString());
@@ -112,8 +132,7 @@ export class SalesReturnsService {
         returnedReserveQty: sum((x) => x.reserveQty),
         returnedTotalCost: sum((x) => x.totalCost),
         movementId: movement.id,
-        unitCost: toDecimal(movement.unitCost.toString()),
-        totalCost: toDecimal(movement.totalCost.toString()),
+        ...effectiveOutCost(movement, recostById.get(movement.id.toString())),
         unit: movement.unit,
         businessLineId: movement.businessLineId,
       });
@@ -663,4 +682,24 @@ export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
       movementId: i.movementId.toString(),
     })),
   };
+}
+
+/**
+ * cc53 (D-649): el costo de una salida con sus recosteos. Sin recosteo, el grabado tal cual (el
+ * unitario del kardex); con recosteo, el total corregido y su unitario.
+ */
+export function effectiveOutCost(
+  movement: {
+    qty: { toString(): string };
+    unitCost: { toString(): string };
+    totalCost: { toString(): string };
+  },
+  recostTotal: Decimal | undefined,
+): { unitCost: Decimal; totalCost: Decimal } {
+  const totalCost = toDecimal(movement.totalCost.toString());
+  if (!recostTotal || recostTotal.isZero()) {
+    return { unitCost: toDecimal(movement.unitCost.toString()), totalCost };
+  }
+  const corrected = totalCost.minus(recostTotal);
+  return { unitCost: corrected.div(movement.qty.toString()), totalCost: corrected };
 }

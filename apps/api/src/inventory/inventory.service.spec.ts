@@ -108,10 +108,18 @@ function createFakeTx(line: { id: string; inventoryStrategy: InventoryStrategy }
         // Prisma devuelve `null` en las columnas opcionales que no se escribieron; sin
         // esto el `reversalOfId` llegaría como `undefined` y la guarda anti-doble-reversa
         // dispararía en el primer movimiento.
-        const row = { id: BigInt(movements.length + 1), reversalOfId: null, ...data };
+        const row = {
+          id: BigInt(movements.length + 1),
+          reversalOfId: null,
+          recostOfId: null,
+          ...data,
+        };
         movements.push(row);
         return Promise.resolve(row);
       }),
+      // cc53 (D-649): sin filas posteriores ni recosteos en estos casos.
+      count: jest.fn().mockResolvedValue(0),
+      aggregate: jest.fn().mockResolvedValue({ _sum: { totalCost: null } }),
       findUnique: jest.fn(({ where }: { where: { id: bigint } }) =>
         Promise.resolve(movements.find((m) => m.id === where.id) ?? null),
       ),

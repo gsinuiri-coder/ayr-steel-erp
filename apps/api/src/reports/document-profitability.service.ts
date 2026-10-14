@@ -115,7 +115,7 @@ export class DocumentProfitabilityService {
         FROM "inventory_movements" m
         WHERE m."ref_type" = 'SALE'
           AND m."ref_id" = d."id"::text
-          AND COALESCE(m."reversal_of_id", m."id") = di."movement_id"
+          AND COALESCE(m."reversal_of_id", (SELECT t."reversal_of_id" FROM "inventory_movements" t WHERE t."id" = m."recost_of_id"), m."recost_of_id", m."id") = di."movement_id"
       ) mv ON true
       WHERE d."invoice_id" = ${documentId}::uuid
       GROUP BY di."sales_order_item_id"

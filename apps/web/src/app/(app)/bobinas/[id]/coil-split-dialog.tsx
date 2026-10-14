@@ -68,7 +68,7 @@ export function CoilSplitDialog({
   // todas las hijas quedan el mismo día.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const split = useMutation({
-    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: ({ confirmBackdate }: BackdateAck) =>
       api<CoilDto[]>(`/coils/${coil.id}/split`, {
         method: 'POST',
         body: {
@@ -80,7 +80,6 @@ export function CoilSplitDialog({
           })),
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
-          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: (children) => {
@@ -90,8 +89,8 @@ export function CoilSplitDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo partir')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await split.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await split.mutateAsync({ confirmBackdate });
   });
 
   const preview = previewSplit(coil, rows, kerfLossMm, splitWeightKg);
@@ -228,7 +227,6 @@ export function CoilSplitDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
-        costMismatch={backdate.costMismatch}
         pending={split.isPending}
         onConfirm={() => {
           void backdate.confirm();

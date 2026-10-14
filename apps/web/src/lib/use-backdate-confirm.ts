@@ -1,13 +1,12 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { BACKDATE_COST_MISMATCH, BACKDATE_OUT_OF_ORDER } from '@ayr/shared';
+import { BACKDATE_OUT_OF_ORDER } from '@ayr/shared';
 import { ApiError } from '@/lib/api';
 
-/** Qué acuse manda el reintento: el de orden (D-124) y, si hizo falta, «Registrar igual» (D-648). */
+/** Qué acuse manda el reintento: el de orden cronológico (D-124). */
 export interface BackdateAck {
   confirmBackdate: boolean;
-  acceptBackdatedCost: boolean;
 }
 
 /**
@@ -19,30 +18,20 @@ export interface BackdateAck {
  * copiado en cada vista porque son media docena de pantallas y una copia que se olvide de
  * reintentar deja al usuario con un error que no explica cómo salir.
  *
- * cc52 (D-648): si la respuesta es `BACKDATE_COST_MISMATCH` (una salida atrasada que saldría a
- * otro costo), el diálogo muestra los dos costos y el reintento manda además
- * `acceptBackdatedCost: true` («Registrar igual»). Solo un ADMINISTRADOR la puede registrar: para
- * otro rol el API responde 403 y la mutación lo muestra.
+ * cc53 (D-650): ya no hay «Registrar igual» por costo (D-648): el kardex recostea por fecha los
+ * movimientos posteriores.
  */
-export function useBackdateConfirm(
-  run: (confirmBackdate: boolean, acceptBackdatedCost: boolean) => Promise<unknown>,
-) {
+export function useBackdateConfirm(run: (confirmBackdate: boolean) => Promise<unknown>) {
   const [detail, setDetail] = useState<string | null>(null);
-  const [costMismatch, setCostMismatch] = useState(false);
 
   const attempt = useCallback(
-    async (ack: BackdateAck = { confirmBackdate: false, acceptBackdatedCost: false }) => {
+    async (ack: BackdateAck = { confirmBackdate: false }) => {
       try {
-        await run(ack.confirmBackdate, ack.acceptBackdatedCost);
+        await run(ack.confirmBackdate);
         setDetail(null);
-        setCostMismatch(false);
       } catch (err) {
-        if (
-          err instanceof ApiError &&
-          (err.code === BACKDATE_OUT_OF_ORDER || err.code === BACKDATE_COST_MISMATCH)
-        ) {
+        if (err instanceof ApiError && err.code === BACKDATE_OUT_OF_ORDER) {
           setDetail(err.message);
-          setCostMismatch(err.code === BACKDATE_COST_MISMATCH);
           return;
         }
         // Cualquier otro error ya lo mostró el `onError` de la mutación. Relanzarlo acá solo
@@ -57,18 +46,12 @@ export function useBackdateConfirm(
     /** Mensaje del API cuando hay que confirmar; `null` cuando no hay nada pendiente. */
     detail,
     open: detail !== null,
-    /** cc52 (D-648): lo pendiente es una salida que cambia de costo («Registrar igual»). */
-    costMismatch,
     close: useCallback(() => {
       setDetail(null);
-      setCostMismatch(false);
     }, []),
     /** Primer intento, sin confirmar (o repitiendo el acuse que ya se dio, en planta). */
     attempt: useCallback((ack?: BackdateAck) => attempt(ack), [attempt]),
     /** Reintento tras confirmar en el diálogo. */
-    confirm: useCallback(
-      () => attempt({ confirmBackdate: true, acceptBackdatedCost: costMismatch }),
-      [attempt, costMismatch],
-    ),
+    confirm: useCallback(() => attempt({ confirmBackdate: true }), [attempt]),
   };
 }

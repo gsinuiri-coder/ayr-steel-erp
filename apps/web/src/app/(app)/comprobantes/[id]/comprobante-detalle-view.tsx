@@ -33,10 +33,9 @@ import {
   type InvoiceLinkedDispatchesDto,
   type InvoicingSettingsDto,
   type PaymentMethod,
-  BACKDATE_COST_MISMATCH,
 } from '@ayr/shared';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
-import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 import { api, ApiError } from '@/lib/api';
 import { ME_QUERY_KEY, useSession } from '@/lib/session';
 import {
@@ -242,7 +241,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
    * haya visto, y acá lo vio.
    */
   const updateIssueDate = useMutation({
-    mutationFn: ({ acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: () =>
       api<FiscalDocumentDto>(`/invoicing/documents/${id}/issue-date`, {
         method: 'PATCH',
         body: {
@@ -251,9 +250,6 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           confirmDueDateShift: true,
           // Solo si hay algo que re-fechar: el API exige la decisión únicamente en ese caso.
           ...(atIssueDateDispatches.length > 0 ? { redateDispatches } : {}),
-          // cc52 (D-648): el re-fechado vuelve a despachar con fecha atrasada; si eso cambia el
-          // costo, el ADMINISTRADOR lo confirma en el diálogo con los dos costos.
-          ...(acceptBackdatedCost ? { acceptBackdatedCost: true } : {}),
         },
       }),
     onSuccess: (updated) => {
@@ -264,12 +260,11 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       refresh();
     },
     onError: (err: unknown) => {
-      if (err instanceof ApiError && err.code === BACKDATE_COST_MISMATCH) return;
       toast.error(errorMessage(err, 'No se pudo corregir la fecha'));
     },
   });
-  const issueDateBackdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await updateIssueDate.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const issueDateBackdate = useBackdateConfirm(async () => {
+    await updateIssueDate.mutateAsync();
   });
 
   /**
@@ -1508,7 +1503,6 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           if (!open) issueDateBackdate.close();
         }}
         detail={issueDateBackdate.detail ?? ''}
-        costMismatch={issueDateBackdate.costMismatch}
         pending={updateIssueDate.isPending}
         onConfirm={() => {
           void issueDateBackdate.confirm();

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
-  ForbiddenException,
   ConflictException,
   Inject,
   Injectable,
@@ -15,7 +14,6 @@ import {
   type InventoryRefType,
 } from '@prisma/client';
 import {
-  BACKDATE_COST_MISMATCH,
   BACKDATE_OUT_OF_ORDER,
   businessToday,
   carriesInventory,
@@ -45,10 +43,18 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ENV, type Env } from '../config/env';
 import { AuditService } from '../audit/audit.service';
 import {
-  backdatedCostMessage,
-  backdatedCostMismatch,
-  type BackdatedCostMismatch,
-} from './backdated-cost';
+  laterMovementsNote,
+  planRecost,
+  type MovementMeta,
+  type PlannedAdjust,
+  type RecostSeed,
+} from './inventory-recost';
+import {
+  averageOutCost,
+  RECOST_MAX_ROWS,
+  recostAdjustTotal,
+  rowCostOfRecost,
+} from './recost-engine';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import {
   assertRawMaterialInvariant,
@@ -62,6 +68,9 @@ import { balanceLockKey, compareLockKeys, markBalanceHeld, sortedUniqueIds } fro
 
 /** Candidatos que se traen antes de rankear y recortar el buscador de ítems (D-290). */
 const ITEM_SEARCH_CANDIDATE_POOL = 100;
+
+/** cc53 (D-649): «hasta el final del kardex», para leer el valor de todas sus filas. */
+const KARDEX_END = '9999-12-31';
 
 /**
  * D-134: los movimientos de un **partido**, que no se comprueban contra el agregado uno por
@@ -152,13 +161,6 @@ export interface RecordMovementInput {
    * {@link InventoryService.assertChronological}.
    */
   confirmBackdate?: boolean;
-  /**
-   * cc52 (D-648): «Registrar igual» una **salida** con fecha atrasada que el kardex valorizaría a
-   * un promedio distinto del que el ítem tenía a esa fecha. Solo ADMINISTRADOR (lo comprueba
-   * `record` contra el usuario del movimiento) y queda en la auditoría con los dos costos. En una
-   * entrada se ignora.
-   */
-  acceptBackdatedCost?: boolean;
 }
 
 /**
@@ -246,19 +248,10 @@ export class InventoryService {
     if (input.itemType === InventoryItemType.COIL && input.type === 'OUT') {
       await assertCoilOutNotBeforeEntry(tx, input.itemId, operationDate);
     }
-    // cc52 (D-648): antes que el acuse de D-124, porque es la regla más fuerte: una salida
-    // atrasada que cambia de costo solo pasa con «Registrar igual» de un ADMINISTRADOR, y ese
-    // acuse vale también como el de D-124 (el web reintenta con los dos).
-    const costOverride =
-      input.type === 'OUT'
-        ? await this.assertBackdatedCost(tx, input, operationDate, balance)
-        : null;
-    await this.assertChronological(
-      tx,
-      input,
-      operationDate,
-      input.confirmBackdate === true || costOverride !== null,
-    );
+    await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
+    // cc53 (D-649, D-650): una fila con fecha anterior a otras del ítem ya no se rechaza por costo
+    // (D-648): sale al promedio **de su fecha** y lo posterior se recostea. Cero consultas hoy.
+    const laterCount = await this.laterMovementCount(tx, input, operationDate);
 
     if (balance.unit !== input.unit && !balance.qty.isZero()) {
       // Mezclar unidades en el mismo saldo (kilos con unidades) haría del promedio y del
@@ -286,11 +279,25 @@ export class InventoryService {
           `Stock insuficiente: hay ${balance.qty.toFixed(3)} y se intentan retirar ${qty.toFixed(3)}`,
         );
       }
-      // Una salida no cambia el costo promedio; sale valorizada al promedio vigente.
-      unitCost = balance.avgCost;
-      totalCost = qty.times(unitCost);
-      newQty = balance.qty.minus(qty);
-      newAvgCost = balance.avgCost;
+      const atDate = laterCount > 0 ? await this.stockAtDate(tx, input, operationDate) : null;
+      if (atDate?.qty.gt(0)) {
+        // cc53 (D-649): sale al promedio que el ítem tenía a su fecha; el saldo de hoy pierde
+        // ese valor y el recosteo corrige lo posterior.
+        totalCost = averageOutCost(atDate, qty);
+        unitCost = totalCost.div(qty);
+        newQty = balance.qty.minus(qty);
+        // El valor que queda sale del kardex (sus filas y recosteos), no del promedio guardado a
+        // cuatro decimales: así el saldo no arrastra redondeo de una retrofecha a otra.
+        const kardex = await this.stockAtDate(tx, input, KARDEX_END);
+        const value = Decimal.max(kardex.value.minus(totalCost), new Decimal(0));
+        newAvgCost = newQty.lte(0) ? new Decimal(0) : value.div(newQty);
+      } else {
+        // Una salida no cambia el costo promedio; sale valorizada al promedio vigente.
+        unitCost = balance.avgCost;
+        totalCost = qty.times(unitCost);
+        newQty = balance.qty.minus(qty);
+        newAvgCost = balance.avgCost;
+      }
     }
 
     // D-066: `disponible ≥ reservado`. Acá y en `reverse` está el único punto por el que
@@ -348,99 +355,223 @@ export class InventoryService {
       actorId: input.actorId,
       operationDate: toDateOnly(operationDate),
     });
-    if (costOverride !== null) {
-      // cc52 (D-648): la excepción queda en la auditoría, misma transacción, con los dos costos.
-      await this.audit.write(tx, {
-        actorId: input.actorId,
-        action: 'inventory.backdated-cost-accepted',
-        entity: 'inventory_movements',
-        entityId: movement.id.toString(),
-        after: {
-          itemType: input.itemType,
-          itemId: input.itemId,
-          item: costOverride.label,
-          operationDate,
-          qty: toFixedString(qty, 'KG'),
-          unit: input.unit,
-          costUsed: costOverride.costUsed,
-          costAtDate: costOverride.costAtDate,
-          laterCount: costOverride.laterCount,
-          refType: input.refType,
-          ...(input.refId ? { refId: input.refId } : {}),
-        },
-      });
+    if (laterCount > 0) {
+      await this.recostForward(
+        tx,
+        [{ itemType: input.itemType, itemId: input.itemId, afterMovementId: movement.id }],
+        { actorId: input.actorId, trigger: movement },
+      );
     }
     return movement;
   }
 
   /**
-   * cc52 (D-648): una salida con fecha atrasada **sale al promedio de hoy** (D-028, sin recálculo
-   * retroactivo). Si después de esa fecha ya hay entradas o ajustes registrados, ese promedio no
-   * es el que el ítem tenía a su fecha: se rechaza con los dos costos, salvo «Registrar igual» de
-   * un ADMINISTRADOR. Devuelve la excepción aceptada (para auditarla) o `null` si no hay nada que
-   * avisar. Costo cero el día de hoy: no puede haber nada posterior.
-   *
-   * Lo que hace una reversa (`reverse`) no pasa por acá: devuelve el costo exacto del original.
-   * El bloqueo se quita cuando exista el recosteo del promedio por fecha (cc53).
+   * cc53 (D-649): filas del ítem con fecha **posterior**. Cero consultas el día de hoy (no se
+   * puede retrofechar al futuro). Un recosteo cuenta: no hay fila posterior que no se deba recalcular.
    */
-  private async assertBackdatedCost(
+  private async laterMovementCount(
     tx: Prisma.TransactionClient,
-    input: RecordMovementInput,
+    item: { itemType: InventoryItemType; itemId: string },
     operationDate: string,
-    balance: BalanceRow,
-  ): Promise<(BackdatedCostMismatch & { label: string }) | null> {
-    if (operationDate >= businessToday()) return null;
-    const date = toDateOnly(operationDate);
-    const laterCount = await tx.inventoryMovement.count({
+  ): Promise<number> {
+    if (operationDate >= businessToday()) return 0;
+    return tx.inventoryMovement.count({
       where: {
-        itemType: input.itemType,
-        itemId: input.itemId,
-        type: { in: ['IN', 'ADJUST'] },
-        operationDate: { gt: date },
+        itemType: item.itemType,
+        itemId: item.itemId,
+        recostOfId: null,
+        operationDate: { gt: toDateOnly(operationDate) },
       },
     });
-    if (laterCount === 0) return null;
+  }
+
+  /**
+   * cc53 (D-649): el saldo del ítem con todo lo registrado hasta una fecha (inclusive), por valor y
+   * con sus recosteos (un `ADJUST` de recosteo es valor del saldo, como cualquier ajuste). Lo que
+   * una salida nueva, fechada ahí, toma como promedio.
+   */
+  private async stockAtDate(
+    tx: Prisma.TransactionClient,
+    item: { itemType: InventoryItemType; itemId: string },
+    operationDate: string,
+  ): Promise<{ qty: Decimal; value: Decimal }> {
     const rows = await tx.$queryRaw<{ qty: Prisma.Decimal; value: Prisma.Decimal }[]>`
       SELECT
         COALESCE(SUM(CASE "type" WHEN 'IN' THEN "qty" WHEN 'OUT' THEN -"qty" ELSE 0 END), 0) AS "qty",
         COALESCE(SUM(CASE "type" WHEN 'OUT' THEN -"total_cost" ELSE "total_cost" END), 0) AS "value"
       FROM "inventory_movements"
-      WHERE "item_type" = ${input.itemType}::"InventoryItemType"
-        AND "item_id" = ${input.itemId}::uuid
-        AND "operation_date" <= ${date}::date
+      WHERE "item_type" = ${item.itemType}::"InventoryItemType"
+        AND "item_id" = ${item.itemId}::uuid
+        AND "operation_date" <= ${toDateOnly(operationDate)}::date
     `;
-    const mismatch = backdatedCostMismatch(
-      balance.avgCost,
-      {
-        qty: toDecimal(rows[0]?.qty.toString() ?? '0'),
-        value: toDecimal(rows[0]?.value.toString() ?? '0'),
+    return {
+      qty: toDecimal(rows[0]?.qty.toString() ?? '0'),
+      value: Decimal.max(toDecimal(rows[0]?.value.toString() ?? '0'), new Decimal(0)),
+    };
+  }
+
+  /**
+   * cc53 (D-649) — **la puerta del recosteo por fecha** (regla dura 8). Recalcula hacia adelante el
+   * costo de las salidas (y de lo que derivan de ellas) de los ítems de `seeds`, y por cada fila
+   * que cambia escribe un `ADJUST` con `recostOfId`, la fecha de la fila original y su `ref`, para
+   * que el costo caiga en su mes y en su documento. Nunca edita una fila; el saldo queda con el
+   * valor corregido. Misma transacción que la operación que lo dispara.
+   *
+   * Bloqueos (D-471): primero se arma el plan (solo lecturas), después se toma el conjunto
+   * completo con `lockInOrder` y se vuelve a armar bajo el lock; si el conjunto creció, otra vuelta.
+   *
+   * Si la cadena pasa del tope (`RECOST_MAX_ROWS`, decisión del dueño), no ajusta nada: deja
+   * «Recosteo por fecha pendiente» en la auditoría y lo corrige `pnpm recosteo:historico`. La
+   * operación del usuario no se bloquea.
+   */
+  async recostForward(
+    tx: Prisma.TransactionClient,
+    seeds: readonly RecostSeed[],
+    ctx: {
+      actorId: string;
+      /** El movimiento que lo disparó (su documento recibe la entrada de auditoría). */
+      trigger?: Pick<InventoryMovement, 'id' | 'itemType' | 'itemId' | 'refType' | 'refId'>;
+      /** `recosteo:historico`: otra acción de auditoría y sin tope en línea. */
+      historic?: { label: string };
+      maxRows?: number;
+    },
+  ): Promise<RecostOutcome> {
+    const maxRows = ctx.historic ? Number.MAX_SAFE_INTEGER : ctx.maxRows;
+    let plan = await planRecost(tx, seeds, maxRows);
+    if (plan.overLimit) return this.recostPending(tx, seeds, plan.rowsReplayed, ctx);
+    for (let round = 0; round < 3; round += 1) {
+      const items = plan.items.map((p) => {
+        const meta = p.adjusts[0]?.movement;
+        return meta ? itemRefOf(meta) : null;
+      });
+      const toLock = items.filter((i): i is ItemRef => i !== null);
+      await this.lockInOrder(tx, { items: toLock });
+      const again = await planRecost(tx, seeds, maxRows);
+      if (again.overLimit) return this.recostPending(tx, seeds, again.rowsReplayed, ctx);
+      const before = new Set(toLock.map((i) => labelKey(i.itemType, i.itemId)));
+      const grew = again.items.some(
+        (p) => p.adjusts.length > 0 && !before.has(labelKey(p.item.itemType, p.item.itemId)),
+      );
+      plan = again;
+      if (!grew) break;
+    }
+
+    const adjusted: RecostOutcome['adjusted'] = [];
+    for (const { item, adjusts } of plan.items) {
+      const first = adjusts.at(0)?.movement;
+      if (!first) continue;
+      const balance = await this.lockBalance(tx, itemRefOf(first));
+
+      const data = adjusts.map((a) => {
+        const total = recostAdjustTotal(a.movement.type, a.delta);
+
+        return {
+          businessLineId: a.movement.businessLineId,
+          itemType: a.movement.itemType,
+          itemId: a.movement.itemId,
+          type: 'ADJUST' as const,
+          qty: toFixedString(a.movement.qty, 'KG'),
+          unit: a.movement.unit,
+          unitCost: toFixedString(total.div(a.movement.qty), 'MONEY'),
+          totalCost: toFixedString(total, 'MONEY'),
+          refType: a.movement.refType,
+          refId: a.movement.refId,
+          notes: ctx.historic ? ctx.historic.label : 'Recosteo por fecha',
+          recostOfId: a.movement.id,
+          actorId: ctx.actorId,
+          operationDate: a.movement.operationDate,
+        };
+      });
+      await tx.inventoryMovement.createMany({ data });
+      if (balance.qty.gt(0)) {
+        const kardex = await this.stockAtDate(tx, first, KARDEX_END);
+        const value = Decimal.max(kardex.value, new Decimal(0));
+        await this.writeBalance(tx, balance.id, balance.qty, value.div(balance.qty), balance.unit);
+      }
+      adjusted.push(...adjusts.map((a) => ({ ...a, item })));
+    }
+    await this.auditRecost(tx, adjusted, plan.rowsReplayed, ctx);
+    return { pending: false, rowsReplayed: plan.rowsReplayed, adjusted };
+  }
+
+  /** Se pasó del tope: nada se ajusta en línea, y la auditoría lo deja dicho. */
+  private async recostPending(
+    tx: Prisma.TransactionClient,
+    seeds: readonly RecostSeed[],
+    rowsReplayed: number,
+    ctx: {
+      actorId: string;
+      trigger?: Pick<InventoryMovement, 'id' | 'itemType' | 'itemId' | 'refType' | 'refId'>;
+    },
+  ): Promise<RecostOutcome> {
+    const target = ctx.trigger ? recostAuditTarget(ctx.trigger) : null;
+    await this.audit.write(tx, {
+      actorId: ctx.actorId,
+      action: 'inventory.recost-pending',
+      entity: target?.entity ?? 'inventory_movements',
+      entityId: target?.entityId ?? ctx.trigger?.id.toString() ?? seeds[0]?.itemId ?? '',
+      after: {
+        recostItems: seeds.map((s) => `${s.itemType}:${s.itemId}`),
+        rowsReplayed,
+        maxRows: RECOST_MAX_ROWS,
       },
-      laterCount,
-      input.qty,
-    );
-    if (mismatch === null) return null;
-    const labels = await this.resolveItemLabels([input]);
-    const label = labels.get(labelKey(input.itemType, input.itemId))?.code ?? input.itemId;
-    if (input.acceptBackdatedCost !== true) {
-      throw new BadRequestException({
-        code: BACKDATE_COST_MISMATCH,
-        message: backdatedCostMessage({ operationDate, label, unit: input.unit }, mismatch),
-        costUsed: mismatch.costUsed,
-        costAtDate: mismatch.costAtDate,
-        statusCode: 400,
-        error: 'Bad Request',
+    });
+    return { pending: true, rowsReplayed, adjusted: [] };
+  }
+
+  /**
+   * «Recosteo por fecha» (o «Recosteo histórico cc53») en el documento de cada fila ajustada, con
+   * el costo antes y después, y un resumen en el documento que lo disparó (criterio de cc50).
+   */
+  private async auditRecost(
+    tx: Prisma.TransactionClient,
+    adjusted: RecostOutcome['adjusted'],
+    rowsReplayed: number,
+    ctx: {
+      actorId: string;
+      trigger?: Pick<InventoryMovement, 'id' | 'itemType' | 'itemId' | 'refType' | 'refId'>;
+      historic?: { label: string };
+    },
+  ): Promise<void> {
+    const action = ctx.historic ? 'inventory.recost-historic' : 'inventory.recost';
+    const byDocument = new Map<
+      string,
+      { entity: string; entityId: string; rows: Record<string, string>[] }
+    >();
+    for (const a of adjusted) {
+      const target = recostAuditTarget(a.movement);
+      const key = `${target.entity}:${target.entityId}`;
+      const entry = byDocument.get(key) ?? { ...target, rows: [] };
+      entry.rows.push({
+        movementId: a.movement.id.toString(),
+        itemType: a.movement.itemType,
+        itemId: a.movement.itemId,
+        operationDate: fromDateOnly(a.movement.operationDate),
+        costBefore: toFixedString(a.target.minus(a.delta), 'MONEY'),
+        costAfter: toFixedString(a.target, 'MONEY'),
+        costDelta: toFixedString(a.delta, 'MONEY'),
+      });
+      byDocument.set(key, entry);
+    }
+    const trigger = ctx.trigger ? recostAuditTarget(ctx.trigger) : null;
+    if (trigger && adjusted.length > 0) {
+      const key = `${trigger.entity}:${trigger.entityId}`;
+      if (!byDocument.has(key)) byDocument.set(key, { ...trigger, rows: [] });
+    }
+    for (const doc of byDocument.values()) {
+      await this.audit.write(tx, {
+        actorId: ctx.actorId,
+        action,
+        entity: doc.entity,
+        entityId: doc.entityId,
+        after: {
+          ...(ctx.trigger ? { triggerMovementId: ctx.trigger.id.toString() } : {}),
+          recostedMovements: doc.rows,
+          adjustments: adjusted.length,
+          rowsReplayed,
+        },
       });
     }
-    const actor = await tx.user.findUnique({
-      where: { id: input.actorId },
-      select: { role: true },
-    });
-    if (actor?.role !== 'ADMINISTRADOR') {
-      throw new ForbiddenException(
-        'Solo un administrador puede registrar igual una salida con fecha atrasada que cambia de costo',
-      );
-    }
-    return { ...mismatch, label };
   }
 
   /**
@@ -491,7 +622,8 @@ export class InventoryService {
       message:
         `La fecha ${operationDate} queda ANTES de ${laterCount} movimiento(s) que ${label} ya ` +
         `tiene registrados (el más reciente, del ${fromDateOnly(newest.operationDate)}). La carga ` +
-        'histórica va en orden cronológico: registrá primero lo más antiguo.',
+        'histórica va en orden cronológico: registrá primero lo más antiguo.' +
+        laterMovementsNote(laterCount),
       statusCode: 400,
       error: 'Bad Request',
     });
@@ -542,7 +674,9 @@ export class InventoryService {
       data: { avgCost: toFixedString(newAvgCost, 'MONEY'), unit: balance.unit },
     });
 
-    return tx.inventoryMovement.create({
+    const operationDate = input.operationDate ?? businessToday();
+    const laterCount = await this.laterMovementCount(tx, input, operationDate);
+    const movement = await tx.inventoryMovement.create({
       data: {
         businessLineId: input.businessLineId,
         itemType: input.itemType,
@@ -556,9 +690,18 @@ export class InventoryService {
         refId: input.refId ?? null,
         notes: input.notes ?? null,
         actorId: input.actorId,
-        operationDate: toDateOnly(input.operationDate ?? businessToday()),
+        operationDate: toDateOnly(operationDate),
       },
     });
+    // cc53 (D-649): un ajuste fechado antes de salidas ya registradas les cambia el promedio.
+    if (laterCount > 0) {
+      await this.recostForward(
+        tx,
+        [{ itemType: input.itemType, itemId: input.itemId, afterMovementId: movement.id }],
+        { actorId: input.actorId, trigger: movement },
+      );
+    }
+    return movement;
   }
 
   /**
@@ -608,7 +751,8 @@ export class InventoryService {
     // defecto la fecha es hoy y el chequeo ni consulta.
     await this.assertChronological(tx, item, operationDate ?? businessToday(), confirmBackdate);
     const origQty = toDecimal(original.qty.toString());
-    const origValue = toDecimal(original.totalCost.toString());
+    // cc53 (D-649): el costo **efectivo** del original (con sus recosteos), no solo el grabado.
+    const origValue = await this.effectiveCost(tx, original);
     const currentValue = balance.qty.times(balance.avgCost);
 
     let type: InventoryMovementType;
@@ -622,7 +766,7 @@ export class InventoryService {
       // La misma cuenta que usa `replaceEntry` para su reversa.
       type = 'OUT';
       qty = origQty;
-      unitCost = toDecimal(original.unitCost.toString());
+      unitCost = origValue.div(origQty);
       totalCost = origValue;
       ({ qty: newQty, value: newValue } = stockAfterReverseIn(
         stockOf(balance),
@@ -632,7 +776,7 @@ export class InventoryService {
     } else if (original.type === 'OUT') {
       type = 'IN';
       qty = origQty;
-      unitCost = toDecimal(original.unitCost.toString());
+      unitCost = origValue.div(origQty);
       totalCost = origValue;
       newQty = balance.qty.plus(origQty);
       newValue = currentValue.plus(origValue);
@@ -693,7 +837,9 @@ export class InventoryService {
       await assertRawMaterialInvariant(tx, [original.itemId], roofingToleranceMm(this.env));
     }
 
-    return this.createMovement(tx, {
+    const reversalDate = operationDate ?? businessToday();
+    const laterCount = await this.laterMovementCount(tx, item, reversalDate);
+    const reversal = await this.createMovement(tx, {
       businessLineId: original.businessLineId,
       itemType: original.itemType,
       itemId: original.itemId,
@@ -707,10 +853,32 @@ export class InventoryService {
       notes: reason,
       reversalOfId: original.id,
       actorId,
-      operationDate: toDateOnly(operationDate ?? businessToday()),
+      operationDate: toDateOnly(reversalDate),
     });
+    // cc53 (D-649): una reversa fechada antes de otras filas del ítem les cambia el promedio.
+    if (laterCount > 0) {
+      await this.recostForward(
+        tx,
+        [{ itemType: item.itemType, itemId: item.itemId, afterMovementId: reversal.id }],
+        { actorId, trigger: reversal },
+      );
+    }
+    return reversal;
   }
 
+  /** cc53 (D-649): `totalCost` del movimiento más lo que sus recosteos le movieron. */
+  private async effectiveCost(
+    tx: Prisma.TransactionClient,
+    movement: Pick<InventoryMovement, 'id' | 'type' | 'totalCost'>,
+  ): Promise<Decimal> {
+    const recorded = toDecimal(movement.totalCost.toString());
+    const sum = await tx.inventoryMovement.aggregate({
+      where: { recostOfId: movement.id },
+      _sum: { totalCost: true },
+    });
+    const adjust = toDecimal(sum._sum.totalCost?.toString() ?? '0');
+    return recorded.plus(rowCostOfRecost(movement.type, adjust));
+  }
   /**
    * **Reemplazar un ingreso** (D-372, cc15b; regla dura 8): la reversa del ingreso y su
    * reingreso con cantidad o costo corregidos, **en la misma fecha**, como una sola operación.
@@ -867,6 +1035,10 @@ export class InventoryService {
     if (!original) throw new NotFoundException('Movimiento de kardex no encontrado');
     if (original.reversalOfId !== null) {
       throw new BadRequestException('Un movimiento de anulación no se puede volver a anular');
+    }
+    if (original.recostOfId !== null) {
+      // cc53 (D-649): un recosteo es parte del costo de su fila; se anula con ella.
+      throw new BadRequestException('Un ajuste de recosteo no se anula por separado');
     }
     const existing = await tx.inventoryMovement.findFirst({
       where: { reversalOfId: movementId },
@@ -1423,6 +1595,18 @@ export class InventoryService {
       }),
     ]);
     if (!singleItem) movements.reverse();
+    // cc53 (D-649): un ajuste de recosteo se pliega en la fila que corrige (costo corregido y marca
+    // «recosteado»), así el saldo corrido no salta. Si su fila no está en la página (listado
+    // mezclado), se muestra como el ajuste que es.
+    const present = new Set(movements.map((m) => m.id));
+    const recostAdjust = new Map<bigint, Decimal>();
+    for (const m of movements) {
+      if (m.recostOfId === null || !present.has(m.recostOfId)) continue;
+      const prev = recostAdjust.get(m.recostOfId) ?? new Decimal(0);
+      recostAdjust.set(m.recostOfId, prev.plus(toDecimal(m.totalCost.toString())));
+    }
+    const recostedIds = new Set(recostAdjust.keys());
+    const shown = movements.filter((m) => m.recostOfId === null || !present.has(m.recostOfId));
 
     const labels = await this.resolveItemLabels(movements);
     const actors = await this.resolveActorNames(movements);
@@ -1440,10 +1624,17 @@ export class InventoryService {
     let runningQty = opening?.qty ?? new Decimal(0);
     let runningValue = opening?.value ?? new Decimal(0);
 
-    const dtos = movements.map((m) => {
+    const dtos = shown.map((m) => {
+      const recostTotal = recostAdjust.get(m.id);
+      const totalCost =
+        recostTotal === undefined
+          ? toDecimal(m.totalCost.toString())
+          : toDecimal(m.totalCost.toString()).plus(rowCostOfRecost(m.type, recostTotal));
+      const unitCost =
+        recostTotal === undefined
+          ? toDecimal(m.unitCost.toString())
+          : totalCost.div(toDecimal(m.qty.toString()));
       const qty = toDecimal(m.qty.toString());
-      const unitCost = toDecimal(m.unitCost.toString());
-      const totalCost = toDecimal(m.totalCost.toString());
       if (singleItem) {
         if (m.type === 'IN') {
           runningQty = runningQty.plus(qty);
@@ -1469,7 +1660,7 @@ export class InventoryService {
         qty: qty.toFixed(3),
         unit: m.unit,
         unitCost: showCosts ? unitCost.toFixed(4) : null,
-        totalCost: showCosts ? m.totalCost.toFixed(4) : null,
+        totalCost: showCosts ? toFixedString(totalCost, 'MONEY') : null,
         refType: m.refType,
         refId: m.refId,
         refTargetType: target?.type ?? null,
@@ -1485,6 +1676,7 @@ export class InventoryService {
         balanceQty: singleItem ? runningQty.toFixed(3) : null,
         balanceAvgCost: singleItem && showCosts ? toFixedString(runningAvg, 'MONEY') : null,
         balanceTotalCost: singleItem && showCosts ? toFixedString(runningValue, 'MONEY') : null,
+        ...(recostedIds.has(m.id) ? { recosted: true } : {}),
       } satisfies InventoryMovementDto;
     });
 
@@ -1695,6 +1887,40 @@ export class InventoryService {
 
     return targets;
   }
+}
+
+/** cc53 (D-649): lo que devuelve un recosteo. */
+export interface RecostOutcome {
+  /** Se pasó del tope: no se ajustó nada en línea (queda para `recosteo:historico`). */
+  pending: boolean;
+  rowsReplayed: number;
+  adjusted: (PlannedAdjust & { item: { itemType: InventoryItemType; itemId: string } })[];
+}
+
+function itemRefOf(m: MovementMeta): ItemRef {
+  return {
+    businessLineId: m.businessLineId,
+    itemType: m.itemType,
+    itemId: m.itemId,
+    unit: m.unit,
+  };
+}
+
+/**
+ * cc53 (D-649): el documento en cuyo «Historial» queda un recosteo (criterio de cc50). Los `ref`
+ * que apuntan a un documento con pantalla propia van a ese documento; los demás (producción,
+ * corte, merma, cierre, carga inicial), a la bobina o al producto.
+ */
+export function recostAuditTarget(
+  m: Pick<MovementMeta, 'itemType' | 'itemId' | 'refType' | 'refId'>,
+): { entity: string; entityId: string } {
+  if (m.refId) {
+    if (m.refType === 'SALE') return { entity: 'dispatches', entityId: m.refId };
+    if (m.refType === 'PURCHASE') return { entity: 'purchases', entityId: m.refId };
+    if (m.refType === 'SPLIT') return { entity: 'coil_splits', entityId: m.refId };
+    if (m.refType === 'SALES_RETURN') return { entity: 'sales_returns', entityId: m.refId };
+  }
+  return { entity: m.itemType === 'COIL' ? 'coils' : 'products', entityId: m.itemId };
 }
 
 function labelKey(itemType: InventoryItemType, itemId: string): string {

@@ -80,7 +80,7 @@ export function CuttingReceiveDialog({
   }, [open, row]);
 
   const receive = useMutation({
-    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: ({ confirmBackdate }: BackdateAck) =>
       api<CuttingOrderDto>(`/cutting/${cuttingOrderId}/coils/${row.coilId}/receive`, {
         method: 'POST',
         body: {
@@ -91,7 +91,6 @@ export function CuttingReceiveDialog({
           kerfLossMm: kerfLossMm.trim() || '0',
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
-          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: () => {
@@ -101,8 +100,8 @@ export function CuttingReceiveDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo recibir')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await receive.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await receive.mutateAsync({ confirmBackdate });
   });
 
   const preview = previewReceive(row, rows, kerfLossMm, receivedWeightKg);
@@ -237,7 +236,6 @@ export function CuttingReceiveDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
-        costMismatch={backdate.costMismatch}
         pending={receive.isPending}
         onConfirm={() => {
           void backdate.confirm();

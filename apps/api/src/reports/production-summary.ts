@@ -101,7 +101,8 @@ export function assembleProductionSummary(input: {
   let unattributed = ZERO;
   for (const m of input.movements) {
     const kg = signed(m, m.qty);
-    const cost = signed(m, m.totalCost);
+    // cc53 (D-649): un recosteo (`ADJUST`) es costo sin kilos; saca valor del saldo = más costo.
+    const cost = m.type === 'ADJUST' ? m.totalCost.negated() : signed(m, m.totalCost);
     if (m.refType === 'PRODUCTION') {
       const report = m.refId === null ? undefined : input.reports.get(m.refId);
       if (report === undefined || !input.orders.has(report.productionOrderId)) {

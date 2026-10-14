@@ -897,6 +897,12 @@ model InventoryMovement {
   reversalOfId    BigInt?               @map("reversal_of_id")
   reversalOf      InventoryMovement?    @relation("MovementReversal", fields: [reversalOfId], references: [id])
   reversals       InventoryMovement[]   @relation("MovementReversal")
+  /// cc53 (D-649): un `ADJUST` de **recosteo por fecha** apunta al movimiento cuyo costo corrige.
+  /// El costo efectivo de ese movimiento es su `totalCost` más (o menos) sus recosteos; la fila
+  /// original nunca se edita. Solo un `ADJUST` lo lleva (CHECK en la base).
+  recostOfId      BigInt?               @map("recost_of_id")
+  recostOf        InventoryMovement?    @relation("MovementRecost", fields: [recostOfId], references: [id], onDelete: Restrict)
+  recosts         InventoryMovement[]   @relation("MovementRecost")
   /// cc52 (D-646): la línea de devolución que generó este reingreso.
   salesReturnItem SalesReturnItem?
   actorId         String?               @map("actor_id") @db.Uuid
@@ -916,6 +922,7 @@ model InventoryMovement {
   @@index([itemType, itemId, operationDate])
   @@index([businessLineId, operationDate])
   @@index([refType, refId])
+  @@index([recostOfId])
   @@map("inventory_movements")
 }
 

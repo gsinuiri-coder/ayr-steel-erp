@@ -111,7 +111,6 @@ import {
   type ListWindow,
 } from '../common/list-export';
 import { lockDocuments } from '../inventory/document-locks';
-import { isBackdatedCostMismatch } from '../inventory/backdated-cost';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -1661,15 +1660,11 @@ export class InvoicingService {
         }
         if (input.redateDispatches === true && atIssueDate.length > 0) {
           try {
-            await this.invoiceDispatch.redateInTx(tx, actor, id, {
-              acceptBackdatedCost: input.acceptBackdatedCost,
-            });
+            await this.invoiceDispatch.redateInTx(tx, actor, id);
           } catch (err) {
             // Los rechazos de D-288 son 400 con el motivo (kardex negativo a la fecha nueva, o el
             // despacho nuevo no sería el mismo): se reportan para la auditoría de afuera.
-            // cc52 (D-648): la salida que cambia de costo es una pregunta al administrador
-            // («Registrar igual»), no un rechazo del re-fechado: no se registra como tal.
-            if (err instanceof BadRequestException && !isBackdatedCostMismatch(err)) {
+            if (err instanceof BadRequestException) {
               onRedateRejected(err.message);
             }
             throw err;

@@ -14,8 +14,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
-import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
-import { BACKDATE_COST_MISMATCH } from '@ayr/shared';
+import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
 
 const ACTION_LABELS: Record<InvoiceDispatchPlanDto['lines'][number]['action'], string> = {
   DISPATCH: 'Sale del almacén',
@@ -72,12 +71,11 @@ export function DispatchAtIssueDate({
   const execute = useMutation({
     // cc52 (D-648): «Registrar igual» las salidas atrasadas que cambian de costo, solo si el API
     // lo pidió y el ADMINISTRADOR lo confirmó.
-    mutationFn: ({ acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: () =>
       api<InvoiceDispatchResultDto>(`/dispatches/at-issue-date/${documentId}`, {
         method: 'POST',
         body: {
           ...(dispatchDate ? { dispatchDate } : {}),
-          ...(acceptBackdatedCost ? { acceptBackdatedCost: true } : {}),
         },
       }),
     onSuccess: (result) => {
@@ -91,13 +89,11 @@ export function DispatchAtIssueDate({
       invalidateInvoicing(queryClient, { documentId, orderId: salesOrderId });
     },
     onError: (err: unknown) => {
-      // El rechazo por costo lo muestra el diálogo, con los dos costos.
-      if (err instanceof ApiError && err.code === BACKDATE_COST_MISMATCH) return;
       toast.error(errorMessage(err, 'No se pudo despachar'));
     },
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await execute.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const backdate = useBackdateConfirm(async () => {
+    await execute.mutateAsync();
   });
 
   const defaultLines = defaultPlan.data?.lines ?? [];
@@ -212,7 +208,6 @@ export function DispatchAtIssueDate({
             if (!open) backdate.close();
           }}
           detail={backdate.detail ?? ''}
-          costMismatch={backdate.costMismatch}
           pending={execute.isPending}
           onConfirm={() => {
             void backdate.confirm();

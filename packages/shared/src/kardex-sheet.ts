@@ -101,6 +101,8 @@ export function movementsToKardexSheet(
     const detail = [
       m.reversalOfId ? `${label} (anulación)` : adjust ? `${label} (ajuste de costo)` : label,
       m.notes,
+      // cc53 (D-649): el costo de la fila ya es el corregido por fecha.
+      m.recosted ? 'recosteado' : null,
     ]
       .filter(Boolean)
       .join(' · ');

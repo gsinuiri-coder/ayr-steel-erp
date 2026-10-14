@@ -302,7 +302,7 @@ export function NuevoDespachoView() {
   const allLineWeightsKnown = lineWeights.every((w) => isPositiveDecimal(w));
 
   const create = useMutation({
-    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
+    mutationFn: ({ confirmBackdate }: BackdateAck) =>
       api<DispatchDto>('/dispatches', {
         method: 'POST',
         body: {
@@ -311,7 +311,6 @@ export function NuevoDespachoView() {
           // salida de kardex. Un VENDEDOR solo puede mandar hoy (el API le da 403 si no).
           dispatchDate,
           confirmBackdate: confirmBackdate || undefined,
-          acceptBackdatedCost: acceptBackdatedCost || undefined,
           originAddress: originAddress.trim(),
           originUbigeo: originUbigeo.trim(),
           destinationAddress: destinationAddress.trim(),
@@ -380,8 +379,8 @@ export function NuevoDespachoView() {
       toast.error(errorMessage(err, 'No se pudo registrar el despacho'));
     },
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
-    await create.mutateAsync({ confirmBackdate, acceptBackdatedCost });
+  const backdate = useBackdateConfirm(async (confirmBackdate) => {
+    await create.mutateAsync({ confirmBackdate });
   });
 
   /**
@@ -1283,7 +1282,6 @@ export function NuevoDespachoView() {
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
-        costMismatch={backdate.costMismatch}
         pending={create.isPending}
         onConfirm={() => {
           void backdate.confirm();
