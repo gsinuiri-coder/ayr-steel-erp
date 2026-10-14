@@ -160,7 +160,9 @@ Reglas de convivencia, sin excepción:
    trigger y auditoría) y el reset de la base de pruebas (D-018, `TRUNCATE` con el guard de
    D-181). La limpia de V-4 (D-208) se retiró del repo (D-384). El centinela barre `apps/api/src`,
    `apps/api/prisma`, `scripts/`, `packages/` y `e2e/`, y falla si aparece un escritor nuevo. El
-   kardex es append-only: las reversas son movimientos inversos, nunca edición de saldos.
+   kardex es append-only: las reversas son movimientos inversos, nunca edición de saldos. **D-648 (cc52):** una salida con fecha anterior a
+   entradas o ajustes ya registrados que cambiaría de costo se rechaza (`BACKDATE_COST_MISMATCH`); solo un
+   ADMINISTRADOR la registra igual y queda auditada. Se quita con el recosteo por fecha (cc53).
 9. **`Decimal`, nunca `number`,** para dinero, pesos y dimensiones.
 10. **Sin creación silenciosa de entidades.**
 11. **Orden de deploy siempre:** migraciones Prisma → deploy API → push web.

@@ -128,6 +128,7 @@ Ninguna se borra sin OK del dueño por nombre (`AGENTS.md` §3.3).
 | `respaldo-pre-cc08-20261001` | `br-proud-glade-aev4qddf`         | respaldo de ventana                    | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc41-20261010` | `br-old-mountain-aeno2yqp`        | respaldo antes de la migración de cc41 | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc51-20261013` | `br-divine-thunder-aetc4rfe`      | respaldo antes de la migración de cc51 | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-cc52-20261014` | `br-shy-dew-ae5et5wc`             | respaldo antes de la migración de cc52 | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 
 **Borrada el 2026-10-10 después de cc41, con OK del dueño por nombre** (D-460; id verificado y
 sin ramas hijas): `respaldo-pre-log3-20260930` (`br-super-wave-aeoucd2y`). La borró el agente con

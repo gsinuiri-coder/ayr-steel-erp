@@ -2613,3 +2613,43 @@ autorizó la migración `20261013_sales_line_at_cost` (dos columnas opcionales e
   `replace`.
 - **Fuera:** el mostrador (sin piso para nadie, pendiente antes de las cuentas de vendedores) y volver a
   comprobar el costo al confirmar (el piso normal tampoco lo hace, D-163).
+
+## cc52 — correcciones 08: NC con devolución, kardex PEPS contra promedio, filtro de bobinas y piso en el mostrador (D-642..D-648)
+
+**Paso 0 · kardex Promedio contra PEPS.** Con `pnpm inspect:cc52` (solo lectura), las **cantidades coinciden** fila por
+fila en todos los ítems con movimientos; los saldos cuadran con `inventory_balances`. Lo distinto son los **valores**:
+el kardex valoriza cada salida al promedio del saldo **en el momento en que se graba** (D-028) y no recalcula hacia
+atrás. Cuando una salida se graba con una fecha anterior a una entrada ya registrada, sale a un promedio que incluye
+mercadería que, por fecha, llegó después; PEPS la valoriza con la capa que existía a su fecha. Ejemplo de muestra:
+10 u a S/ 10 el día 1, una compra de 10 u a S/ 20 grabada el día 10 (promedio 15) y después una salida de 4 u
+fechada el día 5: sale a 15 (S/ 60) en lugar de 10 (S/ 40); el costo de ventas del día 5 queda S/ 20 más alto y el
+inventario S/ 20 más bajo. El dueño lo calificó de **error de diseño**: D-648 lo bloquea hasta el recosteo (cc53).
+Las cifras reales quedaron en el informe al dueño, no en el repo.
+
+**D-643 · mostrador con piso.** Antes quedaba fuera de D-163 porque el carrito no mostraba el mínimo. Ahora lo muestra
+(panel de stock) y aplica el mismo `assertPriceFloor`; el centinela que impide mirar el rol sigue igual: el rol del
+«A costo» lo comprueba `PosService` antes del piso. Las pruebas E2E que vendían en caja a pérdida (costo 20, precio de
+lista 10) bajaron el costo por defecto de su stock a 5.
+
+**D-646 · devolución.** Decisiones del dueño sobre la propuesta: (a) productos a medida reingresan como producto
+terminado sobrante, sin pedido, al costo con que salieron — **hoy ese stock no lo toma otro pedido ni el mostrador**;
+(b) la devolución nace al registrar la NC (el borrador se descarta); (c) el costo del despacho más reciente hacia
+atrás; (d) bobina solo total y se reabre; (e) sin re-reserva; (f) anular la NC con `reverse()` y 409 si ya se
+revendió; (g) fecha distinta de hoy solo ADMINISTRADOR. Las revisiones agregaron: lo devuelto no vuelve a quedar
+pendiente de facturar; el reparto prefiere los despachos del comprobante y nunca uno posterior a la NC; un despacho
+con devolución vigente no se revierte ni se re-fecha (si no, la mercadería entraba dos veces).
+
+**D-647 · reportes.** El costo de la devolución se imputa a la NC (fila `RETURN`), así el mes del comprobante no se
+reescribe. Las NC 03 y 13 pasan a contar como «descuento» de costo cero (decisión del dueño): una 13 usada antes como
+devolución parcial no resta su costo histórico.
+
+**D-648 · salida atrasada.** Inventario de los caminos: despacho, despacho a la fecha del comprobante (D-285/D-364),
+re-fechado de emisión (D-288), salida faltante de un despacho, merma, cierre de bobina, partido, corte tercerizado,
+reportes y cierres de producción (drywall y coberturas), herramienta de D-285 y el mostrador (siempre hoy). Las
+reversas (`reverse()`, también la de la devolución al anular la NC) devuelven el costo exacto del original y no pasan
+por la regla. Riesgo anotado: una salida a una fecha en la que el ítem no tenía saldo no se compara.
+
+**Pieza siguiente (cc53) · recosteo del promedio por fecha:** cada salida toma el promedio a su fecha; al registrar
+un movimiento con fecha atrasada se recalcula hacia adelante con movimientos de ajuste (`adjustCost` /
+`replaceEntry`), nunca editando; incluye la corrección única de los SKU afectados y la vista previa del impacto por
+mes. Al terminarla se quita el bloqueo de D-648.
