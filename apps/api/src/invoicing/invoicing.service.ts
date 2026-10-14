@@ -1477,6 +1477,7 @@ export class InvoicingService {
           where: { id },
           select: {
             id: true,
+            docType: true,
             origin: true,
             status: true,
             issueDate: true,
