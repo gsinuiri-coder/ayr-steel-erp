@@ -343,6 +343,48 @@ describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
     expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '0' });
   });
 
+  it('una salida anulada el mismo día no cuenta: re-fechar un despacho a una fecha anterior (D-288)', async () => {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    const old = await move(itemId, { type: 'OUT', qty: '10', date: '2026-08-10' });
+    await prisma.$transaction((tx) =>
+      inventory.reverse(tx, old.id, adminId, 're-fechado', '2026-08-10', true),
+    );
+    const moved = await move(itemId, { type: 'OUT', qty: '10', date: '2026-08-05' });
+    expect(moved.totalCost.toString()).toBe('100');
+  });
+
+  it('anular una entrada y reingresarla en su fecha se juzga por el estado final (D-045)', async () => {
+    const itemId = randomUUID();
+    const entry = await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    const out = await move(itemId, { type: 'OUT', qty: '4', date: '2026-08-10' });
+    // Como en D-375: la salida ya se anuló (otro día), así el ingreso entero sigue en stock.
+    const back = await prisma.$transaction((tx) =>
+      inventory.reverse(tx, out.id, adminId, 'anulada', '2026-08-12', true),
+    );
+    await prisma.$transaction(async (tx) => {
+      await inventory.reverse(tx, entry.id, adminId, 'costo corregido', '2026-08-01', true, {
+        reentry: true,
+      });
+      await inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        type: 'IN',
+        qty: '10',
+        unit: 'NIU',
+        unitCost: '20',
+        refType: 'PURCHASE',
+        actorId: adminId,
+        operationDate: '2026-08-01',
+        confirmBackdate: true,
+      });
+    });
+    expect(await effective(out.id)).toBe('80.0000');
+    expect(await effective(back.id)).toBe('80.0000');
+    expect(await balanceOf(itemId)).toEqual({ qty: '10', avg: '20' });
+  });
+
   it('anular con fecha atrasada una entrada que ya salió se rechaza', async () => {
     const itemId = randomUUID();
     const entry = await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });

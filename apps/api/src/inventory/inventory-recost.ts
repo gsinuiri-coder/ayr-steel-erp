@@ -380,15 +380,30 @@ export async function stockUpToDate(
   return stockBefore(l.rows, end === -1 ? l.rows.length : end);
 }
 
-/** cc53 (D-652): el kardex del ítem en cantidades, en su orden (sin recosteos: no mueven cantidad). */
+/**
+ * cc53 (D-652): el kardex del ítem en cantidades, en su orden (sin recosteos: no mueven cantidad).
+ * Un movimiento anulado **el mismo día** y su anulación se cancelan y no cuentan: entre los dos no
+ * hubo un día con el stock afuera (re-fechar un despacho, D-288, anula en el día viejo).
+ */
 export async function qtyRowsOf(tx: Prisma.TransactionClient, item: RecostItem): Promise<QtyRow[]> {
   const l = await loadItem(tx, item);
-  return l.metas.map((m) => ({
-    date: m.operationDate.toISOString().slice(0, 10),
-    delta: m.type === 'IN' ? m.qty : m.type === 'OUT' ? m.qty.negated() : ZERO,
-  }));
+  const dateOf = (m: MovementMeta) => m.operationDate.toISOString().slice(0, 10);
+  const byId = new Map(l.metas.map((m) => [m.id, m]));
+  const cancelled = new Set<bigint>();
+  for (const m of l.metas) {
+    const original = m.reversalOfId === null ? undefined : byId.get(m.reversalOfId);
+    if (original && dateOf(original) === dateOf(m)) {
+      cancelled.add(original.id);
+      cancelled.add(m.id);
+    }
+  }
+  return l.metas
+    .filter((m) => !cancelled.has(m.id))
+    .map((m) => ({
+      date: dateOf(m),
+      delta: m.type === 'IN' ? m.qty : m.type === 'OUT' ? m.qty.negated() : ZERO,
+    }));
 }
-
 /** Cuántas filas tiene un ítem después de una fecha: lo que avisa el diálogo de retrofecha. */
 export function laterMovementsNote(count: number): string {
   return count === 0

@@ -1217,6 +1217,8 @@ export class CoilOperationsService {
             input.reason ?? 'Corrección de costo de la bobina',
             recostDate,
             true,
+            // cc53: el reingreso de la misma cantidad sigue en esta transacción (estado final).
+            { reentry: true },
           );
           await this.inventory.record(tx, {
             businessLineId: coil.businessLineId,

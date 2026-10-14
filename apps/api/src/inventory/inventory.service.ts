@@ -775,6 +775,12 @@ export class InventoryService {
     reason: string,
     operationDate?: string,
     confirmBackdate?: boolean,
+    /**
+     * cc53: `reentry` = en esta misma transacción sigue el reingreso de la misma cantidad en la misma
+     * fecha (recosteo de una bobina, D-045). Como `replaceEntry`, se juzga el estado final: no se
+     * aplica D-652 al intermedio ni se recostea acá; recostea el reingreso.
+     */
+    options: { reentry?: boolean } = {},
   ): Promise<InventoryMovement> {
     const peek = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
     if (!peek) throw new NotFoundException('Movimiento de kardex no encontrado');
@@ -801,7 +807,7 @@ export class InventoryService {
     if (original.type === 'IN') {
       // cc53 (D-652): anular con fecha atrasada una entrada saca stock igual que una salida.
       const date = operationDate ?? businessToday();
-      if ((await this.laterMovementCount(tx, item, date)) > 0) {
+      if (options.reentry !== true && (await this.laterMovementCount(tx, item, date)) > 0) {
         await this.assertNoNegativeAtDate(tx, item, date, origQty, 'La anulación');
       }
     }
@@ -910,7 +916,7 @@ export class InventoryService {
       operationDate: toDateOnly(reversalDate),
     });
     // cc53 (D-649): una reversa fechada antes de otras filas del ítem les cambia el promedio.
-    if (laterCount > 0) {
+    if (laterCount > 0 && options.reentry !== true) {
       await this.recostForward(
         tx,
         [{ itemType: item.itemType, itemId: item.itemId, afterMovementId: reversal.id }],
