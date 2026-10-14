@@ -24,8 +24,14 @@ function dateOnly(d: Date): string {
 
 function parseSku(args: string[]): string {
   if (args.length === 0) return 'UPVC6MT';
-  if (args.length === 2 && args[0] === '--sku' && /^[A-Z0-9-]{1,40}$/i.test(args[1] ?? '')) {
-    return args[1] as string;
+  const [flag, sku] = args;
+  if (
+    args.length === 2 &&
+    flag === '--sku' &&
+    sku !== undefined &&
+    /^[A-Z0-9-]{1,40}$/i.test(sku)
+  ) {
+    return sku;
   }
   throw new Error('Uso: inspect:cc52 [--sku <SKU>] (solo lectura)');
 }
@@ -306,7 +312,7 @@ async function main(): Promise<void> {
       },
       { timeout: 120_000 },
     );
-    console.log(JSON.stringify(report, null, 2));
+    process.stdout.write(JSON.stringify(report, null, 2) + '\n');
     console.error(
       `Ítems: ${report.itemsCompared} · filas: ${report.rowsCompared} · con cantidad distinta: ${report.qtyMismatches.length} · saldo ≠ inventory_balances: ${report.balanceMismatches.length} · con valor final distinto: ${report.itemsWithClosingValueDiff}`,
     );
