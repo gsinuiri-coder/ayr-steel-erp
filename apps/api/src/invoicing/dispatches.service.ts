@@ -18,6 +18,7 @@ import {
   carriesInventory,
   Decimal,
   dispatchCode,
+  salesReturnCode,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   paginate,
   salesOrderCode,
@@ -747,6 +748,21 @@ export class DispatchesService {
       // reconcilia la baja hecha por fuera y desbloquea esta reversa.
       throw new BadRequestException(
         `La guía ${declaredNote.number ?? 'de este despacho'} está vigente y declara este traslado: dala de baja y usa «Consultar al PSE» sobre ella antes de revertir el despacho.`,
+      );
+    }
+
+    // cc52 (D-646): lo que una devolución ya reingresó de este despacho volvería a entrar con la
+    // reversa (que devuelve la salida entera): primero se anula la NC, que revierte su devolución.
+    const returned = await tx.salesReturnItem.findFirst({
+      where: {
+        dispatchItemId: { in: dispatch.items.map((i) => i.id) },
+        salesReturn: { status: 'ACTIVE' },
+      },
+      select: { salesReturn: { select: { seq: true } } },
+    });
+    if (returned) {
+      throw new ConflictException(
+        `La devolución ${salesReturnCode(returned.salesReturn.seq)} ya reingresó mercadería de este despacho: anula primero su nota de crédito (revierte la devolución) y después revierte el despacho.`,
       );
     }
 

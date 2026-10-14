@@ -45,6 +45,8 @@ function lockedTables(calls: unknown[][]): string[] {
 function build(declaring: { id: string; number: string } | null = null) {
   const tx = {
     $queryRaw: jest.fn(lockedIds),
+    // cc52 (D-646): sin devoluciones vigentes del despacho.
+    salesReturnItem: { findFirst: jest.fn().mockResolvedValue(null) },
     dispatch: {
       findUnique: jest.fn().mockResolvedValue({ salesOrderId: 'ped' }),
       findUniqueOrThrow: jest.fn().mockResolvedValue({

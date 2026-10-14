@@ -315,6 +315,23 @@ describe('cc52: nota de crédito con devolución', () => {
     expect(sumReturned._sum.qty?.toFixed(3)).toBe('5.000');
   });
 
+  it('un despacho con devolución vigente no se revierte (reingresaría dos veces): 409', async () => {
+    const { orderId, invoiceId } = await sold();
+    await creditNote(invoiceId, 'DEVOLUCION_TOTAL', null);
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: orderId } });
+    const r = await rejection(
+      moduleRef
+        .get(DispatchesService)
+        .reverse(
+          admin,
+          dispatch.id,
+          reverseMovementSchema.parse({ reason: 'cc52 doble reingreso' }),
+        ),
+    );
+    expect(r.status).toBe(409);
+    expect(r.message).toContain('anula primero su nota de crédito');
+  });
+
   it('descuento: solo monto, no mueve el almacén ni crea devolución', async () => {
     const { productId, invoiceId } = await sold();
     const note = await creditNote(invoiceId, 'DESCUENTO_ITEM', '1');
