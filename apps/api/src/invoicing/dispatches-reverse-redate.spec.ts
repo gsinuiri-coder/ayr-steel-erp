@@ -166,4 +166,13 @@ describe('DispatchesService.reverseInTx (D-288)', () => {
     ).rejects.toThrow(BadRequestException);
     expect(inventory.reverse).not.toHaveBeenCalled();
   });
+
+  it('cc52 (D-646): con una devolución vigente del despacho, 409 y nada revertido', async () => {
+    const { svc, tx, inventory } = build();
+    tx.salesReturnItem.findFirst.mockResolvedValueOnce({ salesReturn: { seq: 3 } });
+    await expect(
+      svc.reverseInTx(tx as never, ADMIN, 'd-1', 'corrección', { operationDate: '2026-09-15' }),
+    ).rejects.toThrow('DEV-000003');
+    expect(inventory.reverse).not.toHaveBeenCalled();
+  });
 });
