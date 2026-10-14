@@ -114,10 +114,10 @@ y rescates.
   con el nombre, sin tocar las fijas. Se conservan los dos respaldos post-día-D más recientes y
   los checkpoints declarados hasta su fecha.
 
-### Ramas vigentes (2026-10-14, después de cc53): 10 de 10
+### Ramas vigentes (2026-10-14, después de cc53): 9 de 10
 
-Ninguna se borra sin OK del dueño por nombre (`AGENTS.md` §3.3). Con 10 de 10, antes de crear otra rama hay que
-proponer al dueño cuáles borrar.
+Ninguna se borra sin OK del dueño por nombre (`AGENTS.md` §3.3). Antes de crear una rama que deje 10 de 10, mirar
+la lista y, si con la nueva se pasa de 10, proponer al dueño cuáles borrar.
 
 | Rama                          | id                                | Qué es                                        | Se conserva                                                              |
 | ----------------------------- | --------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------ |
@@ -128,9 +128,12 @@ proponer al dueño cuáles borrar.
 | `respaldo-pre-v4-20260915`    | `br-sweet-resonance-aegd7jdg`     | respaldo del día D                            | siempre                                                                  |
 | `respaldo-pre-cc41-20261010`  | `br-old-mountain-aeno2yqp`        | respaldo antes de la migración de cc41        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc51-20261013`  | `br-divine-thunder-aetc4rfe`      | respaldo antes de la migración de cc51        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
-| `respaldo-pre-cc52-20261014`  | `br-shy-dew-ae5et5wc`             | respaldo antes de la migración de cc52        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc53-20261014`  | `br-flat-rice-aetbs1e3`           | respaldo antes de la migración de cc53        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc53b-20261014` | `br-hidden-sound-ae4ue3jd`        | respaldo antes del recosteo histórico (D-651) | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+
+**Borrada el 2026-10-14 al cerrar cc53, por el dueño** (con `!`): `respaldo-pre-cc52-20261014`
+(`br-shy-dew-ae5et5wc`). Los dos respaldos post-día-D más recientes son ahora `respaldo-pre-cc53-20261014` y
+`respaldo-pre-cc53b-20261014`.
 
 **Borrada el 2026-10-14 al empezar cc53, con OK del dueño por nombre** (D-460; id verificado y sin ramas hijas):
 `respaldo-pre-cc08-20261001` (`br-proud-glade-aev4qddf`). El clasificador de permisos se lo negó al agente; la borró el
