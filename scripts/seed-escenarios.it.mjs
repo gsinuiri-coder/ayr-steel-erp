@@ -197,11 +197,18 @@ try {
     (c) => c.kind !== 'STRIP' && c.availableKg === '2000.000' && c.thicknessMm === '0.45',
   );
   assert.equal(free.length, 1, 'la bobina de drywall libre (2 000 kg)');
-  // cc52 (D-646): NC · la bobina devuelta por la NC volvió con su peso y está abierta.
-  const returned = coils.filter(
-    (c) => c.kind !== 'STRIP' && c.availableKg === '500.000' && c.thicknessMm === '0.40',
+  // cc52 (D-646): NC · una sola NC de devolución viva (la de la corrida anterior quedó anulada, y
+  // su devolución revertida), con su documento vigente y la bobina devuelta abierta.
+  const notes = (await api.list('/invoicing/documents')).filter(
+    (d) => d.customerId === customer.id && d.docType === 'NOTA_CREDITO' && d.status === 'ACCEPTED',
   );
-  assert.equal(returned.length, 1, 'NC: la bobina devuelta, abierta y con sus 500 kg');
+  assert.equal(notes.length, 1, 'NC: una nota de crédito de devolución viva');
+  const note = await api.get(`/invoicing/documents/${notes[0].id}`);
+  assert.equal(note.salesReturn?.status, 'ACTIVE', 'NC: su devolución vigente');
+  const ret = await api.get(`/invoicing/returns/${note.salesReturn.id}`);
+  const coil = await api.get(`/coils/${ret.items[0].itemId}`);
+  assert.equal(coil.status, 'OPEN', 'NC: la bobina devuelta, abierta');
+  assert.equal(coil.availableKg, '500.000', 'NC: con sus 500 kg');
   // cc46: S1 · un solo partido vivo (el de la corrida 1 se revirtió), con borde y dos hijas.
   const splitChildren = coils.filter((c) => c.splitId !== null);
   assert.equal(splitChildren.length, 2, 'S1: dos hijas vivas del partido');

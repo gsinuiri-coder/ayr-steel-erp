@@ -438,9 +438,7 @@ export async function voidPrevious(api, masters) {
     // devolución); un comprobante con NC vivas no se anula.
     const documents = (await api.list('/invoicing/documents'))
       .filter((d) => isCustomer(d) && !['VOIDED', 'REJECTED', 'ANNULLED'].includes(d.status))
-      .sort(
-        (a, b) => Number(b.docType === 'NOTA_CREDITO') - Number(a.docType === 'NOTA_CREDITO'),
-      );
+      .sort((a, b) => Number(b.docType === 'NOTA_CREDITO') - Number(a.docType === 'NOTA_CREDITO'));
     for (const d of documents) {
       await attempt(`comprobante ${d.number ?? d.id}`, async () => {
         const detail = await api.get(`/invoicing/documents/${d.id}`);
