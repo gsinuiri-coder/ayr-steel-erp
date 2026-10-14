@@ -2653,3 +2653,49 @@ por la regla. Riesgo anotado: una salida a una fecha en la que el ítem no tení
 un movimiento con fecha atrasada se recalcula hacia adelante con movimientos de ajuste (`adjustCost` /
 `replaceEntry`), nunca editando; incluye la corrección única de los SKU afectados y la vista previa del impacto por
 mes. Al terminarla se quita el bloqueo de D-648.
+
+## Ratificación del dueño (2026-10-14, piezas cc52 y cc53)
+
+El dueño ratificó D-642..D-652 y aprobó el UAT de cc52. Registró además que el problema de costo de cc52 fue un **error
+de diseño**: cada salida debe tomar el promedio vigente **a su fecha** (`operationDate`), no el del momento de registro
+(D-649).
+
+## cc53 — recosteo del promedio por fecha, corrección única y nada atrasado en negativo (D-649..D-652)
+
+**Por qué una migración.** Para corregir el costo de una salida sin editarla hace falta un movimiento nuevo que diga
+**qué fila corrige**: lo leen la rentabilidad del comprobante (que une por el movimiento del despacho), PEPS (que lo
+ignora), la vista Promedio (que lo pliega en su fila) y el recosteo siguiente (que parte del costo efectivo). Las
+alternativas sin migración se descartaron: la nota de texto como enlace era ambigua (un despacho con dos salidas del
+mismo ítem) y la reversa más una salida nueva duplicaba filas y rompía el enlace de `dispatch_items` y de las
+devoluciones con la salida original. Columna `recost_of_id` (FK, `CHECK` de solo `ADJUST`, índice).
+
+**Cómo se recalcula.** Motor puro (`recost-engine.ts`): reproduce el saldo por valor exacto en orden de fecha y
+registro; las filas anteriores al punto de inicio valen su costo efectivo. Una salida vale cantidad × promedio a su
+posición; el sobrante y el conteo de más (D-164) también entran al promedio; una reversa toma el corregido del
+original; una devolución de NC, la parte (por cantidad) del corregido de su salida; una entrada derivada, su valor
+grabado más su parte de la diferencia de las salidas de las que deriva. Una diferencia menor a un céntimo, o dentro del
+redondeo del promedio guardado a 4 decimales (una diezmilésima por unidad), no se ajusta. El plan (`inventory-recost.ts`)
+solo lee; escribe `InventoryService.recostForward`, que toma el conjunto bajo lock y vuelve a armar el plan antes de
+escribir (D-474).
+
+**Las revisiones** encontraron que los ajustes de recosteo eran visibles para las guardas del dominio («movimiento
+posterior», «último movimiento», listas que se revierten): reabrir una bobina o una OP, revertir un reporte, un partido
+o una recepción de corte quedaban bloqueados. Se excluyen en 26 consultas. También: bloqueos tardíos con `NOWAIT`, la
+devolución lee el costo bajo el lock, y el ruido de redondeo.
+
+**Ventas y margen y la Rentabilidad usan bases distintas para coberturas** (C06, `PROFIT_SOURCES_NOTICE`): la
+Rentabilidad costea con los kilos de bobina consumidos y Ventas y margen con el costo promedio del producto. Por eso la
+corrección histórica movió el costo de comprobantes de agosto en Ventas y margen (pedidos facturados en agosto con
+despachos posteriores de COB030ROJO y PL040RJ6MT: el costo del pedido va al mes de su comprobante) sin mover su
+Rentabilidad. Es el comportamiento vigente (D-647), no un efecto del recosteo. **Para la auditoría siguiente:** (a) esa
+diferencia de bases; (b) un pedido con un despacho «sin comprobante declarado» (datos en el informe al dueño).
+
+**D-652** nació de la autorrevisión: sin él, una salida atrasada mayor que el stock a su fecha dejaba el kardex negativo
+y el motor repartía mal el costo entre meses. El dueño eligió rechazarla con la primera fecha válida (D-374), sin
+retroactividad. La CI destapó dos estados intermedios legítimos que la regla rechazaba (recosteo de bobina, re-fechado
+de despacho); se juzga el estado final.
+
+**Hotfix de topes (sin número).** Registrar una NC de devolución daba 500 contra Neon: la transacción usaba los 5 s por
+defecto de Prisma. `KARDEX_TX_OPTIONS` (30 s) en las seis transacciones sin tope que pueden registrar o revertir una
+devolución o recostear, y un centinela para todas las que tocan kardex. Medido contra Neon `ci` desde la PC: recosteo
+de 10 salidas 2,37 s; reingreso de devolución con recosteo 2,72 s.
