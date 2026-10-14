@@ -31,7 +31,7 @@ import {
 } from '@/lib/format';
 import { invalidateInvoicing } from '@/lib/invoicing-queries';
 import { useSession } from '@/lib/session';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
 import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { cn } from '@/lib/utils';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
@@ -302,7 +302,7 @@ export function NuevoDespachoView() {
   const allLineWeightsKnown = lineWeights.every((w) => isPositiveDecimal(w));
 
   const create = useMutation({
-    mutationFn: (confirmBackdate: boolean) =>
+    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
       api<DispatchDto>('/dispatches', {
         method: 'POST',
         body: {
@@ -311,6 +311,7 @@ export function NuevoDespachoView() {
           // salida de kardex. Un VENDEDOR solo puede mandar hoy (el API le da 403 si no).
           dispatchDate,
           confirmBackdate: confirmBackdate || undefined,
+          acceptBackdatedCost: acceptBackdatedCost || undefined,
           originAddress: originAddress.trim(),
           originUbigeo: originUbigeo.trim(),
           destinationAddress: destinationAddress.trim(),
@@ -379,8 +380,8 @@ export function NuevoDespachoView() {
       toast.error(errorMessage(err, 'No se pudo registrar el despacho'));
     },
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await create.mutateAsync(confirmBackdate);
+  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+    await create.mutateAsync({ confirmBackdate, acceptBackdatedCost });
   });
 
   /**
@@ -1282,6 +1283,7 @@ export function NuevoDespachoView() {
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
+        costMismatch={backdate.costMismatch}
         pending={create.isPending}
         onConfirm={() => {
           void backdate.confirm();

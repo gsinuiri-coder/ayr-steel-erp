@@ -930,6 +930,8 @@ export const createDispatchSchema = z
     dispatchDate: isoDateSchema,
     /** D-124: acuse de la advertencia de retrofecha fuera de orden cronológico. */
     confirmBackdate: z.boolean().optional(),
+    /** cc52 (D-648): «Registrar igual» una salida atrasada que cambia de costo. Solo ADMINISTRADOR. */
+    acceptBackdatedCost: z.boolean().optional(),
     originAddress: z.string().trim().min(1, 'La dirección de partida es obligatoria').max(240),
     destinationAddress: z.string().trim().min(1, 'La dirección de llegada es obligatoria').max(240),
     originUbigeo: ubigeoSchema,
@@ -1040,6 +1042,8 @@ export const invoiceDispatchDateSchema = z.object({
   // D-364 escribe una fecha de operación: a diferencia de una emisión, esta sí debe rechazar
   // un día inexistente antes de que el plan compare cadenas o Prisma lo normalice.
   dispatchDate: operationDateSchema.optional(),
+  /** cc52 (D-648): «Registrar igual» una salida atrasada que cambia de costo. Solo ADMINISTRADOR. */
+  acceptBackdatedCost: z.boolean().optional(),
 });
 export type InvoiceDispatchDateInput = z.infer<typeof invoiceDispatchDateSchema>;
 export const invoiceDispatchPlanSchema = z.object({
@@ -1405,6 +1409,8 @@ export const updateManualIssueDateSchema = z
      * tiene que ser explícita, como la del vencimiento.
      */
     redateDispatches: z.boolean().optional(),
+    /** cc52 (D-648): «Registrar igual» las salidas del re-fechado que cambian de costo. */
+    acceptBackdatedCost: z.boolean().optional(),
     /** Por qué se corrige. Queda en el registro de cambios y en la auditoría. */
     reason: z.string().trim().min(3, 'Explicá el motivo de la corrección').max(200),
   })

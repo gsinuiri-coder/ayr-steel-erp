@@ -24,6 +24,7 @@ export function BackdateConfirmDialog({
   onOpenChange,
   detail,
   pending = false,
+  costMismatch = false,
   onConfirm,
 }: {
   open: boolean;
@@ -31,18 +32,26 @@ export function BackdateConfirmDialog({
   /** El mensaje tal cual lo mandó el API: ítem, fecha pedida y fecha del más reciente. */
   detail: string;
   pending?: boolean;
+  /**
+   * cc52 (D-648): lo que se confirma es una **salida atrasada que cambiaría de costo**: sale al
+   * promedio de hoy y no al que el ítem tenía a esa fecha. Solo un ADMINISTRADOR la registra igual.
+   */
+  costMismatch?: boolean;
   onConfirm: () => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>La fecha queda fuera de orden</DialogTitle>
+          <DialogTitle>
+            {costMismatch ? 'La salida cambiaría de costo' : 'La fecha queda fuera de orden'}
+          </DialogTitle>
           <DialogDescription>{detail}</DialogDescription>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Registrarlo igual deja el kardex ordenado por fecha mostrando, para ese día, un saldo que
-          no fue el de ese día. Lo recomendable es cancelar y cargar primero lo más antiguo.
+          {costMismatch
+            ? 'Hasta que exista el recosteo por fecha, el kardex valoriza la salida al promedio de hoy: el costo de ventas de esa fecha quedaría con el promedio equivocado. Solo un administrador puede registrarla igual, y queda en la auditoría con los dos costos.'
+            : 'Registrarlo igual deja el kardex ordenado por fecha mostrando, para ese día, un saldo que no fue el de ese día. Lo recomendable es cancelar y cargar primero lo más antiguo.'}
         </p>
         <DialogFooter>
           <Button

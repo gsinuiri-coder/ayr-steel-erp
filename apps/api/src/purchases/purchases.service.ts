@@ -722,6 +722,7 @@ export class PurchasesService {
               actorId: actor.id,
               operationDate,
               confirmBackdate: input.confirmBackdate,
+              acceptBackdatedCost: input.acceptBackdatedCost,
             });
           }
           // SERVICE y EXPENSE no mueven inventario (D-030): solo generan cuenta por pagar.

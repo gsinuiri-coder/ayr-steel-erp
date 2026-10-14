@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.service';
 import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { InventoryStrategy, Prisma } from '@prisma/client';
@@ -82,6 +83,7 @@ describe('InventoryService.record — totalCost de una entrada (D-359)', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         InventoryService,
+        { provide: AuditService, useValue: { write: jest.fn() } },
         { provide: PrismaService, useValue: {} },
         { provide: ENV, useValue: { ROOFING_THICKNESS_TOLERANCE_MM: '' } },
       ],

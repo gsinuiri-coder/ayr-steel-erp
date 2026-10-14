@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ForbiddenException,
   ConflictException,
   Inject,
   Injectable,
@@ -14,6 +15,7 @@ import {
   type InventoryRefType,
 } from '@prisma/client';
 import {
+  BACKDATE_COST_MISMATCH,
   BACKDATE_OUT_OF_ORDER,
   businessToday,
   carriesInventory,
@@ -41,6 +43,12 @@ import {
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
 import { ENV, type Env } from '../config/env';
+import { AuditService } from '../audit/audit.service';
+import {
+  backdatedCostMessage,
+  backdatedCostMismatch,
+  type BackdatedCostMismatch,
+} from './backdated-cost';
 import { roofingToleranceMm } from '../production/roofing-coil-match';
 import {
   assertRawMaterialInvariant,
@@ -144,6 +152,13 @@ export interface RecordMovementInput {
    * {@link InventoryService.assertChronological}.
    */
   confirmBackdate?: boolean;
+  /**
+   * cc52 (D-648): «Registrar igual» una **salida** con fecha atrasada que el kardex valorizaría a
+   * un promedio distinto del que el ítem tenía a esa fecha. Solo ADMINISTRADOR (lo comprueba
+   * `record` contra el usuario del movimiento) y queda en la auditoría con los dos costos. En una
+   * entrada se ignora.
+   */
+  acceptBackdatedCost?: boolean;
 }
 
 /**
@@ -194,6 +209,7 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(ENV) private readonly env: Env,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -230,7 +246,19 @@ export class InventoryService {
     if (input.itemType === InventoryItemType.COIL && input.type === 'OUT') {
       await assertCoilOutNotBeforeEntry(tx, input.itemId, operationDate);
     }
-    await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
+    // cc52 (D-648): antes que el acuse de D-124, porque es la regla más fuerte: una salida
+    // atrasada que cambia de costo solo pasa con «Registrar igual» de un ADMINISTRADOR, y ese
+    // acuse vale también como el de D-124 (el web reintenta con los dos).
+    const costOverride =
+      input.type === 'OUT'
+        ? await this.assertBackdatedCost(tx, input, operationDate, balance)
+        : null;
+    await this.assertChronological(
+      tx,
+      input,
+      operationDate,
+      input.confirmBackdate === true || costOverride !== null,
+    );
 
     if (balance.unit !== input.unit && !balance.qty.isZero()) {
       // Mezclar unidades en el mismo saldo (kilos con unidades) haría del promedio y del
@@ -305,7 +333,7 @@ export class InventoryService {
       }
     }
 
-    return this.createMovement(tx, {
+    const movement = await this.createMovement(tx, {
       businessLineId: input.businessLineId,
       itemType: input.itemType,
       itemId: input.itemId,
@@ -320,6 +348,98 @@ export class InventoryService {
       actorId: input.actorId,
       operationDate: toDateOnly(operationDate),
     });
+    if (costOverride !== null) {
+      // cc52 (D-648): la excepción queda en la auditoría, misma transacción, con los dos costos.
+      await this.audit.write(tx, {
+        actorId: input.actorId,
+        action: 'inventory.backdated-cost-accepted',
+        entity: 'inventory_movements',
+        entityId: movement.id.toString(),
+        after: {
+          itemType: input.itemType,
+          itemId: input.itemId,
+          item: costOverride.label,
+          operationDate,
+          qty: toFixedString(qty, 'KG'),
+          unit: input.unit,
+          costUsed: costOverride.costUsed,
+          costAtDate: costOverride.costAtDate,
+          laterCount: costOverride.laterCount,
+          refType: input.refType,
+          ...(input.refId ? { refId: input.refId } : {}),
+        },
+      });
+    }
+    return movement;
+  }
+
+  /**
+   * cc52 (D-648): una salida con fecha atrasada **sale al promedio de hoy** (D-028, sin recálculo
+   * retroactivo). Si después de esa fecha ya hay entradas o ajustes registrados, ese promedio no
+   * es el que el ítem tenía a su fecha: se rechaza con los dos costos, salvo «Registrar igual» de
+   * un ADMINISTRADOR. Devuelve la excepción aceptada (para auditarla) o `null` si no hay nada que
+   * avisar. Costo cero el día de hoy: no puede haber nada posterior.
+   *
+   * Lo que hace una reversa (`reverse`) no pasa por acá: devuelve el costo exacto del original.
+   * El bloqueo se quita cuando exista el recosteo del promedio por fecha (cc53).
+   */
+  private async assertBackdatedCost(
+    tx: Prisma.TransactionClient,
+    input: RecordMovementInput,
+    operationDate: string,
+    balance: BalanceRow,
+  ): Promise<(BackdatedCostMismatch & { label: string }) | null> {
+    if (operationDate >= businessToday()) return null;
+    const date = toDateOnly(operationDate);
+    const laterCount = await tx.inventoryMovement.count({
+      where: {
+        itemType: input.itemType,
+        itemId: input.itemId,
+        type: { in: ['IN', 'ADJUST'] },
+        operationDate: { gt: date },
+      },
+    });
+    if (laterCount === 0) return null;
+    const rows = await tx.$queryRaw<{ qty: Prisma.Decimal; value: Prisma.Decimal }[]>`
+      SELECT
+        COALESCE(SUM(CASE "type" WHEN 'IN' THEN "qty" WHEN 'OUT' THEN -"qty" ELSE 0 END), 0) AS "qty",
+        COALESCE(SUM(CASE "type" WHEN 'OUT' THEN -"total_cost" ELSE "total_cost" END), 0) AS "value"
+      FROM "inventory_movements"
+      WHERE "item_type" = ${input.itemType}::"InventoryItemType"
+        AND "item_id" = ${input.itemId}::uuid
+        AND "operation_date" <= ${date}::date
+    `;
+    const mismatch = backdatedCostMismatch(
+      balance.avgCost,
+      {
+        qty: toDecimal(rows[0]?.qty.toString() ?? '0'),
+        value: toDecimal(rows[0]?.value.toString() ?? '0'),
+      },
+      laterCount,
+    );
+    if (mismatch === null) return null;
+    const labels = await this.resolveItemLabels([input]);
+    const label = labels.get(labelKey(input.itemType, input.itemId))?.code ?? input.itemId;
+    if (input.acceptBackdatedCost !== true) {
+      throw new BadRequestException({
+        code: BACKDATE_COST_MISMATCH,
+        message: backdatedCostMessage({ operationDate, label, unit: input.unit }, mismatch),
+        costUsed: mismatch.costUsed,
+        costAtDate: mismatch.costAtDate,
+        statusCode: 400,
+        error: 'Bad Request',
+      });
+    }
+    const actor = await tx.user.findUnique({
+      where: { id: input.actorId },
+      select: { role: true },
+    });
+    if (actor?.role !== 'ADMINISTRADOR') {
+      throw new ForbiddenException(
+        'Solo un administrador puede registrar igual una salida con fecha atrasada que cambia de costo',
+      );
+    }
+    return { ...mismatch, label };
   }
 
   /**

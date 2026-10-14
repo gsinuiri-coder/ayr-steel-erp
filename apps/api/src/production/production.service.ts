@@ -758,6 +758,7 @@ export class ProductionService {
             actorId: actor.id,
             operationDate,
             confirmBackdate: input.confirmBackdate,
+            acceptBackdatedCost: input.acceptBackdatedCost,
           });
           if (!out) {
             throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -789,6 +790,7 @@ export class ProductionService {
           actorId: actor.id,
           operationDate,
           confirmBackdate: input.confirmBackdate,
+          acceptBackdatedCost: input.acceptBackdatedCost,
         });
         if (!entry) {
           throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -1180,6 +1182,7 @@ export class ProductionService {
           actorId: actor.id,
           operationDate,
           confirmBackdate: input.confirmBackdate,
+          acceptBackdatedCost: input.acceptBackdatedCost,
         });
         if (!out) {
           throw new BadRequestException('La línea de negocio de la orden no lleva inventario');

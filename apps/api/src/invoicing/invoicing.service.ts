@@ -1554,7 +1554,9 @@ export class InvoicingService {
         // Después de mover la fecha: el plan del despacho nuevo lee la emisión corregida.
         if (input.redateDispatches === true && atIssueDate.length > 0) {
           try {
-            await this.invoiceDispatch.redateInTx(tx, actor, id);
+            await this.invoiceDispatch.redateInTx(tx, actor, id, {
+              acceptBackdatedCost: input.acceptBackdatedCost,
+            });
           } catch (err) {
             // Los rechazos de D-288 son 400 con el motivo (kardex negativo a la fecha nueva, o el
             // despacho nuevo no sería el mismo): se reportan para la auditoría de afuera.

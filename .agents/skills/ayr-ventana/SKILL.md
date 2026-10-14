@@ -26,7 +26,10 @@ guion UAT. Una autorización general de ventana no elimina las paradas manuales 
 8. Desde un worktree en el SHA desplegado, corre `pnpm smoke:prod`; nunca `e2e:prod` (D-126).
    El smoke espera a que `/version` de los dos dominios publique el commit de `main` y, con
    `--expect-api-sha <sha-corto>` tras `deploy:api`, que `/api/health` diga ese sha (D-636).
-   Verifica además revisión activa, label y ausencia de drift de runtime.
+   Verifica además revisión activa, label y ausencia de drift de runtime. Si falla **solo** «web
+   publicada» con `health` y las lecturas en verde, no hay vuelta atrás: se reintenta el
+   despliegue de la web, se repite el smoke y se avisa al dueño (D-644). Toda otra falla, vuelta
+   atrás.
 9. **PARADA DE VERIFICACIÓN:** el dueño ejecuta el guion manual/UAT en producción. Sin esa
    confirmación la ventana queda abierta, no «completada».
 10. Registra tiempos y resultados medidos en `docs/PROGRESO.md` y cierra con `$ayr-cierre`.

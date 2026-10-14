@@ -43,7 +43,7 @@ import { OperationDateField } from '@/components/operation-date-field';
 import { ReasonDialog } from '@/components/reason-dialog';
 import { ANNUL_REASONS } from '@/lib/reasons';
 import { EditReceivedPurchaseDialog } from '@/components/purchases/edit-received-purchase-dialog';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { useSession } from '@/lib/session';
 import { Badge } from '@/components/ui/badge';
@@ -145,10 +145,14 @@ export function CompraDetalleView({ id }: { id: string }) {
   // de operación es la de todo lo que crea. Por defecto hoy; solo un administrador la mueve.
   const [receiveDate, setReceiveDate] = useState<string | undefined>(undefined);
   const receive = useMutation({
-    mutationFn: (confirmBackdate: boolean) =>
+    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
       api<PurchaseDto>(`/purchases/${id}/receive`, {
         method: 'POST',
-        body: { operationDate: receiveDate, confirmBackdate: confirmBackdate || undefined },
+        body: {
+          operationDate: receiveDate,
+          confirmBackdate: confirmBackdate || undefined,
+          acceptBackdatedCost: acceptBackdatedCost || undefined,
+        },
       }),
     onSuccess: () => {
       toast.success('Compra recibida: el stock ya está en el kardex');
@@ -156,8 +160,8 @@ export function CompraDetalleView({ id }: { id: string }) {
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo recibir')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await receive.mutateAsync(confirmBackdate);
+  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+    await receive.mutateAsync({ confirmBackdate, acceptBackdatedCost });
   });
 
   const cancel = useMutation({
@@ -650,6 +654,7 @@ export function CompraDetalleView({ id }: { id: string }) {
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
+        costMismatch={backdate.costMismatch}
         pending={receive.isPending}
         onConfirm={() => {
           void backdate.confirm();

@@ -1432,6 +1432,7 @@ export class RoofingProductionService {
         // distintos, en una tabla append-only que no se corrige con un UPDATE.
         operationDate,
         confirmBackdate: input.confirmBackdate,
+        acceptBackdatedCost: input.acceptBackdatedCost,
       });
       if (!out) {
         throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -1457,6 +1458,7 @@ export class RoofingProductionService {
       actorId: actor.id,
       operationDate,
       confirmBackdate: input.confirmBackdate,
+      acceptBackdatedCost: input.acceptBackdatedCost,
     });
     if (!entry) {
       throw new BadRequestException('La línea de negocio de la orden no lleva inventario');
@@ -2126,6 +2128,7 @@ export class RoofingProductionService {
             consumedKg: input.closeConsumedKg,
             reason: input.closeReason,
             confirmBackdate: input.confirmBackdate,
+            acceptBackdatedCost: input.acceptBackdatedCost,
           },
           operationDate,
           warnings,
@@ -2180,6 +2183,7 @@ export class RoofingProductionService {
             consumedKg: input.closeConsumedKg,
             reason: input.closeReason,
             confirmBackdate: input.confirmBackdate,
+            acceptBackdatedCost: input.acceptBackdatedCost,
           },
           operationDate,
           closeWarnings,
@@ -2397,6 +2401,7 @@ export class RoofingProductionService {
           actorId: actor.id,
           operationDate,
           confirmBackdate: input.confirmBackdate,
+          acceptBackdatedCost: input.acceptBackdatedCost,
         });
         if (!out) {
           throw new BadRequestException('La línea de negocio de la orden no lleva inventario');

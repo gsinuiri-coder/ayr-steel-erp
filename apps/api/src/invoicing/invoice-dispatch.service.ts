@@ -133,6 +133,11 @@ function sumByLine(
  * mismo cálculo de siempre (`recomputeOrderStatus` mira los despachos vigentes) y la reserva se
  * descuente por el camino de siempre.
  */
+/** cc52 (D-648): «Registrar igual» las salidas atrasadas que cambian de costo (solo ADMINISTRADOR). */
+export interface BackdatedCostOption {
+  acceptBackdatedCost?: boolean;
+}
+
 @Injectable()
 export class InvoiceDispatchService {
   constructor(
@@ -174,11 +179,12 @@ export class InvoiceDispatchService {
     actor: RequestUser,
     invoiceId: string,
     requestedDate?: string,
+    options: BackdatedCostOption = {},
   ): Promise<InvoiceDispatchResultDto> {
     const dispatchDate =
       requestedDate === undefined ? undefined : this.operationDate.resolve(actor, requestedDate);
     return this.prisma.$transaction(
-      (tx) => this.executeInTx(tx, actor, invoiceId, undefined, dispatchDate),
+      (tx) => this.executeInTx(tx, actor, invoiceId, undefined, dispatchDate, options),
       {
         // Un despacho por comprobante, con los locks de bobina y saldo de siempre.
         timeout: 60_000,
@@ -228,6 +234,7 @@ export class InvoiceDispatchService {
     tx: Prisma.TransactionClient,
     actor: RequestUser,
     invoiceId: string,
+    options: BackdatedCostOption = {},
   ): Promise<{ reversed: string[]; created: string[] } | null> {
     const linked = (await this.linkedInTx(tx, invoiceId)).filter((d) => d.atIssueDate);
     if (linked.length === 0) return null;
@@ -273,7 +280,7 @@ export class InvoiceDispatchService {
           'Resolvelo a mano desde el pedido.',
       );
     }
-    const result = await this.executeInTx(tx, actor, invoiceId, planned);
+    const result = await this.executeInTx(tx, actor, invoiceId, planned, undefined, options);
     const reversed = linked.map((d) => dispatchCode(d.seq));
     await this.audit.write(tx, {
       actorId: actor.id,
@@ -303,6 +310,7 @@ export class InvoiceDispatchService {
     invoiceId: string,
     expected?: PlannedInvoice,
     dispatchDate?: string,
+    options: BackdatedCostOption = {},
   ): Promise<InvoiceDispatchResultDto> {
     const exists = await tx.fiscalDocument.findUnique({
       where: { id: invoiceId },
@@ -344,6 +352,9 @@ export class InvoiceDispatchService {
       // La retrofecha es el propósito: el acuse de orden cronológico va implícito y queda en
       // la auditoría del despacho. El plan ya comprobó que el kardex no queda negativo.
       confirmBackdate: true,
+      // cc52 (D-648): una salida atrasada que cambia de costo no va implícita: la pide el
+      // ADMINISTRADOR («Registrar igual») y el kardex la audita con los dos costos.
+      acceptBackdatedCost: options.acceptBackdatedCost === true,
       originAddress: pickup.address,
       destinationAddress: pickup.address,
       originUbigeo: pickup.ubigeo,

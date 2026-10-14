@@ -11,7 +11,7 @@ import {
   type CuttingOrderDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { OperationDateField } from '@/components/operation-date-field';
 import { isPositiveDecimal } from '@/lib/format';
@@ -80,7 +80,7 @@ export function CuttingReceiveDialog({
   }, [open, row]);
 
   const receive = useMutation({
-    mutationFn: (confirmBackdate: boolean) =>
+    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
       api<CuttingOrderDto>(`/cutting/${cuttingOrderId}/coils/${row.coilId}/receive`, {
         method: 'POST',
         body: {
@@ -91,6 +91,7 @@ export function CuttingReceiveDialog({
           kerfLossMm: kerfLossMm.trim() || '0',
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
+          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: () => {
@@ -100,8 +101,8 @@ export function CuttingReceiveDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo recibir')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await receive.mutateAsync(confirmBackdate);
+  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+    await receive.mutateAsync({ confirmBackdate, acceptBackdatedCost });
   });
 
   const preview = previewReceive(row, rows, kerfLossMm, receivedWeightKg);
@@ -236,6 +237,7 @@ export function CuttingReceiveDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
+        costMismatch={backdate.costMismatch}
         pending={receive.isPending}
         onConfirm={() => {
           void backdate.confirm();

@@ -28,7 +28,9 @@ description: 'Cierra una sesión de AYR Steel ERP después de revisión y QA: co
 8. Cada merge que publica la web se verifica con `pnpm smoke:prod` (D-636): espera a que
    `/version` de los dos dominios diga el commit de `origin/main`, y con `--expect-api-sha` si
    hubo `deploy:api`. Pega su salida en el informe; no uses la caché de `/login` ni los
-   despliegues de Vercel en GitHub como prueba.
+   despliegues de Vercel en GitHub como prueba. Si falla **solo** «web publicada» con `health` y
+   las lecturas en verde, no hay vuelta atrás: se reintenta el despliegue de la web, se repite el
+   smoke y se avisa al dueño (D-644).
 
 Fuentes: protocolo de cierre de `AGENTS.md` §5 y `$ayr-handoff`. No existe un
 comando `/goal` versionado; no se inventa uno.

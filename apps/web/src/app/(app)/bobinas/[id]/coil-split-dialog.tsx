@@ -27,7 +27,7 @@ import { Label } from '@/components/ui/label';
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { FilmOpenNotice } from '@/components/film-open-notice';
 import { OperationDateField } from '@/components/operation-date-field';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
 
 interface WidthRow {
   widthMm: string;
@@ -68,7 +68,7 @@ export function CoilSplitDialog({
   // todas las hijas quedan el mismo día.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const split = useMutation({
-    mutationFn: (confirmBackdate: boolean) =>
+    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
       api<CoilDto[]>(`/coils/${coil.id}/split`, {
         method: 'POST',
         body: {
@@ -80,6 +80,7 @@ export function CoilSplitDialog({
           })),
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
+          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: (children) => {
@@ -89,8 +90,8 @@ export function CoilSplitDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo partir')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await split.mutateAsync(confirmBackdate);
+  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+    await split.mutateAsync({ confirmBackdate, acceptBackdatedCost });
   });
 
   const preview = previewSplit(coil, rows, kerfLossMm, splitWeightKg);
@@ -227,6 +228,7 @@ export function CoilSplitDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
+        costMismatch={backdate.costMismatch}
         pending={split.isPending}
         onConfirm={() => {
           void backdate.confirm();

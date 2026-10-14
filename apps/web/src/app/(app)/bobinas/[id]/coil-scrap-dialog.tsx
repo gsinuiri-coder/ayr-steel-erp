@@ -28,7 +28,7 @@ import {
 import { BackdateConfirmDialog } from '@/components/backdate-confirm-dialog';
 import { FilmOpenNotice } from '@/components/film-open-notice';
 import { OperationDateField } from '@/components/operation-date-field';
-import { useBackdateConfirm } from '@/lib/use-backdate-confirm';
+import { useBackdateConfirm, type BackdateAck } from '@/lib/use-backdate-confirm';
 
 /**
  * Registrar merma sobre una bobina (RF-17). Es una salida `SCRAP` valorizada al costo
@@ -68,7 +68,7 @@ export function CoilScrapDialog({
   // D-124: día de negocio de la merma, con su acuse de orden cronológico.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
   const scrap = useMutation({
-    mutationFn: (confirmBackdate: boolean) =>
+    mutationFn: ({ confirmBackdate, acceptBackdatedCost }: BackdateAck) =>
       api<CoilDto>(`/coils/${coil.id}/scrap`, {
         method: 'POST',
         body: {
@@ -76,6 +76,7 @@ export function CoilScrapDialog({
           reason,
           operationDate,
           confirmBackdate: confirmBackdate || undefined,
+          acceptBackdatedCost: acceptBackdatedCost || undefined,
         },
       }),
     onSuccess: () => {
@@ -87,8 +88,8 @@ export function CoilScrapDialog({
     },
     onError: (err) => toast.error(errorMessage(err, 'No se pudo registrar la merma')),
   });
-  const backdate = useBackdateConfirm(async (confirmBackdate) => {
-    await scrap.mutateAsync(confirmBackdate);
+  const backdate = useBackdateConfirm(async (confirmBackdate, acceptBackdatedCost) => {
+    await scrap.mutateAsync({ confirmBackdate, acceptBackdatedCost });
   });
 
   const validQty = isPositiveDecimal(qtyKg);
@@ -227,6 +228,7 @@ export function CoilScrapDialog({
           if (!open) backdate.close();
         }}
         detail={backdate.detail ?? ''}
+        costMismatch={backdate.costMismatch}
         pending={scrap.isPending}
         onConfirm={() => {
           void backdate.confirm();

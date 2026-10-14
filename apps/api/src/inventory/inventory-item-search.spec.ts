@@ -1,3 +1,4 @@
+import type { AuditService } from '../audit/audit.service';
 import { NotFoundException } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -9,7 +10,11 @@ function build() {
     coil: { findMany: jest.fn(), findUnique: jest.fn() },
     product: { findMany: jest.fn(), findUnique: jest.fn() },
   };
-  const service = new InventoryService(prisma as unknown as PrismaService, {} as Env);
+  const service = new InventoryService(
+    prisma as unknown as PrismaService,
+    {} as Env,
+    {} as AuditService,
+  );
   return { prisma, service };
 }
 

@@ -176,6 +176,7 @@ export function ProduceBlocks({
     setAskingReason,
     reason,
     backdate,
+    acceptCost,
     closing,
   } = useDraftCommit({
     order,
@@ -700,7 +701,10 @@ export function ProduceBlocks({
           reason.current = value;
           setAskingReason(false);
           closing.current = true;
-          void run.attempt(backdate.current);
+          void run.attempt({
+            confirmBackdate: backdate.current,
+            acceptBackdatedCost: acceptCost.current,
+          });
         }}
       />
 
@@ -710,6 +714,7 @@ export function ProduceBlocks({
           if (!open) run.close();
         }}
         detail={run.detail ?? ''}
+        costMismatch={run.costMismatch}
         pending={busy}
         onConfirm={() => {
           void run.confirm();
