@@ -49,6 +49,7 @@ import { autoTerminateEmptyCoils, reopenAutoTerminatedCoils } from './coil-auto-
 import { openFilmIfSealed } from './coil-film';
 import { expandSplitWidths, planCoilSplit, splitChildrenCosts } from './coil-split-math';
 import { CoilsService } from './coils.service';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * D-164: lo que el cierre (o la reapertura) movió en el kardex, para la auditoría del hecho
@@ -498,7 +499,7 @@ export class CoilOperationsService {
         },
         operationDate,
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.coils.findOne(coilId);
   }
 
@@ -557,7 +558,7 @@ export class CoilOperationsService {
         operationDate,
       });
       return movement.itemId;
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.coils.findOne(coilId);
   }
 
@@ -1341,7 +1342,7 @@ export class CoilOperationsService {
         before: { status: coil.status, code: coil.code },
         after: { status: CoilStatus.CANCELLED, reason, operationDate },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.coils.findOne(coilId);
   }
 

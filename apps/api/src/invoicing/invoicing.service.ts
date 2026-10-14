@@ -111,6 +111,7 @@ import {
   type ListWindow,
 } from '../common/list-export';
 import { lockDocuments } from '../inventory/document-locks';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -1373,7 +1374,7 @@ export class InvoicingService {
       if (returning) {
         await this.salesReturns.createForCreditNoteInTx(tx, actor, id, returnDispatchIds);
       }
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(id);
   }
