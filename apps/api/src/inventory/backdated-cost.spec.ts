@@ -20,6 +20,13 @@ describe('backdatedCostMismatch (cc52, D-648)', () => {
     expect(backdatedCostMismatch('74.5763', at('416', '31023.7408'), 3)).toBeNull();
   });
 
+  it('una diferencia de redondeo (una diezmilésima, o menos de un céntimo en la salida) no avisa', () => {
+    // 10 / 3 = 3.33333…: el promedio guardado es 3.3333.
+    expect(backdatedCostMismatch('3.3333', at('3', '10'), 1, '3')).toBeNull();
+    expect(backdatedCostMismatch('3.3340', at('3', '10'), 1, '1')).toBeNull();
+    expect(backdatedCostMismatch('3.3400', at('3', '10'), 1, '3')?.costAtDate).toBe('3.3333');
+  });
+
   it('sin saldo a esa fecha no hay promedio con que comparar', () => {
     expect(backdatedCostMismatch('70.7924', at('0', '0'), 2)).toBeNull();
     expect(backdatedCostMismatch('70.7924', at('-5', '0'), 2)).toBeNull();

@@ -515,8 +515,8 @@ export function PosView() {
                             }
                             data-testid={`pos-line-floor-${line.product.sku}`}
                           >
-                            {floor.atCost ? 'A costo' : 'Mínimo'}: S/{' '}
-                            {formatMoney(floor.minPricePen)} con IGV
+                            {floor.atCost ? 'A costo' : 'Mínimo'}: {formatMoney(floor.minPricePen)}{' '}
+                            con IGV
                             {floor.below &&
                               (floor.atCost
                                 ? ' · por debajo del costo no se vende'

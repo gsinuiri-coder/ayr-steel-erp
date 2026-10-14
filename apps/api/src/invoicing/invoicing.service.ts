@@ -59,6 +59,7 @@ import {
   type InvoicingSettingsDto,
   type SalesOrderProgressDto,
   type UpdateInvoicingSettingsInput,
+  BACKDATE_COST_MISMATCH,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -241,6 +242,17 @@ function seriesOf(number: string | null): string | null {
   if (number === null) return null;
   const [series] = number.split('-');
   return series ?? null;
+}
+
+/** cc52 (D-648): el 400 es la pregunta «Registrar igual» de una salida atrasada que cambia de costo. */
+function isBackdatedCostMismatch(err: BadRequestException): boolean {
+  const body = err.getResponse();
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    'code' in body &&
+    body.code === BACKDATE_COST_MISMATCH
+  );
 }
 
 @Injectable()
@@ -1560,7 +1572,11 @@ export class InvoicingService {
           } catch (err) {
             // Los rechazos de D-288 son 400 con el motivo (kardex negativo a la fecha nueva, o el
             // despacho nuevo no sería el mismo): se reportan para la auditoría de afuera.
-            if (err instanceof BadRequestException) onRedateRejected(err.message);
+            // cc52 (D-648): la salida que cambia de costo es una pregunta al administrador
+            // («Registrar igual»), no un rechazo del re-fechado: no se registra como tal.
+            if (err instanceof BadRequestException && !isBackdatedCostMismatch(err)) {
+              onRedateRejected(err.message);
+            }
             throw err;
           }
         }

@@ -127,7 +127,9 @@ export async function setupPosStock(
         description: 'Producto E2E de mostrador',
         qty,
         unit: 'NIU',
-        unitPrice: options.unitPrice ?? '20',
+        // cc52 (D-643): el mostrador tiene el piso de la cotización. Con costo 20, los precios de
+        // lista de 10 de varios specs vendían a pérdida; con 5 el piso queda en S/ 6.56 con IGV.
+        unitPrice: options.unitPrice ?? '5',
       },
     ],
   });

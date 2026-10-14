@@ -416,6 +416,7 @@ export class InventoryService {
         value: toDecimal(rows[0]?.value.toString() ?? '0'),
       },
       laterCount,
+      input.qty,
     );
     if (mismatch === null) return null;
     const labels = await this.resolveItemLabels([input]);

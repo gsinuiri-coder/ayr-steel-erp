@@ -11,6 +11,7 @@ import {
   COIL_STATUS_LABELS,
   COIL_STATUSES,
   coilStateLabel,
+  isCalendarDate,
   Role,
   type BusinessLine,
   type CoilDto,
@@ -44,7 +45,7 @@ import { formatMoneyOrDash, formatQty, isPositiveDecimal } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { HeaderActions } from '@/components/header-actions';
 import { Input } from '@/components/ui/input';
-import { isIsoDate } from '@/lib/kardex-range';
+
 import { PaginationBar } from '@/components/pagination-bar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -131,8 +132,8 @@ export function BobinasView() {
     : '';
   // cc47 (D-615): el espesor se escribe en el modal «Filtros» y llega a la URL con «Aplicar».
   const thicknessMm = url.thickness.trim();
-  const receivedFrom = isIsoDate(url.from) ? url.from : '';
-  const receivedTo = isIsoDate(url.to) ? url.to : '';
+  const receivedFrom = isCalendarDate(url.from) ? url.from : '';
+  const receivedTo = isCalendarDate(url.to) ? url.to : '';
   const [searchText, setSearchText, search] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });
   });

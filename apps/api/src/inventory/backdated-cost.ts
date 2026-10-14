@@ -28,22 +28,35 @@ export interface BackdatedCostMismatch {
   laterCount: number;
 }
 
+/** Una diezmilésima: lo que el redondeo del promedio guardado puede mover el unitario. */
+const UNIT_TOLERANCE = new Decimal('0.0001');
+/** Un céntimo: por debajo, la diferencia en la salida es ruido de redondeo, no costo. */
+const VALUE_TOLERANCE = new Decimal('0.01');
+
 /**
  * `null` si no hay nada que avisar: sin entradas ni ajustes posteriores, sin saldo a esa fecha
- * (el promedio no existe; el faltante lo resuelven las otras reglas) o con el mismo promedio a
- * cuatro decimales (una entrada posterior al mismo costo no cambia nada).
+ * (no hay promedio con el que comparar; ver el riesgo anotado en D-648) o con el mismo promedio
+ * salvo redondeo. El promedio guardado está redondeado a cuatro decimales y el de la fecha sale
+ * de sumas exactas: se avisa solo si difieren en más de una diezmilésima **y** la salida cambiaría
+ * en un céntimo o más (revisión de cc52, P2).
  */
 export function backdatedCostMismatch(
   currentAvgCost: Decimal | string,
   atDate: StockAtDate,
   laterCount: number,
+  outQty: Decimal | string = '1',
 ): BackdatedCostMismatch | null {
   if (laterCount <= 0 || atDate.qty.lte(0)) return null;
-  const costUsed = toFixedString(toDecimal(currentAvgCost.toString()), 'MONEY');
+  const used = toDecimal(currentAvgCost.toString());
   const value = Decimal.max(atDate.value, new Decimal(0));
-  const costAtDate = toFixedString(value.div(atDate.qty), 'MONEY');
-  if (toDecimal(costUsed).equals(toDecimal(costAtDate))) return null;
-  return { costUsed, costAtDate, laterCount };
+  const atDateCost = value.div(atDate.qty);
+  const diff = used.minus(atDateCost).abs();
+  if (diff.lte(UNIT_TOLERANCE) || diff.times(outQty.toString()).lt(VALUE_TOLERANCE)) return null;
+  return {
+    costUsed: toFixedString(used, 'MONEY'),
+    costAtDate: toFixedString(atDateCost, 'MONEY'),
+    laterCount,
+  };
 }
 
 /** El mensaje del rechazo: la fecha, el ítem y los dos costos, y cómo salir. */
