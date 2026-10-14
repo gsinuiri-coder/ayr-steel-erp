@@ -1,4 +1,5 @@
-import { Decimal, toDecimal, toFixedString } from '@ayr/shared';
+import type { HttpException } from '@nestjs/common';
+import { BACKDATE_COST_MISMATCH, Decimal, toDecimal, toFixedString } from '@ayr/shared';
 
 /**
  * cc52 (D-648) — **salida con fecha atrasada que cambia de costo.**
@@ -70,5 +71,16 @@ export function backdatedCostMessage(
     `S/ ${mismatch.costAtDate}: hay ${String(mismatch.laterCount)} entrada(s) o ajuste(s) con ` +
     'fecha posterior ya registrados. Registrá primero lo más antiguo; un administrador puede ' +
     'registrarla igual («Registrar igual») y queda en la auditoría con los dos costos.'
+  );
+}
+
+/** Si un error es la pregunta «Registrar igual» de D-648 (no un rechazo definitivo). */
+export function isBackdatedCostMismatch(err: HttpException): boolean {
+  const body = err.getResponse();
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    'code' in body &&
+    (body as { code?: unknown }).code === BACKDATE_COST_MISMATCH
   );
 }

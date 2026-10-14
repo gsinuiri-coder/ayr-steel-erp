@@ -1,5 +1,10 @@
-import { Decimal } from '@ayr/shared';
-import { backdatedCostMessage, backdatedCostMismatch } from './backdated-cost';
+import { BadRequestException } from '@nestjs/common';
+import { BACKDATE_COST_MISMATCH, Decimal } from '@ayr/shared';
+import {
+  backdatedCostMessage,
+  backdatedCostMismatch,
+  isBackdatedCostMismatch,
+} from './backdated-cost';
 
 const at = (qty: string, value: string) => ({ qty: new Decimal(qty), value: new Decimal(value) });
 
@@ -46,5 +51,17 @@ describe('backdatedCostMismatch (cc52, D-648)', () => {
     expect(text).toContain('S/ 70.7924 por NIU');
     expect(text).toContain('S/ 74.5763');
     expect(text).toContain('Registrar igual');
+  });
+});
+
+describe('isBackdatedCostMismatch (cc52, D-648)', () => {
+  it('reconoce la pregunta de costo y no otro 400', () => {
+    expect(
+      isBackdatedCostMismatch(
+        new BadRequestException({ code: BACKDATE_COST_MISMATCH, message: 'x' }),
+      ),
+    ).toBe(true);
+    expect(isBackdatedCostMismatch(new BadRequestException('Stock insuficiente'))).toBe(false);
+    expect(isBackdatedCostMismatch(new BadRequestException({ code: 'OTRO' }))).toBe(false);
   });
 });

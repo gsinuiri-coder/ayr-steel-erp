@@ -59,7 +59,6 @@ import {
   type InvoicingSettingsDto,
   type SalesOrderProgressDto,
   type UpdateInvoicingSettingsInput,
-  BACKDATE_COST_MISMATCH,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -108,6 +107,7 @@ import {
   type ListWindow,
 } from '../common/list-export';
 import { lockDocuments } from '../inventory/document-locks';
+import { isBackdatedCostMismatch } from '../inventory/backdated-cost';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -242,17 +242,6 @@ function seriesOf(number: string | null): string | null {
   if (number === null) return null;
   const [series] = number.split('-');
   return series ?? null;
-}
-
-/** cc52 (D-648): el 400 es la pregunta «Registrar igual» de una salida atrasada que cambia de costo. */
-function isBackdatedCostMismatch(err: BadRequestException): boolean {
-  const body = err.getResponse();
-  return (
-    typeof body === 'object' &&
-    body !== null &&
-    'code' in body &&
-    body.code === BACKDATE_COST_MISMATCH
-  );
 }
 
 @Injectable()
