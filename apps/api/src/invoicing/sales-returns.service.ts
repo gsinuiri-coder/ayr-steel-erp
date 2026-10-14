@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   CoilStatus,
+  Role,
   DispatchStatus,
   InventoryItemType,
   Prisma,
@@ -24,7 +25,6 @@ import {
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
-import { assertSellerAccess } from '../auth/seller-scope';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -185,7 +185,7 @@ export class SalesReturnsService {
       },
       select: { dispatchId: true },
     });
-    return [...new Set(rows.map((r) => r.dispatchId))].sort();
+    return [...new Set(rows.map((r) => r.dispatchId))].sort((a, b) => a.localeCompare(b));
   }
 
   /**
@@ -561,8 +561,13 @@ export class SalesReturnsService {
       where: { id },
       select: { salesOrder: { select: { sellerId: true } } },
     });
-    if (found === null) throw new NotFoundException('Devolución no encontrada');
-    assertSellerAccess(actor, found.salesOrder.sellerId, 'Devolución');
+    // Como `assertSellerAccess`: a otro vendedor, como si no existiera (sin revelar que existe).
+    if (
+      found === null ||
+      (actor.role === Role.VENDEDOR && found.salesOrder.sellerId !== actor.id)
+    ) {
+      throw new NotFoundException('Devolución no encontrada');
+    }
   }
 
   /** El documento de devolución, para su pantalla. */
