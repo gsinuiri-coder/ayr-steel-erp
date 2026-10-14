@@ -2,6 +2,40 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-14 — cc52: correcciones 08 (NC con devolución, PEPS contra promedio, filtro de bobinas) y piso en el mostrador (D-642..D-648; PR #199 y #200)
+
+API y web. **Una migración** (`20261014_sales_returns`, OK del dueño por nombre; respaldo `respaldo-pre-cc52-20261014`). Sin SQL
+contra producción. Detalle en `docs/handoff/ventana-cc52.md`; revisiones en `docs/revision/cc52-{a,b}-*.md`; UAT en
+`docs/uat/cc52.md`.
+
+- **En producción:**
+  - Corte A: API `00124-pd2` (`035f28f7`) y web de `5ae9617b`; `smoke:prod` en verde en los dos dominios.
+  - Corte B: migración aplicada con `pnpm db:prod` (antes: pendiente solo la de cc52; después: al día); API `00125-fcv` (`dfae735d`) y web de `ed78afd6`; `smoke:prod` en verde en los dos dominios.
+- **Paso 0:** las cantidades del kardex coinciden entre Promedio y PEPS en todos los ítems; difieren los valores por
+  salidas grabadas con fecha atrasada (el kardex valoriza al promedio del momento de grabar). El dueño lo calificó de
+  error de diseño → D-648 y la pieza cc53.
+- **D-642:** «Fecha de ingreso» en los filtros de bobinas (URL y PDF).
+- **D-643:** el mostrador tiene el piso de la cotización para todos los roles; «A costo» del ADMINISTRADOR con motivo.
+  Resuelve el pendiente de cc51 (antes de habilitar las cuentas de vendedores).
+- **D-644:** smoke en rojo solo en «web publicada» → redeploy de la web y aviso, sin vuelta atrás (AGENTS.md).
+- **D-645..D-647:** NC con fecha (no anterior al comprobante), motivo por tipo y devolución automática al registrarla
+  (reingreso al costo con que salió, con la fecha de la NC; bobina entera y reabierta; anular la NC la revierte);
+  Ventas y margen resta venta y costo en el mes de la NC sin reescribir el mes del comprobante.
+- **D-648:** una salida con fecha atrasada que cambiaría de costo se rechaza con los dos costos; el ADMINISTRADOR la
+  registra igual y queda en la auditoría. **Se quita con cc53.**
+- **`auth.service.spec.ts`:** causa encontrada (hash de relleno con argon2 de producción al importar) y corregida.
+- **Pieza siguiente — cc53 · recosteo del promedio por fecha:** cada salida toma el promedio a su fecha; al registrar
+  un movimiento con fecha atrasada se recalcula hacia adelante con movimientos de ajuste (`adjustCost` /
+  `replaceEntry`), nunca editando; incluye la corrección única de los SKU afectados (UPVC6MT, UPVC36MT, COB030ROJO,
+  PL040RJ6MT; cifras en el informe al dueño) y la vista previa del impacto por mes. Al terminarla, se quita D-648.
+- **Registro de riesgo (kardex y datos):** `InventoryService.record` (regla de D-648, auditoría con `AuditService`);
+  `SalesReturnsService` (reingreso y reversa por las puertas de la regla dura 8); `registerManual` y `annulExternal`
+  de NC; `DispatchesService.reverseInTx` (bloqueo con devolución vigente); tope de facturación (`withReturnedQty`);
+  Ventas y margen (filas `RETURN`); mostrador (piso).
+- **Pendiente de decisión del dueño:** ratificar D-642..D-648; UAT en `docs/uat/cc52.md`; los P3 anotados en el
+  handoff.
+- **Neon:** 9 ramas de 10. Con `respaldo-pre-cc52-20261014`, los dos respaldos post-día-D más recientes son `respaldo-pre-cc51-20261013` y este; `respaldo-pre-cc08-20261001` y `respaldo-pre-cc41-20261010` quedan proponibles para borrar (solo con OK del dueño por nombre).
+
 ## 2026-10-13 — cc51: anular la factura del corte, detalle de la auditoría en castellano y vender a costo (D-639..D-641; PR #196 y #197)
 
 API y web. **Una migración** (`20261013_sales_line_at_cost`, OK del dueño por nombre; respaldo
