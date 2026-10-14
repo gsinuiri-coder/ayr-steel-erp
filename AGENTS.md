@@ -347,6 +347,10 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
   UTC sin avisar. Usar
   `node -e "console.log(new Date().toLocaleString('es-PE',{timeZone:'America/Lima'}))"` (una línea
   sin texto multilínea ni interpolación, compatible con la regla 7).
+- **Los logs van dentro de `local-data/<pieza>/`** (del worktree o del checkout principal), nunca sueltos
+  en `C:/Users/User/Documents/workspace/ayr/`: instalación, lint, pruebas, despliegue y los de los
+  subagentes (a quienes se les dice dónde escribir). No se toca `frontend-ayr-nextjs`. Pasó en cc53:
+  `install-cc53.log` y los `fork-*.log` quedaron en la carpeta `ayr`.
 - Si un comando externo falla tres veces, documentar el bloqueo en `docs/PROGRESO.md` y seguir
   con lo que no dependa de él.
 - **Worktrees con nombre corto: `../ayr-<corto>`, de no más de ~25 caracteres** (p. ej.

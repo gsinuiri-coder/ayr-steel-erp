@@ -2,6 +2,43 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-14 — cc53: recosteo del promedio por fecha, corrección única y nada atrasado en negativo (D-649..D-652; PR #202, #203 y #204)
+
+API, web y herramientas. **Una migración** (`20261015_inventory_recost`, OK del dueño por nombre; respaldo
+`respaldo-pre-cc53-20261014`). **Una escritura masiva** (`recosteo:historico --execute --confirm-production`, OK por
+nombre; respaldo `respaldo-pre-cc53b-20261014`). Sin SQL contra producción. Detalle en `docs/handoff/ventana-cc53.md`;
+revisiones en `docs/revision/cc53-*.md`; UAT en `docs/uat/cc53.md`.
+
+- **En producción:**
+  - Corte A (PR #202): migración aplicada con `pnpm db:prod`; API `00126-xtp` (`32eb00f9`); merge `c10483a2`;
+    `smoke:prod` en verde en los dos dominios.
+  - Hotfix de topes (PR #204): API `00127-758` (`e33cc342`); merge `7755b6f4`; smoke en verde.
+  - Corte B (PR #203): primero en demo (dry-run, `--execute`, «coincide al céntimo», segundo dry-run 0); en
+    producción el dry-run coincidió con la demo, se ejecutó (48 ajustes «Recosteo histórico cc53»), coincidió al
+    céntimo y el segundo dry-run dio 0. API `00128-9nl` (`7fd1a24b`) para alinear el `git-sha`; smoke en verde.
+- **Registro del dueño:** el problema de cc52 fue un **error de diseño**; cada salida toma el promedio a su fecha.
+  D-642..D-652 ratificadas; UAT de cc52 aprobado.
+- **D-649:** recosteo por fecha en línea (`recostForward`, ADJUST con `recost_of_id`, cascada, tope 500, NOWAIT).
+- **D-650:** fuera el bloqueo de D-648.
+- **D-651:** `pnpm recosteo:historico` (UPVC6MT, UPVC36MT, COB030ROJO, PL040RJ6MT).
+- **D-652:** una salida atrasada que dejaría el kardex negativo se rechaza con la primera fecha válida; no
+  retroactivo (`pnpm inspect:cc53`: 0 ítems con negativos en producción).
+- **Hotfix:** `KARDEX_TX_OPTIONS` (30 s) en seis transacciones; registrar una NC de devolución daba 500 por el tope de
+  5 s.
+- **Verificación:** unitarias de API 3 452; db-spec 14 suites (169) con el caso de cc52 exacto (la tabla del informe al dueño)
+  y par nuevo en `lock-order.db-spec`; E2E locales con builds de producción (61/61 en 10 specs y los dos
+  rojos de CI corregidos, 9/9); CI completa en verde en los tres PR.
+- **Registro de riesgo (kardex y datos):** `InventoryService.recostForward` y su plan (`inventory-recost.ts`,
+  `recost-engine.ts`); `record`/`reverse`/`adjustCost` con fecha atrasada; D-652 (`assertNoNegativeAtDate`); las 26
+  consultas de dominio que excluyen los recosteos; `SalesReturnsService` (costo efectivo bajo el lock); lectores de
+  reportes (`recost_of_id`).
+- **Para la auditoría siguiente:** (a) Rentabilidad del comprobante y Ventas y margen usan bases de costo distintas
+  para coberturas; (b) un pedido tiene un despacho «sin comprobante declarado» (en el informe al dueño).
+- **Neon:** 10 ramas de 10 (`respaldo-pre-cc08-20261001` borrada por el dueño). Proponer borrado antes de crear otra.
+- **Pendiente:** UAT de cc53; P3 de las revisiones (ver handoff).
+
+EOF
+
 ## 2026-10-14 — cc52: correcciones 08 (NC con devolución, PEPS contra promedio, filtro de bobinas) y piso en el mostrador (D-642..D-648; PR #199 y #200)
 
 API y web. **Una migración** (`20261014_sales_returns`, OK del dueño por nombre; respaldo `respaldo-pre-cc52-20261014`). Sin SQL
