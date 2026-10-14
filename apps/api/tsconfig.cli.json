@@ -26,7 +26,8 @@
     "prisma/inspect-cc38-cli.ts",
     "prisma/inspect-cc44-cli.ts",
     "prisma/inspect-cc46-cli.ts",
-    "prisma/inspect-cc52-cli.ts"
+    "prisma/inspect-cc52-cli.ts",
+    "prisma/recost-historic-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }
