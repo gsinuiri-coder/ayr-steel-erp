@@ -918,7 +918,7 @@ export class ProductionService {
         }
 
         const all = await tx.inventoryMovement.findMany({
-          where: { refType: 'PRODUCTION', refId: reportId },
+          where: { recostOfId: null, refType: 'PRODUCTION', refId: reportId },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
@@ -943,7 +943,12 @@ export class ProductionService {
         // repartió sobre un saldo que incluía estas piezas, y sacarlas ahora dejaría a las
         // que quedan cargando un promedio que nunca les correspondió.
         const productAfter = await tx.inventoryMovement.findMany({
-          where: { itemType: 'PRODUCT', itemId: order.productId, id: { gt: entry.id } },
+          where: {
+            recostOfId: null,
+            itemType: 'PRODUCT',
+            itemId: order.productId,
+            id: { gt: entry.id },
+          },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
@@ -1315,6 +1320,7 @@ export class ProductionService {
 
         const own = await tx.inventoryMovement.findMany({
           where: {
+            recostOfId: null,
             refId: orderId,
             refType: { in: ['PRODUCTION', 'SCRAP'] },
           },
@@ -1343,7 +1349,12 @@ export class ProductionService {
         // perfil), revertirlo dejaría el promedio contando algo que ya no es cierto.
         if (adjust) {
           const after = await tx.inventoryMovement.findMany({
-            where: { itemType: 'PRODUCT', itemId: order.productId, id: { gt: adjust.id } },
+            where: {
+              recostOfId: null,
+              itemType: 'PRODUCT',
+              itemId: order.productId,
+              id: { gt: adjust.id },
+            },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },
           });
@@ -1418,6 +1429,7 @@ export class ProductionService {
           const lastOwn = lastOwnByCoil.get(row.coilId);
           const after = await tx.inventoryMovement.findMany({
             where: {
+              recostOfId: null,
               itemType: 'COIL',
               itemId: row.coilId,
               ...(lastOwn === undefined

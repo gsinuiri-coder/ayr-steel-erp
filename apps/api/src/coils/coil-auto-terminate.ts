@@ -274,7 +274,8 @@ async function lastMovementByCoil(
   coilIds: string[],
 ): Promise<Map<string, { movementId: string; refType: string; refId: string | null }>> {
   const rows = await tx.inventoryMovement.findMany({
-    where: { itemType: 'COIL', itemId: { in: coilIds } },
+    // cc53 (D-649): un recosteo no deja a nadie en 0; es el costo de otra fila.
+    where: { itemType: 'COIL', itemId: { in: coilIds }, recostOfId: null },
     orderBy: [{ itemId: 'asc' }, { id: 'desc' }],
     distinct: ['itemId'],
     select: { id: true, itemId: true, refType: true, refId: true },

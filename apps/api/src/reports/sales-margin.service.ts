@@ -308,7 +308,8 @@ export class SalesMarginService {
       SELECT
         r."sales_order_id",
         COALESCE(SUM(
-          CASE m."type" WHEN 'OUT' THEN m."total_cost" WHEN 'IN' THEN -m."total_cost" ELSE 0 END
+          -- cc53 (D-649): un recosteo (ADJUST) es costo del consumo: saca valor del saldo.
+          CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END
         ), 0) AS "material_pen"
       FROM "inventory_movements" m
       JOIN "production_reports" pr ON pr."id"::text = m."ref_id"

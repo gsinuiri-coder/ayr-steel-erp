@@ -45,6 +45,7 @@ import { AuditService } from '../audit/audit.service';
 import {
   laterMovementsNote,
   planRecost,
+  stockUpToDate,
   type MovementMeta,
   type PlannedAdjust,
   type RecostSeed,
@@ -279,7 +280,8 @@ export class InventoryService {
           `Stock insuficiente: hay ${balance.qty.toFixed(3)} y se intentan retirar ${qty.toFixed(3)}`,
         );
       }
-      const atDate = laterCount > 0 ? await this.stockAtDate(tx, input, operationDate) : null;
+      const atDate =
+        laterCount > 0 ? await stockUpToDate(tx, input, toDateOnly(operationDate)) : null;
       if (atDate?.qty.gt(0)) {
         // cc53 (D-649): sale al promedio que el ítem tenía a su fecha; el saldo de hoy pierde
         // ese valor y el recosteo corrige lo posterior.
@@ -288,7 +290,7 @@ export class InventoryService {
         newQty = balance.qty.minus(qty);
         // El valor que queda sale del kardex (sus filas y recosteos), no del promedio guardado a
         // cuatro decimales: así el saldo no arrastra redondeo de una retrofecha a otra.
-        const kardex = await this.stockAtDate(tx, input, KARDEX_END);
+        const kardex = await stockUpToDate(tx, input, toDateOnly(KARDEX_END));
         const value = Decimal.max(kardex.value.minus(totalCost), new Decimal(0));
         newAvgCost = newQty.lte(0) ? new Decimal(0) : value.div(newQty);
       } else {
@@ -386,31 +388,6 @@ export class InventoryService {
   }
 
   /**
-   * cc53 (D-649): el saldo del ítem con todo lo registrado hasta una fecha (inclusive), por valor y
-   * con sus recosteos (un `ADJUST` de recosteo es valor del saldo, como cualquier ajuste). Lo que
-   * una salida nueva, fechada ahí, toma como promedio.
-   */
-  private async stockAtDate(
-    tx: Prisma.TransactionClient,
-    item: { itemType: InventoryItemType; itemId: string },
-    operationDate: string,
-  ): Promise<{ qty: Decimal; value: Decimal }> {
-    const rows = await tx.$queryRaw<{ qty: Prisma.Decimal; value: Prisma.Decimal }[]>`
-      SELECT
-        COALESCE(SUM(CASE "type" WHEN 'IN' THEN "qty" WHEN 'OUT' THEN -"qty" ELSE 0 END), 0) AS "qty",
-        COALESCE(SUM(CASE "type" WHEN 'OUT' THEN -"total_cost" ELSE "total_cost" END), 0) AS "value"
-      FROM "inventory_movements"
-      WHERE "item_type" = ${item.itemType}::"InventoryItemType"
-        AND "item_id" = ${item.itemId}::uuid
-        AND "operation_date" <= ${toDateOnly(operationDate)}::date
-    `;
-    return {
-      qty: toDecimal(rows[0]?.qty.toString() ?? '0'),
-      value: Decimal.max(toDecimal(rows[0]?.value.toString() ?? '0'), new Decimal(0)),
-    };
-  }
-
-  /**
    * cc53 (D-649) — **la puerta del recosteo por fecha** (regla dura 8). Recalcula hacia adelante el
    * costo de las salidas (y de lo que derivan de ellas) de los ítems de `seeds`, y por cada fila
    * que cambia escribe un `ADJUST` con `recostOfId`, la fecha de la fila original y su `ref`, para
@@ -439,21 +416,27 @@ export class InventoryService {
     const maxRows = ctx.historic ? Number.MAX_SAFE_INTEGER : ctx.maxRows;
     let plan = await planRecost(tx, seeds, maxRows);
     if (plan.overLimit) return this.recostPending(tx, seeds, plan.rowsReplayed, ctx);
-    for (let round = 0; round < 3; round += 1) {
-      const items = plan.items.map((p) => {
-        const meta = p.adjusts[0]?.movement;
-        return meta ? itemRefOf(meta) : null;
+    const locked = new Set<string>();
+    let settled = false;
+    for (let round = 0; round < 3 && !settled; round += 1) {
+      const toLock = plan.items.flatMap((p) => {
+        const meta = p.adjusts.at(0)?.movement;
+        return meta && !locked.has(labelKey(meta.itemType, meta.itemId)) ? [itemRefOf(meta)] : [];
       });
-      const toLock = items.filter((i): i is ItemRef => i !== null);
-      await this.lockInOrder(tx, { items: toLock });
+      await this.lockRecostItems(tx, toLock, ctx.historic !== undefined);
+      for (const i of toLock) locked.add(labelKey(i.itemType, i.itemId));
+      // Bajo el lock se vuelve a armar: lo que decide se lee después de bloquear (D-474).
       const again = await planRecost(tx, seeds, maxRows);
       if (again.overLimit) return this.recostPending(tx, seeds, again.rowsReplayed, ctx);
-      const before = new Set(toLock.map((i) => labelKey(i.itemType, i.itemId)));
-      const grew = again.items.some(
-        (p) => p.adjusts.length > 0 && !before.has(labelKey(p.item.itemType, p.item.itemId)),
+      settled = again.items.every(
+        (p) => p.adjusts.length === 0 || locked.has(labelKey(p.item.itemType, p.item.itemId)),
       );
       plan = again;
-      if (!grew) break;
+    }
+    if (!settled) {
+      throw new ConflictException(
+        'El recosteo por fecha no pudo tomar todos los ítems de la cadena: reintentá la operación',
+      );
     }
 
     const adjusted: RecostOutcome['adjusted'] = [];
@@ -484,7 +467,7 @@ export class InventoryService {
       });
       await tx.inventoryMovement.createMany({ data });
       if (balance.qty.gt(0)) {
-        const kardex = await this.stockAtDate(tx, first, KARDEX_END);
+        const kardex = await stockUpToDate(tx, first, toDateOnly(KARDEX_END));
         const value = Decimal.max(kardex.value, new Decimal(0));
         await this.writeBalance(tx, balance.id, balance.qty, value.div(balance.qty), balance.unit);
       }
@@ -492,6 +475,31 @@ export class InventoryService {
     }
     await this.auditRecost(tx, adjusted, plan.rowsReplayed, ctx);
     return { pending: false, rowsReplayed: plan.rowsReplayed, adjusted };
+  }
+
+  /**
+   * cc53 (regla dura 17): los ítems de la cadena del recosteo. En línea, la operación ya tiene en
+   * mano el saldo del ítem que lo disparó, así que lo demás llega tarde y fuera de orden: las
+   * bobinas con `NOWAIT` (`lockRawMaterialCoils`, ya con un saldo tomado) y los saldos también, en
+   * orden canónico; si otra transacción los tiene, 409 y se reintenta (D-475). La corrección
+   * histórica no tiene nada en mano y toma el conjunto en orden normal.
+   */
+  private async lockRecostItems(
+    tx: Prisma.TransactionClient,
+    items: readonly ItemRef[],
+    fresh: boolean,
+  ): Promise<void> {
+    if (items.length === 0) return;
+    if (fresh) {
+      await this.lockInOrder(tx, { items });
+      return;
+    }
+    const coilIds = sortedUniqueIds(
+      items.filter((i) => i.itemType === InventoryItemType.COIL).map((i) => i.itemId),
+    );
+    if (coilIds.length > 0) await lockRawMaterialCoils(tx, coilIds, roofingToleranceMm(this.env));
+    const sorted = [...items].sort((a, b) => compareLockKeys(balanceLockKey(a), balanceLockKey(b)));
+    for (const item of sorted) await this.lockBalance(tx, item, true);
   }
 
   /** Se pasó del tope: nada se ajusta en línea, y la auditoría lo deja dicho. */
@@ -1144,7 +1152,12 @@ export class InventoryService {
    * transacción, para que dos movimientos concurrentes del mismo ítem no calculen el
    * promedio ponderado sobre el mismo saldo previo.
    */
-  private async lockBalance(tx: Prisma.TransactionClient, input: ItemRef): Promise<BalanceRow> {
+  private async lockBalance(
+    tx: Prisma.TransactionClient,
+    input: ItemRef,
+    /** cc53 (D-649, regla dura 17): un saldo que se toma tarde y fuera de orden, con `NOWAIT`. */
+    nowait = false,
+  ): Promise<BalanceRow> {
     await tx.$executeRaw`
       INSERT INTO "inventory_balances"
         ("id", "business_line_id", "item_type", "item_id", "qty", "avg_cost", "unit", "updated_at")
@@ -1171,7 +1184,7 @@ export class InventoryService {
       FROM "inventory_balances"
       WHERE "item_type" = ${input.itemType}::"InventoryItemType"
         AND "item_id" = ${input.itemId}::uuid
-      FOR UPDATE
+      FOR UPDATE ${nowait ? Prisma.sql`NOWAIT` : Prisma.empty}
     `;
     const row = rows[0];
     if (!row) throw new NotFoundException('No se pudo obtener el saldo de inventario del ítem');

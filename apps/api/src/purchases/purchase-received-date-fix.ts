@@ -219,7 +219,8 @@ export async function planPurchaseReceivedDates(
   });
   const itemIds = [...new Set(own.map((m) => m.itemId))];
   const history = await tx.inventoryMovement.findMany({
-    where: { itemId: { in: itemIds } },
+    // cc53 (D-649): los recosteos corrigen el costo de otra fila; no son historia propia.
+    where: { itemId: { in: itemIds }, recostOfId: null },
     orderBy: [{ operationDate: 'asc' }, { id: 'asc' }],
   });
   return purchases.flatMap((p) => {
@@ -407,7 +408,13 @@ export async function undoPurchaseReceivedDates(
   for (const [itemKey, lastId] of lastBatchMovementByItem) {
     const [itemType, itemId] = itemKey.split(':') as [InventoryMovement['itemType'], string];
     const newer = await tx.inventoryMovement.findFirst({
-      where: { itemType, itemId, id: { gt: lastId }, NOT: { id: { in: ownReversalIds } } },
+      where: {
+        itemType,
+        itemId,
+        id: { gt: lastId },
+        recostOfId: null,
+        NOT: { id: { in: ownReversalIds } },
+      },
       select: { id: true },
     });
     if (newer) throw new Error(`Undo bloqueado: ${itemKey} tiene movimientos posteriores al lote`);

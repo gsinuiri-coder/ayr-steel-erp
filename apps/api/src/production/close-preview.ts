@@ -146,6 +146,7 @@ export async function previewPlantClose(
         const after = await coilStates(tx, coilIds);
         const scrapAfter = await tx.inventoryMovement.findMany({
           where: {
+            recostOfId: null,
             ...scrapWhere(orderId, coilIds),
             id: { notIn: scrapBefore.map((m) => m.id) },
           },

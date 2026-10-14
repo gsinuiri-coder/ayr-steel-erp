@@ -259,7 +259,7 @@ export async function loadRestoreContext(
   if (!coil) throw new NotFoundException('Bobina no encontrada');
   const [movements, activeReservations, liveChildren] = await Promise.all([
     tx.inventoryMovement.findMany({
-      where: { itemType: InventoryItemType.COIL, itemId: coilId },
+      where: { itemType: InventoryItemType.COIL, itemId: coilId, recostOfId: null },
       select: {
         id: true,
         type: true,
@@ -453,6 +453,7 @@ export async function undoCoilRestoreBatch(
     await lockCoilRows(tx, [item.coilId]);
     const later = await tx.inventoryMovement.count({
       where: {
+        recostOfId: null,
         itemType: InventoryItemType.COIL,
         itemId: item.coilId,
         id: { gt: BigInt(item.after.movementId) },

@@ -1731,3 +1731,58 @@ describe('cc30 — corte 2: editar compra recibida × partir su bobina (contra l
     expectClean(tally, 'C9 editar compra × partir bobina');
   });
 });
+
+/**
+ * cc53 (D-649) — **recosteo por fecha** contra un despacho de los mismos ítems en orden inverso. La
+ * entrada atrasada toma sus saldos en orden (como la recepción de una compra) y su recosteo
+ * recalcula la salida ya despachada; los saldos que llegan tarde van con `NOWAIT` (regla 17).
+ */
+describe('cc53 — recosteo por fecha × despacho (contra la base)', () => {
+  it('sin deadlock: gana una, la otra entra después o sale con 409', async () => {
+    const inventory = moduleRef.get(InventoryService);
+    const yesterday = new Date(Date.parse(`${businessToday()}T12:00:00.000Z`) - 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const [p1, p2] = [await tradingProduct(), await tradingProduct()];
+      await productPurchase([p1, p2]);
+      await dispatchAll(
+        await directOrder([
+          { productId: p1, qty: '10' },
+          { productId: p2, qty: '10' },
+        ]),
+      );
+      const pending = await directOrder([
+        { productId: p2, qty: '10' },
+        { productId: p1, qty: '10' },
+      ]);
+      const items = [p2, p1].map((itemId) => ({
+        businessLineId: tradingLineId,
+        itemType: 'PRODUCT' as const,
+        itemId,
+        unit: 'NIU',
+      }));
+      await race(tally, `iteración ${i}`, [
+        () =>
+          prisma.$transaction(async (tx) => {
+            await inventory.lockInOrder(tx, { items });
+            for (const item of items) {
+              await inventory.record(tx, {
+                ...item,
+                type: 'IN',
+                qty: '5',
+                unitCost: '99',
+                refType: 'ADJUSTMENT',
+                actorId: admin.id,
+                operationDate: yesterday,
+                confirmBackdate: true,
+              });
+            }
+          }),
+        () => dispatchAll(pending),
+      ]);
+    }
+    expectClean(tally, 'recosteo por fecha × despacho');
+  });
+});

@@ -302,7 +302,7 @@ export class CoilOperationsService {
           coilIds: [split.parentCoilId, ...split.children.map((c) => c.id)],
           items: liveMovements(
             await tx.inventoryMovement.findMany({
-              where: { refType: 'SPLIT', refId: splitId },
+              where: { recostOfId: null, refType: 'SPLIT', refId: splitId },
               include: { reversals: { select: { id: true } } },
             }),
           ).map(itemRefOf),
@@ -324,7 +324,7 @@ export class CoilOperationsService {
         );
 
         const all = await tx.inventoryMovement.findMany({
-          where: { refType: 'SPLIT', refId: splitId },
+          where: { recostOfId: null, refType: 'SPLIT', refId: splitId },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
@@ -341,6 +341,7 @@ export class CoilOperationsService {
         for (const child of split.children) {
           const extra = await tx.inventoryMovement.findMany({
             where: {
+              recostOfId: null,
               itemType: 'COIL',
               itemId: child.id,
               // Un partido siempre tiene movimientos; el guard evita un `NOT IN ()` si
@@ -732,6 +733,7 @@ export class CoilOperationsService {
     // mano— no está en planta: declararle un sobrante crearía kilos de material que ya no existe.
     const leftOtherwise = await tx.inventoryMovement.findFirst({
       where: {
+        recostOfId: null,
         itemType: 'COIL',
         itemId: coil.id,
         type: 'OUT',
@@ -819,6 +821,7 @@ export class CoilOperationsService {
   ): Promise<CloseAdjustmentSummary | null> {
     const surplus = await tx.inventoryMovement.findFirst({
       where: {
+        recostOfId: null,
         itemType: 'COIL',
         itemId: coilId,
         refType: 'CLOSE_ADJUSTMENT',
@@ -1013,7 +1016,8 @@ export class CoilOperationsService {
     operationDate: string,
   ): Promise<CloseAdjustmentSummary | null> {
     const last = await tx.inventoryMovement.findFirst({
-      where: { itemType: 'COIL', itemId: coilId },
+      // cc53 (D-649): un recosteo no es un movimiento del rollo; corrige el costo de otro.
+      where: { itemType: 'COIL', itemId: coilId, recostOfId: null },
       orderBy: { id: 'desc' },
       include: { reversals: { select: { id: true } } },
     });
@@ -1353,7 +1357,7 @@ export class CoilOperationsService {
     coilId: string,
   ): Promise<InventoryMovement> {
     const movements = await tx.inventoryMovement.findMany({
-      where: { itemType: 'COIL', itemId: coilId },
+      where: { recostOfId: null, itemType: 'COIL', itemId: coilId },
       orderBy: { id: 'asc' },
       include: { reversals: { select: { id: true } } },
     });

@@ -141,10 +141,15 @@ export function replayItem(rows: readonly RecostRow[], options: ReplayOptions): 
       } else if (row.rule === 'AVERAGE') {
         // Sin saldo a esa fecha no hay promedio con qué valorizar: queda como se grabó.
         if (qty.gt(0)) {
-          cost =
+          const atAverage =
             row.type === 'OUT'
               ? averageOutCost({ qty, value }, row.qty)
               : round4(row.qty.times(value).div(qty));
+          // El grabado salió del promedio guardado a cuatro decimales; una diferencia dentro de
+          // ese redondeo no es un recosteo (revisión de cc53, P2).
+          cost = isRoundingNoise(atAverage.minus(row.effective), row.qty)
+            ? row.effective
+            : atAverage;
         }
       } else if (row.rule === 'REVERSAL' || row.rule === 'RETURN') {
         cost = followCost(row, sourceCost(row.sourceId)) ?? row.effective;
@@ -242,4 +247,16 @@ export function prorateDelta(
   }
   out.set(heaviest.id, delta.minus(assigned));
   return out;
+}
+
+/** Una diezmilésima por unidad: lo que el promedio guardado a cuatro decimales puede mover. */
+const AVG_ROUNDING = new Decimal('0.0001');
+
+/**
+ * Si una diferencia de costo es solo el redondeo del promedio guardado (una diezmilésima por
+ * unidad) o no llega a un céntimo.
+ */
+export function isRoundingNoise(delta: Decimal, qty: Decimal): boolean {
+  const abs = delta.abs();
+  return abs.lt(RECOST_MIN_DELTA) || abs.lte(qty.times(AVG_ROUNDING));
 }

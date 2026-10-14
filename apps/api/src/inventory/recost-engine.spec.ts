@@ -1,6 +1,7 @@
 import { Decimal } from '@ayr/shared';
 import {
   averageOutCost,
+  isRoundingNoise,
   prorateDelta,
   recostAdjustTotal,
   replayItem,
@@ -180,5 +181,20 @@ describe('ayudas', () => {
     ]);
     expect(byQty.get('a')?.toFixed(4)).toBe('0.2500');
     expect(prorateDelta(d('1'), []).size).toBe(0);
+  });
+});
+
+describe('isRoundingNoise (revisión de cc53)', () => {
+  it('una diezmilésima por unidad o menos de un céntimo es redondeo, no recosteo', () => {
+    expect(isRoundingNoise(d('0.009'), d('1'))).toBe(true);
+    expect(isRoundingNoise(d('0.02'), d('250'))).toBe(true);
+    expect(isRoundingNoise(d('-0.025'), d('250'))).toBe(true);
+    expect(isRoundingNoise(d('0.03'), d('250'))).toBe(false);
+  });
+
+  it('una salida grabada al promedio redondeado no se recostea', () => {
+    // 3 u por 10: promedio exacto 3.3333…, guardado 3.3333; salen 2 u a 6.6666.
+    const rows = [row('1', 'IN', '3', '10'), row('2', 'OUT', '2', '6.6666')];
+    expect(replayItem(rows, { start: 0 }).deltas).toEqual([]);
   });
 });

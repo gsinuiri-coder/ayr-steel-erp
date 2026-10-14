@@ -81,7 +81,7 @@ export class SalesReturnsService {
         dispatch: { select: { seq: true, dispatchDate: true, invoiceId: true } },
         salesReturnItems: {
           where: { salesReturn: { status: SalesReturnStatus.ACTIVE } },
-          select: { qty: true, reserveQty: true, totalCost: true },
+          select: { qty: true, reserveQty: true, totalCost: true, movementId: true },
         },
       },
     });
@@ -104,7 +104,14 @@ export class SalesReturnsService {
         ? []
         : await tx.inventoryMovement.groupBy({
             by: ['recostOfId'],
-            where: { recostOfId: { in: movements.map((m) => m.id) } },
+            where: {
+              recostOfId: {
+                in: [
+                  ...movements.map((m) => m.id),
+                  ...rows.flatMap((r) => r.salesReturnItems.map((x) => x.movementId)),
+                ],
+              },
+            },
             _sum: { totalCost: true },
           });
     const recostById = new Map(
@@ -130,7 +137,15 @@ export class SalesReturnsService {
         reserveQty: toDecimal(r.reserveQty.toString()),
         returnedQty: sum((x) => x.qty),
         returnedReserveQty: sum((x) => x.reserveQty),
-        returnedTotalCost: sum((x) => x.totalCost),
+        // cc53 (D-649): lo ya devuelto, a su costo efectivo (una devolución también se recostea con
+        // su salida); si no, la última devolución tomaría de más o de menos.
+        returnedTotalCost: r.salesReturnItems.reduce(
+          (acc, x) =>
+            acc
+              .plus(x.totalCost.toString())
+              .plus(recostById.get(x.movementId.toString()) ?? new Decimal(0)),
+          new Decimal(0),
+        ),
         movementId: movement.id,
         ...effectiveOutCost(movement, recostById.get(movement.id.toString())),
         unit: movement.unit,
@@ -242,30 +257,45 @@ export class SalesReturnsService {
       );
     }
     const operationDate = fromDateOnly(note.issueDate);
-    const plans = await this.planForLines(
-      tx,
-      note.items.map((i) => ({
-        lineNumber: i.lineNumber,
-        orderItemId: i.salesOrderItemId,
-        qty: i.qty.toString(),
-      })),
-      { affectedInvoiceId: note.affectedDocument?.id ?? null, asOf: operationDate },
-    );
-    const locked = new Set(lockedDispatchIds);
-    if (plans.flat().some((a) => !locked.has(a.stock.dispatchId))) {
-      throw new ConflictException(
-        'Entró un despacho nuevo de este pedido mientras se registraba la nota de crédito: vuelve a intentarlo',
+    const plan = () =>
+      this.planForLines(
+        tx,
+        note.items.map((i) => ({
+          lineNumber: i.lineNumber,
+          orderItemId: i.salesOrderItemId,
+          qty: i.qty.toString(),
+        })),
+        { affectedInvoiceId: note.affectedDocument?.id ?? null, asOf: operationDate },
       );
-    }
+    const locked = new Set(lockedDispatchIds);
+    const assertLockedDispatches = (planned: Awaited<ReturnType<typeof plan>>) => {
+      if (planned.flat().some((a) => !locked.has(a.stock.dispatchId))) {
+        throw new ConflictException(
+          'Entró un despacho nuevo de este pedido mientras se registraba la nota de crédito: vuelve a intentarlo',
+        );
+      }
+    };
+    const draft = await plan();
+    assertLockedDispatches(draft);
     // Regla dura 17: bobinas y saldos de toda la operación, en orden, antes de escribir.
     await this.inventory.lockInOrder(tx, {
-      items: plans.flat().map((a) => ({
+      items: draft.flat().map((a) => ({
         businessLineId: a.stock.businessLineId,
         itemType: a.stock.itemType,
         itemId: a.stock.itemId,
         unit: a.stock.unit,
       })),
     });
+    // cc53 (D-474): el costo efectivo de la salida (con sus recosteos) se lee bajo el lock; un
+    // recosteo concurrente que entró entre la primera lectura y el bloqueo ya está acá.
+    const plans = await plan();
+    assertLockedDispatches(plans);
+    const lockedItems = new Set(draft.flat().map((a) => `${a.stock.itemType}:${a.stock.itemId}`));
+    if (plans.flat().some((a) => !lockedItems.has(`${a.stock.itemType}:${a.stock.itemId}`))) {
+      throw new ConflictException(
+        'Cambió lo despachado de este pedido mientras se registraba la nota de crédito: vuelve a intentarlo',
+      );
+    }
 
     const created = await tx.salesReturn.create({
       data: {

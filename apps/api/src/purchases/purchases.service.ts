@@ -821,7 +821,7 @@ export class PurchasesService {
         const landedReversed = { coils: 0, amountPen: new Decimal(0) };
         if (purchase.status === PurchaseStatus.RECEIVED) {
           const own = await tx.inventoryMovement.findMany({
-            where: { refType: 'PURCHASE', refId: id },
+            where: { recostOfId: null, refType: 'PURCHASE', refId: id },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },
           });

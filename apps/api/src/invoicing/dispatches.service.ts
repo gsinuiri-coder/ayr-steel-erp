@@ -781,6 +781,7 @@ export class DispatchesService {
     );
     const reversedMovements = await tx.inventoryMovement.findMany({
       where: {
+        recostOfId: null,
         id: { in: dispatch.items.flatMap((i) => (i.movementId === null ? [] : [i.movementId])) },
       },
       select: { businessLineId: true, itemType: true, itemId: true, unit: true },

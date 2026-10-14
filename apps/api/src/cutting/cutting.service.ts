@@ -456,7 +456,7 @@ export class CuttingService {
         }
 
         const all = await tx.inventoryMovement.findMany({
-          where: { refType: 'CUTTING', refId: row.id },
+          where: { recostOfId: null, refType: 'CUTTING', refId: row.id },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
@@ -508,6 +508,7 @@ export class CuttingService {
         for (const strip of strips) {
           const extra = await tx.inventoryMovement.findMany({
             where: {
+              recostOfId: null,
               itemType: 'COIL',
               itemId: strip.id,
               ...(movementIds.size > 0 ? { id: { notIn: [...movementIds] } } : {}),
@@ -528,7 +529,7 @@ export class CuttingService {
         // rastro: cualquier movimiento de la madre posterior a la salida que se está
         // revirtiendo (otro partido, otra merma, otra recepción de corte).
         const motherMovements = await tx.inventoryMovement.findMany({
-          where: { itemType: 'COIL', itemId: coilId },
+          where: { recostOfId: null, itemType: 'COIL', itemId: coilId },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });

@@ -187,7 +187,7 @@ export async function snapshotCoils(
     }),
     tx.inventoryMovement.groupBy({
       by: ['itemId'],
-      where: { itemType: 'COIL', itemId: { in: ids } },
+      where: { itemType: 'COIL', itemId: { in: ids }, recostOfId: null },
       _count: { _all: true },
       _max: { id: true },
     }),

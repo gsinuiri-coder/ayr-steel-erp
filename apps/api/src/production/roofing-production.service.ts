@@ -2260,6 +2260,7 @@ export class RoofingProductionService {
     const coilOuts = liveMovements(
       await tx.inventoryMovement.findMany({
         where: {
+          recostOfId: null,
           refType: 'PRODUCTION',
           refId: { in: reports.map((r) => r.id) },
           itemType: 'COIL',
@@ -2572,7 +2573,7 @@ export class RoofingProductionService {
         }
 
         const all = await tx.inventoryMovement.findMany({
-          where: { refType: 'PRODUCTION', refId: reportId },
+          where: { recostOfId: null, refType: 'PRODUCTION', refId: reportId },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
@@ -2614,7 +2615,12 @@ export class RoofingProductionService {
         // justo el de este reporte) o que haya entrado un **ajuste de costo** de otro cierre,
         // que se repartió sobre un saldo que incluía estos metros.
         const productAfter = await tx.inventoryMovement.findMany({
-          where: { itemType: 'PRODUCT', itemId: order.productId, id: { gt: entry.id } },
+          where: {
+            recostOfId: null,
+            itemType: 'PRODUCT',
+            itemId: order.productId,
+            id: { gt: entry.id },
+          },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
@@ -2753,7 +2759,7 @@ export class RoofingProductionService {
         }
 
         const own = await tx.inventoryMovement.findMany({
-          where: { refId: orderId, refType: { in: ['PRODUCTION', 'SCRAP'] } },
+          where: { recostOfId: null, refId: orderId, refType: { in: ['PRODUCTION', 'SCRAP'] } },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
@@ -2777,7 +2783,12 @@ export class RoofingProductionService {
 
         if (adjust) {
           const after = await tx.inventoryMovement.findMany({
-            where: { itemType: 'PRODUCT', itemId: order.productId, id: { gt: adjust.id } },
+            where: {
+              recostOfId: null,
+              itemType: 'PRODUCT',
+              itemId: order.productId,
+              id: { gt: adjust.id },
+            },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },
           });
@@ -2845,6 +2856,7 @@ export class RoofingProductionService {
           const lastOwn = lastOwnByCoil.get(row.coilId);
           const after = await tx.inventoryMovement.findMany({
             where: {
+              recostOfId: null,
               itemType: 'COIL',
               itemId: row.coilId,
               ...(lastOwn === undefined

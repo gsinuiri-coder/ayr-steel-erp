@@ -9,6 +9,7 @@ import {
   prorateDelta,
   RECOST_MAX_ROWS,
   replayItem,
+  stockBefore,
   rowCostOfRecost,
   type ExternalCost,
   type RecostRow,
@@ -361,6 +362,21 @@ export async function planRecost(
     });
   }
   return { items, rowsReplayed, overLimit: false };
+}
+
+/**
+ * El saldo de un ítem con todo lo registrado hasta una fecha (inclusive), con la misma cuenta que
+ * el motor (costos efectivos; el valor se descarta al pasar por cero). Lo que una salida nueva,
+ * fechada ahí, toma como promedio (D-649).
+ */
+export async function stockUpToDate(
+  tx: Prisma.TransactionClient,
+  item: RecostItem,
+  date: Date,
+): Promise<{ qty: Decimal; value: Decimal }> {
+  const l = await loadItem(tx, item);
+  const end = l.metas.findIndex((m) => m.operationDate > date);
+  return stockBefore(l.rows, end === -1 ? l.rows.length : end);
 }
 
 /** Cuántas filas tiene un ítem después de una fecha: lo que avisa el diálogo de retrofecha. */
