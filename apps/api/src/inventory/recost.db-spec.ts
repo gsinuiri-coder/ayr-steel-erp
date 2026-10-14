@@ -305,3 +305,54 @@ describe('cc53 (D-649): tope', () => {
     ).not.toBeNull();
   });
 });
+
+describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
+  async function rejection(promise: Promise<unknown>) {
+    try {
+      await promise;
+    } catch (err) {
+      const e = err as { getStatus?: () => number; getResponse?: () => unknown };
+      return { status: e.getStatus?.() ?? 500, body: e.getResponse?.() as Record<string, unknown> };
+    }
+    throw new Error('Se esperaba un rechazo');
+  }
+
+  it('una salida atrasada que deja negativo se rechaza con la primera fecha válida', async () => {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    await move(itemId, { type: 'OUT', qty: '8', date: '2026-08-05' });
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-10' });
+    const r = await rejection(move(itemId, { type: 'OUT', qty: '3', date: '2026-08-03' }));
+    expect(r.status).toBe(400);
+    expect(r.body).toMatchObject({ code: 'BACKDATE_NEGATIVE_STOCK', firstValidDate: '2026-08-10' });
+    expect(String(r.body.message)).toContain(
+      'La primera fecha válida para registrarla es el 2026-08-10',
+    );
+    expect(await prisma.inventoryMovement.count({ where: { itemId } })).toBe(3);
+    // En la fecha sugerida, sí.
+    const ok = await move(itemId, { type: 'OUT', qty: '3', date: '2026-08-10' });
+    expect(ok.totalCost.toString()).toBe('30');
+  });
+
+  it('con 2 sí cabe a su fecha', async () => {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    await move(itemId, { type: 'OUT', qty: '8', date: '2026-08-05' });
+    const ok = await move(itemId, { type: 'OUT', qty: '2', date: '2026-08-03' });
+    expect(ok.totalCost.toString()).toBe('20');
+    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '0' });
+  });
+
+  it('anular con fecha atrasada una entrada que ya salió se rechaza', async () => {
+    const itemId = randomUUID();
+    const entry = await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    await move(itemId, { type: 'OUT', qty: '6', date: '2026-08-05' });
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-10' });
+    const r = await rejection(
+      prisma.$transaction((tx) =>
+        inventory.reverse(tx, entry.id, adminId, 'mal cargada', '2026-08-01', true),
+      ),
+    );
+    expect(r.body).toMatchObject({ code: 'BACKDATE_NEGATIVE_STOCK', firstValidDate: '2026-08-10' });
+  });
+});

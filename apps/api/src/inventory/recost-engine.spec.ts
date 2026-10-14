@@ -1,6 +1,8 @@
 import { Decimal } from '@ayr/shared';
 import {
   averageOutCost,
+  firstValidDate,
+  fitsWithoutNegative,
   isRoundingNoise,
   prorateDelta,
   recostAdjustTotal,
@@ -196,5 +198,32 @@ describe('isRoundingNoise (revisión de cc53)', () => {
     // 3 u por 10: promedio exacto 3.3333…, guardado 3.3333; salen 2 u a 6.6666.
     const rows = [row('1', 'IN', '3', '10'), row('2', 'OUT', '2', '6.6666')];
     expect(replayItem(rows, { start: 0 }).deltas).toEqual([]);
+  });
+});
+
+describe('D-652: salida atrasada sin dejar el kardex en negativo', () => {
+  const q = (date: string, delta: string) => ({ date, delta: d(delta) });
+  // Entran 10 el 01; salen 8 el 05; entran 10 el 10.
+  const rows = [q('2026-08-01', '10'), q('2026-08-05', '-8'), q('2026-08-10', '10')];
+
+  it('cabe si a su fecha y después el saldo no baja de cero', () => {
+    expect(fitsWithoutNegative(rows, '2026-08-03', d('2'))).toBe(true);
+    expect(fitsWithoutNegative(rows, '2026-08-03', d('3'))).toBe(false);
+    expect(fitsWithoutNegative(rows, '2026-08-11', d('12'))).toBe(true);
+  });
+
+  it('sugiere la primera fecha válida (criterio de D-374)', () => {
+    expect(firstValidDate(rows, '2026-08-03', d('3'), '2026-10-14')).toBe('2026-08-10');
+    expect(firstValidDate(rows, '2026-08-03', d('2'), '2026-10-14')).toBe('2026-08-03');
+    expect(firstValidDate(rows, '2026-08-03', d('13'), '2026-10-14')).toBeNull();
+  });
+
+  it('no es retroactivo: un negativo ya registrado no bloquea', () => {
+    // El 05 ya salió de más (−2): una salida del 08 no lo empeora en otro punto.
+    const legacy = [q('2026-08-01', '10'), q('2026-08-05', '-12'), q('2026-08-10', '10')];
+    expect(fitsWithoutNegative(legacy, '2026-08-11', d('5'))).toBe(true);
+    expect(fitsWithoutNegative(legacy, '2026-08-03', d('5'))).toBe(true);
+    // Pero sí bloquea si vuelve negativo un punto que no lo era.
+    expect(fitsWithoutNegative(legacy, '2026-08-03', d('9'))).toBe(false);
   });
 });

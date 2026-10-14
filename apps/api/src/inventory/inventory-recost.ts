@@ -12,6 +12,7 @@ import {
   stockBefore,
   rowCostOfRecost,
   type ExternalCost,
+  type QtyRow,
   type RecostRow,
   type RecostRule,
 } from './recost-engine';
@@ -377,6 +378,15 @@ export async function stockUpToDate(
   const l = await loadItem(tx, item);
   const end = l.metas.findIndex((m) => m.operationDate > date);
   return stockBefore(l.rows, end === -1 ? l.rows.length : end);
+}
+
+/** cc53 (D-652): el kardex del ítem en cantidades, en su orden (sin recosteos: no mueven cantidad). */
+export async function qtyRowsOf(tx: Prisma.TransactionClient, item: RecostItem): Promise<QtyRow[]> {
+  const l = await loadItem(tx, item);
+  return l.metas.map((m) => ({
+    date: m.operationDate.toISOString().slice(0, 10),
+    delta: m.type === 'IN' ? m.qty : m.type === 'OUT' ? m.qty.negated() : ZERO,
+  }));
 }
 
 /** Cuántas filas tiene un ítem después de una fecha: lo que avisa el diálogo de retrofecha. */

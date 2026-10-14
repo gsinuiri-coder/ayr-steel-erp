@@ -55,6 +55,8 @@ export const DEFAULT_HISTORICAL_LOAD_START = '2026-08-01';
  * confirmando, sin tener que reconocer el texto del mensaje.
  */
 export const BACKDATE_OUT_OF_ORDER = 'BACKDATE_OUT_OF_ORDER';
+/** cc53 (D-652): un movimiento atrasado que dejaría el kardex en negativo; trae `firstValidDate`. */
+export const BACKDATE_NEGATIVE_STOCK = 'BACKDATE_NEGATIVE_STOCK';
 
 export const backdatableFields = {
   operationDate: operationDateSchema.optional(),

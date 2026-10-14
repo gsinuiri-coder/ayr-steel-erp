@@ -14,6 +14,7 @@ import {
   type InventoryRefType,
 } from '@prisma/client';
 import {
+  BACKDATE_NEGATIVE_STOCK,
   BACKDATE_OUT_OF_ORDER,
   businessToday,
   carriesInventory,
@@ -45,6 +46,7 @@ import { AuditService } from '../audit/audit.service';
 import {
   laterMovementsNote,
   planRecost,
+  qtyRowsOf,
   stockUpToDate,
   type MovementMeta,
   type PlannedAdjust,
@@ -52,6 +54,8 @@ import {
 } from './inventory-recost';
 import {
   averageOutCost,
+  firstValidDate,
+  fitsWithoutNegative,
   RECOST_MAX_ROWS,
   recostAdjustTotal,
   rowCostOfRecost,
@@ -253,6 +257,9 @@ export class InventoryService {
     // cc53 (D-649, D-650): una fila con fecha anterior a otras del ítem ya no se rechaza por costo
     // (D-648): sale al promedio **de su fecha** y lo posterior se recostea. Cero consultas hoy.
     const laterCount = await this.laterMovementCount(tx, input, operationDate);
+    if (input.type === 'OUT' && laterCount > 0) {
+      await this.assertNoNegativeAtDate(tx, input, operationDate, qty, 'La salida');
+    }
 
     if (balance.unit !== input.unit && !balance.qty.isZero()) {
       // Mezclar unidades en el mismo saldo (kilos con unidades) haría del promedio y del
@@ -368,8 +375,40 @@ export class InventoryService {
   }
 
   /**
+   * cc53 (D-652, criterio de D-374): un movimiento con fecha atrasada que saca stock no puede dejar
+   * el kardex del ítem en negativo en ninguna fecha. Se rechaza con la primera fecha válida para
+   * registrarlo. No es retroactivo: un punto que ya estaba negativo no bloquea. Se llama solo cuando
+   * hay filas posteriores (con la fecha de hoy alcanza el chequeo de stock de siempre).
+   */
+  private async assertNoNegativeAtDate(
+    tx: Prisma.TransactionClient,
+    item: { itemType: InventoryItemType; itemId: string; unit: string },
+    operationDate: string,
+    qty: Decimal,
+    what: string,
+  ): Promise<void> {
+    const rows = await qtyRowsOf(tx, item);
+    if (fitsWithoutNegative(rows, operationDate, qty)) return;
+    const first = firstValidDate(rows, operationDate, qty, businessToday());
+    const labels = await this.resolveItemLabels([item]);
+    const label = labels.get(labelKey(item.itemType, item.itemId))?.code ?? item.itemId;
+    throw new BadRequestException({
+      code: BACKDATE_NEGATIVE_STOCK,
+      message:
+        `${what} del ${operationDate} de ${label} (${qty.toFixed(3)} ${item.unit}) dejaría el kardex ` +
+        'en negativo en una fecha posterior. ' +
+        (first
+          ? `La primera fecha válida para registrarla es el ${first}.`
+          : 'No alcanza el stock ni con la fecha de hoy.'),
+      firstValidDate: first,
+      statusCode: 400,
+      error: 'Bad Request',
+    });
+  }
+
+  /**
    * cc53 (D-649): filas del ítem con fecha **posterior**. Cero consultas el día de hoy (no se
-   * puede retrofechar al futuro). Un recosteo cuenta: no hay fila posterior que no se deba recalcular.
+   * puede retrofechar al futuro). Los recosteos no cuentan: corrigen el costo de otra fila.
    */
   private async laterMovementCount(
     tx: Prisma.TransactionClient,
@@ -759,6 +798,13 @@ export class InventoryService {
     // defecto la fecha es hoy y el chequeo ni consulta.
     await this.assertChronological(tx, item, operationDate ?? businessToday(), confirmBackdate);
     const origQty = toDecimal(original.qty.toString());
+    if (original.type === 'IN') {
+      // cc53 (D-652): anular con fecha atrasada una entrada saca stock igual que una salida.
+      const date = operationDate ?? businessToday();
+      if ((await this.laterMovementCount(tx, item, date)) > 0) {
+        await this.assertNoNegativeAtDate(tx, item, date, origQty, 'La anulación');
+      }
+    }
     // cc53 (D-649): el costo **efectivo** del original (con sus recosteos), no solo el grabado.
     const origValue = await this.effectiveCost(tx, original);
     const currentValue = balance.qty.times(balance.avgCost);

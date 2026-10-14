@@ -260,3 +260,47 @@ export function isRoundingNoise(delta: Decimal, qty: Decimal): boolean {
   const abs = delta.abs();
   return abs.lt(RECOST_MIN_DELTA) || abs.lte(qty.times(AVG_ROUNDING));
 }
+
+/** Una fila del kardex en cantidades: su fecha y lo que suma o resta al saldo. */
+export interface QtyRow {
+  date: string;
+  /** Entrada +, salida −, ajuste 0. */
+  delta: Decimal;
+}
+
+/**
+ * cc53 (D-652): ¿cabe una salida de `qty` fechada `date` (al final de ese día) sin dejar el kardex
+ * en negativo en alguna fecha? Solo cuenta lo que **la salida** volvería negativo: un punto que ya
+ * estaba negativo (historia anterior a D-652) no bloquea. `rows` en el orden del kardex.
+ */
+export function fitsWithoutNegative(rows: readonly QtyRow[], date: string, qty: Decimal): boolean {
+  let running = ZERO;
+  let inserted = false;
+  const check = (before: Decimal) => before.lt(0) || before.minus(qty).gte(0);
+  for (const r of rows) {
+    if (!inserted && r.date > date) {
+      inserted = true;
+      if (!check(running)) return false;
+    }
+    running = running.plus(r.delta);
+    if (inserted && !check(running)) return false;
+  }
+  return inserted || check(running);
+}
+
+/**
+ * cc53 (D-652, criterio de D-374): la primera fecha, desde `date` y hasta `today`, en que la salida
+ * cabe sin dejar el kardex negativo. Se prueban `date`, cada fecha posterior con movimientos y hoy;
+ * `null` si ni hoy alcanza (entonces es stock insuficiente, el rechazo de siempre).
+ */
+export function firstValidDate(
+  rows: readonly QtyRow[],
+  date: string,
+  qty: Decimal,
+  today: string,
+): string | null {
+  const candidates = [
+    ...new Set([date, ...rows.map((r) => r.date).filter((d) => d > date && d < today), today]),
+  ].sort();
+  return candidates.find((d) => fitsWithoutNegative(rows, d, qty)) ?? null;
+}
