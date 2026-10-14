@@ -643,7 +643,7 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       const notes: FiscalDocumentDto[] = [];
       for (const qty of ['1000', '1097']) {
         const note = await createCreditNote(api, first.id, {
-          reason: 'DEVOLUCION_ITEM',
+          reason: 'DESCUENTO_ITEM', // cc52 (D-646): sin despacho, la devolución no aplica
           items: [{ affectedItemId: first.items[0]!.id, qty }],
         });
         trail.documentIds!.unshift(note.id);

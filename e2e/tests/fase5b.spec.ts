@@ -420,7 +420,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
 
       // Acredita 4 de las 10 unidades: 400 + 72 de IGV.
       const note = await createCreditNote(api, invoice.id, {
-        reason: 'DEVOLUCION_ITEM',
+        reason: 'DESCUENTO_ITEM', // cc52 (D-646): sin despacho, la devolución no aplica
         items: [{ affectedItemId: invoice.items[0]!.id, qty: '4' }],
       });
       trail.documentIds!.unshift(note.id);
@@ -448,7 +448,7 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
         api,
         `/api/invoicing/documents/${invoice.id}/credit-note`,
         {
-          reason: 'DEVOLUCION_ITEM',
+          reason: 'DESCUENTO_ITEM', // cc52 (D-646): sin despacho, la devolución no aplica
           issueDate: invoice.issueDate,
           items: [{ affectedItemId: invoice.items[0]!.id, qty: '7' }],
         },
