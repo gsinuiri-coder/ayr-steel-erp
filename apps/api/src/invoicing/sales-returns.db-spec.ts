@@ -12,6 +12,7 @@ import {
   createPurchaseSchema,
   createSalesOrderSchema,
   createSupplierSchema,
+  reverseMovementSchema,
   salesMarginQuerySchema,
   type SalesMarginDto,
 } from '@ayr/shared';
@@ -434,6 +435,18 @@ describe('cc52: nota de crédito con devolución', () => {
     expect((await prisma.coil.findUniqueOrThrow({ where: { id: coil.id } })).status).toBe('OPEN');
     await fiscalImport.annulExternal(admin, note.id, 'cc52 anular la NC de la bobina');
     expect((await prisma.coil.findUniqueOrThrow({ where: { id: coil.id } })).status).toBe('CLOSED');
+    // Vuelve a estar vendida por su despacho: anular la factura y revertir el despacho la reabre
+    // con su peso (D-170), en vez de dejarla cerrada con saldo.
+    await fiscalImport.annulExternal(admin, invoice.id, 'cc52 anular la factura de la bobina');
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: order.id } });
+    await moduleRef
+      .get(DispatchesService)
+      .reverse(
+        admin,
+        dispatch.id,
+        reverseMovementSchema.parse({ reason: 'cc52 revertir despacho' }),
+      );
+    expect((await prisma.coil.findUniqueOrThrow({ where: { id: coil.id } })).status).toBe('OPEN');
   });
 
   it('Ventas y margen: la NC del mes siguiente no cambia el mes original y resta venta y costo en el suyo', async () => {

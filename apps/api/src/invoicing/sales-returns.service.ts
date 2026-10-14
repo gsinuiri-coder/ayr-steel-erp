@@ -383,6 +383,7 @@ export class SalesReturnsService {
             reserveQty: true,
             totalCost: true,
             movement: { select: { businessLineId: true, unit: true } },
+            dispatchItem: { select: { dispatch: { select: { seq: true } } } },
           },
         },
       },
@@ -429,7 +430,11 @@ export class SalesReturnsService {
     const closed = await this.closeReturnedCoils(
       tx,
       actor,
-      found.items.filter((i) => i.itemType === InventoryItemType.COIL).map((i) => i.itemId),
+      new Map(
+        found.items
+          .filter((i) => i.itemType === InventoryItemType.COIL)
+          .map((i) => [i.itemId, dispatchCode(i.dispatchItem.dispatch.seq)]),
+      ),
       code,
     );
     const detail = {
@@ -489,13 +494,19 @@ export class SalesReturnsService {
     return coils.map((c) => c.code);
   }
 
-  /** Al revertir la devolución, la bobina que esa devolución reabrió y quedó en cero se cierra. */
+  /**
+   * Al revertir la devolución, la bobina que esa devolución reabrió y quedó en cero se cierra. El
+   * cierre lleva `closedByDispatch` (el despacho que la había vendido entera): vuelve a estar
+   * vendida por ese despacho, y si después se revierte el despacho, `reopenRevertedCoils` la
+   * reabre (D-170) en vez de dejarla cerrada con saldo.
+   */
   private async closeReturnedCoils(
     tx: Prisma.TransactionClient,
     actor: RequestUser,
-    coilIds: string[],
+    dispatchByCoil: Map<string, string>,
     code: string,
   ): Promise<string[]> {
+    const coilIds = [...dispatchByCoil.keys()];
     if (coilIds.length === 0) return [];
     const balances = await tx.inventoryBalance.findMany({
       where: { itemType: 'COIL', itemId: { in: coilIds } },
@@ -527,6 +538,7 @@ export class SalesReturnsService {
           reason: `Se revirtió la devolución ${code} que la había reabierto (D-646)`,
           adjustment: null,
           closedBySalesReturnReversal: code,
+          ...(dispatchByCoil.get(coil.id) ? { closedByDispatch: dispatchByCoil.get(coil.id) } : {}),
         },
       });
     }
