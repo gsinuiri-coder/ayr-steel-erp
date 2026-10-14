@@ -1,10 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import {
-  PrismaClient,
-  Role,
-  type InventoryMovement,
-  type InventoryRefType,
-} from '@prisma/client';
+import { PrismaClient, Role, type InventoryMovement, type InventoryRefType } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { Env } from '../config/env';
@@ -112,7 +107,9 @@ describe('cc53 (D-649): salida atrasada', () => {
     expect(out.totalCost.toString()).toBe('40');
     // Saldo: 16 u por 260 (300 − 40).
     expect(await balanceOf(itemId)).toEqual({ qty: '16', avg: '16.25' });
-    expect(await prisma.inventoryMovement.count({ where: { itemId, recostOfId: { not: null } } })).toBe(0);
+    expect(
+      await prisma.inventoryMovement.count({ where: { itemId, recostOfId: { not: null } } }),
+    ).toBe(0);
   });
 
   it('dos salidas el mismo día toman el promedio en su orden de registro', async () => {
@@ -132,7 +129,12 @@ describe('cc53 (D-649): recalcular hacia adelante', () => {
     const itemId = randomUUID();
     const dispatchRef = randomUUID();
     await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
-    const out = await move(itemId, { type: 'OUT', qty: '4', date: '2026-08-10', refId: dispatchRef });
+    const out = await move(itemId, {
+      type: 'OUT',
+      qty: '4',
+      date: '2026-08-10',
+      refId: dispatchRef,
+    });
     expect(out.totalCost.toString()).toBe('40');
     // Llega tarde una compra del 05/08: a la fecha de la salida el promedio era 25.
     await move(itemId, { type: 'IN', qty: '10', unitCost: '40', date: '2026-08-05' });
@@ -143,7 +145,11 @@ describe('cc53 (D-649): recalcular hacia adelante', () => {
     expect(recost[0]?.operationDate.toISOString().slice(0, 10)).toBe('2026-08-10');
     expect(await effective(out.id)).toBe('100.0000');
     // La fila original no cambió (append-only).
-    expect((await prisma.inventoryMovement.findUniqueOrThrow({ where: { id: out.id } })).totalCost.toString()).toBe('40');
+    expect(
+      (
+        await prisma.inventoryMovement.findUniqueOrThrow({ where: { id: out.id } })
+      ).totalCost.toString(),
+    ).toBe('40');
     // Saldo: 16 u por 400 (500 − 100).
     expect(await balanceOf(itemId)).toEqual({ qty: '16', avg: '25' });
     expect((await kardexValue(itemId)).toFixed(4)).toBe('400.0000');
@@ -166,7 +172,9 @@ describe('cc53 (D-649): recalcular hacia adelante', () => {
     expect(await effective(out.id)).toBe('40.0000');
     expect(await balanceOf(itemId)).toEqual({ qty: '6', avg: '10' });
     // Anular la salida devuelve los 40 efectivos, no los 100 grabados.
-    const back = await prisma.$transaction((tx) => inventory.reverse(tx, out.id, adminId, 'devuelta'));
+    const back = await prisma.$transaction((tx) =>
+      inventory.reverse(tx, out.id, adminId, 'devuelta'),
+    );
     expect(back.totalCost.toString()).toBe('40');
     expect(await balanceOf(itemId)).toEqual({ qty: '10', avg: '10' });
   });
@@ -176,7 +184,9 @@ describe('cc53 (D-649): recalcular hacia adelante', () => {
     await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
     const out = await move(itemId, { type: 'OUT', qty: '4', date: '2026-08-10' });
     await move(itemId, { type: 'IN', qty: '10', unitCost: '40', date: '2026-08-05' });
-    const recost = await prisma.inventoryMovement.findFirstOrThrow({ where: { recostOfId: out.id } });
+    const recost = await prisma.inventoryMovement.findFirstOrThrow({
+      where: { recostOfId: out.id },
+    });
     await expect(
       prisma.$transaction((tx) => inventory.reverse(tx, recost.id, adminId, 'x')),
     ).rejects.toThrow('recosteo');
@@ -221,7 +231,13 @@ describe('cc53 (D-649): el caso de cc52 con datos de muestra', () => {
   it('las salidas de septiembre grabadas después de la compra salen a su fecha', async () => {
     const itemId = randomUUID();
     const before = '74.5763';
-    await move(itemId, { type: 'IN', qty: '1061', totalCost: '79125.4543', unitCost: before, date: '2026-08-01' });
+    await move(itemId, {
+      type: 'IN',
+      qty: '1061',
+      totalCost: '79125.4543',
+      unitCost: before,
+      date: '2026-08-01',
+    });
     await move(itemId, { type: 'OUT', qty: '645', date: '2026-08-31' });
     const reversed = await move(itemId, { type: 'OUT', qty: '50', date: '2026-09-19' });
     await prisma.$transaction((tx) =>
