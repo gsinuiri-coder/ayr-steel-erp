@@ -27,7 +27,9 @@
   - las **cuotas reales del 13** quedan para cuando se usen: hoy, vencimiento único (D-657).
 - Registro de riesgo (toca datos): `invoicing.service.ts` (`planCreditNote`, `applyReplacementInTx`,
   `registerManualInTx`), `fiscal-import.service.ts` (`undoReplacementInTx`), `sales-returns.service.ts` (01 con DEV-),
-  `invoicing-net.ts` y `order-cancel-checks.ts`. Pendiente de la revisión del dueño (UAT `docs/uat/cc54.md`).
+  `invoicing-net.ts` y `order-cancel-checks.ts`. **Revisado por el dueño:** UAT `docs/uat/cc54.md` aprobado en demo.
+- **Registro del dueño (15/10):** UAT de cc54 aprobado y **D-653 a D-663 RATIFICADAS por el dueño el 15/10**. El 06 es
+  solo devolución total; sobre un comprobante despachado a medias corresponde un 07 (la guía lo dice así).
 
 ## 2026-10-14 — cc53: recosteo del promedio por fecha, corrección única y nada atrasado en negativo (D-649..D-652; PR #202, #203 y #204)
 

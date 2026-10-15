@@ -2708,3 +2708,11 @@ y `ayr-neon*` dentro de `workspace/ayr`, y las ramas de Neon `respaldo-*` que no
 ni el del día D, siempre listando, verificando nombre e id y anotándolo en `docs/ENTORNOS.md`. La parte de Neon
 requiere el cambio de permisos en `.claude/settings.json`, que aplica el dueño (el clasificador no deja que el agente
 modifique su propia configuración).
+
+## Ratificación del dueño (2026-10-15, pieza cc54)
+
+UAT de cc54 aprobado y **D-653 a D-663 RATIFICADAS por el dueño el 15/10** (pasan a firmes en `ARQUITECTURA.md` §0.2).
+El UAT se hizo en la rama `demo` de Neon, restablecida desde `production`, con un comprobante sembrado por motivo. El
+dueño confirmó que el **06 es solo devolución total**: sobre un comprobante despachado a medias, el rechazo del 06
+(«hay N despachado sin devolver y se intenta devolver M») es el comportamiento correcto, y lo que corresponde ahí es un
+**07** (devolución por ítem, hasta lo despachado y no devuelto). La guía `docs/uat/cc54.md` lo dice así.
