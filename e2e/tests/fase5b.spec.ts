@@ -418,11 +418,16 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       expect(invoice.status).toBe('ACCEPTED');
       expect(invoice.totalPen).toBe('1180.0000');
 
-      // Acredita 4 de las 10 unidades: 400 + 72 de IGV.
-      const note = await createCreditNote(api, invoice.id, {
-        reason: 'DESCUENTO_ITEM', // cc52 (D-646): sin despacho, la devolución no aplica
-        items: [{ affectedItemId: invoice.items[0]!.id, qty: '4' }],
-      });
+      // cc54 (D-663): el 05 rebaja el precio: de 118 a 70.80 con IGV en las 10 unidades = 400 + 72.
+      const note = await postJson<FiscalDocumentDto>(
+        api,
+        `/api/invoicing/documents/${invoice.id}/credit-note`,
+        {
+          reason: 'DESCUENTO_ITEM',
+          issueDate: invoice.issueDate,
+          prices: [{ affectedItemId: invoice.items[0]!.id, unitPriceWithIgvPen: '70.80' }],
+        },
+      );
       trail.documentIds!.unshift(note.id);
       expect(note).toMatchObject({
         docType: 'NOTA_CREDITO',
@@ -440,21 +445,22 @@ test.describe('Fase 5b — despacho, comprobante y cobranza', () => {
       const afterNote = await getDocument(api, invoice.id);
       expect(afterNote.creditedPen).toBe('472.0000');
       expect(afterNote.balancePen).toBe('708.0000');
-      expect(afterNote.items[0]!.creditedQty).toBe('4.000');
+      // Una rebaja no acredita unidades (D-663).
+      expect(afterNote.items[0]!.creditedQty).toBe('0.000');
       expect(afterNote.creditNotes.map((n) => n.number)).toContain(sentNote.number);
 
-      // Lo que queda por acreditar son 6: pedir 7 se corta con lo que sí queda.
+      // El precio vigente ya es 70.80: otro «nuevo» que no lo baja se corta.
       const tooMuch = await postExpectingError(
         api,
         `/api/invoicing/documents/${invoice.id}/credit-note`,
         {
-          reason: 'DESCUENTO_ITEM', // cc52 (D-646): sin despacho, la devolución no aplica
+          reason: 'DESCUENTO_ITEM',
           issueDate: invoice.issueDate,
-          items: [{ affectedItemId: invoice.items[0]!.id, qty: '7' }],
+          prices: [{ affectedItemId: invoice.items[0]!.id, unitPriceWithIgvPen: '80' }],
         },
       );
       expect(tooMuch.status).toBe(400);
-      expect(tooMuch.message).toContain('por acreditar');
+      expect(tooMuch.message).toContain('menor que el vigente');
 
       // Con el saldo ajustado, un cobro por el saldo restante lo deja en cero.
       const paid = await addPayment(api, invoice.id, { amountPen: '708.0000' });

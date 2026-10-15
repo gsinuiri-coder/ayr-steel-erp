@@ -6,13 +6,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import {
-  CREDIT_NOTE_KIND_LABELS,
-  CREDIT_NOTE_KIND_REASONS,
-  CREDIT_NOTE_KINDS,
   CREDIT_NOTE_REASON_LABELS,
+  CREDIT_NOTE_REASON_SUNAT_CODE,
   FISCAL_DOC_TYPE_LABELS,
   FISCAL_DOCUMENT_ORIGIN_LABELS,
-  FULL_CREDIT_NOTE_REASONS,
   PAYMENT_METHOD_LABELS,
   PAYMENT_METHODS,
   LIVE_DOCUMENT_STATUSES,
@@ -26,8 +23,6 @@ import {
   hasCollectibleBalance,
   payableBalance,
   toDecimal,
-  type CreditNoteKind,
-  type CreditNoteReason,
   type CustomerPaymentDto,
   type FiscalDocumentDto,
   type InvoiceLinkedDispatchesDto,
@@ -101,7 +96,7 @@ import {
 } from '@/components/invoicing/reactivate-with-order-lines-dialog';
 import { DocumentProfitability } from './document-profitability';
 import { AtCostBadge } from '@/components/sales/at-cost-control';
-import { creditNoteDateError, defaultReasonOfKind } from '@/lib/credit-note-form';
+import { CreditNoteDialog } from './credit-note-dialog';
 import { SalesReturnLink } from '@/components/invoicing/sales-return-link';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -124,13 +119,8 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   const [reactivateOpen, setReactivateOpen] = useState(false);
   const [reactivateLinesOpen, setReactivateLinesOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  // cc54 (D-660): la nota de crédito en un solo diálogo (`CreditNoteDialog`).
   const [creditOpen, setCreditOpen] = useState(false);
-  // cc52 (D-646): primero el tipo de nota, después el motivo SUNAT de ese tipo.
-  const [creditKind, setCreditKind] = useState<CreditNoteKind>('ANNUL');
-  const [creditReason, setCreditReason] = useState<CreditNoteReason>('ANULACION_OPERACION');
-  // cc52 (D-645): la fecha de la NC, hoy por defecto; solo el ADMINISTRADOR la mueve.
-  const [creditDate, setCreditDate] = useState(businessToday());
-  const [creditQty, setCreditQty] = useState<Record<string, string>>({});
   const [payOpen, setPayOpen] = useState(false);
   const [payDate, setPayDate] = useState(businessToday());
   const [payAmount, setPayAmount] = useState('');
@@ -370,34 +360,6 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     onError,
   });
 
-  const creditNote = useMutation({
-    mutationFn: () => {
-      // `isPositiveDecimal` y no `Number(qty) > 0`: descartar en silencio una cantidad mal
-      // escrita mandaba una nota parcial por el subconjunto equivocado —o, si todas
-      // quedaban fuera, una nota **total**, que es lo contrario de lo que se pidió.
-      const items = Object.entries(creditQty)
-        .filter(([, qty]) => isPositiveDecimal(qty))
-        .map(([affectedItemId, qty]) => ({ affectedItemId, qty: qty.trim() }));
-      return api<FiscalDocumentDto>(`/invoicing/documents/${id}/credit-note`, {
-        method: 'POST',
-        body: {
-          reason: creditReason,
-          issueDate: creditDate,
-          // Sin líneas es total; con líneas, parcial (RF-76).
-          ...(items.length > 0 ? { items } : {}),
-        },
-      });
-    },
-    onSuccess: (created) => {
-      toast.success('Nota de crédito creada en borrador: revísala y emítela');
-      setCreditOpen(false);
-      setCreditQty({});
-      refresh();
-      router.push(`/comprobantes/${created.id}`);
-    },
-    onError,
-  });
-
   // Dentro del `RoleGate`: fuera, quien no tiene permiso veía "no se pudo cargar" en
   // lugar de "no tienes permiso", que es justo lo que el guard existe para decir.
   const paymentKey = useIdempotencyKey();
@@ -555,7 +517,6 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
   // importado, que no tiene vuelta por ningún lado (D-105).
   const canCreditNote =
     !isImported && d.status === 'ACCEPTED' && d.docType !== 'NOTA_CREDITO' && !isDispatchNote;
-  const isFullReason = FULL_CREDIT_NOTE_REASONS.includes(creditReason);
   // Consultar tiene sentido donde puede cambiar algo: un pendiente de aceptación, una baja
   // en trámite, o un aceptado al que le faltan archivos. En `REJECTED` y `VOIDED` la
   // consulta gastaba una llamada al PSE para mostrar un "listo" que no significaba nada.
@@ -567,10 +528,6 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       (d.status === 'ACCEPTED' && !(d.hasPdf && d.hasXml && d.hasCdr)));
   // W9: una guía de remisión comparte tabla y pantalla con los comprobantes, pero su
   // envío arma otro payload y su corrección vive en el despacho.
-  const typedCreditQty = Object.values(creditQty).filter((q) => q.trim() !== '');
-  const validCreditQty = typedCreditQty.filter((q) => isPositiveDecimal(q));
-  // Un motivo parcial sin cantidades acabaría emitiendo una nota **total**; y una cantidad
-  // mal escrita, una parcial por el subconjunto equivocado. Las dos cosas se cortan acá.
   // Solo se cobra lo que existe fiscalmente y todavía debe algo. El saldo cero no
   // esconde el botón por gusto: cobrar de más lo rechaza el API igual.
   const canCollect =
@@ -592,11 +549,6 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       : toDecimal(payAmount.trim()).gt(payable)
         ? `Excede el saldo pendiente (${formatMoney(payable.toFixed(4))})`
         : null;
-  const creditDateError = creditNoteDateError(creditDate, d.issueDate, businessToday(), isAdmin);
-  const canCreateCreditNote =
-    creditDateError === null &&
-    typedCreditQty.length === validCreditQty.length &&
-    (isFullReason || validCreditQty.length > 0);
 
   // F8-S1/M1: un solo `busy` para toda mutación que cambia este comprobante (estado, saldo o
   // cobros). Antes cada botón miraba solo su propio `isPending`, así que "Descartar borrador"
@@ -610,7 +562,6 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
     correct.isPending ||
     voidDocument.isPending ||
     annul.isPending ||
-    creditNote.isPending ||
     addPayment.isPending ||
     reversePayment.isPending;
   // D-216/M0d: solo lo que de verdad habla con el PSE. `discard`/`annul`/`issue-date` son
@@ -874,6 +825,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             value: d.dueDate ? (
               <span className={d.isOverdue ? 'text-destructive' : undefined}>
                 {formatDate(d.dueDate)}
+                {/* cc54 (D-657): el vencimiento lo fijó una NC 13. */}
+                {d.dueDateChangedByNumber && (
+                  <span className="ml-1 text-xs text-muted-foreground" data-testid="due-changed-by">
+                    (por la NC {d.dueDateChangedByNumber})
+                  </span>
+                )}
               </span>
             ) : (
               'Sin vencimiento'
@@ -1040,8 +997,10 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
       {d.replacesDocumentNumber && (
         <Alert>
           <AlertDescription>
-            Este comprobante corrige a {d.replacesDocumentNumber}, que fue rechazado y conserva su
-            propio número.
+            {/* cc54 (D-655): el reemplazo de un comprobante anulado por error en el RUC (02). */}
+            {d.notes?.startsWith('Reemplaza a ')
+              ? `Reemplaza a ${d.replacesDocumentNumber}, anulado por una nota de crédito 02 (error en el RUC).`
+              : `Este comprobante corrige a ${d.replacesDocumentNumber}, que fue rechazado y conserva su propio número.`}
           </AlertDescription>
         </Alert>
       )}
@@ -1076,6 +1035,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   <div className="font-medium">{item.productSku ?? item.description}</div>
                   {item.productSku && (
                     <div className="text-xs text-muted-foreground">{item.description}</div>
+                  )}
+                  {/* cc54 (D-654): la descripción que corrigió una NC 03; el papel no cambia. */}
+                  {item.correctedDescription && (
+                    <div className="text-xs" data-testid="corrected-description">
+                      Descripción corregida por la NC {item.correctedByNumber ?? ''}:{' '}
+                      <span className="font-medium">{item.correctedDescription}</span>
+                    </div>
                   )}
                   {/* cc51 (D-641): la línea vendida a costo, solo en pantalla. */}
                   <AtCostBadge reason={item.atCostReason} note={item.atCostNote} />
@@ -1200,6 +1166,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               <TableRow>
                 <TableHead>Número</TableHead>
                 <TableHead>Fecha</TableHead>
+                <TableHead>Motivo SUNAT</TableHead>
                 <TableHead>Estado</TableHead>
                 <TableHead>Devolución</TableHead>
                 <TableHead className="text-right">Total</TableHead>
@@ -1214,6 +1181,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                     </Link>
                   </TableCell>
                   <TableCell>{formatDate(n.issueDate)}</TableCell>
+                  <TableCell>
+                    {n.creditNoteReason
+                      ? `${CREDIT_NOTE_REASON_SUNAT_CODE[n.creditNoteReason]} · ${CREDIT_NOTE_REASON_LABELS[n.creditNoteReason]}`
+                      : '—'}
+                    {n.dueDate ? ` (vence ${formatDate(n.dueDate)})` : ''}
+                  </TableCell>
                   <TableCell>
                     <FiscalDocumentStatusBadge status={n.status} />
                   </TableCell>
@@ -1273,7 +1246,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           <Link href={`/comprobantes/${d.affectedDocumentId}`} className={LINK_CLASSNAME}>
             {d.affectedDocumentNumber}
           </Link>
-          {d.creditNoteReason && <> · {CREDIT_NOTE_REASON_LABELS[d.creditNoteReason]}</>}
+          {d.creditNoteReason && (
+            <>
+              {' · Motivo SUNAT '}
+              {CREDIT_NOTE_REASON_SUNAT_CODE[d.creditNoteReason]} ·{' '}
+              {CREDIT_NOTE_REASON_LABELS[d.creditNoteReason]}
+            </>
+          )}
           {/* cc52 (D-646): la NC de devolución, con el documento de devolución que generó. */}
           {d.salesReturn && (
             <>
@@ -1652,159 +1631,22 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
         }}
       />
 
-      <Dialog
+      <CreditNoteDialog
+        document={d}
         open={creditOpen}
-        onOpenChange={(open) => {
-          setCreditOpen(open);
-          // Cancelar y reabrir no arrastra lo tipeado la vez anterior, igual que
-          // `ReasonDialog`.
-          if (!open) {
-            setCreditQty({});
-            setCreditKind('ANNUL');
-            setCreditReason('ANULACION_OPERACION');
-            setCreditDate(businessToday());
-          }
+        isAdmin={isAdmin}
+        onOpenChange={setCreditOpen}
+        onDone={(note, manual) => {
+          toast.success(
+            manual
+              ? `Nota de crédito ${note.number ?? ''} registrada`
+              : 'Nota de crédito creada en borrador: revísala y emítela',
+          );
+          setCreditOpen(false);
+          refresh();
+          router.push(`/comprobantes/${note.id}`);
         }}
-      >
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Nota de crédito sobre {d.number}</DialogTitle>
-            <DialogDescription>
-              Sin cantidades es una nota <strong>total</strong>: acredita todo lo que quede sin
-              acreditar. Escribe cantidades para acreditar solo una parte.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="credit-kind">Tipo de nota</Label>
-                <Select
-                  value={creditKind}
-                  onValueChange={(v) => {
-                    const kind = v as CreditNoteKind;
-                    setCreditKind(kind);
-                    setCreditReason(defaultReasonOfKind(kind));
-                  }}
-                >
-                  <SelectTrigger id="credit-kind" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CREDIT_NOTE_KINDS.map((k) => (
-                      <SelectItem key={k} value={k}>
-                        {CREDIT_NOTE_KIND_LABELS[k]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="credit-date">Fecha de la nota</Label>
-                <Input
-                  id="credit-date"
-                  type="date"
-                  min={d.issueDate}
-                  max={businessToday()}
-                  value={creditDate}
-                  // D-645: solo el ADMINISTRADOR elige otra fecha que hoy; el API rechaza al resto.
-                  disabled={!isAdmin}
-                  onChange={(e) => {
-                    setCreditDate(e.target.value);
-                  }}
-                />
-                {creditDateError !== null && (
-                  <p className="text-destructive text-xs">{creditDateError}</p>
-                )}
-              </div>
-            </div>
-            {creditKind === 'RETURN' && (
-              <p className="text-xs text-muted-foreground">
-                Al registrarla, la mercadería vuelve al almacén con la fecha de la nota y al costo
-                con que salió (documento de devolución). Solo lo despachado y no devuelto.
-              </p>
-            )}
-            {creditKind === 'DISCOUNT' && (
-              <p className="text-xs text-muted-foreground">
-                Solo ajusta el monto; no mueve el almacén.
-              </p>
-            )}
-            <div className="space-y-1">
-              <Label htmlFor="credit-reason">Motivo (catálogo 09 de SUNAT)</Label>
-              <Select
-                value={creditReason}
-                onValueChange={(v) => {
-                  setCreditReason(v as CreditNoteReason);
-                }}
-              >
-                <SelectTrigger id="credit-reason" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CREDIT_NOTE_KIND_REASONS[creditKind].map((r) => (
-                    <SelectItem key={r} value={r}>
-                      {CREDIT_NOTE_REASON_LABELS[r]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!isFullReason && (
-                <p className="text-xs text-muted-foreground">
-                  Este motivo describe un ajuste parcial: conviene indicar cantidades por línea.
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1">
-              <Label>Cantidades a acreditar (opcional)</Label>
-              {d.items.map((item) => {
-                const pending = toDecimal(item.qty).minus(toDecimal(item.creditedQty));
-                return (
-                  <div key={item.id} className="flex items-center gap-3">
-                    <span className="flex-1 text-sm">
-                      {item.productSku ?? item.description}
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        quedan {formatQty(pending.toFixed(3), unitSymbol(item.unit))}
-                      </span>
-                    </span>
-                    <Input
-                      className="w-32"
-                      inputMode="decimal"
-                      placeholder="Total"
-                      value={creditQty[item.id] ?? ''}
-                      onChange={(e) => {
-                        setCreditQty((prev) => ({ ...prev, [item.id]: e.target.value }));
-                      }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setCreditOpen(false);
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button
-              disabled={busy || !canCreateCreditNote}
-              pending={creditNote.isPending}
-              pendingText="Creando…"
-              onClick={() => {
-                if (busy) return;
-                creditNote.mutate();
-              }}
-            >
-              Crear borrador de nota de crédito
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      />
     </RoleGate>
   );
 }

@@ -638,20 +638,9 @@ test.describe('D-169 — el importe del papel manda de punta a punta', () => {
       expect(sum(invoices, 'igvPen')).toBe(2239.17);
       expect(sum(invoices, 'totalPen')).toBe(14679);
 
-      // --- Acreditar en dos partes la primera mitad ---
-      const first = invoices[0]!;
-      const notes: FiscalDocumentDto[] = [];
-      for (const qty of ['1000', '1097']) {
-        const note = await createCreditNote(api, first.id, {
-          reason: 'DESCUENTO_ITEM', // cc52 (D-646): sin despacho, la devolución no aplica
-          items: [{ affectedItemId: first.items[0]!.id, qty }],
-        });
-        trail.documentIds!.unshift(note.id);
-        notes.push(await register(note.id));
-      }
-      for (const key of ['subtotalPen', 'igvPen', 'totalPen'] as const) {
-        expect(sum(notes, key), key).toBe(Number(first.items[0]![key]));
-      }
+      // cc54 (D-663): acreditar en partes por cantidad exige un motivo de cantidad (07, con
+      // despacho, D-646); sin despacho no hay NC parcial por cantidad. La parte que cierra de la NC
+      // la fijan `credit-note-lines.spec.ts` e `invoicing-parts-drafts.spec.ts`.
     } finally {
       await purgeInvoicingTrail(api, trail);
       await purgeSalesTrail(api, { quotationIds });

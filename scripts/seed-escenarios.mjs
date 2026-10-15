@@ -42,8 +42,23 @@ export const DEMO = Object.freeze({
   steelSupplier: { code: 'DEMACE', name: 'Proveedor Demo Aceros', docNumber: '20999990001' },
   cuttingSupplier: { code: 'DEMCOR', name: 'Proveedor Demo Corte', docNumber: '20999990002' },
   customer: { name: 'Cliente Demo', docNumber: '99999901' },
+  // cc54: facturas al crédito (13) y el error de RUC (02) piden clientes con RUC.
+  rucCustomer: { name: 'Cliente Demo RUC', docNumber: '20999990011' },
+  rightCustomer: { name: 'Cliente Demo Correcto', docNumber: '20999990012' },
 });
 export const REASON = 'seed:escenarios reemplaza los casos DEMO por un juego nuevo (D-592)';
+
+/** cc54: qué mirar en cada caso de NC por motivo. */
+const REASON_CASE_HINT = {
+  'NC-01': '01 anula la boleta y la bobina vuelve con su DEV- (D-656)',
+  'NC-02':
+    '02 anula la factura del cliente equivocado; el reemplazo F990 al cliente correcto toma el despacho y el pedido cambia de cliente (D-655)',
+  'NC-03': '03 con importe 0: la línea de la boleta muestra la descripción corregida (D-654)',
+  'NC-04': '04 rebaja S/ 50.00 con IGV; la venta baja, el almacén no se mueve',
+  'NC-05': '05 rebaja el precio al 90 %; la cantidad no vuelve a quedar pendiente (D-663)',
+  'NC-07': '07 devuelve la línea despachada; la bobina vuelve con su DEV-',
+  'NC-13': '13 con importe 0: la factura al crédito vence 60 días después (D-657)',
+};
 
 const COLORS = {
   red: { code: 'DEMOROJO', name: 'Demo rojo', hexColor: '#b22222' },
@@ -399,12 +414,22 @@ export async function ensureMasters(api) {
     '/customers',
     { docType: 'DNI', docNumber: DEMO.customer.docNumber, name: DEMO.customer.name, creditDays: 0 },
   );
+  const rucCustomer = async (c) =>
+    findOrCreate(
+      api,
+      `/customers?search=${encodeURIComponent(c.docNumber)}`,
+      (x) => x.docNumber === c.docNumber,
+      '/customers',
+      { docType: 'RUC', docNumber: c.docNumber, name: c.name, creditDays: 30 },
+    );
   return {
     finishes: { red: redFinish, white: whiteFinish, galv: galvFinish },
     products: { sheet, custom, accessory, stud, track },
     steelSupplier,
     cuttingSupplier,
     customer,
+    rucCustomer: await rucCustomer(DEMO.rucCustomer),
+    rightCustomer: await rucCustomer(DEMO.rightCustomer),
   };
 }
 
@@ -427,7 +452,13 @@ export async function voidPrevious(api, masters) {
     }
   };
   // Por id (el cliente DEMO se encuentra por su DNI): un «Cliente Demo» creado a mano no se toca.
-  const isCustomer = (row) => row.customerId === masters.customer.id;
+  // cc54: también los dos clientes con RUC de los casos de NC (13 y 02).
+  const customerIds = new Set(
+    [masters.customer, masters.rucCustomer, masters.rightCustomer]
+      .filter((c) => c !== undefined)
+      .map((c) => c.id),
+  );
+  const isCustomer = (row) => customerIds.has(row.customerId);
   const supplierIds = new Set([masters.steelSupplier.id, masters.cuttingSupplier.id]);
   const skus = new Set(Object.values(DEMO_SKUS));
   const reason = { reason: REASON };
@@ -436,22 +467,37 @@ export async function voidPrevious(api, masters) {
   await attempt('comprobantes', async () => {
     // cc52 (D-646): las notas de crédito primero (anular una de devolución revierte su
     // devolución); un comprobante con NC vivas no se anula.
-    const documents = (await api.list('/invoicing/documents'))
+    let documents = (await api.list('/invoicing/documents'))
       .filter((d) => isCustomer(d) && !['VOIDED', 'REJECTED', 'ANNULLED'].includes(d.status))
       .sort((a, b) => Number(b.docType === 'NOTA_CREDITO') - Number(a.docType === 'NOTA_CREDITO'));
-    for (const d of documents) {
-      await attempt(`comprobante ${d.number ?? d.id}`, async () => {
-        const detail = await api.get(`/invoicing/documents/${d.id}`);
-        for (const p of (detail.payments ?? []).filter((x) => x.reversedAt === null)) {
-          await api.post(`/invoicing/documents/${d.id}/payments/${p.id}/reverse`, reason);
+    const close = async (d) => {
+      const detail = await api.get(`/invoicing/documents/${d.id}`);
+      for (const p of (detail.payments ?? []).filter((x) => x.reversedAt === null)) {
+        await api.post(`/invoicing/documents/${d.id}/payments/${p.id}/reverse`, reason);
+      }
+      if (d.status === 'DRAFT') await api.del(`/invoicing/documents/${d.id}`, reason);
+      // cc48: el manual de V1 (y uno importado) se anula por dentro (D-153); la baja es solo
+      // de lo que emitió el ERP.
+      else if (detail.origin === 'ISSUED_HERE')
+        await api.post(`/invoicing/documents/${d.id}/void`, reason);
+      else await api.post(`/invoicing/documents/${d.id}/annul`, reason);
+    };
+    // cc54 (D-655): una NC 02 se anula después de su reemplazo, y el anulado después de su NC: el
+    // orden se resuelve en pasadas (hasta que ninguna avanza); lo que queda, al informe.
+    for (let pass = 0; pass < 3 && documents.length > 0; pass += 1) {
+      const left = [];
+      for (const d of documents) {
+        try {
+          await close(d);
+        } catch {
+          left.push(d);
         }
-        if (d.status === 'DRAFT') await api.del(`/invoicing/documents/${d.id}`, reason);
-        // cc48: el manual de V1 (y uno importado) se anula por dentro (D-153); la baja es solo
-        // de lo que emitió el ERP.
-        else if (detail.origin === 'ISSUED_HERE')
-          await api.post(`/invoicing/documents/${d.id}/void`, reason);
-        else await api.post(`/invoicing/documents/${d.id}/annul`, reason);
-      });
+      }
+      if (left.length === documents.length) break;
+      documents = left;
+    }
+    for (const d of documents) {
+      await attempt(`comprobante ${d.number ?? d.id}`, () => close(d));
     }
   });
   await attempt('despachos', async () => {
@@ -1048,6 +1094,162 @@ export async function seedCases(api, masters) {
     coil: ncCoil.code,
   };
 
+  // cc54 (D-654..D-663) · una NC por motivo SUNAT, cada una sobre una bobina de 300 kg vendida
+  // entera (una sola compra). 01 y 07 con despacho (vuelven con su DEV-); 02 y 13 con factura a un
+  // cliente con RUC (13 al crédito); 03, 04 y 05 con boleta.
+  const ncCoils = await buyCoils(
+    'drywall',
+    galv,
+    '0.40',
+    ['300', '300', '300', '300', '300', '300', '300'],
+    'casos NC por motivo',
+  );
+  const sellCoil = async (coil, { customerId, docType, dispatch, credit, label }) => {
+    const sellable = (await api.get('/sales/sellable-coils')).find((c) => c.coilId === coil.id);
+    if (!sellable?.minPricePen) throw new Error(`La bobina del caso ${label} no trae su precio`);
+    const quotation = await api.post('/sales/quotations', {
+      customerId,
+      issueDate: today,
+      notes: `DEMO · caso ${label}`,
+      items: [
+        {
+          saleCoilId: coil.id,
+          qty: sellable.availableQty,
+          unitPriceWithIgvPen: sellable.minPricePen,
+        },
+      ],
+    });
+    const order = await api.post(`/sales/quotations/${quotation.id}/confirm`, {});
+    const detail = await api.get(`/sales/orders/${order.id}`);
+    const line = detail.items[0];
+    let dispatchId = null;
+    if (dispatch) {
+      dispatchId = (
+        await api.post('/dispatches', {
+          salesOrderId: order.id,
+          dispatchDate: today,
+          originAddress: 'Av. Almacén DEMO 100, Lima',
+          destinationAddress: 'Av. Cliente DEMO 200, Lima',
+          originUbigeo: '150101',
+          destinationUbigeo: '150132',
+          transferMode: 'PRIVATE',
+          totalWeightKg: line.qty,
+          packageCount: 1,
+          vehiclePlate: 'DEM-001',
+          driverGivenNames: 'Chofer',
+          driverFamilyNames: 'Demo',
+          driverDocType: 'DNI',
+          driverDocNumber: '99999902',
+          driverLicense: 'Q99999902',
+          notes: `DEMO · caso ${label}`,
+          items: [{ salesOrderItemId: line.id, qty: line.qty }],
+        })
+      ).id;
+    }
+    const draft = await api.post('/invoicing/documents', {
+      docType,
+      customerId,
+      salesOrderId: order.id,
+      issueDate: today,
+      paymentTerms: credit ? 'CREDITO' : 'CONTADO',
+      ...(credit ? { dueDate: addDaysIso(today, 30) } : {}),
+      ...(dispatchId ? { dispatchId } : {}),
+      notes: `DEMO · caso ${label}`,
+      items: [{ salesOrderItemId: line.id, qty: line.qty }],
+    });
+    const invoice = await api.post(`/invoicing/documents/${draft.id}/register-manual`, {
+      series: docType === 'FACTURA' ? 'F900' : 'B900',
+      correlative: (seq += 1),
+    });
+    return { invoice, orderId: order.id, price: sellable.minPricePen, coil };
+  };
+  const credit = (sold, body) =>
+    api.post(`/invoicing/documents/${sold.invoice.id}/credit-note/register`, {
+      issueDate: today,
+      series: sold.invoice.docType === 'FACTURA' ? 'FC90' : 'BC90',
+      correlative: (seq += 1),
+      notes: 'DEMO · caso NC por motivo',
+      ...body,
+    });
+  const dni = { customerId: masters.customer.id, docType: 'BOLETA' };
+  const ruc = { customerId: masters.rucCustomer.id, docType: 'FACTURA' };
+  const [c01, c02, c03, c04, c05, c07, c13] = ncCoils;
+  const s01 = await sellCoil(c01, { ...dni, dispatch: true, label: 'NC-01' });
+  const s02 = await sellCoil(c02, { ...ruc, dispatch: true, label: 'NC-02' });
+  const s03 = await sellCoil(c03, { ...dni, label: 'NC-03' });
+  const s04 = await sellCoil(c04, { ...dni, label: 'NC-04' });
+  const s05 = await sellCoil(c05, { ...dni, label: 'NC-05' });
+  const s07 = await sellCoil(c07, { ...dni, dispatch: true, label: 'NC-07' });
+  const s13 = await sellCoil(c13, { ...ruc, credit: true, label: 'NC-13' });
+  const reasonCases = [
+    { key: 'NC-01', sold: s01, note: await credit(s01, { reason: 'ANULACION_OPERACION' }) },
+    {
+      key: 'NC-02',
+      sold: s02,
+      note: await credit(s02, {
+        reason: 'ANULACION_ERROR_RUC',
+        replacement: {
+          customerId: masters.rightCustomer.id,
+          issueDate: today,
+          series: 'F990',
+          correlative: (seq += 1),
+        },
+      }),
+    },
+    {
+      key: 'NC-03',
+      sold: s03,
+      note: await credit(s03, {
+        reason: 'CORRECCION_DESCRIPCION',
+        descriptions: [
+          {
+            affectedItemId: s03.invoice.items[0].id,
+            description: `${s03.invoice.items[0].description} (descripción corregida DEMO)`,
+          },
+        ],
+      }),
+    },
+    {
+      key: 'NC-04',
+      sold: s04,
+      note: await credit(s04, { reason: 'DESCUENTO_GLOBAL', amountPen: '50.00' }),
+    },
+    {
+      key: 'NC-05',
+      sold: s05,
+      note: await credit(s05, {
+        reason: 'DESCUENTO_ITEM',
+        prices: [
+          {
+            affectedItemId: s05.invoice.items[0].id,
+            unitPriceWithIgvPen: (Number(s05.price) * 0.9).toFixed(2),
+          },
+        ],
+      }),
+    },
+    {
+      key: 'NC-07',
+      sold: s07,
+      note: await credit(s07, {
+        reason: 'DEVOLUCION_ITEM',
+        items: [{ affectedItemId: s07.invoice.items[0].id, qty: s07.invoice.items[0].qty }],
+      }),
+    },
+    {
+      key: 'NC-13',
+      sold: s13,
+      note: await credit(s13, { reason: 'OTROS_AJUSTES', dueDate: addDaysIso(today, 60) }),
+    },
+  ].map((c) => ({
+    key: c.key,
+    invoiceId: c.sold.invoice.id,
+    invoice: c.sold.invoice.number,
+    noteId: c.note.id,
+    note: c.note.number,
+    totalPen: c.note.totalPen,
+    returnCode: c.note.salesReturn?.code ?? null,
+  }));
+
   // S1 · partido con borde (cc46, D-608): 1 000 kg de 1 220 mm en 600 + 560 con 20 mm de kerf.
   // Quedan 40 mm de borde: el valor del kerf y el borde entra a las hijas (sube su costo por kg).
   const [s1] = await buyCoils('drywall', galv, '0.50', ['1000'], 'partido S1');
@@ -1070,10 +1272,14 @@ export async function seedCases(api, masters) {
     split: { mother: s1, children: s1Children },
     acCase,
     ncCase,
+    reasonCases,
   };
 }
 
-export function casesTable({ cases, history, drywall, split, acCase, ncCase }, masters) {
+export function casesTable(
+  { cases, history, drywall, split, acCase, ncCase, reasonCases = [] },
+  masters,
+) {
   const lines = [
     '| Caso | Pedido | OP | Abrir | Qué probar |',
     '|---|---|---|---|---|',
@@ -1084,6 +1290,11 @@ export function casesTable({ cases, history, drywall, split, acCase, ncCase }, m
     `| Drywall | — | — | ${PREVIEW_WEB}/corte/${drywall.cuttingId} | ${drywall.cut.code} cortada en 5 flejes de 244 mm (${masters.products.stud.sku}); ${drywall.free.code} libre para tu orden de corte con ${DEMO.cuttingSupplier.name}; perfiles en «Nueva orden de perfiles» (${PREVIEW_WEB}/planta) |`,
     `| H1 | — | — | ${PREVIEW_WEB}/compras/${history.purchaseId} | «Historial» de la compra ${history.purchase}: pago y su reversa, y el flete imputado; en la orden de corte (${PREVIEW_WEB}/corte/${history.cuttingId}), la factura vinculada y la duplicada anulada (D-639); en la auditoría, el «Lote de importación» ${history.batchId.slice(0, 8)} (D-638) |`,
     `| NC | — | — | ${PREVIEW_WEB}/devoluciones/${ncCase.returnId} | la boleta ${ncCase.invoice} con la NC ${ncCase.note} «Devolución total» de hoy (${PREVIEW_WEB}/comprobantes/${ncCase.noteId}); el documento ${ncCase.returnCode}; la bobina ${ncCase.coil} vuelve con su peso y se reabre (${PREVIEW_WEB}/bobinas/${ncCase.coilId}); el kardex muestra el reingreso al costo de salida (D-645..D-647) |`,
+    // cc54 (D-654..D-663): una NC por motivo SUNAT.
+    ...reasonCases.map(
+      (c) =>
+        `| ${c.key} | — | — | ${PREVIEW_WEB}/comprobantes/${c.invoiceId} | ${c.invoice} con la NC ${c.note} (${PREVIEW_WEB}/comprobantes/${c.noteId}) por S/ ${c.totalPen}${c.returnCode ? `; devolución ${c.returnCode}` : ''}: ${REASON_CASE_HINT[c.key] ?? ''} |`,
+    ),
     `| AC | ${acCase.order} | — | ${PREVIEW_WEB}/cotizaciones/${acCase.quotationId} | la línea «A costo · Liquidación de stock» en la cotización ${acCase.quotation}, el pedido (${PREVIEW_WEB}/pedidos/${acCase.orderId}) y la boleta ${acCase.invoice} (${PREVIEW_WEB}/comprobantes/${acCase.invoiceId}); Ventas y margen con el filtro «A costo» (D-641) |`,
     `| S1 | — | — | ${PREVIEW_WEB}/bobinas/${split.mother.id} | ${split.mother.code} partida en ${split.children.map((c) => c.code).join(' y ')} con 20 mm de kerf y 40 mm de borde: las hijas suman el valor que salió de la madre (D-608); «Revertir» la devuelve exacta |`,
   ];

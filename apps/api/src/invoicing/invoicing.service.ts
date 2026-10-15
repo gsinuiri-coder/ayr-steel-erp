@@ -63,6 +63,7 @@ import {
   isReturnCreditNoteReason,
   salesReturnCode,
   CREDIT_NOTE_REASON_SUNAT_CODE,
+  QTY_CREDIT_NOTE_REASONS,
   CreditNoteReason,
   creditNoteDeadlineWarning,
   creditsQty,
@@ -4197,7 +4198,12 @@ export class InvoicingService {
       by: ['affectedItemId'],
       where: {
         affectedItemId: { in: itemIds },
-        document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
+        // cc54 (D-663): «acreditado» en cantidad: solo los motivos de cantidad (una rebaja no).
+        document: {
+          status: { in: LIVE_DOCUMENT_STATUSES },
+          archivedAt: null,
+          creditNoteReason: { in: [...QTY_CREDIT_NOTE_REASONS] },
+        },
       },
       _sum: { qty: true },
     });
