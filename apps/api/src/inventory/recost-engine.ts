@@ -332,7 +332,7 @@ export function firstValidDate(
 ): string | null {
   const candidates = [
     ...new Set([date, ...rows.map((r) => r.date).filter((d) => d > date && d < today), today]),
-  ].sort();
+  ].sort((a, b) => a.localeCompare(b));
   return (
     candidates.find((d) => firstNegativeDate(rows, [...priorOuts, { date: d, qty }]) === null) ??
     null

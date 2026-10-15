@@ -82,13 +82,22 @@ export function dayMonthYear(date: string): string {
   return m ? `${m[3] ?? ''}/${m[2] ?? ''}/${m[1] ?? ''}` : date;
 }
 
+/** `12.000` → `12`, `1.250` → `1.25`; sin punto decimal, tal cual. */
+function trimDecimalZeros(value: string): string {
+  if (!value.includes('.')) return value;
+  let end = value.length;
+  while (value[end - 1] === '0') end -= 1;
+  if (value[end - 1] === '.') end -= 1;
+  return value.slice(0, end);
+}
+
 /**
  * cc54 (P2-3 y P3-3 de la revisión de cc53): el texto del rechazo de D-652, el mismo en todos los
  * caminos (despacho, producción, corte, partido, anulaciones, compras). Fechas como se leen en
  * Perú, la cantidad sin ceros de relleno y la salida que se propone.
  */
 export function backdateNegativeStockMessage(x: BackdateNegativeStock): string {
-  const qty = x.qty.includes('.') ? x.qty.replace(/\.?0+$/, '') : x.qty;
+  const qty = trimDecimalZeros(x.qty);
   const unit = SHORT_UNITS[x.unit] ?? x.unit;
   return (
     `${x.action} con fecha ${dayMonthYear(x.operationDate)} (${qty} ${unit}) dejaría el kardex de ` +
