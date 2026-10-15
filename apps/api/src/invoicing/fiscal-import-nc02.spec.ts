@@ -87,7 +87,9 @@ describe('anular una NC (cc54)', () => {
       where: { id: 'so-1' },
       data: { customerId: 'c-1' },
     });
-    const actions = audit.write.mock.calls.map((c) => (c[1] as { action: string }).action);
+    const actions = (audit.write.mock.calls as unknown[][]).map(
+      (c) => (c[1] as { action: string }).action,
+    );
     expect(actions).toEqual(
       expect.arrayContaining([
         'sales.order.customer',

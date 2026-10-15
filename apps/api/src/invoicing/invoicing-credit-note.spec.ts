@@ -223,9 +223,9 @@ describe('InvoicingService.registerCreditNote — el motivo decide (cc54)', () =
       totalPen: '50.0000',
     });
     expect(tx.fiscalDocument.update).toHaveBeenCalled(); // applyManualNumber
-    expect(audit.write.mock.calls.map((c) => (c[1] as { action: string }).action)).toContain(
-      'invoicing.credit-note.create',
-    );
+    expect(
+      (audit.write.mock.calls as unknown[][]).map((c) => (c[1] as { action: string }).action),
+    ).toContain('invoicing.credit-note.create');
   });
 
   it('03: importe cero, con la descripción corregida', async () => {
@@ -355,7 +355,9 @@ describe('InvoicingService.registerCreditNote — el motivo decide (cc54)', () =
     expect(tx.salesOrder.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { customerId: '00000000-0000-4000-8000-000000000002' } }),
     );
-    const actions = audit.write.mock.calls.map((c) => (c[1] as { action: string }).action);
+    const actions = (audit.write.mock.calls as unknown[][]).map(
+      (c) => (c[1] as { action: string }).action,
+    );
     expect(actions).toEqual(
       expect.arrayContaining(['invoicing.credit-note.replacement', 'sales.order.customer']),
     );
