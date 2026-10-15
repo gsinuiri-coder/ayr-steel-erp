@@ -73,14 +73,13 @@ en 9 de 10).
 
   Los P3 sin cambio quedan anotados.
 
-- Falta la revisión del dueño: UAT en `docs/uat/cc54.md`.
+- Revisión del dueño: **UAT de `docs/uat/cc54.md` aprobado** (15/10, en la rama `demo`).
 
 ## Pendiente / para la siguiente sesión
 
-- **El dueño:**
-  - UAT de `docs/uat/cc54.md`, una casilla por motivo;
-  - ratificar D-653..D-663 (provisionales). D-655 suma, por las revisiones, que el 02 lo registra solo un
-    ADMINISTRADOR y lo bloquean las guías vivas del pedido.
+- **El dueño:** nada de cc54. **UAT de cc54 aprobado y D-653 a D-663 RATIFICADAS por el dueño el 15/10** (D-655
+  incluye que el 02 lo registra solo un ADMINISTRADOR y lo bloquean las guías vivas del pedido). El 06 es solo
+  devolución total; sobre un comprobante despachado a medias corresponde un 07.
 - **Anotado, sin hacer:**
   - **08, 09 y 10** no se agregaron (D-658: exigen migración del enum);
   - **cuotas reales del 13** (D-657: hoy, vencimiento único; exige migración);
