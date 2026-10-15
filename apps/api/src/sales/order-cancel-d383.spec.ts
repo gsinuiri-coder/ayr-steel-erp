@@ -37,7 +37,10 @@ describe('D-383 — anular un pedido', () => {
       creditNotes: { totalPen: Prisma.Decimal }[];
       items?: { id: string }[];
     }[];
-    dispatches: { seq: number }[];
+    dispatches: {
+      seq: number;
+      items?: { qty: string; salesReturnItems: { qty: string }[] }[];
+    }[];
     reports: {
       id: string;
       productionOrder: {
@@ -167,9 +170,17 @@ describe('D-383 — anular un pedido', () => {
         groupBy: jest
           .fn()
           .mockResolvedValueOnce(s.emitted ?? [])
-          .mockResolvedValueOnce(s.credited ?? []),
+          .mockResolvedValueOnce(s.credited ?? [])
+          // cc54 (D-663): lo acreditado solo en importe (rebajas): ninguno.
+          .mockResolvedValueOnce([]),
       },
-      dispatch: { findMany: jest.fn().mockResolvedValue(s.dispatches) },
+      dispatch: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue(
+            s.dispatches.map((d) => ({ items: [{ qty: '1', salesReturnItems: [] }], ...d })),
+          ),
+      },
       productionReport: { findMany: jest.fn().mockResolvedValue(s.reports) },
       inventoryMovement: { findMany: jest.fn().mockResolvedValue(s.movements) },
       dispatchItem: { groupBy: jest.fn().mockResolvedValue(s.shipped) },
@@ -306,6 +317,17 @@ describe('D-383 — anular un pedido', () => {
         BadRequestException,
         'El pedido PED-000007 tiene los despachos DES-000040, DES-000041 vigentes: reviértelos antes de anular el pedido',
       );
+    });
+
+    it('cc54 (D-656): un despacho devuelto entero por una NC no bloquea; uno a medias, sí', async () => {
+      const whole = happy();
+      whole.dispatches = [{ seq: 3, items: [{ qty: '5', salesReturnItems: [{ qty: '5' }] }] }];
+      const { service, tx } = await build(whole);
+      await service.cancel(ADMIN, 'o-1', { reason: 'el cliente desistió' });
+      expect(tx.salesOrder.update).toHaveBeenCalled();
+      const half = happy();
+      half.dispatches = [{ seq: 3, items: [{ qty: '5', salesReturnItems: [{ qty: '2' }] }] }];
+      await rejects(half, BadRequestException, /DES-000003 vigente/);
     });
 
     it('comprobante y despacho a la vez: los dos motivos', async () => {

@@ -62,6 +62,19 @@ import {
   fromDateOnly,
   isReturnCreditNoteReason,
   salesReturnCode,
+  CREDIT_NOTE_REASON_SUNAT_CODE,
+  QTY_CREDIT_NOTE_REASONS,
+  CreditNoteReason,
+  creditNoteDeadlineWarning,
+  creditsQty,
+  DISCOUNT_CREDIT_NOTE_REASONS,
+  effectiveDueDate,
+  isZeroAmountCreditNote,
+  returnsStock,
+  type CreditNotePreviewDto,
+  type CreditNoteReplacementInput,
+  type RegisterCreditNoteInput,
+  type SalesLineTotals,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -112,6 +125,15 @@ import {
 } from '../common/list-export';
 import { lockDocuments } from '../inventory/document-locks';
 import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
+import {
+  amountCreditLines,
+  creditsByLine,
+  priceCreditLines,
+  qtyCreditLines,
+  zeroCreditLines,
+  type AffectedLine,
+  type NoteLine,
+} from './credit-note-lines';
 
 /**
  * Comprobantes electrónicos (RF-70, RF-74..RF-76; D-071..D-073, D-077).
@@ -166,6 +188,10 @@ const documentInclude = {
       status: true,
       issueDate: true,
       totalPen: true,
+      // cc54 (D-657): el motivo y el vencimiento que declara un 13 (`effectiveDueDate`).
+      creditNoteReason: true,
+      dueDate: true,
+      createdAt: true,
       // cc52 (D-646): la devolución de cada NC de devolución, para enlazarla.
       salesReturn: { select: { id: true, seq: true, status: true } },
     },
@@ -181,12 +207,72 @@ const documentInclude = {
  */
 const documentDetailInclude = {
   ...documentInclude,
+  // cc54 (D-654): en el detalle, las líneas de cada NC, para mostrar la descripción corregida por
+  // un 03 en la línea que corrige.
+  creditNotes: {
+    ...documentInclude.creditNotes,
+    select: {
+      ...documentInclude.creditNotes.select,
+      items: { select: { affectedItemId: true, description: true } },
+    },
+  },
   issueDateChanges: { orderBy: { changedAt: 'desc' } },
   // cc52 (D-646): la devolución que generó esta NC, si es de devolución.
   salesReturn: { select: { id: true, seq: true, status: true } },
 } satisfies Prisma.FiscalDocumentInclude;
 
 type DocumentRow = Prisma.FiscalDocumentGetPayload<{ include: typeof documentInclude }>;
+
+/** cc54: el comprobante que una NC acredita, con lo que el motivo necesita mirar. */
+const CREDIT_NOTE_AFFECTED_INCLUDE = {
+  items: { orderBy: { lineNumber: 'asc' } },
+  customer: true,
+  salesOrder: { select: { sellerId: true, status: true, seq: true } },
+  dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
+  payments: { where: { reversedAt: null }, select: { amountPen: true } },
+  creditNotes: {
+    where: { status: { in: [...SHARED_LIVE_DOCUMENT_STATUSES] }, archivedAt: null },
+    select: {
+      number: true,
+      status: true,
+      totalPen: true,
+      creditNoteReason: true,
+      dueDate: true,
+      issueDate: true,
+      createdAt: true,
+    },
+  },
+} satisfies Prisma.FiscalDocumentInclude;
+
+/** cc54: lo que una NC va a ser, antes de escribirla (`planCreditNote`). */
+interface CreditNotePlan {
+  affected: Prisma.FiscalDocumentGetPayload<{ include: typeof CREDIT_NOTE_AFFECTED_INCLUDE }>;
+  lines: NoteLine[];
+  totals: SalesLineTotals;
+  /** El vencimiento vigente del afectado (D-657). */
+  dueDate: string | null;
+  replacement: {
+    customerId: string;
+    customerName: string;
+    number: string;
+    series: string;
+    correlative: number;
+    issueDate: string;
+  } | null;
+}
+
+/** cc54 (D-655): lo que el reemplazo de un 02 mira del comprobante anulado. */
+interface ReplacementSubject {
+  id: string;
+  number: string | null;
+  docType: FiscalDocType;
+  customerId: string;
+  salesOrderId: string | null;
+  issueDate: Date;
+  payments: { amountPen: Prisma.Decimal }[];
+  creditNotes: { number: string | null }[];
+  salesOrder: { status: string; seq: number } | null;
+}
 /** Lo mismo más el historial de correcciones de fecha (F8-S7/M1), solo en el detalle. */
 type DocumentDetailRow = Prisma.FiscalDocumentGetPayload<{
   include: typeof documentDetailInclude;
@@ -959,16 +1045,14 @@ export class InvoicingService {
   }
 
   // -------------------------------------------------------------------------
-  // RF-76 — nota de crédito
+  // RF-76 — nota de crédito (cc54: el motivo SUNAT decide, D-654..D-663)
   // -------------------------------------------------------------------------
 
   /**
-   * Nota de crédito sobre un comprobante vivo (RF-76). Sin líneas es **total**; con
-   * líneas, parcial, y cada una acredita como mucho lo que a su línea original le queda.
-   *
-   * Nace en `BORRADOR` como cualquier otro documento: se envía con la misma ruta, toma su
-   * correlativo de la serie que corresponde al tipo del afectado (`FC01`/`BC01`, D-072) y
-   * pasa por la misma máquina de estados.
+   * Nota de crédito en **borrador** sobre un comprobante vivo (RF-76): el camino electrónico (se
+   * envía con la misma ruta y toma su correlativo de `FC01`/`BC01`, D-072) y el de dos pasos de
+   * siempre. La manual se registra en un solo paso con `registerCreditNote` (D-660). El 02 lleva su
+   * comprobante de reemplazo, que un borrador no guarda: solo en un paso.
    */
   async createCreditNote(
     actor: RequestUser,
@@ -977,203 +1061,359 @@ export class InvoicingService {
   ): Promise<FiscalDocumentDto> {
     // D-133: mismo control que al emitir. Una nota de crédito también es un hecho fechado.
     this.operationDate.assertIssueDate(actor, input.issueDate);
+    if (input.reason === CreditNoteReason.ANULACION_ERROR_RUC) {
+      throw new BadRequestException(
+        'La anulación por error en el RUC (02) se registra en un solo paso, con su comprobante de reemplazo',
+      );
+    }
     const id = await this.prisma.$transaction(async (tx) => {
-      // **El afectado se bloquea antes de leer lo que le queda por acreditar.** Sin esto,
-      // dos notas de crédito concurrentes sobre el mismo comprobante calculaban las dos el
-      // mismo pendiente y acreditaban el doble: dos correlativos gastados, dos documentos
-      // ante SUNAT y un saldo negativo que no se deshace —una nota de crédito no se acredita
-      // con otra—. Es el mismo lock que `addPayment` toma para el saldo, por el mismo motivo.
-      await lockDocuments(tx, { fiscalDocuments: [affectedId] });
-      const affected = await tx.fiscalDocument.findUnique({
-        where: { id: affectedId },
-        include: {
-          items: { orderBy: { lineNumber: 'asc' } },
-          customer: true,
-          salesOrder: { select: { sellerId: true } },
-          dispatch: { select: { salesOrder: { select: { sellerId: true } } } },
-        },
-      });
-      if (!affected) throw new NotFoundException('Comprobante no encontrado');
-      // RF-S3c: el vendedor solo opera sobre sus propios comprobantes.
-      {
-        const ownerId =
-          affected.salesOrder?.sellerId ??
-          affected.dispatch?.salesOrder?.sellerId ??
-          affected.createdById;
-        assertSellerAccess(actor, ownerId, 'Comprobante');
-      }
-      // D-153: sobre un manual **sí** hay nota de crédito, pero manual — el afectado salió de
-      // la otra app y su NC también. Acá solo se corta lo importado, que no tiene vuelta por
-      // ningún lado; que el modo del terminal coincida con el del afectado lo exige `send` y
-      // `registerManual`, que es donde el documento deja de ser un borrador.
-      if (affected.origin === FiscalDocumentOrigin.IMPORTED) {
-        throw new BadRequestException(
-          `El comprobante ${affected.number ?? ''} se importó ya emitido: su nota de crédito se hace donde se emitió`,
-        );
-      }
-      if (affected.docType === FiscalDocType.NOTA_CREDITO) {
-        throw new BadRequestException(
-          'Una nota de crédito no se acredita con otra nota de crédito',
-        );
-      }
-      if (affected.docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
-        throw new BadRequestException('Una guía de remisión no se acredita: se da de baja');
-      }
-      if (affected.status === FiscalDocumentStatus.VOID_PENDING) {
-        // cc34 (D-536 de fondo): la baja ya salió hacia SUNAT; acreditar ahora dejaría una NC sobre
-        // una factura que SUNAT puede estar anulando.
-        throw new BadRequestException(
-          `${affected.number ?? 'El comprobante'} ${VOID_IN_PROGRESS}: espera a que SUNAT la confirme o la rechace antes de emitir una nota de crédito`,
-        );
-      }
-      if (affected.status !== FiscalDocumentStatus.ACCEPTED) {
-        throw new BadRequestException(
-          `Solo se acredita un comprobante aceptado por SUNAT; este está ${affected.status}`,
-        );
-      }
-      // cc52 (D-645): la NC no puede ser anterior al comprobante que acredita (posterior a hoy ya
-      // lo rechaza el esquema). Su fecha es la de todo lo que genera, también la devolución.
-      const affectedDate = fromDateOnly(affected.issueDate);
-      if (input.issueDate < affectedDate) {
-        throw new BadRequestException(
-          `La nota de crédito no puede ser anterior al comprobante que acredita (${affected.number ?? ''}, del ${affectedDate})`,
-        );
-      }
+      const plan = await this.planCreditNote(tx, actor, affectedId, input, 'DRAFT');
+      return this.writeCreditNote(tx, actor, plan, input);
+    }, KARDEX_TX_OPTIONS);
+    return this.findOne(id);
+  }
 
-      // Lo ya acreditado por línea, contando solo notas vivas.
-      const credited = await tx.fiscalDocumentItem.groupBy({
-        by: ['affectedItemId'],
-        where: {
-          affectedItemId: { in: affected.items.map((i) => i.id) },
-          document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
-        },
-        _sum: { qty: true, subtotalPen: true, igvPen: true, totalPen: true },
-      });
-      const creditedByItem = new Map(
-        credited.map((r) => [
-          r.affectedItemId ?? '',
-          toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString()),
-        ]),
+  /**
+   * cc54 (D-660): la NC **manual en un solo paso**: el alta, el registro con la serie y el número del
+   * papel y lo que el motivo genera (la devolución del 01/06/07, el reemplazo del 02), en una sola
+   * transacción. Si algo no se puede, no queda nada: ni nota, ni devolución, ni reemplazo.
+   */
+  async registerCreditNote(
+    actor: RequestUser,
+    affectedId: string,
+    input: RegisterCreditNoteInput,
+  ): Promise<FiscalDocumentDto> {
+    this.operationDate.assertIssueDate(actor, input.issueDate);
+    if (input.replacement) this.operationDate.assertIssueDate(actor, input.replacement.issueDate);
+    // Revisiones de cc54-B (P2): el 02 cambia el cliente del pedido: lo registra un administrador.
+    if (
+      input.reason === CreditNoteReason.ANULACION_ERROR_RUC &&
+      actor.role !== Role.ADMINISTRADOR
+    ) {
+      throw new ForbiddenException(
+        'La anulación por error en el RUC (02) cambia el cliente del pedido: la registra un administrador',
       );
-      // P2-A: las notas en borrador sobre las mismas líneas, igual que en `resolveLines`.
-      const drafted = await tx.fiscalDocumentItem.groupBy({
-        by: ['affectedItemId'],
-        where: {
-          affectedItemId: { in: affected.items.map((i) => i.id) },
-          document: { status: FiscalDocumentStatus.DRAFT, archivedAt: null },
-        },
-        _sum: { qty: true, subtotalPen: true, igvPen: true, totalPen: true },
-      });
-      const draftedByItem = new Map(
-        drafted.map((r) => [r.affectedItemId ?? '', (r._sum.qty ?? 0).toString()]),
+    }
+    const id = await this.prisma.$transaction(async (tx) => {
+      const plan = await this.planCreditNote(tx, actor, affectedId, input, 'MANUAL');
+      const noteId = await this.writeCreditNote(tx, actor, plan, input);
+      await this.registerManualInTx(
+        tx,
+        actor,
+        noteId,
+        { series: input.series, correlative: input.correlative },
+        input.replacement ?? null,
       );
-      // D-265: y sus importes, para que la parte que cierra la línea tome el resto.
-      const parts = new PartLedger(
-        credited.map((r) => [r.affectedItemId ?? '', r._sum]),
-        drafted.map((r) => [r.affectedItemId ?? '', r._sum]),
-      );
+      return noteId;
+    }, KARDEX_TX_OPTIONS);
+    return this.findOne(id);
+  }
 
-      const requested =
-        input.items && input.items.length > 0
-          ? input.items
-          : affected.items
-              // Una "total" sobre un comprobante que ya tuvo una parcial acredita **lo que
-              // queda**, no todo: sin este filtro, la primera línea ya acreditada por
-              // completo hacía fallar la operación culpando a una línea que el usuario ni
-              // siquiera pidió.
-              .filter((i) =>
-                toDecimal(i.qty.toString())
-                  .minus(creditedByItem.get(i.id) ?? new Decimal(0))
-                  .gt(0),
+  /**
+   * cc54: **«Qué va a pasar»** antes de confirmar: la misma cuenta que el registro (líneas, importes,
+   * devolución al almacén con su costo, saldo y vencimiento del cliente), sin escribir nada.
+   */
+  async previewCreditNote(
+    actor: RequestUser,
+    affectedId: string,
+    input: CreateCreditNoteInput,
+  ): Promise<CreditNotePreviewDto> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const plan = await this.planCreditNote(tx, actor, affectedId, input, 'PREVIEW');
+        const { affected } = plan;
+        // La devolución nace solo al registrar a mano (un electrónico va por borrador y envío).
+        const allocations =
+          returnsStock(input.reason) && affected.origin === FiscalDocumentOrigin.MANUAL
+            ? await this.salesReturns.planForLines(
+                tx,
+                plan.lines.map((l) => ({
+                  lineNumber: l.original.lineNumber,
+                  orderItemId: l.original.salesOrderItemId,
+                  qty: l.qty,
+                })),
+                {
+                  affectedInvoiceId: affected.id,
+                  asOf: input.issueDate,
+                  ...(input.reason === CreditNoteReason.ANULACION_OPERACION
+                    ? { upToAvailable: true, onlyAffected: true }
+                    : {}),
+                },
               )
-              .map((i) => ({
-                affectedItemId: i.id,
-                qty: toDecimal(i.qty.toString())
-                  .minus(creditedByItem.get(i.id) ?? new Decimal(0))
-                  .toFixed(3),
-              }));
-
-      const byId = new Map(affected.items.map((i) => [i.id, i]));
-      // Mismo acumulador que en `resolveLines`, por el mismo motivo: dos líneas de la NC
-      // sobre la misma línea del comprobante acreditaban el doble.
-      const usedHere = new Map<string, Decimal>();
-      const lines = requested.map((line) => {
-        const original = byId.get(line.affectedItemId);
-        if (!original) {
-          throw new BadRequestException('Hay una línea que no pertenece al comprobante afectado');
-        }
-        const qty = toDecimal(line.qty);
-        const pending = toDecimal(original.qty.toString())
-          .minus(creditedByItem.get(original.id) ?? new Decimal(0))
-          .minus(usedHere.get(original.id) ?? new Decimal(0));
-        if (qty.lte(0)) {
-          throw new BadRequestException(
-            `La línea ${original.lineNumber} ya está acreditada por completo`,
-          );
-        }
-        if (qty.gt(pending)) {
-          throw new BadRequestException(
-            `A la línea ${original.lineNumber} le quedan ${pending.toFixed(3)} por acreditar y se intentan acreditar ${qty.toFixed(3)}`,
-          );
-        }
-        usedHere.set(original.id, (usedHere.get(original.id) ?? new Decimal(0)).plus(qty));
-        // D-169: acreditar la línea **entera** acredita su importe entero, copiado. Con el
-        // recálculo desde el unitario, una nota de crédito total sobre un comprobante
-        // importado dejaba unos céntimos de deuda que ya nadie podía acreditar ni cobrar: la
-        // NC no llegaba al total del afectado y su cuenta por cobrar no cerraba nunca. Una
-        // acreditación **parcial** sí se calcula: el importe exacto es del total de la línea y
-        // una fracción de él hay que derivarla.
-        //
-        // D-255: la fracción sale del unitario **derivado del importe** (diez decimales), no
-        // del guardado para mostrar: 1920 de 3840 kg por 11 715.254 acreditan la mitad.
-        // D-265 (P2-8): la parte que agota lo que queda por acreditar toma el resto.
-        const closing = pendingWithDrafts({
-          qty,
-          pending,
-          drafts: draftedByItem.get(original.id) ?? '0',
-        });
-        const totals = parts.part(
-          original.id,
-          original,
-          partKind({
-            qty,
-            lineQty: original.qty.toString(),
-            pending: closing.pending,
-            priceEdited: false,
-          }),
-          () =>
-            salesTotals([
-              {
-                qty: line.qty,
-                unitPricePen: derivedUnitValue(
-                  original.qty.toString(),
-                  original.subtotalPen.toString(),
-                ).toFixed(DERIVED_UNIT_VALUE_DECIMALS),
-              },
-            ]),
-          closing.countDrafts,
+            : [];
+        const flat = allocations.flat();
+        const labels = await this.kardexItemLabels(
+          tx,
+          flat.map((a) => ({ itemType: a.stock.itemType, itemId: a.stock.itemId })),
         );
-        return {
-          original,
-          qty: line.qty,
-          ...serializeSalesTotals(totals),
-        };
-      });
-
-      if (lines.length === 0) {
-        throw new BadRequestException('No queda nada por acreditar en este comprobante');
-      }
-      // cc52 (D-646): una NC de devolución solo devuelve lo despachado y aún no devuelto. Se
-      // comprueba ya acá para no dejar un borrador que después no se pueda registrar; el registro
-      // lo vuelve a comprobar con los despachos bloqueados.
-      if (isReturnCreditNoteReason(input.reason)) {
-        // Revisión de cc52 (P2): sobre un comprobante emitido por el ERP la NC se enviaría al PSE,
-        // y la de devolución solo se registra a mano: se avisa ya, no con un borrador atascado.
-        if (affected.origin !== FiscalDocumentOrigin.MANUAL) {
-          throw new BadRequestException(
-            'La devolución de mercadería se registra con una nota de crédito manual: este comprobante no es manual',
+        const notDispatched =
+          input.reason === CreditNoteReason.ANULACION_OPERACION
+            ? plan.lines.flatMap((l, i) => {
+                const back = (allocations[i] ?? []).reduce(
+                  (acc, a) => acc.plus(a.qty),
+                  new Decimal(0),
+                );
+                const left = toDecimal(l.qty).minus(back);
+                return left.gt(0)
+                  ? [{ lineNumber: l.original.lineNumber, qty: left.toFixed(3) }]
+                  : [];
+              })
+            : [];
+        const before = documentBalance({
+          status: affected.status,
+          totalPen: affected.totalPen.toString(),
+          paidPen: affected.payments.reduce(
+            (acc, p) => acc.plus(toDecimal(p.amountPen.toString())),
+            new Decimal(0),
+          ),
+          creditedPen: affected.creditNotes.reduce(
+            (acc, n) => acc.plus(toDecimal(n.totalPen.toString())),
+            new Decimal(0),
+          ),
+        });
+        const after = Decimal.max(toDecimal(before).minus(plan.totals.total), new Decimal(0));
+        const warnings: string[] = [];
+        const late = creditNoteDeadlineWarning(
+          input.reason,
+          fromDateOnly(affected.issueDate),
+          input.issueDate,
+        );
+        if (late) warnings.push(late);
+        if (
+          DISCOUNT_CREDIT_NOTE_REASONS.includes(input.reason) &&
+          affected.docType === FiscalDocType.BOLETA
+        ) {
+          warnings.push(
+            'SUNAT observa una nota de descuento sobre una boleta (observación 4367): se acepta, pero queda observada.',
           );
         }
+        if (notDispatched.length > 0) {
+          warnings.push(
+            'Parte de lo facturado no salió del almacén: no vuelve nada de eso y queda otra vez pendiente de facturar en el pedido.',
+          );
+        }
+        return {
+          reason: input.reason,
+          sunatCode: CREDIT_NOTE_REASON_SUNAT_CODE[input.reason],
+          ...serializeSalesTotals(plan.totals),
+          lines: plan.lines.map((l) => ({
+            affectedItemId: l.original.id,
+            lineNumber: l.original.lineNumber,
+            description: l.description,
+            qty: l.qty,
+            totalPen: l.totalPen,
+          })),
+          stock: flat.map((a) => ({
+            label: labels.get(`${a.stock.itemType}:${a.stock.itemId}`) ?? a.stock.itemId,
+            qty: toFixedString(a.reserveQty, 'KG'),
+            unit: a.stock.unit,
+            costPen: toFixedString(a.totalCost, 'MONEY'),
+            dispatch: a.stock.dispatchCode,
+          })),
+          notDispatched,
+          costPen: toFixedString(
+            flat.reduce((acc, a) => acc.plus(a.totalCost), new Decimal(0)),
+            'MONEY',
+          ),
+          receivable: {
+            beforePen: toFixedString(before, 'MONEY'),
+            afterPen: toFixedString(after, 'MONEY'),
+            dueDateBefore: plan.dueDate,
+            dueDateAfter:
+              input.reason === CreditNoteReason.OTROS_AJUSTES
+                ? (input.dueDate ?? null)
+                : plan.dueDate,
+          },
+          replacement: plan.replacement
+            ? {
+                customerName: plan.replacement.customerName,
+                number: plan.replacement.number,
+                totalPen: affected.totalPen.toFixed(4),
+              }
+            : null,
+          warnings,
+        };
+      },
+      { timeout: 30_000, maxWait: 10_000 },
+    );
+  }
+
+  /** SKU o código de bobina de cada ítem del kardex, para mostrarlo. Dos consultas como mucho. */
+  private async kardexItemLabels(
+    tx: Prisma.TransactionClient,
+    items: readonly { itemType: InventoryItemType; itemId: string }[],
+  ): Promise<Map<string, string>> {
+    const products = items.filter((i) => i.itemType === 'PRODUCT').map((i) => i.itemId);
+    const coils = items.filter((i) => i.itemType === 'COIL').map((i) => i.itemId);
+    const [p, c] = await Promise.all([
+      products.length > 0
+        ? tx.product.findMany({ where: { id: { in: products } }, select: { id: true, sku: true } })
+        : [],
+      coils.length > 0
+        ? tx.coil.findMany({ where: { id: { in: coils } }, select: { id: true, code: true } })
+        : [],
+    ]);
+    return new Map([
+      ...p.map((x) => [`PRODUCT:${x.id}`, x.sku] as [string, string]),
+      ...c.map((x) => [`COIL:${x.id}`, x.code] as [string, string]),
+    ]);
+  }
+
+  /**
+   * Lo que la nota va a ser, **sin escribir**: valida el afectado y el motivo y arma las líneas
+   * (`credit-note-lines.ts`). `DRAFT` y `MANUAL` bloquean el afectado antes de leer lo que le queda
+   * por acreditar (dos NC concurrentes acreditaban el doble); `PREVIEW` solo lee.
+   */
+  private async planCreditNote(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    affectedId: string,
+    input: CreateCreditNoteInput,
+    mode: 'DRAFT' | 'MANUAL' | 'PREVIEW',
+  ): Promise<CreditNotePlan> {
+    // **El afectado se bloquea antes de leer lo que le queda por acreditar.** Sin esto, dos notas de
+    // crédito concurrentes sobre el mismo comprobante calculaban las dos el mismo pendiente y
+    // acreditaban el doble. Es el mismo lock que `addPayment` toma para el saldo.
+    if (mode !== 'PREVIEW') await lockDocuments(tx, { fiscalDocuments: [affectedId] });
+    const affected = await tx.fiscalDocument.findUnique({
+      where: { id: affectedId },
+      include: CREDIT_NOTE_AFFECTED_INCLUDE,
+    });
+    if (!affected) throw new NotFoundException('Comprobante no encontrado');
+    // RF-S3c: el vendedor solo opera sobre sus propios comprobantes.
+    assertSellerAccess(
+      actor,
+      affected.salesOrder?.sellerId ??
+        affected.dispatch?.salesOrder?.sellerId ??
+        affected.createdById,
+      'Comprobante',
+    );
+    // D-153: sobre un manual **sí** hay nota de crédito, pero manual. Lo importado no tiene vuelta.
+    if (affected.origin === FiscalDocumentOrigin.IMPORTED) {
+      throw new BadRequestException(
+        `El comprobante ${affected.number ?? ''} se importó ya emitido: su nota de crédito se hace donde se emitió`,
+      );
+    }
+    if (affected.docType === FiscalDocType.NOTA_CREDITO) {
+      throw new BadRequestException('Una nota de crédito no se acredita con otra nota de crédito');
+    }
+    if (affected.docType === FiscalDocType.GUIA_REMISION_REMITENTE) {
+      throw new BadRequestException('Una guía de remisión no se acredita: se da de baja');
+    }
+    if (affected.status === FiscalDocumentStatus.VOID_PENDING) {
+      // cc34 (D-536 de fondo): la baja ya salió hacia SUNAT.
+      throw new BadRequestException(
+        `${affected.number ?? 'El comprobante'} ${VOID_IN_PROGRESS}: espera a que SUNAT la confirme o la rechace antes de emitir una nota de crédito`,
+      );
+    }
+    if (affected.status !== FiscalDocumentStatus.ACCEPTED) {
+      throw new BadRequestException(
+        `Solo se acredita un comprobante aceptado por SUNAT; este está ${affected.status}`,
+      );
+    }
+    // La NC manual va sobre un manual (D-153); la de un electrónico se emite.
+    if (mode === 'MANUAL' && affected.origin !== FiscalDocumentOrigin.MANUAL) {
+      throw new BadRequestException(
+        `${affected.number ?? 'El comprobante'} no es manual: su nota de crédito se emite, no se registra a mano`,
+      );
+    }
+    // cc52 (D-645): la NC no puede ser anterior al comprobante que acredita.
+    const affectedDate = fromDateOnly(affected.issueDate);
+    if (input.issueDate < affectedDate) {
+      throw new BadRequestException(
+        `La nota de crédito no puede ser anterior al comprobante que acredita (${affected.number ?? ''}, del ${affectedDate})`,
+      );
+    }
+
+    // Lo ya acreditado de cada línea, en una sola lectura: las notas vivas y los borradores. La
+    // cantidad la mueven solo los motivos de cantidad; el importe, todos (D-663).
+    const prior = await tx.fiscalDocumentItem.findMany({
+      where: {
+        affectedItemId: { in: affected.items.map((i) => i.id) },
+        document: {
+          archivedAt: null,
+          status: { in: [...LIVE_DOCUMENT_STATUSES, FiscalDocumentStatus.DRAFT] },
+        },
+      },
+      select: {
+        affectedItemId: true,
+        qty: true,
+        subtotalPen: true,
+        igvPen: true,
+        totalPen: true,
+        document: { select: { status: true, creditNoteReason: true } },
+      },
+    });
+    const credited = creditsByLine(
+      prior.filter((p) => p.document.status !== FiscalDocumentStatus.DRAFT),
+      creditsQty,
+    );
+    const drafted = creditsByLine(
+      prior.filter((p) => p.document.status === FiscalDocumentStatus.DRAFT),
+      creditsQty,
+    );
+    const affectedLines: AffectedLine[] = affected.items.map((i) => ({
+      id: i.id,
+      lineNumber: i.lineNumber,
+      qty: toDecimal(i.qty.toString()),
+      subtotalPen: toDecimal(i.subtotalPen.toString()),
+      igvPen: toDecimal(i.igvPen.toString()),
+      totalPen: toDecimal(i.totalPen.toString()),
+      unitPricePen: i.unitPricePen.toString(),
+      description: i.description,
+      productId: i.productId,
+      unit: i.unit,
+      salesOrderItemId: i.salesOrderItemId,
+    }));
+
+    const reason = input.reason;
+    let lines: NoteLine[];
+    if (creditsQty(reason)) {
+      lines = qtyCreditLines(
+        affectedLines,
+        input.items && input.items.length > 0 ? input.items : null,
+        credited,
+        drafted,
+      );
+    } else if (reason === CreditNoteReason.DESCUENTO_ITEM) {
+      lines = priceCreditLines(affectedLines, input.prices ?? [], credited);
+    } else if (reason === CreditNoteReason.DESCUENTO_GLOBAL) {
+      lines = amountCreditLines(affectedLines, input.amountPen ?? '0', credited);
+    } else if (reason === CreditNoteReason.CORRECCION_DESCRIPCION) {
+      lines = zeroCreditLines(affectedLines, input.descriptions ?? []);
+    } else {
+      lines = zeroCreditLines(affectedLines, null);
+    }
+    if (lines.length === 0) {
+      throw new BadRequestException('No queda nada por acreditar en este comprobante');
+    }
+    if (
+      DISCOUNT_CREDIT_NOTE_REASONS.includes(reason) &&
+      lines.reduce((acc, l) => acc.plus(l.totalPen), new Decimal(0)).lt('0.01')
+    ) {
+      throw new BadRequestException('La rebaja no llega a un céntimo: revisa el precio o el monto');
+    }
+
+    const currentDue = effectiveDueDate(
+      affected.dueDate ? fromDateOnly(affected.dueDate) : null,
+      affected.creditNotes.map((n) => ({
+        creditNoteReason: n.creditNoteReason,
+        status: n.status,
+        dueDate: n.dueDate ? fromDateOnly(n.dueDate) : null,
+        issueDate: fromDateOnly(n.issueDate),
+        createdAt: n.createdAt.toISOString(),
+      })),
+    ).dueDate;
+
+    // cc52 (D-646): una NC de devolución solo devuelve lo despachado y aún no devuelto, y solo a mano.
+    if (isReturnCreditNoteReason(reason)) {
+      if (affected.origin !== FiscalDocumentOrigin.MANUAL) {
+        throw new BadRequestException(
+          'La devolución de mercadería se registra con una nota de crédito manual: este comprobante no es manual',
+        );
+      }
+      // En un paso, el registro lo comprueba con los despachos bloqueados: no hace falta dos veces.
+      if (mode === 'DRAFT') {
         await this.salesReturns.planForLines(
           tx,
           lines.map((l) => ({
@@ -1184,72 +1424,235 @@ export class InvoicingService {
           { affectedInvoiceId: affected.id, asOf: input.issueDate },
         );
       }
+    }
 
-      // D-169: la cabecera de la nota **suma sus propias líneas**, igual que la del
-      // comprobante. Recalcularla desde el unitario volvía a perder el importe copiado.
-      const totals = sumLineTotals(lines);
-      const serialized = serializeSalesTotals(totals);
-
-      const note = await tx.fiscalDocument.create({
-        data: {
-          docType: FiscalDocType.NOTA_CREDITO,
-          status: FiscalDocumentStatus.DRAFT,
-          customerId: affected.customerId,
-          salesOrderId: affected.salesOrderId,
-          affectedDocumentId: affected.id,
-          creditNoteReason: input.reason,
-          issueDate: toDateOnly(input.issueDate),
-          // Una nota de crédito no se cobra: ajusta el saldo del comprobante que afecta.
-          paymentTerms: 'CONTADO',
-          subtotalPen: serialized.subtotalPen,
-          igvPen: serialized.igvPen,
-          totalPen: serialized.totalPen,
-          notes: input.notes ?? null,
-          createdById: actor.id,
-          items: {
-            create: lines.map((l, i) => ({
-              lineNumber: i + 1,
-              productId: l.original.productId,
-              description: l.original.description,
-              qty: l.qty,
-              unit: l.original.unit,
-              unitPricePen: l.original.unitPricePen,
-              subtotalPen: l.subtotalPen,
-              igvPen: l.igvPen,
-              totalPen: l.totalPen,
-              salesOrderItemId: l.original.salesOrderItemId,
-              affectedItemId: l.original.id,
-            })),
-          },
-        },
-      });
-
-      // cc52 (cc50, D-638): la NC también en el «Historial» del comprobante y del pedido.
-      for (const target of [
-        { entity: 'fiscal_documents', entityId: note.id },
-        { entity: 'fiscal_documents', entityId: affected.id },
-        ...(affected.salesOrderId
-          ? [{ entity: 'sales_orders', entityId: affected.salesOrderId }]
-          : []),
-      ]) {
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'invoicing.credit-note.create',
-          ...target,
-          after: {
-            creditNoteId: note.id,
-            affects: affected.number,
-            reason: input.reason,
-            issueDate: input.issueDate,
-            totalPen: serialized.totalPen,
-            partial: (input.items?.length ?? 0) > 0,
-          },
-        });
+    // cc54 (D-657): el 13 cambia el vencimiento de una factura al crédito; el importe no cambia.
+    if (reason === CreditNoteReason.OTROS_AJUSTES) {
+      if (affected.docType !== FiscalDocType.FACTURA || affected.paymentTerms !== 'CREDITO') {
+        throw new BadRequestException(
+          'El vencimiento se corrige solo en una factura al crédito (SUNAT: motivo 13, errores 3259 y 3260)',
+        );
       }
-      return note.id;
+      const next = input.dueDate ?? '';
+      if (next < affectedDate) {
+        throw new BadRequestException(
+          `El vencimiento nuevo no puede ser anterior a la emisión del comprobante (${affectedDate})`,
+        );
+      }
+      if (next === currentDue) {
+        throw new BadRequestException(`El comprobante ya vence el ${next}: elige otra fecha`);
+      }
+    }
+
+    const replacement =
+      reason === CreditNoteReason.ANULACION_ERROR_RUC && input.replacement
+        ? await this.planReplacement(tx, affected, input.replacement)
+        : null;
+
+    const totals = isZeroAmountCreditNote(reason)
+      ? { subtotal: new Decimal(0), igv: new Decimal(0), total: new Decimal(0) }
+      : sumLineTotals(lines);
+    return { affected, lines, totals, dueDate: currentDue, replacement };
+  }
+
+  /**
+   * cc54 (D-655): lo que el reemplazo de un 02 exige, antes de escribir nada. El comprobante
+   * anulado no puede tener cobros (primero se anulan) ni otras notas; el cliente correcto tiene que
+   * poder recibir ese tipo de comprobante; el pedido no puede tener otros comprobantes del cliente
+   * anterior (se le cambia el cliente).
+   */
+  private async planReplacement(
+    tx: Prisma.TransactionClient,
+    affected: ReplacementSubject,
+    replacement: CreditNoteReplacementInput,
+  ): Promise<NonNullable<CreditNotePlan['replacement']>> {
+    const label = affected.number ?? 'El comprobante';
+    // `replaces_document_id` es único: un comprobante se reemplaza una sola vez.
+    const before = await tx.fiscalDocument.findFirst({
+      where: { replacesDocumentId: affected.id },
+      select: { number: true },
+    });
+    if (before) {
+      throw new BadRequestException(
+        `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}): un segundo 02 sobre el mismo comprobante no se registra`,
+      );
+    }
+    const draftBlock = await draftCreditNoteBlock(tx, affected.id, 'antes del 02');
+    if (draftBlock) throw new BadRequestException(draftBlock);
+    if (affected.payments.length > 0) {
+      throw new BadRequestException(
+        `${label} tiene cobros registrados: anúlalos primero y después registra la nota de crédito 02`,
+      );
+    }
+    if (affected.creditNotes.length > 0) {
+      throw new BadRequestException(
+        `${label} ya tiene notas de crédito vivas (${affected.creditNotes.map((n) => n.number ?? 'borrador').join(', ')}): el 02 reemplaza el comprobante entero`,
+      );
+    }
+    if (replacement.issueDate < fromDateOnly(affected.issueDate)) {
+      throw new BadRequestException(
+        `El comprobante de reemplazo no puede ser anterior al que reemplaza (${fromDateOnly(affected.issueDate)})`,
+      );
+    }
+    const customer = await tx.customer.findUnique({ where: { id: replacement.customerId } });
+    if (!customer) throw new NotFoundException('Cliente del reemplazo no encontrado');
+    if (!customer.isActive)
+      throw new BadRequestException('El cliente del reemplazo está desactivado');
+    if (customer.id === affected.customerId) {
+      throw new BadRequestException(
+        'El reemplazo es del mismo cliente: si no hubo error de cliente, usa «Anular» (01)',
+      );
+    }
+    if (customer.isSystem && affected.docType !== FiscalDocType.BOLETA) {
+      throw new BadRequestException(
+        'Al cliente "público en general" solo se le emiten boletas: elige un cliente identificado',
+      );
+    }
+    if (affected.docType === FiscalDocType.FACTURA && customer.docType !== DocType.RUC) {
+      throw new BadRequestException(
+        'El reemplazo de una factura va a un cliente con RUC; para este cliente corresponde una boleta',
+      );
+    }
+    const number = fiscalDocumentNumber(replacement.series, replacement.correlative);
+    const clash = await tx.fiscalDocument.findFirst({
+      where: { number, archivedAt: null },
+      select: { id: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        `Ya hay un comprobante registrado con el número ${number}: revisa la serie y el correlativo del reemplazo`,
+      );
+    }
+    if (affected.salesOrderId) {
+      if (affected.salesOrder?.status === 'CANCELLED') {
+        throw new BadRequestException(
+          `El pedido ${salesOrderCode(affected.salesOrder.seq)} está anulado: el reemplazo no tiene dónde ir`,
+        );
+      }
+      const others = await tx.fiscalDocument.findMany({
+        where: {
+          salesOrderId: affected.salesOrderId,
+          id: { not: affected.id },
+          // Las guías de remisión también llevan al cliente anterior.
+          docType: {
+            in: [
+              FiscalDocType.FACTURA,
+              FiscalDocType.BOLETA,
+              FiscalDocType.GUIA_REMISION_REMITENTE,
+            ],
+          },
+          status: { in: [...STANDING_DOCUMENT_STATUSES] },
+          archivedAt: null,
+        },
+        select: { number: true },
+      });
+      if (others.length > 0) {
+        throw new BadRequestException(
+          `El pedido tiene otros comprobantes o guías del cliente anterior (${others.map((o) => o.number ?? 'borrador').join(', ')}): no se le puede cambiar el cliente`,
+        );
+      }
+    }
+    return {
+      customerId: customer.id,
+      customerName: customer.name,
+      number,
+      series: replacement.series,
+      correlative: replacement.correlative,
+      issueDate: replacement.issueDate,
+    };
+  }
+
+  /** Escribe la nota (borrador) y su constancia. Devuelve su id. */
+  private async writeCreditNote(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    plan: CreditNotePlan,
+    input: CreateCreditNoteInput,
+  ): Promise<string> {
+    const { affected, lines } = plan;
+    const serialized = serializeSalesTotals(plan.totals);
+    const note = await tx.fiscalDocument.create({
+      data: {
+        docType: FiscalDocType.NOTA_CREDITO,
+        status: FiscalDocumentStatus.DRAFT,
+        customerId: affected.customerId,
+        salesOrderId: affected.salesOrderId,
+        affectedDocumentId: affected.id,
+        creditNoteReason: input.reason,
+        issueDate: toDateOnly(input.issueDate),
+        // Una nota de crédito no se cobra: ajusta el saldo del comprobante que afecta.
+        paymentTerms: 'CONTADO',
+        // cc54 (D-657): el 13 declara acá el vencimiento nuevo del afectado (`effectiveDueDate`).
+        dueDate:
+          input.reason === CreditNoteReason.OTROS_AJUSTES && input.dueDate
+            ? toDateOnly(input.dueDate)
+            : null,
+        subtotalPen: serialized.subtotalPen,
+        igvPen: serialized.igvPen,
+        totalPen: serialized.totalPen,
+        notes: input.notes ?? null,
+        createdById: actor.id,
+        items: {
+          create: lines.map((l, i) => ({
+            lineNumber: i + 1,
+            productId: l.original.productId,
+            description: l.description,
+            qty: l.qty,
+            unit: l.original.unit,
+            unitPricePen: l.unitPricePen,
+            subtotalPen: l.subtotalPen,
+            igvPen: l.igvPen,
+            totalPen: l.totalPen,
+            salesOrderItemId: l.original.salesOrderItemId,
+            affectedItemId: l.original.id,
+          })),
+        },
+      },
     });
 
-    return this.findOne(id);
+    // cc52 (cc50, D-638): la NC también en el «Historial» del comprobante y del pedido.
+    const after = {
+      creditNoteId: note.id,
+      affects: affected.number,
+      reason: input.reason,
+      sunatCode: CREDIT_NOTE_REASON_SUNAT_CODE[input.reason],
+      issueDate: input.issueDate,
+      totalPen: serialized.totalPen,
+      partial: (input.items?.length ?? 0) > 0,
+      ...(input.reason === CreditNoteReason.OTROS_AJUSTES
+        ? { dueDateBefore: plan.dueDate, dueDateAfter: input.dueDate ?? null }
+        : {}),
+      ...(input.reason === CreditNoteReason.CORRECCION_DESCRIPCION
+        ? {
+            corrected: lines.map((l) => ({
+              line: l.original.lineNumber,
+              before: l.original.description,
+              after: l.description,
+            })),
+          }
+        : {}),
+      ...(plan.replacement
+        ? {
+            replacement: plan.replacement.number,
+            replacementCustomer: plan.replacement.customerName,
+          }
+        : {}),
+    };
+    for (const target of [
+      { entity: 'fiscal_documents', entityId: note.id },
+      { entity: 'fiscal_documents', entityId: affected.id },
+      ...(affected.salesOrderId
+        ? [{ entity: 'sales_orders', entityId: affected.salesOrderId }]
+        : []),
+    ]) {
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.credit-note.create',
+        ...target,
+        after,
+      });
+    }
+    return note.id;
   }
 
   /**
@@ -1275,108 +1678,303 @@ export class InvoicingService {
     // El mismo control que `send` y `retry`: cerrar un borrador ajeno como comprobante manual
     // es igual de irreversible que emitirlo, y después solo un ADMINISTRADOR puede anularlo.
     await this.assertOwnership(actor, id, 'registrarlo como manual');
+    await this.prisma.$transaction(
+      (tx) => this.registerManualInTx(tx, actor, id, input, null),
+      KARDEX_TX_OPTIONS,
+    );
+    return this.findOne(id);
+  }
 
-    await this.prisma.$transaction(async (tx) => {
-      const rows = await this.lockWithAffected(tx, id);
-      if (rows.length === 0) throw new NotFoundException('Comprobante no encontrado');
-      const document = await tx.fiscalDocument.findUniqueOrThrow({
-        where: { id },
-        include: {
-          items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
-          affectedDocument: {
-            select: { origin: true, number: true, status: true, archivedAt: true },
+  /**
+   * El registro como manual dentro de la transacción del llamador: el de un borrador (dos pasos) y
+   * el de la NC en un paso (D-660). Una NC que devuelve mercadería (01, 06, 07) genera su devolución;
+   * un 02, su comprobante de reemplazo (D-655).
+   */
+  private async registerManualInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    id: string,
+    input: RegisterManualInput,
+    replacement: CreditNoteReplacementInput | null,
+  ): Promise<void> {
+    const rows = await this.lockWithAffected(tx, id);
+    if (rows.length === 0) throw new NotFoundException('Comprobante no encontrado');
+    const document = await tx.fiscalDocument.findUniqueOrThrow({
+      where: { id },
+      include: {
+        items: {
+          select: {
+            id: true,
+            qty: true,
+            totalPen: true,
+            salesOrderItemId: true,
+            affectedItemId: true,
           },
         },
-      });
+        affectedDocument: {
+          select: { id: true, origin: true, number: true, status: true, archivedAt: true },
+        },
+      },
+    });
 
-      if (document.status !== FiscalDocumentStatus.DRAFT) {
-        throw new ConflictException(
-          document.status === FiscalDocumentStatus.REJECTED
-            ? 'Este comprobante fue rechazado: corrígelo para registrar uno nuevo'
-            : 'El comprobante ya dejó de ser un borrador',
-        );
-      }
-      if (document.items.length === 0) {
-        throw new BadRequestException('Un comprobante sin líneas no se registra');
-      }
-      // La simétrica de la guarda de `assignInTx`: la NC de un comprobante electrónico se
-      // emite, no se registra a mano — si no, SUNAT se queda sin la nota de crédito de un
-      // comprobante que sí le mandamos.
-      if (
-        document.affectedDocument !== null &&
-        document.affectedDocument.origin !== FiscalDocumentOrigin.MANUAL
-      ) {
-        throw new BadRequestException(
-          `${document.affectedDocument.number ?? 'El comprobante afectado'} no es manual: su nota de crédito se emite, no se registra a mano`,
-        );
-      }
-      // cc33 N3: el afectado, ya bloqueado junto con la nota, tiene que seguir aceptado y vigente.
-      if (document.affectedDocument !== null)
-        assertAffectedStillCreditable(document.affectedDocument);
+    if (document.status !== FiscalDocumentStatus.DRAFT) {
+      throw new ConflictException(
+        document.status === FiscalDocumentStatus.REJECTED
+          ? 'Este comprobante fue rechazado: corrígelo para registrar uno nuevo'
+          : 'El comprobante ya dejó de ser un borrador',
+      );
+    }
+    if (document.items.length === 0) {
+      throw new BadRequestException('Un comprobante sin líneas no se registra');
+    }
+    // La simétrica de la guarda de `assignInTx`: la NC de un comprobante electrónico se
+    // emite, no se registra a mano — si no, SUNAT se queda sin la nota de crédito de un
+    // comprobante que sí le mandamos.
+    if (
+      document.affectedDocument !== null &&
+      document.affectedDocument.origin !== FiscalDocumentOrigin.MANUAL
+    ) {
+      throw new BadRequestException(
+        `${document.affectedDocument.number ?? 'El comprobante afectado'} no es manual: su nota de crédito se emite, no se registra a mano`,
+      );
+    }
+    // cc33 N3: el afectado, ya bloqueado junto con la nota, tiene que seguir aceptado y vigente.
+    if (document.affectedDocument !== null)
+      assertAffectedStillCreditable(document.affectedDocument);
+    const isNote = document.docType === FiscalDocType.NOTA_CREDITO;
+    // cc54 (D-655): el 02 sin su reemplazo no se registra (un borrador viejo no lo guarda).
+    if (
+      isNote &&
+      document.creditNoteReason === CreditNoteReason.ANULACION_ERROR_RUC &&
+      !replacement
+    ) {
+      throw new BadRequestException(
+        'La anulación por error en el RUC (02) se registra con su comprobante de reemplazo: hazla desde «Nota de crédito»',
+      );
+    }
 
-      // El mismo último control que `send`: dos borradores sobre la misma línea pasan los dos
-      // la validación de creación, y este es el punto en el que todavía se puede decir que no.
-      // cc30 (D-471/D-474, matriz F9): con el pedido tomado detrás del comprobante, lo facturado
-      // del pedido se lee sin que una edición o una anulación del pedido cambie en el medio.
-      // cc52 (D-646): una NC de devolución toma además sus despachos, que van **antes** que el
-      // pedido en el orden único (regla dura 17).
-      const returning =
-        document.docType === FiscalDocType.NOTA_CREDITO &&
-        isReturnCreditNoteReason(document.creditNoteReason);
-      const returnDispatchIds = returning
-        ? await this.salesReturns.dispatchIdsForCreditNote(tx, id)
+    // El mismo último control que `send`: dos borradores sobre la misma línea pasan los dos
+    // la validación de creación, y este es el punto en el que todavía se puede decir que no.
+    // cc30 (D-471/D-474, matriz F9): con el pedido tomado detrás del comprobante, lo facturado
+    // del pedido se lee sin que una edición o una anulación del pedido cambie en el medio.
+    // cc52 (D-646): una NC de devolución toma además sus despachos, que van **antes** que el
+    // pedido en el orden único (regla dura 17). cc54: también el 01 (D-656) y los despachos que el
+    // 02 lleva al reemplazo (D-655).
+    const returning = isNote && returnsStock(document.creditNoteReason);
+    const returnDispatchIds = returning
+      ? await this.salesReturns.dispatchIdsForCreditNote(tx, id)
+      : [];
+    const movedDispatchIds =
+      replacement && document.affectedDocument
+        ? (
+            await tx.dispatch.findMany({
+              where: { invoiceId: document.affectedDocument.id },
+              select: { id: true },
+            })
+          ).map((d) => d.id)
         : [];
-      await lockDocuments(tx, {
-        ...(returning ? { dispatches: returnDispatchIds } : {}),
-        salesOrders: [document.salesOrderId],
-      });
-      // Revisión de cc52 (P2): la fecha de la NC es la del reingreso al kardex; quien la registra
-      // tiene que poder fechar así (solo ADMINISTRADOR fecha otro día que hoy, D-124/D-133).
-      if (returning) this.operationDate.assertIssueDate(actor, fromDateOnly(document.issueDate));
-      await this.assertStillAvailable(tx, document);
+    await lockDocuments(tx, {
+      dispatches: [...new Set([...returnDispatchIds, ...movedDispatchIds])],
+      salesOrders: [document.salesOrderId],
+    });
+    // Revisión de cc52 (P2): la fecha de la NC es la del reingreso al kardex; quien la registra
+    // tiene que poder fechar así (solo ADMINISTRADOR fecha otro día que hoy, D-124/D-133).
+    if (returning) this.operationDate.assertIssueDate(actor, fromDateOnly(document.issueDate));
+    await this.assertStillAvailable(tx, document);
 
-      const number = fiscalDocumentNumber(input.series, input.correlative);
-      // El índice único parcial de `number` ya lo impide en la base; esto es para que el
-      // usuario lea el motivo en vez de un choque de constraint.
-      const clash = await tx.fiscalDocument.findFirst({
-        where: { number, archivedAt: null, id: { not: id } },
-        select: { id: true, status: true },
-      });
-      if (clash) {
+    const number = fiscalDocumentNumber(input.series, input.correlative);
+    // El índice único parcial de `number` ya lo impide en la base; esto es para que el
+    // usuario lea el motivo en vez de un choque de constraint.
+    const clash = await tx.fiscalDocument.findFirst({
+      where: { number, archivedAt: null, id: { not: id } },
+      select: { id: true, status: true },
+    });
+    if (clash) {
+      throw new ConflictException(
+        `Ya hay un comprobante registrado con el número ${number}: revisa la serie y el correlativo`,
+      );
+    }
+
+    // El `findFirst` de arriba es una lectura sin lock sobre **otra** fila: dos registros
+    // simultáneos con el mismo número lo pasan los dos y el segundo choca contra el índice
+    // único parcial. Se traduce acá para que el usuario lea el motivo y no un 500.
+    try {
+      await this.applyManualNumber(tx, id, input, number, document.status, document.origin, actor);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ConflictException(
           `Ya hay un comprobante registrado con el número ${number}: revisa la serie y el correlativo`,
         );
       }
+      throw err;
+    }
+    // cc52 (D-646): la NC de devolución, ya aceptada, genera su devolución en la misma
+    // transacción: si el reingreso no se puede, la NC tampoco queda registrada.
+    if (returning) {
+      await this.salesReturns.createForCreditNoteInTx(tx, actor, id, returnDispatchIds);
+    }
+    if (replacement && document.affectedDocument) {
+      await this.applyReplacementInTx(tx, actor, id, document.affectedDocument.id, replacement);
+    }
+  }
 
-      // El `findFirst` de arriba es una lectura sin lock sobre **otra** fila: dos registros
-      // simultáneos con el mismo número lo pasan los dos y el segundo choca contra el índice
-      // único parcial. Se traduce acá para que el usuario lea el motivo y no un 500.
-      try {
-        await this.applyManualNumber(
-          tx,
-          id,
-          input,
-          number,
-          document.status,
-          document.origin,
-          actor,
-        );
-      } catch (err) {
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-          throw new ConflictException(
-            `Ya hay un comprobante registrado con el número ${number}: revisa la serie y el correlativo`,
+  /**
+   * cc54 (D-655): el comprobante de reemplazo de un 02, ya registrado en papel al cliente correcto:
+   * las **mismas líneas e importes** que el anulado, en el mismo pedido, sin una salida nueva (el
+   * despacho pasa del anulado al reemplazo). El pedido cambia de cliente. Todo con su constancia.
+   */
+  private async applyReplacementInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    noteId: string,
+    affectedId: string,
+    replacement: CreditNoteReplacementInput,
+  ): Promise<void> {
+    const affected = await tx.fiscalDocument.findUniqueOrThrow({
+      where: { id: affectedId },
+      include: { items: { orderBy: { lineNumber: 'asc' } }, customer: { select: { name: true } } },
+    });
+    const plan = await this.planReplacement(
+      tx,
+      {
+        ...affected,
+        payments: await tx.customerPayment.findMany({
+          where: { documentId: affectedId, reversedAt: null },
+          select: { amountPen: true },
+        }),
+        // La nota que se está registrando ya acredita al afectado: el control de «otras notas» la
+        // excluye (lo hizo `planCreditNote` antes de crearla).
+        creditNotes: [],
+        salesOrder: affected.salesOrderId
+          ? await tx.salesOrder.findUnique({
+              where: { id: affected.salesOrderId },
+              select: { sellerId: true, status: true, seq: true },
+            })
+          : null,
+      },
+      replacement,
+    );
+    // El plazo del papel se conserva: el reemplazo vence los mismos días después de su emisión.
+    const dueDate =
+      affected.dueDate === null
+        ? null
+        : shiftDate(
+            fromDateOnly(affected.dueDate),
+            fromDateOnly(affected.issueDate),
+            plan.issueDate,
           );
-        }
-        throw err;
+    let created: { id: string };
+    try {
+      created = await tx.fiscalDocument.create({
+        data: {
+          docType: affected.docType,
+          status: FiscalDocumentStatus.ACCEPTED,
+          origin: FiscalDocumentOrigin.MANUAL,
+          customerId: plan.customerId,
+          salesOrderId: affected.salesOrderId,
+          replacesDocumentId: affected.id,
+          correlative: plan.correlative,
+          number: plan.number,
+          issueDate: toDateOnly(plan.issueDate),
+          paymentTerms: affected.paymentTerms,
+          dueDate: dueDate === null ? null : toDateOnly(dueDate),
+          subtotalPen: affected.subtotalPen,
+          igvPen: affected.igvPen,
+          totalPen: affected.totalPen,
+          detractionCode: affected.detractionCode,
+          detractionPct: affected.detractionPct,
+          detractionAmountPen: affected.detractionAmountPen,
+          notes: `Reemplaza a ${affected.number ?? ''} (nota de crédito 02 por error en el RUC)`,
+          createdById: actor.id,
+          issuedAt: new Date(),
+          acceptedAt: new Date(),
+          items: {
+            create: affected.items.map((i) => ({
+              lineNumber: i.lineNumber,
+              productId: i.productId,
+              description: i.description,
+              qty: i.qty,
+              unit: i.unit,
+              unitPricePen: i.unitPricePen,
+              subtotalPen: i.subtotalPen,
+              igvPen: i.igvPen,
+              totalPen: i.totalPen,
+              salesOrderItemId: i.salesOrderItemId,
+            })),
+          },
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException(
+          `Ya hay un comprobante registrado con el número ${plan.number}: revisa la serie y el correlativo del reemplazo`,
+        );
       }
-      // cc52 (D-646): la NC de devolución, ya aceptada, genera su devolución en la misma
-      // transacción: si el reingreso no se puede, la NC tampoco queda registrada.
-      if (returning) {
-        await this.salesReturns.createForCreditNoteInTx(tx, actor, id, returnDispatchIds);
-      }
-    }, KARDEX_TX_OPTIONS);
-
-    return this.findOne(id);
+      throw err;
+    }
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.document.register-manual',
+      entity: 'fiscal_documents',
+      entityId: created.id,
+      after: {
+        status: FiscalDocumentStatus.ACCEPTED,
+        origin: FiscalDocumentOrigin.MANUAL,
+        number: plan.number,
+        replaces: affected.number,
+        customer: plan.customerName,
+      },
+    });
+    // El despacho declarado pasa al reemplazo: la mercadería no se mueve (D-205, por la puerta
+    // del kardex, la única que escribe `dispatches.invoice_id`).
+    const moved = await this.inventory.moveInvoiceDispatches(tx, affected.id, created.id);
+    let orderCode: string | null = null;
+    if (affected.salesOrderId) {
+      const order = await tx.salesOrder.update({
+        where: { id: affected.salesOrderId },
+        data: { customerId: plan.customerId },
+        select: { seq: true },
+      });
+      orderCode = salesOrderCode(order.seq);
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.order.customer',
+        entity: 'sales_orders',
+        entityId: affected.salesOrderId,
+        before: { customerId: affected.customerId, customer: affected.customer.name },
+        after: {
+          customerId: plan.customerId,
+          customer: plan.customerName,
+          reason: `Nota de crédito 02 de ${affected.number ?? ''}: el comprobante se reemplaza por ${plan.number}`,
+        },
+      });
+    }
+    const detail = {
+      creditNoteId: noteId,
+      replaced: affected.number,
+      replacementId: created.id,
+      replacement: plan.number,
+      customerBefore: affected.customer.name,
+      customerAfter: plan.customerName,
+      salesOrder: orderCode,
+      dispatchesMoved: moved,
+    };
+    for (const target of [
+      { entity: 'fiscal_documents', entityId: noteId },
+      { entity: 'fiscal_documents', entityId: affected.id },
+      { entity: 'fiscal_documents', entityId: created.id },
+      ...(affected.salesOrderId
+        ? [{ entity: 'sales_orders', entityId: affected.salesOrderId }]
+        : []),
+    ]) {
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.credit-note.replacement',
+        ...target,
+        after: detail,
+      });
+    }
   }
 
   /** El cierre del borrador como manual, aparte para que su `P2002` se pueda distinguir. */
@@ -1960,7 +2558,15 @@ export class InvoicingService {
     const document = await tx.fiscalDocument.findUniqueOrThrow({
       where: { id },
       include: {
-        items: { select: { id: true, qty: true, salesOrderItemId: true, affectedItemId: true } },
+        items: {
+          select: {
+            id: true,
+            qty: true,
+            totalPen: true,
+            salesOrderItemId: true,
+            affectedItemId: true,
+          },
+        },
         affectedDocument: {
           select: { docType: true, origin: true, number: true, status: true, archivedAt: true },
         },
@@ -2046,8 +2652,11 @@ export class InvoicingService {
       // `select` apagaría en silencio la comprobación del pedido.
       salesOrderId: string | null;
       customerId: string;
+      /** cc54 (D-663): una NC de cantidad se mide en unidades; las demás, en importe. */
+      creditNoteReason: string | null;
       items: {
         qty: Prisma.Decimal;
+        totalPen: Prisma.Decimal;
         salesOrderItemId: string | null;
         affectedItemId: string | null;
       }[];
@@ -2060,39 +2669,47 @@ export class InvoicingService {
       if (ids.length === 0) return;
       const originals = await tx.fiscalDocumentItem.findMany({
         where: { id: { in: ids } },
-        select: { id: true, lineNumber: true, qty: true },
+        select: { id: true, lineNumber: true, qty: true, totalPen: true },
       });
-      const credited = await tx.fiscalDocumentItem.groupBy({
-        by: ['affectedItemId'],
+      // cc54 (D-663): la cantidad la consumen solo los motivos de cantidad; el importe, todos.
+      const others = await tx.fiscalDocumentItem.findMany({
         where: {
           affectedItemId: { in: ids },
           documentId: { not: document.id },
           document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
         },
-        _sum: { qty: true },
+        select: {
+          affectedItemId: true,
+          qty: true,
+          subtotalPen: true,
+          igvPen: true,
+          totalPen: true,
+          document: { select: { creditNoteReason: true } },
+        },
       });
-      const creditedById = new Map(
-        credited.flatMap((r) =>
-          r.affectedItemId === null
-            ? []
-            : [
-                [r.affectedItemId, toDecimal((r._sum.qty ?? new Prisma.Decimal(0)).toString())] as [
-                  string,
-                  Decimal,
-                ],
-              ],
-        ),
-      );
+      const done = creditsByLine(others, creditsQty);
+      const byQty = creditsQty(document.creditNoteReason);
       for (const item of document.items) {
         if (!item.affectedItemId) continue;
         const original = originals.find((o) => o.id === item.affectedItemId);
         if (!original) continue;
-        const available = toDecimal(original.qty.toString()).minus(
-          creditedById.get(original.id) ?? new Decimal(0),
-        );
-        if (toDecimal(item.qty.toString()).gt(available)) {
+        const c = done.get(original.id);
+        if (byQty) {
+          const available = toDecimal(original.qty.toString()).minus(c?.qty ?? new Decimal(0));
+          if (toDecimal(item.qty.toString()).gt(available)) {
+            throw new ConflictException(
+              `Otra nota de crédito ya acreditó la línea ${original.lineNumber}: quedan ${available.toFixed(3)}. Revisa este borrador antes de emitirlo.`,
+            );
+          }
+        }
+        // Revisiones de cc54-B: el importe para todo motivo (un borrador de devolución y una rebaja
+        // registrada antes no pueden acreditar juntas más de lo que vale la línea). Un céntimo de
+        // holgura: la parte que cierra se recalcula si el resto no cuadra (D-265).
+        const credited = c ? c.byQty.total.plus(c.byAmount.total) : new Decimal(0);
+        const left = toDecimal(original.totalPen.toString()).minus(credited);
+        if (toDecimal(item.totalPen.toString()).gt(left.plus('0.01'))) {
           throw new ConflictException(
-            `Otra nota de crédito ya acreditó la línea ${original.lineNumber}: quedan ${available.toFixed(3)}. Revisa este borrador antes de emitirlo.`,
+            `Otra nota de crédito ya acreditó la línea ${original.lineNumber}: le quedan S/ ${left.toFixed(2)}. Revisa esta nota antes de registrarla.`,
           );
         }
       }
@@ -3632,7 +4249,12 @@ export class InvoicingService {
       by: ['affectedItemId'],
       where: {
         affectedItemId: { in: itemIds },
-        document: { status: { in: LIVE_DOCUMENT_STATUSES }, archivedAt: null },
+        // cc54 (D-663): «acreditado» en cantidad: solo los motivos de cantidad (una rebaja no).
+        document: {
+          status: { in: LIVE_DOCUMENT_STATUSES },
+          archivedAt: null,
+          creditNoteReason: { in: [...QTY_CREDIT_NOTE_REASONS] },
+        },
       },
       _sum: { qty: true },
     });
@@ -3754,7 +4376,27 @@ export class InvoicingService {
       paidPen: paid,
       creditedPen: credited,
     });
-    const dueDate = row.dueDate ? row.dueDate.toISOString().slice(0, 10) : null;
+    // cc54 (D-657): el vencimiento vigente: el de la NC 13 viva más reciente, si hay.
+    const due = effectiveDueDate(
+      row.dueDate ? row.dueDate.toISOString().slice(0, 10) : null,
+      row.creditNotes.map((n) => ({
+        creditNoteReason: n.creditNoteReason,
+        status: n.status,
+        dueDate: n.dueDate ? n.dueDate.toISOString().slice(0, 10) : null,
+        issueDate: n.issueDate.toISOString().slice(0, 10),
+        createdAt: n.createdAt.toISOString(),
+      })),
+    );
+    const dueDate = due.dueDate;
+    const dueNote = due.changedByNote
+      ? (row.creditNotes.find(
+          (n) =>
+            n.creditNoteReason === CreditNoteReason.OTROS_AJUSTES &&
+            LIVE_DOCUMENT_STATUSES.includes(n.status) &&
+            n.dueDate?.toISOString().slice(0, 10) === dueDate,
+        )?.number ?? null)
+      : null;
+    const corrected = correctedDescriptions(row.creditNotes);
     const issueDate = row.issueDate.toISOString().slice(0, 10);
 
     return {
@@ -3787,6 +4429,7 @@ export class InvoicingService {
       issueDate,
       paymentTerms: row.paymentTerms,
       dueDate,
+      dueDateChangedByNumber: dueNote,
       subtotalPen: row.subtotalPen.toFixed(4),
       igvPen: row.igvPen.toFixed(4),
       totalPen: row.totalPen.toFixed(4),
@@ -3852,6 +4495,8 @@ export class InvoicingService {
         // cc51 (D-641): lo completa `withAtCostMarks` (el detalle); el listado no lo muestra.
         atCostReason: null,
         atCostNote: null,
+        correctedDescription: corrected.get(i.id)?.description ?? null,
+        correctedByNumber: corrected.get(i.id)?.number ?? null,
       })),
       payments: row.payments.map((p) => ({
         id: p.id,
@@ -3870,6 +4515,8 @@ export class InvoicingService {
         status: n.status,
         issueDate: n.issueDate.toISOString().slice(0, 10),
         totalPen: n.totalPen.toFixed(4),
+        creditNoteReason: n.creditNoteReason,
+        dueDate: n.dueDate ? n.dueDate.toISOString().slice(0, 10) : null,
         salesReturn: n.salesReturn
           ? {
               id: n.salesReturn.id,
@@ -3898,6 +4545,30 @@ export class InvoicingService {
       })),
     };
   }
+}
+
+/**
+ * cc54 (D-654): por línea del comprobante, la descripción de la NC 03 viva más reciente que la
+ * corrige (las NC vienen en orden de creación). Solo el detalle trae las líneas de las NC.
+ */
+function correctedDescriptions(
+  notes: readonly {
+    number: string | null;
+    status: FiscalDocumentStatus;
+    creditNoteReason: string | null;
+    items?: { affectedItemId: string | null; description: string }[];
+  }[],
+): Map<string, { description: string; number: string | null }> {
+  const out = new Map<string, { description: string; number: string | null }>();
+  for (const n of notes) {
+    if (n.creditNoteReason !== CreditNoteReason.CORRECCION_DESCRIPCION) continue;
+    if (!LIVE_DOCUMENT_STATUSES.includes(n.status)) continue;
+    for (const i of n.items ?? []) {
+      if (i.affectedItemId)
+        out.set(i.affectedItemId, { description: i.description, number: n.number });
+    }
+  }
+  return out;
 }
 
 /** cc51 (D-641): la marca «A costo» de la línea de pedido, en la línea del comprobante que la factura. */

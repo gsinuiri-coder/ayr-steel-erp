@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
-  CREDIT_NOTE_KIND_REASONS,
+  CREDIT_NOTE_REASONS,
   Decimal,
+  isReturnCreditNoteReason,
+  QTY_CREDIT_NOTE_REASONS,
   LIVE_DOCUMENT_STATUSES,
   NO_COST_REPORT_LINES,
   salesOrderCode,
@@ -202,7 +204,8 @@ export class SalesMarginService {
         AND fd."status"::text IN (${live})
         AND (fd."issue_date" < ${from}::date OR fd."issue_date" > ${to}::date)
         -- cc52 (D-647): una NC de descuento (sin costo) o de devolución (con su propio costo) no
-        -- vuelve «no comparable» al pedido en el otro periodo: su efecto es solo del suyo.
+        -- vuelve «no comparable» al pedido en el otro periodo: su efecto es solo del suyo. cc54
+        -- (D-663): toda NC que no exige devolución declara costo cero si no generó una.
         AND NOT (
           fd."doc_type" = 'NOTA_CREDITO'
           AND (
@@ -361,7 +364,10 @@ export class SalesMarginService {
       LEFT JOIN (
         SELECT
           fdi."sales_order_item_id" AS "id",
-          SUM(CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."qty" ELSE fdi."qty" END) AS "qty"
+          -- cc54 (D-663): una NC resta unidades solo si su motivo acredita cantidad.
+          SUM(CASE WHEN fd."doc_type" = 'NOTA_CREDITO'
+            THEN (CASE WHEN fd."credit_note_reason"::text = ANY(${QTY_REASONS}::text[]) THEN -fdi."qty" ELSE 0 END)
+            ELSE fdi."qty" END) AS "qty"
         FROM "fiscal_document_items" fdi
         JOIN "fiscal_documents" fd ON fd."id" = fdi."document_id"
         WHERE fd."archived_at" IS NULL
@@ -717,8 +723,19 @@ const ZERO = new Decimal(0);
  * cc52 (D-647): las NC que **declaran su costo**: las de descuento o corrección (costo cero: no
  * mueven mercadería) y las de devolución (el reingreso, imputado a la NC). Su efecto cae entero
  * en su periodo y no vuelven «no comparable» al pedido en el periodo del comprobante.
+ *
+ * cc54 (D-663): con el motivo decidiendo el efecto, **toda** NC declara su costo. Las que exigen
+ * devolución (06, 07) lo declaran con su DEV-; las demás, con la suya si la generaron (01, D-656) o
+ * con cero: 02 pasa el despacho al reemplazo (D-655), 03 y 13 no mueven importe (D-654, D-657), 04
+ * y 05 no mueven mercadería.
  */
-const DISCOUNT_CREDIT_REASONS: string[] = [...CREDIT_NOTE_KIND_REASONS.DISCOUNT];
+/** cc54 (D-663): los motivos que acreditan cantidad. */
+const QTY_REASONS: string[] = [...QTY_CREDIT_NOTE_REASONS];
+const DISCOUNT_CREDIT_REASONS: string[] = CREDIT_NOTE_REASONS.filter(
+  // El 01 declara costo solo con su DEV- (la cláusula de devoluciones); sin ella, como antes: la
+  // anulación del mostrador y la manual que revierte el despacho a mano no son «costo cero».
+  (r) => !isReturnCreditNoteReason(r) && r !== 'ANULACION_OPERACION',
+);
 /** Clave interna del grupo sin línea de negocio. No es un código de línea y no se serializa. */
 const SIN_LINEA = '__sin_linea__';
 

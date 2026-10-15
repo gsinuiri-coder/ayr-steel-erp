@@ -10,6 +10,7 @@ import {
   type DocumentProfitLineStatus,
   type DocumentProfitabilityDto,
   type SalesMaterialKind,
+  QTY_CREDIT_NOTE_REASONS,
 } from '@ayr/shared';
 import {
   addAcc,
@@ -38,12 +39,10 @@ const ONE = new Decimal(1);
  * facturado: la anulación de la operación o por error en el RUC y las devoluciones. El descuento
  * global o por ítem, la corrección de la descripción y los otros ajustes solo restan venta.
  */
-export const QTY_REDUCING_CREDIT_REASONS: ReadonlySet<string> = new Set([
-  'ANULACION_OPERACION',
-  'ANULACION_ERROR_RUC',
-  'DEVOLUCION_TOTAL',
-  'DEVOLUCION_ITEM',
-]);
+export const QTY_REDUCING_CREDIT_REASONS: ReadonlySet<string> = new Set<string>(
+  // cc54 (D-663): la misma lista que el resto del sistema.
+  QTY_CREDIT_NOTE_REASONS,
+);
 
 /** Lo despachado y costeado de una línea de pedido en los despachos **declarados** del comprobante. */
 export interface DeclaredSale {
@@ -70,6 +69,11 @@ export interface AssembleProfitabilityInput {
   declared: Map<string, DeclaredSale>;
   /** El comprobante tiene al menos un despacho declarado vigente. */
   hasDeclaredDispatch: boolean;
+  /**
+   * cc54 (D-663): el costo efectivo de lo devuelto (DEV- vigente) por línea de NC, para las líneas
+   * de nota de crédito fuera del motor. Sin entrada, la línea no devolvió nada.
+   */
+  returnCostByItem?: Map<string, Decimal>;
 }
 
 /** Lo que suma una fila o un total, y si sus cocientes por kilo o por metro tienen sentido. */
@@ -356,16 +360,17 @@ function dispatchLine(
 }
 
 /**
- * Una línea de nota de crédito que no es de Coberturas Aluzinc: **resta su venta con costo 0**
- * (revisión C06, P1). Si hubo devolución, el costo de lo devuelto ya volvió por la reversa del
- * despacho y el comprobante lo refleja; si fue un descuento, no hay costo que devolver. En los
- * dos casos, restar la venta y nada de costo es lo que hace verdadero el neto.
+ * Una línea de nota de crédito que no es de Coberturas Aluzinc: **resta su venta** (revisión C06,
+ * P1). cc54 (D-663): si la NC devolvió mercadería (DEV-, D-646/D-656), resta además el costo de lo
+ * devuelto, a su costo efectivo; antes quedaba el costo entero del despacho contra la venta neta.
+ * Una rebaja o una corrección no movió mercadería: costo cero.
  */
-function creditLine(row: DocumentLineRow): LineResult {
+function creditLine(row: DocumentLineRow, returnCost: Decimal = ZERO): LineResult {
   const sales = toDecimal(row.subtotal_pen.toString());
   const qty = toDecimal(row.qty.toString());
+  const returned = returnCost.gt(0);
   const sum: Sum = {
-    acc: { ...emptyAcc(), sales, qty, unit: row.unit },
+    acc: { ...emptyAcc(), sales, qty, unit: row.unit, cost: returnCost.negated() },
     kg: false,
     meters: false,
     any: true,
@@ -376,8 +381,10 @@ function creditLine(row: DocumentLineRow): LineResult {
     dto: finish(row, sum, {
       costBasis: null,
       costBasisDetail: null,
-      status: 'NO_COST',
-      note: 'Nota de crédito: resta la venta; el costo de lo devuelto vuelve por la reversa del despacho',
+      status: returned ? 'COMPLETE' : 'NO_COST',
+      note: returned
+        ? 'Nota de crédito con devolución: resta la venta y el costo de lo devuelto'
+        : 'Nota de crédito: resta la venta; no movió mercadería',
     }),
   };
 }
@@ -410,6 +417,7 @@ export function assembleDocumentProfitability(
     );
   }
 
+  const returnCostOf = (row: DocumentLineRow) => input.returnCostByItem?.get(row.item_id) ?? ZERO;
   // Una nota de crédito vista por sí misma no tiene despacho propio: sus líneas fuera del
   // motor van como las acreditadas de su comprobante.
   const isCreditNote = input.document.docType === 'NOTA_CREDITO';
@@ -417,11 +425,11 @@ export function assembleDocumentProfitability(
     row.in_engine
       ? engineLine(row, input.engine, usageByLine)
       : isCreditNote
-        ? creditLine(row)
+        ? creditLine(row, returnCostOf(row))
         : dispatchLine(row, input, invoicedByItem, creditedByItem),
   );
   const creditResults = credit.map((row): LineResult =>
-    row.in_engine ? engineLine(row, input.engine, usageByLine) : creditLine(row),
+    row.in_engine ? engineLine(row, input.engine, usageByLine) : creditLine(row, returnCostOf(row)),
   );
 
   const total = emptySum();

@@ -16,7 +16,8 @@ import {
   Decimal,
   dispatchCode,
   fromDateOnly,
-  isReturnCreditNoteReason,
+  CreditNoteReason,
+  returnsStock,
   salesOrderCode,
   salesReturnCode,
   toDecimal,
@@ -31,6 +32,7 @@ import {
   planReturnAllocation,
   type DispatchLineStock,
   type ReturnAllocation,
+  type ReturnPlanOptions,
 } from './sales-return-allocation';
 
 /**
@@ -163,7 +165,7 @@ export class SalesReturnsService {
   async planForLines(
     tx: Prisma.TransactionClient,
     lines: readonly { lineNumber: number; orderItemId: string | null; qty: string }[],
-    options: { affectedInvoiceId?: string | null; asOf?: string } = {},
+    options: ReturnPlanOptions = {},
   ): Promise<ReturnAllocation[][]> {
     const stock = await this.stockByOrderItem(
       tx,
@@ -173,6 +175,8 @@ export class SalesReturnsService {
     type Used = Map<string, { qty: Decimal; reserveQty: Decimal; cost: Decimal }>;
     const used = new Map<string, Used>();
     return lines.map((line) => {
+      // cc54 (D-656): el 01 sobre una línea sin pedido (flete, servicio) no devuelve nada.
+      if (line.orderItemId === null && options.upToAvailable) return [];
       if (line.orderItemId === null) {
         throw new BadRequestException(
           `Línea ${String(line.lineNumber)}: no viene de un pedido, no hay despacho que devolver`,
@@ -249,11 +253,15 @@ export class SalesReturnsService {
         },
       },
     });
-    if (!isReturnCreditNoteReason(note.creditNoteReason)) return null;
+    if (!returnsStock(note.creditNoteReason)) return null;
+    // cc54 (D-656): el 01 devuelve lo que haya salido por ese comprobante; si no salió nada (o no
+    // viene de un pedido), no hay devolución.
+    const annul = note.creditNoteReason === CreditNoteReason.ANULACION_OPERACION;
     const salesOrderId = note.salesOrderId;
+    if (salesOrderId === null && annul) return null;
     if (salesOrderId === null) {
       throw new BadRequestException(
-        'Este comprobante no viene de un pedido: no hay despacho que devolver. Usa «Descuento / corrección de precio».',
+        'Este comprobante no viene de un pedido: no hay despacho que devolver. Usa «Rebajar el precio».',
       );
     }
     const operationDate = fromDateOnly(note.issueDate);
@@ -265,7 +273,11 @@ export class SalesReturnsService {
           orderItemId: i.salesOrderItemId,
           qty: i.qty.toString(),
         })),
-        { affectedInvoiceId: note.affectedDocument?.id ?? null, asOf: operationDate },
+        {
+          affectedInvoiceId: note.affectedDocument?.id ?? null,
+          asOf: operationDate,
+          ...(annul ? { upToAvailable: true, onlyAffected: true } : {}),
+        },
       );
     const locked = new Set(lockedDispatchIds);
     const assertLockedDispatches = (planned: Awaited<ReturnType<typeof plan>>) => {
@@ -277,6 +289,7 @@ export class SalesReturnsService {
     };
     const draft = await plan();
     assertLockedDispatches(draft);
+    if (draft.flat().length === 0) return null;
     // Regla dura 17: bobinas y saldos de toda la operación, en orden, antes de escribir.
     await this.inventory.lockInOrder(tx, {
       items: draft.flat().map((a) => ({

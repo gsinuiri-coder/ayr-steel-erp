@@ -184,6 +184,7 @@ describe('FiscalImportService.reactivateWithOrderLines (D-378)', () => {
       prisma as never,
       audit as never,
       { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+      {} as never,
     );
     return { service, tx: models, audit, prisma, touched };
   }

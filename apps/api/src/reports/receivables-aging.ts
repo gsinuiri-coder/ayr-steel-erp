@@ -11,7 +11,11 @@ import {
   type ReceivablesAgingDocumentDto,
   type ReceivablesAgingDto,
 } from '@ayr/shared';
-import { documentOwnerId, type CollectibleDocument } from '../invoicing/collectible-documents';
+import {
+  documentOwnerId,
+  dueDateOf,
+  type CollectibleDocument,
+} from '../invoicing/collectible-documents';
 
 /**
  * cc25 (D-421..D-423, D-428, D-432). Arma el reporte de cuentas por cobrar por antigüedad sobre
@@ -46,7 +50,8 @@ export function assembleReceivablesAging(input: {
     const ownerId = documentOwnerId(doc);
     if (sellerId !== null && ownerId !== sellerId) continue;
 
-    const dueDate = doc.dueDate ? isoDate(doc.dueDate) : null;
+    // cc54 (D-657): el vencimiento vigente (una NC 13 lo cambia).
+    const dueDate = dueDateOf(doc);
     // D-428: al contado vence el día de la emisión.
     const agingDate = dueDate ?? isoDate(doc.issueDate);
     const days = daysOverdue(agingDate, today);

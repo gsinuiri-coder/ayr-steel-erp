@@ -135,10 +135,23 @@ describe('InvoicingService — la parte que cierra con las otras en borrador (D-
             items: [affectedItem],
             salesOrder: { sellerId: ACTOR.id },
             dispatch: null,
+            paymentTerms: 'CONTADO',
+            dueDate: null,
+            payments: [],
+            creditNotes: [],
           }),
           create,
         },
-        fiscalDocumentItem: { groupBy: groupByWith('affectedItemId', drafts) },
+        // cc54: lo acreditado y los borradores, en una sola lectura por línea.
+        fiscalDocumentItem: {
+          findMany: jest.fn().mockResolvedValue(
+            drafts.map((d) => ({
+              affectedItemId: 'line-1',
+              ...sum(d),
+              document: { status: FiscalDocumentStatus.DRAFT, creditNoteReason: 'DEVOLUCION_ITEM' },
+            })),
+          ),
+        },
       };
       const service = Object.create(InvoicingService.prototype) as InvoicingService;
       Object.assign(service, {

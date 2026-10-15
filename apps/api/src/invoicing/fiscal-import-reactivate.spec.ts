@@ -141,6 +141,8 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
               },
             })),
           )
+          .mockResolvedValueOnce([])
+          // cc54 (D-663): lo acreditado solo en importe.
           .mockResolvedValueOnce([]),
       },
     };
@@ -151,6 +153,7 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
       prisma as never,
       audit as never,
       { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+      {} as never,
     );
     return { service, tx, audit, prisma };
   }

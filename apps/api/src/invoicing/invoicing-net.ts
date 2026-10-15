@@ -1,5 +1,5 @@
-import { FiscalDocType, type FiscalDocumentStatus, type Prisma } from '@prisma/client';
-import { LIVE_DOCUMENT_STATUSES } from '@ayr/shared';
+import { FiscalDocType, Prisma, type FiscalDocumentStatus } from '@prisma/client';
+import { LIVE_DOCUMENT_STATUSES, QTY_CREDIT_NOTE_REASONS } from '@ayr/shared';
 import { netInvoicedByItem, type NetInvoiced } from './invoicing-math';
 
 /**
@@ -30,7 +30,9 @@ export async function invoicedByOrderItem(
   const notSelf = options.excludeDocumentId
     ? { documentId: { not: options.excludeDocumentId } }
     : {};
-  const [emitted, credited] = await Promise.all([
+  const ncWhere = { status: { in: LIVE }, docType: FiscalDocType.NOTA_CREDITO, archivedAt: null };
+  const qtyReasons = { in: [...QTY_CREDIT_NOTE_REASONS] };
+  const [emitted, creditedByQty, creditedByAmount] = await Promise.all([
     client.fiscalDocumentItem.groupBy({
       by: ['salesOrderItemId'],
       where: {
@@ -44,17 +46,28 @@ export async function invoicedByOrderItem(
       },
       _sum: SUM,
     }),
+    // cc54 (D-663): solo los motivos de cantidad devuelven unidades al pedido…
     client.fiscalDocumentItem.groupBy({
       by: ['salesOrderItemId'],
       where: {
         salesOrderItemId: { in: ids },
         ...notSelf,
-        document: { status: { in: LIVE }, docType: FiscalDocType.NOTA_CREDITO, archivedAt: null },
+        document: { ...ncWhere, creditNoteReason: qtyReasons },
+      },
+      _sum: SUM,
+    }),
+    // …y una rebaja o una corrección (03, 04, 05, 13) baja solo el importe.
+    client.fiscalDocumentItem.groupBy({
+      by: ['salesOrderItemId'],
+      where: {
+        salesOrderItemId: { in: ids },
+        ...notSelf,
+        document: { ...ncWhere, creditNoteReason: { notIn: [...QTY_CREDIT_NOTE_REASONS] } },
       },
       _sum: SUM,
     }),
   ]);
-  return netInvoicedByItem(emitted, credited);
+  return netInvoicedByItem(emitted, mergeCredits(creditedByQty, creditedByAmount));
 }
 
 /**
@@ -81,4 +94,35 @@ export async function withReturnedQty(
     if (entry) entry.qty = entry.qty.plus(r.qty.toString());
   }
   return net;
+}
+
+type CreditSumRow = Parameters<typeof netInvoicedByItem>[1][number];
+
+/**
+ * cc54 (D-663): lo acreditado por línea de pedido con la cantidad de las NC de cantidad y el importe
+ * de todas. Exportada para probarla sin base.
+ */
+export function mergeCredits(
+  byQty: readonly CreditSumRow[],
+  byAmount: readonly CreditSumRow[],
+): CreditSumRow[] {
+  const out = new Map<string | null, CreditSumRow>();
+  const add = (a: { toString(): string } | null, b: { toString(): string } | null) =>
+    a === null && b === null
+      ? null
+      : new Prisma.Decimal((a ?? 0).toString()).plus((b ?? 0).toString());
+  for (const r of byQty) out.set(r.salesOrderItemId, { ...r, _sum: { ...r._sum } });
+  for (const r of byAmount) {
+    const prev = out.get(r.salesOrderItemId);
+    out.set(r.salesOrderItemId, {
+      salesOrderItemId: r.salesOrderItemId,
+      _sum: {
+        qty: prev ? prev._sum.qty : null,
+        subtotalPen: add(prev?._sum.subtotalPen ?? null, r._sum.subtotalPen),
+        igvPen: add(prev?._sum.igvPen ?? null, r._sum.igvPen),
+        totalPen: add(prev?._sum.totalPen ?? null, r._sum.totalPen),
+      },
+    });
+  }
+  return [...out.values()];
 }

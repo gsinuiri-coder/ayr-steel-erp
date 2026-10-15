@@ -43,6 +43,17 @@ export interface ReturnAllocation {
 
 const ZERO = new Decimal(0);
 
+export interface ReturnPlanOptions {
+  /** Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. */
+  affectedInvoiceId?: string | null;
+  /** Ninguno posterior a la fecha de la NC (no se devuelve lo que todavía no había salido). */
+  asOf?: string;
+  /** cc54 (D-656, 01): devolver hasta lo disponible, sin error si es menos (o nada). */
+  upToAvailable?: boolean;
+  /** cc54 (D-656, 01): solo despachos del comprobante acreditado o sin comprobante declarado. */
+  onlyAffected?: boolean;
+}
+
 /**
  * Reparte `qty` (unidad de venta) sobre las líneas de despacho, **de la más reciente hacia atrás**
  * (fecha y correlativo), sin pasar de lo despachado menos lo ya devuelto de cada una.
@@ -60,7 +71,7 @@ export function planReturnAllocation(
    * Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado; y ninguno
    * posterior a la fecha de la NC (no se devuelve lo que todavía no había salido).
    */
-  options: { affectedInvoiceId?: string | null; asOf?: string } = {},
+  options: ReturnPlanOptions = {},
 ): ReturnAllocation[] {
   const at = `Línea ${String(lineNumber)}`;
   if (qty.lte(0))
@@ -69,6 +80,14 @@ export function planReturnAllocation(
     options.affectedInvoiceId && s.invoiceId === options.affectedInvoiceId ? 0 : 1;
   const ordered = stock
     .filter((s) => options.asOf === undefined || s.dispatchDate <= options.asOf)
+    // cc54 (D-656): la anulación (01) solo devuelve lo que salió por ese comprobante o sin
+    // comprobante declarado; lo despachado para otro comprobante del pedido es de ese otro.
+    .filter(
+      (s) =>
+        !options.onlyAffected ||
+        s.invoiceId === null ||
+        s.invoiceId === (options.affectedInvoiceId ?? null),
+    )
     .sort(
       (a, b) =>
         preferred(a) - preferred(b) ||
@@ -79,12 +98,15 @@ export function planReturnAllocation(
     (acc, s) => acc.plus(Decimal.max(s.qty.minus(s.returnedQty), ZERO)),
     ZERO,
   );
-  if (qty.gt(available)) {
+  // cc54 (D-656): el 01 devuelve **hasta** lo despachado; lo que no salió no vuelve.
+  if (options.upToAvailable && available.lte(0)) return [];
+  const wanted = options.upToAvailable ? Decimal.min(qty, available) : qty;
+  if (wanted.gt(available)) {
     throw new BadRequestException(
-      `${at}: hay ${available.toFixed(3)} despachado sin devolver y se intenta devolver ${qty.toFixed(3)}. Una devolución no pasa de lo vendido menos lo ya devuelto; si no salió del almacén, usa «Descuento / corrección de precio».`,
+      `${at}: hay ${available.toFixed(3)} despachado sin devolver y se intenta devolver ${wanted.toFixed(3)}. Una devolución no pasa de lo vendido menos lo ya devuelto; si no salió del almacén, usa «Rebajar el precio».`,
     );
   }
-  let remaining = qty;
+  let remaining = wanted;
   const out: ReturnAllocation[] = [];
   for (const s of ordered) {
     if (remaining.lte(0)) break;

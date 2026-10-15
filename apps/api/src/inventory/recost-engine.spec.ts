@@ -226,13 +226,17 @@ describe('D-652: salida atrasada sin dejar el kardex en negativo', () => {
     expect(firstValidDate(rows, '2026-08-03', d('13'), '2026-10-14')).toBeNull();
   });
 
-  it('no es retroactivo: un negativo ya registrado no bloquea', () => {
-    // El 05 ya salió de más (−2): una salida del 08 no lo empeora en otro punto.
+  it('cc54 (D-662): una salida tampoco agrava un negativo que ya existía', () => {
+    // El 05 ya salió de más (−2). Una salida del 03 lo llevaría a −7: se rechaza.
     const legacy = [q('2026-08-01', '10'), q('2026-08-05', '-12'), q('2026-08-10', '10')];
+    expect(fitsWithoutNegative(legacy, '2026-08-03', d('5'))).toBe(false);
+    // Después del negativo, sí: el 11 hay 8.
     expect(fitsWithoutNegative(legacy, '2026-08-11', d('5'))).toBe(true);
-    expect(fitsWithoutNegative(legacy, '2026-08-03', d('5'))).toBe(true);
-    // Pero sí bloquea si vuelve negativo un punto que no lo era.
-    expect(fitsWithoutNegative(legacy, '2026-08-03', d('9'))).toBe(false);
+    // La primera fecha válida es la que ya no pasa por el negativo.
+    expect(firstValidDate(legacy, '2026-08-03', d('5'), '2026-10-14')).toBe('2026-08-10');
+    // Un negativo anterior a la salida no la afecta.
+    const before = [q('2026-08-01', '-2'), q('2026-08-02', '10')];
+    expect(fitsWithoutNegative(before, '2026-08-05', d('8'))).toBe(true);
   });
 });
 
@@ -276,16 +280,14 @@ describe('cc54: un solo cálculo de negativos y primera fecha válida (P2-2 de c
     ).toBe('2026-08-10');
   });
 
-  it('con varias salidas, un punto ya negativo sin ellas tampoco bloquea', () => {
+  it('cc54 (D-662): con varias salidas, el negativo que ya existía también las rechaza', () => {
     const legacy = [q('2026-08-01', '10'), q('2026-08-05', '-12'), q('2026-08-10', '10')];
     const outs = [
       { date: '2026-08-02', qty: d('2') },
       { date: '2026-08-03', qty: d('3') },
     ];
-    expect(firstNegativeDate(legacy, outs)).toBeNull();
-    expect(firstNegativeDate(legacy, [...outs, { date: '2026-08-04', qty: d('6') }])).toBe(
-      '2026-08-04',
-    );
+    expect(firstNegativeDate(legacy, outs)).toBe('2026-08-05');
+    expect(firstNegativeDate(legacy, [{ date: '2026-08-11', qty: d('8') }])).toBeNull();
   });
 });
 

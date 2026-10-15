@@ -381,7 +381,7 @@ export class InventoryService {
   /**
    * cc53 (D-652, criterio de D-374): un movimiento con fecha atrasada que saca stock no puede dejar
    * el kardex del ítem en negativo en ninguna fecha. Se rechaza con la primera fecha válida para
-   * registrarlo. No es retroactivo: un punto que ya estaba negativo no bloquea. Se llama solo cuando
+   * registrarlo. cc54 (D-662): tampoco puede agravar un negativo que ya existía. Se llama solo cuando
    * hay filas posteriores (con la fecha de hoy alcanza el chequeo de stock de siempre).
    */
   private async assertNoNegativeAtDate(
@@ -1203,6 +1203,23 @@ export class InventoryService {
     invoiceId: string,
   ): Promise<void> {
     await tx.dispatch.updateMany({ where: { invoiceId }, data: { invoiceId: null } });
+  }
+
+  /**
+   * cc54 (D-655): lo que declaraba un comprobante anulado por error en el RUC (02) pasa a su
+   * reemplazo. La mercadería no se mueve: cambia qué comprobante cubre esa salida. Devuelve los
+   * despachos movidos.
+   */
+  async moveInvoiceDispatches(
+    tx: Prisma.TransactionClient,
+    fromInvoiceId: string,
+    toInvoiceId: string,
+  ): Promise<number> {
+    const moved = await tx.dispatch.updateMany({
+      where: { invoiceId: fromInvoiceId },
+      data: { invoiceId: toInvoiceId },
+    });
+    return moved.count;
   }
 
   /** La otra mitad: suelta lo que tenga **este despacho**, sea cual sea el comprobante. */

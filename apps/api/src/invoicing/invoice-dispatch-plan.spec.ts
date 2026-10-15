@@ -320,16 +320,16 @@ describe('dropSameDayReversals (D-288)', () => {
     expect(kept).toEqual([]);
   });
 
-  it('cc54: un negativo que ya estaba sin la salida nueva no manda a revisión (D-652)', () => {
-    // Entran 10 el 01, salen 12 el 05 (historia), entran 10 el 10. Una salida de 5 el 03 vuelve
-    // negativo el 03 solo si lo deja bajo cero: 10 − 5 ≥ 0, y el 05 ya era negativo.
+  it('cc54 (D-662): agravar un negativo que ya existía manda a revisión, como en el kardex', () => {
+    // Entran 10 el 01, salen 12 el 05 (historia), entran 10 el 10. Una salida de 5 el 03 lleva
+    // el 05 de −2 a −7; una del 11 cabe (quedan 8).
     const movements = [
       { ...mv('1', '2026-08-01'), signedQty: d(10) },
       { ...mv('2', '2026-08-05'), signedQty: d(-12) },
       { ...mv('3', '2026-08-10'), signedQty: d(10) },
     ];
-    expect(firstNegativeDate(movements, [{ date: '2026-08-03', qty: d(5) }])).toBeNull();
-    expect(firstNegativeDate(movements, [{ date: '2026-08-03', qty: d(11) }])).toBe('2026-08-03');
+    expect(firstNegativeDate(movements, [{ date: '2026-08-03', qty: d(5) }])).toBe('2026-08-05');
+    expect(firstNegativeDate(movements, [{ date: '2026-08-11', qty: d(5) }])).toBeNull();
   });
 
   it('sin el par, la salida nueva anterior no ve un negativo de paso', () => {

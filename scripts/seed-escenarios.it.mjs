@@ -168,8 +168,9 @@ try {
   const orders = (await api.list('/sales/orders')).filter((o) => o.customerId === customer.id);
   assert.equal(
     orders.filter((o) => o.status !== 'CANCELLED').length,
-    11,
-    'once pedidos vivos (con V1, cc48, AC, cc51, y NC, cc52)',
+    16,
+    // cc54: los casos NC-01, NC-03, NC-04, NC-05 y NC-07 (NC-02 y NC-13 son de clientes con RUC).
+    'dieciséis pedidos vivos (con V1, cc48, AC, cc51, NC, cc52, y cinco casos de NC de cc54)',
   );
 
   const suppliers = await api.list('/suppliers');
@@ -181,11 +182,12 @@ try {
   const purchases = (await api.list('/purchases')).filter((p) => supplierIds.has(p.supplierId));
   assert.equal(
     purchases.filter((p) => p.status !== 'CANCELLED').length,
-    17,
+    18,
+    // cc54: la compra de las siete bobinas de los casos de NC por motivo.
     // cc50 (D-638): H1 suma la compra de bobinas, el flete, la factura del corte y la del lote; cc51
     // (D-641): AC, la bobina vendida a costo (la factura del corte duplicada de H1 queda anulada);
     // cc52 (D-646): NC, la bobina vendida y devuelta.
-    'diecisiete compras vivas (con V1, cc48, H1, cc50, AC, cc51, y NC, cc52)',
+    'dieciocho compras vivas (con V1, cc48, H1, cc50, AC, cc51, NC, cc52, y las NC de cc54)',
   );
 
   const cuts = (await api.list('/cutting')).filter((o) => supplierIds.has(o.supplierId));
@@ -202,8 +204,12 @@ try {
   const notes = (await api.list('/invoicing/documents')).filter(
     (d) => d.customerId === customer.id && d.docType === 'NOTA_CREDITO' && d.status === 'ACCEPTED',
   );
-  assert.equal(notes.length, 1, 'NC: una nota de crédito de devolución viva');
-  const note = await api.get(`/invoicing/documents/${notes[0].id}`);
+  // cc54: con las de 01, 03, 04, 05 y 07, seis notas vivas del cliente DEMO (las de la corrida
+  // anterior quedaron anuladas).
+  assert.equal(notes.length, 6, 'NC: seis notas de crédito vivas del cliente DEMO');
+  const returnNote = notes.find((n) => n.creditNoteReason === 'DEVOLUCION_TOTAL');
+  assert.ok(returnNote, 'NC: la de devolución total');
+  const note = await api.get(`/invoicing/documents/${returnNote.id}`);
   assert.equal(note.salesReturn?.status, 'ACTIVE', 'NC: su devolución vigente');
   const ret = await api.get(`/invoicing/returns/${note.salesReturn.id}`);
   const coil = await api.get(`/coils/${ret.items[0].itemId}`);

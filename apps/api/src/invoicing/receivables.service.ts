@@ -32,6 +32,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   documentBalanceOf,
   documentOwnerId,
+  dueDateOf,
   loadCollectibleDocuments,
 } from './collectible-documents';
 import { lockDocuments } from '../inventory/document-locks';
@@ -292,7 +293,7 @@ export class ReceivablesService {
     const byCustomer = new Map<string, ReceivableSummaryDto>();
 
     for (const { document: doc, balance } of collectible) {
-      const dueDate = doc.dueDate ? doc.dueDate.toISOString().slice(0, 10) : null;
+      const dueDate = dueDateOf(doc);
       const overdue = dueDate !== null && dueDate < today;
 
       const current = byCustomer.get(doc.customerId) ?? {

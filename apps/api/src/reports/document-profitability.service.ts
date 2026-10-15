@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { FiscalDocType, Prisma } from '@prisma/client';
 import {
+  Decimal,
   FISCAL_DOCUMENT_STATUS_LABELS,
   LIVE_DOCUMENT_STATUSES,
   type DocumentProfitabilityDto,
@@ -64,9 +65,14 @@ export class DocumentProfitabilityService {
       .filter((v): v is string => v !== null);
     const needsDispatch =
       doc.docType !== FiscalDocType.NOTA_CREDITO && rows.some((r) => !r.is_credit && !r.in_engine);
-    const [engine, declared] = await Promise.all([
+    // cc54 (D-663): las líneas de NC fuera del motor restan el costo de lo que devolvieron.
+    const creditItems = rows
+      .filter((r) => !r.in_engine && (r.is_credit || doc.docType === FiscalDocType.NOTA_CREDITO))
+      .map((r) => r.item_id);
+    const [engine, declared, returnCostByItem] = await Promise.all([
       this.material.engineFacts(engineItems),
       needsDispatch ? this.declaredSales(documentId) : Promise.resolve([]),
+      this.returnCosts(creditItems),
     ]);
 
     return assembleDocumentProfitability({
@@ -88,7 +94,30 @@ export class DocumentProfitabilityService {
       hasDeclaredDispatch: declared.some(
         (d) => d.dispatch_seqs !== null && d.dispatch_seqs.length > 0,
       ),
+      returnCostByItem,
     });
+  }
+
+  /**
+   * cc54 (D-663): el costo efectivo de lo devuelto (DEV- vigente) por línea de NC: el de cada
+   * reingreso más sus recosteos (cc53, D-649). Una consulta; ninguna sin líneas de NC.
+   */
+  private async returnCosts(creditItemIds: string[]): Promise<Map<string, Decimal>> {
+    const out = new Map<string, Decimal>();
+    if (creditItemIds.length === 0) return out;
+    const rows = await this.prisma.$queryRaw<{ item_id: string; cost: Prisma.Decimal }[]>`
+      SELECT sri."credit_note_item_id" AS "item_id",
+        SUM(sri."total_cost" + COALESCE((
+          SELECT SUM(r."total_cost") FROM "inventory_movements" r WHERE r."recost_of_id" = sri."movement_id"
+        ), 0)) AS "cost"
+      FROM "sales_return_items" sri
+      JOIN "sales_returns" sr ON sr."id" = sri."sales_return_id"
+      WHERE sr."status" = 'ACTIVE'
+        AND sri."credit_note_item_id" = ANY(${creditItemIds}::uuid[])
+      GROUP BY sri."credit_note_item_id"
+    `;
+    for (const r of rows) out.set(r.item_id, new Decimal(r.cost.toString()));
+    return out;
   }
 
   /**

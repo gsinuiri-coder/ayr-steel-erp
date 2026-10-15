@@ -134,6 +134,7 @@ describe('FiscalImportService.annulledOfOrder (cc13)', () => {
       prisma as never,
       audit as never,
       { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+      {} as never,
     );
     return { service, prisma, audit };
   }
@@ -181,14 +182,14 @@ describe('FiscalImportService.annulledOfOrder (cc13)', () => {
     expect(audit.write).not.toHaveBeenCalled();
   });
 
-  it('presupuesto: 2 fijas + 16 por anulado (4 comunes, 5 de D-378, 7 de D-373)', async () => {
+  it('presupuesto: 2 fijas + 17 por anulado (4 comunes, 5 de D-378, 8 de D-373; cc54: el neto por motivo)', async () => {
     const { service, prisma } = build();
     await service.annulledOfOrder(ADMIN, 'so-11');
-    expect(queries(prisma)).toBe(18);
+    expect(queries(prisma)).toBe(19);
 
     const two = build({ docs: [listed, { ...listed, id: 'doc-2', number: 'FFA1-00001400' }] });
     await two.service.annulledOfOrder(ADMIN, 'so-11');
-    expect(queries(two.prisma)).toBe(2 + 16 * 2);
+    expect(queries(two.prisma)).toBe(2 + 17 * 2);
   });
 
   it('un pedido sin anulados paga una sola consulta', async () => {

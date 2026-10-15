@@ -15,6 +15,7 @@ import {
   createCoilScrapSchema,
   createCoilSplitSchema,
   createCreditNoteSchema,
+  registerCreditNoteSchema,
   createProductionOrderSchema,
   consumeStripSchema,
   reportPiecesSchema,
@@ -1784,5 +1785,60 @@ describe('cc53 — recosteo por fecha × despacho (contra la base)', () => {
       ]);
     }
     expectClean(tally, 'recosteo por fecha × despacho');
+  });
+});
+
+/**
+ * cc54 (D-656, D-660, regla dura 17): la NC 01 en un solo paso toma el comprobante, la NC, los
+ * despachos del pedido y el pedido, y después las bobinas y los saldos para su DEV-; revertir ese
+ * despacho toma el despacho, el pedido y los saldos. Sin deadlock: gana una y la otra sale con su
+ * rechazo de dominio (el despacho con devolución no se revierte, o la línea ya no tiene despacho).
+ */
+describe('cc54 — NC 01 en un paso × revertir su despacho (contra la base)', () => {
+  it('sin deadlock ni doble devolución', async () => {
+    const invoicing = moduleRef.get(InvoicingService);
+    let correlative = Math.floor(Math.random() * 50_000) + 70_000;
+    const tally = newTally();
+    for (let i = 0; i < ITERATIONS; i++) {
+      const p = await tradingProduct();
+      await productPurchase([p]);
+      const order = await directOrder([{ productId: p, qty: '5' }]);
+      const dispatch = await dispatchAll(order);
+      const draft = await invoicing.create(
+        admin,
+        createInvoiceSchema.parse({
+          docType: 'FACTURA',
+          customerId,
+          salesOrderId: order.id,
+          issueDate: businessToday(),
+          items: order.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+        }),
+      );
+      const invoice = await invoicing.registerManual(admin, draft.id, {
+        series: 'F935',
+        correlative: (correlative += 1),
+      });
+      await race(tally, `iteración ${i}`, [
+        () =>
+          invoicing.registerCreditNote(
+            admin,
+            invoice.id,
+            registerCreditNoteSchema.parse({
+              reason: 'ANULACION_OPERACION',
+              issueDate: businessToday(),
+              series: 'FC35',
+              correlative: (correlative += 1),
+            }),
+          ),
+        () => reverseDispatch(dispatch.id),
+      ]);
+      // Nunca vuelve dos veces: o la DEV- o la reversa del despacho.
+      const back = await prisma.inventoryMovement.count({
+        where: { itemId: p, type: 'IN', refType: { in: ['SALES_RETURN', 'SALE'] } },
+      });
+      expect(back).toBeLessThanOrEqual(1);
+    }
+    // La reversa siempre pierde: o la factura todavía declara la línea, o la DEV- ya la devolvió.
+    expectClean(tally, 'NC 01 en un paso × revertir su despacho', [1]);
   });
 });

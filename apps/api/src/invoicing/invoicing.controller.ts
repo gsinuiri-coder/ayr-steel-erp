@@ -15,6 +15,9 @@ import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import {
   createCreditNoteSchema,
+  registerCreditNoteSchema,
+  type CreditNotePreviewDto,
+  type RegisterCreditNoteInput,
   createCustomerPaymentSchema,
   createFiscalSeriesSchema,
   createInvoiceSchema,
@@ -396,6 +399,26 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(createCreditNoteSchema)) body: CreateCreditNoteInput,
   ): Promise<FiscalDocumentDto> {
     return this.invoicing.createCreditNote(actor, id, body);
+  }
+
+  /** cc54 (D-660): la NC manual en un solo paso (alta, registro y lo que el motivo genera). */
+  @Post('documents/:id/credit-note/register')
+  registerCreditNote(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(registerCreditNoteSchema)) body: RegisterCreditNoteInput,
+  ): Promise<FiscalDocumentDto> {
+    return this.invoicing.registerCreditNote(actor, id, body);
+  }
+
+  /** cc54: «Qué va a pasar» con una NC, sin escribir nada. */
+  @Post('documents/:id/credit-note/preview')
+  previewCreditNote(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(createCreditNoteSchema)) body: CreateCreditNoteInput,
+  ): Promise<CreditNotePreviewDto> {
+    return this.invoicing.previewCreditNote(actor, id, body);
   }
 
   // -------------------------------------------------------------------------
