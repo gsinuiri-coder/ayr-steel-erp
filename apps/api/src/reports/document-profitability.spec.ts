@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
+import { Decimal } from '@ayr/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { assembleDocumentProfitability, notApplicable } from './document-profitability';
 import { DocumentProfitabilityService } from './document-profitability.service';
@@ -826,5 +827,51 @@ describe('DocumentProfitabilityService (C06)', () => {
     expect(dto.lines[0]).toEqual(
       expect.objectContaining({ costPen: '320.0000', costBasisDetail: 'DES-000004, DES-000018' }),
     );
+  });
+});
+
+describe('cc54 (D-663): la NC con devolución resta el costo de lo devuelto', () => {
+  it('neto: venta y costo de lo que se quedó el cliente', () => {
+    const credit = row({
+      credit: true,
+      engine: false,
+      sku: 'UPVC-1',
+      unit: 'NIU',
+      orderItem: 'soi-9',
+      qty: '5',
+      subtotal: '500',
+      creditReason: 'DEVOLUCION_ITEM',
+    });
+    const doc = assembleDocumentProfitability({
+      document: HEADER,
+      rows: [
+        row({
+          engine: false,
+          sku: 'UPVC-1',
+          unit: 'NIU',
+          orderItem: 'soi-9',
+          qty: '10',
+          subtotal: '1000',
+        }),
+        credit,
+      ],
+      engine: engineFacts({}),
+      declared: new Map([
+        [
+          'soi-9',
+          {
+            dispatchedQty: '10',
+            costedQty: '10',
+            costPen: '800',
+            withoutMovement: false,
+            dispatchSeqs: [18],
+          },
+        ],
+      ]),
+      hasDeclaredDispatch: true,
+      returnCostByItem: new Map([[credit.item_id, new Decimal('400')]]),
+    });
+    expect(doc.credited?.lines[0]).toMatchObject({ status: 'COMPLETE' });
+    expect(doc.net).toMatchObject({ salesPen: '500.0000', costPen: '400.0000' });
   });
 });

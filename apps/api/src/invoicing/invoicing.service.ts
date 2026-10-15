@@ -1389,7 +1389,7 @@ export class InvoicingService {
     }
     if (
       DISCOUNT_CREDIT_NOTE_REASONS.includes(reason) &&
-      !lines.some((l) => toDecimal(l.totalPen).gt(0))
+      lines.reduce((acc, l) => acc.plus(l.totalPen), new Decimal(0)).lt('0.01')
     ) {
       throw new BadRequestException('La rebaja no llega a un céntimo: revisa el precio o el monto');
     }
