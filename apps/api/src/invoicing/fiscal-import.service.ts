@@ -85,6 +85,8 @@ export class FiscalImportService {
           status: true,
           totalPen: true,
           archivedAt: true,
+          creditNoteReason: true,
+          affectedDocumentId: true,
         },
       });
       if (!document) throw new NotFoundException('Comprobante no encontrado');
@@ -145,6 +147,23 @@ export class FiscalImportService {
       // del pedido): registrada después, quedaría viva sobre un comprobante anulado.
       const draftBlock = await draftCreditNoteBlock(tx, id, 'antes de anularlo');
       if (draftBlock) throw new BadRequestException(draftBlock);
+      // cc54 (D-655): la NC 02 se anula después de su reemplazo: con el reemplazo vivo, el
+      // comprobante anulado volvería a deber y la venta se contaría dos veces.
+      if (document.creditNoteReason === 'ANULACION_ERROR_RUC' && document.affectedDocumentId) {
+        const replacement = await tx.fiscalDocument.findFirst({
+          where: {
+            replacesDocumentId: document.affectedDocumentId,
+            status: { in: [...SHARED_LIVE_DOCUMENT_STATUSES] },
+            archivedAt: null,
+          },
+          select: { number: true },
+        });
+        if (replacement) {
+          throw new BadRequestException(
+            `Esta nota de crédito 02 tiene su comprobante de reemplazo vivo (${replacement.number ?? ''}): anúlalo primero`,
+          );
+        }
+      }
 
       // cc52 (D-646): una NC de devolución se anula revirtiendo su devolución, con movimientos
       // inversos al mismo costo (nunca editando saldos). 409 si esa mercadería ya se vendió.

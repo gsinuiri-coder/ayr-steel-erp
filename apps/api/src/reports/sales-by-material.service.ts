@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  QTY_CREDIT_NOTE_REASONS,
   BusinessLine,
   FINISH_KIND_LABELS,
   FinishKind,
@@ -129,6 +130,16 @@ const ROOFING_KIND_TO_MATERIAL: Record<string, SalesMaterialKind> = {
 const str = (v: Prisma.Decimal | null): string | null => (v === null ? null : v.toString());
 
 /**
+ * La cantidad de una línea con signo. cc54 (D-663): una NC resta unidades **solo** si su motivo
+ * acredita cantidad (01, 02, 06, 07); una rebaja o una corrección (03, 04, 05, 13) resta venta, pero
+ * no metros, kilos ni costo.
+ */
+const SIGNED_QTY = Prisma.sql`CASE WHEN fd."doc_type" = 'NOTA_CREDITO'
+          THEN (CASE WHEN fd."credit_note_reason"::text = ANY(${[...QTY_CREDIT_NOTE_REASONS]}::text[])
+            THEN -fdi."qty" ELSE 0 END)
+          ELSE fdi."qty" END`;
+
+/**
  * Las columnas y los cruces de una línea de comprobante que el motor necesita. Los comparten el
  * rango de «Ventas por material» y la rentabilidad de un comprobante (C06), para que las dos
  * lecturas no puedan describir la misma línea de dos maneras.
@@ -141,7 +152,7 @@ const LINE_COLUMNS = Prisma.sql`
         so."seq" AS "order_seq",
         so."id" AS "order_id",
         soi."id" AS "sales_order_item_id",
-        CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."qty" ELSE fdi."qty" END AS "qty",
+        ${SIGNED_QTY} AS "qty",
         CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."subtotal_pen" ELSE fdi."subtotal_pen" END
           AS "subtotal_pen",
         p."sku",
@@ -397,7 +408,7 @@ export class SalesByMaterialService {
         p."sku",
         p."name",
         p."unit",
-        CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."qty" ELSE fdi."qty" END AS "qty",
+        ${SIGNED_QTY} AS "qty",
         CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."subtotal_pen" ELSE fdi."subtotal_pen" END
           AS "subtotal_pen",
         COALESCE(
@@ -516,7 +527,7 @@ export class SalesByMaterialService {
     return this.prisma.$queryRaw<InvoicedRow[]>`
       SELECT
         COALESCE(fdi."sales_order_item_id", afi."sales_order_item_id") AS "sales_order_item_id",
-        SUM(CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."qty" ELSE fdi."qty" END) AS "qty"
+        SUM(${SIGNED_QTY}) AS "qty"
       FROM "fiscal_document_items" fdi
       JOIN "fiscal_documents" fd ON fd."id" = fdi."document_id"
       LEFT JOIN "fiscal_document_items" afi ON afi."id" = fdi."affected_item_id"

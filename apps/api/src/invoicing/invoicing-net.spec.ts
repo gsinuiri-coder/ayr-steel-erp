@@ -35,6 +35,7 @@ interface Row {
     status: FiscalDocumentStatus;
     docType: FiscalDocType;
     archivedAt: Date | null;
+    creditNoteReason?: string | null;
   };
 }
 
@@ -45,6 +46,7 @@ interface Where {
     status?: FiscalDocumentStatus | { in: FiscalDocumentStatus[] };
     docType?: FiscalDocType | { not: FiscalDocType };
     archivedAt?: null;
+    creditNoteReason?: { in: string[] } | { notIn: string[] };
   };
 }
 
@@ -70,6 +72,14 @@ function matches(row: Row, where: Where): boolean {
     if (!ok) return false;
   }
   if (d.archivedAt === null && row.document.archivedAt !== null) return false;
+  if (d.creditNoteReason !== undefined) {
+    const reason = row.document.creditNoteReason ?? '';
+    const ok =
+      'in' in d.creditNoteReason
+        ? d.creditNoteReason.in.includes(reason)
+        : !d.creditNoteReason.notIn.includes(reason);
+    if (!ok) return false;
+  }
   return true;
 }
 
@@ -137,7 +147,11 @@ const creditNote = (
   qty: string,
   amounts: { subtotalPen: string; igvPen: string; totalPen: string },
   status: FiscalDocumentStatus = ACCEPTED,
-) => row(FiscalDocType.NOTA_CREDITO, status, qty, amounts);
+  reason = 'DEVOLUCION_ITEM',
+) => {
+  const r = row(FiscalDocType.NOTA_CREDITO, status, qty, amounts);
+  return { ...r, document: { ...r.document, creditNoteReason: reason } };
+};
 const FORTY = { subtotalPen: '400.0000', igvPen: '72.0000', totalPen: '472.0000' };
 
 // ---------------------------------------------------------------------------
@@ -268,6 +282,22 @@ describe('invoicedByOrderItem — la función única (D-346)', () => {
     const client = fakeClient([invoice(), creditNote('40', FORTY)]);
     const net = (await invoicedByOrderItem(client, ['line-1'])).get('line-1')!;
     expect(net.qty.toFixed(3)).toBe('60.000');
+    expect(net.totalPen.toFixed(4)).toBe('708.0000');
+  });
+
+  it('cc54 (D-663): una rebaja baja el importe, no la cantidad', async () => {
+    const client = fakeClient([
+      invoice(),
+      creditNote('100', FORTY, ACCEPTED, 'DESCUENTO_ITEM'),
+      creditNote(
+        '100',
+        { subtotalPen: '0', igvPen: '0', totalPen: '0' },
+        ACCEPTED,
+        'OTROS_AJUSTES',
+      ),
+    ]);
+    const net = (await invoicedByOrderItem(client, ['line-1'])).get('line-1')!;
+    expect(net.qty.toFixed(3)).toBe('100.000');
     expect(net.totalPen.toFixed(4)).toBe('708.0000');
   });
 
@@ -537,8 +567,9 @@ describe('orderProgress y la reválida al emitir usan la misma función — D-34
     const [ok] = await resolve(rows, pending);
     expect(ok!.qty).toBe(pending);
     await expect(resolve(rows, '40.001')).rejects.toThrow('le quedan 40.000');
-    // Cada sitio hace exactamente las dos consultas de la función única (emitido y acreditado).
-    expect(client.groupBy).toHaveBeenCalledTimes(2);
+    // Cada sitio hace exactamente las consultas de la función única (emitido y acreditado por
+    // cantidad y por importe, cc54).
+    expect(client.groupBy).toHaveBeenCalledTimes(3);
   });
 
   describe('assertStillAvailable (reválida al emitir)', () => {

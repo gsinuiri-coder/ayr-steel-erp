@@ -205,7 +205,16 @@ async function creditNote(
     createCreditNoteSchema.parse({
       reason,
       issueDate,
-      ...(qty === null ? {} : { items: [{ affectedItemId: detail.items[0]?.id ?? '', qty }] }),
+      // cc54 (D-663): el 05 rebaja el precio (con IGV) en vez de acreditar cantidad.
+      ...(reason === 'DESCUENTO_ITEM'
+        ? {
+            prices: [
+              { affectedItemId: detail.items[0]?.id ?? '', unitPriceWithIgvPen: qty ?? '0' },
+            ],
+          }
+        : qty === null
+          ? {}
+          : { items: [{ affectedItemId: detail.items[0]?.id ?? '', qty }] }),
     }),
   );
   return invoicing.registerManual(admin, note.id, {

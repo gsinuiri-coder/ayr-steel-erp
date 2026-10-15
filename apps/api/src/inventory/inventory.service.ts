@@ -1205,6 +1205,23 @@ export class InventoryService {
     await tx.dispatch.updateMany({ where: { invoiceId }, data: { invoiceId: null } });
   }
 
+  /**
+   * cc54 (D-655): lo que declaraba un comprobante anulado por error en el RUC (02) pasa a su
+   * reemplazo. La mercadería no se mueve: cambia qué comprobante cubre esa salida. Devuelve los
+   * despachos movidos.
+   */
+  async moveInvoiceDispatches(
+    tx: Prisma.TransactionClient,
+    fromInvoiceId: string,
+    toInvoiceId: string,
+  ): Promise<number> {
+    const moved = await tx.dispatch.updateMany({
+      where: { invoiceId: fromInvoiceId },
+      data: { invoiceId: toInvoiceId },
+    });
+    return moved.count;
+  }
+
   /** La otra mitad: suelta lo que tenga **este despacho**, sea cual sea el comprobante. */
   async unlinkInvoiceFromDispatch(tx: Prisma.TransactionClient, dispatchId: string): Promise<void> {
     await tx.dispatch.updateMany({ where: { id: dispatchId }, data: { invoiceId: null } });

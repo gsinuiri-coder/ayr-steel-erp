@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { Decimal, decimalStringSchema, MAX_VALUE, toDecimal, type DecimalInput } from '../decimal';
 import {
   CREDIT_NOTE_REASONS,
+  DEADLINE_CREDIT_NOTE_REASONS,
   DISPATCH_STATUSES,
-  FULL_CREDIT_NOTE_REASONS,
   DOC_TYPES,
+  type CreditNoteReason,
   FISCAL_DOC_TYPES,
   FISCAL_DOCUMENT_ORIGINS,
   FISCAL_DOCUMENT_STATUSES,
@@ -12,6 +13,7 @@ import {
   FiscalDocumentStatus,
   INVENTORY_ITEM_TYPES,
   INVOICE_DOC_TYPES,
+  LIVE_DOCUMENT_STATUSES,
   PAYMENT_METHODS,
   PAYMENT_TERMS,
   SALES_ORDER_STATUSES,
@@ -381,10 +383,64 @@ export const createInvoiceSchema = z
   });
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;
 
+/** Una lista por línea del afectado, sin líneas repetidas. */
+function assertDistinctLines(
+  list: readonly { affectedItemId: string }[] | undefined,
+  key: string,
+  ctx: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const [i, item] of (list ?? []).entries()) {
+    if (seen.has(item.affectedItemId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [key, i, 'affectedItemId'],
+        message: 'La misma línea del comprobante está repetida en la nota de crédito',
+      });
+    }
+    seen.add(item.affectedItemId);
+  }
+}
+
+/** cc54: los campos que cada motivo usa; cualquier otro, si viene, es un error. */
+const CREDIT_NOTE_FIELDS: Record<
+  CreditNoteReason,
+  readonly ('items' | 'prices' | 'amountPen' | 'descriptions' | 'dueDate' | 'replacement')[]
+> = {
+  ANULACION_OPERACION: [],
+  ANULACION_ERROR_RUC: ['replacement'],
+  CORRECCION_DESCRIPCION: ['descriptions'],
+  DESCUENTO_GLOBAL: ['amountPen'],
+  DESCUENTO_ITEM: ['prices'],
+  DEVOLUCION_TOTAL: ['items'],
+  DEVOLUCION_ITEM: ['items'],
+  OTROS_AJUSTES: ['dueDate'],
+};
+
+/** cc54 (D-655): el comprobante de reemplazo de un 02, ya emitido en papel al cliente correcto. */
+export const creditNoteReplacementSchema = z.object({
+  customerId: z.string().uuid(),
+  issueDate: isoDateSchema,
+  series: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z][A-Z0-9]{3}$/, 'La serie son cuatro caracteres (ej: F001)'),
+  correlative: z.number().int().min(1, 'El correlativo empieza en 1').max(99_999_999),
+});
+export type CreditNoteReplacementInput = z.infer<typeof creditNoteReplacementSchema>;
+
 /**
- * Nota de crédito sobre un comprobante aceptado (RF-76). Sin `items` es **total**: copia
- * todas las líneas del afectado. Con `items` es **parcial** y cada una acredita como
- * mucho lo que su línea original todavía tiene sin acreditar.
+ * Nota de crédito sobre un comprobante aceptado (RF-76). cc54 (D-663): **el motivo decide** qué
+ * datos lleva y qué hace:
+ *
+ * - 01: total; la mercadería despachada vuelve al almacén (D-656). Sin más datos.
+ * - 02: total, con el comprobante de reemplazo (`replacement`, D-655).
+ * - 03: importe 0; la descripción corregida de una o más líneas (`descriptions`, D-654).
+ * - 04: un monto con IGV que se rebaja del total (`amountPen`).
+ * - 05: el precio nuevo con IGV de una o más líneas (`prices`).
+ * - 06: total de lo despachado; 07: cantidades por línea (`items`, D-646).
+ * - 13: importe 0; el vencimiento nuevo de una factura al crédito (`dueDate`, D-657).
  */
 export const createCreditNoteSchema = z
   .object({
@@ -402,32 +458,199 @@ export const createCreditNoteSchema = z
       )
       .max(MAX_INVOICE_ITEMS, `Máximo ${MAX_INVOICE_ITEMS} líneas`)
       .optional(),
+    prices: z
+      .array(
+        z.object({
+          affectedItemId: z.string().uuid(),
+          /** Precio unitario nuevo **con IGV** (la UI muestra y acepta precios con IGV). */
+          unitPriceWithIgvPen: decimalStringSchema('MONEY', { max: MAX_VALUE.MONEY }),
+        }),
+      )
+      .max(MAX_INVOICE_ITEMS, `Máximo ${MAX_INVOICE_ITEMS} líneas`)
+      .optional(),
+    /** 04: el monto **con IGV** que se rebaja. */
+    amountPen: moneySchema.optional(),
+    descriptions: z
+      .array(
+        z.object({
+          affectedItemId: z.string().uuid(),
+          description: z.string().trim().min(1, 'Escribe la descripción corregida').max(500),
+        }),
+      )
+      .max(MAX_INVOICE_ITEMS, `Máximo ${MAX_INVOICE_ITEMS} líneas`)
+      .optional(),
+    /** 13: el vencimiento nuevo (pago único). */
+    dueDate: isoDateSchema.optional(),
+    replacement: creditNoteReplacementSchema.optional(),
   })
   .superRefine((input, ctx) => {
-    const seen = new Set<string>();
-    for (const [i, item] of (input.items ?? []).entries()) {
-      if (seen.has(item.affectedItemId)) {
+    assertDistinctLines(input.items, 'items', ctx);
+    assertDistinctLines(input.prices, 'prices', ctx);
+    assertDistinctLines(input.descriptions, 'descriptions', ctx);
+    const allowed = CREDIT_NOTE_FIELDS[input.reason];
+    const present = {
+      items: (input.items ?? []).length > 0,
+      prices: (input.prices ?? []).length > 0,
+      amountPen: input.amountPen !== undefined,
+      descriptions: (input.descriptions ?? []).length > 0,
+      dueDate: input.dueDate !== undefined,
+      replacement: input.replacement !== undefined,
+    };
+    for (const [field, here] of Object.entries(present) as [keyof typeof present, boolean][]) {
+      if (here && !allowed.includes(field)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['items', i, 'affectedItemId'],
-          message: 'La misma línea del comprobante está repetida en la nota de crédito',
+          path: [field],
+          message: 'Ese dato no corresponde al motivo elegido',
         });
       }
-      seen.add(item.affectedItemId);
     }
-    // Un motivo que describe un ajuste **parcial** sin decir qué líneas acreditar acabaría
-    // emitiendo una nota total, que es lo contrario de lo que se pidió.
-    if ((input.items ?? []).length === 0 && !FULL_CREDIT_NOTE_REASONS.includes(input.reason)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['items'],
-        message:
-          'Este motivo acredita una parte: indica las cantidades por línea, o elige un motivo de anulación o devolución total',
-      });
+    const required: [CreditNoteReason, keyof typeof present, string][] = [
+      ['DEVOLUCION_ITEM', 'items', 'Indica las cantidades devueltas por línea'],
+      ['DESCUENTO_ITEM', 'prices', 'Indica el precio nuevo de al menos una línea'],
+      ['DESCUENTO_GLOBAL', 'amountPen', 'Indica el monto a rebajar'],
+      [
+        'CORRECCION_DESCRIPCION',
+        'descriptions',
+        'Escribe la descripción corregida de al menos una línea',
+      ],
+      ['OTROS_AJUSTES', 'dueDate', 'Indica el vencimiento nuevo'],
+      ['ANULACION_ERROR_RUC', 'replacement', 'Indica el comprobante de reemplazo y su cliente'],
+    ];
+    for (const [reason, field, message] of required) {
+      if (input.reason === reason && !present[field]) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
+      }
     }
     assertIssueDateWindow(input.issueDate, ctx, ['issueDate']);
+    if (input.replacement) {
+      assertIssueDateWindow(input.replacement.issueDate, ctx, ['replacement', 'issueDate']);
+    }
   });
 export type CreateCreditNoteInput = z.infer<typeof createCreditNoteSchema>;
+
+/**
+ * cc54 (D-660): la NC manual **en un solo paso**: el alta y el registro con la serie y el número del
+ * papel, en una transacción. Sin borrador intermedio.
+ */
+export const registerCreditNoteSchema = z
+  .object({
+    series: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z][A-Z0-9]{3}$/, 'La serie son cuatro caracteres (ej: FC01)'),
+    correlative: z.number().int().min(1, 'El correlativo empieza en 1').max(99_999_999),
+  })
+  .and(createCreditNoteSchema);
+export type RegisterCreditNoteInput = z.infer<typeof registerCreditNoteSchema>;
+
+/**
+ * cc54 (D-657): el vencimiento **vigente** de un comprobante. Una NC 13 viva no edita el
+ * comprobante: declara el vencimiento nuevo, y lo que vale es el de la más reciente (por fecha y,
+ * a igual fecha, la última registrada). Anularla devuelve el anterior sin escribir nada. Fechas
+ * `YYYY-MM-DD`.
+ */
+export function effectiveDueDate(
+  dueDate: string | null,
+  creditNotes: readonly {
+    creditNoteReason: string | null;
+    status: string;
+    dueDate: string | null;
+    issueDate: string;
+    createdAt: string;
+  }[],
+): { dueDate: string | null; changedByNote: boolean } {
+  const live = creditNotes
+    .filter(
+      (n) =>
+        n.creditNoteReason === 'OTROS_AJUSTES' &&
+        n.dueDate !== null &&
+        LIVE_DOCUMENT_STATUSES.includes(n.status as FiscalDocumentStatus),
+    )
+    .sort((a, b) =>
+      a.issueDate === b.issueDate
+        ? b.createdAt.localeCompare(a.createdAt)
+        : b.issueDate.localeCompare(a.issueDate),
+    );
+  const latest = live[0];
+  return latest
+    ? { dueDate: latest.dueDate, changedByNote: true }
+    : { dueDate, changedByNote: false };
+}
+
+/** Días hábiles del plazo de las NC excepcionales (SEE-OSE, R.S. 117-2017 art. 26.5). */
+export const CREDIT_NOTE_DEADLINE_BUSINESS_DAYS = 15;
+
+/**
+ * cc54 (D-659): el último día para emitir una NC 02, 03 o 13 de un comprobante: el 15.º día hábil
+ * (lunes a viernes; sin feriados, que el ERP no conoce) del mes siguiente a su emisión.
+ */
+export function creditNoteDeadline(affectedIssueDate: string): string {
+  const [y, m] = affectedIssueDate.split('-').map(Number) as [number, number];
+  const day = new Date(Date.UTC(y, m, 1));
+  let count = 0;
+  for (;;) {
+    const weekday = day.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) count += 1;
+    if (count === CREDIT_NOTE_DEADLINE_BUSINESS_DAYS) return day.toISOString().slice(0, 10);
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+}
+
+/** cc54 (D-659): el aviso (no bloquea) de una NC 02, 03 o 13 fuera de plazo, o `null`. */
+export function creditNoteDeadlineWarning(
+  reason: CreditNoteReason,
+  affectedIssueDate: string,
+  noteDate: string,
+): string | null {
+  if (!DEADLINE_CREDIT_NOTE_REASONS.includes(reason)) return null;
+  const deadline = creditNoteDeadline(affectedIssueDate);
+  if (noteDate <= deadline) return null;
+  const [y, m, d] = deadline.split('-');
+  return `SUNAT da plazo hasta el ${d ?? ''}/${m ?? ''}/${y ?? ''} (15.º día hábil del mes siguiente al comprobante) para esta nota. Se registra igual: revisa que el papel esté emitido.`;
+}
+
+/** cc54: «Qué va a pasar», calculado por el API antes de confirmar. */
+export const creditNotePreviewSchema = z.object({
+  reason: z.enum(CREDIT_NOTE_REASONS),
+  sunatCode: z.string(),
+  subtotalPen: z.string(),
+  igvPen: z.string(),
+  totalPen: z.string(),
+  lines: z.array(
+    z.object({
+      affectedItemId: z.string(),
+      lineNumber: z.number().int(),
+      description: z.string(),
+      qty: z.string(),
+      totalPen: z.string(),
+    }),
+  ),
+  stock: z.array(
+    z.object({
+      label: z.string(),
+      qty: z.string(),
+      unit: z.string(),
+      costPen: z.string(),
+      dispatch: z.string(),
+    }),
+  ),
+  /** Lo que no vuelve porque no salió (01 sin despacho completo). */
+  notDispatched: z.array(z.object({ lineNumber: z.number().int(), qty: z.string() })),
+  costPen: z.string(),
+  receivable: z.object({
+    beforePen: z.string(),
+    afterPen: z.string(),
+    dueDateBefore: z.string().nullable(),
+    dueDateAfter: z.string().nullable(),
+  }),
+  replacement: z
+    .object({ customerName: z.string(), number: z.string(), totalPen: z.string() })
+    .nullable(),
+  warnings: z.array(z.string()),
+});
+export type CreditNotePreviewDto = z.infer<typeof creditNotePreviewSchema>;
 
 /** Comunicación de baja de un comprobante aceptado (RF-75). Siempre con motivo. */
 export const voidDocumentSchema = z.object({ reason: reasonSchema });
@@ -704,6 +927,12 @@ export const fiscalDocumentItemSchema = z.object({
    */
   atCostReason: z.string().nullable(),
   atCostNote: z.string().nullable(),
+  /**
+   * cc54 (D-654): la descripción corregida por la NC 03 viva más reciente sobre esta línea, y el
+   * número de esa nota. Null si nadie la corrigió (solo en el detalle).
+   */
+  correctedDescription: z.string().nullable().optional(),
+  correctedByNumber: z.string().nullable().optional(),
 });
 export type FiscalDocumentItemDto = z.infer<typeof fiscalDocumentItemSchema>;
 
@@ -780,7 +1009,10 @@ export const fiscalDocumentSchema = z.object({
   replacedByDocumentNumber: z.string().nullable(),
   issueDate: z.string(),
   paymentTerms: z.enum(PAYMENT_TERMS),
+  /** cc54 (D-657): el vencimiento **vigente** (el de la NC 13 viva más reciente, si hay). */
   dueDate: z.string().nullable(),
+  /** cc54 (D-657): el número de la NC 13 que fijó el vencimiento vigente, o null. */
+  dueDateChangedByNumber: z.string().nullable().optional(),
   subtotalPen: z.string(),
   igvPen: z.string(),
   totalPen: z.string(),
@@ -841,6 +1073,9 @@ export const fiscalDocumentSchema = z.object({
       status: z.enum(FISCAL_DOCUMENT_STATUSES),
       issueDate: z.string(),
       totalPen: z.string(),
+      /** cc54: el motivo (catálogo 09) y, en un 13, el vencimiento que fijó. */
+      creditNoteReason: z.enum(CREDIT_NOTE_REASONS).nullable().optional(),
+      dueDate: z.string().nullable().optional(),
       /** cc52 (D-646): la devolución que generó, si es una NC de devolución. */
       salesReturn: z
         .object({ id: z.string().uuid(), code: z.string(), status: z.enum(['ACTIVE', 'REVERSED']) })

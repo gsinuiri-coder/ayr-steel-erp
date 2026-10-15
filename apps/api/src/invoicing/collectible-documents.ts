@@ -2,6 +2,8 @@ import { FiscalDocType, type FiscalDocumentStatus, type Prisma } from '@prisma/c
 import {
   Decimal,
   documentBalance,
+  effectiveDueDate,
+  fromDateOnly,
   hasCollectibleBalance,
   LIVE_DOCUMENT_STATUSES,
   toDecimal,
@@ -25,7 +27,15 @@ const COLLECTIBLE_INCLUDE = {
   creditNotes: {
     // RF-72: una versión archivada dejó de ser el documento; no acredita nada.
     where: { status: { in: LIVE_STATUSES }, archivedAt: null },
-    select: { totalPen: true },
+    // cc54 (D-657): lo que el 13 necesita para el vencimiento vigente (`dueDateOf`).
+    select: {
+      totalPen: true,
+      status: true,
+      creditNoteReason: true,
+      dueDate: true,
+      issueDate: true,
+      createdAt: true,
+    },
   },
   // RF-S3c: de quién es el comprobante (`documentOwnerId`). El reporte de CxC lo usa para el
   // filtro por vendedor y el enlace al pedido; cobranzas no lo lee.
@@ -72,6 +82,23 @@ export async function loadCollectibleDocuments(prisma: Reader): Promise<Collecti
     out.push({ document, balance, paid: parts.paid, credited: parts.credited });
   }
   return out;
+}
+
+/**
+ * cc54 (D-657): el vencimiento **vigente** de un comprobante con saldo (`YYYY-MM-DD`): el de la NC
+ * 13 viva más reciente, o el suyo. Lo usan cobranzas y el reporte de cuentas por cobrar.
+ */
+export function dueDateOf(document: CollectibleDocumentRow): string | null {
+  return effectiveDueDate(
+    document.dueDate ? fromDateOnly(document.dueDate) : null,
+    document.creditNotes.map((n) => ({
+      creditNoteReason: n.creditNoteReason,
+      status: n.status,
+      dueDate: n.dueDate ? fromDateOnly(n.dueDate) : null,
+      issueDate: fromDateOnly(n.issueDate),
+      createdAt: n.createdAt.toISOString(),
+    })),
+  ).dueDate;
 }
 
 /** El saldo de un comprobante, con la misma regla compartida que usa el DTO (D-075). */

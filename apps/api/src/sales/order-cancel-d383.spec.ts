@@ -167,7 +167,9 @@ describe('D-383 — anular un pedido', () => {
         groupBy: jest
           .fn()
           .mockResolvedValueOnce(s.emitted ?? [])
-          .mockResolvedValueOnce(s.credited ?? []),
+          .mockResolvedValueOnce(s.credited ?? [])
+          // cc54 (D-663): lo acreditado solo en importe (rebajas): ninguno.
+          .mockResolvedValueOnce([]),
       },
       dispatch: { findMany: jest.fn().mockResolvedValue(s.dispatches) },
       productionReport: { findMany: jest.fn().mockResolvedValue(s.reports) },

@@ -1067,7 +1067,9 @@ export const CREDIT_NOTE_REASON_LABELS: Record<CreditNoteReason, string> = {
   DESCUENTO_ITEM: 'Descuento por ítem',
   DEVOLUCION_TOTAL: 'Devolución total',
   DEVOLUCION_ITEM: 'Devolución por ítem',
-  OTROS_AJUSTES: 'Otros ajustes de monto',
+  // cc54 (D-657): el 13 del catálogo vigente es la corrección de la forma de pago al crédito, no
+  // un ajuste de monto (R.S. 193-2020).
+  OTROS_AJUSTES: 'Corrección del monto pendiente o de las fechas de pago',
 };
 export const CREDIT_NOTE_REASON_SUNAT_CODE: Record<CreditNoteReason, string> = {
   ANULACION_OPERACION: '01',
@@ -1092,9 +1094,9 @@ export const FULL_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
 
 /**
  * cc52 (D-646): los motivos SUNAT de una NC que **devuelven mercadería** (06 total, 07 por ítem).
- * Registrar una de estas genera la devolución que reingresa al kardex. Los de descuento o
- * corrección (03, 04, 05, 13) solo ajustan el monto; los de anulación (01, 02) siguen como antes
- * (la mercadería vuelve revirtiendo el despacho).
+ * Exigen que lo devuelto se haya despachado: registrar una de estas genera la devolución que
+ * reingresa al kardex. cc54: el 01 también devuelve lo despachado, pero no lo exige
+ * (`returnsStock`).
  */
 export const RETURN_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
   CreditNoteReason.DEVOLUCION_TOTAL,
@@ -1105,23 +1107,157 @@ export function isReturnCreditNoteReason(reason: string | null | undefined): boo
   return RETURN_CREDIT_NOTE_REASONS.includes(reason as CreditNoteReason);
 }
 
-/** cc52 (D-646): los grupos del motivo de una NC, como los elige el usuario. */
-export const CREDIT_NOTE_KINDS = ['RETURN', 'DISCOUNT', 'ANNUL'] as const;
-export type CreditNoteKind = (typeof CREDIT_NOTE_KINDS)[number];
-export const CREDIT_NOTE_KIND_LABELS: Record<CreditNoteKind, string> = {
-  RETURN: 'Devolución de mercadería',
-  DISCOUNT: 'Descuento / corrección de precio',
-  ANNUL: 'Anulación de la operación',
+/**
+ * cc54 (D-656): los motivos cuya NC devuelve al almacén lo despachado y no devuelto (documento
+ * DEV-): 06 y 07 (lo exigen) y 01 (todo lo que haya salido; si no salió nada, no mueve stock).
+ */
+export function returnsStock(reason: string | null | undefined): boolean {
+  return isReturnCreditNoteReason(reason) || reason === CreditNoteReason.ANULACION_OPERACION;
+}
+
+/**
+ * cc54 (D-663): los motivos que **acreditan cantidad** (la venta de esas unidades se deshace): 01,
+ * 02, 06 y 07. Los demás (03, 04, 05, 13) solo cambian el monto o un dato: lo facturado del pedido
+ * no vuelve a quedar pendiente y los reportes no restan unidades, metros ni kilos.
+ */
+export const QTY_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
+  CreditNoteReason.ANULACION_OPERACION,
+  CreditNoteReason.ANULACION_ERROR_RUC,
+  CreditNoteReason.DEVOLUCION_TOTAL,
+  CreditNoteReason.DEVOLUCION_ITEM,
+];
+
+export function creditsQty(reason: string | null | undefined): boolean {
+  return QTY_CREDIT_NOTE_REASONS.includes(reason as CreditNoteReason);
+}
+
+/** cc54 (D-654, D-657): los motivos que van con importe **cero** (Anexo 3, campo 39). */
+export const ZERO_AMOUNT_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
+  CreditNoteReason.CORRECCION_DESCRIPCION,
+  CreditNoteReason.OTROS_AJUSTES,
+];
+
+export function isZeroAmountCreditNote(reason: string | null | undefined): boolean {
+  return ZERO_AMOUNT_CREDIT_NOTE_REASONS.includes(reason as CreditNoteReason);
+}
+
+/** cc54: los motivos de rebaja de precio (la mercadería no vuelve; el costo no cambia). */
+export const DISCOUNT_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
+  CreditNoteReason.DESCUENTO_GLOBAL,
+  CreditNoteReason.DESCUENTO_ITEM,
+];
+
+/**
+ * cc54 (D-659): los motivos «excepcionales» con plazo de emisión (15.º día hábil del mes
+ * siguiente al comprobante, SEE-OSE, R.S. 117-2017 art. 26.5): 02, 03 y 13. Es un aviso.
+ */
+export const DEADLINE_CREDIT_NOTE_REASONS: readonly CreditNoteReason[] = [
+  CreditNoteReason.ANULACION_ERROR_RUC,
+  CreditNoteReason.CORRECCION_DESCRIPCION,
+  CreditNoteReason.OTROS_AJUSTES,
+];
+
+/**
+ * cc54 (D-663): lo que el usuario elige primero, agrupado por **efecto**. El motivo decide el
+ * comportamiento; ya no hay «Tipo de nota» aparte. 08–12 no se ofrecen (D-658; 11 y 12 no aplican).
+ */
+export const CREDIT_NOTE_GROUPS = ['ANULAR', 'DEVOLVER', 'REBAJAR', 'CORREGIR', 'CUOTAS'] as const;
+export type CreditNoteGroup = (typeof CREDIT_NOTE_GROUPS)[number];
+export const CREDIT_NOTE_GROUP_LABELS: Record<CreditNoteGroup, string> = {
+  ANULAR: 'Anular',
+  DEVOLVER: 'Devolver mercadería',
+  REBAJAR: 'Rebajar el precio',
+  CORREGIR: 'Corregir datos',
+  CUOTAS: 'Cambiar el vencimiento',
 };
-export const CREDIT_NOTE_KIND_REASONS: Record<CreditNoteKind, readonly CreditNoteReason[]> = {
-  RETURN: RETURN_CREDIT_NOTE_REASONS,
-  DISCOUNT: [
-    CreditNoteReason.DESCUENTO_GLOBAL,
-    CreditNoteReason.DESCUENTO_ITEM,
-    CreditNoteReason.CORRECCION_DESCRIPCION,
-    CreditNoteReason.OTROS_AJUSTES,
-  ],
-  ANNUL: [CreditNoteReason.ANULACION_OPERACION, CreditNoteReason.ANULACION_ERROR_RUC],
+export const CREDIT_NOTE_GROUP_HINTS: Record<CreditNoteGroup, string> = {
+  ANULAR: 'La venta queda sin efecto. Se acredita el total.',
+  DEVOLVER: 'El cliente devolvió todo o parte de lo despachado.',
+  REBAJAR: 'Se cobra menos; la mercadería no vuelve.',
+  CORREGIR: 'La descripción no corresponde a lo vendido. Importe S/ 0.',
+  CUOTAS: 'Solo factura al crédito. Importe S/ 0.',
+};
+export const CREDIT_NOTE_GROUP_REASONS: Record<CreditNoteGroup, readonly CreditNoteReason[]> = {
+  ANULAR: [CreditNoteReason.ANULACION_OPERACION, CreditNoteReason.ANULACION_ERROR_RUC],
+  DEVOLVER: RETURN_CREDIT_NOTE_REASONS,
+  REBAJAR: DISCOUNT_CREDIT_NOTE_REASONS,
+  CORREGIR: [CreditNoteReason.CORRECCION_DESCRIPCION],
+  CUOTAS: [CreditNoteReason.OTROS_AJUSTES],
+};
+
+export function creditNoteGroupOf(reason: CreditNoteReason): CreditNoteGroup {
+  return CREDIT_NOTE_GROUPS.find((g) => CREDIT_NOTE_GROUP_REASONS[g].includes(reason)) ?? 'ANULAR';
+}
+
+/** cc54: el botón (i) de cada código, en lenguaje simple. */
+export interface CreditNoteReasonInfo {
+  what: string;
+  when: string;
+  stock: string;
+  sales: string;
+  receivables: string;
+}
+export const CREDIT_NOTE_REASON_INFO: Record<CreditNoteReason, CreditNoteReasonInfo> = {
+  ANULACION_OPERACION: {
+    what: 'Deja sin efecto toda la venta.',
+    when: 'La operación no se hizo o se deshizo entera.',
+    stock:
+      'Lo despachado y no devuelto vuelve al almacén (documento DEV-), al costo con que salió y con la fecha de la nota. Si no salió nada, no se mueve.',
+    sales:
+      'Baja la venta del comprobante en el mes de la nota; si hubo devolución, baja también su costo.',
+    receivables: 'El saldo del comprobante queda en cero.',
+  },
+  ANULACION_ERROR_RUC: {
+    what: 'Anula el comprobante emitido al cliente equivocado y lo reemplaza por el del cliente correcto.',
+    when: 'Se facturó a otro RUC o a otro cliente. El papel del reemplazo ya existe.',
+    stock: 'Nada: la mercadería ya la tiene el cliente correcto. El despacho pasa al reemplazo.',
+    sales: 'La nota baja la venta y el reemplazo la vuelve a subir: el neto no cambia.',
+    receivables:
+      'El saldo pasa al comprobante de reemplazo, del cliente correcto. El pedido también cambia de cliente.',
+  },
+  CORRECCION_DESCRIPCION: {
+    what: 'Corrige el texto de una o más líneas, con importe S/ 0.',
+    when: 'La descripción no corresponde a lo vendido. El comprobante conserva su número.',
+    stock: 'Nada.',
+    sales: 'No cambia: ni venta ni costo.',
+    receivables: 'No cambia.',
+  },
+  DESCUENTO_GLOBAL: {
+    what: 'Rebaja un monto sobre el total del comprobante.',
+    when: 'Se acordó cobrar menos después de emitir. Para una boleta, SUNAT lo observa.',
+    stock: 'Nada: la mercadería no vuelve.',
+    sales: 'Baja la venta en el mes de la nota; el costo no cambia, así que baja el margen.',
+    receivables: 'Baja el saldo del cliente por el monto de la nota.',
+  },
+  DESCUENTO_ITEM: {
+    what: 'Rebaja el precio de una o más líneas.',
+    when: 'Se acordó un precio menor para algunos productos. Para una boleta, SUNAT lo observa.',
+    stock: 'Nada: la mercadería no vuelve.',
+    sales: 'Baja la venta en el mes de la nota; el costo no cambia, así que baja el margen.',
+    receivables: 'Baja el saldo del cliente por la rebaja.',
+  },
+  DEVOLUCION_TOTAL: {
+    what: 'El cliente devuelve toda la mercadería despachada.',
+    when: 'Vuelve todo lo que salió del almacén.',
+    stock:
+      'Entra todo lo devuelto (documento DEV-), al costo con que salió y con la fecha de la nota.',
+    sales: 'Baja la venta y su costo en el mes de la nota.',
+    receivables: 'Baja el saldo del cliente por el importe acreditado.',
+  },
+  DEVOLUCION_ITEM: {
+    what: 'El cliente devuelve solo algunos productos o una parte de las cantidades.',
+    when: 'Vuelve al almacén parte de lo despachado.',
+    stock: 'Entra lo devuelto (documento DEV-), al costo con que salió y con la fecha de la nota.',
+    sales: 'Baja la venta y su costo en el mes de la nota.',
+    receivables: 'Baja el saldo del cliente por el importe acreditado.',
+  },
+  OTROS_AJUSTES: {
+    what: 'Cambia el vencimiento de una factura al crédito, con importe S/ 0.',
+    when: 'Se acordó pagar en otra fecha. El importe de la factura no cambia.',
+    stock: 'Nada.',
+    sales: 'No cambia.',
+    receivables: 'El saldo es el mismo, con el vencimiento nuevo (cuenta para la deuda vencida).',
+  },
 };
 
 /** Modalidad de traslado (catálogo 18 de SUNAT, D-078). Se elige por despacho. */

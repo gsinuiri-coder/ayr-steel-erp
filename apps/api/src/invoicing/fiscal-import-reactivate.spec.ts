@@ -141,6 +141,8 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
               },
             })),
           )
+          .mockResolvedValueOnce([])
+          // cc54 (D-663): lo acreditado solo en importe.
           .mockResolvedValueOnce([]),
       },
     };

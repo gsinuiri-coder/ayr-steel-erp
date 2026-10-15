@@ -73,7 +73,14 @@ function doc(over: {
       amountPen: D(p.amount),
       reversedAt: p.reversed ? new Date() : null,
     })),
-    creditNotes: (over.credited ?? []).map((t) => ({ totalPen: D(t) })),
+    creditNotes: (over.credited ?? []).map((t) => ({
+      totalPen: D(t),
+      status: 'ACCEPTED',
+      creditNoteReason: 'DESCUENTO_ITEM',
+      dueDate: null,
+      issueDate: new Date('2026-09-01T00:00:00.000Z'),
+      createdAt: new Date('2026-09-01T12:00:00.000Z'),
+    })),
     salesOrder: over.viaDispatch ? null : order,
     dispatch: over.viaDispatch ? { salesOrder: order } : null,
   };
