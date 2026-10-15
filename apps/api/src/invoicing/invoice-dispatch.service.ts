@@ -17,6 +17,7 @@ import {
   type InvoiceDispatchPlanDto,
   type InvoiceDispatchResultDto,
   type InvoiceLinkedDispatchesDto,
+  QTY_CREDIT_NOTE_REASONS,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -541,11 +542,12 @@ export class InvoiceDispatchService {
         _sum: { qty: true },
       }),
     ]);
+    // cc54 (D-663): una rebaja o una corrección no deja unidades sin facturar.
     const credited = await tx.fiscalDocumentItem.groupBy({
       by: ['affectedItemId'],
       where: {
         affectedItemId: { in: invoicedRows.map((r) => r.id) },
-        document: { status: { in: LIVE } },
+        document: { status: { in: LIVE }, creditNoteReason: { in: [...QTY_CREDIT_NOTE_REASONS] } },
       },
       _sum: { qty: true },
     });

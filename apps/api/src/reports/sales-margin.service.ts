@@ -4,6 +4,7 @@ import {
   CREDIT_NOTE_REASONS,
   Decimal,
   isReturnCreditNoteReason,
+  QTY_CREDIT_NOTE_REASONS,
   LIVE_DOCUMENT_STATUSES,
   NO_COST_REPORT_LINES,
   salesOrderCode,
@@ -363,7 +364,10 @@ export class SalesMarginService {
       LEFT JOIN (
         SELECT
           fdi."sales_order_item_id" AS "id",
-          SUM(CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN -fdi."qty" ELSE fdi."qty" END) AS "qty"
+          -- cc54 (D-663): una NC resta unidades solo si su motivo acredita cantidad.
+          SUM(CASE WHEN fd."doc_type" = 'NOTA_CREDITO'
+            THEN (CASE WHEN fd."credit_note_reason"::text = ANY(${QTY_REASONS}::text[]) THEN -fdi."qty" ELSE 0 END)
+            ELSE fdi."qty" END) AS "qty"
         FROM "fiscal_document_items" fdi
         JOIN "fiscal_documents" fd ON fd."id" = fdi."document_id"
         WHERE fd."archived_at" IS NULL
@@ -725,6 +729,8 @@ const ZERO = new Decimal(0);
  * con cero: 02 pasa el despacho al reemplazo (D-655), 03 y 13 no mueven importe (D-654, D-657), 04
  * y 05 no mueven mercadería.
  */
+/** cc54 (D-663): los motivos que acreditan cantidad. */
+const QTY_REASONS: string[] = [...QTY_CREDIT_NOTE_REASONS];
 const DISCOUNT_CREDIT_REASONS: string[] = CREDIT_NOTE_REASONS.filter(
   (r) => !isReturnCreditNoteReason(r),
 );

@@ -37,6 +37,7 @@ import {
   type TransportSuggestionsDto,
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
+  QTY_CREDIT_NOTE_REASONS,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -640,11 +641,16 @@ export class DispatchesService {
     const itemIds = documents.flatMap((d) => d.items.map((i) => i.id));
     // Solo las notas **vivas**: una NC dada de baja no acredita nada, igual que en
     // `documentBalance` y en `createCreditNote`.
+    // cc54 (D-663): solo las notas que acreditan **cantidad** (01, 02, 06, 07); una rebaja o una
+    // corrección guarda la cantidad de la línea, pero esa venta sigue facturada.
     const credited = await tx.fiscalDocumentItem.groupBy({
       by: ['affectedItemId'],
       where: {
         affectedItemId: { in: itemIds },
-        document: { status: { in: DECLARED_STATUSES } },
+        document: {
+          status: { in: DECLARED_STATUSES },
+          creditNoteReason: { in: [...QTY_CREDIT_NOTE_REASONS] },
+        },
       },
       _sum: { qty: true },
     });

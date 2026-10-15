@@ -720,7 +720,7 @@ function ReasonFields({
               </Button>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="cn-r-series">Serie</Label>
+              <Label htmlFor="cn-r-series">Serie del reemplazo</Label>
               <Input
                 id="cn-r-series"
                 className="w-24"
@@ -733,7 +733,7 @@ function ReasonFields({
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="cn-r-number">Número</Label>
+              <Label htmlFor="cn-r-number">Número del reemplazo</Label>
               <Input
                 id="cn-r-number"
                 className="w-32"
@@ -746,7 +746,7 @@ function ReasonFields({
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="cn-r-date">Fecha</Label>
+              <Label htmlFor="cn-r-date">Fecha del reemplazo</Label>
               <Input
                 id="cn-r-date"
                 type="date"
@@ -808,10 +808,12 @@ function WhatWillHappen({
                 {preview.stock.map((s, i) => (
                   <span key={`${s.label}-${String(i)}`}>
                     {i > 0 ? ', ' : ''}
-                    <b>{formatQty(s.qty, unitSymbol(s.unit))}</b> de {s.label} ({s.dispatch})
+                    <b>{formatQty(s.qty, unitSymbol(s.unit))}</b> de {s.label}, del despacho{' '}
+                    {s.dispatch}
                   </span>
                 ))}{' '}
-                (DEV-), al costo con que salieron: <b>{formatMoney(preview.costPen)}</b>.
+                con un documento DEV-, al costo con que salieron:{' '}
+                <b>{formatMoney(preview.costPen)}</b>.
               </>
             ),
           )}

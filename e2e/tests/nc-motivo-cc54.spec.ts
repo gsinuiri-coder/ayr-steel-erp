@@ -96,9 +96,9 @@ async function registerPaper(page: Page, dialog: Locator): Promise<void> {
   const button = dialog.getByRole('button', { name: 'Registrar nota de crédito' });
   await expect(button).toBeEnabled({ timeout: 30_000 });
   await button.click();
-  await expect(page.getByRole('heading', { level: 1 })).not.toContainText('Borrador', {
-    timeout: 60_000,
-  });
+  // El registro termina cuando el diálogo se cierra y la pantalla pasa a la nota.
+  await expect(dialog).toBeHidden({ timeout: 60_000 });
+  await expect(page.getByText('Motivo SUNAT')).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe('cc54 — nota de crédito por motivo SUNAT', () => {
@@ -142,7 +142,7 @@ test.describe('cc54 — nota de crédito por motivo SUNAT', () => {
     await dialog.getByRole('button', { name: 'Continuar' }).click();
     const preview = dialog.getByTestId('credit-note-preview');
     await expect(preview).toContainText(s.coilCode, { timeout: 30_000 });
-    await expect(preview).toContainText('(DEV-)');
+    await expect(preview).toContainText('documento DEV-');
     await registerPaper(page, dialog);
     const returnLink = page.getByRole('link', { name: /^DEV-\d{6}$/ });
     await expect(returnLink).toBeVisible({ timeout: 30_000 });
@@ -232,17 +232,24 @@ test.describe('cc54 — nota de crédito por motivo SUNAT', () => {
       .click();
     await dialog.getByLabel('Serie', { exact: true }).fill(series());
     await dialog.getByLabel('Número del papel').fill(correlative());
-    await dialog.locator('#cn-r-series').fill(series());
-    await dialog.locator('#cn-r-number').fill(correlative());
+    await dialog.getByLabel('Serie del reemplazo').fill(series());
+    await dialog.getByLabel('Número del reemplazo').fill(correlative());
     const preview = dialog.getByTestId('credit-note-preview');
     await expect(preview).toContainText(right.name, { timeout: 30_000 });
     await expect(preview).toContainText('Nada: no se mueve mercadería');
     const button = dialog.getByRole('button', { name: 'Registrar nota de crédito' });
     await expect(button).toBeEnabled({ timeout: 30_000 });
     await button.click();
+    await expect(dialog).toBeHidden({ timeout: 60_000 });
     await expect(page.getByText('Motivo SUNAT 02')).toBeVisible({ timeout: 60_000 });
     // El pedido pasó al cliente correcto.
-    const order = await (await api.get(`/api/sales/orders/${s.orderId}`)).json();
-    expect((order as { customerId: string }).customerId).toBe(right.id);
+    await expect
+      .poll(async () => {
+        const order = (await (await api.get(`/api/sales/orders/${s.orderId}`)).json()) as {
+          customerId: string;
+        };
+        return order.customerId;
+      })
+      .toBe(right.id);
   });
 });
