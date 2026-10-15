@@ -277,15 +277,15 @@ export interface QtyOut {
 /**
  * cc53 (D-652, criterio de D-374) y cc54 (un solo cálculo): la primera fecha en que el kardex queda
  * en negativo **por las salidas nuevas** `outs`, o `null` si no queda. Cada salida va al final de su
- * día (se graba después de todo lo que ya existe) y se acumulan en su orden. Solo cuenta lo que las
- * salidas vuelven negativo: un punto que ya estaba negativo sin ellas (historia anterior a D-652)
- * no bloquea. `rows` en el orden del kardex. Lo usan el kardex (`InventoryService`), el plan del
- * despacho a la fecha del comprobante (D-278) y el de la herramienta de fecha de la carga (D-285).
+ * día (se graba después de todo lo que ya existe) y se acumulan en su orden. `rows` en el orden del
+ * kardex. Lo usan el kardex (`InventoryService`), el plan del despacho a la fecha del comprobante
+ * (D-278) y el de la herramienta de fecha de la carga (D-285).
  *
- * El **saldo final** (el de hoy) nunca queda eximido: `InventoryService.record` siempre exige que
- * la salida quepa en el saldo vigente («Stock insuficiente»), aunque el kardex ya termine en
- * negativo. Sin esto el plan aceptaba un despacho que el kardex rechazaba a mitad de la ejecución
- * (P2-1 del segundo modelo de cc54).
+ * cc54 (D-662, decisión del dueño sobre el P3-1 de cc53): una salida tampoco puede **agravar** un
+ * negativo que ya existía. Desde su fecha, todo punto en que el saldo con las salidas nuevas queda
+ * bajo cero la rechaza, aunque ya estuviera negativo sin ellas; lo anterior a la salida no la
+ * afecta (ahí no saca nada). El saldo final (el de hoy) es el último punto: es el «Stock
+ * insuficiente» de `InventoryService.record`.
  */
 export function firstNegativeDate(rows: readonly QtyRow[], outs: readonly QtyOut[]): string | null {
   const events = [
@@ -305,10 +305,8 @@ export function firstNegativeDate(rows: readonly QtyRow[], outs: readonly QtyOut
   for (const e of events) {
     running = running.plus(e.row);
     taken = taken.plus(e.out);
-    if (taken.gt(0) && running.gte(0) && running.minus(taken).lt(0)) return e.date;
+    if (taken.gt(0) && running.minus(taken).lt(0)) return e.date;
   }
-  const last = events.at(-1);
-  if (last && taken.gt(0) && running.minus(taken).lt(0)) return last.date;
   return null;
 }
 

@@ -381,7 +381,7 @@ export class InventoryService {
   /**
    * cc53 (D-652, criterio de D-374): un movimiento con fecha atrasada que saca stock no puede dejar
    * el kardex del ítem en negativo en ninguna fecha. Se rechaza con la primera fecha válida para
-   * registrarlo. No es retroactivo: un punto que ya estaba negativo no bloquea. Se llama solo cuando
+   * registrarlo. cc54 (D-662): tampoco puede agravar un negativo que ya existía. Se llama solo cuando
    * hay filas posteriores (con la fecha de hoy alcanza el chequeo de stock de siempre).
    */
   private async assertNoNegativeAtDate(
