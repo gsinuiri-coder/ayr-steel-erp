@@ -1085,6 +1085,15 @@ export class InvoicingService {
   ): Promise<FiscalDocumentDto> {
     this.operationDate.assertIssueDate(actor, input.issueDate);
     if (input.replacement) this.operationDate.assertIssueDate(actor, input.replacement.issueDate);
+    // Revisiones de cc54-B (P2): el 02 cambia el cliente del pedido: lo registra un administrador.
+    if (
+      input.reason === CreditNoteReason.ANULACION_ERROR_RUC &&
+      actor.role !== Role.ADMINISTRADOR
+    ) {
+      throw new ForbiddenException(
+        'La anulación por error en el RUC (02) cambia el cliente del pedido: la registra un administrador',
+      );
+    }
     const id = await this.prisma.$transaction(async (tx) => {
       const plan = await this.planCreditNote(tx, actor, affectedId, input, 'MANUAL');
       const noteId = await this.writeCreditNote(tx, actor, plan, input);
@@ -1113,23 +1122,25 @@ export class InvoicingService {
       async (tx) => {
         const plan = await this.planCreditNote(tx, actor, affectedId, input, 'PREVIEW');
         const { affected } = plan;
-        const allocations = returnsStock(input.reason)
-          ? await this.salesReturns.planForLines(
-              tx,
-              plan.lines.map((l) => ({
-                lineNumber: l.original.lineNumber,
-                orderItemId: l.original.salesOrderItemId,
-                qty: l.qty,
-              })),
-              {
-                affectedInvoiceId: affected.id,
-                asOf: input.issueDate,
-                ...(input.reason === CreditNoteReason.ANULACION_OPERACION
-                  ? { upToAvailable: true, onlyAffected: true }
-                  : {}),
-              },
-            )
-          : [];
+        // La devolución nace solo al registrar a mano (un electrónico va por borrador y envío).
+        const allocations =
+          returnsStock(input.reason) && affected.origin === FiscalDocumentOrigin.MANUAL
+            ? await this.salesReturns.planForLines(
+                tx,
+                plan.lines.map((l) => ({
+                  lineNumber: l.original.lineNumber,
+                  orderItemId: l.original.salesOrderItemId,
+                  qty: l.qty,
+                })),
+                {
+                  affectedInvoiceId: affected.id,
+                  asOf: input.issueDate,
+                  ...(input.reason === CreditNoteReason.ANULACION_OPERACION
+                    ? { upToAvailable: true, onlyAffected: true }
+                    : {}),
+                },
+              )
+            : [];
         const flat = allocations.flat();
         const labels = await this.kardexItemLabels(
           tx,
@@ -1376,6 +1387,12 @@ export class InvoicingService {
     if (lines.length === 0) {
       throw new BadRequestException('No queda nada por acreditar en este comprobante');
     }
+    if (
+      DISCOUNT_CREDIT_NOTE_REASONS.includes(reason) &&
+      !lines.some((l) => toDecimal(l.totalPen).gt(0))
+    ) {
+      throw new BadRequestException('La rebaja no llega a un céntimo: revisa el precio o el monto');
+    }
 
     const currentDue = effectiveDueDate(
       affected.dueDate ? fromDateOnly(affected.dueDate) : null,
@@ -1450,6 +1467,18 @@ export class InvoicingService {
     replacement: CreditNoteReplacementInput,
   ): Promise<NonNullable<CreditNotePlan['replacement']>> {
     const label = affected.number ?? 'El comprobante';
+    // `replaces_document_id` es único: un comprobante se reemplaza una sola vez.
+    const before = await tx.fiscalDocument.findFirst({
+      where: { replacesDocumentId: affected.id },
+      select: { number: true },
+    });
+    if (before) {
+      throw new BadRequestException(
+        `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}): un segundo 02 sobre el mismo comprobante no se registra`,
+      );
+    }
+    const draftBlock = await draftCreditNoteBlock(tx, affected.id, 'antes del 02');
+    if (draftBlock) throw new BadRequestException(draftBlock);
     if (affected.payments.length > 0) {
       throw new BadRequestException(
         `${label} tiene cobros registrados: anúlalos primero y después registra la nota de crédito 02`,
@@ -1504,7 +1533,14 @@ export class InvoicingService {
         where: {
           salesOrderId: affected.salesOrderId,
           id: { not: affected.id },
-          docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+          // Las guías de remisión también llevan al cliente anterior.
+          docType: {
+            in: [
+              FiscalDocType.FACTURA,
+              FiscalDocType.BOLETA,
+              FiscalDocType.GUIA_REMISION_REMITENTE,
+            ],
+          },
           status: { in: [...STANDING_DOCUMENT_STATUSES] },
           archivedAt: null,
         },
@@ -1512,7 +1548,7 @@ export class InvoicingService {
       });
       if (others.length > 0) {
         throw new BadRequestException(
-          `El pedido tiene otros comprobantes del cliente anterior (${others.map((o) => o.number ?? 'borrador').join(', ')}): no se le puede cambiar el cliente`,
+          `El pedido tiene otros comprobantes o guías del cliente anterior (${others.map((o) => o.number ?? 'borrador').join(', ')}): no se le puede cambiar el cliente`,
         );
       }
     }
@@ -1877,6 +1913,19 @@ export class InvoicingService {
       }
       throw err;
     }
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.document.register-manual',
+      entity: 'fiscal_documents',
+      entityId: created.id,
+      after: {
+        status: FiscalDocumentStatus.ACCEPTED,
+        origin: FiscalDocumentOrigin.MANUAL,
+        number: plan.number,
+        replaces: affected.number,
+        customer: plan.customerName,
+      },
+    });
     // El despacho declarado pasa al reemplazo: la mercadería no se mueve (D-205, por la puerta
     // del kardex, la única que escribe `dispatches.invoice_id`).
     const moved = await this.inventory.moveInvoiceDispatches(tx, affected.id, created.id);
@@ -1890,7 +1939,7 @@ export class InvoicingService {
       orderCode = salesOrderCode(order.seq);
       await this.audit.write(tx, {
         actorId: actor.id,
-        action: 'sales.order.customer-change',
+        action: 'sales.order.customer',
         entity: 'sales_orders',
         entityId: affected.salesOrderId,
         before: { customerId: affected.customerId, customer: affected.customer.name },
@@ -2652,14 +2701,16 @@ export class InvoicingService {
               `Otra nota de crédito ya acreditó la línea ${original.lineNumber}: quedan ${available.toFixed(3)}. Revisa este borrador antes de emitirlo.`,
             );
           }
-        } else {
-          const credited = c ? c.byQty.total.plus(c.byAmount.total) : new Decimal(0);
-          const left = toDecimal(original.totalPen.toString()).minus(credited);
-          if (toDecimal(item.totalPen.toString()).gt(left)) {
-            throw new ConflictException(
-              `Otra nota de crédito ya acreditó la línea ${original.lineNumber}: le quedan S/ ${left.toFixed(2)}. Revisa esta nota antes de registrarla.`,
-            );
-          }
+        }
+        // Revisiones de cc54-B: el importe para todo motivo (un borrador de devolución y una rebaja
+        // registrada antes no pueden acreditar juntas más de lo que vale la línea). Un céntimo de
+        // holgura: la parte que cierra se recalcula si el resto no cuadra (D-265).
+        const credited = c ? c.byQty.total.plus(c.byAmount.total) : new Decimal(0);
+        const left = toDecimal(original.totalPen.toString()).minus(credited);
+        if (toDecimal(item.totalPen.toString()).gt(left.plus('0.01'))) {
+          throw new ConflictException(
+            `Otra nota de crédito ya acreditó la línea ${original.lineNumber}: le quedan S/ ${left.toFixed(2)}. Revisa esta nota antes de registrarla.`,
+          );
         }
       }
       return;

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Role } from '@prisma/client';
@@ -142,7 +142,13 @@ interface Sold {
 
 /** Compra, venta de 5 u (despachadas o no) y su factura manual. */
 async function sold(
-  options: { dispatch?: boolean; declare?: boolean; paymentTerms?: 'CONTADO' | 'CREDITO' } = {},
+  options: {
+    dispatch?: boolean;
+    declare?: boolean;
+    paymentTerms?: 'CONTADO' | 'CREDITO';
+    /** Cuánto se despacha (por defecto, todo). */
+    dispatchQty?: string;
+  } = {},
 ): Promise<Sold> {
   const productId = (
     await moduleRef.get(CatalogService).create(
@@ -195,7 +201,10 @@ async function sold(
           originUbigeo: '150101',
           destinationUbigeo: '150101',
           transferMode: 'PICKUP',
-          items: order.items.map((i) => ({ salesOrderItemId: i.id, qty: i.qty })),
+          items: order.items.map((i) => ({
+            salesOrderItemId: i.id,
+            qty: options.dispatchQty ?? i.qty,
+          })),
         }),
       )
     ).id;
@@ -273,6 +282,50 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect(await pendingOf(s.orderId)).toBe('0.000');
   });
 
+  it('01 con despacho parcial: después se puede anular el pedido; la NC ya no se anula (revisiones)', async () => {
+    // Despachado a medias (un pedido atendido entero no se anula, regla de siempre).
+    const s = await sold({ dispatchQty: '2' });
+    const note = await register(s.invoiceId, { reason: 'ANULACION_OPERACION' });
+    // El despacho quedó devuelto entero: ya no bloquea la anulación del pedido.
+    const order = await moduleRef
+      .get(SalesOrdersService)
+      .cancel(admin, s.orderId, { reason: 'prueba cc54', acknowledgeFabricated: true });
+    expect(order.status).toBe('CANCELLED');
+    // Con el pedido anulado, la devolución no se deshace.
+    const r = await rejection(
+      moduleRef.get(FiscalImportService).annulExternal(admin, note.id, 'prueba'),
+    );
+    expect(r.message).toContain('está anulado');
+  });
+
+  it('01 con una línea sin pedido (flete): esa línea no devuelve nada y no falla', async () => {
+    const s = await sold();
+    // Una segunda factura del mismo cliente con una línea libre.
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId,
+        issueDate: PREV(11),
+        items: [{ description: 'Flete cc54', qty: '1', unitPricePen: '20' }],
+      }),
+    );
+    const free = await invoicing.registerManual(admin, draft.id, {
+      series: 'F954',
+      correlative: (correlative += 1),
+    });
+    const preview = await invoicing.previewCreditNote(
+      admin,
+      free.id,
+      createCreditNoteSchema.parse({ reason: 'ANULACION_OPERACION', issueDate: TODAY }),
+    );
+    expect(preview.stock).toEqual([]);
+    const note = await register(free.id, { reason: 'ANULACION_OPERACION' });
+    expect(note.totalPen).toBe('23.6000');
+    expect(note.salesReturn).toBeNull();
+    expect(await returns(s.productId)).toHaveLength(0);
+  });
+
   it('01 sin despacho: no mueve stock y lo facturado vuelve a quedar pendiente', async () => {
     const s = await sold({ dispatch: false });
     const preview = await invoicing.previewCreditNote(
@@ -323,6 +376,26 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
       moduleRef.get(FiscalImportService).annulExternal(admin, note.id, 'prueba'),
     );
     expect(r.message).toContain('reemplazo vivo');
+    // Anulado el reemplazo, anular la 02 devuelve el despacho y el cliente del pedido.
+    await moduleRef.get(FiscalImportService).annulExternal(admin, replacement.id, 'prueba');
+    await moduleRef.get(FiscalImportService).annulExternal(admin, note.id, 'prueba');
+    const back = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    expect(back.invoiceId).toBe(s.invoiceId);
+    const restored = await prisma.salesOrder.findUniqueOrThrow({ where: { id: s.orderId } });
+    expect(restored.customerId).toBe(customerId);
+    // Un segundo 02 sobre el mismo comprobante no se registra (el reemplazo es único).
+    const again = await rejection(
+      register(s.invoiceId, {
+        reason: 'ANULACION_ERROR_RUC',
+        replacement: {
+          customerId: otherCustomerId,
+          issueDate: TODAY,
+          series: 'F955',
+          correlative: correlative + 3000,
+        },
+      }),
+    );
+    expect(again.message).toContain('ya tuvo un comprobante de reemplazo');
   });
 
   it('02: con cobros en el comprobante, se bloquea con un mensaje claro', async () => {
@@ -462,8 +535,10 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
         items: [{ affectedItemId: b.itemId, qty: '2' }],
       }),
     );
+    const out = resolve(__dirname, '../../../../local-data/cc54');
+    mkdirSync(out, { recursive: true });
     writeFileSync(
-      resolve(__dirname, '../../../../local-data/cc54/medicion-nc-devolucion.json'),
+      resolve(out, 'medicion-nc-devolucion.json'),
       JSON.stringify({ twoSteps, oneStep, at: new Date().toISOString() }, null, 2),
     );
     expect(oneStep.queries).toBeLessThan(twoSteps.queries);

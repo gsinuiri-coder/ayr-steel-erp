@@ -732,7 +732,9 @@ const ZERO = new Decimal(0);
 /** cc54 (D-663): los motivos que acreditan cantidad. */
 const QTY_REASONS: string[] = [...QTY_CREDIT_NOTE_REASONS];
 const DISCOUNT_CREDIT_REASONS: string[] = CREDIT_NOTE_REASONS.filter(
-  (r) => !isReturnCreditNoteReason(r),
+  // El 01 declara costo solo con su DEV- (la cláusula de devoluciones); sin ella, como antes: la
+  // anulación del mostrador y la manual que revierte el despacho a mano no son «costo cero».
+  (r) => !isReturnCreditNoteReason(r) && r !== 'ANULACION_OPERACION',
 );
 /** Clave interna del grupo sin línea de negocio. No es un código de línea y no se serializa. */
 const SIN_LINEA = '__sin_linea__';

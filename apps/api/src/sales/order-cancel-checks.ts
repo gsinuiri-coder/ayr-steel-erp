@@ -60,7 +60,7 @@ export async function commercialCancelBlocks(
   const itemIds = (
     await db.salesOrderItem.findMany({ where: { salesOrderId: orderId }, select: { id: true } })
   ).map((i) => i.id);
-  const [candidates, dispatches] = await Promise.all([
+  const [candidates, issuedDispatches] = await Promise.all([
     // Facturas y boletas vivas y en borrador, en una sola consulta. Las notas de crédito en
     // borrador no bloquean: no facturan nada, y el mostrador puede dejar una a medias entre
     // crearla y emitirla (autorrevisión de D-383, P3).
@@ -93,10 +93,37 @@ export async function commercialCancelBlocks(
     }),
     db.dispatch.findMany({
       where: { salesOrderId: orderId, status: DispatchStatus.ISSUED },
-      select: { seq: true },
+      select: {
+        seq: true,
+        // cc54 (D-656): lo devuelto por una NC (DEV- vigente) ya volvió al almacén.
+        items: {
+          select: {
+            qty: true,
+            salesReturnItems: {
+              where: { salesReturn: { status: 'ACTIVE' } },
+              select: { qty: true },
+            },
+          },
+        },
+      },
       orderBy: { seq: 'asc' },
     }),
   ]);
+  // cc54 (D-656): un despacho devuelto entero por notas de crédito (01, 06, 07) ya no tiene nada
+  // afuera: no bloquea la anulación del pedido (antes quedaba sin salida: revertirlo lo impide su
+  // devolución, y el pedido pedía revertirlo).
+  const dispatches = issuedDispatches.filter((d) =>
+    d.items.some((i) =>
+      toDecimal(i.qty.toString())
+        .minus(
+          i.salesReturnItems.reduce(
+            (acc, r) => acc.plus(toDecimal(r.qty.toString())),
+            new Decimal(0),
+          ),
+        )
+        .gt(0),
+    ),
+  );
   // Un comprobante acreditado por completo con notas de crédito vivas ya no factura nada: la
   // venta está deshecha por ese camino. Es lo que hace el mostrador al anular una boleta fuera
   // del plazo de baja (`PosService.void`: nota de crédito total y después `cancel`), y no se

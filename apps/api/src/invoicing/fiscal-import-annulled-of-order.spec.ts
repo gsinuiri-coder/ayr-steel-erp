@@ -134,6 +134,7 @@ describe('FiscalImportService.annulledOfOrder (cc13)', () => {
       prisma as never,
       audit as never,
       { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+      {} as never,
     );
     return { service, prisma, audit };
   }

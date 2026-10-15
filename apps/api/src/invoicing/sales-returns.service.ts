@@ -175,6 +175,8 @@ export class SalesReturnsService {
     type Used = Map<string, { qty: Decimal; reserveQty: Decimal; cost: Decimal }>;
     const used = new Map<string, Used>();
     return lines.map((line) => {
+      // cc54 (D-656): el 01 sobre una línea sin pedido (flete, servicio) no devuelve nada.
+      if (line.orderItemId === null && options.upToAvailable) return [];
       if (line.orderItemId === null) {
         throw new BadRequestException(
           `Línea ${String(line.lineNumber)}: no viene de un pedido, no hay despacho que devolver`,
@@ -259,7 +261,7 @@ export class SalesReturnsService {
     if (salesOrderId === null && annul) return null;
     if (salesOrderId === null) {
       throw new BadRequestException(
-        'Este comprobante no viene de un pedido: no hay despacho que devolver. Usa «Descuento / corrección de precio».',
+        'Este comprobante no viene de un pedido: no hay despacho que devolver. Usa «Rebajar el precio».',
       );
     }
     const operationDate = fromDateOnly(note.issueDate);

@@ -56,6 +56,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'inventory.recost-historic': 'Recosteo histórico cc53',
   'imports.initial-inventory-products': 'Carga de inventario inicial de productos',
   'invoicing.credit-note.create': 'Nota de crédito creada',
+  'invoicing.credit-note.replacement': 'Comprobante de reemplazo registrado (NC 02)',
+  'invoicing.credit-note.replacement-undone': 'Reemplazo deshecho al anular la NC 02',
   'invoicing.dispatch.create': 'Despacho creado',
   'invoicing.dispatch.reverse': 'Despacho revertido',
   'invoicing.dispatch.redate': 'Despacho re-fechado con la fecha de emisión corregida',

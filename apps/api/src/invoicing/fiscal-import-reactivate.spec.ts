@@ -153,6 +153,7 @@ describe('FiscalImportService.reactivateExternal (D-373)', () => {
       prisma as never,
       audit as never,
       { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+      {} as never,
     );
     return { service, tx, audit, prisma };
   }

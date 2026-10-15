@@ -99,6 +99,9 @@ export function CreditNoteDialog({
     if (!manual && reason === 'ANULACION_ERROR_RUC') {
       return 'El reemplazo se registra sobre un comprobante manual';
     }
+    if (!isAdmin && reason === 'ANULACION_ERROR_RUC') {
+      return 'Cambia el cliente del pedido: lo registra un administrador';
+    }
     if (reason === 'OTROS_AJUSTES' && !(d.docType === 'FACTURA' && d.paymentTerms === 'CREDITO')) {
       return 'Solo en una factura al crédito';
     }
@@ -118,7 +121,8 @@ export function CreditNoteDialog({
   const bodyError = 'error' in built ? built.error : null;
   const paperError = manual ? paperNumberError(series, correlative) : null;
   const body = 'body' in built ? built.body : null;
-  const debouncedBody = useDebounced(dateError === null && body ? JSON.stringify(body) : null, 400);
+  const bodyKey = dateError === null && body ? JSON.stringify(body) : null;
+  const debouncedBody = useDebounced(bodyKey, 400);
 
   const preview = useQuery({
     queryKey: ['credit-note-preview', d.id, debouncedBody],
@@ -177,6 +181,8 @@ export function CreditNoteDialog({
     dateError === null &&
     bodyError === null &&
     paperError === null &&
+    // Lo que se registra es lo que se previsualizó: no durante la espera del debounce.
+    debouncedBody === bodyKey &&
     preview.isSuccess &&
     !preview.isFetching;
   const busy = register.isPending;

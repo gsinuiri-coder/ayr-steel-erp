@@ -522,6 +522,14 @@ export const createCreditNoteSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message });
       }
     }
+    // El monto del 04 es el del papel: al céntimo (su IGV sale como resta, D-255).
+    if (input.amountPen !== undefined && toDecimal(input.amountPen).decimalPlaces() > 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['amountPen'],
+        message: 'El monto va con hasta dos decimales (céntimos)',
+      });
+    }
     assertIssueDateWindow(input.issueDate, ctx, ['issueDate']);
     if (input.replacement) {
       assertIssueDateWindow(input.replacement.issueDate, ctx, ['replacement', 'issueDate']);

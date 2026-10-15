@@ -10,6 +10,7 @@ import {
   type DocumentProfitLineStatus,
   type DocumentProfitabilityDto,
   type SalesMaterialKind,
+  QTY_CREDIT_NOTE_REASONS,
 } from '@ayr/shared';
 import {
   addAcc,
@@ -38,12 +39,10 @@ const ONE = new Decimal(1);
  * facturado: la anulación de la operación o por error en el RUC y las devoluciones. El descuento
  * global o por ítem, la corrección de la descripción y los otros ajustes solo restan venta.
  */
-export const QTY_REDUCING_CREDIT_REASONS: ReadonlySet<string> = new Set([
-  'ANULACION_OPERACION',
-  'ANULACION_ERROR_RUC',
-  'DEVOLUCION_TOTAL',
-  'DEVOLUCION_ITEM',
-]);
+export const QTY_REDUCING_CREDIT_REASONS: ReadonlySet<string> = new Set<string>(
+  // cc54 (D-663): la misma lista que el resto del sistema.
+  QTY_CREDIT_NOTE_REASONS,
+);
 
 /** Lo despachado y costeado de una línea de pedido en los despachos **declarados** del comprobante. */
 export interface DeclaredSale {

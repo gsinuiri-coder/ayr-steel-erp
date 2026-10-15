@@ -182,6 +182,7 @@ describe('anular o dar de baja con una NC en borrador (cc33 N3)', () => {
       prisma as never,
       { write: jest.fn() } as never,
       { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) } as never,
+      {} as never,
     );
     await expect(service.annulExternal(ACTOR, 'inv-1', 'Prueba')).rejects.toThrow(
       'una nota de crédito en borrador',

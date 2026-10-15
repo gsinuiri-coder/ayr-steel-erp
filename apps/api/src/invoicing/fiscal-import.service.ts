@@ -28,6 +28,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { SalesReturnsService } from './sales-returns.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { invoicedByOrderItem } from './invoicing-net';
 import { paperTotalDifference, planOrderLines } from './reactivate-order-lines';
 import { lockDocuments } from '../inventory/document-locks';
@@ -59,6 +60,8 @@ export class FiscalImportService {
     private readonly audit: AuditService,
     // cc52 (D-646): anular una NC de devolución revierte su devolución.
     private readonly salesReturns: SalesReturnsService,
+    // cc54 (D-655): anular una NC 02 devuelve el despacho al comprobante que vuelve a estar vivo.
+    private readonly inventory: InventoryService,
   ) {}
 
   /**
@@ -163,6 +166,18 @@ export class FiscalImportService {
             `Esta nota de crédito 02 tiene su comprobante de reemplazo vivo (${replacement.number ?? ''}): anúlalo primero`,
           );
         }
+        await this.undoReplacementInTx(tx, actor, id, document.affectedDocumentId);
+      }
+      // cc54 (D-656): con el pedido anulado, la devolución de la NC ya no se deshace: la
+      // mercadería volvería a salir por un pedido que no existe.
+      const returned = await tx.salesReturn.findFirst({
+        where: { creditNoteId: id, status: 'ACTIVE' },
+        select: { salesOrder: { select: { status: true, seq: true } } },
+      });
+      if (returned?.salesOrder.status === 'CANCELLED') {
+        throw new BadRequestException(
+          `El pedido ${salesOrderCode(returned.salesOrder.seq)} está anulado: la devolución de esta nota de crédito ya no se deshace`,
+        );
       }
 
       // cc52 (D-646): una NC de devolución se anula revirtiendo su devolución, con movimientos
@@ -195,6 +210,77 @@ export class FiscalImportService {
       });
       return updated;
     }, KARDEX_TX_OPTIONS);
+  }
+
+  /**
+   * cc54 (D-655): al anular una NC 02 (su reemplazo ya anulado), el comprobante original vuelve a
+   * valer: el despacho que pasó al reemplazo vuelve a él y el pedido vuelve a su cliente. Con su
+   * constancia en el pedido.
+   */
+  private async undoReplacementInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    noteId: string,
+    affectedId: string,
+  ): Promise<void> {
+    const replacement = await tx.fiscalDocument.findFirst({
+      where: { replacesDocumentId: affectedId },
+      select: { id: true, number: true },
+    });
+    if (!replacement) return;
+    const affected = await tx.fiscalDocument.findUniqueOrThrow({
+      where: { id: affectedId },
+      select: {
+        number: true,
+        customerId: true,
+        salesOrderId: true,
+        customer: { select: { name: true } },
+      },
+    });
+    const dispatchIds = (
+      await tx.dispatch.findMany({ where: { invoiceId: replacement.id }, select: { id: true } })
+    ).map((d) => d.id);
+    // Regla dura 17: comprobante (ya tomado) → despacho → pedido.
+    await lockDocuments(tx, {
+      dispatches: dispatchIds,
+      salesOrders: affected.salesOrderId ? [affected.salesOrderId] : [],
+    });
+    await this.inventory.moveInvoiceDispatches(tx, replacement.id, affectedId);
+    if (affected.salesOrderId) {
+      const order = await tx.salesOrder.findUniqueOrThrow({
+        where: { id: affected.salesOrderId },
+        select: { customerId: true, customer: { select: { name: true } } },
+      });
+      if (order.customerId !== affected.customerId) {
+        await tx.salesOrder.update({
+          where: { id: affected.salesOrderId },
+          data: { customerId: affected.customerId },
+        });
+        await this.audit.write(tx, {
+          actorId: actor.id,
+          action: 'sales.order.customer',
+          entity: 'sales_orders',
+          entityId: affected.salesOrderId,
+          before: { customerId: order.customerId, customer: order.customer.name },
+          after: {
+            customerId: affected.customerId,
+            customer: affected.customer.name,
+            reason: `Se anula la nota de crédito 02 de ${affected.number ?? ''}: vuelve su cliente (el reemplazo ${replacement.number ?? ''} está anulado)`,
+          },
+        });
+      }
+    }
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.credit-note.replacement-undone',
+      entity: 'fiscal_documents',
+      entityId: noteId,
+      after: {
+        replaced: affected.number,
+        replacement: replacement.number,
+        dispatches: dispatchIds.length,
+      },
+    });
   }
 
   /**
