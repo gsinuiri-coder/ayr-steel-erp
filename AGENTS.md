@@ -108,7 +108,7 @@ Reglas de convivencia, sin excepción:
    `gcloud run services update-traffic` y los demás comandos que antes estaban en `ask` corren
    sin OK por acción, **salvo tres que siguen pidiendo el OK del dueño por nombre** (D-460):
    una migración contra producción, una escritura masiva con `--execute --confirm-production`
-   (regla 5) y borrar una rama de Neon (además en `deny`). **El agente no empuja directo a
+   (regla 5) y borrar una rama de Neon que no cubra la regla 18. **El agente no empuja directo a
    `main`: todo entra por PR** (también el cierre de docs), por decisión del dueño (cc28).
    Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, el push directo a `main` (`git push origin main`, `AYR_OWNER_PUSH=1 git push`, D-476), borrar ramas de Neon,
    `e2e:prod`, `prod-reset-go-live` y leer `.env*`. **D-572: la prohibición de ramas queda en el
@@ -137,7 +137,7 @@ Reglas de convivencia, sin excepción:
    turno automático.
 4. **Nada destructivo sobre datos reales.** Exige respaldo Neon + decisión del dueño + horario
    muerto. Borrar ramas Neon: solo con OK del dueño **por nombre**, conservando
-   `respaldo-pre-v4-20260915`.
+   `respaldo-pre-v4-20260915` (salvo los respaldos que cubre la regla 18).
 5. **Dry-run por default.** Escrituras masivas requieren `--confirm-production`; un
    `--execute --confirm-production` exige aprobación explícita del dueño.
 6. **Los puertos 4000/4001 son del dueño** (`dev:preview`). Ningún agente los toca ni los mata.
@@ -216,6 +216,19 @@ Reglas de convivencia, sin excepción:
     Los centinelas `row-locks.sentinel.spec.ts` y `document-locks.sentinel.spec.ts` fallan si
     aparece un `FOR UPDATE` sobre esas tablas fuera de su puerta. Los pares concurrentes viven en
     `lock-order.db-spec.ts`; un camino nuevo que tome documentos o inventario suma su par ahí.
+18. **Limpieza autónoma (OK del dueño, 2026-10-14; cambia D-460 solo en esto).** Sin pedir OK, el
+    agente puede:
+    - **Borrar carpetas de worktrees y temporales** dentro de `C:/Users/User/Documents/workspace/ayr/`
+      cuyo nombre empiece con `ayr-steel-erp-cc`, `ayr-steel-erp-audit` o `ayr-neon`. **Nunca** el
+      checkout principal `ayr-steel-erp` ni `frontend-ayr-nextjs`. Antes, copiar su `local-data/` al
+      checkout principal y verificar la copia (§4), y cerrar los procesos que la usan.
+    - **Borrar ramas de Neon cuyo nombre empiece con `respaldo-`**, conservando **siempre los dos
+      respaldos más recientes** y el del día D (`respaldo-pre-v4-20260915`, §3.3). **Nunca**
+      `production`, `demo`, `ci` ni `dev`. Antes de borrar: listar las ramas, verificar nombre e id y
+      que no tenga ramas hijas, y anotarlo en `docs/ENTORNOS.md` (nombre, id, fecha) en el PR de docs.
+      Se borra con `neonctl branches delete <id>` en silencio (`--output json`, sin imprimir nada más).
+      Todo lo demás de D-460 sigue igual. Para la parte de Neon, `.claude/settings.json` debe tener
+      `neonctl branches delete` en `allow` y no en `deny` (lo aplica el dueño).
 
 ### 3.1 Credenciales y secretos
 
@@ -290,10 +303,11 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
 - Nunca se borran `production`, `dev`, `ci`, `demo` ni `respaldo-pre-v4-20260915`.
 - **Máximo 10 ramas en Neon** (regla del dueño, 2026-10-04), contando las cinco de arriba. Antes
   de crear una rama nueva (respaldo, ensayo, rescate) se listan las ramas; si con la nueva se
-  pasaría de 10, primero se le propone al dueño cuáles borrar, y se borra solo con su OK por
+  pasaría de 10, primero se borra un respaldo que cubra la regla 18; si no hay, se propone al
+  dueño cuáles borrar, y se borra solo con su OK por
   nombre. Al cerrar cada ventana se listan las ramas y, si hay más de 10, se propone el borrado
   con la misma regla de respaldos de abajo.
-- Un respaldo pre-ventana solo se borra con OK explícito del dueño **por nombre**, cuando la
+- Salvo la regla 18, un respaldo pre-ventana solo se borra con OK explícito del dueño **por nombre**, cuando la
   ventana está cerrada/verificada y existe un respaldo posterior que cubre el mismo estado.
   Conservar siempre los dos respaldos post-día-D más recientes. Tras cada ventana verificada,
   se pueden proponer para borrado los respaldos de ventanas verificadas con más de siete días,

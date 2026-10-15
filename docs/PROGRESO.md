@@ -35,7 +35,7 @@ revisiones en `docs/revision/cc53-*.md`; UAT en `docs/uat/cc53.md`.
 - **Para la auditoría siguiente:** (a) Rentabilidad del comprobante y Ventas y margen usan bases de costo distintas
   para coberturas; (b) un pedido tiene un despacho «sin comprobante declarado» (en el informe al dueño).
 - **Neon:** 10 ramas de 10 (`respaldo-pre-cc08-20261001` borrada por el dueño). Proponer borrado antes de crear otra.
-- **Pendiente:** UAT de cc53; P3 de las revisiones (ver handoff).
+- **UAT de cc53 aprobado por el dueño (2026-10-14).** Pendiente: P2 y P3 de las revisiones (ver handoff).
 
 EOF
 

@@ -68,7 +68,7 @@ el dueño el mismo día (con D-642..D-648). **Una migración** (`20261015_invent
 
 ## Pendiente / para la siguiente sesión
 
-- **El dueño:** UAT en `docs/uat/cc53.md`.
+- **El dueño:** UAT de `docs/uat/cc53.md` **aprobado el 2026-10-14**.
 - **Auditoría siguiente:** (a) Rentabilidad del comprobante y Ventas y margen usan bases de costo distintas para
   coberturas; (b) un pedido con un despacho «sin comprobante declarado» (en el informe al dueño).
 - **Neon: 10 de 10.** Antes de crear otra rama, proponer al dueño cuáles borrar (el dueño las borra).

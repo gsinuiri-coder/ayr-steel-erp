@@ -2699,3 +2699,12 @@ de despacho); se juzga el estado final.
 defecto de Prisma. `KARDEX_TX_OPTIONS` (30 s) en las seis transacciones sin tope que pueden registrar o revertir una
 devolución o recostear, y un centinela para todas las que tocan kardex. Medido contra Neon `ci` desde la PC: recosteo
 de 10 salidas 2,37 s; reingreso de devolución con recosteo 2,72 s.
+
+## Registro del dueño (2026-10-14, cierre de cc53)
+
+UAT de cc53 aprobado. El dueño autorizó la **limpieza autónoma** (AGENTS.md, regla dura 18; cambia D-460 solo en
+esto): el agente borra sin pedir OK las carpetas de worktrees y temporales `ayr-steel-erp-cc*`, `ayr-steel-erp-audit*`
+y `ayr-neon*` dentro de `workspace/ayr`, y las ramas de Neon `respaldo-*` que no sean los dos respaldos más recientes
+ni el del día D, siempre listando, verificando nombre e id y anotándolo en `docs/ENTORNOS.md`. La parte de Neon
+requiere el cambio de permisos en `.claude/settings.json`, que aplica el dueño (el clasificador no deja que el agente
+modifique su propia configuración).
