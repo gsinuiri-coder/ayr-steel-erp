@@ -2,6 +2,33 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-15 — cc54: deuda de cc53 y nota de crédito por motivo SUNAT en un solo diálogo (D-653..D-663; PR #209 y #210)
+
+- **Corte A, deuda de cc53 (D-653).** En producción con la API `00129-5ll` y el merge `d902e5c9`.
+  - Un solo cálculo de negativos y primera fecha válida.
+  - D-652 antes del acuse de retrofecha y su rechazo legible en toda la web.
+  - `qtyRowsOf` en una consulta y el centinela de topes con auxiliares.
+  - Candado de `recosteo:historico --execute`: N = 2 h.
+  - Cifras y fechas reales fuera de los specs.
+- **Corte B, NC por motivo SUNAT (D-654..D-663).** En producción con la API `00130-62b` y el merge `a2acf50e`.
+  - El motivo decide:
+    - 01 devuelve lo despachado (DEV-);
+    - 02 registra el reemplazo al cliente correcto, sin salida nueva, y cambia el cliente del pedido (solo
+      ADMINISTRADOR);
+    - 03 corrige el texto con importe 0;
+    - 04 y 05 rebajan importe;
+    - 06 y 07 devuelven;
+    - 13 cambia el vencimiento de una factura al crédito con importe 0 (vencimiento derivado).
+  - Un solo diálogo (modal ancho) sin borrador. «Qué va a pasar» y el plazo del 15.º día hábil como aviso.
+  - Solo los motivos de cantidad acreditan unidades; los reportes son coherentes y la rentabilidad resta la DEV-.
+- **D-662:** una salida atrasada tampoco agrava un negativo existente. En producción hay 0 ítems con negativos.
+- **Anotado para después (decisión del dueño):**
+  - **08, 09 y 10** no se agregan ahora: exigen migración del enum (D-658);
+  - las **cuotas reales del 13** quedan para cuando se usen: hoy, vencimiento único (D-657).
+- Registro de riesgo (toca datos): `invoicing.service.ts` (`planCreditNote`, `applyReplacementInTx`,
+  `registerManualInTx`), `fiscal-import.service.ts` (`undoReplacementInTx`), `sales-returns.service.ts` (01 con DEV-),
+  `invoicing-net.ts` y `order-cancel-checks.ts`. Pendiente de la revisión del dueño (UAT `docs/uat/cc54.md`).
+
 ## 2026-10-14 — cc53: recosteo del promedio por fecha, corrección única y nada atrasado en negativo (D-649..D-652; PR #202, #203 y #204)
 
 API, web y herramientas. **Una migración** (`20261015_inventory_recost`, OK del dueño por nombre; respaldo

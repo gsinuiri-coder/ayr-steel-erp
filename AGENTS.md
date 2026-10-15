@@ -169,7 +169,8 @@ Reglas de convivencia, sin excepción:
    con tope de 500 movimientos (encima queda «recosteo pendiente» para `pnpm recosteo:historico`).
    El costo efectivo de una fila es su `total_cost` más sus recosteos; nunca se edita una fila.
    **D-652:** un movimiento atrasado que saca stock no puede dejar el kardex en negativo en ninguna
-   fecha (se rechaza con la primera fecha válida, criterio de D-374; no es retroactivo). El
+   fecha ni agravar un negativo que ya existía (D-662; se rechaza con la primera fecha válida,
+   criterio de D-374). Un solo cálculo para el kardex y los planes (D-653, `recost-engine.ts`). El
    bloqueo de D-648 se quitó.
 9. **`Decimal`, nunca `number`,** para dinero, pesos y dimensiones.
 10. **Sin creación silenciosa de entidades.**
