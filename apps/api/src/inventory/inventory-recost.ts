@@ -7,6 +7,7 @@ import type {
 import { Decimal, toDecimal } from '@ayr/shared';
 import {
   prorateDelta,
+  qtyRowsFromMovements,
   RECOST_MAX_ROWS,
   replayItem,
   stockBefore,
@@ -382,28 +383,27 @@ export async function stockUpToDate(
 
 /**
  * cc53 (D-652): el kardex del ítem en cantidades, en su orden (sin recosteos: no mueven cantidad).
- * Un movimiento anulado **el mismo día** y su anulación se cancelan y no cuentan: entre los dos no
- * hubo un día con el stock afuera (re-fechar un despacho, D-288, anula en el día viejo).
+ * Un movimiento anulado **el mismo día** y su anulación se cancelan y no cuentan
+ * (`cancelSameDayReversals`). cc54 (P2-4 de la revisión de cc53): **una sola consulta**, con las
+ * columnas que el conteo usa; sin costos ni el vínculo de las devoluciones.
  */
 export async function qtyRowsOf(tx: Prisma.TransactionClient, item: RecostItem): Promise<QtyRow[]> {
-  const l = await loadItem(tx, item);
-  const dateOf = (m: MovementMeta) => m.operationDate.toISOString().slice(0, 10);
-  const byId = new Map(l.metas.map((m) => [m.id, m]));
-  const cancelled = new Set<bigint>();
-  for (const m of l.metas) {
-    const original = m.reversalOfId === null ? undefined : byId.get(m.reversalOfId);
-    if (original && dateOf(original) === dateOf(m)) {
-      cancelled.add(original.id);
-      cancelled.add(m.id);
-    }
-  }
-  return l.metas
-    .filter((m) => !cancelled.has(m.id))
-    .map((m) => ({
-      date: dateOf(m),
-      delta: m.type === 'IN' ? m.qty : m.type === 'OUT' ? m.qty.negated() : ZERO,
-    }));
+  const raw = await tx.inventoryMovement.findMany({
+    where: { itemType: item.itemType, itemId: item.itemId, recostOfId: null },
+    orderBy: [{ operationDate: 'asc' }, { at: 'asc' }, { id: 'asc' }],
+    select: { id: true, type: true, qty: true, operationDate: true, reversalOfId: true },
+  });
+  return qtyRowsFromMovements(
+    raw.map((m) => ({
+      id: m.id,
+      reversalOfId: m.reversalOfId,
+      date: m.operationDate.toISOString().slice(0, 10),
+      type: m.type,
+      qty: toDecimal(m.qty.toString()),
+    })),
+  );
 }
+
 /** Cuántas filas tiene un ítem después de una fecha: lo que avisa el diálogo de retrofecha. */
 export function laterMovementsNote(count: number): string {
   return count === 0

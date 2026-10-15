@@ -7,9 +7,16 @@
  * reportes antes y después **dentro** de ella (Ventas y margen, rentabilidad de cada comprobante
  * afectado, inventario valorizado) y deja la vista previa en `local-data/cc53/` (fuera del repo).
  * `--execute` contra production exige además `--confirm-production` (lo pide el wrapper) y el OK
- * del dueño por nombre; al terminar compara contra la vista previa del dry-run, al céntimo.
+ * del dueño por nombre.
+ *
+ * cc54 (P2-6 de la revisión de cc53; D-653): `--execute` **se niega** a correr sin una vista previa
+ * de la misma rama, del mismo commit y de menos de `PREVIEW_MAX_AGE_HOURS`; y compara al céntimo
+ * **dentro** de la transacción, antes del commit: si difiere, revierte y no escribe nada.
+ * P2-7: la transacción bloquea los SKU del alcance hasta 10 min (ventas y despachos esperan):
+ * se corre en horario muerto.
  */
 import 'dotenv/config';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { NestFactory } from '@nestjs/core';
@@ -22,8 +29,10 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { InventoryService } from '../src/inventory/inventory.service';
 import { planRecost, type RecostSeed } from '../src/inventory/inventory-recost';
 import {
-  comparePreviews,
+  executeDifferences,
+  shaWithChanges,
   monthlyDeltas,
+  previewRejection,
   renderHistoricPreview,
   type BeforeAfter,
   type DocumentBeforeAfter,
@@ -75,6 +84,35 @@ class DryRun extends Error {
   constructor(readonly preview: HistoricPreview) {
     super('dry-run');
   }
+}
+
+/** cc54 (P2-6): la ejecución no coincide con la vista previa; se lanza para revertir. */
+class Mismatch extends Error {
+  constructor(
+    readonly preview: HistoricPreview,
+    readonly differences: string[],
+  ) {
+    super('mismatch');
+  }
+}
+
+/**
+ * El commit del checkout (lo que se compara entre el dry-run y la ejecución), con `DIRTY_SUFFIX`
+ * si `apps` o `packages` tienen cambios sin commitear (entonces `--execute` se niega).
+ */
+function gitSha(): string {
+  // Compilado en `apps/api/dist-cli/prisma/`: la raíz del repo está cuatro niveles arriba.
+  const cwd = resolve(__dirname, '../../../..');
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', cwd });
+  const porcelain = execFileSync('git', ['status', '--porcelain', '--', 'apps', 'packages'], {
+    encoding: 'utf8',
+    cwd,
+  });
+  return shaWithChanges(head, porcelain);
+}
+
+function readPreview(path: string): HistoricPreview | null {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as HistoricPreview) : null;
 }
 
 interface Scope {
@@ -147,6 +185,17 @@ async function main(): Promise<void> {
   const outDir = resolve(__dirname, '../../../../local-data/cc53');
   mkdirSync(outDir, { recursive: true });
   const previewJson = resolve(outDir, `VISTA-PREVIA-${branch}.json`);
+  const sha = gitSha();
+  // cc54 (P2-6): sin vista previa válida no se abre la transacción.
+  const expected = execute ? readPreview(previewJson) : null;
+  if (execute) {
+    const rejection = previewRejection(expected, { branch, gitSha: sha, at: new Date() });
+    if (rejection !== null) throw new Error(`--execute rechazado: ${rejection}`);
+    console.error(
+      `Aviso: la corrida bloquea ventas y despachos de ${skus.join(', ')} y lo que arrastre la ` +
+        'cadena hasta que termine (tope 10 min). Córrela en horario muerto.',
+    );
+  }
 
   const app = await NestFactory.createApplicationContext(AppModule, {
     logger: false,
@@ -269,6 +318,8 @@ async function main(): Promise<void> {
           const result: HistoricPreview = {
             branch,
             generatedAt: `${businessToday()} (Lima)`,
+            gitSha: sha,
+            generatedAtIso: new Date().toISOString(),
             skus,
             adjustments: outcome.adjusted.length,
             rowsReplayed: outcome.rowsReplayed,
@@ -287,11 +338,24 @@ async function main(): Promise<void> {
             residual,
           };
           if (!execute) throw new DryRun(result);
+          // cc54 (P2-6): el candado es antes del commit; una diferencia revierte todo.
+          const differences = executeDifferences(expected, result);
+          if (differences.length > 0) throw new Mismatch(result, differences);
           return result;
         },
         { timeout: 600_000, maxWait: 30_000 },
       );
     } catch (err) {
+      if (err instanceof Mismatch) {
+        writeFileSync(
+          resolve(outDir, `RECHAZADA-${branch}.json`),
+          JSON.stringify(err.preview, null, 2),
+        );
+        throw new Error(
+          `NO SE ESCRIBIÓ NADA en ${branch}: la ejecución no coincide con la vista previa ` +
+            `(la transacción se revirtió).\n${err.differences.join('\n')}`,
+        );
+      }
       if (!(err instanceof DryRun)) throw err;
       preview = err.preview;
     }
@@ -308,16 +372,7 @@ async function main(): Promise<void> {
       ? `EJECUTADO en ${branch}: ${String(preview.adjustments)} ajuste(s) «${LABEL}».`
       : `DRY-RUN en ${branch}: nada se escribió (la transacción se revirtió).`,
   );
-  if (execute && existsSync(previewJson)) {
-    const expected = JSON.parse(readFileSync(previewJson, 'utf8')) as HistoricPreview;
-    const differences = comparePreviews(expected, preview);
-    console.error(
-      differences.length === 0
-        ? 'Coincide con la vista previa del dry-run, al céntimo.'
-        : `DIFERENCIAS contra la vista previa:\n${differences.join('\n')}`,
-    );
-    if (differences.length > 0) process.exitCode = 2;
-  }
+  if (execute) console.error('Coincide con la vista previa del dry-run, al céntimo.');
 }
 
 main().catch((error: unknown) => {

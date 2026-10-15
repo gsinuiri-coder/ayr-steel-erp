@@ -268,39 +268,142 @@ export interface QtyRow {
   delta: Decimal;
 }
 
+/** Una salida nueva para el chequeo de negativos: su fecha (va al final de ese día) y su cantidad. */
+export interface QtyOut {
+  date: string;
+  qty: Decimal;
+}
+
 /**
- * cc53 (D-652): ¿cabe una salida de `qty` fechada `date` (al final de ese día) sin dejar el kardex
- * en negativo en alguna fecha? Solo cuenta lo que **la salida** volvería negativo: un punto que ya
- * estaba negativo (historia anterior a D-652) no bloquea. `rows` en el orden del kardex.
+ * cc53 (D-652, criterio de D-374) y cc54 (un solo cálculo): la primera fecha en que el kardex queda
+ * en negativo **por las salidas nuevas** `outs`, o `null` si no queda. Cada salida va al final de su
+ * día (se graba después de todo lo que ya existe) y se acumulan en su orden. Solo cuenta lo que las
+ * salidas vuelven negativo: un punto que ya estaba negativo sin ellas (historia anterior a D-652)
+ * no bloquea. `rows` en el orden del kardex. Lo usan el kardex (`InventoryService`), el plan del
+ * despacho a la fecha del comprobante (D-278) y el de la herramienta de fecha de la carga (D-285).
+ *
+ * El **saldo final** (el de hoy) nunca queda eximido: `InventoryService.record` siempre exige que
+ * la salida quepa en el saldo vigente («Stock insuficiente»), aunque el kardex ya termine en
+ * negativo. Sin esto el plan aceptaba un despacho que el kardex rechazaba a mitad de la ejecución
+ * (P2-1 del segundo modelo de cc54).
  */
-export function fitsWithoutNegative(rows: readonly QtyRow[], date: string, qty: Decimal): boolean {
+export function firstNegativeDate(rows: readonly QtyRow[], outs: readonly QtyOut[]): string | null {
+  const events = [
+    ...rows.map((r, i) => ({ date: r.date, rank: 0, order: i, row: r.delta, out: ZERO })),
+    ...outs.map((o, i) => ({ date: o.date, rank: 1, order: i, row: ZERO, out: o.qty })),
+  ].sort((a, b) =>
+    a.date !== b.date
+      ? a.date < b.date
+        ? -1
+        : 1
+      : a.rank !== b.rank
+        ? a.rank - b.rank
+        : a.order - b.order,
+  );
   let running = ZERO;
-  let inserted = false;
-  const check = (before: Decimal) => before.lt(0) || before.minus(qty).gte(0);
-  for (const r of rows) {
-    if (!inserted && r.date > date) {
-      inserted = true;
-      if (!check(running)) return false;
-    }
-    running = running.plus(r.delta);
-    if (inserted && !check(running)) return false;
+  let taken = ZERO;
+  for (const e of events) {
+    running = running.plus(e.row);
+    taken = taken.plus(e.out);
+    if (taken.gt(0) && running.gte(0) && running.minus(taken).lt(0)) return e.date;
   }
-  return inserted || check(running);
+  const last = events.at(-1);
+  if (last && taken.gt(0) && running.minus(taken).lt(0)) return last.date;
+  return null;
+}
+
+/** ¿Cabe una salida de `qty` fechada `date` sin dejar el kardex en negativo? (D-652) */
+export function fitsWithoutNegative(rows: readonly QtyRow[], date: string, qty: Decimal): boolean {
+  return firstNegativeDate(rows, [{ date, qty }]) === null;
 }
 
 /**
  * cc53 (D-652, criterio de D-374): la primera fecha, desde `date` y hasta `today`, en que la salida
- * cabe sin dejar el kardex negativo. Se prueban `date`, cada fecha posterior con movimientos y hoy;
- * `null` si ni hoy alcanza (entonces es stock insuficiente, el rechazo de siempre).
+ * cabe sin dejar el kardex negativo, sumada a `priorOuts` (las que el mismo plan ya aceptó). Se
+ * prueban `date`, cada fecha posterior con movimientos y hoy; `null` si ni hoy alcanza (entonces es
+ * stock insuficiente, el rechazo de siempre).
  */
 export function firstValidDate(
   rows: readonly QtyRow[],
   date: string,
   qty: Decimal,
   today: string,
+  priorOuts: readonly QtyOut[] = [],
 ): string | null {
   const candidates = [
     ...new Set([date, ...rows.map((r) => r.date).filter((d) => d > date && d < today), today]),
-  ].sort();
-  return candidates.find((d) => fitsWithoutNegative(rows, d, qty)) ?? null;
+  ].sort((a, b) => a.localeCompare(b));
+  return (
+    candidates.find((d) => firstNegativeDate(rows, [...priorOuts, { date: d, qty }]) === null) ??
+    null
+  );
+}
+
+/** Un movimiento del kardex con lo mínimo para contar cantidades por fecha. */
+export interface QtyMovement {
+  id: bigint | string;
+  reversalOfId: bigint | string | null;
+  /** `YYYY-MM-DD`. */
+  date: string;
+  type: 'IN' | 'OUT' | 'ADJUST';
+  qty: Decimal;
+}
+
+/**
+ * cc53 (D-652) y cc54: un movimiento anulado **el mismo día** y su anulación se cancelan y no
+ * cuentan: entre los dos no hubo un día con el stock afuera (re-fechar un despacho, D-288, anula en
+ * el día viejo; una anulación normal del mismo día tampoco deja un día distinto). Conserva el orden.
+ */
+export function cancelSameDayReversals<T extends Omit<QtyMovement, 'type' | 'qty'>>(
+  movements: readonly T[],
+): T[] {
+  const dateById = new Map(movements.map((m) => [String(m.id), m.date]));
+  const cancelled = new Set<string>();
+  for (const m of movements) {
+    if (m.reversalOfId === null) continue;
+    const original = String(m.reversalOfId);
+    if (dateById.get(original) === m.date) {
+      cancelled.add(original);
+      cancelled.add(String(m.id));
+    }
+  }
+  return movements.filter((m) => !cancelled.has(String(m.id)));
+}
+
+/** El kardex en cantidades (D-652), en el orden recibido, sin los pares anulados el mismo día. */
+export function qtyRowsFromMovements(movements: readonly QtyMovement[]): QtyRow[] {
+  return cancelSameDayReversals(movements).map((m) => ({
+    date: m.date,
+    delta: m.type === 'IN' ? m.qty : m.type === 'OUT' ? m.qty.negated() : ZERO,
+  }));
+}
+
+/** Un tramo del kardex con el saldo en cantidad bajo cero: desde, hasta (null = sigue hoy) y mínimo. */
+export interface NegativeSpan {
+  from: string;
+  to: string | null;
+  minQty: string;
+}
+
+/**
+ * cc54 (P3-2 de la revisión de cc53): los tramos negativos de un ítem con el mismo conteo que D-652
+ * (`qtyRowsFromMovements`: sin los pares anulados el mismo día), para `inspect:cc53`.
+ */
+export function negativeSpans(rows: readonly QtyRow[]): NegativeSpan[] {
+  const spans: NegativeSpan[] = [];
+  let running = ZERO;
+  let open: NegativeSpan | null = null;
+  for (const r of rows) {
+    running = running.plus(r.delta);
+    if (running.lt(0)) {
+      if (!open) open = { from: r.date, to: null, minQty: running.toFixed(3) };
+      else if (running.lt(open.minQty)) open.minQty = running.toFixed(3);
+    } else if (open) {
+      open.to = r.date;
+      spans.push(open);
+      open = null;
+    }
+  }
+  if (open) spans.push(open);
+  return spans;
 }

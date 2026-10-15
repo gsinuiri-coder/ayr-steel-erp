@@ -312,12 +312,24 @@ describe('dropSameDayReversals (D-288)', () => {
     expect(kept.map((m) => m.id)).toEqual(['1', '4', '5']);
   });
 
-  it('una reversa normal del mismo día (D-124) se queda: su hueco intermedio sigue contando', () => {
+  it('cc54: una reversa normal del mismo día también se cancela (la regla del kardex, D-652)', () => {
     const kept = dropSameDayReversals([
       mv('1', '2026-09-24'),
       mv('2', '2026-09-24', '1', 'devolución del cliente'),
     ]);
-    expect(kept.map((m) => m.id)).toEqual(['1', '2']);
+    expect(kept).toEqual([]);
+  });
+
+  it('cc54: un negativo que ya estaba sin la salida nueva no manda a revisión (D-652)', () => {
+    // Entran 10 el 01, salen 12 el 05 (historia), entran 10 el 10. Una salida de 5 el 03 vuelve
+    // negativo el 03 solo si lo deja bajo cero: 10 − 5 ≥ 0, y el 05 ya era negativo.
+    const movements = [
+      { ...mv('1', '2026-08-01'), signedQty: d(10) },
+      { ...mv('2', '2026-08-05'), signedQty: d(-12) },
+      { ...mv('3', '2026-08-10'), signedQty: d(10) },
+    ];
+    expect(firstNegativeDate(movements, [{ date: '2026-08-03', qty: d(5) }])).toBeNull();
+    expect(firstNegativeDate(movements, [{ date: '2026-08-03', qty: d(11) }])).toBe('2026-08-03');
   });
 
   it('sin el par, la salida nueva anterior no ve un negativo de paso', () => {

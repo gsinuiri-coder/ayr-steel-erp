@@ -6,6 +6,7 @@ import type { Env } from '../config/env';
 import type { PrismaService } from '../prisma/prisma.service';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
 import { InventoryService } from './inventory.service';
+import { qtyRowsOf } from './inventory-recost';
 
 /**
  * cc53 (D-649, D-650) — **recosteo del promedio por fecha**, contra una base real. Cada caso usa
@@ -227,54 +228,53 @@ describe('cc53 (D-649): cadena material → producción → producto terminado �
   });
 });
 
-describe('cc53 (D-649): el caso de cc52 con datos de muestra', () => {
-  it('las salidas de septiembre grabadas después de la compra salen a su fecha', async () => {
+describe('cc53 (D-649): la estructura del caso de cc52, con cifras de muestra (cc54)', () => {
+  it('las salidas de abril grabadas después de la compra salen a su fecha', async () => {
     const itemId = randomUUID();
-    const before = '74.5763';
     await move(itemId, {
       type: 'IN',
-      qty: '1061',
-      totalCost: '79125.4543',
-      unitCost: before,
-      date: '2026-08-01',
+      qty: '100',
+      totalCost: '1000.0000',
+      unitCost: '10.0000',
+      date: '2026-03-02',
     });
-    await move(itemId, { type: 'OUT', qty: '645', date: '2026-08-31' });
-    const reversed = await move(itemId, { type: 'OUT', qty: '50', date: '2026-09-19' });
+    await move(itemId, { type: 'OUT', qty: '60', date: '2026-03-30' });
+    const reversed = await move(itemId, { type: 'OUT', qty: '5', date: '2026-04-17' });
     await prisma.$transaction((tx) =>
-      inventory.reverse(tx, reversed.id, adminId, 'anulada', '2026-09-19', true),
+      inventory.reverse(tx, reversed.id, adminId, 'anulada', '2026-04-17', true),
     );
-    await move(itemId, { type: 'OUT', qty: '42', date: '2026-09-27' });
-    // El 07/10 entra la compra; recién después se graban las salidas de septiembre, en el orden
-    // de cc52: siete, la de octubre y la del 30/09 al final.
-    await move(itemId, { type: 'IN', qty: '740', unitCost: '68.88', date: '2026-10-07' });
-    const september: bigint[] = [];
+    await move(itemId, { type: 'OUT', qty: '4', date: '2026-04-24' });
+    // El 06/05 entra la compra; recién después se graban las salidas de abril, en el orden
+    // de cc52: siete, la de mayo y la del 28/04 al final.
+    await move(itemId, { type: 'IN', qty: '70', unitCost: '9.20', date: '2026-05-06' });
+    const lateMonth: bigint[] = [];
     const late = async (qty: string, date: string) =>
       (await move(itemId, { type: 'OUT', qty, date })).id;
     for (const [qty, date] of [
-      ['24', '2026-09-03'],
-      ['15', '2026-09-04'],
-      ['100', '2026-09-04'],
-      ['12', '2026-09-04'],
-      ['94', '2026-09-08'],
-      ['7', '2026-09-10'],
-      ['14', '2026-09-11'],
+      ['2', '2026-04-02'],
+      ['1', '2026-04-06'],
+      ['10', '2026-04-06'],
+      ['1', '2026-04-06'],
+      ['9', '2026-04-09'],
+      ['1', '2026-04-13'],
+      ['1', '2026-04-14'],
     ] as const) {
-      september.push(await late(qty, date));
+      lateMonth.push(await late(qty, date));
     }
-    const october = await move(itemId, { type: 'OUT', qty: '250', date: '2026-10-07' });
-    september.push(await late('100', '2026-09-30'));
+    const nextMonth = await move(itemId, { type: 'OUT', qty: '25', date: '2026-05-06' });
+    lateMonth.push(await late('10', '2026-04-28'));
 
-    // Antes (registro al promedio del momento): septiembre 366 × 70.7924, octubre 250 × 70.7924.
-    const oldSeptember = new Decimal('366').times('70.7924');
-    const oldOctober = new Decimal('250').times('70.7924');
-    let newSeptember = new Decimal(0);
-    for (const id of september) newSeptember = newSeptember.plus(await effective(id));
-    expect(newSeptember.minus(oldSeptember).toFixed(2)).toBe('1384.91');
-    expect(new Decimal(await effective(october.id)).minus(oldOctober).toFixed(2)).toBe('-462.87');
-    // Inventario: 498 u. Antes, 498 × 70.7924.
+    // Antes (registro al promedio del momento): abril 35 × 9.4717, mayo 25 × 9.4717.
+    const oldLate = new Decimal('35').times('9.4717');
+    const oldNext = new Decimal('25').times('9.4717');
+    let newLate = new Decimal(0);
+    for (const id of lateMonth) newLate = newLate.plus(await effective(id));
+    expect(newLate.minus(oldLate).toFixed(2)).toBe('18.49');
+    expect(new Decimal(await effective(nextMonth.id)).minus(oldNext).toFixed(2)).toBe('-6.51');
+    // Inventario: 46 u. Antes, 46 × 9.4717.
     const value = await kardexValue(itemId);
-    expect(value.minus(new Decimal('498').times('70.7924')).toFixed(2)).toBe('-922.04');
-    expect(await balanceOf(itemId)).toEqual({ qty: '498', avg: '68.9409' });
+    expect(value.minus(new Decimal('46').times('9.4717')).toFixed(2)).toBe('-11.98');
+    expect(await balanceOf(itemId)).toEqual({ qty: '46', avg: '9.2113' });
   });
 });
 
@@ -325,9 +325,8 @@ describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
     const r = await rejection(move(itemId, { type: 'OUT', qty: '3', date: '2026-08-03' }));
     expect(r.status).toBe(400);
     expect(r.body).toMatchObject({ code: 'BACKDATE_NEGATIVE_STOCK', firstValidDate: '2026-08-10' });
-    expect(String(r.body.message)).toContain(
-      'La primera fecha válida para registrarla es el 2026-08-10',
-    );
+    expect(String(r.body.message)).toContain('Puedes hacerlo con fecha 10/08/2026 o posterior');
+    expect(r.body.negativeStock).toMatchObject({ operationDate: '2026-08-03', qty: '3.000' });
     expect(await prisma.inventoryMovement.count({ where: { itemId } })).toBe(3);
     // En la fecha sugerida, sí.
     const ok = await move(itemId, { type: 'OUT', qty: '3', date: '2026-08-10' });
@@ -396,5 +395,76 @@ describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
       ),
     );
     expect(r.body).toMatchObject({ code: 'BACKDATE_NEGATIVE_STOCK', firstValidDate: '2026-08-10' });
+    // cc54 (P3-3): el texto dice qué entrada se saca y por qué.
+    expect(String(r.body.message)).toContain(
+      'Sacar del kardex la entrada del 01/08/2026 («mal cargada»)',
+    );
+  });
+
+  it('cc54 (P2-1): sin acuse de retrofecha, el rechazo es D-652 y no el diálogo de confirmar', async () => {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    await move(itemId, { type: 'OUT', qty: '8', date: '2026-08-05' });
+    const r = await rejection(
+      prisma.$transaction((tx) =>
+        inventory.record(tx, {
+          businessLineId,
+          itemType: 'PRODUCT',
+          itemId,
+          type: 'OUT',
+          qty: '3',
+          unit: 'NIU',
+          refType: 'SALE',
+          actorId: adminId,
+          operationDate: '2026-08-03',
+        }),
+      ),
+    );
+    expect(r.body).toMatchObject({ code: 'BACKDATE_NEGATIVE_STOCK' });
+    // Si cabe, sigue pidiendo el acuse de siempre (D-124).
+    const ok = await rejection(
+      prisma.$transaction((tx) =>
+        inventory.record(tx, {
+          businessLineId,
+          itemType: 'PRODUCT',
+          itemId,
+          type: 'OUT',
+          qty: '2',
+          unit: 'NIU',
+          refType: 'SALE',
+          actorId: adminId,
+          operationDate: '2026-08-03',
+        }),
+      ),
+    );
+    expect(ok.body).toMatchObject({ code: 'BACKDATE_OUT_OF_ORDER' });
+  });
+
+  it('cc54 (P2-4): qtyRowsOf lee el kardex del ítem en una sola consulta', async () => {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    const out = await move(itemId, { type: 'OUT', qty: '4', date: '2026-08-05' });
+    await prisma.$transaction((tx) =>
+      inventory.reverse(tx, out.id, adminId, 'anulada', '2026-08-05', true),
+    );
+    await move(itemId, { type: 'IN', qty: '5', unitCost: '30', date: '2026-08-03' }); // recostea
+    const queries: string[] = [];
+    const counting = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    counting.$on('query', (e) => queries.push(e.query));
+    try {
+      const rows = await counting.$transaction(async (tx) => {
+        queries.length = 0;
+        return qtyRowsOf(tx, { itemType: 'PRODUCT', itemId });
+      });
+      const selects = queries.filter((q) => q.startsWith('SELECT'));
+      expect(selects).toHaveLength(1);
+      // El par del 05 se cancela; el recosteo no cuenta.
+      expect(rows.map((x) => [x.date, x.delta.toString()])).toEqual([
+        ['2026-08-01', '10'],
+        ['2026-08-03', '5'],
+      ]);
+    } finally {
+      await counting.$disconnect();
+    }
   });
 });

@@ -3,18 +3,20 @@
  * transacción `READ ONLY`, sin modo execute. Recorre cada ítem en el orden del kardex (fecha de
  * operación, registro, id) y anota los tramos en que el saldo en cantidad queda bajo cero. Imprime
  * un JSON en stdout (para `local-data/cc53/`, fuera del repo) y un resumen en stderr.
+ *
+ * cc54 (P3-2 de la revisión de cc53): cuenta como D-652 (`qtyRowsFromMovements` y
+ * `negativeSpans` del motor): un par anulado el mismo día no abre un tramo.
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
-import { Decimal } from '@ayr/shared';
+import { toDecimal } from '@ayr/shared';
 import { assertExecuteAllowed } from './cli-gate';
 import { assertExternalOutputsOff } from '../src/common/external-outputs';
-
-interface NegativeSpan {
-  from: string;
-  to: string | null;
-  minQty: string;
-}
+import {
+  negativeSpans,
+  qtyRowsFromMovements,
+  type QtyMovement,
+} from '../src/inventory/recost-engine';
 
 async function main(): Promise<void> {
   if (process.argv.slice(2).length > 0) throw new Error('Uso: inspect:cc53 (sin argumentos)');
@@ -37,7 +39,15 @@ async function main(): Promise<void> {
             { at: 'asc' },
             { id: 'asc' },
           ],
-          select: { itemType: true, itemId: true, type: true, qty: true, operationDate: true },
+          select: {
+            id: true,
+            itemType: true,
+            itemId: true,
+            type: true,
+            qty: true,
+            operationDate: true,
+            reversalOfId: true,
+          },
         });
         const products = await tx.product.findMany({ select: { id: true, sku: true } });
         const coils = await tx.coil.findMany({ select: { id: true, code: true } });
@@ -45,37 +55,23 @@ async function main(): Promise<void> {
           ...products.map((p) => [`PRODUCT:${p.id}`, p.sku] as const),
           ...coils.map((c) => [`COIL:${c.id}`, c.code] as const),
         ]);
-        const spans = new Map<string, NegativeSpan[]>();
-        let key = '';
-        let running = new Decimal(0);
-        let open: NegativeSpan | null = null;
-        const close = (date: string | null) => {
-          if (!open) return;
-          open.to = date;
-          const list = spans.get(key) ?? [];
-          list.push(open);
-          spans.set(key, list);
-          open = null;
-        };
+        const byItem = new Map<string, QtyMovement[]>();
         for (const r of rows) {
           const k = `${r.itemType}:${r.itemId}`;
-          const date = r.operationDate.toISOString().slice(0, 10);
-          if (k !== key) {
-            close(null);
-            key = k;
-            running = new Decimal(0);
-          }
-          const q = new Decimal(r.qty.toString());
-          running = r.type === 'IN' ? running.plus(q) : running.minus(q);
-          if (running.lt(0)) {
-            if (!open) open = { from: date, to: null, minQty: running.toFixed(3) };
-            else if (running.lt(open.minQty)) open.minQty = running.toFixed(3);
-          } else if (open) {
-            close(date);
-          }
+          const list = byItem.get(k) ?? [];
+          list.push({
+            id: r.id,
+            reversalOfId: r.reversalOfId,
+            date: r.operationDate.toISOString().slice(0, 10),
+            type: r.type,
+            qty: toDecimal(r.qty.toString()),
+          });
+          byItem.set(k, list);
         }
-        close(null);
-        const items = [...spans].map(([k, list]) => ({ item: label.get(k) ?? k, spans: list }));
+        const items = [...byItem].flatMap(([k, list]) => {
+          const spans = negativeSpans(qtyRowsFromMovements(list));
+          return spans.length > 0 ? [{ item: label.get(k) ?? k, spans }] : [];
+        });
         return { itemsWithNegative: items.length, rows: rows.length, items };
       },
       { timeout: 120_000 },
