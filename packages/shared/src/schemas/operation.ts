@@ -58,6 +58,47 @@ export const BACKDATE_OUT_OF_ORDER = 'BACKDATE_OUT_OF_ORDER';
 /** cc53 (D-652): un movimiento atrasado que dejaría el kardex en negativo; trae `firstValidDate`. */
 export const BACKDATE_NEGATIVE_STOCK = 'BACKDATE_NEGATIVE_STOCK';
 
+/** cc54: los datos del rechazo de D-652, en el cuerpo del 400 (`negativeStock`). */
+export interface BackdateNegativeStock {
+  /** Qué se intentó, en infinitivo y con su contexto: «Registrar esta salida». */
+  action: string;
+  /** `YYYY-MM-DD` pedida. */
+  operationDate: string;
+  /** SKU o código de bobina. */
+  item: string;
+  /** Cantidad, en texto decimal. */
+  qty: string;
+  /** Código de unidad (KGM, NIU, MTR…). */
+  unit: string;
+  /** Primera fecha en que cabe (`YYYY-MM-DD`), o null si ni hoy alcanza. */
+  firstValidDate: string | null;
+}
+
+const SHORT_UNITS: Record<string, string> = { KGM: 'kg', NIU: 'u', MTR: 'm', TNE: 't' };
+
+/** `YYYY-MM-DD` → `DD/MM/YYYY`; cualquier otra cosa, tal cual. */
+export function dayMonthYear(date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  return m ? `${m[3] ?? ''}/${m[2] ?? ''}/${m[1] ?? ''}` : date;
+}
+
+/**
+ * cc54 (P2-3 y P3-3 de la revisión de cc53): el texto del rechazo de D-652, el mismo en todos los
+ * caminos (despacho, producción, corte, partido, anulaciones, compras). Fechas como se leen en
+ * Perú, la cantidad sin ceros de relleno y la salida que se propone.
+ */
+export function backdateNegativeStockMessage(x: BackdateNegativeStock): string {
+  const qty = x.qty.includes('.') ? x.qty.replace(/\.?0+$/, '') : x.qty;
+  const unit = SHORT_UNITS[x.unit] ?? x.unit;
+  return (
+    `${x.action} con fecha ${dayMonthYear(x.operationDate)} (${qty} ${unit}) dejaría el kardex de ` +
+    `${x.item} en negativo en una fecha posterior. ` +
+    (x.firstValidDate
+      ? `Puedes hacerlo con fecha ${dayMonthYear(x.firstValidDate)} o posterior.`
+      : 'No alcanza el stock ni con la fecha de hoy.')
+  );
+}
+
 export const backdatableFields = {
   operationDate: operationDateSchema.optional(),
   confirmBackdate: z.boolean().optional(),

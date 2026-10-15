@@ -1,4 +1,9 @@
-import type { MountedKgExcess } from '@ayr/shared';
+import {
+  BACKDATE_NEGATIVE_STOCK,
+  backdateNegativeStockMessage,
+  type BackdateNegativeStock,
+  type MountedKgExcess,
+} from '@ayr/shared';
 
 /**
  * Cliente HTTP del web. Habla con `/api/*` (mismo origen; Next reenvía al API, D-015).
@@ -17,20 +22,35 @@ export class ApiError extends Error {
     public readonly code?: string,
     /**
      * D-389: el resto del cuerpo del error cuando trae datos de dominio (hoy, `excess` de
-     * `TOLERANCE_OVERRIDE_REQUIRED`: las cifras para ofrecer la casilla).
+     * `TOLERANCE_OVERRIDE_REQUIRED`: las cifras para ofrecer la casilla). cc54: `negativeStock` de
+     * `BACKDATE_NEGATIVE_STOCK` (D-652), con la primera fecha válida.
      */
-    public readonly details?: { excess?: MountedKgExcess },
+    public readonly details?: { excess?: MountedKgExcess; negativeStock?: BackdateNegativeStock },
   ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-interface ErrorBody {
+export interface ErrorBody {
   message?: string | string[];
   errors?: Record<string, string[] | undefined>;
   code?: string;
   excess?: MountedKgExcess;
+  negativeStock?: BackdateNegativeStock;
+}
+
+/**
+ * cc54 (P2-3 de la revisión de cc53): el rechazo de D-652 se lee igual en todos los caminos
+ * (producción, corte, partido, anulaciones, compras, despacho): el texto se arma acá con los datos
+ * del cuerpo, con fechas `DD/MM/YYYY` y la primera fecha válida, y no depende de cada vista.
+ */
+export function errorBodyText(status: number, body: ErrorBody): string {
+  if (body.code === BACKDATE_NEGATIVE_STOCK && body.negativeStock !== undefined) {
+    return backdateNegativeStockMessage(body.negativeStock);
+  }
+  const raw = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+  return errorTextFor(status, raw);
 }
 
 /** cc31: lo que se ve cuando el servidor no contesta o falla sin decir por qué. */
@@ -88,14 +108,11 @@ async function toError(res: Response): Promise<ApiError> {
   } catch {
     /* sin cuerpo */
   }
-  const raw = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-  return new ApiError(
-    res.status,
-    errorTextFor(res.status, raw),
-    body.errors,
-    body.code,
-    body.excess === undefined ? undefined : { excess: body.excess },
-  );
+  const details =
+    body.excess === undefined && body.negativeStock === undefined
+      ? undefined
+      : { excess: body.excess, negativeStock: body.negativeStock };
+  return new ApiError(res.status, errorBodyText(res.status, body), body.errors, body.code, details);
 }
 
 export interface ApiOptions {

@@ -20,8 +20,62 @@ const KNOWN: Record<string, number> = {
   REACTIVATION_TX_TIMEOUT_MS: 30_000,
   COMMIT_PREVIEW_TIMEOUT_MS: 30_000,
 };
+/**
+ * cc54 (P2-5 de la revisión de cc53): con o sin `this.` (un auxiliar que recibe `inventory` como
+ * parámetro también llega al kardex).
+ */
 const KARDEX_CALL =
-  /this\.(inventory\.(record|reverse|adjustCost|replaceEntry|recostForward)|salesReturns\.[a-zA-Z]+InTx|dispatches\.[a-zA-Z]+InTx)\(/;
+  /\b(inventory\.(record|reverse|adjustCost|replaceEntry|recostForward)|salesReturns\.[a-zA-Z]+InTx|dispatches\.[a-zA-Z]+InTx)\(/;
+
+interface FnDecl {
+  name: string;
+  body: string;
+}
+
+/**
+ * cc54 (P2-5): las funciones sueltas (no métodos) del código que llegan al kardex, directo o por
+ * otra función suelta que llega. Una transacción que llama a una de estas también necesita tope.
+ */
+function kardexHelpers(): Set<string> {
+  const fns: FnDecl[] = [];
+  for (const path of sources(SRC)) {
+    const text = readFileSync(path, 'utf8');
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node) => {
+      if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+        fns.push({ name: node.name.getText(sf), body: node.body.getText(sf) });
+      }
+      // `const helper = async (…) => …` también es una función suelta.
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+      ) {
+        fns.push({ name: node.name.getText(sf), body: node.initializer.body.getText(sf) });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  const found = new Set(fns.filter((f) => KARDEX_CALL.test(f.body)).map((f) => f.name));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const f of fns) {
+      if (found.has(f.name)) continue;
+      if ([...found].some((h) => new RegExp(`\\b${h}\\(`).test(f.body))) {
+        found.add(f.name);
+        grew = true;
+      }
+    }
+  }
+  return found;
+}
+
+/** Si el cuerpo llama al kardex directo o por un auxiliar que llega a él. */
+function reachesKardex(body: string, helpers: ReadonlySet<string>): boolean {
+  return KARDEX_CALL.test(body) || [...helpers].some((h) => new RegExp(`\\b${h}\\(`).test(body));
+}
 
 /** Los caminos del hotfix: registrar y anular NC, merma, anular merma, anular bobina, soltar bobina. */
 const HOTFIX: [string, string][] = [
@@ -107,11 +161,21 @@ describe('cc53 (hotfix): tope de las transacciones del kardex', () => {
   });
 
   it('toda transacción que llama al kardex, a una devolución o a un despacho tiene tope ≥ 30 s', () => {
+    const helpers = kardexHelpers();
     const offenders = all
-      .filter((t) => KARDEX_CALL.test(t.body))
+      .filter((t) => reachesKardex(t.body, helpers))
       .filter((t) => (timeoutOf(t.options) ?? 0) < MIN_TIMEOUT_MS)
       .map((t) => `${t.file} · ${t.method} (${t.options ?? 'sin opciones'})`);
     expect(offenders).toEqual([]);
+  });
+
+  it('ve los auxiliares que llegan al kardex sin `this.` (P2-5 de cc53)', () => {
+    const helpers = kardexHelpers();
+    expect(helpers).toContain('undoCoilRestoreBatch');
+    expect(helpers).toContain('executePurchaseReceivedDates');
+    expect(reachesKardex('await undoCoilRestoreBatch(tx, inventory, x)', helpers)).toBe(true);
+    expect(reachesKardex('await inventory.record(tx, input)', helpers)).toBe(true);
+    expect(reachesKardex('await tx.product.findMany()', helpers)).toBe(false);
   });
 
   it('timeoutOf lee las formas del repo', () => {

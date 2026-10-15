@@ -1,8 +1,11 @@
 import { Decimal } from '@ayr/shared';
 import {
   comparePreviews,
+  DIRTY_SUFFIX,
   diff,
   monthlyDeltas,
+  PREVIEW_MAX_AGE_HOURS,
+  previewRejection,
   renderHistoricPreview,
   type HistoricPreview,
 } from './recost-historic';
@@ -84,9 +87,56 @@ describe('vista previa (D-651)', () => {
       residual: 1,
     });
     expect(comparePreviews(preview(), changed)).toEqual([
-      'inventario SKU-A: esperado 94.00, quedó 93.99',
+      'inventario SKU-A: esperado -6.00, quedó -6.01',
       'margen 2026-10 costo: no estaba en la vista previa',
       'residuo 1 (debe ser 0)',
+    ]);
+  });
+
+  it('cc54: una venta entre el dry-run y la ejecución no cuenta como diferencia', () => {
+    // Otra venta movió el costo del mes y el inventario; lo que suma el recosteo es lo mismo.
+    const later = preview({
+      inventory: [{ label: 'SKU-A', before: '80', after: '74' }],
+      salesMargin: [{ label: '2026-09 costo', before: '70', after: '80' }],
+    });
+    expect(comparePreviews(preview(), later)).toEqual([]);
+  });
+});
+
+describe('cc54 (P2-6 de cc53, D-653): candado de --execute', () => {
+  const sha = 'a'.repeat(40);
+  const at = new Date('2026-10-15T15:00:00.000Z');
+  const fresh = () =>
+    preview({ gitSha: sha, generatedAtIso: new Date(at.getTime() - 3_600_000).toISOString() });
+
+  it('acepta la vista previa de la misma rama, del mismo commit y de menos de 2 h', () => {
+    expect(PREVIEW_MAX_AGE_HOURS).toBe(2);
+    expect(previewRejection(fresh(), { branch: 'local', gitSha: sha, at })).toBeNull();
+  });
+
+  it('rechaza sin vista previa, de otra rama, sin commit, de otro commit o vieja', () => {
+    const now = { branch: 'local', gitSha: sha, at };
+    expect(previewRejection(null, now)).toMatch(/No hay vista previa/);
+    expect(previewRejection(fresh(), { ...now, branch: 'production' })).toMatch(/es de local/);
+    expect(previewRejection(preview(), now)).toMatch(/no dice con qué commit/);
+    expect(previewRejection(fresh(), { ...now, gitSha: 'b'.repeat(40) })).toMatch(
+      /commit aaaaaaaa/,
+    );
+    const old = preview({
+      gitSha: sha,
+      generatedAtIso: new Date(at.getTime() - 3 * 3_600_000).toISOString(),
+    });
+    expect(previewRejection(old, now)).toMatch(/más de 2 h/);
+    expect(previewRejection(fresh(), { ...now, gitSha: `${sha}${DIRTY_SUFFIX}` })).toMatch(
+      /sin commitear/,
+    );
+    const future = preview({ gitSha: sha, generatedAtIso: '2026-10-16T00:00:00.000Z' });
+    expect(previewRejection(future, now)).toMatch(/no es válida/);
+  });
+
+  it('compara también el número de ajustes', () => {
+    expect(comparePreviews(preview(), preview({ adjustments: 3 }))).toEqual([
+      'ajustes: esperado 2, quedó 3',
     ]);
   });
 });

@@ -7,7 +7,7 @@ import { OperationDateService } from '../common/operation-date.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { reservedByItem } from '../sales/reserved-ledger';
 import { DispatchesService } from './dispatches.service';
-import type { PlanItemKardex } from './invoice-dispatch-plan';
+import { dropSameDayReversals, type PlanItemKardex } from './invoice-dispatch-plan';
 import {
   InvoiceDispatchService,
   planSignature,
@@ -303,23 +303,25 @@ export class OpeningDateMoveService {
         refType: true,
         operationDate: true,
         at: true,
+        reversalOfId: true,
       },
     });
-    const dated = rows
-      .map((m) => ({ ...m, date: moved.get(m.id.toString()) ?? day(m.operationDate) }))
-      .sort((a, b) =>
-        a.date !== b.date
-          ? a.date < b.date
+    // cc54: el mismo conteo que el kardex (D-652): un par anulado el mismo día no cuenta.
+    const dated = dropSameDayReversals(
+      rows.map((m) => ({ ...m, date: moved.get(m.id.toString()) ?? day(m.operationDate) })),
+    ).sort((a, b) =>
+      a.date !== b.date
+        ? a.date < b.date
+          ? -1
+          : 1
+        : a.at.getTime() !== b.at.getTime()
+          ? a.at.getTime() - b.at.getTime()
+          : a.id < b.id
             ? -1
-            : 1
-          : a.at.getTime() !== b.at.getTime()
-            ? a.at.getTime() - b.at.getTime()
-            : a.id < b.id
-              ? -1
-              : a.id > b.id
-                ? 1
-                : 0,
-      );
+            : a.id > b.id
+              ? 1
+              : 0,
+    );
     const out = new Map<string, PlanItemKardex>();
     for (const m of dated) {
       const key = `${m.itemType}:${m.itemId}`;

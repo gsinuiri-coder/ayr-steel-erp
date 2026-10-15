@@ -16,8 +16,10 @@ import {
 import {
   BACKDATE_NEGATIVE_STOCK,
   BACKDATE_OUT_OF_ORDER,
+  backdateNegativeStockMessage,
   businessToday,
   carriesInventory,
+  dayMonthYear,
   Decimal,
   equivalentMeters,
   fromDateOnly,
@@ -253,13 +255,15 @@ export class InventoryService {
     if (input.itemType === InventoryItemType.COIL && input.type === 'OUT') {
       await assertCoilOutNotBeforeEntry(tx, input.itemId, operationDate);
     }
-    await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
     // cc53 (D-649, D-650): una fila con fecha anterior a otras del ítem ya no se rechaza por costo
     // (D-648): sale al promedio **de su fecha** y lo posterior se recostea. Cero consultas hoy.
     const laterCount = await this.laterMovementCount(tx, input, operationDate);
+    // cc54 (P2-1 de la revisión de cc53): D-652 va **antes** del acuse de retrofecha. Si la fecha no
+    // cabe, se dice de entrada; antes el usuario confirmaba la retrofecha y recién ahí chocaba.
     if (input.type === 'OUT' && laterCount > 0) {
-      await this.assertNoNegativeAtDate(tx, input, operationDate, qty, 'La salida');
+      await this.assertNoNegativeAtDate(tx, input, operationDate, qty, 'Registrar esta salida');
     }
+    await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
 
     if (balance.unit !== input.unit && !balance.qty.isZero()) {
       // Mezclar unidades en el mismo saldo (kilos con unidades) haría del promedio y del
@@ -385,21 +389,25 @@ export class InventoryService {
     item: { itemType: InventoryItemType; itemId: string; unit: string },
     operationDate: string,
     qty: Decimal,
-    what: string,
+    action: string,
   ): Promise<void> {
     const rows = await qtyRowsOf(tx, item);
     if (fitsWithoutNegative(rows, operationDate, qty)) return;
     const first = firstValidDate(rows, operationDate, qty, businessToday());
     const labels = await this.resolveItemLabels([item]);
     const label = labels.get(labelKey(item.itemType, item.itemId))?.code ?? item.itemId;
+    const negativeStock = {
+      action,
+      operationDate,
+      item: label,
+      qty: qty.toFixed(3),
+      unit: item.unit,
+      firstValidDate: first,
+    };
     throw new BadRequestException({
       code: BACKDATE_NEGATIVE_STOCK,
-      message:
-        `${what} del ${operationDate} de ${label} (${qty.toFixed(3)} ${item.unit}) dejaría el kardex ` +
-        'en negativo en una fecha posterior. ' +
-        (first
-          ? `La primera fecha válida para registrarla es el ${first}.`
-          : 'No alcanza el stock ni con la fecha de hoy.'),
+      message: backdateNegativeStockMessage(negativeStock),
+      negativeStock,
       firstValidDate: first,
       statusCode: 400,
       error: 'Bad Request',
@@ -799,18 +807,21 @@ export class InventoryService {
     const balance = await this.lockBalance(tx, item);
     // Recién bajo el lock: un reemplazo o una anulación concurrentes ya terminaron.
     const original = await this.reversibleMovement(tx, movementId);
+    const origQty = toDecimal(original.qty.toString());
+    if (original.type === 'IN') {
+      // cc53 (D-652): anular con fecha atrasada una entrada saca stock igual que una salida. cc54:
+      // antes del acuse de retrofecha (P2-1), y el texto dice qué entrada y por qué (P3-3: la
+      // usan la anulación, la corrección de la fecha recibida y el cambio de producto de una compra).
+      const date = operationDate ?? businessToday();
+      if (options.reentry !== true && (await this.laterMovementCount(tx, item, date)) > 0) {
+        const action = `Sacar del kardex la entrada del ${dayMonthYear(fromDateOnly(original.operationDate))} («${reason}»)`;
+        await this.assertNoNegativeAtDate(tx, item, date, origQty, action);
+      }
+    }
     // D-124: una reversa retrofechada mete una salida (o una entrada) por detrás del saldo
     // corrido igual que cualquier otro movimiento, así que pasa por el mismo guardrail. Por
     // defecto la fecha es hoy y el chequeo ni consulta.
     await this.assertChronological(tx, item, operationDate ?? businessToday(), confirmBackdate);
-    const origQty = toDecimal(original.qty.toString());
-    if (original.type === 'IN') {
-      // cc53 (D-652): anular con fecha atrasada una entrada saca stock igual que una salida.
-      const date = operationDate ?? businessToday();
-      if (options.reentry !== true && (await this.laterMovementCount(tx, item, date)) > 0) {
-        await this.assertNoNegativeAtDate(tx, item, date, origQty, 'La anulación');
-      }
-    }
     // cc53 (D-649): el costo **efectivo** del original (con sus recosteos), no solo el grabado.
     const origValue = await this.effectiveCost(tx, original);
     const currentValue = balance.qty.times(balance.avgCost);
