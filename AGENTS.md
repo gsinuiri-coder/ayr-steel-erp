@@ -110,7 +110,7 @@ Reglas de convivencia, sin excepción:
    una migración contra producción, una escritura masiva con `--execute --confirm-production`
    (regla 5) y borrar una rama de Neon que no cubra la regla 18. **El agente no empuja directo a
    `main`: todo entra por PR** (también el cierre de docs), por decisión del dueño (cc28).
-   Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, el push directo a `main` (`git push origin main`, `AYR_OWNER_PUSH=1 git push`, D-476), borrar ramas de Neon,
+   Siguen prohibidos (`deny` de `.claude/settings.json`): `gh repo sync`, `git push` con `--force`, `--delete`, `-f`, `-d`, `+main` o `:main`, el push directo a `main` (`git push origin main`, `AYR_OWNER_PUSH=1 git push`, D-476), borrar ramas de Neon fuera de la regla 18 (borrar `respaldo-*` ya no está en `deny`; lo acota la regla 18),
    `e2e:prod`, `prod-reset-go-live` y leer `.env*`. **D-572: la prohibición de ramas queda en el
    push forzado y en borrar `main`.** Las ramas de PR se borran solas al hacer merge
    (`delete_branch_on_merge` activo en el repo); una rama remota suelta de una pieza cerrada, ya
@@ -226,9 +226,10 @@ Reglas de convivencia, sin excepción:
       respaldos más recientes** y el del día D (`respaldo-pre-v4-20260915`, §3.3). **Nunca**
       `production`, `demo`, `ci` ni `dev`. Antes de borrar: listar las ramas, verificar nombre e id y
       que no tenga ramas hijas, y anotarlo en `docs/ENTORNOS.md` (nombre, id, fecha) en el PR de docs.
-      Se borra con `neonctl branches delete <id>` en silencio (`--output json`, sin imprimir nada más).
-      Todo lo demás de D-460 sigue igual. Para la parte de Neon, `.claude/settings.json` debe tener
-      `neonctl branches delete` en `allow` y no en `deny` (lo aplica el dueño).
+      Se borra con `neonctl branches delete <id> --project-id frosty-cherry-97873994 --output json`, en
+      silencio (la forma exacta que permite `settings.json`).
+      Todo lo demás de D-460 sigue igual. **Permisos aplicados por el dueño el 2026-10-14:** en
+      `.claude/settings.json`, `neonctl branches delete` salió de `deny` y quedó en `allow`.
 
 ### 3.1 Credenciales y secretos
 

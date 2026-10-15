@@ -105,7 +105,8 @@
       "Bash(node *scripts/opening-date.mjs*)",
       "Bash(pnpm *inventory:opening-date*)",
       "Bash(node *scripts/color-comercial-dry-run.mjs*)",
-      "Bash(pnpm *check:color-comercial*)"
+      "Bash(pnpm *check:color-comercial*)",
+      "Bash(neonctl branches delete * --project-id frosty-cherry-97873994 --output json)"
     ],
     "deny": [
       "Bash(gh repo sync*)",
@@ -120,8 +121,6 @@
       "Bash(AYR_OWNER_PUSH=1 git push*)",
       "Bash(git push *-d *)",
       "Bash(git push *-d)",
-      "Bash(neonctl branches delete*)",
-      "Bash(neonctl * branches delete*)",
       "Bash(*e2e:prod*)",
       "Bash(*e2e-prod.mjs*)",
       "Bash(*reset-go-live*)",
