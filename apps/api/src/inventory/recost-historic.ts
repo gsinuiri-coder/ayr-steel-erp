@@ -183,6 +183,22 @@ export const PREVIEW_MAX_AGE_HOURS = 2;
 /** Lo que la CLI agrega al sha cuando el checkout tiene cambios sin commitear. */
 export const DIRTY_SUFFIX = '+cambios';
 
+/** El sha que la CLI anota: el de `HEAD`, con `DIRTY_SUFFIX` si `git status --porcelain` no está vacío. */
+export function shaWithChanges(head: string, porcelain: string): string {
+  return porcelain.trim() === '' ? head.trim() : `${head.trim()}${DIRTY_SUFFIX}`;
+}
+
+/**
+ * cc54 (segundo modelo P2-2): lo que impide el commit de `--execute`, dentro de la transacción. Sin
+ * vista previa nunca se escribe; con vista previa, cualquier diferencia de `comparePreviews`.
+ */
+export function executeDifferences(
+  expected: HistoricPreview | null,
+  actual: HistoricPreview,
+): string[] {
+  return expected === null ? ['sin vista previa'] : comparePreviews(expected, actual);
+}
+
 /**
  * cc54 (P2-6): por qué una vista previa no sirve para ejecutar, o `null` si sirve. Tiene que
  * existir, ser de la misma rama, del mismo commit y de menos de {@link PREVIEW_MAX_AGE_HOURS}.

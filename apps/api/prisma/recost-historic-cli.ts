@@ -29,8 +29,8 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { InventoryService } from '../src/inventory/inventory.service';
 import { planRecost, type RecostSeed } from '../src/inventory/inventory-recost';
 import {
-  comparePreviews,
-  DIRTY_SUFFIX,
+  executeDifferences,
+  shaWithChanges,
   monthlyDeltas,
   previewRejection,
   renderHistoricPreview,
@@ -101,12 +101,14 @@ class Mismatch extends Error {
  * si `apps` o `packages` tienen cambios sin commitear (entonces `--execute` se niega).
  */
 function gitSha(): string {
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const dirty = execFileSync('git', ['status', '--porcelain', '--', 'apps', 'packages'], {
+  // Compilado en `apps/api/dist-cli/prisma/`: la raíz del repo está cuatro niveles arriba.
+  const cwd = resolve(__dirname, '../../../..');
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', cwd });
+  const porcelain = execFileSync('git', ['status', '--porcelain', '--', 'apps', 'packages'], {
     encoding: 'utf8',
-    cwd: resolve(__dirname, '../../..'),
-  }).trim();
-  return dirty === '' ? head : `${head}${DIRTY_SUFFIX}`;
+    cwd,
+  });
+  return shaWithChanges(head, porcelain);
 }
 
 function readPreview(path: string): HistoricPreview | null {
@@ -337,8 +339,7 @@ async function main(): Promise<void> {
           };
           if (!execute) throw new DryRun(result);
           // cc54 (P2-6): el candado es antes del commit; una diferencia revierte todo.
-          const differences =
-            expected === null ? ['sin vista previa'] : comparePreviews(expected, result);
+          const differences = executeDifferences(expected, result);
           if (differences.length > 0) throw new Mismatch(result, differences);
           return result;
         },

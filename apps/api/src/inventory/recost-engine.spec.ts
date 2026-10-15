@@ -354,3 +354,19 @@ describe('cc54: negativeSpans (P3-2 de cc53, inspect:cc53)', () => {
     expect(negativeSpans([q('2026-08-01', '5'), q('2026-08-02', '-5')])).toEqual([]);
   });
 });
+
+describe('cc54 (segundo modelo P2-1): el saldo final nunca queda eximido', () => {
+  const q = (date: string, delta: string) => ({ date, delta: d(delta) });
+  // El kardex ya termina en −2 (historia anterior a D-652).
+  const ends = [q('2026-08-01', '10'), q('2026-08-05', '-12')];
+
+  it('una salida posterior a todo no cabe: es el «Stock insuficiente» del kardex', () => {
+    expect(firstNegativeDate(ends, [{ date: '2026-08-10', qty: d('1') }])).toBe('2026-08-10');
+    expect(fitsWithoutNegative(ends, '2026-08-10', d('1'))).toBe(false);
+    expect(firstValidDate(ends, '2026-08-10', d('1'), '2026-10-14')).toBeNull();
+  });
+
+  it('tampoco una atrasada, aunque el punto intermedio ya fuera negativo', () => {
+    expect(firstNegativeDate(ends, [{ date: '2026-08-03', qty: d('1') }])).toBe('2026-08-05');
+  });
+});

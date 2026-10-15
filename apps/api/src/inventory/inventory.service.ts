@@ -814,7 +814,7 @@ export class InventoryService {
       // usan la anulación, la corrección de la fecha recibida y el cambio de producto de una compra).
       const date = operationDate ?? businessToday();
       if (options.reentry !== true && (await this.laterMovementCount(tx, item, date)) > 0) {
-        const action = `Sacar del kardex la entrada del ${dayMonthYear(fromDateOnly(original.operationDate))} («${reason}»)`;
+        const action = `Sacar del kardex la entrada del ${dayMonthYear(fromDateOnly(original.operationDate))} («${reason.length > 80 ? `${reason.slice(0, 79)}…` : reason}»)`;
         await this.assertNoNegativeAtDate(tx, item, date, origQty, action);
       }
     }

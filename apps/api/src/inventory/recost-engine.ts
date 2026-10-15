@@ -281,6 +281,11 @@ export interface QtyOut {
  * salidas vuelven negativo: un punto que ya estaba negativo sin ellas (historia anterior a D-652)
  * no bloquea. `rows` en el orden del kardex. Lo usan el kardex (`InventoryService`), el plan del
  * despacho a la fecha del comprobante (D-278) y el de la herramienta de fecha de la carga (D-285).
+ *
+ * El **saldo final** (el de hoy) nunca queda eximido: `InventoryService.record` siempre exige que
+ * la salida quepa en el saldo vigente («Stock insuficiente»), aunque el kardex ya termine en
+ * negativo. Sin esto el plan aceptaba un despacho que el kardex rechazaba a mitad de la ejecución
+ * (P2-1 del segundo modelo de cc54).
  */
 export function firstNegativeDate(rows: readonly QtyRow[], outs: readonly QtyOut[]): string | null {
   const events = [
@@ -302,6 +307,8 @@ export function firstNegativeDate(rows: readonly QtyRow[], outs: readonly QtyOut
     taken = taken.plus(e.out);
     if (taken.gt(0) && running.gte(0) && running.minus(taken).lt(0)) return e.date;
   }
+  const last = events.at(-1);
+  if (last && taken.gt(0) && running.minus(taken).lt(0)) return last.date;
   return null;
 }
 

@@ -3,6 +3,8 @@ import {
   comparePreviews,
   DIRTY_SUFFIX,
   diff,
+  executeDifferences,
+  shaWithChanges,
   monthlyDeltas,
   PREVIEW_MAX_AGE_HOURS,
   previewRejection,
@@ -138,5 +140,23 @@ describe('cc54 (P2-6 de cc53, D-653): candado de --execute', () => {
     expect(comparePreviews(preview(), preview({ adjustments: 3 }))).toEqual([
       'ajustes: esperado 2, quedó 3',
     ]);
+  });
+});
+
+describe('cc54 (segundo modelo P2-2): decisión del candado', () => {
+  it('sin vista previa nunca se escribe', () => {
+    expect(executeDifferences(null, preview())).toEqual(['sin vista previa']);
+  });
+
+  it('con la misma vista previa, se escribe; con otra, no', () => {
+    expect(executeDifferences(preview(), preview())).toEqual([]);
+    expect(executeDifferences(preview(), preview({ adjustments: 5 }))).toEqual([
+      'ajustes: esperado 2, quedó 5',
+    ]);
+  });
+
+  it('el sha marca los cambios sin commitear', () => {
+    expect(shaWithChanges('abc\n', '')).toBe('abc');
+    expect(shaWithChanges('abc\n', ' M apps/api/x.ts\n')).toBe(`abc${DIRTY_SUFFIX}`);
   });
 });
