@@ -16,6 +16,7 @@ import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 import { SalesByMaterialService } from './sales-by-material.service';
 import { SalesMarginService } from './sales-margin.service';
+import { UndispatchedAtCloseService } from './undispatched-at-close.service';
 
 @Module({
   imports: [InventoryModule, CoilsModule, ProductionModule],
@@ -34,6 +35,7 @@ import { SalesMarginService } from './sales-margin.service';
     AdminDashboardService,
     PlantDashboardService,
     SellerDashboardService,
+    UndispatchedAtCloseService,
   ],
 })
 export class ReportsModule {}

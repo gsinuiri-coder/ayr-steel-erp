@@ -19,6 +19,7 @@ import type { ReceivablesAgingService } from './receivables-aging.service';
 import type { ReportsService } from './reports.service';
 import type { SalesByMaterialService } from './sales-by-material.service';
 import type { SalesMarginService } from './sales-margin.service';
+import type { UndispatchedAtCloseService } from './undispatched-at-close.service';
 
 /**
  * RF-S4b/M3 (deuda de RF-S4a): el controlador de reportes. Lo que se fija acá es lo que los
@@ -172,6 +173,14 @@ function build() {
   const adminDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const plantDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
   const sellerDashboard = { dashboard: jest.fn().mockResolvedValue({}) };
+  const undispatchedAtClose = {
+    report: jest.fn().mockResolvedValue({
+      from: '2026-09-01',
+      to: '2026-09-30',
+      rows: [],
+      totals: { count: 0, salesPen: '0.0000', estimatedCostPen: '0.0000', withoutCostCount: 0 },
+    }),
+  };
   const controller = new ReportsController(
     reports as unknown as ReportsService,
     inventoryValuation as unknown as InventoryValuationService,
@@ -186,6 +195,7 @@ function build() {
     adminDashboard as unknown as AdminDashboardService,
     plantDashboard as unknown as PlantDashboardService,
     sellerDashboard as unknown as SellerDashboardService,
+    undispatchedAtClose as unknown as UndispatchedAtCloseService,
   );
   return {
     controller,
@@ -199,6 +209,7 @@ function build() {
     receivablesAging,
     coilWaste,
     productionSummary,
+    undispatchedAtClose,
   };
 }
 
@@ -245,6 +256,9 @@ describe('ReportsController', () => {
     expect(rolesOf('coils')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsXlsxFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
     expect(rolesOf('coilsPdfFile')).toEqual([Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA]);
+    // cc56 (D-670): facturado y no despachado lleva costos.
+    expect(rolesOf('undispatchedAtCloseReport')).toEqual([Role.ADMINISTRADOR]);
+    expect(rolesOf('undispatchedAtCloseXlsxFile')).toEqual([Role.ADMINISTRADOR]);
   });
 
   it('cc29: el reporte de producción lleva costos solo para el administrador', async () => {
@@ -345,6 +359,18 @@ describe('ReportsController', () => {
     const query = { from: '2026-08-01', to: '2026-08-31' };
     await expect(controller.salesMarginReport(query)).resolves.toBe(MARGIN);
     expect(salesMargin.salesMargin).toHaveBeenCalledWith(query);
+  });
+
+  it('cc56 (D-670): facturado y no despachado, en JSON y en Excel, del mismo servicio', async () => {
+    const { controller, undispatchedAtClose } = build();
+    const query = { from: '2026-09-01', to: '2026-09-30' };
+    expect((await controller.undispatchedAtCloseReport(query)).totals.count).toBe(0);
+    const res = fakeResponse();
+    await controller.undispatchedAtCloseXlsxFile(query, res);
+    expect(undispatchedAtClose.report).toHaveBeenCalledWith(query);
+    expect(res.headers['Content-Disposition']).toBe(
+      'attachment; filename="facturado-no-despachado-2026-09-01-a-2026-09-30.xlsx"',
+    );
   });
 
   it('el xlsx de inventario sale de una sola consulta y viaja como adjunto', async () => {
