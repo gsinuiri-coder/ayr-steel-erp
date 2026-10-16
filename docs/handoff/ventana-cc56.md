@@ -1,7 +1,7 @@
 # Ventana cc56 — cobranzas y pagos con saldos iniciales, costo de bobinas protegido y cierre de mes
 
 2026-10-16, Lima. Tres PR de código, cada uno con su despliegue, y este cierre de docs. Decisiones D-668..D-670
-(provisionales; D-668 y D-669 son decisión del dueño). **Sin migraciones.** Sin SQL contra producción. **Sin escrituras
+(D-668 y D-669 son decisión del dueño; las tres **ratificadas por el dueño el 2026-10-16**). **Sin migraciones.** Sin SQL contra producción. **Sin escrituras
 en producción** al cierre: el importador de saldos espera el Excel del dueño y la corrección C2 quedó en PARA.
 **Después del cierre, C2 se ejecutó con un nuevo OK del dueño** (ver «C2, ejecutada»); Neon quedó en 10 de 10.
 
@@ -60,13 +60,14 @@ Autorrevisión y segundo modelo por corte (`docs/revision/cc56-{a,b,c}-*.md`), c
   candado de la CLI) corregidos.
 - **C:** los dos P1 de cada revisión (despachos no declarados, fechas en vez de cantidades) llevaron a rehacer el armado
   por cantidades.
-- Revisión del dueño: UAT en `docs/uat/cc56.md`, pendiente.
+- Revisión del dueño: UAT en `docs/uat/cc56.md`, **aprobado por el dueño el 2026-10-16**.
 
 ## Pendiente / para la siguiente sesión
 
 - **El dueño:**
   - llenar el Excel de saldos (ver «Qué llenar» abajo) y elegir fecha de corte y opción de faltantes;
-  - UAT de cc56 y de cc55; ratificar D-664..D-670.
+  - ~~UAT de cc56 y de cc55; ratificar D-664..D-670~~ — **hecho el 2026-10-16** (los dos UAT aprobados y D-664..D-670
+    ratificadas).
 - **Correr el importador en producción** cuando llegue el Excel: dry-run, revisar la vista previa con el dueño, respaldo
   Neon (regla 18 si falta lugar) y `--execute --confirm-production` con su OK por nombre.
 - **C2, ejecutada (2026-10-16, después del cierre).** OK por nombre del dueño (D-460) aceptando que el ajuste cae en
