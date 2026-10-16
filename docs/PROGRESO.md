@@ -2,6 +2,35 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-16 — cc56: saldos iniciales de cobranzas y pagos, costo de entradas protegido y cierre de mes (D-668..D-670; PR #217, #218 y #219)
+
+Sin migraciones. Sin SQL contra producción. **Sin escrituras en producción** (el importador espera el Excel del dueño; C2
+en PARA). Detalle en `docs/handoff/ventana-cc56.md`; revisiones en `docs/revision/cc56-*.md`; UAT en `docs/uat/cc56.md`.
+
+- **Corte A: saldos iniciales (D-668, decisión del dueño: cobros y pagos en la app).** API `00134-5vp`
+  (`git-sha=4f0c1c5d`), merge `68ba8adb`.
+  - `pnpm import:saldos-iniciales`: plantillas (vacías con ejemplo ficticio y prellenadas con 109 comprobantes y 26
+    compras, en `local-data/cc56/plantillas/` del checkout principal), lote dry-run por defecto, registro por
+    `addPaymentInTx` de cobranzas y compras en una transacción, lote en la auditoría (sin migración) y deshacer.
+  - Dry-run en producción con la plantilla en blanco: 0 pagos, 0 errores. **Corre cuando el dueño entregue el Excel.**
+- **Corte B: el costo de una entrada no se baja a mano (D-669, decisión del dueño).** API `00135-t9b`
+  (`git-sha=2e7c4510`), merge `02175b1d`.
+  - Cambiar el costo de una bobina o el precio de una compra recibida exige un motivo de la lista (corrección de la
+    compra, NC del proveedor, error de digitación); la web lo pide y explica que para vender barato están «A costo» y el
+    precio.
+  - `pnpm fix:costo-bobina` (recosteo por fecha de la entrada viva de una bobina ya vendida).
+  - **C2 (bobina 4150-23): PARA.** El dry-run cumple todo, pero el +S/ 731,23 cae en **septiembre** en Ventas y margen
+    (factura del 24/09) y en el valorizado al 30/09; el OK decía octubre. Decide el dueño.
+- **Corte C: «Facturado y no despachado al cierre» (D-670).** API `00136-q2t` (`git-sha=e1e18424`), merge `b33748da`.
+  - Sección en Ventas y margen y en el inventario valorizado, con Excel; por cantidades por línea de pedido.
+  - Producción: agosto 26 comprobantes (costo estimado S/ 419 034,93), septiembre 33 (S/ 514 542,69).
+  - Cierra C1 de cc55 («se dejan como están», decisión del dueño).
+- **Pendiente del dueño:** Excel de saldos, decisión de C2, UAT de cc56 y de cc55, ratificar D-664..D-670.
+- Registro de riesgo (toca kardex o datos):
+  - `imports/opening-balances.service.ts` y los `addPaymentInTx`/`reversePaymentInTx` de cobranzas y compras;
+  - `coils/coil-entry-cost.ts` (`recostEntries` sobre la entrada de una bobina) y su CLI;
+  - `coil-operations.service.ts` `update` y `purchase-received-edit.service.ts` `commit` (motivo exigido).
+
 ## 2026-10-16 — cc55: hallazgos de audit-01, costos ocultos a vendedores y un solo costo de coberturas (D-664..D-667; PR #213 y #214)
 
 Sin migraciones ni escrituras masivas. Sin SQL contra producción. Detalle en `docs/handoff/ventana-cc55.md`;

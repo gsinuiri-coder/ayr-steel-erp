@@ -12,6 +12,7 @@ ramas nuevas de Neon (sigue en 9 de 10). El corte C (datos) se detuvo en un PARA
 - **Corte B (PR #214, merge `6b348861`):**
   - API `00132-rdj` (`git-sha=4a9afb3b`), desplegada antes del merge;
   - `smoke:prod --expect-sha 6b348861 --expect-api-sha 4a9afb3b` en verde.
+- **Revisión final (nota de cc56):** después del merge de la CLI de solo lectura (PR #215) se volvió a desplegar la API desde `main` para alinear el sha: la revisión final de cc55 fue `ayr-steel-erp-api-00133-tfm` (`git-sha=fe0ca043`), no `00132-rdj`.
 - **Vuelta atrás:**
   - Comando: `gcloud run services update-traffic ayr-steel-erp-api --to-revisions=<anterior>=100` y revert del merge.
     La revisión anterior es `00131-2n4` para el corte B y `00130-62b` para el A.
