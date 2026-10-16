@@ -83,6 +83,7 @@ import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
+import { assertNoCloseRecost, recostCloseIntoEntries } from './close-recost';
 import { liveMovements } from '../inventory/live-movements';
 import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
@@ -2456,6 +2457,7 @@ export class RoofingProductionService {
       })),
     );
     let adjusted = false;
+    let recostedEntries = false;
     if (!adjustPen.isZero()) {
       const movement = await this.inventory.adjustCost(tx, {
         businessLineId: order.businessLineId,
@@ -2468,10 +2470,22 @@ export class RoofingProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: despunte ${scrapKg.toFixed(3)} kg imputado a ${outputQty.toFixed(3)}`,
         actorId: actor.id,
         operationDate,
-        // cc55 (D-665, E-01): con el producto ya despachado, el despunte va a esas salidas.
-        whenEmptyAt: reports.map((r) => fromDateOnly(r.operationDate)),
       });
       adjusted = movement !== null;
+      // cc55 (D-665, E-01 de audit-01): sin saldo del producto (ya se despachó), el ajuste no tiene
+      // dónde repartirse; se recostean las entradas de los partes y el recosteo lo pasa a las
+      // salidas. Antes se perdía.
+      if (!adjusted) {
+        const outcome = await recostCloseIntoEntries(tx, this.inventory, {
+          orderSeq: order.seq,
+          reportIds: reports.map((r) => r.id),
+          productId: order.productId,
+          amountPen: adjustPen,
+          actorId: actor.id,
+        });
+        adjusted = outcome !== null;
+        recostedEntries = outcome !== null;
+      }
     }
 
     await tx.productionOrder.update({
@@ -2508,6 +2522,7 @@ export class RoofingProductionService {
         materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
         unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
         costAdjusted: adjusted,
+        ...(recostedEntries ? { costRecostedIntoEntries: true } : {}),
         releasedReservationKg: releasedReservationKg.gt(0)
           ? toFixedString(releasedReservationKg, 'KG')
           : null,
@@ -2784,15 +2799,17 @@ export class RoofingProductionService {
           items: movements.map(itemRefOf),
         });
 
+        // cc55 (D-665): si el cierre pasó el despunte a las entradas de los partes (el producto ya
+        // había salido), esas planchas ya se movieron: reabrir devolvería el despunte a la bobina
+        // con su costo ya cargado en las ventas.
+        await assertNoCloseRecost(tx, orderId, 'Las planchas de esta orden');
         if (adjust) {
           const after = await tx.inventoryMovement.findMany({
             where: {
               recostOfId: null,
               itemType: 'PRODUCT',
               itemId: order.productId,
-              // cc55 (D-665): un ajuste imputado a la fecha de un parte (producto sin saldo al
-              // cerrar) tiene salidas posteriores **por fecha** con id menor.
-              OR: [{ id: { gt: adjust.id } }, { operationDate: { gt: adjust.operationDate } }],
+              id: { gt: adjust.id },
             },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },

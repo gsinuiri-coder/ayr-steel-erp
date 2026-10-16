@@ -739,7 +739,8 @@ export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
 
 /**
  * cc55 (D-664, D-04 de audit-01): el comprobante que de verdad declara un despacho. Un enlace a uno
- * que ya no está vivo (anulado, dado de baja, rechazado) o a una versión archivada no declara nada:
+ * que ya no está vivo ni en borrador (anulado, dado de baja, rechazado) o a una versión archivada no
+ * declara nada:
  * para la devolución, ese despacho es «sin comprobante declarado».
  */
 export function liveInvoiceId(
@@ -747,7 +748,11 @@ export function liveInvoiceId(
   invoice: { status: string; archivedAt: Date | null } | null,
 ): string | null {
   if (invoiceId === null || invoice === null) return null;
-  const live = (LIVE_DOCUMENT_STATUSES as readonly string[]).includes(invoice.status);
+  // Revisiones de cc55 (R-1): un **borrador** que declara el despacho todavía lo va a facturar; si
+  // contara como muerto, una NC 01 de otro comprobante del pedido podría devolver ese despacho.
+  const live =
+    invoice.status === 'DRAFT' ||
+    (LIVE_DOCUMENT_STATUSES as readonly string[]).includes(invoice.status);
   return live && invoice.archivedAt === null ? invoiceId : null;
 }
 

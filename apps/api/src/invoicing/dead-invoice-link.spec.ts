@@ -47,7 +47,11 @@ describe('liveInvoiceId', () => {
     expect(liveInvoiceId('F1', { status: 'ISSUED', archivedAt: null })).toBe('F1');
   });
 
-  it.each(['ANNULLED', 'VOIDED', 'REJECTED', 'DRAFT'])('uno %s no declara nada', (status) => {
+  it('un borrador sigue declarando su despacho: lo va a facturar (revisiones de cc55, R-1)', () => {
+    expect(liveInvoiceId('F1', { status: 'DRAFT', archivedAt: null })).toBe('F1');
+  });
+
+  it.each(['ANNULLED', 'VOIDED', 'REJECTED'])('uno %s no declara nada', (status) => {
     expect(liveInvoiceId('F1', { status, archivedAt: null })).toBeNull();
   });
 

@@ -189,15 +189,6 @@ export interface AdjustCostInput {
   operationDate?: string;
   /** D-124: acuse de la advertencia de retrofecha fuera de orden. */
   confirmBackdate?: boolean;
-  /**
-   * cc55 (D-665, E-01 de audit-01): **si hoy el ítem no tiene saldo**, el ajuste no se pierde: se
-   * imputa en la más reciente de estas fechas (`YYYY-MM-DD`, no posteriores a `operationDate`) en que
-   * el ítem terminaba el día con saldo, y el recosteo por fecha (D-649) lo pasa a las salidas que
-   * vinieron después. Lo usa el cierre de una OP con las fechas de sus partes: el despunte se
-   * absorbe aunque el producto ya se haya despachado. Sin fechas, o sin saldo en ninguna, devuelve
-   * `null` como antes.
-   */
-  whenEmptyAt?: readonly string[];
 }
 
 /** Saldo vigente de un ítem, ya en Decimal. */
@@ -467,10 +458,14 @@ export class InventoryService {
       /** `recosteo:historico`: otra acción de auditoría y sin tope en línea. */
       historic?: { label: string };
       maxRows?: number;
+      /** cc55 (D-665): costos de fila fijados de antemano (`recostEntries`). */
+      overrides?: ReadonlyMap<string, Decimal>;
+      /** cc55 (D-665): la nota de los ajustes (por defecto, «Recosteo por fecha»). */
+      note?: string;
     },
   ): Promise<RecostOutcome> {
     const maxRows = ctx.historic ? Number.MAX_SAFE_INTEGER : ctx.maxRows;
-    let plan = await planRecost(tx, seeds, maxRows);
+    let plan = await planRecost(tx, seeds, maxRows, ctx.overrides);
     if (plan.overLimit) return this.recostPending(tx, seeds, plan.rowsReplayed, ctx);
     const locked = new Set<string>();
     let settled = false;
@@ -482,7 +477,7 @@ export class InventoryService {
       await this.lockRecostItems(tx, toLock, ctx.historic !== undefined);
       for (const i of toLock) locked.add(labelKey(i.itemType, i.itemId));
       // Bajo el lock se vuelve a armar: lo que decide se lee después de bloquear (D-474).
-      const again = await planRecost(tx, seeds, maxRows);
+      const again = await planRecost(tx, seeds, maxRows, ctx.overrides);
       if (again.overLimit) return this.recostPending(tx, seeds, again.rowsReplayed, ctx);
       settled = again.items.every(
         (p) => p.adjusts.length === 0 || locked.has(labelKey(p.item.itemType, p.item.itemId)),
@@ -515,7 +510,7 @@ export class InventoryService {
           totalCost: toFixedString(total, 'MONEY'),
           refType: a.movement.refType,
           refId: a.movement.refId,
-          notes: ctx.historic ? ctx.historic.label : 'Recosteo por fecha',
+          notes: ctx.historic ? ctx.historic.label : (ctx.note ?? 'Recosteo por fecha'),
           recostOfId: a.movement.id,
           actorId: ctx.actorId,
           operationDate: a.movement.operationDate,
@@ -713,7 +708,7 @@ export class InventoryService {
     if (amount.isZero()) return null;
 
     const balance = await this.lockBalance(tx, input);
-    if (balance.qty.lte(0)) return this.adjustCostWhenEmpty(tx, input, amount);
+    if (balance.qty.lte(0)) return null;
     // D-124: un ajuste mueve valor con una fecha, así que también se ordena. Mismo guardrail.
     await this.assertChronological(
       tx,
@@ -769,64 +764,52 @@ export class InventoryService {
   }
 
   /**
-   * cc55 (D-665): el ajuste de un ítem que hoy no tiene saldo, imputado en la última fecha de
-   * `whenEmptyAt` en que el ítem terminaba el día con saldo. El saldo vigente no se toca (es cero);
-   * `recostForward` lleva el valor a las salidas posteriores, que son las que se llevaron ese saldo.
-   * La fecha la elige el sistema (la de un parte de la OP), así que no pide el acuse de D-124.
+   * cc55 (D-665, E-01 de audit-01) — **subir el costo de entradas ya registradas** y pasarlo a lo
+   * que salió después, por la puerta del recosteo por fecha (D-649; regla dura 8). Cada entrada
+   * vale su costo efectivo más `addPen`; `recostForward` escribe el `ADJUST` de la entrada (con
+   * `recost_of_id`, en su fecha) y los de las salidas que se llevaron ese saldo, en cascada. La fila
+   * original nunca se edita.
+   *
+   * Lo usa el cierre de una OP cuyo producto **ya no tiene saldo**: el despunte (y el residuo) que
+   * el `ADJUST` de cierre no podía repartir sobre cero unidades va a las entradas de sus partes, y de
+   * ahí a los despachos. Antes se perdía (`costAdjusted: false`).
    */
-  private async adjustCostWhenEmpty(
+  async recostEntries(
     tx: Prisma.TransactionClient,
-    input: AdjustCostInput,
-    amount: Decimal,
-  ): Promise<InventoryMovement | null> {
-    const ceiling = input.operationDate ?? businessToday();
-    const dates = [...new Set(input.whenEmptyAt ?? [])]
-      .filter((d) => d <= ceiling)
-      .sort((a, b) => b.localeCompare(a));
-    if (dates.length === 0) return null;
-    const rows = await qtyRowsOf(tx, input);
-    const qtyAtEndOf = (date: string): Decimal =>
-      rows.filter((r) => r.date <= date).reduce((acc, r) => acc.plus(r.delta), new Decimal(0));
-    const date = dates.find((d) => qtyAtEndOf(d).gt(0));
-    if (date === undefined) return null;
-    const qty = qtyAtEndOf(date);
-    const unit =
-      (
-        await tx.inventoryBalance.findUnique({
-          where: { itemType_itemId: { itemType: input.itemType, itemId: input.itemId } },
-          select: { unit: true },
-        })
-      )?.unit ?? input.unit;
-    const movement = await tx.inventoryMovement.create({
-      data: {
-        businessLineId: input.businessLineId,
-        itemType: input.itemType,
-        itemId: input.itemId,
-        type: 'ADJUST',
-        qty: toFixedString(qty, 'KG'),
-        unit,
-        unitCost: toFixedString(amount.div(qty), 'MONEY'),
-        totalCost: toFixedString(amount, 'MONEY'),
-        refType: input.refType,
-        refId: input.refId ?? null,
-        notes:
-          `${input.notes ?? 'Ajuste de costo'} · imputado al ${date}: sin saldo el ${ceiling} (D-665)`.slice(
-            0,
-            240,
-          ),
-        actorId: input.actorId,
-        operationDate: toDateOnly(date),
-      },
+    entries: readonly { movementId: bigint; addPen: Decimal }[],
+    ctx: { actorId: string; note: string },
+  ): Promise<RecostOutcome | null> {
+    const wanted = entries.filter((e) => !e.addPen.isZero());
+    if (wanted.length === 0) return null;
+    const rows = await tx.inventoryMovement.findMany({
+      where: { id: { in: wanted.map((e) => e.movementId) }, type: 'IN' },
+      select: { id: true, itemType: true, itemId: true, totalCost: true },
     });
-    await this.recostForward(
-      tx,
-      [{ itemType: input.itemType, itemId: input.itemId, afterMovementId: movement.id }],
-      { actorId: input.actorId, trigger: movement },
+    if (rows.length !== wanted.length) {
+      throw new BadRequestException('Recosteo de entradas: hay una fila que no es una entrada');
+    }
+    const recosts = await tx.inventoryMovement.groupBy({
+      by: ['recostOfId'],
+      where: { recostOfId: { in: rows.map((r) => r.id) } },
+      _sum: { totalCost: true },
+    });
+    const recostOf = new Map(
+      recosts.map((g) => [String(g.recostOfId), toDecimal(g._sum.totalCost?.toString() ?? '0')]),
     );
-    return movement;
+    const overrides = new Map<string, Decimal>();
+    for (const r of rows) {
+      const add = wanted.find((e) => e.movementId === r.id)?.addPen ?? new Decimal(0);
+      const effective = toDecimal(r.totalCost.toString()).plus(
+        rowCostOfRecost('IN', recostOf.get(r.id.toString()) ?? new Decimal(0)),
+      );
+      overrides.set(r.id.toString(), effective.plus(add));
+    }
+    const seeds = rows.map((r) => ({ itemType: r.itemType, itemId: r.itemId, atMovementId: r.id }));
+    return this.recostForward(tx, seeds, { actorId: ctx.actorId, overrides, note: ctx.note });
   }
 
   /**
+   * Anula un movimiento emitiendo su inverso  /**
    * Anula un movimiento emitiendo su inverso (§3.2: nunca `UPDATE` ni `DELETE`). El
    * inverso arrastra el **mismo valor** que el original, no el promedio del momento:
    * revertir un ingreso tiene que sacar del saldo exactamente el costo que metió, o

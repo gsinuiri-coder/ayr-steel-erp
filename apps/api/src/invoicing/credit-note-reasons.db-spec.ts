@@ -596,3 +596,20 @@ describe('cc55 (D-664): hallazgos de audit-01 sobre la nota de crédito', () => 
     expect(asSeller.stock.map((x) => x.qty)).toEqual(asAdmin.stock.map((x) => x.qty));
   });
 });
+
+describe('cc55 (revisiones del corte A): reactivar repone el enlace que la anulación soltó', () => {
+  it('R-2: anular suelta el despacho y reactivar lo vuelve a declarar', async () => {
+    const s = await sold({ declare: true });
+    const imports = moduleRef.get(FiscalImportService);
+    await imports.annulExternal(admin, s.invoiceId, 'por error');
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    expect(dispatch.invoiceId).toBeNull();
+    await imports.reactivateExternal(admin, s.invoiceId, {
+      reason: 'la anulación fue un error',
+      confirmStillValid: true,
+    });
+    expect(
+      (await prisma.dispatch.findUniqueOrThrow({ where: { id: dispatch.id } })).invoiceId,
+    ).toBe(s.invoiceId);
+  });
+});

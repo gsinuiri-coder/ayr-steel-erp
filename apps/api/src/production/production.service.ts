@@ -53,6 +53,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { drywallStripMismatch, drywallStripSpec, drywallStripWhere } from '../common/drywall-strip';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { assertNoCloseRecost, recostCloseIntoEntries } from './close-recost';
 import { liveMovements } from '../inventory/live-movements';
 import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
@@ -1227,9 +1228,18 @@ export class ProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: merma de proceso ${scrapKg.toFixed(3)} kg imputada a ${pieces} piezas`,
         actorId: actor.id,
         operationDate,
-        // cc55 (D-665, E-01): con las piezas ya despachadas, la merma va a esas salidas.
-        whenEmptyAt: reports.map((r) => fromDateOnly(r.operationDate)),
       });
+      // cc55 (D-665, E-01 de audit-01): sin saldo de piezas, la merma va a las entradas de los
+      // partes y el recosteo la pasa a sus salidas (ver el cierre de coberturas).
+      if (adjusted === null) {
+        await recostCloseIntoEntries(tx, this.inventory, {
+          orderSeq: order.seq,
+          reportIds: reports.map((r) => r.id),
+          productId: order.productId,
+          amountPen: adjustPen,
+          actorId: actor.id,
+        });
+      }
     }
 
     // D-360: los flejes que el cierre soltó y quedaron en exactamente 0 se terminan solos
@@ -1346,6 +1356,8 @@ export class ProductionService {
           items: movements.map(itemRefOf),
         });
 
+        // cc55 (D-665): ver la reapertura de coberturas.
+        await assertNoCloseRecost(tx, orderId, 'Las piezas de esta orden');
         // El ajuste de costo se repartió sobre el saldo de piezas del momento del cierre:
         // si después salieron piezas o entró otro ajuste (el cierre de otra OP del mismo
         // perfil), revertirlo dejaría el promedio contando algo que ya no es cierto.
@@ -1355,8 +1367,7 @@ export class ProductionService {
               recostOfId: null,
               itemType: 'PRODUCT',
               itemId: order.productId,
-              // cc55 (D-665): ver la reapertura de coberturas.
-              OR: [{ id: { gt: adjust.id } }, { operationDate: { gt: adjust.operationDate } }],
+              id: { gt: adjust.id },
             },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },

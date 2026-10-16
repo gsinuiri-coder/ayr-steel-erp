@@ -1,0 +1,57 @@
+# cc55-a — revisión de segundo modelo (Sonnet, contexto limpio)
+
+Diff revisado: `git diff origin/main..7fdfb448` (un commit, 25 archivos, solo lectura). Contraste con
+`local-data/audit-01/INFORME.md` (C-01, C-02, C-03, C-05, D-04, E-01, B-01). Es una revisión de modelo:
+no sustituye la del dueño (AGENTS.md §2).
+
+Corrido: `tsc --noEmit` de `apps/api` y de `apps/web` (limpios); jest de `price-floor`,
+`dead-invoice-link`, `fiscal-import-nc02`, `credit-note-guards`, `sales-returns.service` y el centinela
+`kardex-writers.sentinel` (6 suites, 69 pruebas, verdes). Los `*.db-spec.ts` no se corrieron (piden base).
+
+## Resumen
+
+No hay P0 ni P1. Los siete hallazgos de audit-01 quedan corregidos en lo que dicen. Quedan 2 P2 y 5 P3.
+Lo más relevante: el «enlace vivo» que se introduce para D-04 trata un borrador como muerto (R-1), y
+reactivar un comprobante anulado ya no recupera su enlace con el despacho, con lo que se pierde la
+atribución de costo en Rentabilidad y en Ventas por producto (R-2).
+
+## Hallazgos
+
+| Id | Grav. | Archivo:línea | Qué pasa | Cómo reproducir | Recomendación |
+| --- | --- | --- | --- | --- | --- |
+| R-1 | P2 | `apps/api/src/invoicing/sales-returns.service.ts:745-752` (`liveInvoiceId`); `dead-invoice-link.spec.ts` (caso `DRAFT`) | `liveInvoiceId` usa `LIVE_DOCUMENT_STATUSES`, que no incluye `DRAFT`. El enlace `dispatches.invoice_id` se toma al crear el comprobante (borrador), así que un despacho declarado por un borrador cuenta como «sin comprobante declarado». Una NC 01 (`onlyAffected`, D-656) sobre otro comprobante vivo del mismo pedido puede devolver ese despacho, que era del borrador; al registrarse el borrador, su mercadería ya volvió al almacén. El test fija `DRAFT` como «no declara nada». | Pedido con dos despachos: D1 declarado a F1 aceptada y D2 declarado a F2 en `DRAFT`. Registrar una NC 01 sobre F1 por más de lo de D1: la asignación toma también D2. | Usar `STANDING_DOCUMENT_STATUSES` (vivos + borrador) en `liveInvoiceId` y sacar `DRAFT` de la lista del test. |
+| R-2 | P2 | `apps/api/src/invoicing/fiscal-import.service.ts:195-206` y docstring de `reactivateExternal` (~:310) | Anular suelta el enlace con el despacho y reactivar no lo repone («queda sin declarar»). Antes el enlace sobrevivía a la reactivación. `document-profitability.service.ts#declaredSales` y los reportes por producto/material atribuyen costo por `Dispatch.invoiceId`: un comprobante reactivado pasa a «sin despacho declarado» y su costo/margen sale incompleto o «No trazable». No hay doble despacho: `allocateUndispatched` es por línea de pedido, no por enlace (revisado). | Anular internamente una factura con despacho declarado, reactivarla y abrir su Rentabilidad. | Al reactivar, volver a enlazar los despachos `ISSUED` de la auditoría (`dispatchesUnlinked`) que sigan sin comprobante y sean del mismo pedido; o dejar el caso documentado. Sumar un db-spec anular, reactivar, rentabilidad. |
+| R-3 | P3 | `apps/api/src/invoicing/fiscal-import.service.ts:82-88` | Los despachos a bloquear se leen antes de tomar el lock del comprobante; el `updateMany` de `unlinkInvoiceFromDispatches` luego puede tocar filas que no estaban en el conjunto bloqueado. Los caminos que enlazan toman antes el comprobante, así que la ventana es mínima, pero la regla 17 pide leer lo que decide después del bloqueo (D-474). | Anular mientras `invoice-dispatch` enlaza un despacho nuevo al mismo comprobante. | Releer los despachos tras `lockDocuments`; si aparece uno no bloqueado, volver a pedir el conjunto completo; o comentar por qué basta. |
+| R-4 | P3 | `apps/api/src/pos/pos.service.ts:233-235`; `apps/web/.../pos/pos-view.tsx:148-182` | La repetición con la misma clave devuelve la venta original sin comprobar que el cuerpo ni el usuario coincidan (la web lo evita con la huella del cuerpo, la API no). Una clave reutilizada con otro carrito recibe la venta vieja sin aviso. | `POST /pos/sales` dos veces con la misma clave y distinto carrito. | Guardar huella del cuerpo/actor con la clave y responder 409 si cambia (deuda común a todas las claves de la API; puede quedar anotada). |
+| R-5 | P3 | `apps/api/src/inventory/inventory.service.ts:771-826` (`adjustCostWhenEmpty`) | (a) El ajuste se reparte sobre todo el stock que el ítem tenía ese día, también el de otras OP del mismo SKU; el diseño lo acepta pero el cierre no lo avisa. (b) Con más de 500 movimientos posteriores, `recostForward` queda «pendiente» y el cierre devuelve el movimiento como aplicado: el despunte no llegaría a la venta hasta correr `recosteo:historico`. (c) El cierre no distingue ajuste normal de imputado. | Cerrar una OP con producto ya despachado y más de 500 movimientos posteriores del SKU. | Auditar la fecha imputada y el estado de recosteo pendiente en el cierre; probar el tope. |
+| R-6 | P3 | Pruebas | Huecos: (1) reapertura de coberturas/drywall con un `ADJUST` imputado (el nuevo `OR` por `operationDate`) sin prueba, y la rama de drywall (`production.service.ts:1231`) también; (2) `fiscal-import-nc02.spec.ts` solo agrega el mock de `unlinkInvoiceFromDispatches`, no comprueba que se omita con `replacesDocumentId !== null`; (3) sin prueba de rol para `/pricing` (C-05) ni para `refreshStatus` de un vendedor ajeno (C-03); (4) el par concurrente de B-01 acepta `ok.length > 0` y no exige que ambas llamadas devuelvan la venta; (5) la regla 17 pide un par en `lock-order.db-spec` para caminos nuevos y no se sumó para la anulación con despachos ni para el mostrador con clave. | — | Agregar esos casos; (2) y (3) son unitarios. |
+| R-7 | P3 | `apps/api/src/sales/sales.controller.ts:593` | El comentario de `stock-panel` sigue diciendo que el margen mínimo es legible por cualquier rol en `GET /pricing`; ya no lo es. | — | Actualizar el comentario. |
+
+## Revisado sin hallazgo
+
+- **(a) Costos a roles no administradores.** `assertPriceFloor` es seguro por defecto: sin `showCost` no
+  imprime costo, margen ni precio a costo. Los llamadores (`sales-lines`, `sales-order-edits` x2) y los
+  sitios de cotización, pedido y mostrador pasan `showCost` solo para ADMINISTRADOR; un llamador que lo
+  olvide queda opaco. Los mensajes con «costo promedio» que quedan son del importador de listas y de
+  compras (administrador). La vista previa de NC enmascara `stock[].costPen` y `costPen`; la web maneja
+  `null` y compila. `GET /invoicing/returns/:id` ya enmascaraba. `sellable-coils` y `stock-panel` ya
+  limitaban `avgCostPen` y `atCostPricePen` al administrador. Los Excel/PDF de cotización, pedido y
+  comprobantes no traen costos. `/pricing` queda solo ADMINISTRADOR; la web solo lo pide en Configuración
+  y los E2E que lo leen usan `adminApi`.
+- **C-03.** `refreshStatus` exige `assertOwnership`; el único llamador interno (`PosService.voidSale`) es
+  solo ADMINISTRADOR.
+- **(b) Otros flujos.** NC 02 y su deshacer: omitir el desenlace con `replacesDocumentId !== null` conserva
+  el enlace que `undoReplacementInTx` necesita. Devoluciones 06/07: con enlace muerto pasan a «sin
+  comprobante», lo que mejora la preferencia. «Traer a otro pedido» deja de bloquearse por un anulado.
+  Cierre de OP: la rama con saldo > 0 no cambió; con saldo <= 0 el ajuste se imputa a la última fecha de
+  parte con saldo al fin del día, sin mover cantidades, así que D-652 no puede quedar en negativo.
+  Reapertura con producto despachado: queda bloqueada por el `OR` (correcto); tras anular el despacho,
+  `reverse` del `ADJUST` pasa porque el saldo vuelve a ser > 0 y la reversa de la salida arrastra el costo
+  efectivo con recosteo. Regla 8: la puerta nueva vive dentro de `InventoryService.adjustCost`, sin
+  escritor nuevo; el centinela pasa.
+- **(c) Concurrencia.** Mostrador: la clave se reclama antes del lock de caja; el segundo envío espera al
+  primero en el `INSERT ... ON CONFLICT` sin sostener otros locks, así que no hay ciclo; si el primero
+  revierte, el segundo sigue como reclamante. `posSale.create` usa el `resourceId` reclamado. Anulación:
+  comprobante antes que despachos, en una sola llamada de `lockDocuments` (salvo R-3).
+- **Plan de despacho por comprobante** (`allocateUndispatched`): es por línea de pedido, no por enlace;
+  quitar el enlace de un anulado no genera doble salida.

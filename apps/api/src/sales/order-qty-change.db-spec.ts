@@ -5,6 +5,7 @@ import {
   businessToday,
   canonicalAccessorySku,
   closeRoofingOrderSchema,
+  createDispatchSchema,
   createCustomerSchema,
   createFinishSchema,
   createInvoiceSchema,
@@ -26,6 +27,7 @@ import { CatalogService } from '../catalog/catalog.service';
 import { CustomersService } from '../customers/customers.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { InvoicingService } from '../invoicing/invoicing.service';
+import { DispatchesService } from '../invoicing/dispatches.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProductionService } from '../production/production.service';
 import { RoofingProductionService } from '../production/roofing-production.service';
@@ -769,5 +771,80 @@ describe('cc45 (D-603, D-604) — cambiar la cantidad con producción', () => {
         where: { action: 'production.cancel-by-sales-order', entityId: s.opId },
       }),
     ).toBe(0);
+  });
+});
+
+describe('cc55 (D-665, A-03 de la autorrevisión): cerrar la OP después de despachar', () => {
+  it('el despunte va a la salida del despacho y la reapertura se rechaza (el producto ya salió)', async () => {
+    const productId = await product('A_MEDIDA', '0.75');
+    const s = await scenario(productId, '0.75', { qty: '12.000', pieces: [m(6, 2)] });
+    await roofing.report(
+      admin,
+      s.opId,
+      reportRoofingPiecesSchema.parse({ coilId: s.coilId, pieces: [m(6, 2)] }),
+    );
+    const report = await prisma.productionReport.findFirstOrThrow({
+      where: { productionOrderId: s.opId, status: 'ACTIVE' },
+    });
+    await moduleRef.get(DispatchesService).create(
+      admin,
+      createDispatchSchema.parse({
+        salesOrderId: s.salesOrderId,
+        dispatchDate: businessToday(),
+        originAddress: 'Almacén cc55',
+        destinationAddress: 'Cliente cc55',
+        originUbigeo: '150101',
+        destinationUbigeo: '150101',
+        transferMode: 'PICKUP',
+        items: [{ salesOrderItemId: s.itemId, qty: '12.000' }],
+      }),
+    );
+    const out = await prisma.inventoryMovement.findFirstOrThrow({
+      where: { itemId: productId, refType: 'SALE', type: 'OUT' },
+    });
+    expect(
+      (
+        await prisma.inventoryBalance.findFirstOrThrow({ where: { itemId: productId } })
+      ).qty.toString(),
+    ).toBe('0');
+
+    // Diez kilos de despunte a S/ 5: S/ 50 que antes no llegaban a ninguna venta.
+    const consumedKg = report.theoreticalKg.plus(10).toFixed(3);
+    await roofing.close(
+      admin,
+      s.opId,
+      closeRoofingOrderSchema.parse({ consumedKg, reason: 'Despunte de prueba cc55' }),
+    );
+    // Sin saldo del producto no hay ADJUST de cierre: el despunte va a la entrada del parte y, por
+    // el recosteo (D-649), a la salida del despacho del mismo día.
+    expect(
+      await prisma.inventoryMovement.count({
+        where: { itemId: productId, type: 'ADJUST', recostOfId: null, refId: s.opId },
+      }),
+    ).toBe(0);
+    const entry = await prisma.inventoryMovement.findFirstOrThrow({
+      where: { itemId: productId, type: 'IN', refType: 'PRODUCTION', refId: report.id },
+    });
+    const sum = async (id: bigint) =>
+      (
+        await prisma.inventoryMovement.aggregate({
+          where: { recostOfId: id },
+          _sum: { totalCost: true },
+        })
+      )._sum.totalCost;
+    const added = await sum(entry.id);
+    const taken = await sum(out.id);
+    // Diez kilos a S/ 5: unos S/ 50 que antes no llegaban a ninguna venta.
+    expect(added?.toNumber()).toBeGreaterThan(49);
+    // La salida saca exactamente lo que entró de más (total negativo = más costo de venta).
+    expect(taken?.negated().toFixed(4)).toBe(added?.toFixed(4));
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'production.roofing.close', entityId: s.opId },
+    });
+    expect(audit.after).toMatchObject({ costAdjusted: true, costRecostedIntoEntries: true });
+
+    const r = await rejection(roofing.reopen(admin, s.opId, { reason: 'prueba cc55' }));
+    expect(r.status).toBe(400);
+    expect(r.message).toContain('ya se movieron');
   });
 });

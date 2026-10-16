@@ -216,7 +216,9 @@ describe('cc51 (D-641) — vender a costo en la cotización', () => {
   it('el VENDEDOR sigue con el piso de hoy en una línea normal', async () => {
     const r = await rejection(quote(seller, [line('23.60')]));
     expect(r.status).toBe(400);
-    expect(r.message).toContain('margen mínimo');
+    // cc55 (D-664, C-02): el mínimo sí, el costo y el margen no.
+    expect(r.message).toContain('el precio mínimo es S/ 26.23');
+    expect(r.message).not.toMatch(/margen|costo/i);
   });
 
   it('sin motivo no hay marca: el motivo es parte del schema, y «Otro» pide el texto', () => {
