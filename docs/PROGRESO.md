@@ -2,6 +2,46 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-16 — cc55: hallazgos de audit-01, costos ocultos a vendedores y un solo costo de coberturas (D-664..D-667; PR #213 y #214)
+
+Sin migraciones ni escrituras masivas. Sin SQL contra producción. Detalle en `docs/handoff/ventana-cc55.md`;
+revisiones en `docs/revision/cc55-*.md`; UAT en `docs/uat/cc55.md`.
+
+- **Corte A: permisos, reversas e idempotencia (D-664..D-666).** En producción con la API `00131-2n4`
+  (`git-sha=a51c0100`) y el merge `5ae7fb30`.
+  - Un VENDEDOR ya no ve costos en dos lugares:
+    - el rechazo del piso es opaco por defecto (C-02);
+    - la vista previa de la NC no trae costo (C-01).
+  - Otros permisos cerrados:
+    - `GET /pricing` solo ADMINISTRADOR (C-05);
+    - la consulta al PSE pide alcance (C-03).
+  - El barrido de costos a otros roles no encontró otra fuga abierta.
+  - La anulación interna suelta el enlace de sus despachos y reactivar lo repone (D-04).
+  - Sin saldo del producto al cerrar una OP, el despunte va a las entradas de sus partes y de ahí a los despachos (E-01,
+    D-665). La reapertura de esa OP se rechaza.
+  - La venta de mostrador es idempotente (B-01, D-666).
+- **Corte B: un solo costo para lo fabricado contra pedido (D-667, decisión del dueño).** En producción con la API
+  `00132-rdj` (`git-sha=4a9afb3b`) y el merge `6b348861`.
+  - «Ventas y margen» costea las coberturas fabricadas contra pedido con el costo de su OP, la misma cuenta que la
+    Rentabilidad del comprobante.
+  - Los 109 comprobantes coinciden ahora entre los dos reportes.
+  - Agosto: +S/ 623,08 de costo. Septiembre: −S/ 622,85.
+  - Cambian 33 comprobantes; el mayor es FFA1-00001360 (+566,72).
+- **Corte C: correcciones de datos — no ejecutadas (PARA).**
+  - Re-fecha D-278: son 34 despachos de 33 comprobantes, y los 17 ítems quedarían negativos (D-652/D-662), porque se
+    fabricaron después de facturar. No se cumple la condición del OK.
+  - Bobina `IMPO-ALZ-AZUL-5002-0.28-4150-23` (compra 118-315630, línea 22): el papel ya dice 2,87 y la bobina está
+    vendida entera, así que «Editar compra» no la puede corregir (D-372). Los cambios del 25/09 dicen «vender a menos
+    costo» y «menos costo». La corrección posible (`recostEntries`, +S/ 731,23 a FFA1-00001448) es otro mecanismo y
+    espera el OK del dueño.
+  - Queda `pnpm inspect:cc55` (solo lectura) para repetir los chequeos previos.
+- **Siguiente pieza, por decisión del dueño: cc56 · cobranzas en la app con importador de saldos iniciales.**
+- Registro de riesgo (toca kardex o datos):
+  - `inventory.service.ts`: `recostEntries` y los overrides de `recostForward`;
+  - `production/close-recost.ts` y los dos cierres de OP;
+  - `fiscal-import.service.ts`: anular suelta el enlace y reactivar lo repone;
+  - `sales-margin.service.ts`: `withEngineCosts` y `declaredDocuments`.
+
 ## 2026-10-15 — cc54: deuda de cc53 y nota de crédito por motivo SUNAT en un solo diálogo (D-653..D-663; PR #209 y #210)
 
 - **Corte A, deuda de cc53 (D-653).** En producción con la API `00129-5ll` y el merge `d902e5c9`.
