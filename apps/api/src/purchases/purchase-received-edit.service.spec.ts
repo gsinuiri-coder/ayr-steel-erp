@@ -289,6 +289,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
       reason: 'Precio mal tipeado',
+      costReason: 'PURCHASE_CORRECTION',
     });
     expect(inventory.reverse).not.toHaveBeenCalled();
     expect(inventory.record).not.toHaveBeenCalled();
@@ -507,6 +508,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     const plan = await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
       reason: 'x',
+      costReason: 'PURCHASE_CORRECTION',
       idempotencyKey: 'k-1',
     });
     expect(plan).toMatchObject({ changes: [], replayed: true });
@@ -525,12 +527,26 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     await expect(service.preview(ADMIN, 'p-1', {})).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('cc56 (D-669): confirmar un precio sin motivo de la lista se rechaza y no escribe nada', async () => {
+    const { tx, updates } = makeTx({});
+    withTx(tx);
+    await expect(
+      service.commit(ADMIN, 'p-1', {
+        items: [{ itemId: 'item-1', unitPrice: '5.5' }],
+        reason: 'vender a menos costo',
+      }),
+    ).rejects.toThrow(/Cambiar el costo exige elegir el motivo/);
+    expect(inventory.replaceEntry).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
+  });
+
   it('confirmar el precio: un reemplazo del ingreso (cc15b), bobina y cabecera corregidas, auditado', async () => {
     const { tx, updates } = makeTx({});
     withTx(tx);
     await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
       reason: 'Precio mal tipeado',
+      costReason: 'PURCHASE_CORRECTION',
     });
     // La puerta `replaceEntry` (regla dura 8): la fecha la toma del ingreso original.
     expect(inventory.replaceEntry).toHaveBeenCalledWith(tx, {
@@ -576,6 +592,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', finishId: 'fin-azul', thicknessMm: '0.5', widthMm: '1200' }],
       reason: 'Acabado equivocado',
+      costReason: 'PURCHASE_CORRECTION',
     });
     expect(inventory.reverse).not.toHaveBeenCalled();
     const coilUpdate = updates.find((u) => u.model === 'coil')?.args as {
@@ -605,6 +622,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
         notes: 'ok',
       },
       reason: 'Comprobante mal registrado',
+      costReason: 'PURCHASE_CORRECTION',
     });
     const header = updates.find((u) => u.model === 'purchase')?.args as {
       data: Record<string, unknown>;
@@ -631,6 +649,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
       service.commit(ADMIN, 'p-1', {
         header: { paymentTerms: 'CREDITO', creditDays: null },
         reason: 'x',
+        costReason: 'PURCHASE_CORRECTION',
       }),
     ).rejects.toThrow(/días de crédito/);
   });
@@ -649,7 +668,11 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     const { tx } = makeTx({ payments: 1 });
     withTx(tx);
     await expect(
-      service.commit(ADMIN, 'p-1', { items: [{ itemId: 'item-1', unitPrice: '6' }], reason: 'x' }),
+      service.commit(ADMIN, 'p-1', {
+        items: [{ itemId: 'item-1', unitPrice: '6' }],
+        reason: 'x',
+        costReason: 'TYPING_ERROR',
+      }),
     ).rejects.toThrow(BadRequestException);
     expect(inventory.reverse).not.toHaveBeenCalled();
     expect(audit.write).not.toHaveBeenCalled();
@@ -661,6 +684,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     const plan = await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5' }],
       reason: 'x',
+      costReason: 'PURCHASE_CORRECTION',
     });
     expect(plan.changes).toEqual([]);
     expect(audit.write).not.toHaveBeenCalled();
@@ -698,6 +722,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', productId: 'prod-2' }],
       reason: 'Producto equivocado',
+      costReason: 'PURCHASE_CORRECTION',
     });
     expect(inventory.reverse).toHaveBeenCalledWith(
       tx,
@@ -725,6 +750,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5.5' }],
       reason: 'x',
+      costReason: 'PURCHASE_CORRECTION',
     });
     expect(inventory.lockAvailability).toHaveBeenCalledWith(
       tx,
@@ -746,6 +772,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
       service.commit(ADMIN, 'p-1', {
         items: [{ itemId: 'item-1', unitPrice: '5.5' }],
         reason: 'x',
+        costReason: 'PURCHASE_CORRECTION',
       }),
     ).rejects.toThrow(BadRequestException);
     expect(tx.purchaseItem.update).not.toHaveBeenCalled();
@@ -922,6 +949,7 @@ describe('D-372 — ReceivedPurchaseEditService con base simulada', () => {
     await service.commit(ADMIN, 'p-1', {
       items: [{ itemId: 'item-1', unitPrice: '5' }],
       reason: 'Deshacer',
+      costReason: 'PURCHASE_CORRECTION',
     });
     const line = updates.find((u) => u.model === 'purchaseItem')?.args as {
       data: Record<string, unknown>;

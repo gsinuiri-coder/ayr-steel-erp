@@ -857,6 +857,7 @@ test.describe('Fase 2b — partido, merma, anulación y landed cost', () => {
       await patchJson<CoilDto>(api, `/api/coils/${coil.id}`, {
         unitCostPerKg: '4.8',
         reason: 'Nota de débito del proveedor por el precio por kilo',
+        costReason: 'PURCHASE_CORRECTION',
       });
       const beforeCancel = await coilMovements(api, coil.id);
       expect(beforeCancel).toHaveLength(3);
@@ -1325,8 +1326,17 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
 
       // RF-20 / D-045: cambiar costo, moneda o tipo de cambio recuesta el kardex.
       for (const body of [
-        { unitCostPerKg: '9', reason: 'Intento de recosteo desde planta' },
-        { currency: 'USD', exchangeRate: '3.7', reason: 'Intento de cambio de moneda' },
+        {
+          unitCostPerKg: '9',
+          reason: 'Intento de recosteo desde planta',
+          costReason: 'TYPING_ERROR',
+        },
+        {
+          currency: 'USD',
+          exchangeRate: '3.7',
+          reason: 'Intento de cambio de moneda',
+          costReason: 'TYPING_ERROR',
+        },
       ]) {
         const denied = await patchExpectingError(supervisor, `/api/coils/${coil.id}`, body);
         expect(denied.status).toBe(403);
@@ -1557,6 +1567,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
       const recosted = await patchJson<CoilDto>(api, `/api/coils/${coil.id}`, {
         unitCostPerKg: '4.8',
         reason,
+        costReason: 'PURCHASE_CORRECTION',
       });
       expect(recosted).toMatchObject({
         unitCostPerKg: '4.8000',
@@ -1582,7 +1593,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
         qty: '5000.000',
         totalCost: '20000.0000',
         reversalOfId: movements[0]!.id,
-        notes: reason,
+        notes: `Corrección de la compra: ${reason}`,
         balanceQty: '0.000',
       });
       expect(movements[2]).toMatchObject({
@@ -1592,7 +1603,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
         qty: '5000.000',
         unitCost: '4.8000',
         totalCost: '24000.0000',
-        notes: reason,
+        notes: `Corrección de la compra: ${reason}`,
         reversalOfId: null,
         balanceQty: '5000.000',
       });
@@ -1613,6 +1624,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
       const blocked = await patchExpectingError(api, `/api/coils/${coil.id}`, {
         unitCostPerKg: '5',
         reason: 'Segundo ajuste de precio',
+        costReason: 'TYPING_ERROR',
       });
       expect(blocked.status).toBe(400);
       expect(blocked.message).toContain('posterior');

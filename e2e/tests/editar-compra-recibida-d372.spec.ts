@@ -113,6 +113,7 @@ test.describe('D-372 — editar una compra recibida', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         items: [{ itemId: item.id, unitPrice: '5.5' }],
         reason: 'Precio mal tipeado (E2E D-372)',
+        costReason: 'PURCHASE_CORRECTION',
       });
 
       // Kardex: el ingreso original revertido, su reversa y el ingreso nuevo, los tres en la
@@ -159,6 +160,7 @@ test.describe('D-372 — editar una compra recibida', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         items: [{ itemId: item.id, unitPrice: '5' }],
         reason: 'Vuelta al valor anterior (E2E D-372)',
+        costReason: 'PURCHASE_CORRECTION',
       });
       const back = await balanceOf(api, 'COIL', s.coil.id);
       expect(back).toMatchObject({ qty: before.qty, avgCost: before.avgCost });
@@ -178,6 +180,7 @@ test.describe('D-372 — editar una compra recibida', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         items: [{ itemId: item.id, qty: '980' }],
         reason: 'Peso de la balanza (E2E D-372)',
+        costReason: 'PURCHASE_CORRECTION',
       });
       const balance = await balanceOf(api, 'COIL', s.coil.id);
       expect(balance.qty).toBe('980.000');
@@ -224,6 +227,7 @@ test.describe('D-372 — editar una compra recibida', () => {
         {
           items: [{ itemId: item.id, qty: '990' }],
           reason: 'Intento con consumo (E2E D-372)',
+          costReason: 'PURCHASE_CORRECTION',
         },
       );
       expect(rejected.status).toBe(400);
@@ -253,7 +257,13 @@ test.describe('D-372 — editar una compra recibida', () => {
       await expect(change).toHaveAttribute('data-path', 'REVERSE_REENTRY');
       await expect(change).toContainText('Reversa y nuevo ingreso');
 
-      await dialog.getByLabel('Motivo').fill('Precio mal tipeado (E2E D-372 pantalla)');
+      // cc56 (D-669): un cambio de precio exige el motivo de la lista.
+      await expect(dialog.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled();
+      await dialog.getByLabel('Por qué cambia el costo').click();
+      await page.getByRole('option', { name: 'Error de digitación' }).click();
+      await dialog
+        .getByLabel('Motivo', { exact: true })
+        .fill('Precio mal tipeado (E2E D-372 pantalla)');
       await dialog.getByRole('button', { name: 'Guardar cambios' }).click();
       await expect(dialog).toBeHidden({ timeout: 30_000 });
 
@@ -321,6 +331,7 @@ test.describe('D-372 — editar una compra recibida', () => {
           header: { notes: 'No debe quedar (E2E D-372)' },
           items: [{ itemId: item.id, finishId: otherFinish.id }],
           reason: 'Acabado equivocado (E2E D-372)',
+          costReason: 'PURCHASE_CORRECTION',
         },
       );
       expect(rejected.status).toBe(400);
@@ -347,6 +358,7 @@ test.describe('D-372 — editar una compra recibida', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         items: [{ itemId: item.id, unitPrice: '5.5' }],
         reason: 'Precio con promesa viva (E2E cc15b)',
+        costReason: 'PURCHASE_CORRECTION',
       });
       expect((await balanceOf(api, 'COIL', s.coil.id)).avgCost).toBe('5.5000');
       const reservations = await reservationsOf(api, order.id);
@@ -385,6 +397,7 @@ test.describe('D-372 — editar una compra recibida', () => {
           header: { docType: other.docType, series: other.series, number: other.number },
           items: [{ itemId: item.id, unitPrice: '5.5' }],
           reason: 'Comprobante duplicado (E2E D-372)',
+          costReason: 'PURCHASE_CORRECTION',
         },
       );
       expect(rejected.status).toBe(409);
@@ -409,6 +422,7 @@ test.describe('D-372 — editar una compra recibida', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         header: { notes: 'Observación corregida (E2E D-372)' },
         reason: 'Observación (E2E D-372)',
+        costReason: 'PURCHASE_CORRECTION',
       });
       const purchase = await getJson<{ notes: string | null }>(
         api,

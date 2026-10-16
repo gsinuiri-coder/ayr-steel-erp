@@ -97,6 +97,7 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
     await postJson(api, `/api/purchases/${stock.purchaseId}/received-edit`, {
       items: [{ itemId: item.id, productId: other.id }],
       reason: 'Producto equivocado (E2E cc15a)',
+      costReason: 'PURCHASE_CORRECTION',
     });
     const edited = await getJson<PurchaseDto>(api, `/api/purchases/${stock.purchaseId}`);
     // Decisión D: la descripción pasa a ser el nombre del producto nuevo.
@@ -169,6 +170,7 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         items: [{ itemId: item.id, unitPrice: '5.5' }],
         reason: 'Precio mal tipeado (E2E cc15a)',
+        costReason: 'PURCHASE_CORRECTION',
       });
 
       // Kardex: la merma conserva su costo; un ajuste de 300 con la fecha de hoy; lo que queda,
@@ -220,6 +222,7 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         items: [{ itemId: item.id, unitPrice: '5' }],
         reason: 'Vuelta al precio anterior (E2E cc15a)',
+        costReason: 'PURCHASE_CORRECTION',
       });
       // Correcto y explicado: lo que queda vuelve a 5; los 200 que salieron entre medio
       // conservan 5.5 (no es idéntico al inicio, y la vista previa lo dijo).
@@ -246,6 +249,7 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
       await postJson(api, `/api/purchases/${s.purchaseId}/received-edit`, {
         items: [{ itemId: purchase.items[0]!.id, unitPrice: '6' }],
         reason: 'Precio mal tipeado (E2E cc15a)',
+        costReason: 'PURCHASE_CORRECTION',
       });
       // El ajuste propio es el movimiento más nuevo de la compra: no puede esconder la merma.
       const rejected = await postExpectingError(api, `/api/purchases/${s.purchaseId}/cancel`, {
@@ -308,7 +312,12 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
       await expect(dialog.getByTestId('received-edit-warnings')).toContainText(
         'reportes mensuales',
       );
-      await dialog.getByLabel('Motivo').fill('Precio mal tipeado (E2E cc15a pantalla)');
+      // cc56 (D-669): un cambio de precio exige el motivo de la lista.
+      await dialog.getByLabel('Por qué cambia el costo').click();
+      await page.getByRole('option', { name: 'Error de digitación' }).click();
+      await dialog
+        .getByLabel('Motivo', { exact: true })
+        .fill('Precio mal tipeado (E2E cc15a pantalla)');
       await dialog.getByRole('button', { name: 'Guardar cambios' }).click();
       await expect(dialog).toBeHidden({ timeout: 30_000 });
       expect((await balanceOf(api, 'COIL', s.coil.id)).avgCost).toBe('6.0000');

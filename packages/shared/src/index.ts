@@ -25,6 +25,7 @@ export * from './schemas/quotation-import';
 export * from './schemas/purchase';
 export * from './schemas/purchase-import';
 export * from './schemas/coil';
+export * from './schemas/cost-change';
 export * from './schemas/cutting';
 export * from './schemas/color';
 export * from './schemas/roofing';

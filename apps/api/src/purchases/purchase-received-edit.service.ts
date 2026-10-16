@@ -23,6 +23,7 @@ import {
   type ReceivedEditPlanDto,
   type ReceivedPurchaseItemEdit,
   normalizePurchaseNumber,
+  COST_CHANGE_REQUIRED_MESSAGE,
 } from '@ayr/shared';
 import { assertNoLiveDocumentClash } from './purchase-document-clash';
 import { AuditService } from '../audit/audit.service';
@@ -168,6 +169,10 @@ export class ReceivedPurchaseEditService {
         const classified = classifyReceivedEdit(loaded.facts, input, targets);
         if (classified.changes.length === 0) return classified;
         if (!classified.executable) throw new BadRequestException(blockedSummary(classified));
+        // cc56 (D-669): cambiar un precio cambia el costo de lo que entró; solo con motivo de la lista.
+        if (classified.changes.some((c) => c.group === 'COST') && !input.costReason) {
+          throw new BadRequestException(COST_CHANGE_REQUIRED_MESSAGE);
+        }
         const { plan, adjustments } = await this.enrichPlan(tx, loaded, input, classified);
 
         const movements = await this.applyItems(tx, actor, loaded, input, adjustments, targets);
@@ -217,6 +222,7 @@ export class ReceivedPurchaseEditService {
                 : [],
             ),
             reason: input.reason,
+            costReason: input.costReason ?? null,
           },
         });
         return plan;
