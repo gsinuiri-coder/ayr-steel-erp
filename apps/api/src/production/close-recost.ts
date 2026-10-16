@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { InventoryMovement, Prisma } from '@prisma/client';
 import { Decimal, productionOrderCode, toDecimal } from '@ayr/shared';
-import type { InventoryService } from '../inventory/inventory.service';
+import type { AdjustCostInput, InventoryService } from '../inventory/inventory.service';
 import { prorateDelta } from '../inventory/recost-engine';
 
 /**
@@ -62,6 +62,30 @@ export async function recostCloseIntoEntries(
     })),
     { actorId: input.actorId, note: closeRecostNote(input.orderSeq) },
   );
+}
+
+/**
+ * cc55 (D-665): el ajuste de cierre de una OP. Con saldo del producto, el `ADJUST` de siempre sobre
+ * ese saldo (D-057/D-089); sin saldo, el ajuste va a las entradas de los partes y de ahí a los
+ * despachos (`recostCloseIntoEntries`). Lo usan los cierres de coberturas y de drywall.
+ */
+export async function applyCloseAdjustment(
+  tx: Prisma.TransactionClient,
+  inventory: Pick<InventoryService, 'adjustCost' | 'recostEntries'>,
+  input: { adjust: AdjustCostInput; orderSeq: number; reportIds: readonly string[] },
+): Promise<{ movement: InventoryMovement | null; recostedEntries: boolean }> {
+  const amountPen = toDecimal(input.adjust.amountPen);
+  if (amountPen.isZero()) return { movement: null, recostedEntries: false };
+  const movement = await inventory.adjustCost(tx, input.adjust);
+  if (movement !== null) return { movement, recostedEntries: false };
+  const outcome = await recostCloseIntoEntries(tx, inventory, {
+    orderSeq: input.orderSeq,
+    reportIds: input.reportIds,
+    productId: input.adjust.itemId,
+    amountPen,
+    actorId: input.adjust.actorId,
+  });
+  return { movement: null, recostedEntries: outcome !== null };
 }
 
 /**

@@ -1,7 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
-import { assertNoCloseRecost, closeRecostNote, recostCloseIntoEntries } from './close-recost';
+import {
+  applyCloseAdjustment,
+  assertNoCloseRecost,
+  closeRecostNote,
+  recostCloseIntoEntries,
+} from './close-recost';
 
 /**
  * cc55 (D-665, E-01 de audit-01) — el despunte de una OP cuyo producto ya salió va a las entradas
@@ -93,5 +98,63 @@ describe('assertNoCloseRecost', () => {
 
   it('sin ese recosteo, deja seguir', async () => {
     await expect(assertNoCloseRecost(tx(false) as never, 'op-7', 'x')).resolves.toBeUndefined();
+  });
+});
+
+describe('applyCloseAdjustment', () => {
+  const adjust = {
+    businessLineId: 'bl',
+    itemType: 'PRODUCT' as const,
+    itemId: 'p1',
+    unit: 'MTR',
+    amountPen: '30.0000',
+    refType: 'PRODUCTION' as const,
+    refId: 'op-1',
+    actorId: 'u1',
+  };
+  const tx = {
+    inventoryMovement: { findMany: jest.fn().mockResolvedValue([entry(1n, '100', '10')]) },
+  };
+
+  it('con saldo, el ADJUST de siempre y nada más', async () => {
+    const inventory = {
+      adjustCost: jest.fn().mockResolvedValue({ id: 5n }),
+      recostEntries: jest.fn(),
+    };
+    await expect(
+      applyCloseAdjustment(tx as never, inventory as never, {
+        adjust,
+        orderSeq: 1,
+        reportIds: ['r1'],
+      }),
+    ).resolves.toEqual({ movement: { id: 5n }, recostedEntries: false });
+    expect(inventory.recostEntries).not.toHaveBeenCalled();
+  });
+
+  it('sin saldo, recostea las entradas de los partes', async () => {
+    const inventory = {
+      adjustCost: jest.fn().mockResolvedValue(null),
+      recostEntries: jest.fn().mockResolvedValue({ pending: false }),
+    };
+    await expect(
+      applyCloseAdjustment(tx as never, inventory as never, {
+        adjust,
+        orderSeq: 1,
+        reportIds: ['r1'],
+      }),
+    ).resolves.toEqual({ movement: null, recostedEntries: true });
+    expect(inventory.recostEntries).toHaveBeenCalledTimes(1);
+  });
+
+  it('sin monto no toca el kardex', async () => {
+    const inventory = { adjustCost: jest.fn(), recostEntries: jest.fn() };
+    await expect(
+      applyCloseAdjustment(tx as never, inventory as never, {
+        adjust: { ...adjust, amountPen: '0.0000' },
+        orderSeq: 1,
+        reportIds: ['r1'],
+      }),
+    ).resolves.toEqual({ movement: null, recostedEntries: false });
+    expect(inventory.adjustCost).not.toHaveBeenCalled();
   });
 });

@@ -83,7 +83,7 @@ import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
-import { assertNoCloseRecost, recostCloseIntoEntries } from './close-recost';
+import { applyCloseAdjustment, assertNoCloseRecost } from './close-recost';
 import { liveMovements } from '../inventory/live-movements';
 import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
@@ -2456,10 +2456,12 @@ export class RoofingProductionService {
         unitCostPen: r.unitCostPen.toFixed(4),
       })),
     );
-    let adjusted = false;
-    let recostedEntries = false;
-    if (!adjustPen.isZero()) {
-      const movement = await this.inventory.adjustCost(tx, {
+    // cc55 (D-665, E-01 de audit-01): sin saldo del producto (ya se despachó), el ajuste va a las
+    // entradas de los partes y el recosteo lo pasa a las salidas. Antes se perdía.
+    const closeAdjust = await applyCloseAdjustment(tx, this.inventory, {
+      orderSeq: order.seq,
+      reportIds: reports.map((r) => r.id),
+      adjust: {
         businessLineId: order.businessLineId,
         itemType: 'PRODUCT',
         itemId: order.productId,
@@ -2470,23 +2472,10 @@ export class RoofingProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: despunte ${scrapKg.toFixed(3)} kg imputado a ${outputQty.toFixed(3)}`,
         actorId: actor.id,
         operationDate,
-      });
-      adjusted = movement !== null;
-      // cc55 (D-665, E-01 de audit-01): sin saldo del producto (ya se despachó), el ajuste no tiene
-      // dónde repartirse; se recostean las entradas de los partes y el recosteo lo pasa a las
-      // salidas. Antes se perdía.
-      if (!adjusted) {
-        const outcome = await recostCloseIntoEntries(tx, this.inventory, {
-          orderSeq: order.seq,
-          reportIds: reports.map((r) => r.id),
-          productId: order.productId,
-          amountPen: adjustPen,
-          actorId: actor.id,
-        });
-        adjusted = outcome !== null;
-        recostedEntries = outcome !== null;
-      }
-    }
+      },
+    });
+    const adjusted = closeAdjust.movement !== null || closeAdjust.recostedEntries;
+    const recostedEntries = closeAdjust.recostedEntries;
 
     await tx.productionOrder.update({
       where: { id: orderId },
