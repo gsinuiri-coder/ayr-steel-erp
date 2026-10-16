@@ -120,12 +120,9 @@ describe('facturado y no despachado al cierre (D-670), por cantidades', () => {
     const { buffer, filename } = undispatchedAtCloseXlsx(report);
     expect(filename).toBe('facturado-no-despachado-2026-09-01-a-2026-09-30.xlsx');
     const book = XLSX.read(buffer, { type: 'buffer' });
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(
-      book.Sheets['Facturado no despachado']!,
-      {
-        header: 1,
-      },
-    );
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(book.Sheets['Facturado no despachado']!, {
+      header: 1,
+    });
     expect(rows[1]).toEqual([
       'F-a',
       '2026-09-24',
@@ -144,7 +141,7 @@ describe('facturado y no despachado al cierre (D-670), por cantidades', () => {
       '',
       '1 sin costo estimado',
     ]);
-    expect(String((rows[5]!)[0])).toMatch(/No cambia ningún otro reporte/);
+    expect(String(rows[5]![0])).toMatch(/No cambia ningún otro reporte/);
   });
 
   it('el servicio lee Ventas y margen, las líneas de pedido y los despachos vivos', async () => {
