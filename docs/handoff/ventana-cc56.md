@@ -2,8 +2,8 @@
 
 2026-10-16, Lima. Tres PR de código, cada uno con su despliegue, y este cierre de docs. Decisiones D-668..D-670
 (provisionales; D-668 y D-669 son decisión del dueño). **Sin migraciones.** Sin SQL contra producción. **Sin escrituras
-en producción:** el importador de saldos espera el Excel del dueño y la corrección C2 quedó en PARA. Sin ramas nuevas de
-Neon (sigue en 9 de 10): no hizo falta respaldo porque no se ejecutó nada.
+en producción** al cierre: el importador de saldos espera el Excel del dueño y la corrección C2 quedó en PARA.
+**Después del cierre, C2 se ejecutó con un nuevo OK del dueño** (ver «C2, ejecutada»); Neon quedó en 10 de 10.
 
 ## En producción
 
@@ -66,11 +66,12 @@ Autorrevisión y segundo modelo por corte (`docs/revision/cc56-{a,b,c}-*.md`), c
 
 - **El dueño:**
   - llenar el Excel de saldos (ver «Qué llenar» abajo) y elegir fecha de corte y opción de faltantes;
-  - **decidir C2** (abajo);
   - UAT de cc56 y de cc55; ratificar D-664..D-670.
 - **Correr el importador en producción** cuando llegue el Excel: dry-run, revisar la vista previa con el dueño, respaldo
   Neon (regla 18 si falta lugar) y `--execute --confirm-production` con su OK por nombre.
-- **C2 · bobina IMPO-ALZ-AZUL-5002-0.28-4150-23 (PARA).** El OK decía «+731,23 en el costo, octubre». El dry-run cumple
+- **C2, ejecutada (2026-10-16, después del cierre).** OK por nombre del dueño (D-460) aceptando que el ajuste cae en
+  septiembre: respaldo `respaldo-pre-cc56c2-20261016` (`br-bitter-water-aesm4ies`), dry-run idéntico al mostrado (commit `3350b6db`), `--execute --confirm-production` a las 14:09 de Lima (entrada 468 y venta 960 +S/ 731,23; FFA1-00001448 de S/ 11 179,27 a S/ 11 910,50 en Rentabilidad y en Ventas y margen; costo de septiembre de S/ 580 773,90 a S/ 581 505,13; sin cambios de cantidad ni negativos), segundo dry-run en 0 (sube 0,0000, sin ajustes) y `smoke:prod --expect-api-sha e1e18424` en verde. Logs en `local-data/cc56/`. Neon: 10 de 10; la próxima rama exige antes borrar un respaldo por la regla 18.
+- **Antes de la ejecución (historia) · C2 · bobina IMPO-ALZ-AZUL-5002-0.28-4150-23 (PARA).** El OK decía «+731,23 en el costo, octubre». El dry-run cumple
   todo lo demás, pero en los reportes el aumento cae en **septiembre** (Ventas y margen por la fecha de la factura, 24/09;
   inventario valorizado al 30/09, porque la entrada es del 28/09); solo la salida del kardex es de octubre (07/10). Si el
   dueño acepta septiembre: `pnpm fix:costo-bobina --branch production --confirm-production --bobina

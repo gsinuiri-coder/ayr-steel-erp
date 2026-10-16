@@ -2725,6 +2725,7 @@ dueño confirmó que el **06 es solo devolución total**: sobre un comprobante d
   (la salida real, D-278). El cierre de mes los muestra aparte (D-670).
 - **UAT de cc55 y ratificación de D-664 a D-667: pendientes del dueño.**
 - OK por nombre (D-460) para el `--execute --confirm-production` de C2 con condiciones; no se usó (PARA, ver cc56).
+- **2026-10-16, después del cierre de cc56: nuevo OK por nombre (D-460) para C2, aceptando que el ajuste cae en septiembre** (Ventas y margen de septiembre +S/ 731,23 por FFA1-00001448 del 24/09; inventario valorizado al 30/09 por la entrada del 28/09). Condiciones: dry-run idéntico, respaldo Neon, segundo dry-run en 0 y smoke.
 
 ## cc56 — saldos iniciales de cobranzas y pagos, costo de entradas protegido y cierre de mes (D-668..D-670)
 
@@ -2752,6 +2753,8 @@ FFA1-00001448, cuadra al céntimo, sin cambios de cantidad ni negativos. Pero el
 aumento cae en **septiembre**: Ventas y margen ubica el costo en el mes de la factura (24/09) y el inventario valorizado
 al 30/09 sube porque la entrada es del 28/09. Solo la salida del kardex es de octubre (07/10). Es una diferencia con la
 condición, así que no se ejecutó.
+
+**C2, ejecutada (2026-10-16).** Con el nuevo OK del dueño, que acepta septiembre: respaldo `respaldo-pre-cc56c2-20261016` (`br-bitter-water-aesm4ies`), dry-run idéntico al mostrado (commit `3350b6db`), `--execute --confirm-production` a las 14:09 de Lima (entrada 468 y venta 960 +S/ 731,23; FFA1-00001448 de S/ 11 179,27 a S/ 11 910,50 en Rentabilidad y en Ventas y margen; costo de septiembre de S/ 580 773,90 a S/ 581 505,13; sin cambios de cantidad ni negativos), segundo dry-run en 0 (sube 0,0000, sin ajustes) y `smoke:prod --expect-api-sha e1e18424` en verde. Vistas previas y ejecución en `local-data/cc56/` (`costo-bobina-*-production*.json`, `c2-dry4.log`, `c2-exec.log`, `c2-dry5-post.log`, `smoke-c2.log`).
 
 **Por qué «facturado y no despachado» se mide por cantidades (D-670).** La primera versión miraba solo los despachos
 declarados (D-205) y sus fechas. Las dos revisiones mostraron que un despacho hecho desde el pedido no declara el
