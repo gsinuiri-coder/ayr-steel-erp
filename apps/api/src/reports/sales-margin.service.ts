@@ -796,7 +796,7 @@ export function withEngineCosts(
   );
   const added: CostRow[] = [...engineItems].flatMap((item) =>
     (byItem.get(item) ?? []).map((r): CostRow => ({
-      sales_order_id: r.order_id as string,
+      sales_order_id: r.order_id ?? '',
       invoice_id: r.document_id,
       business_line_code: r.line_code ?? r.product_line ?? '',
       sales_order_item_id: null,
