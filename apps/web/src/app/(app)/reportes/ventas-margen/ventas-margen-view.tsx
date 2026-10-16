@@ -25,6 +25,7 @@ import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ListStateMessage } from '@/components/list-state';
 import { ReportHeader } from '@/components/reports/report-header';
+import { UndispatchedAtClose } from '@/components/reports/undispatched-at-close';
 import {
   defaultPeriodDraft,
   periodDraftError,
@@ -392,6 +393,8 @@ export function VentasMargenView() {
             {/* En la pestaña de una línea, la tabla repetiría la franja de arriba: solo en «Todas». */}
             {data && line === undefined && <TotalsByLine data={data} />}
           </BusyRegion>
+          {/* cc56 (D-670): lo facturado en el periodo que sale del kardex después del cierre. */}
+          {valid && line === undefined && <UndispatchedAtClose from={period.from} to={period.to} />}
         </>
       )}
     </RoleGate>

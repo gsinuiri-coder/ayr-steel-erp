@@ -37,6 +37,9 @@ import {
   type ReceivablesAgingQuery,
   type SalesMarginDto,
   type SalesMarginQuery,
+  undispatchedAtCloseQuerySchema,
+  type UndispatchedAtCloseDto,
+  type UndispatchedAtCloseQuery,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -78,6 +81,8 @@ import { ReportsService } from './reports.service';
 import { salesByMaterialXlsx } from './sales-by-material-xlsx';
 import { SalesByMaterialService } from './sales-by-material.service';
 import { SalesMarginService } from './sales-margin.service';
+import { UndispatchedAtCloseService } from './undispatched-at-close.service';
+import { undispatchedAtCloseXlsx } from './undispatched-at-close-xlsx';
 import { Roles } from '../auth/decorators/roles.decorator';
 
 /**
@@ -102,7 +107,30 @@ export class ReportsController {
     private readonly adminDashboard: AdminDashboardService,
     private readonly plantDashboard: PlantDashboardService,
     private readonly sellerDashboard: SellerDashboardService,
+    private readonly undispatchedAtClose: UndispatchedAtCloseService,
   ) {}
+
+  /**
+   * cc56 (D-670): «Facturado y no despachado al cierre». Solo ADMINISTRADOR: lleva costos, como
+   * Ventas y margen, del que sale.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('undispatched-at-close')
+  undispatchedAtCloseReport(
+    @Query(new ZodValidationPipe(undispatchedAtCloseQuerySchema)) query: UndispatchedAtCloseQuery,
+  ): Promise<UndispatchedAtCloseDto> {
+    return this.undispatchedAtClose.report(query);
+  }
+
+  /** cc56 (D-670): su Excel, del mismo DTO que la pantalla. */
+  @Roles(Role.ADMINISTRADOR)
+  @Get('undispatched-at-close/xlsx')
+  async undispatchedAtCloseXlsxFile(
+    @Query(new ZodValidationPipe(undispatchedAtCloseQuerySchema)) query: UndispatchedAtCloseQuery,
+    @Res() res: Response,
+  ): Promise<void> {
+    sendXlsx(res, undispatchedAtCloseXlsx(await this.undispatchedAtClose.report(query)));
+  }
 
   // El reporte es de planta: el menú ya lo restringe a estos dos roles (`nav.ts`) y la ruta
   // dice lo mismo, en vez de dejar que difieran. No es el caso de `/inventory`, que §3.4 sí le

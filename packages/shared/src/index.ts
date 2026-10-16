@@ -34,6 +34,7 @@ export * from './schemas/sales';
 export * from './schemas/invoicing';
 export * from './schemas/pos';
 export * from './schemas/report';
+export * from './schemas/undispatched-at-close';
 export * from './schemas/coil-waste';
 export * from './schemas/production-summary';
 export * from './schemas/receivables-aging';

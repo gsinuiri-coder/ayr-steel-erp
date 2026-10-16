@@ -30,6 +30,7 @@ import {
 import { HeaderActions } from '@/components/header-actions';
 import { LineTabs } from '@/components/line-tabs';
 import { ReportHeader } from '@/components/reports/report-header';
+import { UndispatchedAtCloseMonth } from '@/components/reports/undispatched-at-close';
 import {
   BusyRegion,
   DETAIL_ROW_CLASSNAME,
@@ -356,6 +357,8 @@ export function InventarioValorizadoView() {
           />
         </BusyRegion>
       )}
+      {/* cc56 (D-670): qué parte del inventario al cierre de un mes ya estaba facturada. */}
+      <UndispatchedAtCloseMonth />
     </RoleGate>
   );
 }
