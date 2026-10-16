@@ -1,7 +1,7 @@
 # Ventana cc55 — hallazgos de audit-01: permisos y costos, un solo costo de coberturas y correcciones de datos
 
 2026-10-16, Lima. Dos PR de código, cada uno con su despliegue, y este cierre de docs. Decisiones D-664..D-667
-(provisionales; D-667 es decisión del dueño). **Sin migraciones ni escrituras masivas.** Sin SQL contra producción. Sin
+(D-667 es decisión del dueño; las cuatro **ratificadas por el dueño el 2026-10-16**). **Sin migraciones ni escrituras masivas.** Sin SQL contra producción. Sin
 ramas nuevas de Neon (sigue en 9 de 10). El corte C (datos) se detuvo en un PARA y no se ejecutó.
 
 ## En producción
@@ -84,13 +84,12 @@ ramas nuevas de Neon (sigue en 9 de 10). El corte C (datos) se detuvo en un PARA
   - Corregidos los P1: H1 (un comprobante mixto no declara por el motor) y H2 (`PARTIAL` al promedio).
   - Anotados: H4 (despacho contra otra línea de pedido), H5 (PARCIAL de una línea del motor sin despachar), H6
     (latencia) y H7.
-- Revisión del dueño: UAT en `docs/uat/cc55.md`, pendiente.
+- Revisión del dueño: UAT en `docs/uat/cc55.md`, **aprobado por el dueño el 2026-10-16**.
 
 ## Pendiente / para la siguiente sesión
 
 - **El dueño:**
-  - UAT de cc55;
-  - ratificar D-664 a D-667;
+  - ~~UAT de cc55; ratificar D-664 a D-667~~ — **hecho el 2026-10-16** (UAT aprobado y D-664..D-667 ratificadas);
   - decidir C1 y C2.
 - **C1 · re-fecha D-278 (PARA):**
   - el dry-run da 34 despachos de 33 comprobantes y 17/17 ítems negativos en alguna fecha;

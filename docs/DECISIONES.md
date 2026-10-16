@@ -2761,3 +2761,8 @@ declarados (D-205) y sus fechas. Las dos revisiones mostraron que un despacho he
 comprobante, y que un despacho del mes que llevó una sola línea sacaba el comprobante entero. Se mide por línea de
 pedido: lo facturado hasta el cierre menos lo despachado hasta el cierre, repartido desde la factura más reciente. En
 producción: agosto 26 comprobantes y septiembre 33, como contó audit-01.
+
+## Ratificación del dueño (2026-10-16, piezas cc55 y cc56)
+
+UAT de cc55 y de cc56 aprobados y **D-664 a D-670 RATIFICADAS por el dueño el 16/10** (pasan a firmes en
+`ARQUITECTURA.md` §0.2).

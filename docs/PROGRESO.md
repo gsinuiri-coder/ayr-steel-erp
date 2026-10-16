@@ -26,7 +26,8 @@ en PARA). Detalle en `docs/handoff/ventana-cc56.md`; revisiones en `docs/revisio
   - Sección en Ventas y margen y en el inventario valorizado, con Excel; por cantidades por línea de pedido.
   - Producción: agosto 26 comprobantes (costo estimado S/ 419 034,93), septiembre 33 (S/ 514 542,69).
   - Cierra C1 de cc55 («se dejan como están», decisión del dueño).
-- **Pendiente del dueño:** Excel de saldos, UAT de cc56 y de cc55, ratificar D-664..D-670.
+- **Registro del dueño (16/10):** UAT de cc55 y de cc56 aprobados y **D-664 a D-670 RATIFICADAS por el dueño el 16/10**.
+- **Pendiente del dueño:** Excel de saldos.
 - Registro de riesgo (toca kardex o datos):
   - `imports/opening-balances.service.ts` y los `addPaymentInTx`/`reversePaymentInTx` de cobranzas y compras;
   - `coils/coil-entry-cost.ts` (`recostEntries` sobre la entrada de una bobina) y su CLI;
@@ -35,7 +36,8 @@ en PARA). Detalle en `docs/handoff/ventana-cc56.md`; revisiones en `docs/revisio
 ## 2026-10-16 — cc55: hallazgos de audit-01, costos ocultos a vendedores y un solo costo de coberturas (D-664..D-667; PR #213 y #214)
 
 Sin migraciones ni escrituras masivas. Sin SQL contra producción. Detalle en `docs/handoff/ventana-cc55.md`;
-revisiones en `docs/revision/cc55-*.md`; UAT en `docs/uat/cc55.md`.
+revisiones en `docs/revision/cc55-*.md`; UAT en `docs/uat/cc55.md`. **UAT aprobado y D-664..D-667 ratificadas por el
+dueño el 16/10** (registrado en cc56).
 
 - **Corte A: permisos, reversas e idempotencia (D-664..D-666).** En producción con la API `00131-2n4`
   (`git-sha=a51c0100`) y el merge `5ae7fb30`.
