@@ -630,6 +630,7 @@ describe('D-386 — ningún 40P01 entre operaciones que cruzan inventario (contr
             commitReceivedPurchaseEditSchema.parse({
               items: items.map((it) => ({ itemId: it.id, unitPrice: '21' })),
               reason: 'cc18 corregir precio',
+              costReason: 'TYPING_ERROR',
             }),
           ),
       ]);
@@ -1718,6 +1719,7 @@ describe('cc30 — corte 2: editar compra recibida × partir su bobina (contra l
             commitReceivedPurchaseEditSchema.parse({
               items: items.map((it) => ({ itemId: it.id, unitPrice: '6' })),
               reason: 'cc30 corregir precio',
+              costReason: 'TYPING_ERROR',
             }),
           ),
         () =>

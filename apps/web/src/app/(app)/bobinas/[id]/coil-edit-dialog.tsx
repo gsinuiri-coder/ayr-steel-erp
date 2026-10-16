@@ -4,8 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import {
+  COST_CHANGE_HINT,
+  COST_CHANGE_REASON_LABELS,
+  COST_CHANGE_REASONS,
   CURRENCIES,
   CURRENCY_LABELS,
+  type CostChangeReason,
   Decimal,
   type Currency,
   type CoilDto,
@@ -71,6 +75,8 @@ export function CoilEditDialog({
   const [exchangeRate, setExchangeRate] = useState(coil.exchangeRate ?? '');
   const [unitCostPerKg, setUnitCostPerKg] = useState(coil.unitCostPerKg ?? '');
   const [reason, setReason] = useState('');
+  // cc56 (D-669): el costo solo cambia por un motivo de la lista, nunca para vender más barato.
+  const [costReason, setCostReason] = useState<CostChangeReason | ''>('');
 
   // La bobina se lee de un ref y no de las dependencias: si una invalidación refresca
   // el detalle mientras el diálogo está abierto, el efecto no puede pisar lo que el
@@ -87,6 +93,7 @@ export function CoilEditDialog({
     setExchangeRate(current.exchangeRate ?? '');
     setUnitCostPerKg(current.unitCostPerKg ?? '');
     setReason('');
+    setCostReason('');
   }, [open]);
 
   // Se compara por valor, no por texto: el DTO llega con escala fija (`"3.4500"`), así
@@ -134,6 +141,7 @@ export function CoilEditDialog({
                 exchangeRate: currency === 'PEN' ? '1' : exchangeRate.trim(),
                 unitCostPerKg: unitCostPerKg.trim(),
                 reason: reason.trim(),
+                ...(costReason ? { costReason } : {}),
               }
             : {}),
         },
@@ -152,7 +160,7 @@ export function CoilEditDialog({
 
   const canSubmit =
     (widthChanged || finishChanged || notesChanged || costChanged) &&
-    (!costChanged || (reason.trim().length >= 3 && !needsRate));
+    (!costChanged || (reason.trim().length >= 3 && !needsRate && costReason !== ''));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -298,15 +306,41 @@ export function CoilEditDialog({
                 <Input
                   id="edit-cost"
                   inputMode="decimal"
+                  aria-describedby="edit-cost-hint"
                   value={unitCostPerKg}
                   onChange={(e) => {
                     setUnitCostPerKg(e.target.value);
                   }}
                 />
+                <p id="edit-cost-hint" className="text-xs text-muted-foreground">
+                  {COST_CHANGE_HINT}
+                </p>
               </div>
               {costChanged && (
                 <div className="grid gap-1">
-                  <Label htmlFor="edit-reason">Motivo del recosteo</Label>
+                  <Label htmlFor="edit-cost-reason">Por qué cambia el costo</Label>
+                  <Select
+                    value={costReason}
+                    onValueChange={(v) => {
+                      setCostReason(v as CostChangeReason);
+                    }}
+                  >
+                    <SelectTrigger id="edit-cost-reason" className="w-full">
+                      <SelectValue placeholder="Elige el motivo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {COST_CHANGE_REASONS.map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {COST_CHANGE_REASON_LABELS[r]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {costChanged && (
+                <div className="grid gap-1">
+                  <Label htmlFor="edit-reason">Detalle del recosteo</Label>
                   <Input
                     id="edit-reason"
                     maxLength={240}

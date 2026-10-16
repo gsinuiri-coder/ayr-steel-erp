@@ -27,6 +27,10 @@ import {
   type SupplierDto,
   PURCHASE_NUMBER_MESSAGE,
   PURCHASE_NUMBER_PATTERN,
+  COST_CHANGE_HINT,
+  COST_CHANGE_REASON_LABELS,
+  COST_CHANGE_REASONS,
+  type CostChangeReason,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
 import { useIdempotencyKey } from '@/lib/use-idempotency-key';
@@ -155,6 +159,8 @@ export function EditReceivedPurchaseDialog({
     Object.fromEntries(p.items.map((item) => [item.id, initialItem(item)])),
   );
   const [reason, setReason] = useState('');
+  // cc56 (D-669): cambiar un precio cambia el costo de lo que entró; solo con motivo de la lista.
+  const [costReason, setCostReason] = useState<CostChangeReason | ''>('');
   // La vista previa queda atada al cuerpo que la produjo: si los campos cambian, deja de valer.
   const [plan, setPlan] = useState<{ key: string; data: ReceivedEditPlanDto } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -260,6 +266,7 @@ export function EditReceivedPurchaseDialog({
   if (itemEdits.length > 0) payload.items = itemEdits;
   const payloadKey = JSON.stringify(payload);
   const hasChanges = payload.header !== undefined || payload.items !== undefined;
+  const priceChanged = itemEdits.some((e) => e.unitPrice !== undefined);
   const currentPlan = plan?.key === payloadKey ? plan.data : null;
 
   // --- mutaciones --------------------------------------------------------------------------
@@ -311,6 +318,7 @@ export function EditReceivedPurchaseDialog({
     currentPlan !== null &&
     currentPlan.executable &&
     reasonOk &&
+    (!priceChanged || costReason !== '') &&
     errors.length === 0 &&
     !preview.isPending;
 
@@ -777,6 +785,30 @@ export function EditReceivedPurchaseDialog({
           </section>
         )}
 
+        {priceChanged && (
+          <div className="grid gap-1">
+            <Label htmlFor="re-cost-reason">Por qué cambia el costo</Label>
+            <Select
+              value={costReason}
+              onValueChange={(v) => {
+                setCostReason(v as CostChangeReason);
+              }}
+            >
+              <SelectTrigger id="re-cost-reason" className="w-full">
+                <SelectValue placeholder="Elige el motivo" />
+              </SelectTrigger>
+              <SelectContent>
+                {COST_CHANGE_REASONS.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {COST_CHANGE_REASON_LABELS[value]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">{COST_CHANGE_HINT}</p>
+          </div>
+        )}
+
         <div className="grid gap-1">
           <Label htmlFor="re-reason">Motivo</Label>
           <textarea
@@ -806,7 +838,11 @@ export function EditReceivedPurchaseDialog({
             onClick={() => {
               // Guard contra el doble Enter antes del repintado (F8-S1/M1).
               if (!canSave || commit.isPending) return;
-              commit.mutate({ ...payload, reason: trimmedReason });
+              commit.mutate({
+                ...payload,
+                reason: trimmedReason,
+                ...(priceChanged && costReason ? { costReason } : {}),
+              });
             }}
           >
             Guardar cambios
