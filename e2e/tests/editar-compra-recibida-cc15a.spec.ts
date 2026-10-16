@@ -312,7 +312,12 @@ test.describe('D-372 sesión 2 (cc15a)', () => {
       await expect(dialog.getByTestId('received-edit-warnings')).toContainText(
         'reportes mensuales',
       );
-      await dialog.getByLabel('Motivo').fill('Precio mal tipeado (E2E cc15a pantalla)');
+      // cc56 (D-669): un cambio de precio exige el motivo de la lista.
+      await dialog.getByLabel('Por qué cambia el costo').click();
+      await page.getByRole('option', { name: 'Error de digitación' }).click();
+      await dialog
+        .getByLabel('Motivo', { exact: true })
+        .fill('Precio mal tipeado (E2E cc15a pantalla)');
       await dialog.getByRole('button', { name: 'Guardar cambios' }).click();
       await expect(dialog).toBeHidden({ timeout: 30_000 });
       expect((await balanceOf(api, 'COIL', s.coil.id)).avgCost).toBe('6.0000');

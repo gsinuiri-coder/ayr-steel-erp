@@ -1593,7 +1593,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
         qty: '5000.000',
         totalCost: '20000.0000',
         reversalOfId: movements[0]!.id,
-        notes: reason,
+        notes: `Corrección de la compra: ${reason}`,
         balanceQty: '0.000',
       });
       expect(movements[2]).toMatchObject({
@@ -1603,7 +1603,7 @@ test.describe('Fase 2b — roles y ciclo de vida de la bobina (D-046, RF-19..RF-
         qty: '5000.000',
         unitCost: '4.8000',
         totalCost: '24000.0000',
-        notes: reason,
+        notes: `Corrección de la compra: ${reason}`,
         reversalOfId: null,
         balanceQty: '5000.000',
       });
