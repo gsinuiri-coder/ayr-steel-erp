@@ -7,7 +7,9 @@ jest.mock('../inventory/row-locks', () => ({ lockCoilRows: jest.fn(() => Promise
 
 const D = (v: string) => new Prisma.Decimal(v);
 
-function fakeTx(over: { entries?: unknown[]; recost?: string | null; coil?: unknown } = {}) {
+function fakeTx(
+  over: { entries?: unknown[]; recost?: string | null; coil?: unknown; ownAdjusts?: number } = {},
+) {
   return {
     coil: {
       findUnique: jest.fn(() =>
@@ -18,9 +20,11 @@ function fakeTx(over: { entries?: unknown[]; recost?: string | null; coil?: unkn
                 code: 'COIL-1',
                 status: 'CLOSED',
                 exchangeRate: D('1'),
-                weightKg: D('4150'),
-                unitCostPerKg: D('2.6938'),
-                totalCostPen: D('11179.27'),
+                weightKg: D('2000'),
+                unitCostPerKg: D('3.0000'),
+                totalCostPen: D('6000'),
+                parentCoilId: null,
+                kind: 'COIL',
               }
             : over.coil,
         ),
@@ -29,8 +33,9 @@ function fakeTx(over: { entries?: unknown[]; recost?: string | null; coil?: unkn
     },
     inventoryMovement: {
       findMany: jest.fn(() =>
-        Promise.resolve(over.entries ?? [{ id: 468n, qty: D('4150'), totalCost: D('11179.27') }]),
+        Promise.resolve(over.entries ?? [{ id: 101n, qty: D('2000'), totalCost: D('6000') }]),
       ),
+      count: jest.fn(() => Promise.resolve(over.ownAdjusts ?? 0)),
       aggregate: jest.fn(() =>
         Promise.resolve({
           _sum: { totalCost: over.recost === undefined ? null : over.recost && D(over.recost) },
@@ -48,9 +53,9 @@ function deps() {
     rowsReplayed: 2,
     adjusted: [
       {
-        movement: { id: 468n, type: 'IN', refType: 'PURCHASE', refId: 'p' },
-        delta: new Decimal('731.23'),
-        target: new Decimal('11910.5'),
+        movement: { id: 101n, type: 'IN', refType: 'PURCHASE', refId: 'p' },
+        delta: new Decimal('500'),
+        target: new Decimal('6500'),
         item: { itemType: 'COIL', itemId: 'coil-1' },
       },
     ],
@@ -63,7 +68,7 @@ function deps() {
 
 const input = {
   coilId: 'coil-1',
-  unitCostPerKg: new Decimal('2.87'),
+  unitCostPerKg: new Decimal('3.25'),
   costReason: 'PURCHASE_CORRECTION' as const,
   detail: 'costo del papel',
 };
@@ -74,19 +79,19 @@ describe('correctCoilEntryCost (D-669)', () => {
     const d = deps();
     const r = await correctCoilEntryCost(tx as unknown as Tx, d, 'admin', input);
     expect(r).toMatchObject({
-      entryMovementId: '468',
-      fromPen: '11179.2700',
-      toPen: '11910.5000',
-      addPen: '731.2300',
+      entryMovementId: '101',
+      fromPen: '6000.0000',
+      toPen: '6500.0000',
+      addPen: '500.0000',
     });
     expect(d.inventory.recostEntries).toHaveBeenCalledWith(
       tx,
-      [{ movementId: 468n, addPen: new Decimal('731.23') }],
+      [{ movementId: 101n, addPen: new Decimal('500') }],
       { actorId: 'admin', note: 'Corrección de la compra: costo del papel' },
     );
     expect(tx.coil.update).toHaveBeenCalledWith({
       where: { id: 'coil-1' },
-      data: { unitCostPerKg: '2.8700', totalCost: '11910.5000', totalCostPen: '11910.5000' },
+      data: { unitCostPerKg: '3.2500', totalCost: '6500.0000', totalCostPen: '6500.0000' },
     });
     expect(d.audit.write).toHaveBeenCalledWith(
       tx,
@@ -96,7 +101,7 @@ describe('correctCoilEntryCost (D-669)', () => {
       }),
     );
     expect(adjustedDeltas(r.outcome)).toEqual([
-      { movementId: '468', type: 'IN', refType: 'PURCHASE', refId: 'p', delta: '731.2300' },
+      { movementId: '101', type: 'IN', refType: 'PURCHASE', refId: 'p', delta: '500.0000' },
     ]);
   });
 
@@ -108,14 +113,14 @@ describe('correctCoilEntryCost (D-669)', () => {
       'admin',
       input,
     );
-    expect(r.fromPen).toBe('11279.2700');
-    expect(r.addPen).toBe('631.2300');
+    expect(r.fromPen).toBe('6100.0000');
+    expect(r.addPen).toBe('400.0000');
   });
 
   it('sin diferencia no recostea', async () => {
     const d = deps();
     const r = await correctCoilEntryCost(
-      fakeTx({ entries: [{ id: 1n, qty: D('4150'), totalCost: D('11910.5') }] }) as unknown as Tx,
+      fakeTx({ entries: [{ id: 1n, qty: D('2000'), totalCost: D('6500') }] }) as unknown as Tx,
       d,
       'admin',
       input,
@@ -129,6 +134,8 @@ describe('correctCoilEntryCost (D-669)', () => {
     [{ coil: null }, /no encontrada/],
     [{ coil: { status: 'CANCELLED' } }, /anulada/],
     [{ entries: [] }, /0 entradas vivas/],
+    [{ ownAdjusts: 1 }, 'ajuste(s) de costo propios'],
+    [{ coil: { status: 'CLOSED', parentCoilId: 'madre', kind: 'COIL' } }, 'hija de un partido'],
   ])('rechaza %o', async (over, message) => {
     await expect(
       correctCoilEntryCost(fakeTx(over) as unknown as Tx, deps(), 'a', input),
@@ -157,19 +164,19 @@ describe('correctCoilEntryCost (D-669)', () => {
 describe('entryCostViolations (condiciones del OK de C2)', () => {
   const facts = (over: Partial<EntryCostFacts> = {}): EntryCostFacts => ({
     coilId: 'c',
-    entryMovementId: '468',
-    addPen: '731.23',
+    entryMovementId: '101',
+    addPen: '500.00',
     adjusted: [
-      { movementId: '468', itemId: 'c', type: 'IN', refType: 'PURCHASE', delta: '731.2300' },
-      { movementId: '960', itemId: 'c', type: 'OUT', refType: 'SALE', delta: '731.2300' },
+      { movementId: '101', itemId: 'c', type: 'IN', refType: 'PURCHASE', delta: '500.0000' },
+      { movementId: '102', itemId: 'c', type: 'OUT', refType: 'SALE', delta: '500.0000' },
     ],
     documents: [
       {
-        number: 'F-1448',
-        profitabilityBefore: '11179.27',
-        profitabilityAfter: '11910.50',
-        marginBefore: '11179.27',
-        marginAfter: '11910.50',
+        number: 'F-0001',
+        profitabilityBefore: '6000.00',
+        profitabilityAfter: '6500.00',
+        marginBefore: '6000.00',
+        marginAfter: '6500.00',
       },
     ],
     balanceQtyBefore: '0',
@@ -179,9 +186,9 @@ describe('entryCostViolations (condiciones del OK de C2)', () => {
     qtyChangingRows: 0,
     ...over,
   });
-  const expected = { document: 'F-1448', deltaPen: '731.23' };
+  const expected = { document: 'F-0001', deltaPen: '500.00' };
 
-  it('el caso de C2 cumple todo', () => {
+  it('el caso esperado cumple todo', () => {
     expect(entryCostViolations(facts(), expected)).toEqual([]);
   });
 
@@ -201,12 +208,12 @@ describe('entryCostViolations (condiciones del OK de C2)', () => {
       expected,
     );
     expect(v).toEqual([
-      'la entrada sube 700 y se esperaba 731.23',
+      'la entrada sube 700 y se esperaba 500.00',
       'el recosteo alcanza 1 movimiento(s) de otros ítems',
       'la entrada no quedó ajustada una sola vez',
       'el recosteo ajusta salidas de la bobina que no son la venta',
-      'las salidas suben 5.0000 y la entrada 731.23: no cuadra al céntimo',
-      'cambia el costo de ningún comprobante y se esperaba solo F-1448',
+      'las salidas suben 5.0000 y la entrada 700.0000: no cuadra al céntimo',
+      'cambia el costo de ningún comprobante y se esperaba solo F-0001',
       'la cantidad en kardex de la bobina cambió',
       'el saldo de la bobina queda negativo',
       'el valor del saldo de la bobina pasa de 0 a 5',
@@ -219,16 +226,16 @@ describe('entryCostViolations (condiciones del OK de C2)', () => {
       facts({
         documents: [
           {
-            number: 'F-1448',
+            number: 'F-0001',
             profitabilityBefore: '0',
-            profitabilityAfter: '700',
+            profitabilityAfter: '450',
             marginBefore: '0',
-            marginAfter: '731.23',
+            marginAfter: '500.00',
           },
         ],
       }),
       expected,
     );
-    expect(v).toEqual(['F-1448: Rentabilidad cambia 700.00, no 731.23']);
+    expect(v).toEqual(['F-0001: Rentabilidad cambia 450.00, no 500.00']);
   });
 });

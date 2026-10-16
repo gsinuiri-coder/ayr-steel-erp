@@ -93,6 +93,8 @@ interface Preview {
   coil: string;
   unitCostPerKg: string;
   costReason: CostChangeReason;
+  detail: string;
+  expected: { document: string; deltaPen: string };
   fromPen: string;
   toPen: string;
   facts: EntryCostFacts;
@@ -178,6 +180,14 @@ async function main(): Promise<void> {
     if (Date.now() - new Date(previous.generatedAtIso).getTime() > 24 * 3_600_000) {
       throw new Error('--execute rechazado: la vista previa tiene más de 24 h');
     }
+    const same =
+      previous.coil === coilCode &&
+      previous.unitCostPerKg === unitCostPerKg.toFixed(4) &&
+      previous.costReason === costReason &&
+      previous.detail === detail &&
+      previous.expected?.document === expected.document &&
+      previous.expected.deltaPen === expected.deltaPen;
+    if (!same) throw new Error('--execute rechazado: los argumentos no son los de la vista previa');
     if (previous.violations.length > 0) {
       throw new Error('--execute rechazado: la vista previa no cumple las condiciones');
     }
@@ -198,7 +208,11 @@ async function main(): Promise<void> {
           const coil = await tx.coil.findUnique({ where: { code: coilCode } });
           if (!coil) throw new Error(`No existe la bobina ${coilCode}`);
           const doc = await tx.fiscalDocument.findFirst({
-            where: { number: expected.document, archivedAt: null },
+            where: {
+              number: expected.document,
+              archivedAt: null,
+              docType: { in: ['FACTURA', 'BOLETA'] },
+            },
             select: { id: true, issueDate: true },
           });
           if (!doc) throw new Error(`No existe el comprobante ${expected.document}`);
@@ -210,7 +224,9 @@ async function main(): Promise<void> {
           // Las cantidades del kardex las mueven las entradas y salidas; un ADJUST de recosteo lleva
           // la cantidad de la fila que corrige pero no cambia el saldo.
           const movementCount = () =>
-            tx.inventoryMovement.count({ where: { type: { in: ['IN', 'OUT'] } } });
+            tx.inventoryMovement.count({
+              where: { itemType: 'COIL', itemId: coil.id, type: { in: ['IN', 'OUT'] } },
+            });
           const issueMonth = fromDateOnly(doc.issueDate).slice(0, 7);
           const sales = await tx.dispatch.findMany({
             where: { invoiceId: doc.id },
@@ -285,7 +301,7 @@ async function main(): Promise<void> {
           const facts: EntryCostFacts = {
             coilId: coil.id,
             entryMovementId: result.entryMovementId,
-            addPen: toDecimal(result.addPen).toFixed(2),
+            addPen: result.addPen,
             adjusted,
             documents,
             balanceQtyBefore: balanceBefore?.qty.toString() ?? '0',
@@ -302,6 +318,8 @@ async function main(): Promise<void> {
             coil: coilCode,
             unitCostPerKg: unitCostPerKg.toFixed(4),
             costReason,
+            detail,
+            expected,
             fromPen: result.fromPen,
             toPen: result.toPen,
             facts,
@@ -343,6 +361,7 @@ async function main(): Promise<void> {
   }
   const name = execute ? `costo-bobina-EJECUCION-${branch}` : `costo-bobina-VISTA-PREVIA-${branch}`;
   writeFileSync(resolve(outDir, `${name}.json`), JSON.stringify(preview, null, 2));
+  if (execute) writeFileSync(previewPath, JSON.stringify({ ...previous, executed: true }, null, 2));
   console.error(JSON.stringify(preview, null, 2));
   console.error(
     preview.violations.length === 0

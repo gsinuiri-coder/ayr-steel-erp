@@ -2,7 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import {
   costChangeNote,
-  Decimal,
+  type Decimal,
   toDecimal,
   toFixedString,
   type CostChangeReason,
@@ -52,6 +52,13 @@ export async function correctCoilEntryCost(
   const coil = await tx.coil.findUnique({ where: { id: input.coilId } });
   if (!coil) throw new BadRequestException('Bobina no encontrada');
   if (coil.status === 'CANCELLED') throw new BadRequestException('La bobina está anulada');
+  // Una hija de partido o un fleje entró con su parte del valor de la madre: recostear solo la hija
+  // crearía o destruiría valor frente a la salida de la madre.
+  if (coil.parentCoilId !== null || coil.kind !== 'COIL') {
+    throw new BadRequestException(
+      `La bobina ${coil.code} es hija de un partido o un fleje: su costo sale de la madre`,
+    );
+  }
 
   // La entrada viva: un `IN` de la bobina sin reversa y que no sea él mismo una reversa.
   const entries = await tx.inventoryMovement.findMany({
@@ -70,6 +77,16 @@ export async function correctCoilEntryCost(
     );
   }
   const [entry] = entries as [(typeof entries)[number]];
+  // Un ajuste de costo propio de la bobina (landed cost, D-043; corte tercerizado) que no es recosteo:
+  // la ficha quedaría en peso × costo/kg sin explicarlo. Mismo criterio que RF-20 (D-045).
+  const ownAdjusts = await tx.inventoryMovement.count({
+    where: { itemType: 'COIL', itemId: coil.id, type: 'ADJUST', recostOfId: null },
+  });
+  if (ownAdjusts > 0) {
+    throw new BadRequestException(
+      `La bobina ${coil.code} tiene ${String(ownAdjusts)} ajuste(s) de costo propios (landed cost o servicios): esta corrección no los contempla`,
+    );
+  }
   const recosts = await tx.inventoryMovement.aggregate({
     where: { recostOfId: entry.id },
     _sum: { totalCost: true },
@@ -138,9 +155,7 @@ export async function correctCoilEntryCost(
 }
 
 /** Lo neto del recosteo por cada movimiento ajustado, para la vista previa (`id → delta`). */
-export function adjustedDeltas(
-  outcome: RecostOutcome | null,
-): {
+export function adjustedDeltas(outcome: RecostOutcome | null): {
   movementId: string;
   type: string;
   refType: string | null;
@@ -155,5 +170,3 @@ export function adjustedDeltas(
     delta: a.delta.toFixed(4),
   }));
 }
-
-export { Decimal };
