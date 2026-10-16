@@ -205,31 +205,42 @@ export class ReceivablesService {
     paymentId: string,
     reason: string,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      await lockDocuments(tx, { fiscalDocuments: [documentId] });
-      const payment = await tx.customerPayment.findFirst({
-        where: { id: paymentId, documentId },
-      });
-      if (!payment) throw new NotFoundException('Cobro no encontrado');
+    await this.prisma.$transaction((tx) =>
+      this.reversePaymentInTx(tx, actor, documentId, paymentId, reason),
+    );
+  }
 
-      const claimed = await tx.customerPayment.updateMany({
-        where: { id: paymentId, reversedAt: null },
-        data: { reversedAt: new Date(), reversedById: actor.id },
-      });
-      if (claimed.count === 0) throw new ConflictException('Ese cobro ya fue revertido');
+  /** El cuerpo de `reversePayment` dentro de la transacción del llamador (cc56, D-668: el deshacer del lote). */
+  async reversePaymentInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    documentId: string,
+    paymentId: string,
+    reason: string,
+  ): Promise<void> {
+    await lockDocuments(tx, { fiscalDocuments: [documentId] });
+    const payment = await tx.customerPayment.findFirst({
+      where: { id: paymentId, documentId },
+    });
+    if (!payment) throw new NotFoundException('Cobro no encontrado');
 
-      await this.audit.write(tx, {
-        actorId: actor.id,
-        action: 'invoicing.payment-reverse',
-        entity: 'customer_payments',
-        entityId: paymentId,
-        before: {
-          documentId,
-          amountPen: payment.amountPen.toFixed(4),
-          method: payment.method,
-        },
-        after: { reason, operationDate: businessToday() },
-      });
+    const claimed = await tx.customerPayment.updateMany({
+      where: { id: paymentId, reversedAt: null },
+      data: { reversedAt: new Date(), reversedById: actor.id },
+    });
+    if (claimed.count === 0) throw new ConflictException('Ese cobro ya fue revertido');
+
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.payment-reverse',
+      entity: 'customer_payments',
+      entityId: paymentId,
+      before: {
+        documentId,
+        amountPen: payment.amountPen.toFixed(4),
+        method: payment.method,
+      },
+      after: { reason, operationDate: businessToday() },
     });
   }
 

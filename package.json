@@ -72,6 +72,7 @@
     "inspect:cc52": "node scripts/inspect-cc52.mjs",
     "inspect:cc53": "node scripts/inspect-cc53.mjs",
     "inspect:cc55": "node scripts/inspect-cc55.mjs",
+    "import:saldos-iniciales": "node scripts/import-opening-balances.mjs",
     "recosteo:historico": "node scripts/recost-historic.mjs",
     "restore:cancelled-coils": "node scripts/restore-cancelled-coils.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
