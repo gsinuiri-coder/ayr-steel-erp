@@ -19,13 +19,14 @@ en PARA). Detalle en `docs/handoff/ventana-cc56.md`; revisiones en `docs/revisio
     compra, NC del proveedor, error de digitación); la web lo pide y explica que para vender barato están «A costo» y el
     precio.
   - `pnpm fix:costo-bobina` (recosteo por fecha de la entrada viva de una bobina ya vendida).
-  - **C2 (bobina 4150-23): PARA.** El dry-run cumple todo, pero el +S/ 731,23 cae en **septiembre** en Ventas y margen
-    (factura del 24/09) y en el valorizado al 30/09; el OK decía octubre. Decide el dueño.
+  - **C2 (bobina 4150-23): ejecutada el 2026-10-16, después del cierre,** con un nuevo OK del dueño que acepta que el
+    +S/ 731,23 cae en **septiembre** (Ventas y margen por la factura del 24/09; valorizado al 30/09). Respaldo
+    `respaldo-pre-cc56c2-20261016`, dry-run idéntico, segundo dry-run en 0 y smoke en verde (DECISIONES, cc56).
 - **Corte C: «Facturado y no despachado al cierre» (D-670).** API `00136-q2t` (`git-sha=e1e18424`), merge `b33748da`.
   - Sección en Ventas y margen y en el inventario valorizado, con Excel; por cantidades por línea de pedido.
   - Producción: agosto 26 comprobantes (costo estimado S/ 419 034,93), septiembre 33 (S/ 514 542,69).
   - Cierra C1 de cc55 («se dejan como están», decisión del dueño).
-- **Pendiente del dueño:** Excel de saldos, decisión de C2, UAT de cc56 y de cc55, ratificar D-664..D-670.
+- **Pendiente del dueño:** Excel de saldos, UAT de cc56 y de cc55, ratificar D-664..D-670.
 - Registro de riesgo (toca kardex o datos):
   - `imports/opening-balances.service.ts` y los `addPaymentInTx`/`reversePaymentInTx` de cobranzas y compras;
   - `coils/coil-entry-cost.ts` (`recostEntries` sobre la entrada de una bobina) y su CLI;
