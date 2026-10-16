@@ -17,6 +17,7 @@ import {
   dispatchCode,
   fromDateOnly,
   CreditNoteReason,
+  LIVE_DOCUMENT_STATUSES,
   returnsStock,
   salesOrderCode,
   salesReturnCode,
@@ -80,7 +81,14 @@ export class SalesReturnsService {
         qty: true,
         reserveQty: true,
         movementId: true,
-        dispatch: { select: { seq: true, dispatchDate: true, invoiceId: true } },
+        dispatch: {
+          select: {
+            seq: true,
+            dispatchDate: true,
+            invoiceId: true,
+            invoice: { select: { status: true, archivedAt: true } },
+          },
+        },
         salesReturnItems: {
           where: { salesReturn: { status: SalesReturnStatus.ACTIVE } },
           select: { qty: true, reserveQty: true, totalCost: true, movementId: true },
@@ -132,7 +140,9 @@ export class SalesReturnsService {
         dispatchCode: dispatchCode(r.dispatch.seq),
         dispatchDate: fromDateOnly(r.dispatch.dispatchDate),
         dispatchSeq: r.dispatch.seq,
-        invoiceId: r.dispatch.invoiceId,
+        // cc55 (D-664, D-04 de audit-01): un enlace a un comprobante que ya no está vivo (anulado
+        // antes de cc55, que no lo soltaba) no declara nada: el despacho cuenta como sin comprobante.
+        invoiceId: liveInvoiceId(r.dispatch.invoiceId, r.dispatch.invoice),
         itemType: r.itemType,
         itemId: r.itemId,
         qty: toDecimal(r.qty.toString()),
@@ -725,6 +735,25 @@ export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
       movementId: i.movementId.toString(),
     })),
   };
+}
+
+/**
+ * cc55 (D-664, D-04 de audit-01): el comprobante que de verdad declara un despacho. Un enlace a uno
+ * que ya no está vivo ni en borrador (anulado, dado de baja, rechazado) o a una versión archivada no
+ * declara nada:
+ * para la devolución, ese despacho es «sin comprobante declarado».
+ */
+export function liveInvoiceId(
+  invoiceId: string | null,
+  invoice: { status: string; archivedAt: Date | null } | null,
+): string | null {
+  if (invoiceId === null || invoice === null) return null;
+  // Revisiones de cc55 (R-1): un **borrador** que declara el despacho todavía lo va a facturar; si
+  // contara como muerto, una NC 01 de otro comprobante del pedido podría devolver ese despacho.
+  const live =
+    invoice.status === 'DRAFT' ||
+    (LIVE_DOCUMENT_STATUSES as readonly string[]).includes(invoice.status);
+  return live && invoice.archivedAt === null ? invoiceId : null;
 }
 
 /**

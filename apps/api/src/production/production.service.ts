@@ -53,6 +53,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { drywallStripMismatch, drywallStripSpec, drywallStripWhere } from '../common/drywall-strip';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { applyCloseAdjustment, assertNoCloseRecost } from './close-recost';
 import { liveMovements } from '../inventory/live-movements';
 import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
@@ -1214,9 +1215,12 @@ export class ProductionService {
       cost.totalCostPen,
       reports.map((r) => ({ pieces: r.pieces, unitCostPen: r.unitCostPen.toFixed(4) })),
     );
-    let adjusted: InventoryMovement | null = null;
-    if (!adjustPen.isZero()) {
-      adjusted = await this.inventory.adjustCost(tx, {
+    // cc55 (D-665, E-01 de audit-01): sin saldo de piezas, la merma va a las entradas de los
+    // partes y el recosteo la pasa a sus salidas (ver el cierre de coberturas).
+    const closeAdjust = await applyCloseAdjustment(tx, this.inventory, {
+      orderSeq: order.seq,
+      reportIds: reports.map((r) => r.id),
+      adjust: {
         businessLineId: order.businessLineId,
         itemType: 'PRODUCT',
         itemId: order.productId,
@@ -1227,8 +1231,9 @@ export class ProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: merma de proceso ${scrapKg.toFixed(3)} kg imputada a ${pieces} piezas`,
         actorId: actor.id,
         operationDate,
-      });
-    }
+      },
+    });
+    const adjusted: InventoryMovement | null = closeAdjust.movement;
 
     // D-360: los flejes que el cierre soltó y quedaron en exactamente 0 se terminan solos
     // (el reporte y la merma de proceso no los terminan: estaban montados). Reabrir la
@@ -1344,6 +1349,8 @@ export class ProductionService {
           items: movements.map(itemRefOf),
         });
 
+        // cc55 (D-665): ver la reapertura de coberturas.
+        await assertNoCloseRecost(tx, orderId, 'Las piezas de esta orden');
         // El ajuste de costo se repartió sobre el saldo de piezas del momento del cierre:
         // si después salieron piezas o entró otro ajuste (el cierre de otra OP del mismo
         // perfil), revertirlo dejaría el promedio contando algo que ya no es cierto.

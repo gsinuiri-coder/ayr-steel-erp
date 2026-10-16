@@ -1122,6 +1122,9 @@ export class InvoicingService {
       async (tx) => {
         const plan = await this.planCreditNote(tx, actor, affectedId, input, 'PREVIEW');
         const { affected } = plan;
+        // cc55 (D-664, C-01 de audit-01): el costo de lo que vuelve es del kardex; quien no es
+        // ADMINISTRADOR no lo recibe (mismo criterio que `GET /invoicing/returns/:id`).
+        const showCost = actor.role === Role.ADMINISTRADOR;
         // La devolución nace solo al registrar a mano (un electrónico va por borrador y envío).
         const allocations =
           returnsStock(input.reason) && affected.origin === FiscalDocumentOrigin.MANUAL
@@ -1207,14 +1210,16 @@ export class InvoicingService {
             label: labels.get(`${a.stock.itemType}:${a.stock.itemId}`) ?? a.stock.itemId,
             qty: toFixedString(a.reserveQty, 'KG'),
             unit: a.stock.unit,
-            costPen: toFixedString(a.totalCost, 'MONEY'),
+            costPen: showCost ? toFixedString(a.totalCost, 'MONEY') : null,
             dispatch: a.stock.dispatchCode,
           })),
           notDispatched,
-          costPen: toFixedString(
-            flat.reduce((acc, a) => acc.plus(a.totalCost), new Decimal(0)),
-            'MONEY',
-          ),
+          costPen: showCost
+            ? toFixedString(
+                flat.reduce((acc, a) => acc.plus(a.totalCost), new Decimal(0)),
+                'MONEY',
+              )
+            : null,
           receivable: {
             beforePen: toFixedString(before, 'MONEY'),
             afterPen: toFixedString(after, 'MONEY'),
@@ -3216,6 +3221,9 @@ export class InvoicingService {
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
     assertIssuedHere(document, 'consultar su estado en el PSE');
+    // cc55 (D-664, C-03 de audit-01): la consulta escribe el estado que contesta el PSE; como el
+    // reintento, solo la hace quien puede operar el comprobante.
+    await this.assertOwnership(actor, id, 'consultar su estado en el PSE');
     if (document.number === null || !document.seriesRef) {
       throw new BadRequestException('Un borrador no tiene nada que consultar');
     }

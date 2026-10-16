@@ -60,7 +60,11 @@ function build(o: { reason: string; liveReplacement?: boolean; cancelledOrder?: 
     },
   };
   const audit = { write: jest.fn() };
-  const inventory = { moveInvoiceDispatches: jest.fn().mockResolvedValue(1) };
+  const inventory = {
+    moveInvoiceDispatches: jest.fn().mockResolvedValue(1),
+    // cc55 (D-664): la anulación suelta el enlace de los despachos que el comprobante declara.
+    unlinkInvoiceFromDispatches: jest.fn().mockResolvedValue(undefined),
+  };
   const salesReturns = { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) };
   const service = new FiscalImportService(
     { $transaction: (cb: (t: unknown) => unknown) => cb(tx) } as never,

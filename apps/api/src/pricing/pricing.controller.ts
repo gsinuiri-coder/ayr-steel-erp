@@ -11,9 +11,13 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { PricingService } from './pricing.service';
 
-/** D-032: márgenes por línea. Lectura para todos, edición solo ADMINISTRADOR. */
+/**
+ * D-032: márgenes por línea. **Solo ADMINISTRADOR**, también la lectura (cc55, D-664, C-05 de
+ * audit-01): con el margen mínimo y el precio mínimo del panel de stock se despeja el costo, y
+ * la web solo lo pide desde Configuración → Márgenes.
+ */
 @Controller('pricing')
-@Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA, Role.VENDEDOR)
+@Roles(Role.ADMINISTRADOR)
 export class PricingController {
   constructor(private readonly pricing: PricingService) {}
 
@@ -23,7 +27,6 @@ export class PricingController {
   }
 
   @Patch(':businessLineId')
-  @Roles(Role.ADMINISTRADOR)
   update(
     @CurrentUser() actor: RequestUser,
     @Param('businessLineId', ParseUUIDPipe) businessLineId: string,

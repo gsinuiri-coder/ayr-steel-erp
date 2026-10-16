@@ -226,11 +226,14 @@ export async function assertPriceFloor(
   candidates: PriceFloorCandidate[],
   toleranceMm: string,
   /**
-   * cc51 (D-641, revisión P1): el rechazo de una línea a costo **sin cifras**. El precio a costo
-   * es el costo más IGV, y quien no puede ver costos no lo recibe por un mensaje de error. Lo
-   * decide quien arma la línea; esta función no sabe quién escribe.
+   * cc55 (D-664, hallazgo C-02 de audit-01): **el rechazo no dice el costo salvo que se pida.**
+   * `showCost` lo pasa solo quien arma la línea para un ADMINISTRADOR; sin él (cualquier otro rol, o
+   * un llamador nuevo que se olvidó) el mensaje da el precio mínimo permitido y nada más: ni el
+   * costo promedio, ni el margen mínimo, ni —en una línea a costo— el precio a costo (que es el
+   * costo más IGV, cc51). Antes era al revés: opaco solo si se pedía, y el camino normal del piso le
+   * imprimía el costo a un VENDEDOR.
    */
-  options: { opaqueAtCost?: boolean } = {},
+  options: { showCost?: boolean } = {},
 ): Promise<Map<string, PriceFloor>> {
   const floors = await computePriceFloors(tx, candidates, toleranceMm);
   for (const candidate of candidates) {
@@ -254,7 +257,7 @@ export async function assertPriceFloor(
       candidate.basis.kind === 'PER_METER'
         ? fixedLengthValuePerMeter(candidate.basis.lengthMm, candidate.unitValuePen)
         : toDecimal(candidate.unitValuePen);
-    if (candidate.atCost === true && options.opaqueAtCost === true) {
+    if (candidate.atCost === true && options.showCost !== true) {
       throw new BadRequestException(
         `${candidate.at}: ${candidate.sku} quedó por debajo de su precio a costo (el costo cambió o ` +
           'el precio se movió). Pide a un administrador que la revise.',
@@ -266,6 +269,14 @@ export async function assertPriceFloor(
           `S/ ${salePriceFromValue(proposedValue).toFixed(2)} por ${floor.priceUnitLabel} y a costo ` +
           `el precio es S/ ${floor.minPricePen} por ${floor.priceUnitLabel} (costo promedio ` +
           `S/ ${toDecimal(floor.costPen).toFixed(2)} más IGV). Por debajo del costo no se vende.`,
+      );
+    }
+    if (options.showCost !== true) {
+      throw new BadRequestException(
+        `${candidate.at}: ${candidate.sku} se está vendiendo a ` +
+          `S/ ${salePriceFromValue(proposedValue).toFixed(2)} por ${floor.priceUnitLabel} y el precio ` +
+          `mínimo es S/ ${floor.minPricePen} por ${floor.priceUnitLabel}. Sube el precio, o pide a un ` +
+          'administrador que lo revise.',
       );
     }
     throw new BadRequestException(

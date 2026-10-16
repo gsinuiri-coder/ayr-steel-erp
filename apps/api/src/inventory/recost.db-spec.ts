@@ -468,3 +468,81 @@ describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
     }
   });
 });
+
+describe('cc55 (D-665, E-01 de audit-01): recostear entradas ya registradas', () => {
+  const recost = (entries: { movementId: bigint; addPen: string }[]) =>
+    prisma.$transaction((tx) =>
+      inventory.recostEntries(
+        tx,
+        entries.map((e) => ({ movementId: e.movementId, addPen: new Decimal(e.addPen) })),
+        { actorId: adminId, note: 'Cierre de prueba (D-665)' },
+      ),
+    );
+
+  it('con el producto ya despachado el mismo día, el costo agregado llega a la salida', async () => {
+    const itemId = randomUUID();
+    const entry = await move(itemId, {
+      type: 'IN',
+      qty: '10',
+      unitCost: '10',
+      date: '2026-08-01',
+      refType: 'PRODUCTION',
+    });
+    const out = await move(itemId, { type: 'OUT', qty: '10', date: '2026-08-01' });
+    expect(out.totalCost.toString()).toBe('100');
+
+    await recost([{ movementId: entry.id, addPen: '30' }]);
+    expect(await effective(entry.id)).toBe('130.0000');
+    expect(await effective(out.id)).toBe('130.0000');
+    const adjusts = await prisma.inventoryMovement.findMany({
+      where: { itemId, recostOfId: { not: null } },
+    });
+    expect(adjusts.every((a) => a.notes === 'Cierre de prueba (D-665)')).toBe(true);
+    // El kardex queda en cero de cantidad y de valor.
+    expect((await balanceOf(itemId)).qty).toBe('0');
+    expect((await kardexValue(itemId)).toFixed(4)).toBe('0.0000');
+  });
+
+  it('con dos salidas posteriores, se reparte en proporción a lo que cada una se llevó', async () => {
+    const itemId = randomUUID();
+    const entry = await move(itemId, {
+      type: 'IN',
+      qty: '10',
+      unitCost: '10',
+      date: '2026-08-01',
+      refType: 'PRODUCTION',
+    });
+    const a = await move(itemId, { type: 'OUT', qty: '4', date: '2026-08-03' });
+    const b = await move(itemId, { type: 'OUT', qty: '6', date: '2026-08-06' });
+    await recost([{ movementId: entry.id, addPen: '20' }]);
+    expect(await effective(a.id)).toBe('48.0000');
+    expect(await effective(b.id)).toBe('72.0000');
+  });
+
+  it('con saldo que queda, lo que no salió se queda en el saldo', async () => {
+    const itemId = randomUUID();
+    const entry = await move(itemId, {
+      type: 'IN',
+      qty: '10',
+      unitCost: '10',
+      date: '2026-08-01',
+      refType: 'PRODUCTION',
+    });
+    const out = await move(itemId, { type: 'OUT', qty: '5', date: '2026-08-02' });
+    await recost([{ movementId: entry.id, addPen: '10' }]);
+    expect(await effective(out.id)).toBe('55.0000');
+    expect(await balanceOf(itemId)).toEqual({ qty: '5', avg: '11' });
+  });
+
+  it('solo entradas: una salida se rechaza sin escribir nada', async () => {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    const out = await move(itemId, { type: 'OUT', qty: '1', date: '2026-08-02' });
+    await expect(recost([{ movementId: out.id, addPen: '5' }])).rejects.toThrow(
+      /no es una entrada/,
+    );
+    expect(
+      await prisma.inventoryMovement.count({ where: { itemId, recostOfId: { not: null } } }),
+    ).toBe(0);
+  });
+});

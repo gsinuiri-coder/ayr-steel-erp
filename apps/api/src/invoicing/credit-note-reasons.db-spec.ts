@@ -544,3 +544,72 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect(oneStep.queries).toBeLessThan(twoSteps.queries);
   });
 });
+
+describe('cc55 (D-664): hallazgos de audit-01 sobre la nota de crédito', () => {
+  it('D-04: anular internamente la factura suelta su despacho, y el 01 sobre la corregida devuelve el stock', async () => {
+    const s = await sold({ declare: true });
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    expect(dispatch.invoiceId).toBe(s.invoiceId);
+
+    await moduleRef.get(FiscalImportService).annulExternal(admin, s.invoiceId, 'error de tipeo');
+    expect(
+      (await prisma.dispatch.findUniqueOrThrow({ where: { id: dispatch.id } })).invoiceId,
+    ).toBeNull();
+
+    // La factura corregida, por las mismas líneas y sin declarar despacho (lo normal: ya salió).
+    const order = await moduleRef.get(SalesOrdersService).findOne(s.orderId, admin);
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId,
+        salesOrderId: s.orderId,
+        issueDate: PREV(10),
+        paymentTerms: 'CONTADO',
+        items: order.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+      }),
+    );
+    const corrected = await invoicing.registerManual(admin, draft.id, {
+      series: 'F954',
+      correlative: (correlative += 1),
+    });
+
+    const note = await register(corrected.id, { reason: 'ANULACION_OPERACION' });
+    expect(note.salesReturn).not.toBeNull();
+    const back = await returns(s.productId);
+    expect(back.map((m) => [m.qty.toString(), m.totalCost.toString()])).toEqual([['5', '100']]);
+    // Lo devuelto no vuelve a quedar pendiente de facturar.
+    expect(await pendingOf(s.orderId)).toBe('0.000');
+  });
+
+  it('C-01: la vista previa no devuelve costos a quien no es ADMINISTRADOR', async () => {
+    const s = await sold();
+    const body = createCreditNoteSchema.parse({ reason: 'ANULACION_OPERACION', issueDate: TODAY });
+    const asAdmin = await invoicing.previewCreditNote(admin, s.invoiceId, body);
+    expect(asAdmin.costPen).toBe('100.0000');
+    expect(asAdmin.stock.map((x) => x.costPen)).toEqual(['100.0000']);
+    // El mismo usuario (dueño del pedido) con rol de vendedor: misma vista, sin cifras de costo.
+    const seller: RequestUser = { ...admin, role: Role.VENDEDOR };
+    const asSeller = await invoicing.previewCreditNote(seller, s.invoiceId, body);
+    expect(asSeller.costPen).toBeNull();
+    expect(asSeller.stock.map((x) => x.costPen)).toEqual([null]);
+    expect(asSeller.stock.map((x) => x.qty)).toEqual(asAdmin.stock.map((x) => x.qty));
+  });
+});
+
+describe('cc55 (revisiones del corte A): reactivar repone el enlace que la anulación soltó', () => {
+  it('R-2: anular suelta el despacho y reactivar lo vuelve a declarar', async () => {
+    const s = await sold({ declare: true });
+    const imports = moduleRef.get(FiscalImportService);
+    await imports.annulExternal(admin, s.invoiceId, 'por error');
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    expect(dispatch.invoiceId).toBeNull();
+    await imports.reactivateExternal(admin, s.invoiceId, {
+      reason: 'la anulación fue un error',
+      confirmStillValid: true,
+    });
+    expect(
+      (await prisma.dispatch.findUniqueOrThrow({ where: { id: dispatch.id } })).invoiceId,
+    ).toBe(s.invoiceId);
+  });
+});

@@ -275,6 +275,8 @@ export class SalesOrderEditsService {
               },
             ],
             floor.toleranceMm,
+            // cc55 (D-664): el rechazo dice el costo solo a un ADMINISTRADOR.
+            { showCost: actor.role === Role.ADMINISTRADOR },
           );
         }
         next = {
@@ -291,6 +293,7 @@ export class SalesOrderEditsService {
         const [line] = await resolveSalesLines(tx, [this.lineInput(item, { price: input })], {
           ...(floor ? { priceFloor: floor } : {}),
           firstLineNumber: item.lineNumber,
+          showCost: actor.role === Role.ADMINISTRADOR,
         });
         if (!line) throw new NotFoundException(`${at}: no se pudo recalcular`);
         next = line;
@@ -655,6 +658,7 @@ export class SalesOrderEditsService {
         const lines = await resolveSalesLines(tx, input.items, {
           priceFloor: { toleranceMm: roofingToleranceMm(this.env) },
           firstLineNumber: (existing._max.lineNumber ?? 0) + 1,
+          showCost: actor.role === Role.ADMINISTRADOR,
           // D-320: una bobina entera atada a una cotización abierta no se agrega a un pedido por
           // el lado (la misma regla que el alta de cotización, D-310).
           coilTies: { viewer: actor },
@@ -1106,6 +1110,7 @@ export class SalesOrderEditsService {
       // ADMINISTRADOR eso pasa por el piso como cualquier línea.
       {
         firstLineNumber: item.lineNumber,
+        showCost: actor.role === Role.ADMINISTRADOR,
         ...(order.imported && actor.role !== Role.ADMINISTRADOR
           ? { priceFloor: { toleranceMm: roofingToleranceMm(this.env) } }
           : {}),

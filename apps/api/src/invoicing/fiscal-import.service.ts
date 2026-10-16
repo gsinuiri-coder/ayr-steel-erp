@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
+  dispatchCode,
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   salesOrderCode,
@@ -78,7 +79,23 @@ export class FiscalImportService {
       // El lock va antes de leer, igual que en `addPayment` y en la nota de crédito: sin él,
       // un cobro que entra mientras se decide la anulación queda colgado de un comprobante
       // que dejó de deber, y el guardrail de abajo no lo habría visto.
-      await lockDocuments(tx, { fiscalDocuments: [id] });
+      // cc55 (D-664, D-04 de audit-01): con él, los despachos que declara (regla 17: comprobante
+      // antes que despacho, en la misma llamada), porque la anulación les suelta el enlace.
+      const declared = await tx.dispatch.findMany({
+        where: { invoiceId: id },
+        select: { id: true, seq: true },
+      });
+      await lockDocuments(tx, { fiscalDocuments: [id], dispatches: declared.map((d) => d.id) });
+      // Revisiones de cc55 (R-3, D-474): lo que decide se lee después del bloqueo. Un despacho que se
+      // enlazó entre la lectura y el lock se bloquea también (fuera de orden sale con 409, D-475).
+      const known = new Set(declared.map((d) => d.id));
+      const late = (
+        await tx.dispatch.findMany({ where: { invoiceId: id }, select: { id: true, seq: true } })
+      ).filter((d) => !known.has(d.id));
+      if (late.length > 0) {
+        await lockDocuments(tx, { dispatches: late.map((d) => d.id) });
+        declared.push(...late);
+      }
       const document = await tx.fiscalDocument.findUnique({
         where: { id },
         select: {
@@ -90,6 +107,7 @@ export class FiscalImportService {
           archivedAt: true,
           creditNoteReason: true,
           affectedDocumentId: true,
+          replacesDocumentId: true,
         },
       });
       if (!document) throw new NotFoundException('Comprobante no encontrado');
@@ -184,6 +202,18 @@ export class FiscalImportService {
       // inversos al mismo costo (nunca editando saldos). 409 si esa mercadería ya se vendió.
       const salesReturnId = await this.salesReturns.reverseForCreditNoteInTx(tx, actor, id, reason);
 
+      // cc55 (D-664, D-04 de audit-01): un comprobante anulado deja de cubrir sus despachos. Con el
+      // enlace vivo (D-205), el comprobante corregido que se registra después no podía devolver ese
+      // despacho por una NC 01 (D-656: «de otro comprobante») y la línea quedaba otra vez pendiente
+      // de facturar; «traer a otro pedido» tampoco lo admitía. Un enlace a un anulado es justo el
+      // enlace falso que D-205 prohíbe. Reactivar no lo vuelve a poner: queda sin declarar.
+      // Salvo el **reemplazo de un 02** (D-655): anular su NC 02 después le devuelve los despachos al
+      // comprobante original (`undoReplacementInTx` los busca por este enlace). Mientras tanto la
+      // devolución lo lee como sin comprobante (`liveInvoiceId`).
+      if (document.replacesDocumentId === null) {
+        await this.inventory.unlinkInvoiceFromDispatches(tx, id);
+      }
+
       const updated = await tx.fiscalDocument.update({
         where: { id },
         data: {
@@ -206,6 +236,13 @@ export class FiscalImportService {
           reason,
           number: document.number,
           ...(salesReturnId === null ? {} : { salesReturnReversed: salesReturnId }),
+          ...(declared.length === 0 || document.replacesDocumentId !== null
+            ? {}
+            : {
+                dispatchesUnlinked: declared.map((d) => dispatchCode(d.seq)),
+                // Revisiones de cc55 (R-2): lo que la reactivación vuelve a enlazar.
+                dispatchIdsUnlinked: declared.map((d) => d.id),
+              }),
         },
       });
       return updated;
@@ -506,6 +543,7 @@ export class FiscalImportService {
     if (changed.count !== 1) {
       throw new ConflictException(`${label} cambió mientras se reactivaba: vuelve a intentarlo`);
     }
+    const relinked = await this.relinkUnlinkedDispatches(tx, id);
 
     await this.audit.write(tx, {
       actorId: actor.id,
@@ -527,9 +565,52 @@ export class FiscalImportService {
         reason: input.reason,
         number: document.number,
         confirmedStillValid: true,
+        ...(relinked.length === 0 ? {} : { dispatchesRelinked: relinked }),
       },
     });
     return { id, number: document.number };
+  }
+
+  /**
+   * Revisiones de cc55 (R-2, A-01): reactivar deshace la anulación **también** en el enlace D-205
+   * que la anulación soltó (cc55, D-664): vuelven a quedar declarados los despachos de la última
+   * anulación que siguen vigentes, del mismo pedido y sin otro comprobante. Lo que se movió mientras
+   * tanto (un despacho revertido, o tomado por otro comprobante) no se toca. Bloquea los despachos
+   * después del comprobante (regla 17). Devuelve los códigos re-enlazados.
+   */
+  private async relinkUnlinkedDispatches(
+    tx: Prisma.TransactionClient,
+    id: string,
+  ): Promise<string[]> {
+    const annul = await tx.auditLog.findFirst({
+      where: { action: 'invoicing.import.annul', entity: 'fiscal_documents', entityId: id },
+      orderBy: { at: 'desc' },
+      select: { after: true },
+    });
+    const after = annul?.after as { dispatchIdsUnlinked?: unknown } | null | undefined;
+    const ids = Array.isArray(after?.dispatchIdsUnlinked)
+      ? after.dispatchIdsUnlinked.filter((v): v is string => typeof v === 'string')
+      : [];
+    if (ids.length === 0) return [];
+    await lockDocuments(tx, { dispatches: ids });
+    const document = await tx.fiscalDocument.findUniqueOrThrow({
+      where: { id },
+      select: { salesOrderId: true },
+    });
+    const candidates = await tx.dispatch.findMany({
+      where: {
+        id: { in: ids },
+        invoiceId: null,
+        status: 'ISSUED',
+        ...(document.salesOrderId ? { salesOrderId: document.salesOrderId } : {}),
+      },
+      select: { id: true, seq: true },
+    });
+    const out: string[] = [];
+    for (const d of candidates) {
+      if (await this.inventory.linkInvoiceToDispatch(tx, d.id, id)) out.push(dispatchCode(d.seq));
+    }
+    return out;
   }
 
   /**

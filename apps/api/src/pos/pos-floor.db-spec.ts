@@ -198,3 +198,57 @@ describe('cc52 (D-643): el mostrador con el piso de la cotización', () => {
     expect(r.message).toContain('costo');
   });
 });
+
+describe('cc55 (D-664, D-666): hallazgos de audit-01 en el mostrador', () => {
+  it('C-02: bajo el piso, el vendedor lee el mínimo pero no el costo ni el margen', async () => {
+    const r = await rejection(sell(seller, { unitPriceWithIgvPen: '26.22' }));
+    expect(r.status).toBe(400);
+    expect(r.message).toContain('el precio mínimo es S/ 26.23');
+    expect(r.message).not.toMatch(/costo|margen|20\.00/i);
+    const asAdmin = await rejection(sell(admin, { unitPriceWithIgvPen: '26.22' }));
+    expect(asAdmin.message).toContain('costo promedio S/ 20.00');
+  });
+
+  it('B-01: el mismo intento (misma clave) vende una sola vez y devuelve la misma venta', async () => {
+    const key = randomUUID();
+    const body = createPosSaleSchema.parse({
+      method: 'CASH',
+      idempotencyKey: key,
+      items: [{ productId, qty: '1.000', unitPriceWithIgvPen: '30.00' }],
+    });
+    const before = {
+      sales: await prisma.posSale.count(),
+      outs: await prisma.inventoryMovement.count({ where: { itemId: productId, type: 'OUT' } }),
+      payments: await prisma.customerPayment.count(),
+    };
+    const first = await pos.sell(admin, body);
+    const again = await pos.sell(admin, body);
+    expect(again.id).toBe(first.id);
+    expect(await prisma.posSale.count()).toBe(before.sales + 1);
+    expect(
+      await prisma.inventoryMovement.count({ where: { itemId: productId, type: 'OUT' } }),
+    ).toBe(before.outs + 1);
+    expect(await prisma.customerPayment.count()).toBe(before.payments + 1);
+  });
+
+  it('B-01: dos envíos simultáneos con la misma clave dejan una sola venta', async () => {
+    const body = createPosSaleSchema.parse({
+      method: 'CASH',
+      idempotencyKey: randomUUID(),
+      items: [{ productId, qty: '1.000', unitPriceWithIgvPen: '30.00' }],
+    });
+    const before = await prisma.posSale.count();
+    const results = await Promise.allSettled([pos.sell(admin, body), pos.sell(admin, body)]);
+    const ok = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.id] : []));
+    expect(ok.length).toBeGreaterThan(0);
+    expect(new Set(ok).size).toBe(1);
+    expect(await prisma.posSale.count()).toBe(before + 1);
+  });
+
+  it('B-01: sin clave, dos ventas iguales son dos ventas (el guardrail es opt-in)', async () => {
+    const before = await prisma.posSale.count();
+    await sell(admin, { unitPriceWithIgvPen: '30.00' });
+    await sell(admin, { unitPriceWithIgvPen: '30.00' });
+    expect(await prisma.posSale.count()).toBe(before + 2);
+  });
+});

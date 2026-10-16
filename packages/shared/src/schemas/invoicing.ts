@@ -640,13 +640,15 @@ export const creditNotePreviewSchema = z.object({
       label: z.string(),
       qty: z.string(),
       unit: z.string(),
-      costPen: z.string(),
+      /** cc55 (D-664, C-01 de audit-01): el costo de kardex, solo para ADMINISTRADOR; `null` al resto. */
+      costPen: z.string().nullable(),
       dispatch: z.string(),
     }),
   ),
   /** Lo que no vuelve porque no salió (01 sin despacho completo). */
   notDispatched: z.array(z.object({ lineNumber: z.number().int(), qty: z.string() })),
-  costPen: z.string(),
+  /** cc55 (D-664): solo para ADMINISTRADOR; `null` al resto (como `GET /invoicing/returns/:id`). */
+  costPen: z.string().nullable(),
   receivable: z.object({
     beforePen: z.string(),
     afterPen: z.string(),

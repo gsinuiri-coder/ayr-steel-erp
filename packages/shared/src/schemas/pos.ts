@@ -10,6 +10,7 @@ import {
 import { BUSINESS_LINES, DOC_TYPES, PaymentMethod, type PaymentMethod as Method } from '../enums';
 import { reasonSchema } from './coil';
 import { atCostInputSchema } from './sales';
+import { idempotencyFields } from './idempotency';
 
 /**
  * Punto de venta de mostrador (RF-60; D-098..D-104).
@@ -247,6 +248,11 @@ export const createPosSaleSchema = z
      */
     forceGenericCustomer: z.boolean().default(false),
     notes: z.string().trim().max(500).optional(),
+    /**
+     * cc55 (D-666, B-01 de audit-01): el mismo intento de cobro en caja (reintento tras un corte de
+     * red o un 502 con la venta ya grabada) no vende dos veces: devuelve la venta del primero.
+     */
+    ...idempotencyFields,
     items: z
       .array(posSaleItemInputSchema)
       .min(1, 'El carrito está vacío')

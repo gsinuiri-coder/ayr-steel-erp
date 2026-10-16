@@ -41,6 +41,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { DispatchesService } from '../invoicing/dispatches.service';
 import { InvoicingService } from '../invoicing/invoicing.service';
 import { ReceivablesService } from '../invoicing/receivables.service';
@@ -226,6 +227,11 @@ export class PosService {
     const today = businessToday();
     const { saleId, documentId } = await this.prisma.$transaction(
       async (tx) => {
+        // cc55 (D-666, B-01 de audit-01): el mismo intento no vende dos veces. La clave se reclama
+        // antes que nada (como el cobro, D-182); si ya existía, la venta es la que dejó el primero
+        // y no se repite ningún efecto: ni pedido, ni salida de kardex, ni correlativo, ni cobro.
+        const claim = await claimIdempotencyKey(tx, 'pos-sale', input.idempotencyKey);
+        if (!claim.claimed) return { saleId: claim.resourceId, documentId: null };
         const session = await this.cashSessions.lockOpenSession(tx, actor);
 
         // 1. El cliente. Sin `customerId` es el sembrado de D-077 y la venta va con boleta.
@@ -318,6 +324,7 @@ export class PosService {
         // 7. Lo único que este módulo agrega: que los cuatro son una venta de mostrador.
         const sale = await tx.posSale.create({
           data: {
+            id: claim.resourceId,
             cashSessionId: session.id,
             salesOrderId,
             dispatchId,
@@ -353,7 +360,8 @@ export class PosService {
     // hecha y el comprobante queda pendiente para el job. Nunca se propaga el error: la
     // operación no se detiene por el PSE, que es el punto entero de esa decisión.
     try {
-      await this.invoicing.deliver(documentId);
+      // cc55 (D-666): un reintento no vuelve a mandar el comprobante (lo mandó el primero o el job).
+      if (documentId !== null) await this.invoicing.deliver(documentId);
     } catch (error) {
       this.logger.warn(
         `Venta de mostrador ${saleId}: el envío del comprobante al PSE no entró (${String(error)}). Queda pendiente; lo recoge el job.`,

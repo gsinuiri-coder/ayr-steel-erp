@@ -36,6 +36,11 @@ export interface RecostSeed extends RecostItem {
   afterMovementId?: bigint;
   /** Se recalcula desde la primera fila (corrección histórica, `recosteo:historico`). */
   fromStart?: boolean;
+  /**
+   * cc55 (D-665): se recalcula **desde esta fila, incluida** (la entrada cuyo costo se fija con
+   * `overrides`).
+   */
+  atMovementId?: bigint;
 }
 
 /** Una fila del kardex con lo que el recosteo necesita para escribir su ajuste. */
@@ -216,10 +221,16 @@ export async function planRecost(
   tx: Prisma.TransactionClient,
   seeds: readonly RecostSeed[],
   maxRows: number = RECOST_MAX_ROWS,
+  /**
+   * cc55 (D-665): costos de fila **fijados** de antemano (id → costo de fila), como los que la
+   * cascada fija a las entradas derivadas. Lo usa el cierre de una OP cuyo producto ya salió: sus
+   * entradas valen el despunte más, y el recosteo lo pasa a las salidas que siguieron.
+   */
+  initialOverrides?: ReadonlyMap<string, Decimal>,
 ): Promise<RecostPlan> {
   const loaded = new Map<string, LoadedItem>();
   const start = new Map<string, number>();
-  const overrides = new Map<string, Decimal>();
+  const overrides = new Map<string, Decimal>(initialOverrides ?? []);
   const results = new Map<string, ReturnType<typeof replayItem>>();
   const queue: string[] = [];
   let rowsReplayed = 0;
@@ -242,7 +253,9 @@ export async function planRecost(
   for (const seed of seeds) {
     const l = await ensure(seed);
     let from = 0;
-    if (!seed.fromStart && seed.afterMovementId !== undefined) {
+    if (!seed.fromStart && seed.atMovementId !== undefined) {
+      from = l.index.get(seed.atMovementId.toString()) ?? l.rows.length;
+    } else if (!seed.fromStart && seed.afterMovementId !== undefined) {
       const at = l.index.get(seed.afterMovementId.toString());
       from = at === undefined ? l.rows.length : at + 1;
     }

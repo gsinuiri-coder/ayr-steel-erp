@@ -1417,6 +1417,8 @@ export class SalesOrdersService {
       // lo muestra (panel de stock) y el ADMINISTRADOR puede marcar la línea «A costo» con motivo,
       // como en la cotización (D-641). El rol lo comprueba `PosService` antes del piso.
       priceFloor: { toleranceMm: roofingToleranceMm(this.env) },
+      // cc55 (D-664): el rechazo del piso dice el costo solo a un ADMINISTRADOR.
+      showCost: actor.role === Role.ADMINISTRADOR,
       ...(options.counterSale === true ? { allowAtCost: true } : {}),
       // D-310: una bobina entera atada a una cotización abierta ajena no se vende por el lado.
       coilTies: { viewer: actor },

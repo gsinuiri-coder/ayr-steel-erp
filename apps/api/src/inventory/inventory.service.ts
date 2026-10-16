@@ -458,10 +458,14 @@ export class InventoryService {
       /** `recosteo:historico`: otra acción de auditoría y sin tope en línea. */
       historic?: { label: string };
       maxRows?: number;
+      /** cc55 (D-665): costos de fila fijados de antemano (`recostEntries`). */
+      overrides?: ReadonlyMap<string, Decimal>;
+      /** cc55 (D-665): la nota de los ajustes (por defecto, «Recosteo por fecha»). */
+      note?: string;
     },
   ): Promise<RecostOutcome> {
     const maxRows = ctx.historic ? Number.MAX_SAFE_INTEGER : ctx.maxRows;
-    let plan = await planRecost(tx, seeds, maxRows);
+    let plan = await planRecost(tx, seeds, maxRows, ctx.overrides);
     if (plan.overLimit) return this.recostPending(tx, seeds, plan.rowsReplayed, ctx);
     const locked = new Set<string>();
     let settled = false;
@@ -473,7 +477,7 @@ export class InventoryService {
       await this.lockRecostItems(tx, toLock, ctx.historic !== undefined);
       for (const i of toLock) locked.add(labelKey(i.itemType, i.itemId));
       // Bajo el lock se vuelve a armar: lo que decide se lee después de bloquear (D-474).
-      const again = await planRecost(tx, seeds, maxRows);
+      const again = await planRecost(tx, seeds, maxRows, ctx.overrides);
       if (again.overLimit) return this.recostPending(tx, seeds, again.rowsReplayed, ctx);
       settled = again.items.every(
         (p) => p.adjusts.length === 0 || locked.has(labelKey(p.item.itemType, p.item.itemId)),
@@ -506,7 +510,7 @@ export class InventoryService {
           totalCost: toFixedString(total, 'MONEY'),
           refType: a.movement.refType,
           refId: a.movement.refId,
-          notes: ctx.historic ? ctx.historic.label : 'Recosteo por fecha',
+          notes: ctx.historic ? ctx.historic.label : (ctx.note ?? 'Recosteo por fecha'),
           recostOfId: a.movement.id,
           actorId: ctx.actorId,
           operationDate: a.movement.operationDate,
@@ -760,6 +764,52 @@ export class InventoryService {
   }
 
   /**
+   * cc55 (D-665, E-01 de audit-01) — **subir el costo de entradas ya registradas** y pasarlo a lo
+   * que salió después, por la puerta del recosteo por fecha (D-649; regla dura 8). Cada entrada
+   * vale su costo efectivo más `addPen`; `recostForward` escribe el `ADJUST` de la entrada (con
+   * `recost_of_id`, en su fecha) y los de las salidas que se llevaron ese saldo, en cascada. La fila
+   * original nunca se edita.
+   *
+   * Lo usa el cierre de una OP cuyo producto **ya no tiene saldo**: el despunte (y el residuo) que
+   * el `ADJUST` de cierre no podía repartir sobre cero unidades va a las entradas de sus partes, y de
+   * ahí a los despachos. Antes se perdía (`costAdjusted: false`).
+   */
+  async recostEntries(
+    tx: Prisma.TransactionClient,
+    entries: readonly { movementId: bigint; addPen: Decimal }[],
+    ctx: { actorId: string; note: string },
+  ): Promise<RecostOutcome | null> {
+    const wanted = entries.filter((e) => !e.addPen.isZero());
+    if (wanted.length === 0) return null;
+    const rows = await tx.inventoryMovement.findMany({
+      where: { id: { in: wanted.map((e) => e.movementId) }, type: 'IN' },
+      select: { id: true, itemType: true, itemId: true, totalCost: true },
+    });
+    if (rows.length !== wanted.length) {
+      throw new BadRequestException('Recosteo de entradas: hay una fila que no es una entrada');
+    }
+    const recosts = await tx.inventoryMovement.groupBy({
+      by: ['recostOfId'],
+      where: { recostOfId: { in: rows.map((r) => r.id) } },
+      _sum: { totalCost: true },
+    });
+    const recostOf = new Map(
+      recosts.map((g) => [String(g.recostOfId), toDecimal(g._sum.totalCost?.toString() ?? '0')]),
+    );
+    const overrides = new Map<string, Decimal>();
+    for (const r of rows) {
+      const add = wanted.find((e) => e.movementId === r.id)?.addPen ?? new Decimal(0);
+      const effective = toDecimal(r.totalCost.toString()).plus(
+        rowCostOfRecost('IN', recostOf.get(r.id.toString()) ?? new Decimal(0)),
+      );
+      overrides.set(r.id.toString(), effective.plus(add));
+    }
+    const seeds = rows.map((r) => ({ itemType: r.itemType, itemId: r.itemId, atMovementId: r.id }));
+    return this.recostForward(tx, seeds, { actorId: ctx.actorId, overrides, note: ctx.note });
+  }
+
+  /**
+   * Anula un movimiento emitiendo su inverso  /**
    * Anula un movimiento emitiendo su inverso (§3.2: nunca `UPDATE` ni `DELETE`). El
    * inverso arrastra el **mismo valor** que el original, no el promedio del momento:
    * revertir un ingreso tiene que sacar del saldo exactamente el costo que metió, o
