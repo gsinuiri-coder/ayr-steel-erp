@@ -2716,3 +2716,45 @@ El UAT se hizo en la rama `demo` de Neon, restablecida desde `production`, con u
 dueño confirmó que el **06 es solo devolución total**: sobre un comprobante despachado a medias, el rechazo del 06
 («hay N despachado sin devolver y se intenta devolver M») es el comportamiento correcto, y lo que corresponde ahí es un
 **07** (devolución por ítem, hasta lo despachado y no devuelto). La guía `docs/uat/cc54.md` lo dice así.
+
+## Registro del dueño (2026-10-16, apertura de cc56)
+
+- **Cobros y pagos se llevan en la app** (base de D-668). Los saldos reales se cargan a una fecha de corte con el
+  importador; mientras tanto, CxC y el Panel siguen mostrando el 100 % pendiente.
+- **C1 de cc55 se cierra «se dejan como están»**: los despachos de septiembre fabricados en octubre conservan su fecha
+  (la salida real, D-278). El cierre de mes los muestra aparte (D-670).
+- **UAT de cc55 y ratificación de D-664 a D-667: pendientes del dueño.**
+- OK por nombre (D-460) para el `--execute --confirm-production` de C2 con condiciones; no se usó (PARA, ver cc56).
+
+## cc56 — saldos iniciales de cobranzas y pagos, costo de entradas protegido y cierre de mes (D-668..D-670)
+
+**Por qué sin migración (D-668).** El lote de un importador suele quedar en una columna (`purchases.import_batch_id`,
+D-351) o en `import_batches` con su `ImportEntity`. Las dos cosas exigían migración (una columna en dos tablas de pagos o
+un valor nuevo del enum), y una migración para una carga que corre una vez no se justificaba. El lote vive en la
+auditoría, que ya es append-only y ya registra cada pago: una fila `imports.opening-balances` con los ids de los pagos
+que creó, y la referencia «SI <lote>» en cada pago, para que se vea en la app. El deshacer lee esa lista y revierte por la
+reversa de siempre; un segundo lote del mismo lado no corre con uno vivo.
+
+**Qué significa «lo cobrado hasta el corte».** Las filas del Excel son la historia de cobros hasta el corte; si la app ya
+tiene cobros de ese comprobante con fecha hasta el corte, sumarlas los duplicaría (lo encontró la autorrevisión), y el
+importador lo rechaza y pide el saldo al corte para esa cuenta. Con el saldo al corte se registra la diferencia entre lo
+que se debía al corte (total − NC hasta el corte − cobros hasta el corte) y lo declarado, a la fecha de corte. Hoy, con 0
+cobros y 0 pagos en producción, las dos formas valen igual.
+
+**Por qué el costo de una entrada exige motivo (D-669).** En cc55 (C2) el costo de la bobina 4150-23 se bajó dos veces en
+la ficha con los motivos «vender a menos costo» y «menos costo». Eso no es un costo: falsea la Rentabilidad, Ventas y
+margen y el inventario. El costo solo cambia por una corrección del documento (compra, NC del proveedor o digitación);
+para vender barato están «A costo» (D-639) y el precio.
+
+**C2, PARA.** La corrección (`pnpm fix:costo-bobina`, recosteo por fecha de la entrada viva) pasa en el dry-run todas las
+condiciones automáticas: solo la entrada 468 y la venta 960, +S/ 731,23 en Rentabilidad y en Ventas y margen de
+FFA1-00001448, cuadra al céntimo, sin cambios de cantidad ni negativos. Pero el OK decía «octubre», y en los reportes el
+aumento cae en **septiembre**: Ventas y margen ubica el costo en el mes de la factura (24/09) y el inventario valorizado
+al 30/09 sube porque la entrada es del 28/09. Solo la salida del kardex es de octubre (07/10). Es una diferencia con la
+condición, así que no se ejecutó.
+
+**Por qué «facturado y no despachado» se mide por cantidades (D-670).** La primera versión miraba solo los despachos
+declarados (D-205) y sus fechas. Las dos revisiones mostraron que un despacho hecho desde el pedido no declara el
+comprobante, y que un despacho del mes que llevó una sola línea sacaba el comprobante entero. Se mide por línea de
+pedido: lo facturado hasta el cierre menos lo despachado hasta el cierre, repartido desde la factura más reciente. En
+producción: agosto 26 comprobantes y septiembre 33, como contó audit-01.
