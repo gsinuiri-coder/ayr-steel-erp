@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import type { Env } from '../config/env';
 import { InventoryService } from './inventory.service';
+import * as recostPlan from './inventory-recost';
 
 /**
  * cc55 (D-665) — `InventoryService.recostEntries`: fija el costo de entradas ya registradas (su
@@ -93,5 +94,28 @@ describe('InventoryService.recostEntries (cc55, D-665)', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(forward).not.toHaveBeenCalled();
+  });
+});
+
+describe('recostForward con costos fijados (cc55, D-665)', () => {
+  it('pasa los costos fijados al plan, también en la vuelta bajo lock', async () => {
+    const service = new InventoryService(
+      {} as never,
+      { ROOFING_THICKNESS_TOLERANCE_MM: '0.02' } as Env,
+      { write: jest.fn() } as never,
+    );
+    const plan = jest
+      .spyOn(recostPlan, 'planRecost')
+      .mockResolvedValue({ items: [], rowsReplayed: 2, overLimit: false });
+    const overrides = new Map([['1', new Decimal('130')]]);
+    const outcome = await service.recostForward(
+      {} as never,
+      [{ itemType: 'PRODUCT', itemId: 'p1', atMovementId: 1n }],
+      { actorId: 'u1', overrides, note: 'Cierre de prueba' },
+    );
+    expect(outcome).toEqual({ pending: false, rowsReplayed: 2, adjusted: [] });
+    expect(plan).toHaveBeenCalledTimes(2);
+    for (const call of plan.mock.calls) expect(call[3]).toBe(overrides);
+    plan.mockRestore();
   });
 });
