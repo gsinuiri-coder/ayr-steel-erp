@@ -40,12 +40,12 @@ export function undispatchedAtCloseXlsx(report: UndispatchedAtCloseDto): {
         num(t.salesPen),
         num(t.estimatedCostPen),
         '',
-        t.withoutCostCount > 0 ? `${String(t.withoutCostCount)} sin salida (sin costo)` : '',
+        t.withoutCostCount > 0 ? `${String(t.withoutCostCount)} sin costo estimado` : '',
       ],
       [],
       [
-        `Facturado del ${report.from} al ${report.to} cuya mercadería sale del kardex después del ${report.to} (o todavía no sale). ` +
-          'El costo estimado es el de Ventas y margen; esa mercadería todavía figura en el inventario al cierre. No cambia ningún otro reporte.',
+        `Facturado del ${report.from} al ${report.to} con mercadería pendiente de salir del kardex al ${report.to}: lo facturado hasta esa fecha menos lo despachado hasta esa fecha, por línea de pedido (despachos declarados o no). ` +
+          'El costo estimado es el de Ventas y margen en la proporción pendiente; esa mercadería todavía figura en el inventario al cierre. La venta es la del comprobante completo. No cambia ningún otro reporte.',
       ],
     ],
   };

@@ -44,9 +44,10 @@ export function UndispatchedAtClose({ from, to }: { from: string; to: string }) 
         <div>
           <h2 className="text-sm font-semibold">Facturado y no despachado al cierre</h2>
           <p className="text-xs text-muted-foreground">
-            Comprobantes del {formatDate(from)} al {formatDate(to)} cuya mercadería sale después del{' '}
-            {formatDate(to)}. Su costo es el de Ventas y margen y esa mercadería todavía figura en
-            el inventario al cierre.
+            Comprobantes del {formatDate(from)} al {formatDate(to)} con mercadería que al{' '}
+            {formatDate(to)} no había salido del kardex (lo facturado menos lo despachado, por línea
+            de pedido). El costo estimado es el de Ventas y margen en la proporción pendiente; esa
+            mercadería todavía figura en el inventario al cierre.
           </p>
         </div>
         <Button variant="outline" size="sm" asChild>
@@ -114,7 +115,7 @@ export function UndispatchedAtClose({ from, to }: { from: string; to: string }) 
               </TableCell>
               <TableCell colSpan={2}>
                 {data.totals.withoutCostCount > 0
-                  ? `${String(data.totals.withoutCostCount)} sin salida (sin costo)`
+                  ? `${String(data.totals.withoutCostCount)} sin costo estimado`
                   : ''}
               </TableCell>
             </TableRow>

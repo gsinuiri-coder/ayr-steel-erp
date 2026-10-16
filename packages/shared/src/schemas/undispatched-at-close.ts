@@ -21,7 +21,7 @@ export type UndispatchedAtCloseStatus = (typeof UNDISPATCHED_AT_CLOSE_STATUSES)[
 
 export const UNDISPATCHED_AT_CLOSE_STATUS_LABELS: Record<UndispatchedAtCloseStatus, string> = {
   DESPACHADO_DESPUES: 'Salió después del cierre',
-  PARCIAL: 'Parte salió después del cierre',
+  PARCIAL: 'Parte pendiente al cierre',
   SIN_SALIDA: 'Todavía sin salida',
 };
 
@@ -32,7 +32,7 @@ export const undispatchedAtCloseRowSchema = z.object({
   customerName: z.string(),
   /** Venta sin IGV del comprobante (la de Ventas y margen). */
   salesPen: z.string(),
-  /** El costo con que Ventas y margen lo cuenta (D-667); `null` si todavía no tiene salida. */
+  /** El costo con que Ventas y margen lo cuenta (D-667), en la proporción pendiente; `null` sin costo comparable. */
   estimatedCostPen: z.string().nullable(),
   /** Fechas de salida real de sus despachos declarados, en orden. */
   dispatchDates: z.array(z.string()),
