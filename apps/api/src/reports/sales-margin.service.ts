@@ -20,6 +20,8 @@ import {
 } from '@ayr/shared';
 import { fromDbLineCode } from '../common/business-line-code';
 import { PrismaService } from '../prisma/prisma.service';
+import { engineLineCosts, type EngineLineCost } from './document-profitability';
+import { SalesByMaterialService, type DocumentLineRow } from './sales-by-material.service';
 
 /**
  * Estados en los que un comprobante **ya es una venta**: `LIVE_DOCUMENT_STATUSES`, el mismo corte
@@ -59,9 +61,17 @@ interface OutOfRangeRow {
   outside: bigint;
 }
 
-interface CostRow {
+export interface CostRow {
   sales_order_id: string;
   invoice_id: string | null;
+  /**
+   * cc55 (D-667): la línea de pedido del despacho (o de la devolución). Es lo que deja reemplazar
+   * el costo de una línea fabricada contra pedido por el de su OP. `null` si el movimiento no
+   * tiene su fila de despacho (no ocurre hoy, ver `costsByOrder`) o en una fila del motor.
+   */
+  sales_order_item_id: string | null;
+  /** cc55 (D-667): fila del costo de OP (motor), no de un despacho. */
+  from_engine?: boolean;
   business_line_code: string;
   cost_pen: Prisma.Decimal;
   /**
@@ -76,10 +86,12 @@ interface OpMaterialRow {
   material_pen: Prisma.Decimal;
 }
 
-interface SalesByLineRow {
+export interface SalesByLineRow {
   document_id: string;
   business_line_code: string | null;
   subtotal_pen: Prisma.Decimal;
+  /** cc55 (D-667, revisión H1): cuántas líneas del comprobante hay en este grupo. */
+  line_count?: bigint | number;
 }
 
 interface PendingDispatchRow {
@@ -98,20 +110,34 @@ interface PendingDispatchRow {
  * - *Venta*: `fiscal_documents.subtotal_pen` —sin IGV, la verdad interna del negocio (§7)—
  *   de los comprobantes vivos con `issue_date` en el rango. Las notas de crédito restan.
  * - *Costo*: los movimientos de kardex `refType='SALE'` de los despachos del pedido, que es
- *   donde el costo de lo vendido ya está valorizado al promedio ponderado, igual para el
- *   producto fabricado, la plancha de catálogo y la bobina de reventa. Las reversas de
- *   despacho son movimientos inversos con el mismo `refType`/`refId`, así que se netean
- *   solas sin un caso especial.
+ *   donde el costo de lo vendido ya está valorizado al promedio ponderado: la plancha de
+ *   catálogo, la reventa y el resto del stock. Las reversas de despacho son movimientos inversos
+ *   con el mismo `refType`/`refId`, así que se netean solas sin un caso especial.
+ *   **cc55 (D-667):** lo **fabricado contra pedido** (Coberturas Aluzinc, las líneas del motor de
+ *   «Ventas por material») se costea con su OP: la bobina que consumieron sus partes y su despunte,
+ *   en la proporción de lo facturado. Es la misma cuenta que la rentabilidad del comprobante
+ *   (`engineLineCosts`), por comprobante y en el periodo del comprobante. Si el motor no puede
+ *   costear la línea (sin producción, sin subtipo), se queda con el promedio de su despacho.
  * - *Material de OPs*: columna aparte, informativa. **No** es el costo de esta venta: una OP
  *   puede producir de más (el excedente queda como stock libre) y un pedido servido desde
  *   stock no tiene OPs propias.
  *
- * Presupuesto de consultas: **seis, fijas**, sin importar cuántos pedidos, comprobantes,
- * líneas o despachos entren en el rango.
+ * Presupuesto de consultas: **diez, fijas**, sin importar cuántos pedidos, comprobantes,
+ * líneas o despachos entren en el rango: las seis de siempre, las líneas del motor (1) y sus
+ * hechos (3, solo si hay líneas del motor; cc55, D-667).
  */
 @Injectable()
 export class SalesMarginService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly material: SalesByMaterialService;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    material?: SalesByMaterialService,
+  ) {
+    // cc55 (D-667): opcional para los usos directos (`new SalesMarginService(prisma)` en las CLI
+    // de recosteo y de auditoría); con Nest llega inyectado.
+    this.material = material ?? new SalesByMaterialService(prisma);
+  }
 
   async salesMargin(query: SalesMarginQuery): Promise<SalesMarginDto> {
     const from = toDateOnly(query.from);
@@ -162,22 +188,31 @@ export class SalesMarginService {
 
     // 2..6 solo tienen sentido si el rango trajo algo. Con el rango vacío se devuelven los
     // totales en cero sin gastar cinco viajes a la base.
-    const [outOfRange, costs, opMaterial, salesByLine, pendingDispatch] =
+    const [outOfRange, costs, opMaterial, salesByLine, pendingDispatch, engineRows] =
       orderIds.length === 0 && documentIds.length === 0
-        ? [[], [], [], [], []]
+        ? [[], [], [], [], [], []]
         : await Promise.all([
             this.outOfRangeCounts(orderIds, from, to, live),
             this.costsByOrder(orderIds),
             this.opMaterialByOrder(orderIds),
             this.salesByLine(documentIds),
             this.pendingDispatchByOrder(orderIds),
+            this.material.engineLinesOf(documentIds),
           ]);
+    // cc55 (D-667): el costo de OP de las líneas fabricadas contra pedido.
+    const engineItems = engineRows
+      .map((r) => r.sales_order_item_id)
+      .filter((v): v is string => v !== null);
+    const engineCosts =
+      engineItems.length === 0
+        ? new Map<string, EngineLineCost>()
+        : engineLineCosts(engineRows, await this.material.engineFacts(engineItems));
 
     return this.assemble({
       query,
       documents,
       outOfRange,
-      costs,
+      costs: withEngineCosts(costs, engineRows, engineCosts),
       opMaterial,
       salesByLine,
       pendingDispatch,
@@ -252,6 +287,7 @@ export class SalesMarginService {
         d."sales_order_id",
         d."invoice_id",
         COALESCE(blp."code", blm."code")::text AS "business_line_code",
+        di."sales_order_item_id",
         COALESCE(SUM(
           CASE m."type"
             WHEN 'OUT' THEN m."total_cost"
@@ -271,7 +307,8 @@ export class SalesMarginService {
       JOIN "business_lines" blm ON blm."id" = m."business_line_id"
       WHERE m."ref_type" = 'SALE'
         AND d."sales_order_id" = ANY(${orderIds}::uuid[])
-      GROUP BY d."sales_order_id", d."invoice_id", COALESCE(blp."code", blm."code")
+      GROUP BY d."sales_order_id", d."invoice_id", COALESCE(blp."code", blm."code"),
+        di."sales_order_item_id"
       UNION ALL
       -- cc52 (D-647): el reingreso de una devolución resta costo **en la NC** que la generó; su
       -- reversa (al anular la NC) lo vuelve a sumar. La línea de negocio, la del producto
@@ -280,6 +317,7 @@ export class SalesMarginService {
         sr."sales_order_id",
         sr."credit_note_id" AS "invoice_id",
         COALESCE(blp."code", blm."code")::text AS "business_line_code",
+        di."sales_order_item_id",
         COALESCE(SUM(
           CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END
         ), 0) AS "cost_pen",
@@ -294,7 +332,8 @@ export class SalesMarginService {
       JOIN "business_lines" blm ON blm."id" = m."business_line_id"
       WHERE m."ref_type" = 'SALES_RETURN'
         AND sr."sales_order_id" = ANY(${orderIds}::uuid[])
-      GROUP BY sr."sales_order_id", sr."credit_note_id", COALESCE(blp."code", blm."code")
+      GROUP BY sr."sales_order_id", sr."credit_note_id", COALESCE(blp."code", blm."code"),
+        di."sales_order_item_id"
     `;
   }
 
@@ -336,7 +375,8 @@ export class SalesMarginService {
       SELECT
         fdi."document_id",
         bl."code"::text AS "business_line_code",
-        COALESCE(SUM(fdi."subtotal_pen"), 0) AS "subtotal_pen"
+        COALESCE(SUM(fdi."subtotal_pen"), 0) AS "subtotal_pen",
+        COUNT(*) AS "line_count"
       FROM "fiscal_document_items" fdi
       LEFT JOIN "products" p ON p."id" = fdi."product_id"
       LEFT JOIN "business_lines" bl ON bl."id" = p."business_line_id"
@@ -445,6 +485,13 @@ export class SalesMarginService {
       }
     }
 
+    // cc55 (D-667, revisión H1): qué comprobantes **declaran** su costo. Antes bastaba con tener
+    // una fila con su `invoice_id`; con el costo de OP, toda línea del motor la tiene. Un comprobante
+    // declara si algún despacho lo declara (D-205/D-213) o si **todas** sus líneas se costean por el
+    // motor; uno mixto con el resto sin despacho declarado sigue sin declarar (NO_COMPARABLE con
+    // comprobantes fuera del rango), como antes de cc55.
+    const declaredDocs = declaredDocuments(costs, salesByLine);
+
     // cc52 (D-647): una NC de descuento declara costo cero: no movió mercadería.
     for (const doc of documents) {
       if (
@@ -454,6 +501,7 @@ export class SalesMarginService {
         !costByDocument.has(doc.id)
       ) {
         costByDocument.set(doc.id, ZERO);
+        declaredDocs.add(doc.id);
       }
     }
 
@@ -504,7 +552,7 @@ export class SalesMarginService {
         isPending,
         isUntraceable,
         docs,
-        costByDocument,
+        declaredDocs,
       });
       const comparable = costStatus !== 'NO_COMPARABLE' && costStatus !== 'NO_RASTREABLE';
       // D-412 (autorrevisión de cc24, P2-2): un pedido cuyas líneas son todas sin costo
@@ -720,6 +768,96 @@ export class SalesMarginService {
 const ZERO = new Decimal(0);
 
 /**
+ * cc55 (D-667): los estados del motor con los que la línea se costea por su OP. Sin producción
+ * (`NO_COST_YET`), sin trazar (`UNTRACEABLE`) o con producción parcial (`PARTIAL`: el motor solo
+ * costea lo producido; revisión H2), la línea de pedido sigue con el promedio de su despacho, como
+ * antes: mejor un costo entero por otra base que uno parcial.
+ */
+// Revisión H2: `PARTIAL` (facturado de más sobre lo producido) costearía solo lo producido.
+const ENGINE_COSTED: readonly string[] = ['COMPLETE'];
+
+/**
+ * cc55 (D-667) — **un solo costo para lo fabricado contra pedido.** Las líneas de pedido cuyas
+ * líneas de comprobante del rango costea el motor dejan de costearse por la salida de su despacho
+ * (promedio del SKU) y pasan a costearse por su OP, imputado a cada comprobante (y a cada NC, con
+ * signo) en su propio periodo: una fila por línea de comprobante, con la línea de negocio del
+ * producto. Si alguna línea del rango de esa línea de pedido no se puede costear por el motor, la
+ * línea de pedido entera se queda con el promedio (no se mezclan bases en una misma línea).
+ *
+ * Pura: sin consultas. Exportada para probarla sin base.
+ */
+export function withEngineCosts(
+  costs: readonly CostRow[],
+  engineRows: readonly DocumentLineRow[],
+  engineCosts: ReadonlyMap<string, EngineLineCost>,
+): CostRow[] {
+  const byItem = new Map<string, DocumentLineRow[]>();
+  for (const r of engineRows) {
+    if (r.sales_order_item_id === null || r.order_id === null) continue;
+    const list = byItem.get(r.sales_order_item_id) ?? [];
+    list.push(r);
+    byItem.set(r.sales_order_item_id, list);
+  }
+  const engineItems = new Set(
+    [...byItem].flatMap(([item, rows]) =>
+      rows.every((r) => ENGINE_COSTED.includes(engineCosts.get(r.item_id)?.status ?? ''))
+        ? [item]
+        : [],
+    ),
+  );
+  if (engineItems.size === 0) return [...costs];
+  const kept = costs.filter(
+    (c) => c.sales_order_item_id === null || !engineItems.has(c.sales_order_item_id),
+  );
+  const added: CostRow[] = [...engineItems].flatMap((item) =>
+    (byItem.get(item) ?? []).map((r): CostRow => ({
+      sales_order_id: r.order_id ?? '',
+      invoice_id: r.document_id,
+      business_line_code: r.line_code ?? r.product_line ?? '',
+      sales_order_item_id: null,
+      cost_pen: new Prisma.Decimal((engineCosts.get(r.item_id)?.costPen ?? ZERO).toFixed(4)),
+      kind: 'SALE',
+      from_engine: true,
+    })),
+  );
+  return [...kept, ...added];
+}
+
+/**
+ * cc55 (D-667, revisión H1): qué comprobantes **declaran** su costo (lo que `resolveCostStatus` mira
+ * cuando el pedido tiene comprobantes fuera del rango). Un comprobante declara si algún despacho lo
+ * declara (D-205/D-213) o si **todas** sus líneas se costean por el motor; uno mixto con el resto
+ * sin despacho declarado no declara, como antes de cc55. (Las NC de descuento las suma `assemble`.)
+ * Pura; exportada para probarla sin base.
+ */
+export function declaredDocuments(
+  costs: readonly CostRow[],
+  salesByLine: readonly SalesByLineRow[],
+): Set<string> {
+  const lineCountByDoc = new Map<string, number>();
+  for (const r of salesByLine) {
+    lineCountByDoc.set(
+      r.document_id,
+      (lineCountByDoc.get(r.document_id) ?? 0) + Number(r.line_count ?? 0),
+    );
+  }
+  const engineLinesByDoc = new Map<string, number>();
+  const declared = new Set<string>();
+  for (const row of costs) {
+    if (row.invoice_id === null) continue;
+    if (row.from_engine === true) {
+      engineLinesByDoc.set(row.invoice_id, (engineLinesByDoc.get(row.invoice_id) ?? 0) + 1);
+    } else {
+      declared.add(row.invoice_id);
+    }
+  }
+  for (const [doc, n] of engineLinesByDoc) {
+    if (n >= (lineCountByDoc.get(doc) ?? 0)) declared.add(doc);
+  }
+  return declared;
+}
+
+/**
  * cc52 (D-647): las NC que **declaran su costo**: las de descuento o corrección (costo cero: no
  * mueven mercadería) y las de devolución (el reingreso, imputado a la NC). Su efecto cae entero
  * en su periodo y no vuelven «no comparable» al pedido en el periodo del comprobante.
@@ -827,15 +965,16 @@ function resolveCostStatus(input: {
   isPending: Set<string>;
   isUntraceable: Set<string>;
   docs: DocumentRow[];
-  costByDocument: Map<string, Decimal>;
+  /** cc55 (revisión H1): los comprobantes que declaran su costo (ver `assemble`). */
+  declaredDocs: Set<string>;
 }): MarginCostStatus {
-  const { orderId, hasOutside, isPending, isUntraceable, docs, costByDocument } = input;
+  const { orderId, hasOutside, isPending, isUntraceable, docs, declaredDocs } = input;
   // Una venta directa sin pedido no tiene nada fuera del rango con lo que compartir costo.
   if (orderId === null) return 'COMPLETO';
   // D-285: algo salió del almacén sin su salida de kardex: el costo no se puede rastrear.
   if (isUntraceable.has(orderId)) return 'NO_RASTREABLE';
   if (hasOutside.has(orderId)) {
-    const everyDocDeclaresDispatch = docs.every((d) => costByDocument.has(d.id));
+    const everyDocDeclaresDispatch = docs.every((d) => declaredDocs.has(d.id));
     if (!everyDocDeclaresDispatch) return 'NO_COMPARABLE';
   }
   return isPending.has(orderId) ? 'PARCIAL' : 'COMPLETO';

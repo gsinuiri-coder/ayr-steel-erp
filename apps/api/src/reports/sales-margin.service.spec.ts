@@ -2,6 +2,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import { LIVE_DOCUMENT_STATUSES, salesMarginQuerySchema, sum as decimalSum } from '@ayr/shared';
 import { SalesMarginService } from './sales-margin.service';
+import { SalesByMaterialService } from './sales-by-material.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -112,6 +113,10 @@ async function buildService(
         })),
       );
     }
+    // cc55 (D-667): las líneas del motor (aquí, ninguna: los casos de este archivo no son de
+    // Coberturas Aluzinc; el reemplazo por el costo de OP lo prueban `sales-margin-engine.spec` y
+    // el db-spec de cc55).
+    if (sql.includes('AS "in_engine"')) return Promise.resolve([]);
     if (sql.includes('"fiscal_document_items" fdi')) {
       return Promise.resolve(
         (seeds.salesByLine ?? []).map((s) => ({
@@ -125,7 +130,11 @@ async function buildService(
   });
 
   const module: TestingModule = await Test.createTestingModule({
-    providers: [SalesMarginService, { provide: PrismaService, useValue: { $queryRaw: queryRaw } }],
+    providers: [
+      SalesMarginService,
+      SalesByMaterialService,
+      { provide: PrismaService, useValue: { $queryRaw: queryRaw } },
+    ],
   }).compile();
 
   return { service: module.get(SalesMarginService), calls, params };
@@ -149,7 +158,9 @@ describe('SalesMarginService', () => {
         (v): v is { values: unknown[]; strings: string[] } =>
           typeof v === 'object' && v !== null && 'values' in v && 'strings' in v,
       )
-      .map((v) => v.values);
+      .map((v) => v.values)
+      // cc55 (D-667): la consulta de las líneas del motor trae sus propios fragmentos (no de estado).
+      .filter((values) => values.includes('ACCEPTED'));
     // Documentos, fuera de rango y pendientes de despacho: las tres consultas que cortan por estado.
     expect(liveLists).toHaveLength(3);
     for (const list of liveLists) expect(list).toEqual([...LIVE_DOCUMENT_STATUSES]);
@@ -495,13 +506,14 @@ describe('SalesMarginService', () => {
     expect(report.totals.excludedSalesPen).toBe('400.0000');
   });
 
-  it('presupuesto de consultas: seis, y el conteo no cambia con diez pedidos y veinte comprobantes', async () => {
+  // cc55 (D-667): siete sin líneas del motor (la séptima las busca); diez con ellas (sus hechos).
+  it('presupuesto de consultas: siete, y el conteo no cambia con diez pedidos y veinte comprobantes', async () => {
     const one = await buildService({
       documents: [{ id: 'd1', subtotal: '10.0000' }],
       costs: [{ orderId: 'o1', cost: '5.0000' }],
     });
     await one.service.salesMargin(RANGE);
-    expect(one.calls).toHaveLength(6);
+    expect(one.calls).toHaveLength(7);
 
     const many = await buildService({
       documents: Array.from({ length: 20 }, (_, i) => ({
@@ -514,7 +526,7 @@ describe('SalesMarginService', () => {
     });
     const report = await many.service.salesMargin(RANGE);
 
-    expect(many.calls).toHaveLength(6);
+    expect(many.calls).toHaveLength(7);
     expect(report.orders).toHaveLength(10);
     expect(report.totals.salesPen).toBe('200.0000');
     expect(report.totals.costPen).toBe('50.0000');

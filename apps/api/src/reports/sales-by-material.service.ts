@@ -340,6 +340,33 @@ export class SalesByMaterialService {
   }
 
   /**
+   * cc55 (D-667): las líneas **del motor** (Coberturas Aluzinc fabricadas contra pedido o bobina
+   * entera) de varios comprobantes, con las columnas de `documentLines`. Una consulta. Cada nota
+   * de crédito es su propio comprobante (`is_credit` en falso): «Ventas y margen» la cuenta en su
+   * periodo, y su cantidad viene con signo (resta).
+   */
+  engineLinesOf(documentIds: readonly string[]): Promise<DocumentLineRow[]> {
+    if (documentIds.length === 0) return Promise.resolve([]);
+    return this.prisma.$queryRaw<DocumentLineRow[]>`
+      SELECT
+        ${LINE_COLUMNS},
+        fdi."id" AS "item_id",
+        fdi."line_number",
+        fdi."description",
+        fdi."sales_order_item_id" AS "own_order_item_id",
+        blp."code"::text AS "line_code",
+        true AS "in_engine",
+        false AS "is_credit",
+        fd."credit_note_reason"::text AS "credit_reason"
+      FROM "fiscal_document_items" fdi
+      LEFT JOIN "products" p ON p."id" = fdi."product_id"
+      ${LINE_JOINS}
+      WHERE fdi."document_id" = ANY(${[...documentIds]}::uuid[])
+        AND COALESCE(${IN_ENGINE}, false)
+    `;
+  }
+
+  /**
    * cc24 (D-417): Coberturas (UPVC) y Reventa, por producto. Tres consultas fijas (dos si el
    * rango no trae líneas): las líneas, lo despachado contra cada comprobante y la venta sin
    * línea. Los filtros de tipo, espesor y color no aplican a estas pestañas.

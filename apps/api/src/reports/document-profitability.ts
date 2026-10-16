@@ -227,6 +227,33 @@ function engineLine(
   };
 }
 
+/** cc55 (D-667): el costo del motor de una línea de comprobante y su estado. */
+export interface EngineLineCost {
+  costPen: Decimal;
+  status: DocumentProfitLineStatus;
+}
+
+/**
+ * cc55 (D-667) — **«el» costo de lo fabricado contra pedido**: el de su OP, por el motor de «Ventas
+ * por material» (bobina consumida por los partes y el despunte de sus OP, en la proporción de lo
+ * facturado sobre lo producido). Es **la misma cuenta** que esta rentabilidad hace por línea
+ * (`engineLine`), expuesta para que «Ventas y margen» costee esas líneas igual y los dos reportes den
+ * el mismo costo para un comprobante de coberturas. Por `item_id` (la línea del comprobante).
+ */
+export function engineLineCosts(
+  rows: readonly DocumentLineRow[],
+  engine: EngineFacts,
+): Map<string, EngineLineCost> {
+  const usageByLine = usageByOrderLine(engine.usage);
+  const out = new Map<string, EngineLineCost>();
+  for (const row of rows) {
+    if (!row.in_engine) continue;
+    const r = engineLine(row, engine, usageByLine);
+    out.set(row.item_id, { costPen: r.sum.acc.cost, status: r.dto.status });
+  }
+  return out;
+}
+
 /**
  * Una línea que no es de Coberturas Aluzinc: la salida `SALE` de los despachos declarados del
  * comprobante para su línea de pedido (D-242), nunca el despacho del pedido (D-205).
