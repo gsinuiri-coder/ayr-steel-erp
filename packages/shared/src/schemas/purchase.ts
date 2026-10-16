@@ -1,3 +1,4 @@
+import { costChangeReasonSchema } from './cost-change';
 import { z } from 'zod';
 import { decimalStringSchema, toDecimal } from '../decimal';
 import { reasonSchema } from './coil';
@@ -547,6 +548,8 @@ export type EditReceivedPurchaseInput = z.infer<typeof editReceivedPurchaseSchem
 /** Confirmar la edición: lo mismo más el motivo, obligatorio. */
 export const commitReceivedPurchaseEditSchema = editReceivedPurchaseSchema.extend({
   reason: reasonSchema,
+  /** cc56 (D-669): obligatorio si la edición cambia un precio (grupo COST); lo exige el API. */
+  costReason: costChangeReasonSchema.optional(),
   /** D-372 (cc15): un mismo envío (doble click, reintento de red) se aplica una sola vez. */
   idempotencyKey: idempotencyKeySchema.optional(),
 });

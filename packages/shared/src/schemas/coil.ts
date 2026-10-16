@@ -12,6 +12,7 @@ import {
   PRODUCTION_ORDER_KINDS,
   PRODUCTION_ORDER_STATUSES,
 } from '../enums';
+import { costChangeReasonSchema, COST_CHANGE_REQUIRED_MESSAGE } from './cost-change';
 import { backdatableFields, operationDateSchema } from './operation';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
@@ -424,6 +425,8 @@ export const updateCoilSchema = z
       max: MAX_VALUE.MONEY,
     }).optional(),
     reason: reasonSchema.optional(),
+    /** cc56 (D-669): por qué cambia el costo, de la lista. Obligatorio si cambia el costo. */
+    costReason: costChangeReasonSchema.optional(),
   })
   .superRefine((d, ctx) => {
     if (Object.values(d).every((v) => v === undefined)) {
@@ -436,6 +439,13 @@ export const updateCoilSchema = z
         code: z.ZodIssueCode.custom,
         path: ['reason'],
         message: 'Cambiar el costo de una bobina exige un motivo (D-045)',
+      });
+    }
+    if (touchesCost && !d.costReason) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['costReason'],
+        message: COST_CHANGE_REQUIRED_MESSAGE,
       });
     }
     if (d.currency === 'PEN' && d.exchangeRate !== undefined && !toDecimal(d.exchangeRate).eq(1)) {

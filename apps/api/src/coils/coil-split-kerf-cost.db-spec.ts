@@ -411,6 +411,7 @@ describe('D-608 — el kerf y el borde del partido interno quedan en el costo de
       updateCoilSchema.parse({
         unitCostPerKg: child.unitCostPerKg.toFixed(4),
         reason: 'Prueba cc46: mismo costo',
+        costReason: 'TYPING_ERROR',
       }),
     );
     const live = await prisma.inventoryMovement.findMany({
@@ -426,7 +427,11 @@ describe('D-608 — el kerf y el borde del partido interno quedan en el costo de
     await operations.update(
       admin,
       child.id,
-      updateCoilSchema.parse({ unitCostPerKg: '4.5000', reason: 'Prueba cc46: costo nuevo' }),
+      updateCoilSchema.parse({
+        unitCostPerKg: '4.5000',
+        reason: 'Prueba cc46: costo nuevo',
+        costReason: 'TYPING_ERROR',
+      }),
     );
     const recosted = await prisma.inventoryMovement.findFirstOrThrow({
       where: { itemType: 'COIL', itemId: child.id, reversalOfId: null, reversals: { none: {} } },

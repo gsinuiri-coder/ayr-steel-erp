@@ -189,7 +189,11 @@ describe('update — recosteo (D-045) de una hija de partido', () => {
     await service.update(
       admin,
       child.id,
-      updateCoilSchema.parse({ unitCostPerKg: '4.3367', reason: 'mismo costo' }),
+      updateCoilSchema.parse({
+        unitCostPerKg: '4.3367',
+        reason: 'mismo costo',
+        costReason: 'TYPING_ERROR',
+      }),
     );
     expect(reverse).toHaveBeenCalled();
     expect(record).toHaveBeenCalledWith(
@@ -205,7 +209,11 @@ describe('update — recosteo (D-045) de una hija de partido', () => {
     await service.update(
       admin,
       child.id,
-      updateCoilSchema.parse({ unitCostPerKg: '4.5000', reason: 'costo nuevo' }),
+      updateCoilSchema.parse({
+        unitCostPerKg: '4.5000',
+        reason: 'costo nuevo',
+        costReason: 'PURCHASE_CORRECTION',
+      }),
     );
     const call = (record.mock.calls as unknown[][])[0]?.[1] as {
       unitCost: string;

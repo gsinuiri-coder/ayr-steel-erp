@@ -30,6 +30,8 @@ import {
   type ReverseMovementInput,
   type SetCoilStatusInput,
   type UpdateCoilInput,
+  costChangeNote,
+  COST_CHANGE_REQUIRED_MESSAGE,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -1072,6 +1074,15 @@ export class CoilOperationsService {
         'Solo un administrador puede cambiar la moneda, el tipo de cambio o el costo de una bobina',
       );
     }
+    // cc56 (D-669): el costo no se baja a mano para vender más barato; solo por un motivo de la
+    // lista. El schema ya lo exige; esto cubre a un llamador interno que no pase por él.
+    if (touchesCost && !input.costReason) {
+      throw new BadRequestException(COST_CHANGE_REQUIRED_MESSAGE);
+    }
+    const costNote =
+      touchesCost && input.costReason
+        ? costChangeNote(input.costReason, input.reason ?? 'Corrección de costo de la bobina')
+        : undefined;
 
     // D-134: presupuesto explícito. La comprobación del agregado recorre las bobinas
     // compatibles, y con los 5 s por defecto de Prisma esta transacción se pasaba del
@@ -1215,7 +1226,7 @@ export class CoilOperationsService {
             tx,
             initial.id,
             actor.id,
-            input.reason ?? 'Corrección de costo de la bobina',
+            costNote ?? input.reason ?? 'Corrección de costo de la bobina',
             recostDate,
             true,
             // cc53: el reingreso de la misma cantidad sigue en esta transacción (estado final).
@@ -1233,7 +1244,7 @@ export class CoilOperationsService {
               : { unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY') }),
             refType: initial.refType,
             refId: initial.refId ?? undefined,
-            notes: input.reason,
+            notes: costNote ?? input.reason,
             actorId: actor.id,
             operationDate: recostDate,
             // El recosteo es reversa + reingreso del **mismo** hecho, con la fecha de ese
@@ -1297,6 +1308,7 @@ export class CoilOperationsService {
             notes: updated.notes,
             recosted: touchesCost,
             reason: input.reason ?? null,
+            costReason: input.costReason ?? null,
           },
         });
       },

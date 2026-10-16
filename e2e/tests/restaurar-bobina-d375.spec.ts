@@ -128,7 +128,11 @@ test.describe('D-375 — restaurar bobina anulada de compra', () => {
       reason: 'Merma por error (E2E)',
     });
     const recost = await api.patch(`/api/coils/${coil.id}`, {
-      data: { unitCostPerKg: '4', reason: 'Costo corregido (E2E D-375)' },
+      data: {
+        unitCostPerKg: '4',
+        reason: 'Costo corregido (E2E D-375)',
+        costReason: 'TYPING_ERROR',
+      },
     });
     expect(recost.status(), await recost.text()).toBe(200);
     await postJson(api, `/api/coils/${coil.id}/cancel`, { reason: 'Anulada (E2E D-375)' });

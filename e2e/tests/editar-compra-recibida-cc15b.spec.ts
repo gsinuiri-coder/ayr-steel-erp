@@ -101,12 +101,14 @@ test.describe('D-372 sesión 2 (cc15b)', () => {
     const rejected = await postExpectingError(api, `/api/purchases/${purchase.id}/received-edit`, {
       items: [{ itemId: item.id, qty: '4' }],
       reason: 'No cubre la reserva (E2E cc15b)',
+      costReason: 'PURCHASE_CORRECTION',
     });
     expect(rejected.status).toBe(400);
 
     await postJson(api, `/api/purchases/${purchase.id}/received-edit`, {
       items: [{ itemId: item.id, unitPrice: '22', qty: '6' }],
       reason: 'Precio y cantidad con reserva (E2E cc15b)',
+      costReason: 'PURCHASE_CORRECTION',
     });
     expect(await balanceOf(api, 'PRODUCT', product.id)).toMatchObject({
       qty: '6.000',
@@ -128,6 +130,7 @@ test.describe('D-372 sesión 2 (cc15b)', () => {
       postJson(api, `/api/purchases/${purchase.id}/received-edit`, {
         items: [{ itemId: item.id, qty: '4' }],
         reason: 'Carrera con una reserva (E2E cc15b)',
+        costReason: 'PURCHASE_CORRECTION',
       }),
       createDirectOrder(api, {
         customerId: customer.id,
@@ -167,6 +170,7 @@ test.describe('D-372 sesión 2 (cc15b)', () => {
     await postJson(api, `/api/purchases/${first.id}/received-edit`, {
       items: [{ itemId: item.id, unitPrice: '27' }],
       reason: 'Precio con compra posterior (E2E cc15b)',
+      costReason: 'PURCHASE_CORRECTION',
     });
     // 10 a 27 + 4 a 20 = 350 / 14 = 25.
     expect(await balanceOf(api, 'PRODUCT', product.id)).toMatchObject({
@@ -183,6 +187,7 @@ test.describe('D-372 sesión 2 (cc15b)', () => {
     await postJson(api, `/api/purchases/${first.id}/received-edit`, {
       items: [{ itemId: first.items[0]!.id, unitPrice: '27' }],
       reason: 'Precio antes de anular la posterior (E2E cc15b)',
+      costReason: 'PURCHASE_CORRECTION',
     });
 
     // El reingreso de la primera tiene id mayor que la segunda, pero es una entrada: no bloquea.
