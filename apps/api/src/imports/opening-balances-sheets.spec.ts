@@ -101,6 +101,27 @@ describe('plantillas de saldos iniciales', () => {
     expect(rows[1]?.key).toBe('');
   });
 
+  it('sin los encabezados de la plantilla, no lee nada (no deja todo vacío)', () => {
+    expect(() =>
+      readOpeningRows(
+        bookOf([
+          ['Comprobante', 'Monto'],
+          ['F1', 10],
+        ]),
+        'CUSTOMERS',
+      ),
+    ).toThrow(/falta «Monto cobrado S\/ o Saldo pendiente al corte S\/»/);
+    expect(() =>
+      readOpeningRows(
+        bookOf([
+          ['Compra', 'Monto pagado'],
+          ['F1', 1],
+        ]),
+        'SUPPLIERS',
+      ),
+    ).toThrow(/«RUC proveedor»/);
+  });
+
   it('el comprobante se lee en mayúsculas', () => {
     const rows = readOpeningRows(
       bookOf([

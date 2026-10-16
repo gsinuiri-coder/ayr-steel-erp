@@ -202,6 +202,9 @@ async function main(): Promise<void> {
     const cutoff = flag('--corte');
     if (!cutoff || !isCalendarDate(cutoff)) throw new Error('--corte AAAA-MM-DD es obligatorio');
     if (cutoff > businessToday()) throw new Error('--corte no puede ser futuro');
+    const floor = app.get(OperationDateService).historicalLoadStart;
+    if (cutoff < floor)
+      throw new Error(`--corte no puede ser anterior al inicio de la carga histórica (${floor})`);
     const missingFlag = flag('--faltantes');
     const missing: MissingPolicy | null =
       missingFlag === 'pagado' ? 'PAID' : missingFlag === 'pendiente' ? 'PENDING' : null;

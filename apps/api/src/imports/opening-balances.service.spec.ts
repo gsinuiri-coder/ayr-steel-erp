@@ -21,6 +21,7 @@ const actor = { id: 'admin', role: 'ADMINISTRADOR' } as RequestUser;
 
 function fakeTx(audit: { action: string; entityId: string; after: unknown; at: Date }[] = []) {
   return {
+    $queryRaw: jest.fn(() => Promise.resolve([])),
     fiscalDocument: {
       findMany: jest.fn(() =>
         Promise.resolve([
@@ -74,7 +75,8 @@ function fakeTx(audit: { action: string; entityId: string; after: unknown; at: D
                 currency: 'PEN',
                 exchangeRate: D('3.7'),
                 reversedAt: null,
-                date: date('2026-08-30'),
+                // Posterior al corte: baja el saldo de hoy, no el del corte.
+                date: date('2026-10-05'),
               },
             ],
           },
@@ -115,14 +117,16 @@ function fakeTx(audit: { action: string; entityId: string; after: unknown; at: D
 function importer() {
   let id = 0;
   const receivables = {
-    addPaymentInTx: jest.fn(() => Promise.resolve(`c${String(++id)}`)),
-    reversePaymentInTx: jest.fn(() => Promise.resolve()),
+    addPaymentInTx: jest.fn((..._args: unknown[]) => Promise.resolve(`c${String(++id)}`)),
+    reversePaymentInTx: jest.fn((..._args: unknown[]) => Promise.resolve()),
   };
   const purchases = {
-    addPaymentInTx: jest.fn((): Promise<string | null> => Promise.resolve(`s${String(++id)}`)),
-    reversePaymentInTx: jest.fn(() => Promise.resolve()),
+    addPaymentInTx: jest.fn((..._args: unknown[]): Promise<string | null> =>
+      Promise.resolve(`s${String(++id)}`),
+    ),
+    reversePaymentInTx: jest.fn((..._args: unknown[]) => Promise.resolve()),
   };
-  const audit = { write: jest.fn(() => Promise.resolve()) };
+  const audit = { write: jest.fn((..._args: unknown[]) => Promise.resolve()) };
   return {
     receivables,
     purchases,
@@ -165,7 +169,7 @@ describe('OpeningBalancesImporter', () => {
     const suppliers = await service.supplierAccounts(fakeTx() as unknown as Tx, '2026-09-30');
     const p = suppliers.accounts.find((a) => a.id === 'pur-1');
     expect(p).toMatchObject({ key: '20999 · F001-9' });
-    expect(p?.paidUpToCutoff.toString()).toBe('100');
+    expect(p?.paidUpToCutoff.toString()).toBe('0');
     expect(p?.payableNow.toFixed(2)).toBe('900.00');
     expect(suppliers.meta.get('pur-1')).toEqual({ currency: 'USD', exchangeRate: '3.7000' });
   });
@@ -399,6 +403,7 @@ describe('vista previa', () => {
           },
         ],
         totalRegistered: '100.00',
+        totalsByCurrency: { PEN: '100.00' },
       },
     },
     suppliers: null,
@@ -418,7 +423,7 @@ describe('vista previa', () => {
     expect(md).toMatch(/pagado al corte/);
     expect(md).toMatch(/fila 3 · X: malo/);
     expect(md).toMatch(/\(sin clave\): ojo/);
-    expect(md).toMatch(/\| F1-1 \| 2026-09-30 \| 100.00 \| Otro \|/);
+    expect(md).toMatch(/\| F1-1 \| 2026-09-30 \| 100.00 \| PEN \| Otro \|/);
     expect(md).toMatch(/Pagos: no vino archivo/);
     expect(renderOpeningPreview({ ...preview, executed: true })).toMatch(/EJECUCIÓN/);
   });

@@ -1,4 +1,10 @@
-import { Decimal, PAYMENT_METHOD_LABELS, PaymentMethod, toDecimal } from '@ayr/shared';
+import {
+  Decimal,
+  hasCollectibleBalance,
+  PAYMENT_METHOD_LABELS,
+  PaymentMethod,
+  toDecimal,
+} from '@ayr/shared';
 import { parseCalendarDate } from './parse-spreadsheet';
 
 /**
@@ -38,6 +44,8 @@ export interface OpeningAccount {
   paidUpToCutoff: Decimal;
   /** Lo que hoy se puede cobrar, en céntimos (`payableBalance` del saldo vigente). */
   payableNow: Decimal;
+  /** Moneda de la cuenta (`PEN` en ventas; la de la compra en compras). */
+  currency?: string;
 }
 
 /** Una fila del Excel ya leída (texto tal como vino; el plan lo valida). */
@@ -65,6 +73,7 @@ export interface PlannedPayment {
   /** De dónde sale: una fila de cobro, el saldo declarado o la opción del lote. */
   source: 'ROW' | 'BALANCE' | 'MISSING_PAID';
   rowNumbers: number[];
+  currency?: string;
 }
 
 export interface PlanIssue {
@@ -89,6 +98,8 @@ export interface OpeningPlan {
   warnings: PlanIssue[];
   accounts: AccountOutcome[];
   totalRegistered: string;
+  /** Lo registrado por moneda (compras en soles y en dólares no se suman entre sí). */
+  totalsByCurrency: Record<string, string>;
 }
 
 export interface PlanOptions {
@@ -104,7 +115,7 @@ const ZERO = new Decimal(0);
 
 /** `1 234,50`, `1,234.50`, `1234.5`, `S/ 1234` → Decimal. `null` si no es un número. */
 export function parseAmount(raw: string): Decimal | null {
-  let text = raw.replaceAll(/s\/|us\$|\$|\s/gi, '');
+  let text = raw.replaceAll(/s\/\.?|us\$|\$|\s/gi, '');
   if (text === '') return null;
   const lastComma = text.lastIndexOf(',');
   const lastDot = text.lastIndexOf('.');
@@ -289,6 +300,8 @@ export function planOpeningBalances(
       continue;
     }
     const [account] = matches as [OpeningAccount];
+    const blank = [row.date, row.amount, row.balance].every((v) => v.trim() === '');
+    if (account.issueDate > options.cutoff && blank) continue;
     if (account.issueDate > options.cutoff) {
       errors.push({
         rowNumber: row.rowNumber,
@@ -305,7 +318,9 @@ export function planOpeningBalances(
   const payments: PlannedPayment[] = [];
   const outcomes: AccountOutcome[] = [];
   for (const account of accounts) {
-    const before = Decimal.max(account.netAtCutoff.minus(account.paidUpToCutoff), ZERO);
+    const rawBefore = Decimal.max(account.netAtCutoff.minus(account.paidUpToCutoff), ZERO);
+    // D-377: un resto de fracciones de céntimo no es deuda; no se registra un cobro de 0,01 por él.
+    const before = hasCollectibleBalance(rawBefore) ? rawBefore : ZERO;
     const outcome = (registered: Decimal, treatment: AccountOutcome['treatment']): void => {
       outcomes.push({
         key: account.key,
@@ -337,6 +352,7 @@ export function planOpeningBalances(
         {
           accountId: account.id,
           key: account.key,
+          currency: account.currency,
           date: options.cutoff,
           amount: room.toFixed(2),
           method: PaymentMethod.OTHER,
@@ -383,6 +399,7 @@ export function planOpeningBalances(
           {
             accountId: account.id,
             key: account.key,
+            currency: account.currency,
             date: options.cutoff,
             amount: toRegister.toFixed(2),
             method: only.method,
@@ -398,6 +415,13 @@ export function planOpeningBalances(
       continue;
     }
 
+    if (account.paidUpToCutoff.gt(0)) {
+      accountError(
+        `ya tiene ${account.paidUpToCutoff.toFixed(2)} registrado en la app hasta el corte: las filas de ${options.noun.payment} duplicarían lo cobrado. Para esta cuenta usa «saldo pendiente al corte»`,
+        rowNumbers,
+      );
+      continue;
+    }
     const total = parsed.reduce((acc, r) => acc.plus(r.amount ?? ZERO), ZERO);
     if (total.gt(room)) {
       accountError(
@@ -412,6 +436,7 @@ export function planOpeningBalances(
     planned = parsed.map((r) => ({
       accountId: account.id,
       key: account.key,
+      currency: account.currency,
       date: r.date ?? options.cutoff,
       amount: (r.amount ?? ZERO).toFixed(2),
       method: r.method,
@@ -425,12 +450,18 @@ export function planOpeningBalances(
   }
 
   const totalRegistered = payments.reduce((acc, p) => acc.plus(p.amount), ZERO);
+  const byCurrency = new Map<string, Decimal>();
+  for (const p of payments) {
+    const c = p.currency ?? 'PEN';
+    byCurrency.set(c, (byCurrency.get(c) ?? ZERO).plus(p.amount));
+  }
   return {
     payments,
     errors,
     warnings,
     accounts: outcomes,
     totalRegistered: totalRegistered.toFixed(2),
+    totalsByCurrency: Object.fromEntries([...byCurrency].map(([c, v]) => [c, v.toFixed(2)])),
   };
 }
 

@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { getField, parseSpreadsheet, type ImportColumn } from './parse-spreadsheet';
+import { getField, parseSpreadsheet, pickRawValue, type ImportColumn } from './parse-spreadsheet';
 import type { OpeningRow } from './opening-balances-plan';
 
 /**
@@ -41,6 +41,7 @@ export function supplierKey(supplierDoc: string, document: string): string {
 /** Las filas de la primera hoja del archivo, ya con la clave armada. La fila 1 es el encabezado. */
 export function readOpeningRows(buffer: Buffer, side: OpeningSide): OpeningRow[] {
   const raw = parseSpreadsheet(buffer);
+  assertHeaders(raw[0] ?? {}, side);
   return raw.map((r, i) => {
     const rowNumber = i + 2;
     if (side === 'CUSTOMERS') {
@@ -69,6 +70,30 @@ export function readOpeningRows(buffer: Buffer, side: OpeningSide): OpeningRow[]
       exchangeRate: getField(r, s.exchangeRate),
     };
   });
+}
+
+/**
+ * Sin los encabezados de la plantilla, cada fila se leería vacía y el lote entero caería en la opción
+ * de lo que no está en el Excel («pagado al corte» registraría todo). Se exige la clave y al menos
+ * una de las dos formas de llenar (monto o saldo al corte).
+ */
+function assertHeaders(first: Record<string, unknown>, side: OpeningSide): void {
+  const has = (column: ImportColumn) => pickRawValue(first, column.header) !== undefined;
+  const keys =
+    side === 'CUSTOMERS'
+      ? [CUSTOMER_COLUMNS.key]
+      : [SUPPLIER_COLUMNS.supplierDoc, SUPPLIER_COLUMNS.document];
+  const values =
+    side === 'CUSTOMERS'
+      ? [CUSTOMER_COLUMNS.amount, CUSTOMER_COLUMNS.balance]
+      : [SUPPLIER_COLUMNS.amount, SUPPLIER_COLUMNS.balance];
+  const missing = keys.filter((c) => !has(c)).map((c) => c.header);
+  if (!values.some(has)) missing.push(`${values[0]?.header ?? ''} o ${values[1]?.header ?? ''}`);
+  if (missing.length > 0) {
+    throw new Error(
+      `El Excel no tiene las columnas de la plantilla: falta ${missing.map((m) => `«${m}»`).join(', ')}. Usa la plantilla sin cambiar los encabezados.`,
+    );
+  }
 }
 
 /** Una fila de la plantilla de cobranzas: lo informativo del comprobante. */
@@ -227,6 +252,7 @@ function instructions(side: OpeningSide, cutoffHint: string): string[][] {
     `Cada fila es un ${what}. Llena UNA de estas dos formas (no las dos en la misma fila):`,
     `  A) Lo ${paid} hasta la fecha de corte: fecha, monto y medio. Si hubo varios, una fila por cada uno (repite el ${what}).`,
     `  B) Solo el saldo que quedaba pendiente a la fecha de corte (columna «Saldo pendiente al corte»). Si ya estaba todo ${paid}, pon 0.`,
+    `Si la app ya tiene ${paid === 'cobrado' ? 'cobros' : 'pagos'} registrados de ese ${what} hasta el corte, usa la forma B (la A los duplicaría y se rechaza).`,
     '',
     `Si dejas un ${what} en blanco (o lo borras), se trata según la opción que elijas al importar:`,
     `  «pagado al corte»: se registra como ${paid} entero a la fecha de corte;`,

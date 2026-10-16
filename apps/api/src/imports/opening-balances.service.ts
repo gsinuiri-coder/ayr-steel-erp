@@ -50,6 +50,8 @@ import {
  */
 
 export const OPENING_BATCH_ACTION = 'imports.opening-balances';
+/** Clave del candado asesor de la ejecución (un número fijo, propio de este importador). */
+export const OPENING_ADVISORY_LOCK = 560668;
 export const OPENING_UNDO_ACTION = 'imports.opening-balances.undo';
 const OPENING_ENTITY = 'opening_balance_batches';
 
@@ -146,7 +148,10 @@ export class OpeningBalancesImporter {
         netAtCutoff: toDecimal(d.totalPen.toString()).minus(credited),
         paidUpToCutoff: paid,
         payableNow: payableBalance(balance),
+        currency: 'PEN',
       });
+      // La plantilla trae lo emitido hasta el corte: lo posterior no es saldo inicial.
+      if (fromDateOnly(d.issueDate) > cutoff) continue;
       template.push({
         number,
         customer: d.customer.name,
@@ -200,8 +205,13 @@ export class OpeningBalancesImporter {
         issueDate: fromDateOnly(p.issueDate),
         netAtCutoff: toDecimal(p.total.toString()),
         paidUpToCutoff: paid,
-        payableNow: payableBalance(balance),
+        // Hacia abajo, no hacia arriba como en ventas: `addPaymentInTx` compara contra el saldo sin
+        // redondear, y el resto de menos de un céntimo ya cuenta como saldado (D-039).
+        payableNow: balance.toDecimalPlaces(2, Decimal.ROUND_DOWN),
+        currency: p.currency,
       });
+      meta.set(p.id, { currency: p.currency, exchangeRate: p.exchangeRate.toFixed(4) });
+      if (fromDateOnly(p.issueDate) > cutoff) continue;
       template.push({
         supplierDoc: p.supplier.docNumber,
         supplier: p.supplier.name,
@@ -211,7 +221,6 @@ export class OpeningBalancesImporter {
         total: p.total.toFixed(2),
         balance: balance.toFixed(2),
       });
-      meta.set(p.id, { currency: p.currency, exchangeRate: p.exchangeRate.toFixed(4) });
     }
     return { accounts, template, meta };
   }
@@ -280,6 +289,8 @@ export class OpeningBalancesImporter {
     actor: RequestUser,
     input: OpeningBatchInput,
   ): Promise<OpeningBatchResult> {
+    // Dos ejecuciones a la vez no se cruzan: la segunda espera y después ve el lote vivo.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${OPENING_ADVISORY_LOCK})::text AS "lock"`;
     const live = await this.liveBatches(tx);
     const sides: OpeningSide[] = [];
     if (input.customers !== null) sides.push('CUSTOMERS');
@@ -290,12 +301,17 @@ export class OpeningBalancesImporter {
         `Ya hay un lote de saldos iniciales vivo (${clash.batchId}, ${clash.at}) del mismo lado: deshazlo antes de cargar otro.`,
       );
     }
-    // Regla 17 (D-474): los comprobantes del lote se toman juntos y en orden al inicio, y el plan se
-    // vuelve a leer con ellos bloqueados. Las compras se pagan en orden de id (cada pago bloquea la suya).
-    const first = await this.plan(tx, input);
-    await lockDocuments(tx, {
-      fiscalDocuments: (first.customers?.plan.payments ?? []).map((p) => p.accountId),
-    });
+    // Regla 17 (D-474): todos los comprobantes que el lote puede tocar (los emitidos hasta el corte
+    // con algo que cobrar) se toman juntos y en orden al inicio, y el plan se lee con ellos bloqueados.
+    // Las compras se pagan en orden de id (cada pago bloquea la suya; es una rama aparte).
+    if (input.customers !== null) {
+      const { accounts } = await this.customerAccounts(tx, input.cutoff);
+      await lockDocuments(tx, {
+        fiscalDocuments: accounts
+          .filter((a) => a.issueDate <= input.cutoff && a.payableNow.gt(0))
+          .map((a) => a.id),
+      });
+    }
     const result = await this.plan(tx, input);
     result.customers?.plan.payments.sort(byAccount);
     result.suppliers?.plan.payments.sort(byAccount);
@@ -317,13 +333,15 @@ export class OpeningBalancesImporter {
     };
     if (result.customers) {
       for (const p of result.customers.plan.payments) {
-        const id = await this.receivables.addPaymentInTx(tx, actor, p.accountId, {
-          date: p.date,
-          amountPen: p.amount,
-          method: p.method,
-          reference: batchReference(batchId, p.reference, 120),
-          idempotencyKey: key(),
-        });
+        const id = await named(p.key, () =>
+          this.receivables.addPaymentInTx(tx, actor, p.accountId, {
+            date: p.date,
+            amountPen: p.amount,
+            method: p.method,
+            reference: batchReference(batchId, p.reference, 120),
+            idempotencyKey: key(),
+          }),
+        );
         result.customers.paymentIds.push(id);
       }
     }
@@ -333,20 +351,22 @@ export class OpeningBalancesImporter {
         const m = meta.get(p.accountId);
         if (!m) throw new OpeningBatchRejected(`Compra ${p.key} sin datos de moneda`);
         const rate = paymentRate(p, m);
-        const id = await this.purchases.addPaymentInTx(
-          tx,
-          actor,
-          p.accountId,
-          {
-            date: p.date,
-            amount: p.amount,
-            currency: m.currency as Currency,
-            exchangeRate: rate.toFixed(4),
-            method: p.method,
-            reference: batchReference(batchId, p.reference, 80),
-            idempotencyKey: key(),
-          },
-          rate,
+        const id = await named(p.key, () =>
+          this.purchases.addPaymentInTx(
+            tx,
+            actor,
+            p.accountId,
+            {
+              date: p.date,
+              amount: p.amount,
+              currency: m.currency as Currency,
+              exchangeRate: rate.toFixed(4),
+              method: p.method,
+              reference: batchReference(batchId, p.reference, 80),
+              idempotencyKey: key(),
+            },
+            rate,
+          ),
         );
         if (id === null) throw new OpeningBatchRejected(`El pago de ${p.key} ya estaba registrado`);
         result.suppliers.paymentIds.push(id);
@@ -368,7 +388,7 @@ export class OpeningBalancesImporter {
         ...audit,
         missingLabel: MISSING_POLICY_LABELS[input.missing],
         customersTotalPen: result.customers?.plan.totalRegistered ?? '0.00',
-        suppliersTotal: result.suppliers?.plan.totalRegistered ?? '0.00',
+        suppliersTotals: result.suppliers?.plan.totalsByCurrency ?? {},
       },
     });
     return result;
@@ -474,7 +494,17 @@ function checkExchangeRates(
 ): void {
   for (const p of plan.payments) {
     const m = meta.get(p.accountId);
-    if (!m || p.exchangeRate === null) continue;
+    if (!m) continue;
+    if (p.exchangeRate === null) {
+      if (m.currency !== 'PEN') {
+        plan.warnings.push({
+          rowNumber: p.rowNumbers[0] ?? null,
+          key: p.key,
+          message: `pago en ${m.currency} sin tipo de cambio: se guarda el de la compra (${m.exchangeRate}); no cambia el saldo`,
+        });
+      }
+      continue;
+    }
     const rate = /^\d+(\.\d{1,4})?$/.test(p.exchangeRate.replace(',', '.'))
       ? toDecimal(p.exchangeRate.replace(',', '.'))
       : null;
@@ -501,6 +531,16 @@ function checkExchangeRates(
 function byAccount(a: PlannedPayment, b: PlannedPayment): number {
   if (a.accountId !== b.accountId) return a.accountId < b.accountId ? -1 : 1;
   return a.date.localeCompare(b.date);
+}
+
+/** Un rechazo del servicio de dominio, con la cuenta que lo causó (el lote se revierte entero). */
+async function named<T>(key: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new OpeningBatchRejected(`${key}: ${message}. No se registró nada del lote.`);
+  }
 }
 
 /** El rótulo de un medio para el informe. */

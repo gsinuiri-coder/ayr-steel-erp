@@ -45,6 +45,7 @@ describe('parseAmount', () => {
     ['1.234,56', '1234.56'],
     ['1,234.56', '1234.56'],
     ['S/ 1180', '1180'],
+    ['S/. 1180,50', '1180.5'],
     ['1234,5', '1234.5'],
     ['1,234', '1234'],
     ['0', '0'],
@@ -266,6 +267,50 @@ describe('planOpeningBalances', () => {
       'la fecha 2026-08-05 es anterior a la emisión (2026-08-10)',
     ]);
     expect(plan.payments.map((p) => p.date)).toEqual(['2026-09-30', '2026-08-05']);
+  });
+
+  it('filas de cobro sobre una cuenta que ya tiene cobros hasta el corte: error, no se duplican', () => {
+    const plan = planOpeningBalances(
+      [account('F1', { paidUpToCutoff: new Decimal(300), payableNow: new Decimal('880.00') })],
+      [
+        row('F1', { amount: '300', date: '2026-08-20' }),
+        row('F1', { amount: '200', date: '2026-09-01' }),
+      ],
+      options(),
+    );
+    expect(plan.errors[0]?.message).toMatch(/ya tiene 300.00 registrado en la app/);
+    expect(plan.payments).toEqual([]);
+  });
+
+  it('un resto de fracciones de céntimo no es deuda (D-377): no registra 0,01', () => {
+    const tail = account('F1', {
+      netAtCutoff: new Decimal('1180.0001'),
+      paidUpToCutoff: new Decimal('1180'),
+      payableNow: new Decimal('0.01'),
+    });
+    expect(planOpeningBalances([tail], [], options({ missing: 'PAID' })).payments).toEqual([]);
+    expect(planOpeningBalances([tail], [row('F1', { balance: '0' })], options()).payments).toEqual(
+      [],
+    );
+  });
+
+  it('una fila vacía de un comprobante emitido después del corte no es error', () => {
+    const plan = planOpeningBalances(
+      [account('F9', { issueDate: '2026-10-02' })],
+      [row('F9')],
+      options(),
+    );
+    expect(plan.errors).toEqual([]);
+  });
+
+  it('suma por moneda', () => {
+    const plan = planOpeningBalances(
+      [account('A', { currency: 'PEN' }), account('B', { currency: 'USD' })],
+      [row('A', { balance: '180' }), row('B', { balance: '1080' })],
+      options(),
+    );
+    expect(plan.totalsByCurrency).toEqual({ PEN: '1000.00', USD: '100.00' });
+    expect(plan.payments.map((p) => p.currency)).toEqual(['PEN', 'USD']);
   });
 
   it('una fila vacía de un comprobante cuenta como si no apareciera', () => {

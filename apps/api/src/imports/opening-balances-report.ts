@@ -83,6 +83,13 @@ const TREATMENT_LABELS = {
   AFTER_CUTOFF: 'emitido después del corte (no se toca)',
 } as const;
 
+/** El total por moneda (soles y dólares no se suman entre sí). */
+function totals(plan: OpeningPlan, fallback: string): string {
+  const entries = Object.entries(plan.totalsByCurrency);
+  if (entries.length === 0) return `${fallback} 0.00`;
+  return entries.map(([c, v]) => `${c === 'PEN' ? 'S/' : c} ${v}`).join(' + ');
+}
+
 function side(title: string, currency: string, plan: OpeningPlan): string[] {
   const counts = new Map<string, number>();
   for (const a of plan.accounts) counts.set(a.treatment, (counts.get(a.treatment) ?? 0) + 1);
@@ -90,7 +97,7 @@ function side(title: string, currency: string, plan: OpeningPlan): string[] {
   return [
     `## ${title}`,
     '',
-    `- Pagos a registrar: **${String(plan.payments.length)}** por **${currency} ${plan.totalRegistered}**.`,
+    `- Pagos a registrar: **${String(plan.payments.length)}** por **${totals(plan, currency)}**.`,
     ...[...counts.entries()].map(
       ([t, c]) => `- ${TREATMENT_LABELS[t as keyof typeof TREATMENT_LABELS]}: ${String(c)}`,
     ),
@@ -108,11 +115,11 @@ function side(title: string, currency: string, plan: OpeningPlan): string[] {
               `| ${a.key} | ${a.issueDate} | ${a.balanceAtCutoffBefore} | ${a.registered} | ${a.balanceAtCutoffAfter} | ${TREATMENT_LABELS[a.treatment]} |`,
           ),
           '',
-          '| Cuenta | Fecha | Monto | Medio | Referencia del Excel |',
-          '| --- | --- | ---: | --- | --- |',
+          '| Cuenta | Fecha | Monto | Moneda | Medio | Referencia del Excel |',
+          '| --- | --- | ---: | --- | --- | --- |',
           ...plan.payments.map(
             (p) =>
-              `| ${p.key} | ${p.date} | ${p.amount} | ${PAYMENT_METHOD_LABELS[p.method]} | ${p.reference ?? ''} |`,
+              `| ${p.key} | ${p.date} | ${p.amount} | ${p.currency ?? 'PEN'} | ${PAYMENT_METHOD_LABELS[p.method]} | ${p.reference ?? ''} |`,
           ),
           '',
         ]),
@@ -132,7 +139,7 @@ export function renderOpeningPreview(preview: OpeningPreview): string {
       ? side('Cobranzas (comprobantes)', 'S/', r.customers.plan)
       : ['## Cobranzas: no vino archivo (no se tocan)', '']),
     ...(r.suppliers
-      ? side('Pagos a proveedor (compras)', 'moneda de la compra', r.suppliers.plan)
+      ? side('Pagos a proveedor (compras)', 'S/', r.suppliers.plan)
       : ['## Pagos: no vino archivo (no se tocan)', '']),
   ].join('\n');
 }
