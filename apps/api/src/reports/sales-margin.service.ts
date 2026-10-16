@@ -795,16 +795,14 @@ export function withEngineCosts(
     (c) => c.sales_order_item_id === null || !engineItems.has(c.sales_order_item_id),
   );
   const added: CostRow[] = [...engineItems].flatMap((item) =>
-    (byItem.get(item) ?? []).map(
-      (r): CostRow => ({
-        sales_order_id: r.order_id as string,
-        invoice_id: r.document_id,
-        business_line_code: r.line_code ?? r.product_line ?? '',
-        sales_order_item_id: null,
-        cost_pen: new Prisma.Decimal((engineCosts.get(r.item_id)?.costPen ?? ZERO).toFixed(4)),
-        kind: 'SALE',
-      }),
-    ),
+    (byItem.get(item) ?? []).map((r): CostRow => ({
+      sales_order_id: r.order_id as string,
+      invoice_id: r.document_id,
+      business_line_code: r.line_code ?? r.product_line ?? '',
+      sales_order_item_id: null,
+      cost_pen: new Prisma.Decimal((engineCosts.get(r.item_id)?.costPen ?? ZERO).toFixed(4)),
+      kind: 'SALE',
+    })),
   );
   return [...kept, ...added];
 }

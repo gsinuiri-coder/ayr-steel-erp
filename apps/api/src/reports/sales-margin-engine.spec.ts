@@ -51,7 +51,11 @@ describe('withEngineCosts (cc55, D-667)', () => {
   });
 
   it('las líneas que no son del motor (reventa, stock) se quedan con su despacho', () => {
-    const resale = sale({ sales_order_item_id: 'i2', business_line_code: 'trading', cost_pen: new Prisma.Decimal('100') });
+    const resale = sale({
+      sales_order_item_id: 'i2',
+      business_line_code: 'trading',
+      cost_pen: new Prisma.Decimal('100'),
+    });
     const out = withEngineCosts(
       [sale({}), resale],
       [line({})],
