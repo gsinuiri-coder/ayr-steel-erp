@@ -11,7 +11,7 @@
  *    nombra (quién, cuándo, motivo de cada cambio de precio).
  */
 import 'dotenv/config';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { LIVE_DOCUMENT_STATUSES, toDecimal } from '@ayr/shared';
 import { assertExecuteAllowed } from './cli-gate';
 import { assertExternalOutputsOff } from '../src/common/external-outputs';
@@ -24,6 +24,7 @@ import {
 type Tx = Prisma.TransactionClient;
 const day = (d: Date | null | undefined): string | null =>
   d ? d.toISOString().slice(0, 10) : null;
+const ymd = (d: Date): string => d.toISOString().slice(0, 10);
 const LIVE = [...LIVE_DOCUMENT_STATUSES];
 const COIL_CODE = 'IMPO-ALZ-AZUL-5002-0.28-4150-23';
 
@@ -47,18 +48,18 @@ async function redatePlan(tx: Tx) {
   });
   const targets = docs.flatMap((d) =>
     d.dispatchesInvoiced
-      .filter((x) => day(x.dispatchDate)!.slice(0, 7) !== day(d.issueDate)!.slice(0, 7))
+      .filter((x) => ymd(x.dispatchDate).slice(0, 7) !== ymd(d.issueDate).slice(0, 7))
       .map((x) => ({ doc: d, dispatch: x })),
   );
   const sepToOct = targets.filter(
     (t) =>
-      day(t.doc.issueDate)!.startsWith('2026-09') &&
-      day(t.dispatch.dispatchDate)!.startsWith('2026-10'),
+      ymd(t.doc.issueDate).startsWith('2026-09') &&
+      ymd(t.dispatch.dispatchDate).startsWith('2026-10'),
   );
   const moving = new Map<string, string>(); // movementId → fecha nueva
   for (const t of sepToOct)
     for (const i of t.dispatch.items)
-      if (i.movementId !== null) moving.set(i.movementId.toString(), day(t.doc.issueDate)!);
+      if (i.movementId !== null) moving.set(i.movementId.toString(), ymd(t.doc.issueDate));
   const itemKeys = new Set(
     sepToOct.flatMap((t) => t.dispatch.items.map((i) => `${i.itemType}:${i.itemId}`)),
   );
@@ -94,14 +95,14 @@ async function redatePlan(tx: Tx) {
       qty: toDecimal(r.qty.toString()),
     });
     const before = negativeSpans(
-      qtyRowsFromMovements(rows.map((r) => toQty(r, day(r.operationDate)!))),
+      qtyRowsFromMovements(rows.map((r) => toQty(r, ymd(r.operationDate)))),
     );
     // Las salidas movidas van al final de su día nuevo (criterio de D-652), en su orden de registro.
     const kept = rows.filter((r) => !moving.has(r.id.toString()));
     const moved = rows.filter((r) => moving.has(r.id.toString()));
     const simulated = [
-      ...kept.map((r) => ({ r, date: day(r.operationDate)!, late: 0 })),
-      ...moved.map((r) => ({ r, date: moving.get(r.id.toString())!, late: 1 })),
+      ...kept.map((r) => ({ r, date: ymd(r.operationDate), late: 0 })),
+      ...moved.map((r) => ({ r, date: moving.get(r.id.toString()) ?? '', late: 1 })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.late - b.late || Number(a.r.id - b.r.id));
     const after = negativeSpans(qtyRowsFromMovements(simulated.map((s) => toQty(s.r, s.date))));
     const firstIn = rows.find((r) => r.type === 'IN');
@@ -266,7 +267,8 @@ async function main(): Promise<void> {
       { timeout: 300_000, maxWait: 30_000 },
     );
     process.stdout.write(
-      JSON.stringify(report, (_k, v) => (typeof v === 'bigint' ? v.toString() : v), 2) + '\n',
+      JSON.stringify(report, (_k, v: unknown) => (typeof v === 'bigint' ? v.toString() : v), 2) +
+        '\n',
     );
     const s = report.redate.sepToOct;
     console.error(
