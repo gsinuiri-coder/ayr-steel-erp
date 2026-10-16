@@ -818,8 +818,15 @@ function WhatWillHappen({
                     {s.dispatch}
                   </span>
                 ))}{' '}
-                con un documento DEV-, al costo con que salieron:{' '}
-                <b>{formatMoney(preview.costPen)}</b>.
+                con un documento DEV-, al costo con que salieron
+                {/* cc55 (D-664): el costo solo llega a un ADMINISTRADOR. */}
+                {preview.costPen === null ? (
+                  '.'
+                ) : (
+                  <>
+                    : <b>{formatMoney(preview.costPen)}</b>.
+                  </>
+                )}
               </>
             ),
           )}
@@ -830,7 +837,7 @@ function WhatWillHappen({
             ) : (
               <>
                 Baja <b>{formatMoney(preview.subtotalPen)}</b> sin IGV
-                {toDecimal(preview.costPen).gt(0) ? (
+                {preview.costPen === null ? null : toDecimal(preview.costPen).gt(0) ? (
                   <>
                     {' '}
                     y el costo <b>{formatMoney(preview.costPen)}</b>

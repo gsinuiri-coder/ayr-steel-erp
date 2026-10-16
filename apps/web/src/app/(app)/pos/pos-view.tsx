@@ -53,6 +53,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListStateMessage } from '@/components/list-state';
 import { HeaderActions, printWithNotice } from '@/components/header-actions';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 
 const POS_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
 
@@ -144,32 +145,40 @@ export function PosView() {
     },
   });
 
+  // cc55 (D-666, B-01 de audit-01): una clave por carrito; un reintento tras un corte de red no
+  // vende dos veces, y cambiar el carrito es otro intento (la huella es el cuerpo).
+  const saleKey = useIdempotencyKey();
   const sell = useMutation({
-    mutationFn: () =>
-      api<PosSaleListItemDto>('/pos/sales', {
+    mutationFn: () => {
+      const body = {
+        customerId: customer?.id,
+        method,
+        reference: reference.trim() || undefined,
+        forceGenericCustomer: customer === null && overGenericCap && forceGeneric,
+        items: cart.map((l) => ({
+          productId: l.product.productId,
+          qty: l.qty,
+          ...posLinePayload(linePrice(l)),
+          ...(l.atCost
+            ? {
+                atCost: {
+                  reason: l.atCost.reason,
+                  ...(l.atCost.note === '' ? {} : { note: l.atCost.note }),
+                },
+              }
+            : {}),
+        })),
+      };
+      return api<PosSaleListItemDto>('/pos/sales', {
         method: 'POST',
-        body: {
-          customerId: customer?.id,
-          method,
-          reference: reference.trim() || undefined,
-          forceGenericCustomer: customer === null && overGenericCap && forceGeneric,
-          items: cart.map((l) => ({
-            productId: l.product.productId,
-            qty: l.qty,
-            ...posLinePayload(linePrice(l)),
-            ...(l.atCost
-              ? {
-                  atCost: {
-                    reason: l.atCost.reason,
-                    ...(l.atCost.note === '' ? {} : { note: l.atCost.note }),
-                  },
-                }
-              : {}),
-          })),
-        },
-      }),
+        body: { ...body, idempotencyKey: saleKey.current(JSON.stringify(body)) },
+      });
+    },
     onMutate: () => {
       setError(null);
+    },
+    onSettled: (_data, error) => {
+      saleKey.settle(error ?? undefined);
     },
     onSuccess: (sale) => {
       setDone(sale);

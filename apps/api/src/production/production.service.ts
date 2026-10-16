@@ -1227,6 +1227,8 @@ export class ProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: merma de proceso ${scrapKg.toFixed(3)} kg imputada a ${pieces} piezas`,
         actorId: actor.id,
         operationDate,
+        // cc55 (D-665, E-01): con las piezas ya despachadas, la merma va a esas salidas.
+        whenEmptyAt: reports.map((r) => fromDateOnly(r.operationDate)),
       });
     }
 
@@ -1353,7 +1355,8 @@ export class ProductionService {
               recostOfId: null,
               itemType: 'PRODUCT',
               itemId: order.productId,
-              id: { gt: adjust.id },
+              // cc55 (D-665): ver la reapertura de coberturas.
+              OR: [{ id: { gt: adjust.id } }, { operationDate: { gt: adjust.operationDate } }],
             },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },

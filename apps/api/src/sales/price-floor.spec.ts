@@ -111,11 +111,24 @@ describe('assertPriceFloor (D-163)', () => {
     );
   });
 
-  it('el mensaje dice el mínimo con IGV, el costo y el margen', async () => {
+  it('a un ADMINISTRADOR (showCost) el mensaje le dice el mínimo con IGV, el costo y el margen', async () => {
     const tx = fakeTx({ productCost: COST });
-    await expect(assertPriceFloor(tx, [candidate('1.0000')], '0.05')).rejects.toThrow(
+    await expect(
+      assertPriceFloor(tx, [candidate('1.0000')], '0.05', { showCost: true }),
+    ).rejects.toThrow(
       /precio mínimo es S\/ 22\.95 por und.*costo promedio S\/ 17\.50.*margen mínimo 10\.00%/s,
     );
+  });
+
+  // cc55 (D-664, C-02 de audit-01): sin `showCost` —cualquier rol que no sea ADMINISTRADOR, y
+  // cualquier llamador que no lo pida— el rechazo da el mínimo permitido y no revela el costo.
+  it('sin showCost el mensaje da el mínimo permitido y no dice costo ni margen', async () => {
+    const tx = fakeTx({ productCost: COST });
+    const err = await assertPriceFloor(tx, [candidate('1.0000')], '0.05').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    const message = (err as Error).message;
+    expect(message).toContain('el precio mínimo es S/ 22.95 por und');
+    expect(message).not.toMatch(/costo|margen|17\.50|10\.00/i);
   });
 
   /**
@@ -234,15 +247,15 @@ describe('assertPriceFloor (D-163)', () => {
     it('una diezmilésima bajo el costo rebota, con su propio mensaje', async () => {
       const tx = fakeTx({ productCost: COST });
       await expect(
-        assertPriceFloor(tx, [candidate('17.4999', { atCost: true })], '0.05'),
+        assertPriceFloor(tx, [candidate('17.4999', { atCost: true })], '0.05', { showCost: true }),
       ).rejects.toThrow(/a costo el precio es S\/ 20\.65 .*Por debajo del costo no se vende/);
     });
 
-    it('con opaqueAtCost el rechazo no dice cifras (quien no ve costos)', async () => {
+    it('sin showCost el rechazo de una línea a costo no dice cifras (quien no ve costos)', async () => {
       const tx = fakeTx({ productCost: COST });
-      const err = await assertPriceFloor(tx, [candidate('1.0000', { atCost: true })], '0.05', {
-        opaqueAtCost: true,
-      }).catch((e: unknown) => e);
+      const err = await assertPriceFloor(tx, [candidate('1.0000', { atCost: true })], '0.05').catch(
+        (e: unknown) => e,
+      );
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain('Pide a un administrador');
       expect((err as Error).message).not.toMatch(/\d+\.\d{2}/);
@@ -251,7 +264,7 @@ describe('assertPriceFloor (D-163)', () => {
     it('no depende del margen configurado: sin margen de la línea, igual tiene piso', async () => {
       const tx = fakeTx({ minMarginPct: null, productCost: COST });
       await expect(
-        assertPriceFloor(tx, [candidate('17.0000', { atCost: true })], '0.05'),
+        assertPriceFloor(tx, [candidate('17.0000', { atCost: true })], '0.05', { showCost: true }),
       ).rejects.toThrow(/Por debajo del costo/);
     });
 
@@ -269,6 +282,7 @@ describe('assertPriceFloor (D-163)', () => {
           tx,
           [candidate(COST, { atCost: true }), candidate(COST, { at: 'Línea 2' })],
           '0.05',
+          { showCost: true },
         ),
       ).rejects.toThrow(/Línea 2: .*margen mínimo/);
     });

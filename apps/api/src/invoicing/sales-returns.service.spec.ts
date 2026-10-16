@@ -25,7 +25,12 @@ function dispatchItem(over: Record<string, unknown> = {}) {
     qty: D('5'),
     reserveQty: D('5'),
     movementId: 10n,
-    dispatch: { seq: 7, dispatchDate: new Date('2026-09-10T00:00:00.000Z'), invoiceId: 'f-1' },
+    dispatch: {
+      seq: 7,
+      dispatchDate: new Date('2026-09-10T00:00:00.000Z'),
+      invoiceId: 'f-1',
+      invoice: { status: 'ACCEPTED', archivedAt: null },
+    },
     salesReturnItems: [],
     ...over,
   };

@@ -2468,6 +2468,8 @@ export class RoofingProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: despunte ${scrapKg.toFixed(3)} kg imputado a ${outputQty.toFixed(3)}`,
         actorId: actor.id,
         operationDate,
+        // cc55 (D-665, E-01): con el producto ya despachado, el despunte va a esas salidas.
+        whenEmptyAt: reports.map((r) => fromDateOnly(r.operationDate)),
       });
       adjusted = movement !== null;
     }
@@ -2788,7 +2790,9 @@ export class RoofingProductionService {
               recostOfId: null,
               itemType: 'PRODUCT',
               itemId: order.productId,
-              id: { gt: adjust.id },
+              // cc55 (D-665): un ajuste imputado a la fecha de un parte (producto sin saldo al
+              // cerrar) tiene salidas posteriores **por fecha** con id menor.
+              OR: [{ id: { gt: adjust.id } }, { operationDate: { gt: adjust.operationDate } }],
             },
             orderBy: { id: 'asc' },
             include: { reversals: { select: { id: true } } },

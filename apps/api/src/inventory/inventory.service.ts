@@ -189,6 +189,15 @@ export interface AdjustCostInput {
   operationDate?: string;
   /** D-124: acuse de la advertencia de retrofecha fuera de orden. */
   confirmBackdate?: boolean;
+  /**
+   * cc55 (D-665, E-01 de audit-01): **si hoy el ítem no tiene saldo**, el ajuste no se pierde: se
+   * imputa en la más reciente de estas fechas (`YYYY-MM-DD`, no posteriores a `operationDate`) en que
+   * el ítem terminaba el día con saldo, y el recosteo por fecha (D-649) lo pasa a las salidas que
+   * vinieron después. Lo usa el cierre de una OP con las fechas de sus partes: el despunte se
+   * absorbe aunque el producto ya se haya despachado. Sin fechas, o sin saldo en ninguna, devuelve
+   * `null` como antes.
+   */
+  whenEmptyAt?: readonly string[];
 }
 
 /** Saldo vigente de un ítem, ya en Decimal. */
@@ -704,7 +713,7 @@ export class InventoryService {
     if (amount.isZero()) return null;
 
     const balance = await this.lockBalance(tx, input);
-    if (balance.qty.lte(0)) return null;
+    if (balance.qty.lte(0)) return this.adjustCostWhenEmpty(tx, input, amount);
     // D-124: un ajuste mueve valor con una fecha, así que también se ordena. Mismo guardrail.
     await this.assertChronological(
       tx,
@@ -756,6 +765,64 @@ export class InventoryService {
         { actorId: input.actorId, trigger: movement },
       );
     }
+    return movement;
+  }
+
+  /**
+   * cc55 (D-665): el ajuste de un ítem que hoy no tiene saldo, imputado en la última fecha de
+   * `whenEmptyAt` en que el ítem terminaba el día con saldo. El saldo vigente no se toca (es cero);
+   * `recostForward` lleva el valor a las salidas posteriores, que son las que se llevaron ese saldo.
+   * La fecha la elige el sistema (la de un parte de la OP), así que no pide el acuse de D-124.
+   */
+  private async adjustCostWhenEmpty(
+    tx: Prisma.TransactionClient,
+    input: AdjustCostInput,
+    amount: Decimal,
+  ): Promise<InventoryMovement | null> {
+    const ceiling = input.operationDate ?? businessToday();
+    const dates = [...new Set(input.whenEmptyAt ?? [])]
+      .filter((d) => d <= ceiling)
+      .sort((a, b) => b.localeCompare(a));
+    if (dates.length === 0) return null;
+    const rows = await qtyRowsOf(tx, input);
+    const qtyAtEndOf = (date: string): Decimal =>
+      rows.filter((r) => r.date <= date).reduce((acc, r) => acc.plus(r.delta), new Decimal(0));
+    const date = dates.find((d) => qtyAtEndOf(d).gt(0));
+    if (date === undefined) return null;
+    const qty = qtyAtEndOf(date);
+    const unit =
+      (
+        await tx.inventoryBalance.findUnique({
+          where: { itemType_itemId: { itemType: input.itemType, itemId: input.itemId } },
+          select: { unit: true },
+        })
+      )?.unit ?? input.unit;
+    const movement = await tx.inventoryMovement.create({
+      data: {
+        businessLineId: input.businessLineId,
+        itemType: input.itemType,
+        itemId: input.itemId,
+        type: 'ADJUST',
+        qty: toFixedString(qty, 'KG'),
+        unit,
+        unitCost: toFixedString(amount.div(qty), 'MONEY'),
+        totalCost: toFixedString(amount, 'MONEY'),
+        refType: input.refType,
+        refId: input.refId ?? null,
+        notes:
+          `${input.notes ?? 'Ajuste de costo'} · imputado al ${date}: sin saldo el ${ceiling} (D-665)`.slice(
+            0,
+            240,
+          ),
+        actorId: input.actorId,
+        operationDate: toDateOnly(date),
+      },
+    });
+    await this.recostForward(
+      tx,
+      [{ itemType: input.itemType, itemId: input.itemId, afterMovementId: movement.id }],
+      { actorId: input.actorId, trigger: movement },
+    );
     return movement;
   }
 

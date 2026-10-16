@@ -468,3 +468,89 @@ describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
     }
   });
 });
+
+describe('cc55 (D-665, E-01 de audit-01): ajuste de cierre con el producto ya despachado', () => {
+  async function adjust(itemId: string, amountPen: string, whenEmptyAt?: string[]) {
+    return prisma.$transaction((tx) =>
+      inventory.adjustCost(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        unit: 'NIU',
+        amountPen,
+        refType: 'PRODUCTION',
+        refId: randomUUID(),
+        notes: 'Cierre de prueba',
+        actorId: adminId,
+        operationDate: '2026-08-20',
+        ...(whenEmptyAt ? { whenEmptyAt } : {}),
+      }),
+    );
+  }
+
+  it('sin fechas, como antes: no hay saldo y el ajuste no se emite', async () => {
+    const itemId = randomUUID();
+    await move(itemId, {
+      type: 'IN',
+      qty: '10',
+      unitCost: '10',
+      date: '2026-08-01',
+      refType: 'PRODUCTION',
+    });
+    await move(itemId, { type: 'OUT', qty: '10', date: '2026-08-05' });
+    expect(await adjust(itemId, '30')).toBeNull();
+  });
+
+  it('con la fecha del parte, el despunte va a la salida que se llevó el producto', async () => {
+    const itemId = randomUUID();
+    await move(itemId, {
+      type: 'IN',
+      qty: '10',
+      unitCost: '10',
+      date: '2026-08-01',
+      refType: 'PRODUCTION',
+    });
+    const out = await move(itemId, { type: 'OUT', qty: '10', date: '2026-08-05' });
+    expect(out.totalCost.toString()).toBe('100');
+
+    const movement = await adjust(itemId, '30', ['2026-08-01']);
+    expect(movement).not.toBeNull();
+    expect(movement?.operationDate.toISOString().slice(0, 10)).toBe('2026-08-01');
+    expect(movement?.qty.toString()).toBe('10');
+    expect(movement?.notes).toContain('imputado al 2026-08-01');
+    // La salida absorbe el despunte por el recosteo (D-649): 100 + 30.
+    expect(await effective(out.id)).toBe('130.0000');
+    // Nada queda en el saldo: el producto sigue en cero y el kardex en cero de valor.
+    expect((await balanceOf(itemId)).qty).toBe('0');
+    expect((await kardexValue(itemId)).toFixed(4)).toBe('0.0000');
+  });
+
+  it('con dos salidas, se reparte en proporción a lo que cada una se llevó', async () => {
+    const itemId = randomUUID();
+    await move(itemId, {
+      type: 'IN',
+      qty: '10',
+      unitCost: '10',
+      date: '2026-08-01',
+      refType: 'PRODUCTION',
+    });
+    const a = await move(itemId, { type: 'OUT', qty: '4', date: '2026-08-03' });
+    const b = await move(itemId, { type: 'OUT', qty: '6', date: '2026-08-06' });
+    await adjust(itemId, '20', ['2026-08-01']);
+    expect(await effective(a.id)).toBe('48.0000');
+    expect(await effective(b.id)).toBe('72.0000');
+  });
+
+  it('si en ninguna fecha del parte quedaba saldo al final del día, no se emite', async () => {
+    const itemId = randomUUID();
+    await move(itemId, {
+      type: 'IN',
+      qty: '10',
+      unitCost: '10',
+      date: '2026-08-01',
+      refType: 'PRODUCTION',
+    });
+    await move(itemId, { type: 'OUT', qty: '10', date: '2026-08-01' });
+    expect(await adjust(itemId, '30', ['2026-08-01'])).toBeNull();
+  });
+});

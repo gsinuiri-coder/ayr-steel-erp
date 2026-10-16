@@ -223,8 +223,11 @@ export interface ResolveSalesLinesOptions {
    * mostrador la rechazan con 400. Quién puede marcarla (ADMINISTRADOR) lo comprueba el servicio.
    */
   allowAtCost?: boolean;
-  /** cc51 (D-641, revisión P1): el rechazo de una línea a costo, sin cifras (otro rol). */
-  opaqueAtCost?: boolean;
+  /**
+   * cc55 (D-664): el rechazo del piso muestra el costo y el margen solo con esto (ADMINISTRADOR).
+   * Sin él, el mensaje da el precio mínimo y nada más (`assertPriceFloor`).
+   */
+  showCost?: boolean;
 }
 
 export async function resolveSalesLines(
@@ -719,7 +722,7 @@ export async function resolveSalesLines(
       tx,
       floorCandidates.filter((c) => !paperAt.has(c.at)),
       options.priceFloor.toleranceMm,
-      { opaqueAtCost: options.opaqueAtCost === true },
+      { showCost: options.showCost === true },
     );
   }
   if (options.exactAmounts !== undefined) {

@@ -16,6 +16,7 @@ import {
 } from '@prisma/client';
 import {
   Decimal,
+  dispatchCode,
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   salesOrderCode,
@@ -78,7 +79,13 @@ export class FiscalImportService {
       // El lock va antes de leer, igual que en `addPayment` y en la nota de crédito: sin él,
       // un cobro que entra mientras se decide la anulación queda colgado de un comprobante
       // que dejó de deber, y el guardrail de abajo no lo habría visto.
-      await lockDocuments(tx, { fiscalDocuments: [id] });
+      // cc55 (D-664, D-04 de audit-01): con él, los despachos que declara (regla 17: comprobante
+      // antes que despacho, en la misma llamada), porque la anulación les suelta el enlace.
+      const declared = await tx.dispatch.findMany({
+        where: { invoiceId: id },
+        select: { id: true, seq: true },
+      });
+      await lockDocuments(tx, { fiscalDocuments: [id], dispatches: declared.map((d) => d.id) });
       const document = await tx.fiscalDocument.findUnique({
         where: { id },
         select: {
@@ -90,6 +97,7 @@ export class FiscalImportService {
           archivedAt: true,
           creditNoteReason: true,
           affectedDocumentId: true,
+          replacesDocumentId: true,
         },
       });
       if (!document) throw new NotFoundException('Comprobante no encontrado');
@@ -184,6 +192,18 @@ export class FiscalImportService {
       // inversos al mismo costo (nunca editando saldos). 409 si esa mercadería ya se vendió.
       const salesReturnId = await this.salesReturns.reverseForCreditNoteInTx(tx, actor, id, reason);
 
+      // cc55 (D-664, D-04 de audit-01): un comprobante anulado deja de cubrir sus despachos. Con el
+      // enlace vivo (D-205), el comprobante corregido que se registra después no podía devolver ese
+      // despacho por una NC 01 (D-656: «de otro comprobante») y la línea quedaba otra vez pendiente
+      // de facturar; «traer a otro pedido» tampoco lo admitía. Un enlace a un anulado es justo el
+      // enlace falso que D-205 prohíbe. Reactivar no lo vuelve a poner: queda sin declarar.
+      // Salvo el **reemplazo de un 02** (D-655): anular su NC 02 después le devuelve los despachos al
+      // comprobante original (`undoReplacementInTx` los busca por este enlace). Mientras tanto la
+      // devolución lo lee como sin comprobante (`liveInvoiceId`).
+      if (document.replacesDocumentId === null) {
+        await this.inventory.unlinkInvoiceFromDispatches(tx, id);
+      }
+
       const updated = await tx.fiscalDocument.update({
         where: { id },
         data: {
@@ -206,6 +226,9 @@ export class FiscalImportService {
           reason,
           number: document.number,
           ...(salesReturnId === null ? {} : { salesReturnReversed: salesReturnId }),
+          ...(declared.length === 0 || document.replacesDocumentId !== null
+            ? {}
+            : { dispatchesUnlinked: declared.map((d) => dispatchCode(d.seq)) }),
         },
       });
       return updated;

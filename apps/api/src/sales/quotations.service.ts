@@ -239,6 +239,8 @@ export class QuotationsService {
       ...(options.exactAmounts ? {} : { coilTies: { viewer: actor } }),
       // cc51 (D-641): la cotización es donde se marca «A costo».
       allowAtCost: true,
+      // cc55 (D-664): el rechazo del piso dice el costo solo a un ADMINISTRADOR.
+      showCost: actor.role === Role.ADMINISTRADOR,
     });
     assertAtCostActor(actor, lines, []);
     const totals = documentTotals(lines);
@@ -396,7 +398,7 @@ export class QuotationsService {
             keepCoilIds: await this.storedCoilIds(tx, id),
           },
           allowAtCost: true,
-          opaqueAtCost: actor.role !== Role.ADMINISTRADOR,
+          showCost: actor.role === Role.ADMINISTRADOR,
         });
         const totals = documentTotals(lines);
         // D-157: una cotización **sin vencimiento** (la trajo el importador) lo sigue siendo al
@@ -1094,6 +1096,7 @@ export class QuotationsService {
         coilTies: { viewer: actor },
         unassignedCoilProducts,
         allowAtCost: true,
+        showCost: actor.role === Role.ADMINISTRADOR,
       });
       const totals = documentTotals(lines);
       const issueDate = businessToday();
