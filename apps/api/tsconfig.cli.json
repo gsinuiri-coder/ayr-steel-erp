@@ -29,7 +29,8 @@
     "prisma/inspect-cc52-cli.ts",
     "prisma/recost-historic-cli.ts",
     "prisma/inspect-cc53-cli.ts",
-    "prisma/inspect-cc55-cli.ts"
+    "prisma/inspect-cc55-cli.ts",
+    "prisma/import-opening-balances-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

@@ -1385,56 +1385,71 @@ export class PurchasesService {
           ? toDecimal(input.exchangeRate)
           : (await this.rateFor(paymentDate, rateCurrency)).rate;
 
+    await this.prisma.$transaction((tx) => this.addPaymentInTx(tx, actor, purchaseId, input, rate));
+    return this.findOne(purchaseId);
+  }
+
+  /**
+   * El cuerpo de `addPayment` **dentro de una transacción que abre el llamador**, con el tipo de
+   * cambio ya resuelto; devuelve el id del pago (`null` si la clave de idempotencia ya lo había
+   * registrado). cc56 (D-668): lo usa también el importador de saldos iniciales, que registra todo
+   * el lote en una sola transacción.
+   */
+  async addPaymentInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    purchaseId: string,
+    input: CreateSupplierPaymentInput,
+    rate: Decimal,
+  ): Promise<string | null> {
+    const paymentDate = this.operationDate.resolve(actor, input.date);
+    // F8-S1/M2: mismo criterio que el cobro a cliente — dos pagos iguales son negocio
+    // legítimo, pero el mismo intento de submit no debe registrar el pago dos veces.
+    const claim = await claimIdempotencyKey(tx, 'supplier-payment', input.idempotencyKey);
+    if (!claim.claimed) return null;
+
+    // Bloquea la compra y recalcula el saldo dentro de la transacción: dos pagos
+    // concurrentes que por separado caben en el saldo no pueden sobrepagarla.
+    await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${purchaseId}::uuid FOR UPDATE`;
+    const current = await tx.purchase.findUniqueOrThrow({
+      where: { id: purchaseId },
+      include: { payments: true },
+    });
+    if (current.status === PurchaseStatus.CANCELLED) {
+      throw new BadRequestException('La compra está anulada');
+    }
     const applied = toPurchaseCurrency(
       toDecimal(input.amount),
       input.currency,
-      purchase.currency,
+      current.currency,
       rate,
     );
-
-    await this.prisma.$transaction(async (tx) => {
-      // F8-S1/M2: mismo criterio que el cobro a cliente — dos pagos iguales son negocio
-      // legítimo, pero el mismo intento de submit no debe registrar el pago dos veces.
-      const claim = await claimIdempotencyKey(tx, 'supplier-payment', input.idempotencyKey);
-      if (!claim.claimed) return;
-
-      // Bloquea la compra y recalcula el saldo dentro de la transacción: dos pagos
-      // concurrentes que por separado caben en el saldo no pueden sobrepagarla.
-      await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${purchaseId}::uuid FOR UPDATE`;
-      const current = await tx.purchase.findUniqueOrThrow({
-        where: { id: purchaseId },
-        include: { payments: true },
-      });
-      if (current.status === PurchaseStatus.CANCELLED) {
-        throw new BadRequestException('La compra está anulada');
-      }
-      const balance = purchaseBalance(current, current.payments);
-      if (applied.gt(balance)) {
-        throw new BadRequestException(
-          `El pago excede el saldo pendiente (${balance.toFixed(2)} ${current.currency})`,
-        );
-      }
-
-      const payment = await tx.supplierPayment.create({
-        data: {
-          purchaseId,
-          date: toDateOnly(paymentDate),
-          amount: toFixedString(input.amount, 'MONEY'),
-          currency: input.currency,
-          exchangeRate: toFixedString(rate, 'RATE'),
-          method: input.method,
-          reference: input.reference ?? null,
-          createdById: actor.id,
-        },
-      });
-      // cc50 (D-638): el pago se audita en su compra (un pago es siempre de una sola), con el id
-      // del pago y el proveedor en el detalle, para que salga en el «Historial» de la compra.
-      await this.audit.write(
-        tx,
-        paymentAuditEntry(actor.id, current, auditedPayment(payment), paymentDate),
+    const balance = purchaseBalance(current, current.payments);
+    if (applied.gt(balance)) {
+      throw new BadRequestException(
+        `El pago excede el saldo pendiente (${balance.toFixed(2)} ${current.currency})`,
       );
+    }
+
+    const payment = await tx.supplierPayment.create({
+      data: {
+        purchaseId,
+        date: toDateOnly(paymentDate),
+        amount: toFixedString(input.amount, 'MONEY'),
+        currency: input.currency,
+        exchangeRate: toFixedString(rate, 'RATE'),
+        method: input.method,
+        reference: input.reference ?? null,
+        createdById: actor.id,
+      },
     });
-    return this.findOne(purchaseId);
+    // cc50 (D-638): el pago se audita en su compra (un pago es siempre de una sola), con el id
+    // del pago y el proveedor en el detalle, para que salga en el «Historial» de la compra.
+    await this.audit.write(
+      tx,
+      paymentAuditEntry(actor.id, current, auditedPayment(payment), paymentDate),
+    );
+    return payment.id;
   }
 
   /**
@@ -1456,40 +1471,51 @@ export class PurchasesService {
     paymentId: string,
     input: ReversePaymentInput,
   ): Promise<PurchaseDto> {
-    await this.prisma.$transaction(async (tx) => {
-      // Mismo lock que `addPayment`/`cancel`: no cambia el resultado de esta operación
-      // (revertir un pago solo puede subir el saldo, nunca dejarlo negativo), pero
-      // mantiene un único punto de serialización por compra para todo lo que toca su
-      // cuenta por pagar, en vez de que cada mutación decida su propio criterio.
-      await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${purchaseId}::uuid FOR UPDATE`;
-      const purchase = await tx.purchase.findUnique({ where: { id: purchaseId } });
-      if (!purchase) throw new NotFoundException('Compra no encontrada');
-      if (purchase.status === PurchaseStatus.CANCELLED) {
-        throw new BadRequestException('La compra está anulada');
-      }
-
-      const payment = await tx.supplierPayment.findFirst({
-        where: { id: paymentId, purchaseId },
-      });
-      if (!payment) throw new NotFoundException('Pago no encontrado');
-
-      // El cambio de estado va primero y condicionado al estado leído (mismo patrón que
-      // `cancel()`): dos anulaciones simultáneas del mismo pago no pueden convivir.
-      const claimed = await tx.supplierPayment.updateMany({
-        where: { id: paymentId, reversedAt: null },
-        data: { reversedById: actor.id, reversedAt: new Date() },
-      });
-      if (claimed.count === 0) {
-        throw new ConflictException('Ese pago ya fue anulado');
-      }
-
-      // cc50 (D-638): igual que el pago, la reversa queda en la compra.
-      await this.audit.write(
-        tx,
-        paymentReverseAuditEntry(actor.id, purchase, auditedPayment(payment), input.reason),
-      );
-    });
+    await this.prisma.$transaction((tx) =>
+      this.reversePaymentInTx(tx, actor, purchaseId, paymentId, input),
+    );
     return this.findOne(purchaseId);
+  }
+
+  /** El cuerpo de `reversePayment` dentro de la transacción del llamador (cc56, D-668: el deshacer del lote). */
+  async reversePaymentInTx(
+    tx: Prisma.TransactionClient,
+    actor: RequestUser,
+    purchaseId: string,
+    paymentId: string,
+    input: ReversePaymentInput,
+  ): Promise<void> {
+    // Mismo lock que `addPayment`/`cancel`: no cambia el resultado de esta operación
+    // (revertir un pago solo puede subir el saldo, nunca dejarlo negativo), pero
+    // mantiene un único punto de serialización por compra para todo lo que toca su
+    // cuenta por pagar, en vez de que cada mutación decida su propio criterio.
+    await tx.$queryRaw`SELECT "id" FROM "purchases" WHERE "id" = ${purchaseId}::uuid FOR UPDATE`;
+    const purchase = await tx.purchase.findUnique({ where: { id: purchaseId } });
+    if (!purchase) throw new NotFoundException('Compra no encontrada');
+    if (purchase.status === PurchaseStatus.CANCELLED) {
+      throw new BadRequestException('La compra está anulada');
+    }
+
+    const payment = await tx.supplierPayment.findFirst({
+      where: { id: paymentId, purchaseId },
+    });
+    if (!payment) throw new NotFoundException('Pago no encontrado');
+
+    // El cambio de estado va primero y condicionado al estado leído (mismo patrón que
+    // `cancel()`): dos anulaciones simultáneas del mismo pago no pueden convivir.
+    const claimed = await tx.supplierPayment.updateMany({
+      where: { id: paymentId, reversedAt: null },
+      data: { reversedById: actor.id, reversedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      throw new ConflictException('Ese pago ya fue anulado');
+    }
+
+    // cc50 (D-638): igual que el pago, la reversa queda en la compra.
+    await this.audit.write(
+      tx,
+      paymentReverseAuditEntry(actor.id, purchase, auditedPayment(payment), input.reason),
+    );
   }
 
   async findAll(query: PurchaseQuery): Promise<PaginatedResult<PurchaseListItemDto>> {
