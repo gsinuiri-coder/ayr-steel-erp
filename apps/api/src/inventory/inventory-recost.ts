@@ -254,8 +254,7 @@ export async function planRecost(
     const l = await ensure(seed);
     let from = 0;
     if (!seed.fromStart && seed.atMovementId !== undefined) {
-      const at = l.index.get(seed.atMovementId.toString());
-      from = at === undefined ? l.rows.length : at;
+      from = l.index.get(seed.atMovementId.toString()) ?? l.rows.length;
     } else if (!seed.fromStart && seed.afterMovementId !== undefined) {
       const at = l.index.get(seed.afterMovementId.toString());
       from = at === undefined ? l.rows.length : at + 1;
