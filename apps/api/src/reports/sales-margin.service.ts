@@ -70,6 +70,8 @@ export interface CostRow {
    * tiene su fila de despacho (no ocurre hoy, ver `costsByOrder`) o en una fila del motor.
    */
   sales_order_item_id: string | null;
+  /** cc55 (D-667): fila del costo de OP (motor), no de un despacho. */
+  from_engine?: boolean;
   business_line_code: string;
   cost_pen: Prisma.Decimal;
   /**
@@ -84,10 +86,12 @@ interface OpMaterialRow {
   material_pen: Prisma.Decimal;
 }
 
-interface SalesByLineRow {
+export interface SalesByLineRow {
   document_id: string;
   business_line_code: string | null;
   subtotal_pen: Prisma.Decimal;
+  /** cc55 (D-667, revisión H1): cuántas líneas del comprobante hay en este grupo. */
+  line_count?: bigint | number;
 }
 
 interface PendingDispatchRow {
@@ -371,7 +375,8 @@ export class SalesMarginService {
       SELECT
         fdi."document_id",
         bl."code"::text AS "business_line_code",
-        COALESCE(SUM(fdi."subtotal_pen"), 0) AS "subtotal_pen"
+        COALESCE(SUM(fdi."subtotal_pen"), 0) AS "subtotal_pen",
+        COUNT(*) AS "line_count"
       FROM "fiscal_document_items" fdi
       LEFT JOIN "products" p ON p."id" = fdi."product_id"
       LEFT JOIN "business_lines" bl ON bl."id" = p."business_line_id"
@@ -480,6 +485,13 @@ export class SalesMarginService {
       }
     }
 
+    // cc55 (D-667, revisión H1): qué comprobantes **declaran** su costo. Antes bastaba con tener
+    // una fila con su `invoice_id`; con el costo de OP, toda línea del motor la tiene. Un comprobante
+    // declara si algún despacho lo declara (D-205/D-213) o si **todas** sus líneas se costean por el
+    // motor; uno mixto con el resto sin despacho declarado sigue sin declarar (NO_COMPARABLE con
+    // comprobantes fuera del rango), como antes de cc55.
+    const declaredDocs = declaredDocuments(costs, salesByLine);
+
     // cc52 (D-647): una NC de descuento declara costo cero: no movió mercadería.
     for (const doc of documents) {
       if (
@@ -489,6 +501,7 @@ export class SalesMarginService {
         !costByDocument.has(doc.id)
       ) {
         costByDocument.set(doc.id, ZERO);
+        declaredDocs.add(doc.id);
       }
     }
 
@@ -539,7 +552,7 @@ export class SalesMarginService {
         isPending,
         isUntraceable,
         docs,
-        costByDocument,
+        declaredDocs,
       });
       const comparable = costStatus !== 'NO_COMPARABLE' && costStatus !== 'NO_RASTREABLE';
       // D-412 (autorrevisión de cc24, P2-2): un pedido cuyas líneas son todas sin costo
@@ -756,10 +769,12 @@ const ZERO = new Decimal(0);
 
 /**
  * cc55 (D-667): los estados del motor con los que la línea se costea por su OP. Sin producción
- * (`NO_COST_YET`) o sin trazar (`UNTRACEABLE`), la línea de pedido sigue con el promedio de su
- * despacho, como antes: mejor un costo por otra base que ninguno.
+ * (`NO_COST_YET`), sin trazar (`UNTRACEABLE`) o con producción parcial (`PARTIAL`: el motor solo
+ * costea lo producido; revisión H2), la línea de pedido sigue con el promedio de su despacho, como
+ * antes: mejor un costo entero por otra base que uno parcial.
  */
-const ENGINE_COSTED: readonly string[] = ['COMPLETE', 'PARTIAL'];
+// Revisión H2: `PARTIAL` (facturado de más sobre lo producido) costearía solo lo producido.
+const ENGINE_COSTED: readonly string[] = ['COMPLETE'];
 
 /**
  * cc55 (D-667) — **un solo costo para lo fabricado contra pedido.** Las líneas de pedido cuyas
@@ -802,9 +817,44 @@ export function withEngineCosts(
       sales_order_item_id: null,
       cost_pen: new Prisma.Decimal((engineCosts.get(r.item_id)?.costPen ?? ZERO).toFixed(4)),
       kind: 'SALE',
+      from_engine: true,
     })),
   );
   return [...kept, ...added];
+}
+
+/**
+ * cc55 (D-667, revisión H1): qué comprobantes **declaran** su costo (lo que `resolveCostStatus` mira
+ * cuando el pedido tiene comprobantes fuera del rango). Un comprobante declara si algún despacho lo
+ * declara (D-205/D-213) o si **todas** sus líneas se costean por el motor; uno mixto con el resto
+ * sin despacho declarado no declara, como antes de cc55. (Las NC de descuento las suma `assemble`.)
+ * Pura; exportada para probarla sin base.
+ */
+export function declaredDocuments(
+  costs: readonly CostRow[],
+  salesByLine: readonly SalesByLineRow[],
+): Set<string> {
+  const lineCountByDoc = new Map<string, number>();
+  for (const r of salesByLine) {
+    lineCountByDoc.set(
+      r.document_id,
+      (lineCountByDoc.get(r.document_id) ?? 0) + Number(r.line_count ?? 0),
+    );
+  }
+  const engineLinesByDoc = new Map<string, number>();
+  const declared = new Set<string>();
+  for (const row of costs) {
+    if (row.invoice_id === null) continue;
+    if (row.from_engine === true) {
+      engineLinesByDoc.set(row.invoice_id, (engineLinesByDoc.get(row.invoice_id) ?? 0) + 1);
+    } else {
+      declared.add(row.invoice_id);
+    }
+  }
+  for (const [doc, n] of engineLinesByDoc) {
+    if (n >= (lineCountByDoc.get(doc) ?? 0)) declared.add(doc);
+  }
+  return declared;
 }
 
 /**
@@ -915,15 +965,16 @@ function resolveCostStatus(input: {
   isPending: Set<string>;
   isUntraceable: Set<string>;
   docs: DocumentRow[];
-  costByDocument: Map<string, Decimal>;
+  /** cc55 (revisión H1): los comprobantes que declaran su costo (ver `assemble`). */
+  declaredDocs: Set<string>;
 }): MarginCostStatus {
-  const { orderId, hasOutside, isPending, isUntraceable, docs, costByDocument } = input;
+  const { orderId, hasOutside, isPending, isUntraceable, docs, declaredDocs } = input;
   // Una venta directa sin pedido no tiene nada fuera del rango con lo que compartir costo.
   if (orderId === null) return 'COMPLETO';
   // D-285: algo salió del almacén sin su salida de kardex: el costo no se puede rastrear.
   if (isUntraceable.has(orderId)) return 'NO_RASTREABLE';
   if (hasOutside.has(orderId)) {
-    const everyDocDeclaresDispatch = docs.every((d) => costByDocument.has(d.id));
+    const everyDocDeclaresDispatch = docs.every((d) => declaredDocs.has(d.id));
     if (!everyDocDeclaresDispatch) return 'NO_COMPARABLE';
   }
   return isPending.has(orderId) ? 'PARCIAL' : 'COMPLETO';

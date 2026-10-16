@@ -2,7 +2,12 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import type { EngineLineCost } from './document-profitability';
 import type { DocumentLineRow } from './sales-by-material.service';
-import { withEngineCosts, type CostRow } from './sales-margin.service';
+import {
+  declaredDocuments,
+  withEngineCosts,
+  type CostRow,
+  type SalesByLineRow,
+} from './sales-margin.service';
 
 /**
  * cc55 (D-667) — **un solo costo para lo fabricado contra pedido.** `withEngineCosts` reemplaza, en
@@ -98,5 +103,44 @@ describe('withEngineCosts (cc55, D-667)', () => {
   it('sin líneas del motor, las filas no cambian', () => {
     const rows = [sale({}), sale({ sales_order_item_id: null })];
     expect(withEngineCosts(rows, [], new Map())).toEqual(rows);
+  });
+});
+
+describe('revisiones del corte B (H1, H2)', () => {
+  it('H2: una línea con producción parcial se queda entera con el promedio', () => {
+    const out = withEngineCosts(
+      [sale({})],
+      [line({})],
+      new Map([['fl1', cost('5000', 'PARTIAL')]]),
+    );
+    expect(out.map((r) => r.cost_pen.toString())).toEqual(['7399.38']);
+  });
+
+  const lines = (doc: string, n: number): SalesByLineRow => ({
+    document_id: doc,
+    business_line_code: 'metallic-roofing',
+    subtotal_pen: new Prisma.Decimal('1'),
+    line_count: n,
+  });
+
+  it('H1: un comprobante con todas sus líneas por el motor declara su costo', () => {
+    const rows = [sale({ sales_order_item_id: null, from_engine: true })];
+    expect([...declaredDocuments(rows, [lines('f1', 1)])]).toEqual(['f1']);
+  });
+
+  it('H1: uno mixto, con el resto sin despacho declarado, no declara', () => {
+    const rows = [
+      sale({ sales_order_item_id: null, from_engine: true }),
+      sale({ invoice_id: null, business_line_code: 'trading', sales_order_item_id: 'i2' }),
+    ];
+    expect(declaredDocuments(rows, [lines('f1', 2)]).size).toBe(0);
+  });
+
+  it('H1: uno mixto cuyo despacho de reventa sí lo declara, declara', () => {
+    const rows = [
+      sale({ sales_order_item_id: null, from_engine: true }),
+      sale({ business_line_code: 'trading', sales_order_item_id: 'i2' }),
+    ];
+    expect([...declaredDocuments(rows, [lines('f1', 2)])]).toEqual(['f1']);
   });
 });
