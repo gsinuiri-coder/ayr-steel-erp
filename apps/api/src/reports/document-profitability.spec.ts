@@ -2,7 +2,11 @@ import { Test } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { assembleDocumentProfitability, notApplicable } from './document-profitability';
+import {
+  assembleDocumentProfitability,
+  engineLineCosts,
+  notApplicable,
+} from './document-profitability';
 import { DocumentProfitabilityService } from './document-profitability.service';
 import { assembleSalesByMaterial, type CoilUsage, type OrderLineFacts } from './sales-by-material';
 import {
@@ -873,5 +877,48 @@ describe('cc54 (D-663): la NC con devolución resta el costo de lo devuelto', ()
     });
     expect(doc.credited?.lines[0]).toMatchObject({ status: 'COMPLETE' });
     expect(doc.net).toMatchObject({ salesPen: '500.0000', costPen: '400.0000' });
+  });
+});
+
+describe('engineLineCosts (cc55, D-667): el mismo costo por línea que la rentabilidad', () => {
+  it('cada línea del motor con su costo y su estado; las demás no entran', () => {
+    const rows = [
+      row({ line: 1, orderItem: 'soi-1', qty: '100', subtotal: '3000' }),
+      row({
+        line: 2,
+        orderItem: 'soi-2',
+        kind: 'PLANCHA',
+        qty: '10',
+        subtotal: '900',
+        lengthMm: '3600',
+      }),
+      row({ line: 3, orderItem: 'soi-9', engine: false, qty: '1', subtotal: '10' }),
+    ];
+    const engine = engineFacts(
+      {
+        'soi-1': { invoicedQty: '100', producedQty: '100' },
+        'soi-2': { invoicedQty: '10', producedQty: '4' },
+      },
+      [
+        { salesOrderItemId: 'soi-1', kg: '250', costPen: '1000' },
+        { salesOrderItemId: 'soi-2', kg: '40', costPen: '160' },
+      ],
+    );
+    const costs = engineLineCosts(rows, engine);
+    expect(costs.size).toBe(2);
+    const doc = assembleDocumentProfitability({
+      document: HEADER,
+      rows,
+      engine,
+      declared: new Map(),
+      hasDeclaredDispatch: false,
+    });
+    for (const line of doc.lines.filter((l) => l.costBasis === 'COIL_KG')) {
+      const c = costs.get(line.itemId);
+      expect(c?.costPen.toFixed(4)).toBe(line.costPen);
+      expect(c?.status).toBe(line.status);
+    }
+    expect(costs.get(rows[0]!.item_id)?.status).toBe('COMPLETE');
+    expect(costs.get(rows[1]!.item_id)?.status).toBe('PARTIAL');
   });
 });
