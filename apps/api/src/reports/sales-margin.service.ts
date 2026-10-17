@@ -444,8 +444,11 @@ export class SalesMarginService {
         SELECT di."sales_order_item_id" AS "id", SUM(di."qty") AS "qty"
         FROM "dispatch_items" di
         JOIN "dispatches" d ON d."id" = di."dispatch_id"
+        -- Por el pedido de la línea, no el del despacho (revisión de cc57-d): mismo resultado que
+        -- sin filtro para cualquier dato.
+        JOIN "sales_order_items" dsoi ON dsoi."id" = di."sales_order_item_id"
         WHERE d."status" = 'ISSUED'
-          AND d."sales_order_id" = ANY(${orderIds}::uuid[])
+          AND dsoi."sales_order_id" = ANY(${orderIds}::uuid[])
         GROUP BY di."sales_order_item_id"
       ) disp ON disp."id" = soi."id"
       LEFT JOIN (
@@ -454,8 +457,9 @@ export class SalesMarginService {
         JOIN "dispatches" d ON d."id" = di."dispatch_id"
         JOIN "products" p ON p."id" = di."product_id"
         JOIN "business_lines" bl ON bl."id" = p."business_line_id"
+        JOIN "sales_order_items" nsoi ON nsoi."id" = di."sales_order_item_id"
         WHERE d."status" = 'ISSUED'
-          AND d."sales_order_id" = ANY(${orderIds}::uuid[])
+          AND nsoi."sales_order_id" = ANY(${orderIds}::uuid[])
           AND di."movement_id" IS NULL
           AND bl."inventory_strategy"::text <> 'NOOP'
         GROUP BY di."sales_order_item_id"

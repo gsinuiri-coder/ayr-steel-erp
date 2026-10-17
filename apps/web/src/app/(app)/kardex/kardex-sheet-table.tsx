@@ -47,6 +47,7 @@ export function KardexSheetTable({
   rows,
   isPending,
   isError,
+  errorText,
   emptyMessage,
   dateSort,
   renderDetail,
@@ -55,6 +56,8 @@ export function KardexSheetTable({
   rows: readonly KardexSheetRow[];
   isPending: boolean;
   isError: boolean;
+  /** El motivo del error, si el API lo dijo (cc57: el tope del kardex pide un rango). */
+  errorText?: string;
   emptyMessage: string;
   /** D-323: la fecha es la única columna que ordena; `dir: null` es el orden en que llegan. */
   dateSort: { dir: SortDir | null; onToggle: () => void };
@@ -114,7 +117,7 @@ export function KardexSheetTable({
           {isError && (
             <TableRow>
               <TableCell colSpan={columns} className="text-destructive">
-                No se pudo cargar el kardex.
+                {errorText ?? 'No se pudo cargar el kardex.'}
               </TableCell>
             </TableRow>
           )}
