@@ -47,6 +47,7 @@ interface ProductLineRow {
   shown_elsewhere: boolean;
   affected_document_id: string | null;
   return_cost: Prisma.Decimal | null;
+  credit_reason: string | null;
 }
 
 interface DeclaredRow {
@@ -447,6 +448,7 @@ export class SalesByMaterialService {
         -- cc57 (E-03): la NC, contra qué comprobante y con qué costo reingresó su devolución vigente
         -- (efectivo, con sus recosteos). Subconsulta por línea: no suma una consulta al reporte.
         fd."affected_document_id",
+        fd."credit_note_reason"::text AS "credit_reason",
         CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN (
           SELECT SUM(sri."total_cost" + COALESCE((
             SELECT SUM(r."total_cost") FROM "inventory_movements" r
@@ -799,5 +801,6 @@ function toProductLine(r: ProductLineRow): ProductInvoiceLine {
     shownElsewhere: r.shown_elsewhere,
     affectedDocumentId: r.affected_document_id ?? null,
     returnCostPen: r.return_cost?.toString() ?? null,
+    creditReason: r.credit_reason ?? null,
   };
 }

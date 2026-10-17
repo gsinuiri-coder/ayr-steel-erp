@@ -220,7 +220,7 @@ export function CobranzasView() {
         <Stat
           label="Vencido"
           className={overdue ? 'text-destructive' : undefined}
-          hint="Con fecha de vencimiento pasada; el Panel cuenta además el contado desde que se emite"
+          hint="Sin el contado (el Panel sí lo cuenta)"
         >
           {totals.isError ? (
             <span className="text-muted-foreground">Sin datos</span>
