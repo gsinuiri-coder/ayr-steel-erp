@@ -621,6 +621,39 @@ describe('InventoryService (§3.2, D-028)', () => {
       return { findMany, count };
     }
 
+    it('cc57 (A-06): al llegar a cero, el valor corrido también vuelve a cero (como el motor)', async () => {
+      const first = movement(1n, '2026-08-01');
+      first.qty = new Decimal('3.000');
+      first.totalCost = new Decimal('10.0000');
+      const out = movement(2n, '2026-08-02');
+      out.type = 'OUT';
+      out.qty = new Decimal('3.000');
+      out.totalCost = new Decimal('9.9999');
+      const next = movement(3n, '2026-08-03');
+      next.qty = new Decimal('1.000');
+      next.totalCost = new Decimal('5.0000');
+      setReadPrisma([first, out, next]);
+      const result = await service.findMovements({ itemType: 'COIL', itemId: ITEM }, true);
+      expect(result.items.map((r) => r.balanceTotalCost)).toEqual(['10.0000', '0.0000', '5.0000']);
+    });
+
+    it('cc57 (A-06): sin cantidad de apertura, el valor de apertura es cero', async () => {
+      const next = movement(3n, '2026-08-03');
+      next.qty = new Decimal('1.000');
+      next.totalCost = new Decimal('5.0000');
+      setReadPrisma([next]);
+      Object.assign((service as unknown as { prisma: object }).prisma, {
+        $queryRaw: jest
+          .fn()
+          .mockResolvedValue([{ qty: new Decimal('0'), value: new Decimal('0.0001') }]),
+      });
+      const result = await service.findMovements(
+        { itemType: 'COIL', itemId: ITEM, from: '2026-08-03' },
+        true,
+      );
+      expect(result.items.map((r) => r.balanceTotalCost)).toEqual(['5.0000']);
+    });
+
     it('entrega el historial individual completo en orden ascendente y como una sola página', async () => {
       const oldMovement = movement(1n, '2026-09-01');
       const newMovement = movement(2n, '2026-09-02');
