@@ -683,11 +683,27 @@ describe('cc57 (E-06 de audit-01): la lectura de cobranzas filtra en SQL lo ya c
     } as never);
     const credited = await sold();
     await register(credited.invoiceId, { reason: 'ANULACION_OPERACION' });
+    // Un cobro revertido no cobra: el comprobante sigue debiendo entero.
+    const reverted = await sold();
+    await moduleRef.get(ReceivablesService).addPayment(admin, reverted.invoiceId, {
+      date: TODAY,
+      amountPen: '295.00',
+      method: 'CASH',
+    } as never);
+    const payment = await prisma.customerPayment.findFirstOrThrow({
+      where: { documentId: reverted.invoiceId },
+    });
+    await moduleRef
+      .get(ReceivablesService)
+      .reversePayment(admin, reverted.invoiceId, payment.id, 'cobro mal registrado');
     const { loadCollectibleDocuments } = await import('./collectible-documents');
     const rows = await loadCollectibleDocuments(prisma);
     const ids = new Set(rows.map((r) => r.document.id));
     expect(ids.has(paid.invoiceId)).toBe(false);
     expect(ids.has(credited.invoiceId)).toBe(false);
     expect(rows.find((r) => r.document.id === half.invoiceId)?.balance.toFixed(4)).toBe('195.0000');
+    expect(rows.find((r) => r.document.id === reverted.invoiceId)?.balance.toFixed(4)).toBe(
+      '295.0000',
+    );
   });
 });

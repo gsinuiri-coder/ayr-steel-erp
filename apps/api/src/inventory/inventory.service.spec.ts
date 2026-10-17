@@ -653,6 +653,13 @@ describe('InventoryService (§3.2, D-028)', () => {
       );
     });
 
+    it('cc57 (E-12): exactamente en el tope, el kardex se muestra', async () => {
+      const rows = Array.from({ length: 10_000 }, (_, i) => movement(BigInt(i + 1), '2026-09-01'));
+      setReadPrisma(rows);
+      const result = await service.findMovements({ itemType: 'COIL', itemId: ITEM }, true);
+      expect(result.items).toHaveLength(10_000);
+    });
+
     it('conserva reciente primero y la paginación en el listado mezclado', async () => {
       const newMovement = movement(2n, '2026-09-02');
       const oldMovement = movement(1n, '2026-09-01');
