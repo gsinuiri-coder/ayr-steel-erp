@@ -396,6 +396,9 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
       }),
     );
     expect(again.message).toContain('ya tuvo un comprobante de reemplazo');
+    // cc57 (D-07 de audit-01): con el reemplazo anulado, el mensaje da la salida que existe.
+    expect(again.message).toContain('hoy anulado');
+    expect(again.message).toContain('nota de crédito 01');
   });
 
   it('02: con cobros en el comprobante, se bloquea con un mensaje claro', async () => {

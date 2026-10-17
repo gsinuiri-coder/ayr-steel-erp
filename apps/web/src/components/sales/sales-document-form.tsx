@@ -1252,7 +1252,7 @@ export function SalesDocumentForm({
       save.mutate({ items, idempotencyKey: submitKey.current(JSON.stringify(items)) });
       return;
     }
-    save.mutate({
+    const body = {
       customerId,
       issueDate,
       // D-157: sin vencimiento, no se manda nada que fingir — el API lo ignora igual, pero
@@ -1261,7 +1261,12 @@ export function SalesDocumentForm({
       // `validityDays` ya quedó validado como entero en rango dentro de `validate()`.
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       items,
-    });
+    };
+    // cc57 (B-02 de audit-01): el alta (cotización o pedido directo) lleva la clave del intento;
+    // un reintento tras un corte de red no crea dos (ni reserva dos veces). Editar no la necesita.
+    save.mutate(
+      initial ? body : { ...body, idempotencyKey: submitKey.current(JSON.stringify(body)) },
+    );
   }
 
   // cc31 (corte 6): la vigencia en días y la fecha en que vence, solo para mostrarla debajo del

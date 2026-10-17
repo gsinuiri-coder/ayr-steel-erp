@@ -55,6 +55,12 @@ describe('D-383 — anular un pedido', () => {
       itemId: string;
       _sum: { reserveQty: Prisma.Decimal | null };
     }[];
+    /** cc57 (D-06): lo devuelto por NC (DEV- vigente) de los despachos de la línea. */
+    returned?: {
+      itemId: string;
+      reserveQty: Prisma.Decimal;
+      dispatchItem: { salesOrderItemId: string };
+    }[];
     /** Filas de `groupBy` de lo emitido y lo acreditado por línea (`invoicedByOrderItem`). */
     emitted?: unknown[];
     credited?: unknown[];
@@ -184,6 +190,7 @@ describe('D-383 — anular un pedido', () => {
       productionReport: { findMany: jest.fn().mockResolvedValue(s.reports) },
       inventoryMovement: { findMany: jest.fn().mockResolvedValue(s.movements) },
       dispatchItem: { groupBy: jest.fn().mockResolvedValue(s.shipped) },
+      salesReturnItem: { findMany: jest.fn().mockResolvedValue(s.returned ?? []) },
     };
     const prisma = {
       $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
@@ -552,8 +559,8 @@ describe('D-383 — anular un pedido', () => {
       expect(plain.calls()).toBe(7);
       const made = await preview(withFabricated(happy()));
       await made.service.cancelPreview('o-1');
-      // + líneas de lo fabricado, movimientos y despachado por línea.
-      expect(made.calls()).toBe(10);
+      // + líneas de lo fabricado, movimientos, despachado y devuelto por NC por línea (cc57, D-06).
+      expect(made.calls()).toBe(11);
     });
   });
 
@@ -564,6 +571,7 @@ describe('D-383 — anular un pedido', () => {
         salesOrderItem: { findMany: jest.fn().mockResolvedValue(items) },
         inventoryMovement: { findMany: jest.fn().mockResolvedValue(s.movements) },
         dispatchItem: { groupBy: jest.fn().mockResolvedValue(s.shipped) },
+        salesReturnItem: { findMany: jest.fn().mockResolvedValue(s.returned ?? []) },
       }) as never;
     const item = {
       id: 'soi-1',
@@ -579,6 +587,18 @@ describe('D-383 — anular un pedido', () => {
       };
       await expect(fabricatedLooseLines(client as never, 'o-1')).resolves.toEqual([]);
       expect(client.salesOrderItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it('cc57 (D-06): lo devuelto por NC vuelve a contar como suelto', async () => {
+      const s = withFabricated(happy());
+      s.shipped = [{ salesOrderItemId: 'soi-1', itemId: 'p-1', _sum: { reserveQty: D('24.6') } }];
+      // Sin devolución, todo lo fabricado salió: nada suelto.
+      await expect(fabricatedLooseLines(db(s, [item]), 'o-1')).resolves.toEqual([]);
+      s.returned = [
+        { itemId: 'p-1', reserveQty: D('10'), dispatchItem: { salesOrderItemId: 'soi-1' } },
+      ];
+      const out = await fabricatedLooseLines(db(s, [item]), 'o-1');
+      expect(out.map((l) => l.qty)).toEqual(['10.000']);
     });
 
     it('resta lo despachado y solo cuenta el producto que la línea vende hoy', async () => {

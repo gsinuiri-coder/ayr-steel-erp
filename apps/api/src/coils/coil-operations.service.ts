@@ -33,6 +33,7 @@ import {
   costChangeNote,
   COST_CHANGE_REQUIRED_MESSAGE,
 } from '@ayr/shared';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { ENV, type Env } from '../config/env';
@@ -105,6 +106,17 @@ export class CoilOperationsService {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const created = await this.prisma.$transaction(
       async (tx) => {
+        // cc57 (B-02 de audit-01): el mismo intento no parte dos veces la bobina (D-182). La
+        // segunda vez devuelve las hijas del primero (el id del partido es el de la clave).
+        const claim = await claimIdempotencyKey(tx, 'coil-split', input.idempotencyKey);
+        if (!claim.claimed) {
+          const again = await tx.coil.findMany({
+            where: { splitId: claim.resourceId },
+            orderBy: { code: 'asc' },
+            select: { id: true },
+          });
+          return again.map((c) => c.id);
+        }
         const coil = await this.coils.lockCoil(tx, coilId);
         if (coil.status !== CoilStatus.OPEN) {
           throw new BadRequestException(notOpenMessage(coil.status));
@@ -135,6 +147,7 @@ export class CoilOperationsService {
 
         const split = await tx.coilSplit.create({
           data: {
+            id: claim.resourceId,
             parentCoilId: coil.id,
             splitWeightKg: toFixedString(plan.splitWeightKg, 'KG'),
             kerfLossMm: toFixedString(plan.kerfLossMm, 'MM'),
@@ -443,6 +456,10 @@ export class CoilOperationsService {
   ): Promise<CoilDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     await this.prisma.$transaction(async (tx) => {
+      // cc57 (B-02 de audit-01): el mismo intento no merma dos veces la bobina (D-182); la
+      // segunda vez devuelve la bobina como quedó.
+      const claim = await claimIdempotencyKey(tx, 'coil-scrap', input.idempotencyKey);
+      if (!claim.claimed) return;
       const coil = await this.coils.lockCoil(tx, coilId);
       if (coil.status === CoilStatus.CANCELLED || coil.status === CoilStatus.IN_THIRD_PARTY) {
         throw new BadRequestException(notOpenMessage(coil.status));

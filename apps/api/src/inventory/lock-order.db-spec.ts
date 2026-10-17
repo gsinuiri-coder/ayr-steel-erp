@@ -1844,3 +1844,99 @@ describe('cc54 — NC 01 en un paso × revertir su despacho (contra la base)', (
     expectClean(tally, 'NC 01 en un paso × revertir su despacho', [1]);
   });
 });
+
+/**
+ * cc57 (D-02 de audit-01): anular una NC con devolución toma la NC, los despachos que devolvió y su
+ * pedido (regla 17) y relee el estado del pedido bajo el lock. Antes leía el pedido sin bloquearlo:
+ * anulado el pedido en paralelo, la NC deshacía su DEV- y quedaba un pedido `CANCELLED` con su
+ * despacho `ISSUED` y la mercadería afuera. Nunca las dos: o el pedido sigue vivo, o la DEV- sigue.
+ */
+describe('cc57 — anular una NC con devolución × anular su pedido (contra la base)', () => {
+  it('sin deadlock y nunca un pedido anulado con la devolución deshecha', async () => {
+    const invoicing = moduleRef.get(InvoicingService);
+    const fiscalImport = moduleRef.get(FiscalImportService);
+    // Las pausas tras cada toma de documentos; si otro bloque ya las puso (cc30), se reusan: espiar
+    // dos veces la misma función la vuelve recursiva.
+    const alreadySpied = jest.isMockFunction(documentLocks.lockDocuments);
+    const realLockDocuments = documentLocks.lockDocuments;
+    const spy = alreadySpied
+      ? null
+      : jest.spyOn(documentLocks, 'lockDocuments').mockImplementation(async (tx, set) => {
+          const locked = await realLockDocuments(tx, set);
+          await sleep(PAUSE_MS);
+          return locked;
+        });
+    let correlative = Math.floor(Math.random() * 50_000) + 130_000;
+    const tally = newTally();
+    const broken: string[] = [];
+    try {
+      for (let i = 0; i < ITERATIONS; i++) {
+        const p = await tradingProduct();
+        await productPurchase([p]);
+        // Atendido a medias: un pedido `FULFILLED` no se anula y el cruce no existiría.
+        const order = await directOrder([{ productId: p, qty: '10' }]);
+        await dispatches.create(
+          admin,
+          createDispatchSchema.parse({
+            salesOrderId: order.id,
+            dispatchDate: businessToday(),
+            originAddress: 'Almacén cc57',
+            destinationAddress: 'Cliente cc57',
+            originUbigeo: '150101',
+            destinationUbigeo: '150101',
+            transferMode: 'PICKUP',
+            items: [{ salesOrderItemId: order.items[0]?.id ?? '', qty: '5' }],
+          }),
+        );
+        const draft = await invoicing.create(
+          admin,
+          createInvoiceSchema.parse({
+            docType: 'FACTURA',
+            customerId,
+            salesOrderId: order.id,
+            issueDate: businessToday(),
+            items: [{ salesOrderItemId: order.items[0]?.id ?? '', qty: '5' }],
+          }),
+        );
+        const invoice = await invoicing.registerManual(admin, draft.id, {
+          series: 'F957',
+          correlative: (correlative += 1),
+        });
+        const note = await invoicing.registerCreditNote(
+          admin,
+          invoice.id,
+          registerCreditNoteSchema.parse({
+            reason: 'ANULACION_OPERACION',
+            issueDate: businessToday(),
+            series: 'FC57',
+            correlative: (correlative += 1),
+          }),
+        );
+        await race(tally, `iteración ${i}`, [
+          () => fiscalImport.annulExternal(admin, note.id, 'cc57 anular NC'),
+          () =>
+            salesOrders.cancel(
+              admin,
+              order.id,
+              cancelSalesOrderSchema.parse({ reason: 'cc57 anular', acknowledgeFabricated: true }),
+            ),
+        ]);
+        const [after, ret] = await Promise.all([
+          prisma.salesOrder.findUniqueOrThrow({
+            where: { id: order.id },
+            select: { status: true },
+          }),
+          prisma.salesReturn.findFirstOrThrow({
+            where: { salesOrderId: order.id },
+            select: { status: true },
+          }),
+        ]);
+        if (after.status === 'CANCELLED' && ret.status !== 'ACTIVE') broken.push(`iteración ${i}`);
+      }
+    } finally {
+      spy?.mockRestore();
+    }
+    expect(broken).toEqual([]);
+    expectClean(tally, 'anular NC con DEV- × anular pedido');
+  });
+});

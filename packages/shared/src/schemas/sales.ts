@@ -28,7 +28,7 @@ import {
   ORDER_STAGES,
 } from '../enums';
 import { reasonSchema } from './coil';
-import { idempotencyKeySchema } from './idempotency';
+import { idempotencyFields, idempotencyKeySchema } from './idempotency';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { listExportQuerySchema } from './list-export';
 import { NO_FLOOR_REASONS } from './product';
@@ -734,6 +734,12 @@ export const createQuotationSchema = z.object({
     .default(DEFAULT_QUOTATION_VALIDITY_DAYS),
   notes: z.string().trim().max(500).optional(),
   items: salesItemsSchema,
+  /**
+   * cc57 (B-02 de audit-01): el alta de una cotización o de un pedido directo es una creación
+   * repetible; el mismo intento (reintento de red) no crea dos (D-182). En el pedido directo la
+   * segunda vez habría reservado el stock dos veces.
+   */
+  ...idempotencyFields,
 });
 export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
 

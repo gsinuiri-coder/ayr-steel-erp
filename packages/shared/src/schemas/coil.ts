@@ -13,6 +13,7 @@ import {
   PRODUCTION_ORDER_STATUSES,
 } from '../enums';
 import { costChangeReasonSchema, COST_CHANGE_REQUIRED_MESSAGE } from './cost-change';
+import { idempotencyFields } from './idempotency';
 import { backdatableFields, operationDateSchema } from './operation';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { statusListSchema } from './status-filter';
@@ -253,6 +254,8 @@ const splitChildInputSchema = z.object({
 export const createCoilSplitSchema = z
   .object({
     ...backdatableFields,
+    /** cc57 (B-02 de audit-01): el mismo intento no parte dos veces la bobina (D-182). */
+    ...idempotencyFields,
     splitWeightKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }).optional(),
     kerfLossMm: decimalStringSchema('MM', { max: MAX_VALUE.WIDTH_MM }).default('0.00'),
     children: z
@@ -288,6 +291,8 @@ export type CreateCoilSplitInput = z.infer<typeof createCoilSplitSchema>;
 /** RF-17, D-040: salida `SCRAP` valorizada al costo promedio vigente. */
 export const createCoilScrapSchema = z.object({
   ...backdatableFields,
+  /** cc57 (B-02 de audit-01): el mismo intento no merma dos veces la bobina (D-182). */
+  ...idempotencyFields,
   qtyKg: decimalStringSchema('KG', { positive: true, max: MAX_VALUE.KG }),
   reason: reasonSchema,
 });

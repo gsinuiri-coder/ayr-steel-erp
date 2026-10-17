@@ -125,3 +125,48 @@ describe('planReturnAllocation (cc52, D-646)', () => {
     );
   });
 });
+
+describe('cc57 (D-14 de audit-01): una devolución parcial deja kardex para el resto', () => {
+  /** Aplica una devolución sobre la línea de despacho, como lo grabaría el servicio. */
+  function after(s: DispatchLineStock, qty: string): DispatchLineStock {
+    const [a] = planReturnAllocation(1, D(qty), [s]);
+    if (!a) throw new Error('sin asignación');
+    return {
+      ...s,
+      returnedQty: s.returnedQty.plus(a.qty),
+      returnedReserveQty: s.returnedReserveQty.plus(a.reserveQty),
+      returnedTotalCost: s.returnedTotalCost.plus(a.totalCost),
+    };
+  }
+
+  it('nunca deja unidades afuera sin kardex que devolver', () => {
+    // 3 unidades que movieron 0.002 en el kardex: 2 de 3 prorratean 0.00133 → 0.001 y queda 0.001.
+    const s = stock({
+      dispatchCode: 'DES-1',
+      qty: D('3'),
+      reserveQty: D('0.002'),
+      unitCost: D('5.0000'),
+      totalCost: D('0.0100'),
+    });
+    const rest = after(s, '2');
+    const [last] = planReturnAllocation(1, D('1'), [rest]);
+    expect(last?.reserveQty.toFixed(3)).toBe('0.001');
+    expect(rest.returnedTotalCost.plus(last?.totalCost ?? 0).toFixed(4)).toBe('0.0100');
+  });
+
+  it('si el prorrateo se lo llevaría todo, rechaza la parcial y pide devolver el resto entero', () => {
+    // Antes: 2 de 3 tomaban todo el 0.001 y la última unidad salía «demasiado chica».
+    const s = stock({
+      dispatchCode: 'DES-1',
+      qty: D('3'),
+      reserveQty: D('0.001'),
+      unitCost: D('5.0000'),
+      totalCost: D('0.0050'),
+    });
+    expect(() => planReturnAllocation(1, D('2'), [s])).toThrow(
+      /demasiado chica para el kardex.*entero \(3\.000\)/,
+    );
+    const [all] = planReturnAllocation(1, D('3'), [s]);
+    expect(all?.reserveQty.toFixed(3)).toBe('0.001');
+  });
+});

@@ -42,6 +42,8 @@ export interface ReturnAllocation {
 }
 
 const ZERO = new Decimal(0);
+/** La menor cantidad que el kardex registra (3 decimales). */
+const KARDEX_STEP = new Decimal('0.001');
 
 export interface ReturnPlanOptions {
   /** Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. */
@@ -119,12 +121,21 @@ export function planReturnAllocation(
         `${at}: una bobina se devuelve entera (${left.toFixed(3)} del despacho ${s.dispatchCode})`,
       );
     }
+    const leftReserve = s.reserveQty.minus(s.returnedReserveQty);
+    // cc57 (D-14 de audit-01): una devolución parcial deja siempre algo del kardex para lo que
+    // queda por devolver; si el prorrateo a 3 decimales se lo llevaba todo, la última devolución
+    // salía «demasiado chica» con unidades todavía afuera.
     const reserveQty = whole
-      ? s.reserveQty.minus(s.returnedReserveQty)
-      : s.reserveQty.times(take).div(s.qty).toDecimalPlaces(3);
+      ? leftReserve
+      : Decimal.min(
+          s.reserveQty.times(take).div(s.qty).toDecimalPlaces(3),
+          leftReserve.minus(KARDEX_STEP),
+        );
     if (reserveQty.lte(0)) {
       throw new BadRequestException(
-        `${at}: la cantidad a devolver es demasiado chica para el kardex (${take.toFixed(3)})`,
+        whole
+          ? `${at}: la cantidad a devolver es demasiado chica para el kardex (${take.toFixed(3)})`
+          : `${at}: la cantidad a devolver es demasiado chica para el kardex (${take.toFixed(3)}); devuelve lo que queda del despacho ${s.dispatchCode} entero (${left.toFixed(3)})`,
       );
     }
     const totalCost = whole

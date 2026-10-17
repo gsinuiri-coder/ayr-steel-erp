@@ -85,7 +85,25 @@ export class FiscalImportService {
         where: { invoiceId: id },
         select: { id: true, seq: true },
       });
-      await lockDocuments(tx, { fiscalDocuments: [id], dispatches: declared.map((d) => d.id) });
+      // cc57 (D-02 de audit-01): una NC con devolución toma además los despachos que devolvió y su
+      // pedido, en la misma llamada (regla 17: comprobante → despacho → pedido). Sin ellos, anular
+      // el pedido en paralelo lo dejaba `CANCELLED` con su despacho vigente y la mercadería afuera:
+      // la anulación leía el pedido sin bloquearlo y deshacía la DEV- igual.
+      const returnScope = await tx.salesReturn.findFirst({
+        where: { creditNoteId: id, status: 'ACTIVE' },
+        select: {
+          salesOrderId: true,
+          items: { select: { dispatchItem: { select: { dispatchId: true } } } },
+        },
+      });
+      await lockDocuments(tx, {
+        fiscalDocuments: [id],
+        dispatches: [
+          ...declared.map((d) => d.id),
+          ...(returnScope?.items.map((it) => it.dispatchItem.dispatchId) ?? []),
+        ],
+        salesOrders: returnScope ? [returnScope.salesOrderId] : [],
+      });
       // Revisiones de cc55 (R-3, D-474): lo que decide se lee después del bloqueo. Un despacho que se
       // enlazó entre la lectura y el lock se bloquea también (fuera de orden sale con 409, D-475).
       const known = new Set(declared.map((d) => d.id));

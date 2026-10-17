@@ -39,6 +39,7 @@ import {
   statusCondition,
   QTY_CREDIT_NOTE_REASONS,
 } from '@ayr/shared';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { assertSellerAccess, sellerWhere } from '../auth/seller-scope';
@@ -125,6 +126,8 @@ export interface DispatchCreateOptions {
   movementNote?: string;
   /** Motivo que queda en la auditoría del despacho. */
   auditReason?: string;
+  /** cc57 (B-02): el id del despacho, el de la clave de idempotencia. */
+  id?: string;
 }
 
 /**
@@ -151,11 +154,19 @@ export class DispatchesService {
   // -------------------------------------------------------------------------
 
   async create(actor: RequestUser, input: CreateDispatchInput): Promise<DispatchDto> {
-    const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input), {
-      // Un despacho toma un lock por línea sobre bobinas y saldos, igual que la
-      // confirmación de un pedido; el timeout por defecto de Prisma no alcanza contra Neon.
-      timeout: 30_000,
-    });
+    const id = await this.prisma.$transaction(
+      async (tx) => {
+        // cc57 (B-02 de audit-01): el mismo intento no saca dos veces del kardex (D-182).
+        const claim = await claimIdempotencyKey(tx, 'dispatch-create', input.idempotencyKey);
+        if (!claim.claimed) return claim.resourceId;
+        return this.createInTx(tx, actor, input, { id: claim.resourceId });
+      },
+      {
+        // Un despacho toma un lock por línea sobre bobinas y saldos, igual que la
+        // confirmación de un pedido; el timeout por defecto de Prisma no alcanza contra Neon.
+        timeout: 30_000,
+      },
+    );
     return this.findOne(id);
   }
 
@@ -311,6 +322,7 @@ export class DispatchesService {
 
     const dispatch = await tx.dispatch.create({
       data: {
+        ...(options.id === undefined ? {} : { id: options.id }),
         salesOrderId: order.id,
         status: DispatchStatus.ISSUED,
         dispatchDate: toDateOnly(dispatchDate),

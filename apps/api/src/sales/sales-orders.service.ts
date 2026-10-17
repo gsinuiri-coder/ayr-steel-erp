@@ -88,6 +88,7 @@ import {
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
 } from '@ayr/shared';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { deriveOrderReadiness, deriveOrderStage, orderStagesWhere } from './order-readiness';
 import {
   annulledManualDocuments,
@@ -307,6 +308,8 @@ export interface CreateDirectOptions {
    * respaldada por su propio producto.
    */
   counterSale?: boolean;
+  /** cc57 (B-02): el id del pedido, el de la clave de idempotencia. */
+  id?: string;
 }
 
 /** Lo que una línea (de pedido o de cotización) necesita para poder reservar. */
@@ -1372,7 +1375,12 @@ export class SalesOrdersService {
       );
     }
     const orderId = await this.prisma.$transaction(
-      (tx) => this.createDirectInTx(tx, actor, input),
+      async (tx) => {
+        // cc57 (B-02 de audit-01): el mismo intento no crea dos pedidos con sus reservas (D-182).
+        const claim = await claimIdempotencyKey(tx, 'sales-order-direct', input.idempotencyKey);
+        if (!claim.claimed) return claim.resourceId;
+        return this.createDirectInTx(tx, actor, input, { id: claim.resourceId });
+      },
       // Mismo motivo que `confirm`: un lock por línea sobre bobinas y saldos.
       { timeout: 30_000 },
     );
@@ -1466,6 +1474,7 @@ export class SalesOrdersService {
 
     const order = await tx.salesOrder.create({
       data: {
+        ...(options.id === undefined ? {} : { id: options.id }),
         quotationId: null,
         customerId: customer.id,
         status: SalesOrderStatus.CONFIRMED,

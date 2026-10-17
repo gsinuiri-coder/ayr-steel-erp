@@ -5,6 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { errorMessage, toast } from '@/lib/notify';
 import { Decimal, type CoilDto } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { formatKgPrecise, formatMoney, isPositiveDecimal } from '@/lib/format';
 import { composeReason, OTHER_REASON, SCRAP_REASONS } from '@/lib/reasons';
 import { Button } from '@/components/ui/button';
@@ -67,17 +68,27 @@ export function CoilScrapDialog({
 
   // D-124: día de negocio de la merma, con su acuse de orden cronológico.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
+  // cc57 (B-02 de audit-01): el reintento tras un corte de red no merma dos veces la bobina.
+  const scrapKey = useIdempotencyKey();
   const scrap = useMutation({
-    mutationFn: ({ confirmBackdate }: BackdateAck) =>
-      api<CoilDto>(`/coils/${coil.id}/scrap`, {
+    mutationFn: ({ confirmBackdate }: BackdateAck) => {
+      const body = {
+        qtyKg: qtyKg.trim(),
+        reason,
+        operationDate,
+        confirmBackdate: confirmBackdate || undefined,
+      };
+      return api<CoilDto>(`/coils/${coil.id}/scrap`, {
         method: 'POST',
         body: {
-          qtyKg: qtyKg.trim(),
-          reason,
-          operationDate,
-          confirmBackdate: confirmBackdate || undefined,
+          ...body,
+          idempotencyKey: scrapKey.current(JSON.stringify({ coilId: coil.id, ...body })),
         },
-      }),
+      });
+    },
+    onSettled: (_data, error) => {
+      scrapKey.settle(error ?? undefined);
+    },
     onSuccess: () => {
       toast.success(`Merma registrada en ${coil.code}`, {
         description: `Salieron ${formatKgPrecise(qtyKg.trim())} de la bobina.`,

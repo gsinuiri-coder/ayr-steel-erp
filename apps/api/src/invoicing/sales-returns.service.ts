@@ -184,9 +184,13 @@ export class SalesReturnsService {
     // Dos líneas de la NC sobre la misma línea de pedido consumen del mismo despachado.
     type Used = Map<string, { qty: Decimal; reserveQty: Decimal; cost: Decimal }>;
     const used = new Map<string, Used>();
-    return lines.map((line) => {
+    const plans: ReturnAllocation[][] = [];
+    for (const line of lines) {
       // cc54 (D-656): el 01 sobre una línea sin pedido (flete, servicio) no devuelve nada.
-      if (line.orderItemId === null && options.upToAvailable) return [];
+      if (line.orderItemId === null && options.upToAvailable) {
+        plans.push([]);
+        continue;
+      }
       if (line.orderItemId === null) {
         throw new BadRequestException(
           `Línea ${String(line.lineNumber)}: no viene de un pedido, no hay despacho que devolver`,
@@ -205,7 +209,12 @@ export class SalesReturnsService {
             }
           : s;
       });
-      const plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available, options);
+      let plan: ReturnAllocation[];
+      try {
+        plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available, options);
+      } catch (err) {
+        throw await this.explainWithoutKardex(tx, line.orderItemId, err);
+      }
       for (const a of plan) {
         const prev = usedHere.get(a.stock.dispatchItemId);
         usedHere.set(a.stock.dispatchItemId, {
@@ -214,8 +223,35 @@ export class SalesReturnsService {
           cost: (prev?.cost ?? new Decimal(0)).plus(a.totalCost),
         });
       }
-      return plan;
+      plans.push(plan);
+    }
+    return plans;
+  }
+
+  /**
+   * cc57 (D-12 de audit-01): una línea entregada antes del inventario inicial (D-278) tiene despacho
+   * pero no salida de kardex, así que no hay costo con que reingresarla. Sin decirlo, el rechazo
+   * («hay 0.000 despachado sin devolver») parecía un error de la app. Una consulta, solo al fallar.
+   */
+  private async explainWithoutKardex(
+    tx: Prisma.TransactionClient,
+    orderItemId: string,
+    err: unknown,
+  ): Promise<unknown> {
+    if (!(err instanceof BadRequestException)) return err;
+    const withoutKardex = await tx.dispatchItem.aggregate({
+      where: {
+        salesOrderItemId: orderItemId,
+        movementId: null,
+        dispatch: { status: DispatchStatus.ISSUED },
+      },
+      _sum: { qty: true },
     });
+    const qty = toDecimal(withoutKardex._sum.qty?.toString() ?? '0');
+    if (qty.lte(0)) return err;
+    return new BadRequestException(
+      `${err.message} De esta línea, ${qty.toFixed(3)} se entregó antes del inventario inicial y no tiene salida en el kardex: esa parte no vuelve al almacén por la nota de crédito. Para acreditar solo el importe, usa «Rebajar el precio».`,
+    );
   }
 
   /** Los despachos de los que puede salir la devolución de una NC: para bloquearlos antes. */

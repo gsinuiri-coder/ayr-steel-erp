@@ -42,6 +42,7 @@ function setup(options: {
   salesReturn?: Record<string, unknown> | null;
   reverseError?: Error;
   coilClosed?: boolean;
+  withoutKardexQty?: Prisma.Decimal;
 }) {
   const audit = {
     write: jest.fn<Promise<void>, [unknown, { entityId?: string; action: string }]>(),
@@ -60,6 +61,8 @@ function setup(options: {
     },
     dispatchItem: {
       findMany: jest.fn().mockResolvedValue(options.dispatchItems ?? [dispatchItem()]),
+      // cc57 (D-12): lo entregado sin salida de kardex (antes del inventario inicial).
+      aggregate: jest.fn().mockResolvedValue({ _sum: { qty: options.withoutKardexQty ?? null } }),
     },
     inventoryMovement: {
       // cc53 (D-649): sin recosteos sobre la salida del despacho.
@@ -187,6 +190,15 @@ describe('SalesReturnsService (cc52, D-646)', () => {
         { lineNumber: 2, orderItemId: 'soi-1', qty: '3' },
       ]),
     ).rejects.toThrow('hay 2.000 despachado sin devolver');
+  });
+
+  it('cc57 (D-12): lo entregado antes del inventario inicial se nombra en el rechazo', async () => {
+    const { service, tx } = setup({ note: NOTE, dispatchItems: [], withoutKardexQty: D('5') });
+    await expect(
+      service.planForLines(tx, [{ lineNumber: 1, orderItemId: 'soi-1', qty: '2' }]),
+    ).rejects.toThrow(
+      /hay 0.000 despachado sin devolver.*5.000 se entregó antes del inventario inicial/,
+    );
   });
 
   it('una línea sin pedido no se devuelve', async () => {
