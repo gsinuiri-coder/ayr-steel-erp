@@ -9,8 +9,9 @@ import type { RequestUser } from '../auth/auth.types';
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
+  // cc57 (C-07 de audit-01): sin SUPERVISOR_PLANTA, que solo recibía ceros (no vende) y no lo usa.
   @Get()
-  @Roles(Role.VENDEDOR, Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
+  @Roles(Role.VENDEDOR, Role.ADMINISTRADOR)
   async getDashboard(@CurrentUser() actor: RequestUser) {
     return this.dashboard.getSellerDashboard(actor);
   }

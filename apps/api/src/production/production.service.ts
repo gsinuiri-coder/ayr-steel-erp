@@ -43,6 +43,7 @@ import {
   type ReportPiecesInput,
   type ReverseMovementInput,
 } from '@ayr/shared';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 import { AuditService } from '../audit/audit.service';
 import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import type { RequestUser } from '../auth/auth.types';
@@ -396,7 +397,7 @@ export class ProductionService {
         },
       });
       return order.id;
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(orderId);
   }
@@ -535,7 +536,7 @@ export class ProductionService {
           assignedKg: toFixedString(assignedKg, 'KG'),
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(orderId);
   }
@@ -588,7 +589,7 @@ export class ProductionService {
         entityId: orderId,
         after: { consumptionId, coilCode: consumption.coil.code },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(orderId);
   }
@@ -1602,7 +1603,7 @@ export class ProductionService {
           ...(restored ? { reservationRestored: order.reservationId } : {}),
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(orderId);
   }
@@ -2041,8 +2042,15 @@ export class ProductionService {
    * El acabado es obligatorio porque de él sale la densidad (RF-25) con la que se convierten
    * metros en kilos; el espesor, porque es lo que decide qué bobina se puede montar (D-086).
    */
-  async requireRoofingProduct(productId: string) {
-    const product = await this.prisma.product.findUnique({
+  /**
+   * cc57 (B-08 de audit-01): `db` deja leer con la transacción del llamador; sin él, desde adentro
+   * de una transacción se tomaba otra conexión del pool para leer el catálogo.
+   */
+  async requireRoofingProduct(
+    productId: string,
+    db: Pick<Prisma.TransactionClient, 'product'> = this.prisma,
+  ) {
+    const product = await db.product.findUnique({
       where: { id: productId },
       select: {
         id: true,

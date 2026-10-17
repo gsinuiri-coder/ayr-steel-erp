@@ -257,7 +257,10 @@ describe('PurchasesService.receive frente a D-371', () => {
       items: [stale],
     };
     const tx = {
-      purchase: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      purchase: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue(purchase),
+      },
       purchaseItem: { findMany: jest.fn().mockResolvedValue([fresh]) },
     };
     const coils = { create: jest.fn().mockResolvedValue({ id: 'coil-1' }) };
@@ -286,5 +289,7 @@ describe('PurchasesService.receive frente a D-371', () => {
       tx,
       expect.objectContaining({ weightKg: '950.000', totalCost: '2850.0000' }),
     );
+    // cc57 (B-11 de audit-01): la cabecera también se relee dentro de la transacción.
+    expect(tx.purchase.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: 'pu-1' } });
   });
 });

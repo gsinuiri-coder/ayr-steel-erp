@@ -132,6 +132,15 @@ export const confirmPriceListImportSchema = z.object({
       z.object({
         productId: z.string().uuid(),
         afterValuePen: decimalStringSchema('MONEY', { positive: true, max: MAX_VALUE.MONEY }),
+        /**
+         * cc57 (D-16 de audit-01): el precio con IGV de la fila del archivo. Con él, el API vuelve a
+         * derivar `afterValuePen` y rechaza si no coincide (no graba un valor que no salió del
+         * archivo). Opcional para el navegador de antes del deploy.
+         */
+        priceWithIgvPen: decimalStringSchema('MONEY', {
+          positive: true,
+          max: MAX_VALUE.MONEY,
+        }).optional(),
       }),
     )
     .min(1, 'No hay filas para confirmar')

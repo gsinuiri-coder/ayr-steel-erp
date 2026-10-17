@@ -19,22 +19,26 @@ const SCAN_DIRS = ['apps/api/src', 'apps/api/prisma', 'scripts', 'packages', 'e2
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'dist-cli', 'migrations', 'coverage']);
 const EXTENSIONS = ['.ts', '.mjs', '.js', '.cjs', '.sql'];
 
+// cc57 (A-04 de audit-01): los patrones cubren también `createManyAndReturn`/`updateManyAndReturn`
+// (Prisma 5.14+), `UPDATE ONLY`, `DELETE FROM ONLY`, `MERGE INTO` y `TRUNCATE` sin `TABLE`. El SQL
+// armado por concatenación (`$executeRawUnsafe`) no se prohíbe: tiene usos legítimos (savepoints de
+// los importadores, herramientas de drift) y ninguno nombra el kardex, que los patrones ya ven.
 const WRITER_PATTERNS: { name: string; re: RegExp }[] = [
   {
     name: 'Prisma: escritura de inventoryMovement',
-    re: /\binventoryMovement\s*\.\s*(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
+    re: /\binventoryMovement\s*\.\s*(create\w*|update\w*|upsert|delete\w*)\s*\(/,
   },
   {
     name: 'Prisma: escritura de inventoryBalance',
-    re: /\binventoryBalance\s*\.\s*(create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
+    re: /\binventoryBalance\s*\.\s*(create\w*|update\w*|upsert|delete\w*)\s*\(/,
   },
   {
-    name: 'SQL: INSERT/UPDATE/DELETE sobre las tablas del kardex',
-    re: /(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"?inventory_(movements|balances)"?/i,
+    name: 'SQL: INSERT/UPDATE/DELETE/MERGE sobre las tablas del kardex',
+    re: /(INSERT\s+INTO|UPDATE(\s+ONLY)?|DELETE\s+FROM(\s+ONLY)?|MERGE\s+INTO)\s+"?inventory_(movements|balances)"?/i,
   },
   // Un TRUNCATE que arma la lista de tablas al vuelo no nombra las del kardex, pero las vacía:
-  // cualquier TRUNCATE cuenta.
-  { name: 'SQL: TRUNCATE', re: /TRUNCATE\s+TABLE/i },
+  // cualquier TRUNCATE cuenta, con o sin `TABLE`.
+  { name: 'SQL: TRUNCATE', re: /TRUNCATE\s+(TABLE\s+)?["\w$]/ },
 ];
 
 interface Exception {

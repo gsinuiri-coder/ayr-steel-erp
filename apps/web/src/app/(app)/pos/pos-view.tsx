@@ -323,12 +323,13 @@ export function PosView() {
               </p>
             )}
             <Button
-              disabled={openSession.isPending}
+              pending={openSession.isPending}
+              pendingText="Abriendo…"
               onClick={() => {
                 openSession.mutate();
               }}
             >
-              {openSession.isPending ? 'Abriendo…' : 'Abrir caja'}
+              Abrir caja
             </Button>
           </CardContent>
         </Card>
@@ -652,13 +653,13 @@ export function PosView() {
               <Button
                 size="lg"
                 disabled={!canSell || (overGenericCap && !forceGeneric)}
+                pending={sell.isPending}
+                pendingText="Cobrando…"
                 onClick={() => {
                   sell.mutate();
                 }}
               >
-                {sell.isPending
-                  ? 'Cobrando…'
-                  : `Cobrar ${formatMoney(toFixedString(totals.total, 'MONEY'))}`}
+                {`Cobrar ${formatMoney(toFixedString(totals.total, 'MONEY'))}`}
               </Button>
             </CardContent>
           </Card>

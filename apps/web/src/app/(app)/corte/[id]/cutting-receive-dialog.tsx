@@ -220,12 +220,14 @@ export function CuttingReceiveDialog({
             Cancelar
           </Button>
           <Button
-            disabled={receive.isPending || !preview || Boolean(preview.error)}
+            disabled={!preview || Boolean(preview.error)}
+            pending={receive.isPending}
+            pendingText="Recibiendo…"
             onClick={() => {
               void backdate.attempt();
             }}
           >
-            {receive.isPending ? 'Recibiendo…' : 'Recibir'}
+            Recibir
           </Button>
         </DialogFooter>
       </DialogContent>

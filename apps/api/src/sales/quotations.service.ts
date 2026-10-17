@@ -60,6 +60,7 @@ import {
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
 } from '@ayr/shared';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { duplicateShapeChange } from './duplicate-shape';
 import { AuditService } from '../audit/audit.service';
@@ -1378,7 +1379,7 @@ export class QuotationsService {
         before: { sellerId: current.sellerId },
         after: { sellerId: newSellerId, reason },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.findOne(id, actor);
   }
 
@@ -1412,9 +1413,12 @@ export class QuotationsService {
     if (due.length === 0) return 0;
 
     const expired = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.quotation.updateMany({
+      // cc57 (B-09 de audit-01): los códigos de las que **de verdad** vencieron (las que el filtro de
+      // estado tocó), no los de la lectura previa: una confirmada entre medio no se nombra.
+      const result = await tx.quotation.updateManyAndReturn({
         where: { id: { in: due.map((q) => q.id) }, status: QuotationStatus.EMITTED },
         data: { status: QuotationStatus.EXPIRED, expiredAt: new Date() },
+        select: { seq: true },
       });
       await this.audit.write(tx, {
         actorId,
@@ -1423,9 +1427,9 @@ export class QuotationsService {
         entityId: null,
         // El conteo real del `updateMany`, no el de la lectura previa: entre una y otra,
         // alguna pudo confirmarse o anularse y el filtro de estado la deja fuera.
-        after: { count: result.count, codes: due.map((q) => quotationCode(q.seq)) },
+        after: { count: result.length, codes: result.map((q) => quotationCode(q.seq)) },
       });
-      return result.count;
+      return result.length;
     });
     this.logger.log(`Cotizaciones vencidas: ${expired}`);
     return expired;

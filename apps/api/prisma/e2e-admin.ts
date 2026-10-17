@@ -52,6 +52,8 @@ async function main(): Promise<void> {
   await prisma.auditLog.create({
     data: {
       actorId: null,
+      // cc57 (P1-07 de audit-01, D-218): el alta la hace un proceso (el smoke), no un usuario.
+      actorKind: 'SYSTEM',
       action: 'e2e.admin.create',
       entity: 'users',
       entityId: admin.id,

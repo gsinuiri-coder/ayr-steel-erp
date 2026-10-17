@@ -88,6 +88,7 @@ import {
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
 } from '@ayr/shared';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { deriveOrderReadiness, deriveOrderStage, orderStagesWhere } from './order-readiness';
 import {
@@ -2712,7 +2713,7 @@ export class SalesOrdersService {
             : {}),
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(id);
   }
@@ -2854,7 +2855,7 @@ export class SalesOrdersService {
         },
         after: { status: ReservationStatus.RELEASED, shortfallQty: '0.000', reason },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.reservationDto(reservationId);
   }
@@ -3230,7 +3231,7 @@ export class SalesOrdersService {
         before: { promisedDeliveryDate: order.promisedDeliveryDate },
         after: { promisedDeliveryDate },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.findOne(id);
   }
 

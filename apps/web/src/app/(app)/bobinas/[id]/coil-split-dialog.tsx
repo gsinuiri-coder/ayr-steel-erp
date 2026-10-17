@@ -222,12 +222,14 @@ export function CoilSplitDialog({
             Cancelar
           </Button>
           <Button
-            disabled={split.isPending || !preview || Boolean(preview.error)}
+            disabled={!preview || Boolean(preview.error)}
+            pending={split.isPending}
+            pendingText="Partiendo…"
             onClick={() => {
               void backdate.attempt();
             }}
           >
-            {split.isPending ? 'Partiendo…' : 'Partir'}
+            Partir
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -617,18 +617,15 @@ export class PurchasesService {
     // emisión del comprobante del proveedor es otra cosa y no se toca: un flete emitido
     // el 3 puede recibirse el 12.
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    const purchase = await this.prisma.purchase.findUnique({
-      where: { id },
-      include: { items: { orderBy: { lineNumber: 'asc' } } },
-    });
-    if (!purchase) throw new NotFoundException('Compra no encontrada');
-    if (purchase.status === PurchaseStatus.CANCELLED) {
+    const peek = await this.prisma.purchase.findUnique({ where: { id } });
+    if (!peek) throw new NotFoundException('Compra no encontrada');
+    if (peek.status === PurchaseStatus.CANCELLED) {
       throw new BadRequestException('La compra está anulada');
     }
-    if (purchase.status === PurchaseStatus.RECEIVED) {
+    if (peek.status === PurchaseStatus.RECEIVED) {
       throw new BadRequestException('La compra ya fue recibida');
     }
-    assertPenRateIsOne(purchase);
+    assertPenRateIsOne(peek);
 
     await this.prisma.$transaction(
       async (tx) => {
@@ -636,7 +633,7 @@ export class PurchasesService {
         // de la fila y hace que dos recepciones simultáneas no dupliquen movimientos de
         // kardex (la segunda ve 0 filas afectadas y aborta sin escribir nada).
         const claimed = await tx.purchase.updateMany({
-          where: { id: purchase.id, status: PurchaseStatus.DRAFT },
+          where: { id: peek.id, status: PurchaseStatus.DRAFT },
           data: { status: PurchaseStatus.RECEIVED, receivedAt: new Date() },
         });
         if (claimed.count === 0) {
@@ -646,6 +643,10 @@ export class PurchasesService {
         // borrador (que toma el mismo lock) pudo confirmarse entre la lectura de arriba y este
         // punto; recibir con la foto vieja daría de alta bobinas o kardex con cantidades que
         // ya no son las de la compra.
+        // cc57 (B-11 de audit-01): la cabecera también (tipo, moneda, TC, línea, proveedor): se
+        // decide con lo que hay después del claim, no con lo leído antes de la transacción.
+        const purchase = await tx.purchase.findUniqueOrThrow({ where: { id: peek.id } });
+        assertPenRateIsOne(purchase);
         const items = await tx.purchaseItem.findMany({
           where: { purchaseId: purchase.id },
           orderBy: { lineNumber: 'asc' },
@@ -740,7 +741,7 @@ export class PurchasesService {
           action: 'purchases.receive',
           entity: 'purchases',
           entityId: purchase.id,
-          before: { status: purchase.status },
+          before: { status: peek.status },
           after: {
             status: PurchaseStatus.RECEIVED,
             items: items.length,
