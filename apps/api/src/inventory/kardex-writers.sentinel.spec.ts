@@ -38,7 +38,7 @@ const WRITER_PATTERNS: { name: string; re: RegExp }[] = [
   },
   // Un TRUNCATE que arma la lista de tablas al vuelo no nombra las del kardex, pero las vacía:
   // cualquier TRUNCATE cuenta, con o sin `TABLE`.
-  { name: 'SQL: TRUNCATE', re: /TRUNCATE\s+(TABLE\s+)?["\w$]/ },
+  { name: 'SQL: TRUNCATE', re: /TRUNCATE\s+(TABLE\s+)?["\w$]/i },
 ];
 
 interface Exception {

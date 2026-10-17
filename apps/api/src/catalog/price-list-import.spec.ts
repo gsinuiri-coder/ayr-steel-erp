@@ -264,6 +264,16 @@ describe('PriceListImportService.confirm (D-217/M1c)', () => {
         rows: [{ productId: 'p-1', afterValuePen: '10.0000', priceWithIgvPen: '11.80' }],
       }),
     ).resolves.toMatchObject({ changed: 0 });
+
+    // Autorrevisión de cc57-e (P1-1): una celda con toda la precisión de una fórmula se compara
+    // sin redondear, como la derivó la vista previa.
+    await expect(
+      svc.confirm(ACTOR, {
+        rows: [
+          { productId: 'p-1', afterValuePen: '82.6379', priceWithIgvPen: '97.51275765904359' },
+        ],
+      }),
+    ).resolves.toMatchObject({ changed: 1 });
   });
 
   it('producto desactivado a mitad de la carga rechaza el lote entero', async () => {

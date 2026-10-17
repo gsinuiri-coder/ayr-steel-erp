@@ -259,7 +259,7 @@ export class PriceListImportService {
 
         const products = await tx.product.findMany({
           where: { id: { in: input.rows.map((r) => r.productId) } },
-          select: { id: true, isActive: true, listPricePen: true },
+          select: { id: true, sku: true, isActive: true, listPricePen: true },
         });
         const productById = new Map(products.map((p) => [p.id, p]));
 
@@ -276,7 +276,7 @@ export class PriceListImportService {
             const derived = money(saleValueFromPrice(row.priceWithIgvPen)).toFixed(4);
             if (!toDecimal(derived).eq(toDecimal(row.afterValuePen))) {
               throw new BadRequestException(
-                `El valor sin IGV de ${row.productId} no corresponde a su precio con IGV (${row.priceWithIgvPen}): vuelve a cargar el archivo`,
+                `El valor sin IGV de ${product.sku} no corresponde a su precio con IGV (${row.priceWithIgvPen}): vuelve a cargar el archivo`,
               );
             }
           }

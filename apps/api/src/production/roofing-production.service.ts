@@ -349,7 +349,7 @@ export class RoofingProductionService {
 
     // D-122: lo que hace falta para producir una cobertura sale del **producto**: su
     // acabado (y con él la densidad), su espesor, su ancho y su largo. Ya no hay receta.
-    const roofing = await this.production.requireRoofingProduct(product.id);
+    const roofing = await this.production.requireRoofingProduct(product.id, tx);
 
     const taken = await tx.productionOrder.findFirst({
       where: {
@@ -443,7 +443,7 @@ export class RoofingProductionService {
     }
     if (!product.isActive) throw new BadRequestException('El producto está desactivado');
 
-    const roofing = await this.production.requireRoofingProduct(product.id);
+    const roofing = await this.production.requireRoofingProduct(product.id, tx);
     if (roofing.lengthMm === null) {
       throw new BadRequestException(
         `${roofing.sku} es una cobertura a medida: no tiene largo fijo para producir a stock. ` +
