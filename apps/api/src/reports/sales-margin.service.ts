@@ -169,12 +169,15 @@ export class SalesMarginService {
       FROM "fiscal_documents" fd
       JOIN "customers" cu ON cu."id" = fd."customer_id"
       LEFT JOIN "sales_orders" so ON so."id" = fd."sales_order_id"
-      -- cc57 (E-16 de audit-01): el vendedor con la regla de CxC y del Panel (documentOwnerId):
-      -- el del pedido, si no el del pedido de su despacho, si no quien lo registró. Antes, una
-      -- venta sin pedido quedaba «sin vendedor» acá y contaba para alguien en los otros dos.
-      LEFT JOIN "dispatches" dsp ON dsp."id" = fd."dispatch_id"
-      LEFT JOIN "sales_orders" dso ON dso."id" = dsp."sales_order_id"
-      LEFT JOIN "users" u ON u."id" = COALESCE(so."seller_id", dso."seller_id", fd."created_by_id")
+      -- cc57 (E-16 de audit-01): el vendedor con la regla de CxC (documentOwnerId): el del pedido
+      -- y, sin pedido, quien registró el comprobante. Una NC sin pedido toma el dueño del
+      -- comprobante que acredita (autorrevisión, P2-4). Antes, una venta sin pedido quedaba «sin
+      -- vendedor» acá y contaba para alguien en CxC.
+      LEFT JOIN "fiscal_documents" afd ON afd."id" = fd."affected_document_id"
+      LEFT JOIN "sales_orders" aso ON aso."id" = afd."sales_order_id"
+      LEFT JOIN "users" u ON u."id" = COALESCE(
+        so."seller_id", aso."seller_id", afd."created_by_id", fd."created_by_id"
+      )
       WHERE fd."archived_at" IS NULL
         AND fd."doc_type" <> 'GUIA_REMISION_REMITENTE'
         AND fd."status"::text IN (${live})

@@ -283,7 +283,9 @@ describe('cc55 (D-667): el costo de una cobertura a medida es el de su OP, en lo
     const row = margin.orders.find((o) => o.salesOrderId === cheap.orderId);
     expect(row?.costPen).toBe(opCost);
     expect(row?.costStatus).toBe('COMPLETO');
-    // cc57 (E-15 de audit-01): «Material de OPs» es el de la OP, despunte incluido.
+    // cc57 (E-15 de audit-01): «Material de OPs» es el de la OP, despunte incluido (la corrida
+    // barata cerró con despunte: sin él la prueba no distinguiría).
+    expect(Number(op.scrapKg ?? 0)).toBeGreaterThan(0);
     expect(row?.opMaterialCostPen).toBe(op.materialCostPen?.toFixed(4));
     // La otra corrida no se despachó: no tiene comprobante en el reporte.
     expect(margin.orders.some((o) => o.salesOrderId === dear.orderId)).toBe(false);
@@ -336,9 +338,10 @@ describe('cc57 (E-02 de audit-01): la NC de devolución de una cobertura, en los
     const profit = await moduleRef.get(DocumentProfitabilityService).profitability(note.id);
     const margin = await moduleRef.get(SalesMarginService).salesMargin({ from: TODAY, to: TODAY });
     const doc = margin.orders.flatMap((o) => o.documents).find((d) => d.id === note.id);
-    console.warn(
-      `[E-02] DEV- ${devCost ?? '-'} · rentabilidad ${profit.total.costPen ?? '-'} · ventas y margen ${doc?.costPen ?? '-'}`,
-    );
+    // Lo que acreditan los dos (D-667): la parte de la OP de lo devuelto, no el costo con que
+    // reingresó la DEV- (el promedio del despacho, que mezcla las dos corridas).
+    expect(profit.total.costPen).toBe('-181.8000');
+    expect(devCost).not.toBe('181.8000');
     expect(doc?.costPen).toBe(profit.total.costPen);
   });
 });

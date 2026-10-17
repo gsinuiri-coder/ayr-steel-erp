@@ -208,6 +208,42 @@ describe('assembleSalesByProduct (cc24, D-417)', () => {
     ]);
   });
 
+  it('cc57 (E-03, autorrevisión): sobre una venta trazada en parte, o con 02, la NC va a no trazable', () => {
+    const out = assembleSalesByProduct(
+      [
+        line({}),
+        line({
+          documentId: 'nc1',
+          docType: 'NOTA_CREDITO',
+          qty: '-10',
+          salesPen: '-500.0000',
+          affectedDocumentId: 'd1',
+          creditReason: 'ANULACION_OPERACION',
+        }),
+        line({ documentId: 'd2' }),
+        line({
+          documentId: 'nc2',
+          docType: 'NOTA_CREDITO',
+          qty: '-10',
+          salesPen: '-500.0000',
+          affectedDocumentId: 'd2',
+          creditReason: 'ANULACION_ERROR_RUC',
+        }),
+      ],
+      declared([
+        ['d1', 'p1', { qty: '4', costPen: '120.0000' }],
+        ['d2', 'p1', { qty: '10', costPen: '300.0000' }],
+      ]),
+    );
+    // d1 se trazó en parte (4 de 10): su NC no resta de la fila; d2 entero, pero su NC es un 02.
+    expect(out.products.rows).toMatchObject([
+      { qty: '14.000', salesPen: '700.0000', costPen: '420.0000' },
+    ]);
+    expect(
+      out.products.untraceable.filter((u) => u.reason === 'NOTA_CREDITO').map((u) => u.documentId),
+    ).toEqual(['nc1', 'nc2']);
+  });
+
   it('venta de la línea = filas + no trazable + bobinas de otra pestaña', () => {
     const lines = [
       line({}),
