@@ -215,7 +215,13 @@ export function CobranzasView() {
           S/ 0.00» —que es la buena noticia— se pintaba igual que una deuda de miles. Rojo y
           ámbar están reservados para error y aviso, y un cero no es ninguno de los dos.
         */}
-        <Stat label="Vencido" className={overdue ? 'text-destructive' : undefined}>
+        {/* cc57 (E-08 de audit-01): dos «vencidos» distintos, y se dice: el del Panel cuenta el
+            contado desde su emisión (D-428); este, solo lo que tiene fecha de vencimiento. */}
+        <Stat
+          label="Vencido"
+          className={overdue ? 'text-destructive' : undefined}
+          hint="Sin el contado (el Panel sí lo cuenta)"
+        >
           {totals.isError ? (
             <span className="text-muted-foreground">Sin datos</span>
           ) : totals.isPending ? (

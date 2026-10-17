@@ -39,6 +39,12 @@ export interface ProductInvoiceLine {
    * vive en la pestaña de esa línea; acá solo cuenta en el cuadre.
    */
   shownElsewhere: boolean;
+  /** cc57 (E-03): en una NC, el comprobante que acredita (para saber si su venta se trazó). */
+  affectedDocumentId?: string | null;
+  /** cc57 (E-03): en una NC, el costo efectivo de lo que su devolución vigente reingresó. */
+  returnCostPen?: string | null;
+  /** cc57 (E-03, autorrevisión): el motivo SUNAT de la NC. */
+  creditReason?: string | null;
 }
 
 /** Lo despachado contra un comprobante, por producto (despachos vigentes). */
@@ -110,6 +116,7 @@ export function assembleSalesByProduct(
     count: number;
   }
   const groups = new Map<string, Group>();
+  const creditLines: ProductInvoiceLine[] = [];
   for (const line of lines) {
     const sales = toDecimal(line.salesPen);
     lineSales = lineSales.plus(sales);
@@ -118,7 +125,8 @@ export function assembleSalesByProduct(
       continue;
     }
     if (line.docType === 'NOTA_CREDITO') {
-      pushUntraceable(line, 'NOTA_CREDITO', toDecimal(line.qty), sales);
+      // cc57 (E-03): se decide después de trazar las ventas (necesita saber si la acreditada entró).
+      creditLines.push(line);
       continue;
     }
     const key = declaredKey(line.documentId, line.productId);
@@ -139,6 +147,7 @@ export function assembleSalesByProduct(
     lineCount: number;
   }
   const rows = new Map<string, RowState>();
+  const tracedKeys = new Set<string>();
 
   for (const [key, g] of groups) {
     const facts = declared.get(key);
@@ -198,6 +207,41 @@ export function assembleSalesByProduct(
     row.cost = row.cost.plus(cost);
     row.lineCount += g.count;
     rows.set(g.first.sku, row);
+    // Solo una venta trazada entera recibe sus NC en la fila (autorrevisión de cc57, P1-1).
+    if (fraction.eq(ONE)) tracedKeys.add(key);
+  }
+
+  // cc57 (E-03 de audit-01): una NC del producto resta en su fila —la venta siempre y, si hubo
+  // devolución, el costo con que reingresó—, como en «Ventas y margen». Solo si la venta que
+  // acredita se trazó en esa fila; si no, va a «No trazable» como antes (restaría de una fila que
+  // nunca sumó esa venta).
+  for (const line of creditLines) {
+    const sales = toDecimal(line.salesPen);
+    const affected = line.affectedDocumentId ?? null;
+    // El 02 (error de RUC) no es una devolución ni una rebaja: anula para reemitir a otro cliente
+    // (autorrevisión de cc57, P2-1); sigue en «No trazable».
+    if (
+      affected === null ||
+      line.creditReason === 'ANULACION_ERROR_RUC' ||
+      !tracedKeys.has(declaredKey(affected, line.productId))
+    ) {
+      pushUntraceable(line, 'NOTA_CREDITO', toDecimal(line.qty), sales);
+      continue;
+    }
+    const row = rows.get(line.sku) ?? {
+      sku: line.sku,
+      name: line.name,
+      unit: line.unit,
+      qty: ZERO,
+      sales: ZERO,
+      cost: ZERO,
+      lineCount: 0,
+    };
+    row.qty = row.qty.plus(toDecimal(line.qty));
+    row.sales = row.sales.plus(sales);
+    row.cost = row.cost.minus(toDecimal(line.returnCostPen ?? '0'));
+    row.lineCount += 1;
+    rows.set(line.sku, row);
   }
 
   let totalSales = ZERO;

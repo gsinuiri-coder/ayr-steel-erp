@@ -25,6 +25,7 @@ import { CustomersService } from '../customers/customers.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PurchasesService } from '../purchases/purchases.service';
 import { ReceivablesAgingService } from '../reports/receivables-aging.service';
+import { SalesByMaterialService } from '../reports/sales-by-material.service';
 import { SalesMarginService } from '../reports/sales-margin.service';
 import { SalesOrdersService } from '../sales/sales-orders.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
@@ -614,5 +615,54 @@ describe('cc55 (revisiones del corte A): reactivar repone el enlace que la anula
     expect(
       (await prisma.dispatch.findUniqueOrThrow({ where: { id: dispatch.id } })).invoiceId,
     ).toBe(s.invoiceId);
+  });
+});
+
+describe('cc57 (E-03 de audit-01): una NC de reventa en «Ventas por material» y en «Ventas y margen»', () => {
+  it('la fila del producto resta la venta y el costo de la devolución, como Ventas y margen', async () => {
+    const s = await sold({ declare: true });
+    await register(s.invoiceId, {
+      reason: 'DEVOLUCION_ITEM',
+      items: [{ affectedItemId: s.itemId, qty: '2' }],
+    });
+    const range = { from: PREV(1), to: TODAY };
+    const material = await moduleRef
+      .get(SalesByMaterialService)
+      .report({ ...range, businessLine: 'trading' } as never);
+    const sku = (await prisma.product.findUniqueOrThrow({ where: { id: s.productId } })).sku;
+    const row = material.products?.rows.find((r) => r.sku === sku);
+    const margin = await moduleRef
+      .get(SalesMarginService)
+      .salesMargin(salesMarginQuerySchema.parse(range));
+    const order = margin.orders.find((o) => o.salesOrderId === s.orderId);
+    // 5 u a S/ 50 menos 2 devueltas; costo 5 × 20 menos los 2 que reingresaron (40).
+    expect(row).toMatchObject({ qty: '3.000', salesPen: '150.0000', costPen: '60.0000' });
+    expect(order?.salesPen).toBe(row?.salesPen);
+    expect(order?.costPen).toBe(row?.costPen);
+    expect(material.products?.untraceable.some((u) => u.sku === sku)).toBe(false);
+  });
+});
+
+describe('cc57 (E-16 de audit-01): el vendedor de una venta sin pedido en «Ventas y margen»', () => {
+  it('es quien registró el comprobante, como en CxC y en el Panel del vendedor', async () => {
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId,
+        issueDate: TODAY,
+        items: [{ description: 'Servicio cc57', qty: '1', unitPricePen: '20' }],
+      }),
+    );
+    const free = await invoicing.registerManual(admin, draft.id, {
+      series: 'F954',
+      correlative: (correlative += 1),
+    });
+    const margin = await moduleRef
+      .get(SalesMarginService)
+      .salesMargin(salesMarginQuerySchema.parse({ from: TODAY, to: TODAY }));
+    const row = margin.orders.find((o) => o.documents.some((d) => d.id === free.id));
+    expect(row?.salesOrderId).toBeNull();
+    expect(row?.sellerId).toBe(admin.id);
   });
 });
