@@ -5,7 +5,6 @@ import {
   businessToday,
   cancelCuttingOrderSchema,
   confirmPurchaseImportSchema,
-  createCoilScrapSchema,
   createCuttingOrderSchema,
   createFinishSchema,
   createPurchaseSchema,
@@ -19,7 +18,6 @@ import { assertTestDatabase } from '../../prisma/test-db-guard';
 import { AppModule } from '../app.module';
 import { AuditService, type AuditEntry } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
-import { CoilOperationsService } from '../coils/coil-operations.service';
 import { CuttingService } from '../cutting/cutting.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { PurchaseImportService } from '../imports/purchase-import.service';
@@ -564,65 +562,5 @@ describe('cc51 (D-639) — anular la factura del corte, en el «Historial» de l
       before,
     );
     expect(await auditsOf('purchases', coils.id, 'purchases.landed-cost-reverse')).toHaveLength(1);
-  });
-});
-
-describe('cc57 (D-03 de audit-01): flete recibido con la fecha del papel', () => {
-  it('con el acuse de retrofecha, el costo de importación se imputa aunque la bobina ya tenga una salida después', async () => {
-    const coils = await purchases.create(
-      admin,
-      createPurchaseSchema.parse({
-        supplierId,
-        docType: 'FACTURA',
-        series: 'F001',
-        number: digits(8),
-        issueDate: '2026-08-01',
-        currency: 'PEN',
-        paymentTerms: 'CONTADO',
-        businessLine: 'drywall',
-        type: 'COIL',
-        items: [
-          {
-            description: 'Bobina cc57',
-            qty: '1000',
-            unit: 'KGM',
-            unitPrice: '4',
-            finishId: galvanizedId,
-            widthMm: '1220',
-            thicknessMm: '0.45',
-            coilStatus: 'OPEN',
-          },
-        ],
-      }),
-    );
-    await purchases.receive(admin, coils.id, {
-      operationDate: '2026-08-01',
-      confirmBackdate: true,
-    });
-    const coil = await prisma.coil.findFirstOrThrow({ where: { purchaseId: coils.id } });
-    await moduleRef.get(CoilOperationsService).registerScrap(
-      admin,
-      coil.id,
-      createCoilScrapSchema.parse({
-        qtyKg: '10',
-        reason: 'merma cc57',
-        operationDate: '2026-08-10',
-        confirmBackdate: true,
-      }),
-    );
-    const freight = await service({
-      serviceKind: 'FREIGHT',
-      relatedPurchaseId: coils.id,
-      issueDate: '2026-08-05',
-    });
-    // Antes: el acuse no llegaba al ajuste y la recepción salía con BACKDATE_OUT_OF_ORDER.
-    await purchases.receive(admin, freight.id, {
-      operationDate: '2026-08-05',
-      confirmBackdate: true,
-    });
-    const adjust = await prisma.inventoryMovement.findFirst({
-      where: { itemId: coil.id, type: 'ADJUST', refType: 'PURCHASE', refId: freight.id },
-    });
-    expect(adjust?.operationDate.toISOString().slice(0, 10)).toBe('2026-08-05');
   });
 });

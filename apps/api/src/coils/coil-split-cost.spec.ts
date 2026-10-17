@@ -61,8 +61,7 @@ function build() {
         totalCost: m.totalCost ? D(m.totalCost) : D(m.qty).times(m.unitCost ?? '4.1234'),
       }),
     );
-  // La reversa saca el costo efectivo del ingreso (D-649); sin recosteos, el grabado.
-  const reverse = jest.fn().mockResolvedValue({ id: 6n, totalCost: D('4265.6017') });
+  const reverse = jest.fn().mockResolvedValue(undefined);
   let seq = 0;
   const create = jest.fn().mockImplementation(() => {
     seq += 1;
@@ -80,7 +79,8 @@ function build() {
       findUnique: jest.fn().mockResolvedValue({ qty: D('2000.000'), avgCost: D('4.1234') }),
     },
     coilSplit: { create: jest.fn().mockResolvedValue({ id: 'split-1' }) },
-    inventoryMovement: { findMany: jest.fn() },
+    // cc57 (A-01): sin recosteos sobre el ingreso, salvo que el test diga otra cosa.
+    inventoryMovement: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
     coil: { update: jest.fn() },
   };
   const prisma = {
@@ -205,23 +205,22 @@ describe('update — recosteo (D-045) de una hija de partido', () => {
     expect(data.totalCostPen).toBeUndefined();
   });
 
-  it('cc57 (A-01): sin cambiar el costo, reingresa lo que la reversa sacó (con sus recosteos)', async () => {
+  it('cc57 (A-01): una hija cuyo ingreso ya tiene recosteos por fecha no se recostea por acá', async () => {
     const { service, tx, record, reverse } = withChild();
-    // La hija ya tenía un recosteo de +100 sobre su ingreso: la reversa saca 4 365.6017.
-    reverse.mockResolvedValueOnce({ id: 6n, totalCost: D('4365.6017') });
-    await service.update(
-      admin,
-      child.id,
-      updateCoilSchema.parse({
-        unitCostPerKg: '4.3367',
-        reason: 'mismo costo',
-        costReason: 'TYPING_ERROR',
-      }),
-    );
-    expect(record).toHaveBeenCalledWith(
-      tx,
-      expect.objectContaining({ unitCost: '4.4384', totalCost: '4365.6017' }),
-    );
+    tx.inventoryMovement.count.mockResolvedValue(1);
+    await expect(
+      service.update(
+        admin,
+        child.id,
+        updateCoilSchema.parse({
+          unitCostPerKg: '4.3367',
+          reason: 'mismo costo',
+          costReason: 'TYPING_ERROR',
+        }),
+      ),
+    ).rejects.toThrow('ya tiene recosteos por fecha');
+    expect(reverse).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
   });
 
   it('con un costo nuevo revaloriza a peso × unitario (corrección explícita)', async () => {
