@@ -661,10 +661,13 @@ export class InventoryService {
     if (confirmed || operationDate >= businessToday()) return;
     // El más reciente y el conteo, sin traerse el histórico del ítem a memoria: una carga
     // histórica sobre un ítem con miles de movimientos lo haría en cada llamada.
+    // cc57 (A-07 de audit-01): sin los recosteos, que la vista pliega en su fila: el aviso contaba
+    // más movimientos de los que el usuario ve en el kardex.
     const where = {
       itemType: item.itemType,
       itemId: item.itemId,
       operationDate: { gt: toDateOnly(operationDate) },
+      recostOfId: null,
     };
     const newest = await tx.inventoryMovement.findFirst({
       where,
@@ -1054,8 +1057,19 @@ export class InventoryService {
         itemType: original.itemType,
         itemId: original.itemId,
         id: { not: original.id },
-        OR: [{ id: { gt: original.id } }, { operationDate: { gt: original.operationDate } }],
-        type: { not: 'IN' },
+        AND: [
+          { OR: [{ id: { gt: original.id } }, { operationDate: { gt: original.operationDate } }] },
+          // cc57 (A-03 de audit-01): una entrada posterior «al promedio» (el sobrante al montar,
+          // CLOSE_ADJUSTMENT) se grabó con el promedio de antes de la corrección y este reemplazo
+          // no recostea: también bloquea, como una salida.
+          {
+            OR: [{ type: { not: 'IN' } }, { type: 'IN', refType: 'CLOSE_ADJUSTMENT' }],
+          },
+          // cc57 (D-09 de audit-01): un recosteo no es un movimiento propio. El de una salida ya
+          // anulada (par que no bloquea) bloqueaba «Editar compra recibida»; el del propio ingreso
+          // sí bloquea (grabado ≠ efectivo y la reversa sale al grabado).
+          { OR: [{ recostOfId: null }, { recostOfId: original.id }] },
+        ],
         reversalOfId: null,
         reversals: { none: {} },
       },
@@ -1789,6 +1803,9 @@ export class InventoryService {
           runningValue = runningValue.plus(totalCost);
         }
         if (runningValue.isNegative()) runningValue = new Decimal(0);
+        // cc57 (A-06 de audit-01): al llegar a cero la cantidad, el valor también, como el motor
+        // (`stockBefore`) y el saldo: el residuo de `qty × promedio` a 4 decimales no se arrastra.
+        if (m.type === 'OUT' && runningQty.lte(0)) runningValue = new Decimal(0);
       }
       const runningAvg = runningQty.lte(0) ? new Decimal(0) : runningValue.div(runningQty);
       const label = labels.get(labelKey(m.itemType, m.itemId));
@@ -1857,9 +1874,13 @@ export class InventoryService {
         AND "operation_date" < ${toDateOnly(from)}::date
     `;
     const row = rows[0];
+    const qty = toDecimal(row?.qty.toString() ?? '0');
     return {
-      qty: toDecimal(row?.qty.toString() ?? '0'),
-      value: Decimal.max(toDecimal(row?.value.toString() ?? '0'), new Decimal(0)),
+      qty,
+      // cc57 (A-06): sin cantidad no hay valor de apertura (el residuo de una salida que agotó).
+      value: qty.lte(0)
+        ? new Decimal(0)
+        : Decimal.max(toDecimal(row?.value.toString() ?? '0'), new Decimal(0)),
     };
   }
 

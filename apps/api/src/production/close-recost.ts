@@ -89,6 +89,21 @@ export async function applyCloseAdjustment(
 }
 
 /**
+ * cc57 (nota de cc55): lo que la auditoría del cierre dice del costo, igual en drywall y en
+ * coberturas. `costAdjusted` es `true` también cuando el ajuste fue a las entradas de los partes
+ * (D-665) porque el producto ya no tenía saldo; antes el cierre de drywall decía `false`.
+ */
+export function closeCostAudit(outcome: { movement: unknown; recostedEntries: boolean }): {
+  costAdjusted: boolean;
+  costRecostedIntoEntries?: true;
+} {
+  const costAdjusted = outcome.movement !== null || outcome.recostedEntries;
+  return outcome.recostedEntries
+    ? { costAdjusted, costRecostedIntoEntries: true }
+    : { costAdjusted };
+}
+
+/**
  * cc55 (D-665): la reapertura no deshace un cierre que pasó el despunte a las ventas. Revertir el
  * despunte de la bobina dejaría ese costo cargado dos veces (otra vez en la bobina y en las salidas
  * del producto). Es el mismo criterio que con el `ADJUST` de cierre: si el producto ya se movió, se

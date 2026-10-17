@@ -1239,6 +1239,16 @@ export class CoilOperationsService {
 
           // D-045: el kardex es append-only, así que recostear es reversar el ingreso y
           // volver a ingresar al costo corregido, no reescribir el movimiento original.
+          // cc57 (A-01 de audit-01; revisión del segundo modelo, P1): un ingreso que ya tiene
+          // recosteos por fecha (D-649) no se recostea por acá. La reversa saca el costo efectivo y el
+          // reingreso entra a un costo grabado: al grabado se perdía el recosteo; al efectivo, la
+          // cascada siguiente lo contaba dos veces (calcula contra lo grabado).
+          const recosts = await tx.inventoryMovement.count({ where: { recostOfId: initial.id } });
+          if (recosts > 0) {
+            throw new BadRequestException(
+              'El ingreso de esta bobina ya tiene recosteos por fecha: cambiar su costo desde aquí los descuadraría. Pide la corrección del costo de entrada a un administrador del sistema.',
+            );
+          }
           await this.inventory.reverse(
             tx,
             initial.id,

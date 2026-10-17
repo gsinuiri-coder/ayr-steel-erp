@@ -79,7 +79,8 @@ function build() {
       findUnique: jest.fn().mockResolvedValue({ qty: D('2000.000'), avgCost: D('4.1234') }),
     },
     coilSplit: { create: jest.fn().mockResolvedValue({ id: 'split-1' }) },
-    inventoryMovement: { findMany: jest.fn() },
+    // cc57 (A-01): sin recosteos sobre el ingreso, salvo que el test diga otra cosa.
+    inventoryMovement: { findMany: jest.fn(), count: jest.fn().mockResolvedValue(0) },
     coil: { update: jest.fn() },
   };
   const prisma = {
@@ -202,6 +203,24 @@ describe('update — recosteo (D-045) de una hija de partido', () => {
     );
     const data = updateData(tx.coil.update);
     expect(data.totalCostPen).toBeUndefined();
+  });
+
+  it('cc57 (A-01): una hija cuyo ingreso ya tiene recosteos por fecha no se recostea por acá', async () => {
+    const { service, tx, record, reverse } = withChild();
+    tx.inventoryMovement.count.mockResolvedValue(1);
+    await expect(
+      service.update(
+        admin,
+        child.id,
+        updateCoilSchema.parse({
+          unitCostPerKg: '4.3367',
+          reason: 'mismo costo',
+          costReason: 'TYPING_ERROR',
+        }),
+      ),
+    ).rejects.toThrow('ya tiene recosteos por fecha');
+    expect(reverse).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
   });
 
   it('con un costo nuevo revaloriza a peso × unitario (corrección explícita)', async () => {

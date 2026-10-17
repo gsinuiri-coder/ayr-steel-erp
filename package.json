@@ -72,6 +72,7 @@
     "inspect:cc52": "node scripts/inspect-cc52.mjs",
     "inspect:cc53": "node scripts/inspect-cc53.mjs",
     "inspect:cc55": "node scripts/inspect-cc55.mjs",
+    "check:balances": "node scripts/check-balances.mjs",
     "import:saldos-iniciales": "node scripts/import-opening-balances.mjs",
     "fix:costo-bobina": "node scripts/fix-coil-entry-cost.mjs",
     "recosteo:historico": "node scripts/recost-historic.mjs",

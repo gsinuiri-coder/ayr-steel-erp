@@ -516,6 +516,26 @@ describe('D-372 — classifyReceivedEdit', () => {
       expect(product.changes[0]?.blockedReason).toContain('otra compra (PURCHASE) el 2026-09-27');
     });
 
+    it('cc57 (A-03): un sobrante posterior al promedio (CLOSE_ADJUSTMENT) bloquea el reemplazo', () => {
+      const facts = purchase({
+        type: PurchaseType.FINISHED_GOOD,
+        items: [
+          productItem({
+            balanceQty: '105.000',
+            laterMovements: [
+              { type: 'IN', refType: 'CLOSE_ADJUSTMENT', operationDate: '2026-09-27' },
+            ],
+          }),
+        ],
+      });
+      const price = classifyReceivedEdit(
+        facts,
+        { items: [{ itemId: 'item-1', unitPrice: '13', qty: '90' }] },
+        noTargets(),
+      );
+      expect(price.changes[0]?.blockedReason).toContain('cierre de bobina (CLOSE_ADJUSTMENT)');
+    });
+
     it('otra compra posterior y además una salida: el precio va por ajuste, no por reemplazo', () => {
       const plan = classifyReceivedEdit(
         purchase({

@@ -546,3 +546,102 @@ describe('cc55 (D-665, E-01 de audit-01): recostear entradas ya registradas', ()
     ).toBe(0);
   });
 });
+
+describe('cc57 (A-01 de audit-01): recosteo de la madre después de corregir una hija (D-045)', () => {
+  it('el cambio de la madre llega entero a las hijas vivas, no al ingreso anulado', async () => {
+    const mother = randomUUID();
+    const child1 = randomUUID();
+    const child2 = randomUUID();
+    const split = randomUUID();
+    await move(mother, { type: 'IN', qty: '100', unitCost: '1', date: '2026-08-01' });
+    const out = await move(mother, {
+      type: 'OUT',
+      qty: '100',
+      date: '2026-08-10',
+      refType: 'SPLIT',
+      refId: split,
+    });
+    const h1 = await move(child1, {
+      type: 'IN',
+      qty: '50',
+      unitCost: '1',
+      date: '2026-08-10',
+      refType: 'SPLIT',
+      refId: split,
+    });
+    await move(child2, {
+      type: 'IN',
+      qty: '50',
+      unitCost: '1',
+      date: '2026-08-10',
+      refType: 'SPLIT',
+      refId: split,
+    });
+    // «Editar bobina» sobre la hija 1 (D-045): reversa de su ingreso y reingreso con el mismo ref.
+    const h1Again = await prisma.$transaction(async (tx) => {
+      const back = await inventory.reverse(tx, h1.id, adminId, 'recosteo', '2026-08-10', true, {
+        reentry: true,
+      });
+      return inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId: child1,
+        type: 'IN',
+        qty: '50',
+        unit: 'NIU',
+        unitCost: '1',
+        totalCost: back.totalCost.toFixed(4),
+        refType: 'SPLIT',
+        refId: split,
+        actorId: adminId,
+        operationDate: '2026-08-10',
+        confirmBackdate: true,
+      });
+    });
+    if (!h1Again) throw new Error('sin reingreso');
+    // Llega tarde una compra de la madre del 05/08: a la fecha del partido el promedio es 2.
+    await move(mother, { type: 'IN', qty: '100', unitCost: '3', date: '2026-08-05' });
+    expect(await effective(out.id)).toBe('200.0000');
+    // Las dos hijas vivas se llevan los 100 de más, mitad y mitad; el ingreso anulado nada.
+    const c1 = await balanceValue(child1);
+    const c2 = await balanceValue(child2);
+    expect(c2).toBe('100.0000');
+    expect(c1).toBe('100.0000');
+    expect((await kardexValue(child1)).toFixed(4)).toBe('100.0000');
+  });
+});
+
+/** El valor del saldo de un ítem (cantidad × promedio). */
+async function balanceValue(itemId: string): Promise<string> {
+  const b = await prisma.inventoryBalance.findFirstOrThrow({ where: { itemId } });
+  return new Decimal(b.qty.toString()).times(b.avgCost.toString()).toFixed(4);
+}
+
+describe('cc57 (A-06 de audit-01): la vista del kardex al pasar por cero', () => {
+  it('el residuo de valor de una salida que agota el ítem no pasa a la entrada siguiente', async () => {
+    const itemId = randomUUID();
+    await move(itemId, {
+      type: 'IN',
+      qty: '3',
+      unitCost: '3.3333',
+      totalCost: '10.0000',
+      date: '2026-08-01',
+    });
+    // Sale todo al promedio a 4 decimales: 3 × 3.3333 = 9.9999, quedan 0.0001 sin cantidad.
+    await move(itemId, { type: 'OUT', qty: '3', date: '2026-08-02' });
+    await move(itemId, { type: 'IN', qty: '1', unitCost: '5', date: '2026-08-03' });
+    const page = await inventory.findMovements(
+      { itemType: 'PRODUCT', itemId, pageSize: 50 } as never,
+      true,
+    );
+    const last = page.items.find((r) => r.operationDate === '2026-08-03');
+    expect(last?.balanceTotalCost).toBe('5.0000');
+    expect(await balanceOf(itemId)).toEqual({ qty: '1', avg: '5' });
+    // Con «desde» después del paso por cero, la apertura tampoco arrastra el residuo.
+    const from = await inventory.findMovements(
+      { itemType: 'PRODUCT', itemId, from: '2026-08-03', pageSize: 50 } as never,
+      true,
+    );
+    expect(from.items[0]?.balanceTotalCost).toBe('5.0000');
+  });
+});

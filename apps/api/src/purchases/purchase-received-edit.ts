@@ -216,7 +216,11 @@ function blockedBy(
   if (item.sharedProduct) {
     return 'Otra línea de la compra entra al mismo producto: esta versión no separa sus ingresos';
   }
-  const onlyLaterEntries = item.laterMovements.every((m) => m.type === 'IN');
+  // cc57 (A-03; autorrevisión P2-1): un sobrante al promedio (`CLOSE_ADJUSTMENT`) no es «otra
+  // entrada»: `replaceEntry` no lo recostea y lo rechaza; el plan lo dice antes.
+  const onlyLaterEntries = item.laterMovements.every(
+    (m) => m.type === 'IN' && m.refType !== 'CLOSE_ADJUSTMENT',
+  );
   if (item.laterMovements.length > 0 && !(replace && onlyLaterEntries)) {
     const detail = item.laterMovements
       .slice(0, 5)

@@ -10,7 +10,6 @@ import {
   ProductSource,
   SalesOrderStatus,
   Prisma,
-  type InventoryMovement,
 } from '@prisma/client';
 import {
   businessToday,
@@ -53,7 +52,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { drywallStripMismatch, drywallStripSpec, drywallStripWhere } from '../common/drywall-strip';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { applyCloseAdjustment, assertNoCloseRecost } from './close-recost';
+import { applyCloseAdjustment, closeCostAudit, assertNoCloseRecost } from './close-recost';
 import { liveMovements } from '../inventory/live-movements';
 import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
@@ -1233,7 +1232,6 @@ export class ProductionService {
         operationDate,
       },
     });
-    const adjusted: InventoryMovement | null = closeAdjust.movement;
 
     // D-360: los flejes que el cierre soltó y quedaron en exactamente 0 se terminan solos
     // (el reporte y la merma de proceso no los terminan: estaban montados). Reabrir la
@@ -1283,9 +1281,7 @@ export class ProductionService {
         scrapped,
         materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
         unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-        // `null` cuando el producto ya no tenía saldo: el costo no tiene dónde
-        // imputarse y reescribir el pasado no es opción (mismo criterio que D-043).
-        costAdjusted: adjusted !== null,
+        ...closeCostAudit(closeAdjust),
       },
     });
   }
