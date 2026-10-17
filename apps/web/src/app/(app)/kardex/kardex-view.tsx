@@ -48,6 +48,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { LINK_CLASSNAME } from '@/lib/utils';
+import { errorMessage } from '@/lib/notify';
 import { KardexSheetTable } from './kardex-sheet-table';
 
 /** El id de una opción del selector lleva el tipo: `COIL:<uuid>` o `PRODUCT:<uuid>`. */
@@ -149,6 +150,7 @@ export function KardexView() {
   const rows = orderKardexRows(sheet?.rows ?? [], sort.key === 'date' ? sort.dir : null);
   const isPending = method === 'PEPS' ? peps.isPending && validRange : movements.isPending;
   const isError = method === 'PEPS' ? peps.isError : movements.isError;
+  const loadError = method === 'PEPS' ? peps.error : movements.error;
 
   /** «Detalle» del promedio: el origen con su enlace (D-205), la nota y el usuario. */
   const renderAverageDetail = (row: KardexSheetRow) => {
@@ -374,6 +376,9 @@ export function KardexView() {
               rows={rows}
               isPending={isPending}
               isError={isError}
+              errorText={
+                loadError ? errorMessage(loadError, 'No se pudo cargar el kardex.') : undefined
+              }
               emptyMessage="No hay movimientos en este rango. Prueba con «Mes anterior» o «Todo»."
               dateSort={{
                 dir: sort.key === 'date' ? sort.dir : null,

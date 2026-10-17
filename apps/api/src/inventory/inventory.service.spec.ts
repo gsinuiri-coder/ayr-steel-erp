@@ -672,9 +672,25 @@ describe('InventoryService (§3.2, D-028)', () => {
         expect.objectContaining({
           orderBy: [{ operationDate: 'asc' }, { at: 'asc' }, { id: 'asc' }],
           skip: 0,
-          take: 10_000,
+          // cc57 (E-12): una más que el tope, para saber si lo pasa.
+          take: 10_001,
         }),
       );
+    });
+
+    it('cc57 (E-12 de audit-01): pasado el tope, rechaza y pide un rango en vez de mostrar un saldo falso', async () => {
+      const rows = Array.from({ length: 10_001 }, (_, i) => movement(BigInt(i + 1), '2026-09-01'));
+      setReadPrisma(rows);
+      await expect(service.findMovements({ itemType: 'COIL', itemId: ITEM }, true)).rejects.toThrow(
+        'más de 10000 movimientos',
+      );
+    });
+
+    it('cc57 (E-12): exactamente en el tope, el kardex se muestra', async () => {
+      const rows = Array.from({ length: 10_000 }, (_, i) => movement(BigInt(i + 1), '2026-09-01'));
+      setReadPrisma(rows);
+      const result = await service.findMovements({ itemType: 'COIL', itemId: ITEM }, true);
+      expect(result.items).toHaveLength(10_000);
     });
 
     it('conserva reciente primero y la paginación en el listado mezclado', async () => {
