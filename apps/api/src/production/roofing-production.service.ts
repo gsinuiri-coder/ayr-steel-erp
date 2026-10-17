@@ -83,7 +83,7 @@ import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import { preferExactFinish, roofingCoilWhere, roofingToleranceMm } from './roofing-coil-match';
 import { DRAFT_INCLUDE, draftCoilStates, draftDtos } from './roofing-drafts';
 import { InventoryService } from '../inventory/inventory.service';
-import { applyCloseAdjustment, assertNoCloseRecost } from './close-recost';
+import { applyCloseAdjustment, assertNoCloseRecost, closeCostAudit } from './close-recost';
 import { liveMovements } from '../inventory/live-movements';
 import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
@@ -2474,8 +2474,6 @@ export class RoofingProductionService {
         operationDate,
       },
     });
-    const adjusted = closeAdjust.movement !== null || closeAdjust.recostedEntries;
-    const recostedEntries = closeAdjust.recostedEntries;
 
     await tx.productionOrder.update({
       where: { id: orderId },
@@ -2510,8 +2508,7 @@ export class RoofingProductionService {
         scrapped,
         materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
         unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-        costAdjusted: adjusted,
-        ...(recostedEntries ? { costRecostedIntoEntries: true } : {}),
+        ...closeCostAudit(closeAdjust),
         releasedReservationKg: releasedReservationKg.gt(0)
           ? toFixedString(releasedReservationKg, 'KG')
           : null,
