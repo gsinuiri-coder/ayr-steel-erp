@@ -130,6 +130,10 @@ export type DocumentProfitabilityDto = z.infer<typeof documentProfitabilitySchem
  * utilidad de «Ventas y margen» puede no coincidir con la de las otras dos.
  */
 export const PROFIT_SOURCES_NOTICE =
+  // cc57 (E-09 de audit-01): el aviso decía que Ventas y margen costea siempre con el promedio, y
+  // desde D-667 (cc55) costea igual lo fabricado contra pedido; y nombra el redondeo (D-461).
   'Ventas por material y la Rentabilidad de cada factura costean con los kilos de bobina ' +
-  'consumidos. Ventas y margen costea con el costo promedio del producto en el inventario. Por ' +
-  'eso la utilidad puede diferir.';
+  'consumidos. Ventas y margen costea igual las coberturas fabricadas contra pedido (con el costo ' +
+  'de su orden de producción); la reventa y el stock, con el costo promedio del producto en el ' +
+  'inventario. La venta puede diferir en fracciones de céntimo: la Rentabilidad suma las líneas y ' +
+  'Ventas y margen toma el total del comprobante, redondeado al céntimo.';

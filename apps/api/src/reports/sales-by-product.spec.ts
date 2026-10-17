@@ -157,6 +157,57 @@ describe('assembleSalesByProduct (cc24, D-417)', () => {
     ]);
   });
 
+  it('cc57 (E-03): la NC de una venta trazada resta venta y el costo de su devolución en la fila', () => {
+    const out = assembleSalesByProduct(
+      [
+        line({}),
+        line({
+          documentId: 'nc1',
+          docType: 'NOTA_CREDITO',
+          qty: '-2',
+          salesPen: '-100.0000',
+          affectedDocumentId: 'd1',
+          returnCostPen: '60.0000',
+        }),
+      ],
+      declared([['d1', 'p1', { qty: '10', costPen: '300.0000' }]]),
+    );
+    expect(out.products.rows).toMatchObject([
+      { sku: 'UPVC-01', qty: '8.000', salesPen: '400.0000', costPen: '240.0000', lineCount: 2 },
+    ]);
+    expect(out.products.total).toMatchObject({ salesPen: '400.0000', costPen: '240.0000' });
+    expect(out.products.untraceable).toEqual([]);
+  });
+
+  it('cc57 (E-03): una rebaja (sin devolución) resta solo venta; sobre una venta no trazada, va a no trazable', () => {
+    const out = assembleSalesByProduct(
+      [
+        line({}),
+        line({
+          documentId: 'nc1',
+          docType: 'NOTA_CREDITO',
+          qty: '0',
+          salesPen: '-50.0000',
+          affectedDocumentId: 'd1',
+        }),
+        line({ documentId: 'd2' }),
+        line({
+          documentId: 'nc2',
+          docType: 'NOTA_CREDITO',
+          qty: '0',
+          salesPen: '-20.0000',
+          affectedDocumentId: 'd2',
+        }),
+      ],
+      declared([['d1', 'p1', { qty: '10', costPen: '300.0000' }]]),
+    );
+    expect(out.products.rows).toMatchObject([{ salesPen: '450.0000', costPen: '300.0000' }]);
+    expect(out.products.untraceable.map((u) => [u.documentId, u.reason])).toEqual([
+      ['d2', 'SIN_DESPACHO_DECLARADO'],
+      ['nc2', 'NOTA_CREDITO'],
+    ]);
+  });
+
   it('venta de la línea = filas + no trazable + bobinas de otra pestaña', () => {
     const lines = [
       line({}),

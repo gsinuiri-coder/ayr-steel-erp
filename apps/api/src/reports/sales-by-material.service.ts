@@ -45,6 +45,8 @@ interface ProductLineRow {
   qty: Prisma.Decimal;
   subtotal_pen: Prisma.Decimal;
   shown_elsewhere: boolean;
+  affected_document_id: string | null;
+  return_cost: Prisma.Decimal | null;
 }
 
 interface DeclaredRow {
@@ -441,7 +443,19 @@ export class SalesByMaterialService {
         COALESCE(
           UPPER(p."sku") LIKE 'BOB%' AND blc."code"::text IN ('metallic-roofing', 'drywall'),
           false
-        ) AS "shown_elsewhere"
+        ) AS "shown_elsewhere",
+        -- cc57 (E-03): la NC, contra qué comprobante y con qué costo reingresó su devolución vigente
+        -- (efectivo, con sus recosteos). Subconsulta por línea: no suma una consulta al reporte.
+        fd."affected_document_id",
+        CASE WHEN fd."doc_type" = 'NOTA_CREDITO' THEN (
+          SELECT SUM(sri."total_cost" + COALESCE((
+            SELECT SUM(r."total_cost") FROM "inventory_movements" r
+            WHERE r."recost_of_id" = sri."movement_id"
+          ), 0))
+          FROM "sales_return_items" sri
+          JOIN "sales_returns" sr ON sr."id" = sri."sales_return_id"
+          WHERE sr."status" = 'ACTIVE' AND sri."credit_note_item_id" = fdi."id"
+        ) END AS "return_cost"
       FROM "fiscal_document_items" fdi
       JOIN "products" p ON p."id" = fdi."product_id"
       ${LINE_JOINS}
@@ -783,5 +797,7 @@ function toProductLine(r: ProductLineRow): ProductInvoiceLine {
     qty: r.qty.toString(),
     salesPen: r.subtotal_pen.toString(),
     shownElsewhere: r.shown_elsewhere,
+    affectedDocumentId: r.affected_document_id ?? null,
+    returnCostPen: r.return_cost?.toString() ?? null,
   };
 }

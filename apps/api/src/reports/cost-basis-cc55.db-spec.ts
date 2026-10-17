@@ -13,6 +13,7 @@ import {
   createQuotationSchema,
   createSupplierSchema,
   mountRoofingCoilSchema,
+  registerCreditNoteSchema,
   reportRoofingPiecesSchema,
 } from '@ayr/shared';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
@@ -163,7 +164,7 @@ interface Made {
 }
 
 /** Un pedido de 12 m del producto, fabricado entero con una bobina del precio dado y cerrado. */
-async function made(productId: string, coilPrice: string): Promise<Made> {
+async function made(productId: string, coilPrice: string, scrapKg = 0): Promise<Made> {
   const coilId = await coil(coilPrice);
   const quotation = await moduleRef.get(QuotationsService).create(
     admin,
@@ -183,7 +184,23 @@ async function made(productId: string, coilPrice: string): Promise<Made> {
     raw.productionOrderId,
     reportRoofingPiecesSchema.parse({ coilId, pieces: [m(6, 2)] }),
   );
-  await roofing.close(admin, raw.productionOrderId, closeRoofingOrderSchema.parse({}));
+  if (scrapKg > 0) {
+    const reports = await prisma.productionReport.findMany({
+      where: { productionOrderId: raw.productionOrderId },
+      select: { theoreticalKg: true },
+    });
+    const theoretical = reports.reduce((acc, r) => acc + Number(r.theoreticalKg), 0);
+    await roofing.close(
+      admin,
+      raw.productionOrderId,
+      closeRoofingOrderSchema.parse({
+        consumedKg: (theoretical + scrapKg).toFixed(3),
+        reason: 'despunte cc57',
+      }),
+    );
+  } else {
+    await roofing.close(admin, raw.productionOrderId, closeRoofingOrderSchema.parse({}));
+  }
   return { orderId: order.id, itemId: order.items[0]?.id ?? '', opId: raw.productionOrderId };
 }
 
@@ -243,7 +260,8 @@ describe('cc55 (D-667): el costo de una cobertura a medida es el de su OP, en lo
     ).id;
     // Las dos corridas entran al mismo SKU antes de despachar la primera: su despacho sale al
     // promedio de las dos.
-    const cheap = await made(productId, '5');
+    // cc57 (E-15): la corrida barata cierra con despunte (5 kg más que lo teórico).
+    const cheap = await made(productId, '5', 5);
     const dear = await made(productId, '9');
     const invoiceId = await invoiced(cheap);
 
@@ -265,7 +283,62 @@ describe('cc55 (D-667): el costo de una cobertura a medida es el de su OP, en lo
     const row = margin.orders.find((o) => o.salesOrderId === cheap.orderId);
     expect(row?.costPen).toBe(opCost);
     expect(row?.costStatus).toBe('COMPLETO');
+    // cc57 (E-15 de audit-01): «Material de OPs» es el de la OP, despunte incluido.
+    expect(row?.opMaterialCostPen).toBe(op.materialCostPen?.toFixed(4));
     // La otra corrida no se despachó: no tiene comprobante en el reporte.
     expect(margin.orders.some((o) => o.salesOrderId === dear.orderId)).toBe(false);
+  });
+});
+
+describe('cc57 (E-02 de audit-01): la NC de devolución de una cobertura, en los dos reportes', () => {
+  it('Ventas y margen y la rentabilidad de la NC restan el mismo costo (D-667: el de la OP)', async () => {
+    const productId = (
+      await moduleRef.get(CatalogService).create(
+        admin,
+        createProductSchema.parse({
+          businessLineId: roofingLineId,
+          sku: `E-CC57${letters(6)}`,
+          name: 'Cobertura cc57 a medida',
+          unit: 'MTR',
+          source: 'MANUFACTURED',
+          listPricePen: '30',
+          finishId,
+          colorId,
+          thicknessMm: '0.75',
+          widthMm: '1000',
+          roofingKind: 'A_MEDIDA',
+        }),
+      )
+    ).id;
+    const cheap = await made(productId, '5');
+    await made(productId, '9');
+    const invoiceId = await invoiced(cheap);
+    const invoicing = moduleRef.get(InvoicingService);
+    const invoiceItem = await prisma.fiscalDocumentItem.findFirstOrThrow({
+      where: { documentId: invoiceId },
+    });
+    const note = await invoicing.registerCreditNote(
+      admin,
+      invoiceId,
+      registerCreditNoteSchema.parse({
+        reason: 'DEVOLUCION_ITEM',
+        issueDate: TODAY,
+        series: 'FC57',
+        correlative: (correlative += 1),
+        items: [{ affectedItemId: invoiceItem.id, qty: '6.000' }],
+      }),
+    );
+    const returned = await prisma.salesReturnItem.aggregate({
+      where: { salesReturn: { creditNoteId: note.id } },
+      _sum: { totalCost: true },
+    });
+    const devCost = returned._sum.totalCost?.toFixed(4);
+    const profit = await moduleRef.get(DocumentProfitabilityService).profitability(note.id);
+    const margin = await moduleRef.get(SalesMarginService).salesMargin({ from: TODAY, to: TODAY });
+    const doc = margin.orders.flatMap((o) => o.documents).find((d) => d.id === note.id);
+    console.warn(
+      `[E-02] DEV- ${devCost ?? '-'} · rentabilidad ${profit.total.costPen ?? '-'} · ventas y margen ${doc?.costPen ?? '-'}`,
+    );
+    expect(doc?.costPen).toBe(profit.total.costPen);
   });
 });

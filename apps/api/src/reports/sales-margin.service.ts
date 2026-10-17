@@ -169,7 +169,12 @@ export class SalesMarginService {
       FROM "fiscal_documents" fd
       JOIN "customers" cu ON cu."id" = fd."customer_id"
       LEFT JOIN "sales_orders" so ON so."id" = fd."sales_order_id"
-      LEFT JOIN "users" u ON u."id" = so."seller_id"
+      -- cc57 (E-16 de audit-01): el vendedor con la regla de CxC y del Panel (documentOwnerId):
+      -- el del pedido, si no el del pedido de su despacho, si no quien lo registró. Antes, una
+      -- venta sin pedido quedaba «sin vendedor» acá y contaba para alguien en los otros dos.
+      LEFT JOIN "dispatches" dsp ON dsp."id" = fd."dispatch_id"
+      LEFT JOIN "sales_orders" dso ON dso."id" = dsp."sales_order_id"
+      LEFT JOIN "users" u ON u."id" = COALESCE(so."seller_id", dso."seller_id", fd."created_by_id")
       WHERE fd."archived_at" IS NULL
         AND fd."doc_type" <> 'GUIA_REMISION_REMITENTE'
         AND fd."status"::text IN (${live})
@@ -346,21 +351,35 @@ export class SalesMarginService {
    */
   private opMaterialByOrder(orderIds: string[]): Promise<OpMaterialRow[]> {
     if (orderIds.length === 0) return Promise.resolve([]);
+    // cc57 (E-15 de audit-01): con el despunte de la OP (`SCRAP`, ref = OP), como
+    // `production_orders.material_cost_pen`: sin él, la columna «Material de OPs» quedaba por debajo.
     return this.prisma.$queryRaw<OpMaterialRow[]>`
+      WITH "mv" AS (
+        SELECT r."sales_order_id", m."type", m."total_cost"
+        FROM "inventory_movements" m
+        JOIN "production_reports" pr ON pr."id"::text = m."ref_id"
+        JOIN "production_orders" po ON po."id" = pr."production_order_id"
+        JOIN "reservations" r ON r."id" = po."reservation_id"
+        WHERE m."ref_type" = 'PRODUCTION'
+          AND m."item_type" = 'COIL'
+          AND r."sales_order_id" = ANY(${orderIds}::uuid[])
+        UNION ALL
+        SELECT r."sales_order_id", m."type", m."total_cost"
+        FROM "inventory_movements" m
+        JOIN "production_orders" po ON po."id"::text = m."ref_id"
+        JOIN "reservations" r ON r."id" = po."reservation_id"
+        WHERE m."ref_type" = 'SCRAP'
+          AND m."item_type" = 'COIL'
+          AND r."sales_order_id" = ANY(${orderIds}::uuid[])
+      )
       SELECT
-        r."sales_order_id",
+        "sales_order_id",
         COALESCE(SUM(
           -- cc53 (D-649): un recosteo (ADJUST) es costo del consumo: saca valor del saldo.
-          CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END
+          CASE "type" WHEN 'OUT' THEN "total_cost" ELSE -"total_cost" END
         ), 0) AS "material_pen"
-      FROM "inventory_movements" m
-      JOIN "production_reports" pr ON pr."id"::text = m."ref_id"
-      JOIN "production_orders" po ON po."id" = pr."production_order_id"
-      JOIN "reservations" r ON r."id" = po."reservation_id"
-      WHERE m."ref_type" = 'PRODUCTION'
-        AND m."item_type" = 'COIL'
-        AND r."sales_order_id" = ANY(${orderIds}::uuid[])
-      GROUP BY r."sales_order_id"
+      FROM "mv"
+      GROUP BY "sales_order_id"
     `;
   }
 
