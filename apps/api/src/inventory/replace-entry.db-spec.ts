@@ -314,3 +314,75 @@ describe('InventoryService.replaceEntry contra la base', () => {
     await expect(replace(reversal.id, '100', '500')).rejects.toThrow(/anulación/);
   });
 });
+
+describe('cc57 (audit-01): precondición de replaceEntry y aviso de retrofecha', () => {
+  async function at(
+    itemId: string,
+    m: {
+      type: 'IN' | 'OUT';
+      qty: string;
+      unitCost?: string;
+      date: string;
+      refType?: 'CLOSE_ADJUSTMENT';
+    },
+    confirmBackdate = true,
+  ) {
+    return prisma.$transaction((tx) =>
+      inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId,
+        type: m.type,
+        qty: m.qty,
+        unit: 'NIU',
+        unitCost: m.unitCost,
+        refType: m.refType ?? (m.type === 'IN' ? 'PURCHASE' : 'SALE'),
+        actorId,
+        operationDate: m.date,
+        confirmBackdate,
+      }),
+    );
+  }
+
+  it('D-09: el recosteo de una salida ya anulada no bloquea el reemplazo', async () => {
+    const { itemId } = item();
+    const first = must(
+      await at(itemId, { type: 'IN', qty: '100', unitCost: '5', date: '2026-08-01' }),
+    );
+    const out = must(await at(itemId, { type: 'OUT', qty: '10', date: '2026-08-10' }));
+    // Una compra atrasada recostea la salida (ADJUST con recost_of_id), y después se anula la salida.
+    await at(itemId, { type: 'IN', qty: '100', unitCost: '7', date: '2026-08-05' });
+    expect(await prisma.inventoryMovement.count({ where: { recostOfId: out.id } })).toBe(1);
+    await prisma.$transaction((tx) => inventory.reverse(tx, out.id, actorId, 'anulada'));
+    const done = await replace(first.id, '100', '550');
+    expect(done.entry.totalCost.toString()).toBe('550');
+  });
+
+  it('A-03: una entrada posterior al promedio (sobrante, CLOSE_ADJUSTMENT) bloquea el reemplazo', async () => {
+    const { itemId } = item();
+    const first = must(
+      await at(itemId, { type: 'IN', qty: '100', unitCost: '5', date: '2026-08-01' }),
+    );
+    await at(itemId, {
+      type: 'IN',
+      qty: '5',
+      date: '2026-08-10',
+      refType: 'CLOSE_ADJUSTMENT',
+      unitCost: '5',
+    });
+    await expect(replace(first.id, '100', '550')).rejects.toThrow(
+      'movimiento posterior (IN CLOSE_ADJUSTMENT)',
+    );
+  });
+
+  it('A-07: el aviso de retrofecha no cuenta los recosteos', async () => {
+    const { itemId } = item();
+    await at(itemId, { type: 'IN', qty: '100', unitCost: '5', date: '2026-08-01' });
+    await at(itemId, { type: 'OUT', qty: '10', date: '2026-08-10' });
+    await at(itemId, { type: 'IN', qty: '100', unitCost: '7', date: '2026-08-05' });
+    // Después del 04/08: la compra del 05/08 y la salida del 10/08 (su recosteo no se cuenta).
+    await expect(
+      at(itemId, { type: 'IN', qty: '1', unitCost: '5', date: '2026-08-04' }, false),
+    ).rejects.toThrow('ANTES de 2 movimiento(s)');
+  });
+});

@@ -29,6 +29,7 @@
     "prisma/inspect-cc52-cli.ts",
     "prisma/recost-historic-cli.ts",
     "prisma/inspect-cc53-cli.ts",
+    "prisma/check-balances-cli.ts",
     "prisma/inspect-cc55-cli.ts",
     "prisma/import-opening-balances-cli.ts",
     "prisma/fix-coil-entry-cost-cli.ts"

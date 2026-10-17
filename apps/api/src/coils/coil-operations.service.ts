@@ -1239,7 +1239,7 @@ export class CoilOperationsService {
 
           // D-045: el kardex es append-only, así que recostear es reversar el ingreso y
           // volver a ingresar al costo corregido, no reescribir el movimiento original.
-          await this.inventory.reverse(
+          const reversal = await this.inventory.reverse(
             tx,
             initial.id,
             actor.id,
@@ -1249,6 +1249,10 @@ export class CoilOperationsService {
             // cc53: el reingreso de la misma cantidad sigue en esta transacción (estado final).
             { reentry: true },
           );
+          // cc57 (A-01 de audit-01): sin cambio de costo, el reingreso vale lo que la reversa sacó:
+          // el costo **efectivo** del ingreso (con sus recosteos, D-649), no el grabado. Con el
+          // grabado, el recosteo que la hija ya tenía desaparecía del saldo en este mismo acto.
+          const reentryTotal = reversal.totalCost.toFixed(4);
           await this.inventory.record(tx, {
             businessLineId: coil.businessLineId,
             itemType: 'COIL',
@@ -1257,7 +1261,13 @@ export class CoilOperationsService {
             qty: initial.qty.toFixed(3),
             unit: initial.unit,
             ...(costUnchanged
-              ? { unitCost: initial.unitCost.toFixed(4), totalCost: initial.totalCost.toFixed(4) }
+              ? {
+                  // Sin recosteos, el unitario grabado tal cual (el del reparto, D-608).
+                  unitCost: toDecimal(reentryTotal).eq(initial.totalCost.toString())
+                    ? initial.unitCost.toFixed(4)
+                    : toFixedString(toDecimal(reentryTotal).div(initial.qty.toString()), 'MONEY'),
+                  totalCost: reentryTotal,
+                }
               : { unitCost: toFixedString(unitCostPerKg.times(exchangeRate), 'MONEY') }),
             refType: initial.refType,
             refId: initial.refId ?? undefined,

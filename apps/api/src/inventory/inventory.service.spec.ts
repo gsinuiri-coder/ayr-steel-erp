@@ -704,7 +704,7 @@ describe('InventoryService.replaceEntry (D-382)', () => {
     // `findFirst` falso (la búsqueda de una anulación existente) sigue igual.
     const original = tx.inventoryMovement.findFirst.getMockImplementation();
     tx.inventoryMovement.findFirst.mockImplementation((args: { where: { type?: unknown } }) =>
-      args.where.type !== undefined
+      (args.where.type ?? (args.where as { AND?: unknown }).AND) !== undefined
         ? Promise.resolve(null)
         : (original?.(args) as Promise<unknown>),
     );
@@ -754,7 +754,7 @@ describe('InventoryService.replaceEntry (D-382)', () => {
     const tx = fake.tx as unknown as FakeTx;
     const original = tx.inventoryMovement.findFirst.getMockImplementation();
     tx.inventoryMovement.findFirst.mockImplementation((args: { where: { type?: unknown } }) =>
-      args.where.type !== undefined
+      (args.where.type ?? (args.where as { AND?: unknown }).AND) !== undefined
         ? Promise.resolve({ id: 9n, type: 'OUT', refType: 'SALE' })
         : (original?.(args) as Promise<unknown>),
     );
@@ -838,7 +838,7 @@ describe('InventoryService.replaceEntry (D-382)', () => {
     tx.inventoryMovement.findMany = jest.fn(() => Promise.resolve(fake.movements));
     const original = tx.inventoryMovement.findFirst.getMockImplementation();
     tx.inventoryMovement.findFirst.mockImplementation((args: { where: { type?: unknown } }) =>
-      args.where.type !== undefined
+      (args.where.type ?? (args.where as { AND?: unknown }).AND) !== undefined
         ? Promise.resolve(null)
         : (original?.(args) as Promise<unknown>),
     );

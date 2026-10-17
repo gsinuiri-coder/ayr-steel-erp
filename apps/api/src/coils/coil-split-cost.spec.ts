@@ -61,7 +61,8 @@ function build() {
         totalCost: m.totalCost ? D(m.totalCost) : D(m.qty).times(m.unitCost ?? '4.1234'),
       }),
     );
-  const reverse = jest.fn().mockResolvedValue(undefined);
+  // La reversa saca el costo efectivo del ingreso (D-649); sin recosteos, el grabado.
+  const reverse = jest.fn().mockResolvedValue({ id: 6n, totalCost: D('4265.6017') });
   let seq = 0;
   const create = jest.fn().mockImplementation(() => {
     seq += 1;
@@ -202,6 +203,25 @@ describe('update — recosteo (D-045) de una hija de partido', () => {
     );
     const data = updateData(tx.coil.update);
     expect(data.totalCostPen).toBeUndefined();
+  });
+
+  it('cc57 (A-01): sin cambiar el costo, reingresa lo que la reversa sacó (con sus recosteos)', async () => {
+    const { service, tx, record, reverse } = withChild();
+    // La hija ya tenía un recosteo de +100 sobre su ingreso: la reversa saca 4 365.6017.
+    reverse.mockResolvedValueOnce({ id: 6n, totalCost: D('4365.6017') });
+    await service.update(
+      admin,
+      child.id,
+      updateCoilSchema.parse({
+        unitCostPerKg: '4.3367',
+        reason: 'mismo costo',
+        costReason: 'TYPING_ERROR',
+      }),
+    );
+    expect(record).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ unitCost: '4.4384', totalCost: '4365.6017' }),
+    );
   });
 
   it('con un costo nuevo revaloriza a peso × unitario (corrección explícita)', async () => {

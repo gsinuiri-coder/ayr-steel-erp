@@ -322,6 +322,13 @@ export async function planRecost(
       select: movementSelect,
     });
     const group = foldRecosts(raw);
+    // cc57 (A-01 de audit-01): una entrada **ya anulada** no es destino. Recostear una hija de
+    // partido o un fleje (D-045: reversa + reingreso con el mismo ref) deja tres filas bajo el ref;
+    // repartir el cambio de la madre también al ingreso muerto le daba a la hija la mitad del
+    // delta y la otra mitad se cancelaba con su reversa: el inventario perdía (o ganaba) esa parte.
+    const reversedIds = new Set(
+      group.flatMap((m) => (m.reversalOfId === null ? [] : [m.reversalOfId.toString()])),
+    );
     for (const ref of refs) {
       const sources = group.filter(
         (m) =>
@@ -334,6 +341,7 @@ export async function planRecost(
       // por las entradas con el mismo ref (producto del reporte, hijas, flejes).
       const isTarget = (m: MovementMeta): boolean => {
         if (m.refId !== ref.refId || m.reversalOfId !== null) return false;
+        if (reversedIds.has(m.id.toString())) return false;
         return ref.refType === 'SCRAP'
           ? m.refType === 'PRODUCTION' && m.type === 'ADJUST'
           : m.refType === ref.refType && m.type === 'IN';

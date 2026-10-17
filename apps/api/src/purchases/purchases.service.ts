@@ -729,11 +729,25 @@ export class PurchasesService {
 
         // Landed cost (D-043): un flete, una aduana o un seguro vinculados a una compra
         // de bobinas reparten su costo sin IGV entre esas bobinas al recibirse.
-        const landed = await this.applyLandedCost(tx, purchase, actor, operationDate);
+        // cc57 (D-03 de audit-01): con el acuse de retrofecha del usuario, como el resto de la
+        // recepción; sin él, un flete con la fecha del papel se rechazaba sin salida.
+        const landed = await this.applyLandedCost(
+          tx,
+          purchase,
+          actor,
+          operationDate,
+          input.confirmBackdate,
+        );
         // Costo de corte tercerizado (RF-41): igual que el landed cost, pero prorrateado
         // entre los flejes ya recibidos de la orden de corte vinculada, sin importar si
         // esta compra llega antes o después de la recepción física (D-033).
-        const cuttingCost = await this.applyCuttingOrderCost(tx, purchase, actor, operationDate);
+        const cuttingCost = await this.applyCuttingOrderCost(
+          tx,
+          purchase,
+          actor,
+          operationDate,
+          input.confirmBackdate,
+        );
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -1036,6 +1050,7 @@ export class PurchasesService {
     purchase: Purchase,
     actor: RequestUser,
     operationDate: string,
+    confirmBackdate?: boolean,
   ): Promise<{
     amountPen: string;
     coils: number;
@@ -1128,6 +1143,7 @@ export class PurchasesService {
         notes: noteLabel,
         actorId: actor.id,
         operationDate,
+        confirmBackdate,
       });
       // Si el kardex no aceptó el ajuste (línea NOOP o saldo en cero), el documento de
       // la bobina tampoco se toca: un `unitCostPerKg` sin movimiento detrás no se puede
@@ -1195,6 +1211,7 @@ export class PurchasesService {
     purchase: Purchase,
     actor: RequestUser,
     operationDate: string,
+    confirmBackdate?: boolean,
   ): Promise<{ amountPen: string; strips: number; imputed: boolean } | null> {
     if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedCuttingOrderId) return null;
     if (purchase.serviceKind !== ServiceKind.CUTTING) return null;
@@ -1268,6 +1285,7 @@ export class PurchasesService {
         notes: noteLabel,
         actorId: actor.id,
         operationDate,
+        confirmBackdate,
       });
       if (!movement) continue;
 

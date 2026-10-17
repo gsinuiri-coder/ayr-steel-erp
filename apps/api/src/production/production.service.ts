@@ -1283,9 +1283,10 @@ export class ProductionService {
         scrapped,
         materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
         unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-        // `null` cuando el producto ya no tenía saldo: el costo no tiene dónde
-        // imputarse y reescribir el pasado no es opción (mismo criterio que D-043).
-        costAdjusted: adjusted !== null,
+        // cc57 (nota de cc55): como en coberturas, `true` también cuando la merma fue a las
+        // entradas de los partes (D-665) porque el producto ya no tenía saldo.
+        costAdjusted: adjusted !== null || closeAdjust.recostedEntries,
+        ...(closeAdjust.recostedEntries ? { costRecostedIntoEntries: true } : {}),
       },
     });
   }
