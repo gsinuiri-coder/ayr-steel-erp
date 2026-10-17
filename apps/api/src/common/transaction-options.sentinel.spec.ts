@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import * as ts from 'typescript';
+import { CLOSE_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
 import { KARDEX_TX_OPTIONS } from './transaction-options';
 
 /**
@@ -11,7 +12,10 @@ import { KARDEX_TX_OPTIONS } from './transaction-options';
  * 1. los caminos corregidos en el hotfix usan `KARDEX_TX_OPTIONS`;
  * 2. toda transacción interactiva cuyo cuerpo llama al kardex (`inventory.record/reverse/adjustCost/
  *    replaceEntry/recostForward`), a una devolución (`salesReturns.…InTx`) o a un despacho
- *    (`dispatches.…InTx`) lleva un tope propio de al menos 30 s.
+ *    (`dispatches.…InTx`) lleva un tope propio de al menos 30 s;
+ * 3. cc57 (B-06 de audit-01): también toda transacción que toma filas por la puerta de bloqueos
+ *    (`lockDocuments`, `lockInOrder`): bloquea varias filas y consulta por fila, y con los 5 s por
+ *    defecto de Prisma era el `P2028` intermitente contra Neon.
  */
 const SRC = join(__dirname, '..');
 const MIN_TIMEOUT_MS = 30_000;
@@ -19,13 +23,16 @@ const KNOWN: Record<string, number> = {
   KARDEX_TX_OPTIONS: KARDEX_TX_OPTIONS.timeout,
   REACTIVATION_TX_TIMEOUT_MS: 30_000,
   COMMIT_PREVIEW_TIMEOUT_MS: 30_000,
+  // cc57: el parámetro de `previewPlantClose`; sus llamadores pasan CLOSE_PREVIEW_TIMEOUT_MS
+  // (60 s) o COMMIT_PREVIEW_TIMEOUT_MS (120 s). Se cuenta el menor.
+  timeoutMs: CLOSE_PREVIEW_TIMEOUT_MS,
 };
 /**
  * cc54 (P2-5 de la revisión de cc53): con o sin `this.` (un auxiliar que recibe `inventory` como
  * parámetro también llega al kardex).
  */
 const KARDEX_CALL =
-  /\b(inventory\.(record|reverse|adjustCost|replaceEntry|recostForward)|salesReturns\.[a-zA-Z]+InTx|dispatches\.[a-zA-Z]+InTx)\(/;
+  /\b(inventory\.(record|reverse|adjustCost|replaceEntry|recostForward)|salesReturns\.[a-zA-Z]+InTx|dispatches\.[a-zA-Z]+InTx|lockDocuments|lockInOrder)\(/;
 
 interface FnDecl {
   name: string;
@@ -142,7 +149,7 @@ function timeoutOf(options: string | null): number | null {
   if (product?.[1] && product[2]) return Number(product[1]) * Number(product[2].replace(/_/g, ''));
   const literal = /timeout:\s*([\d_]+)/.exec(options);
   if (literal?.[1]) return Number(literal[1].replace(/_/g, ''));
-  const named = /timeout:\s*([A-Z_]+)/.exec(options);
+  const named = /timeout:\s*([A-Za-z_]+)/.exec(options);
   if (named?.[1]) return KNOWN[named[1]] ?? null;
   return null;
 }

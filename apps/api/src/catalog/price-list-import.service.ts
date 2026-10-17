@@ -259,7 +259,7 @@ export class PriceListImportService {
 
         const products = await tx.product.findMany({
           where: { id: { in: input.rows.map((r) => r.productId) } },
-          select: { id: true, isActive: true, listPricePen: true },
+          select: { id: true, sku: true, isActive: true, listPricePen: true },
         });
         const productById = new Map(products.map((p) => [p.id, p]));
 
@@ -271,6 +271,14 @@ export class PriceListImportService {
             throw new BadRequestException(
               `Un producto desactivado no admite precio de lista (${row.productId})`,
             );
+          }
+          if (row.priceWithIgvPen !== undefined) {
+            const derived = money(saleValueFromPrice(row.priceWithIgvPen)).toFixed(4);
+            if (!toDecimal(derived).eq(toDecimal(row.afterValuePen))) {
+              throw new BadRequestException(
+                `El valor sin IGV de ${product.sku} no corresponde a su precio con IGV (${row.priceWithIgvPen}): vuelve a cargar el archivo`,
+              );
+            }
           }
           if (!priceListValueChanged(product.listPricePen, row.afterValuePen)) continue;
           await tx.product.update({

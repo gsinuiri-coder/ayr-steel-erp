@@ -1901,6 +1901,10 @@ export const sellableCoilSchema = z.object({
    * D-170: el **costo promedio por kilo** de este rollo, que es a lo que el kardex lo va a
    * dar de baja cuando la venta lo despache.
    *
+   * **Solo lo recibe un ADMINISTRADOR** (`sales-orders.service.ts`, desde D-641): para otro rol
+   * viaja `null`. El texto de abajo es el razonamiento original de D-170; no vale como permiso
+   * para mandárselo al vendedor (cc57, C-10 de audit-01).
+   *
    * Viaja porque una venta de bobina entera es a precio negociado y a ojo: el vendedor tipea
    * un número por kg y hasta ahora lo único que le decía si se había pasado era el piso —del
    * que este costo ya se despejaba (D-163)—. Mostrarlo directo no revela nada nuevo y evita

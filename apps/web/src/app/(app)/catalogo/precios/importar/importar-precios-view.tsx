@@ -107,7 +107,12 @@ export function ImportarPreciosView() {
           r.afterValuePen !== null,
       );
       const body = {
-        rows: rows.map((r) => ({ productId: r.productId, afterValuePen: r.afterValuePen })),
+        rows: rows.map((r) => ({
+          productId: r.productId,
+          afterValuePen: r.afterValuePen,
+          // cc57 (D-16): el precio del archivo, para que el API vuelva a derivar el valor.
+          priceWithIgvPen: r.priceWithIgvPen,
+        })),
         idempotencyKey: idempotency.current(
           JSON.stringify(rows.map((r) => [r.productId, r.afterValuePen])),
         ),

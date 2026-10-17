@@ -19,6 +19,7 @@ import {
   type RoofingReportDraftDto,
   type RoofingReportDraftInput,
 } from '@ayr/shared';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { claimIdempotencyKey } from '../common/idempotency';
@@ -175,7 +176,7 @@ export class RoofingDraftsService {
       if (deleted.count === 0) {
         throw new NotFoundException('Esa fila no está en el borrador de la orden');
       }
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.list(orderId);
   }
 

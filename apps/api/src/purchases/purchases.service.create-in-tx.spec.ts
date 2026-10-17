@@ -306,7 +306,17 @@ describe('PurchasesService.receive — saldos por clave antes del primer ingreso
     const record = jest.fn();
     const lockInOrder = jest.fn().mockRejectedValue(stop);
     const tx = {
-      purchase: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      purchase: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'pu-1',
+          status: 'RECEIVED',
+          type: 'FINISHED_GOOD',
+          businessLineId: 'bl-1',
+          currency: 'PEN',
+          exchangeRate: '1.0000',
+        }),
+      },
       purchaseItem: {
         findMany: jest.fn().mockResolvedValue([
           { id: 'i1', productId: 'prod-b', unit: 'NIU' },

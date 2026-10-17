@@ -32,6 +32,7 @@ import {
   type StripStockQuery,
   type StripStockRowDto,
 } from '@ayr/shared';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
@@ -706,7 +707,7 @@ export class CuttingService {
         before: { status: order.status },
         after: { status: refreshed.status, reason, cancelledCoils: pending.length },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(cuttingOrderId);
   }

@@ -243,6 +243,39 @@ describe('PriceListImportService.confirm (D-217/M1c)', () => {
     expect(tx.product.update).not.toHaveBeenCalled();
   });
 
+  it('cc57 (D-16): un valor sin IGV que no sale del precio con IGV de la fila se rechaza', async () => {
+    const { prisma, tx } = fakePrismaForConfirm({
+      products: [{ id: 'p-1', listPricePen: '10.0000' }],
+    });
+    const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
+
+    // 11.80 con IGV es 10.0000 sin IGV; el navegador manda 1.0000.
+    await expect(
+      svc.confirm(ACTOR, {
+        rows: [{ productId: 'p-1', afterValuePen: '1.0000', priceWithIgvPen: '11.80' }],
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('no corresponde a su precio con IGV'),
+    });
+    expect(tx.product.update).not.toHaveBeenCalled();
+    // Con el valor que sí sale del precio, pasa (aquí, sin cambio real).
+    await expect(
+      svc.confirm(ACTOR, {
+        rows: [{ productId: 'p-1', afterValuePen: '10.0000', priceWithIgvPen: '11.80' }],
+      }),
+    ).resolves.toMatchObject({ changed: 0 });
+
+    // Autorrevisión de cc57-e (P1-1): una celda con toda la precisión de una fórmula se compara
+    // sin redondear, como la derivó la vista previa.
+    await expect(
+      svc.confirm(ACTOR, {
+        rows: [
+          { productId: 'p-1', afterValuePen: '82.6379', priceWithIgvPen: '97.51275765904359' },
+        ],
+      }),
+    ).resolves.toMatchObject({ changed: 1 });
+  });
+
   it('producto desactivado a mitad de la carga rechaza el lote entero', async () => {
     const { prisma } = fakePrismaForConfirm({
       products: [

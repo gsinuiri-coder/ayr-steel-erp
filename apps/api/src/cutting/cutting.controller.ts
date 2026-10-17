@@ -26,8 +26,9 @@ import { CuttingService } from './cutting.service';
 /**
  * Corte tercerizado (RF-40..42, RF-22). SUPERVISOR_PLANTA opera envío, recepción y
  * cancelación (§3.4: bobinas, producción, corte tercerizado, inventario); vincular la
- * factura del servicio es flujo normal de `purchases`. El stock de flejes (RF-42) queda
- * abierto a los tres roles, igual que el resto de inventario de solo lectura.
+ * factura del servicio es flujo normal de `purchases`. El stock de flejes (RF-42) es de los mismos
+ * dos roles (cc57, C-06 de audit-01: el `@Roles()` vacío ya negaba al vendedor y el comentario decía
+ * lo contrario; ahora la intención está declarada).
  */
 @Controller('cutting')
 @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
@@ -36,7 +37,7 @@ export class CuttingController {
 
   /** RF-42. Va antes de `:id` porque `strips` es una ruta fija. */
   @Get('strips')
-  @Roles()
+  @Roles(Role.ADMINISTRADOR, Role.SUPERVISOR_PLANTA)
   stripStock(
     @CurrentUser() actor: RequestUser,
     @Query(new ZodValidationPipe(stripStockQuerySchema)) query: StripStockQuery,

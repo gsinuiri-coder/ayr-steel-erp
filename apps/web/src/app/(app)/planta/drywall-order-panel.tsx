@@ -332,12 +332,14 @@ export function DrywallOrderPanel({
             </div>
             <div className="grid gap-2">
               <Button
-                disabled={!piecesValid || overCapacity || toleranceBlocked || report.isPending}
+                disabled={!piecesValid || overCapacity || toleranceBlocked}
+                pending={report.isPending}
+                pendingText="Registrando…"
                 onClick={() => {
                   void backdate.attempt();
                 }}
               >
-                {report.isPending ? 'Registrando…' : `Guardar ${o.code}`}
+                {`Guardar ${o.code}`}
               </Button>
               <OperationDateField value={operationDate} onChange={setOperationDate} />
             </div>
@@ -479,7 +481,8 @@ export function DrywallOrderPanel({
                 </div>
                 <Button
                   aria-label={`Montar el fleje ${s.code}`}
-                  disabled={consume.isPending || liveStrips.length >= MAX_ORDER_STRIPS}
+                  disabled={liveStrips.length >= MAX_ORDER_STRIPS}
+                  pending={consume.isPending}
                   onClick={() => {
                     consume.mutate(s.coilId);
                   }}

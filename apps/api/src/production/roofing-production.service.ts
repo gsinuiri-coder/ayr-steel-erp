@@ -349,7 +349,7 @@ export class RoofingProductionService {
 
     // D-122: lo que hace falta para producir una cobertura sale del **producto**: su
     // acabado (y con él la densidad), su espesor, su ancho y su largo. Ya no hay receta.
-    const roofing = await this.production.requireRoofingProduct(product.id);
+    const roofing = await this.production.requireRoofingProduct(product.id, tx);
 
     const taken = await tx.productionOrder.findFirst({
       where: {
@@ -443,7 +443,7 @@ export class RoofingProductionService {
     }
     if (!product.isActive) throw new BadRequestException('El producto está desactivado');
 
-    const roofing = await this.production.requireRoofingProduct(product.id);
+    const roofing = await this.production.requireRoofingProduct(product.id, tx);
     if (roofing.lengthMm === null) {
       throw new BadRequestException(
         `${roofing.sku} es una cobertura a medida: no tiene largo fijo para producir a stock. ` +
@@ -589,7 +589,7 @@ export class RoofingProductionService {
           ),
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.production.findOne(orderId);
   }
@@ -631,15 +631,15 @@ export class RoofingProductionService {
         assertKind(order, ProductionOrderKind.ROOFING);
         assertLive(order, 'montar una bobina');
 
-        const [product, color] = await Promise.all([
-          this.production.requireRoofingProduct(order.productId),
-          tx.product
-            .findUniqueOrThrow({
-              where: { id: order.productId },
-              select: { color: { select: { name: true } } },
-            })
-            .then((row) => row.color),
-        ]);
+        // cc57 (B-08 de audit-01): las dos lecturas con la transacción y una tras otra (un
+        // `Promise.all` sobre una transacción interactiva no gana nada: es una sola conexión).
+        const product = await this.production.requireRoofingProduct(order.productId, tx);
+        const color = (
+          await tx.product.findUniqueOrThrow({
+            where: { id: order.productId },
+            select: { color: { select: { name: true } } },
+          })
+        ).color;
         const mounted: {
           consumptionId: string;
           coilId: string;
@@ -1953,7 +1953,7 @@ export class RoofingProductionService {
         before: { priority: before.priorityAt !== null, reason: before.priorityReason },
         after: { priority: input.priority, reason: input.reason },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.production.findOne(orderId);
   }
 
@@ -3041,7 +3041,7 @@ export class RoofingProductionService {
           ...(restored ? { reservationRestored: order.reservationId } : {}),
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.production.findOne(orderId);
   }

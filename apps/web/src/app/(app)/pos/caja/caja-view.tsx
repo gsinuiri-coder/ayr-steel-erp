@@ -361,12 +361,14 @@ export function CajaView() {
               )}
 
               <Button
-                disabled={counted.trim() === '' || close.isPending}
+                disabled={counted.trim() === ''}
+                pending={close.isPending}
+                pendingText="Cerrando…"
                 onClick={() => {
                   close.mutate();
                 }}
               >
-                {close.isPending ? 'Cerrando…' : 'Cerrar caja'}
+                Cerrar caja
               </Button>
             </CardContent>
           </Card>

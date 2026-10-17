@@ -2372,7 +2372,7 @@ export class InvoicingService {
       // atascado en la lista para siempre. Las líneas sí caen por `onDelete: Cascade`.
       await this.inventory.unlinkInvoiceFromDispatches(tx, id);
       await tx.fiscalDocument.delete({ where: { id } });
-    });
+    }, KARDEX_TX_OPTIONS);
   }
 
   // -------------------------------------------------------------------------
@@ -3523,7 +3523,7 @@ export class InvoicingService {
         before: { status: fromStatus, number: document.number },
         after: { status: FiscalDocumentStatus.VOID_PENDING, reason, retryingOrphan },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     // Si la baja no llegó a SUNAT, la marca se quita y la factura vuelve a estar aceptada. Solo si
     // sigue puesta la marca **de esta llamada**: nunca se pisa un estado que otro camino escribió.
@@ -3548,7 +3548,7 @@ export class InvoicingService {
           after: { status: FiscalDocumentStatus.ACCEPTED, outcome },
         });
         return true;
-      });
+      }, KARDEX_TX_OPTIONS);
     const notReleased =
       'El comprobante cambió de estado mientras se comunicaba la baja: usa «Consultar al PSE» para ver dónde quedó';
 
@@ -3663,7 +3663,7 @@ export class InvoicingService {
         after: { outcome: result.outcome, reason },
       });
       return null;
-    });
+    }, KARDEX_TX_OPTIONS);
     if (conflict !== null) throw new ConflictException(conflict);
 
     return this.findOne(id);
@@ -3775,7 +3775,7 @@ export class InvoicingService {
         after: { dispatchId },
       });
       return created.id;
-    });
+    }, KARDEX_TX_OPTIONS);
 
     await this.assign(actor, documentId);
     await this.deliverDispatchNote(documentId);
