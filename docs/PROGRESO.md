@@ -2,6 +2,49 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-17 — cc57: resto del plan de audit-01, P2 y P3 de código (D-671..D-675; PR #223 a #227)
+
+Sesión desatendida. Sin migraciones, sin `--execute`, sin SQL contra producción y sin escrituras de datos. Detalle en
+`docs/handoff/ventana-cc57.md`; tabla id por id de audit-01 en `local-data/cc57/INFORME.md` del checkout principal;
+revisiones en `docs/revision/cc57-*.md`; UAT en `docs/uat/cc57.md`.
+
+- **Corte A, reversas e idempotencia (D-671):** API `00137-tzq` (`git-sha=dcdb8576`), merge `e6c8d113`.
+  - Anular una NC con devolución bloquea despachos y pedido.
+  - `idempotencyKey` en pedido directo, despacho, partido, merma y cotización.
+  - Reclamo exclusivo del envío al PSE.
+  - Devoluciones parciales y mensajes.
+- **Corte B, recosteo y reemplazo (D-672):** API `00138-89n` (`git-sha=64962c38`), merge `2c2563a0`.
+  - Cascada sin ingresos anulados.
+  - «Editar bobina» se rechaza con recosteos.
+  - `replaceEntry` frente a sobrante y recosteos.
+  - Vista del kardex en cero.
+  - `pnpm check:balances`.
+- **Corte C, reportes (D-673):** API `00139-6mb` (`git-sha=00f887cc`), merge `868e8a3d`.
+  - NC en «Ventas por material» por producto.
+  - Despunte en «Material de OPs».
+  - Vendedor con la regla de CxC.
+  - Textos.
+- **Corte D, rendimiento (D-674):** API `00140-6q9` (`git-sha=6c6e64ac`), merge `cc5074d3`.
+  - Agregados de Ventas y margen por pedido.
+  - Prefiltro de CxC.
+  - Tope explícito del kardex.
+- **Corte E, higiene (D-675):** API `00141-2l5` (`git-sha=7a6abe57`), merge `3bec6271`.
+  - Topes de transacción en 19 caminos con bloqueos.
+  - Throttle.
+  - Roles declarados.
+  - Validación de la carga de precios.
+  - Botones.
+  - Centinelas.
+- **Espera OK del dueño:** índices (migración, `local-data/cc57/migraciones-propuestas.sql`) y nueve decisiones (lista en el
+  UAT y en el handoff).
+- **Registro de riesgo** (toca kardex o datos):
+  - `inventory-recost.ts` (`reversedIds`);
+  - `inventory.service.ts` (`replaceEntry`, `assertChronological`, `findMovements`, `openingBalance`);
+  - `coil-operations.service.ts` (`update`, `split`, `registerScrap`);
+  - `fiscal-import.service.ts` (`annulExternal`);
+  - `sales-return-allocation.ts`;
+  - `collectible-documents.ts`.
+
 ## 2026-10-16 — cc56: saldos iniciales de cobranzas y pagos, costo de entradas protegido y cierre de mes (D-668..D-670; PR #217, #218 y #219)
 
 Sin migraciones. Sin SQL contra producción. **Sin escrituras en producción** (el importador espera el Excel del dueño; C2
