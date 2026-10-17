@@ -2766,3 +2766,41 @@ producción: agosto 26 comprobantes y septiembre 33, como contó audit-01.
 
 UAT de cc55 y de cc56 aprobados y **D-664 a D-670 RATIFICADAS por el dueño el 16/10** (pasan a firmes en
 `ARQUITECTURA.md` §0.2).
+
+## cc57 — resto del plan de audit-01 (D-671..D-675)
+
+La sesión fue desatendida y corrió de noche. El dueño fijó el alcance: todos los hallazgos de código de audit-01 que cc55
+y cc56 no habían resuelto, en cinco cortes y sin migraciones. La tabla id por id está en `local-data/cc57/INFORME.md` del
+checkout principal.
+
+**Por qué el reclamo del PSE es un plazo y no un estado (D-671).** La recomendación de audit-01 era un estado `SENDING` o
+una columna `sending_since`, y los dos exigían migración. El reclamo ya escribía `last_attempt_at`, así que basta exigir
+que esté vacío o más viejo que el tope de una llamada a Nubefact (60 s) más un margen. El costo es que, después de un
+envío fallido, «Reintentar» espera hasta 90 s, y lo dice con un 409. Se aceptó porque hoy el PSE está apagado y porque el
+duplicado que evita deja el comprobante rechazado aquí y aceptado en SUNAT.
+
+**Por qué «Editar bobina» rechaza en vez de reingresar al costo efectivo (D-672).** La primera versión reingresaba la hija
+al costo efectivo, con su recosteo. Las dos revisiones mostraron con cifras que la cascada siguiente calcula contra lo
+grabado y contaba ese recosteo dos veces: S/ 50 de la nada en un partido de 100. Reingresar al grabado lo perdía, que era
+el hallazgo original. La salida segura es la alternativa que proponía audit-01: no recostear por ahí un ingreso que ya
+tiene recosteos.
+
+**Por qué D-03 salió del corte B.** Pasar el acuse de retrofecha al landed cost destrababa la recepción del flete con la
+fecha del papel. Pero el flete se reparte con los kilos de **hoy** y su reversa devuelve de más. Eso es D-10, cómo se
+reparte el landed cost en el tiempo, y lo decide el dueño.
+
+**Por qué el vendedor de Ventas y margen es el de CxC (D-673).** Había tres criterios de «vendedor»:
+
+- Ventas y margen dejaba «sin vendedor» una venta sin pedido;
+- CxC tomaba el del pedido, el del pedido de su despacho o quien la registró;
+- el Panel tomaba lo que el vendedor emitió o lo de sus pedidos.
+
+El de CxC es el de `documentOwnerId`, el que ya decide quién puede cobrar ese comprobante. Una NC sin pedido toma el dueño
+del comprobante que acredita, para que la factura y su NC no queden a nombre de dos personas.
+
+**Lo que no era problema.**
+
+- **E-02:** con D-667 los dos reportes acreditan el mismo costo; queda fijado en `cost-basis-cc55.db-spec.ts`.
+- **E-10:** D-444 está ratificada (D-459).
+- **El `$executeRawUnsafe` de A-04:** tiene usos legítimos (savepoints de los importadores, herramientas de drift) y ninguno
+  nombra el kardex.
