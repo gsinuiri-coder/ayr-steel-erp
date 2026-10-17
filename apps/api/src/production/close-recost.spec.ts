@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@ayr/shared';
 import {
   applyCloseAdjustment,
+  closeCostAudit,
   assertNoCloseRecost,
   closeRecostNote,
   recostCloseIntoEntries,
@@ -156,5 +157,26 @@ describe('applyCloseAdjustment', () => {
       }),
     ).resolves.toEqual({ movement: null, recostedEntries: false });
     expect(inventory.adjustCost).not.toHaveBeenCalled();
+  });
+});
+
+describe('closeCostAudit (cc57, nota de cc55)', () => {
+  it('con ajuste sobre el saldo: costAdjusted y nada más', () => {
+    expect(closeCostAudit({ movement: { id: 1n }, recostedEntries: false })).toEqual({
+      costAdjusted: true,
+    });
+  });
+
+  it('sin saldo, con el ajuste en las entradas de los partes: también costAdjusted (D-665)', () => {
+    expect(closeCostAudit({ movement: null, recostedEntries: true })).toEqual({
+      costAdjusted: true,
+      costRecostedIntoEntries: true,
+    });
+  });
+
+  it('sin ajuste: costAdjusted false', () => {
+    expect(closeCostAudit({ movement: null, recostedEntries: false })).toEqual({
+      costAdjusted: false,
+    });
   });
 });

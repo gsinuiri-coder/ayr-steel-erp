@@ -14,6 +14,7 @@ commitear ya cubre un punto.
 ## P1
 
 ### P1-1. Una NC que acredita más de lo trazado resta de la fila la venta que nunca entró en ella
+
 `apps/api/src/reports/sales-by-product.ts:215-235`. La NC entra en la fila si la clave
 (comprobante, producto) **se trazó**, aunque se haya trazado solo una parte (`fraction < 1`,
 `DESPACHO_PARCIAL` o `SIN_SALIDA_KARDEX`). La NC resta su venta y su cantidad **enteras** de la fila,
@@ -36,6 +37,7 @@ tests no cubren este caso.
 ## P2
 
 ### P2-1. Motivo 02 (error de RUC): la fila carga el costo entero contra una venta neta en cero
+
 Mismo sitio que P1-1, aunque la venta sí se haya trazado entera. La NC 02 resta toda la venta y no
 tiene devolución (`return_cost` NULL → '0'), así que la fila conserva el costo del despacho. La
 factura nueva al RUC correcto no la declara ningún despacho (el `invoice_id` del despacho apunta a
@@ -45,6 +47,7 @@ Hay que decidir si los motivos que acreditan cantidad sin devolver mercadería (
 despacho) deben entrar en la fila.
 
 ### P2-2. El test de E-15 no prueba que hubo despunte
+
 `apps/api/src/reports/cost-basis-cc55.db-spec.ts:263` y `:287`. Compara `opMaterialCostPen` con
 `production_orders.material_cost_pen`. Si el cierre con `consumedKg = teórico + 5` no generara el
 movimiento `SCRAP` (por redondeo, por cómo se calcula lo teórico con la merma del 1 %, o por
@@ -53,11 +56,13 @@ código anterior. Falta afirmar `op.scrapKg = 5.000` (o que existe un `SCRAP` co
 que `opMaterialCostPen` es mayor que la suma de `production_reports.material_cost_pen`.
 
 ### P2-3. El test de E-02 en el commit podía pasar con null = null y dejaba un `console.warn`
+
 `cost-basis-cc55.db-spec.ts:337-343` (versión del commit). `expect(doc?.costPen).toBe(profit.total.costPen)`
 pasa si los dos son `null`. El cambio sin commitear ya fija `-181.8000` y quita el `console.warn`.
 Hay que confirmar que entra en el commit.
 
 ### P2-4. Vendedor (E-16): la NC de una venta directa queda a nombre de quien la registró
+
 `apps/api/src/reports/sales-margin.service.ts:175-177`. La NC copia el `salesOrderId` de la
 factura (`invoicing.service.ts:1564/1609/1904`). En una venta sin pedido, ese id es nulo, así que
 el vendedor de la NC es su `created_by_id` (a menudo un administrador o caja), mientras la factura
@@ -68,6 +73,7 @@ dueño, de modo que tampoco «sigue la regla de CxC» para las NC. Habría que c
 dueño del comprobante acreditado (`affected_document_id`) para la NC.
 
 ### P2-5. Vendedor: «el Panel del vendedor» no usa COALESCE sino OR
+
 `apps/api/src/invoicing/fiscal-document-where.ts:24-29`. El Panel del vendedor cuenta para el
 vendedor «lo que creé **o** lo de mis pedidos». Si un vendedor B registra una factura del pedido
 del vendedor A, cuenta para los dos en el Panel, y en Ventas y margen solo para A. El comentario
@@ -77,6 +83,7 @@ exactamente. Esto es anterior al commit, pero el comentario nuevo lo da por resu
 ## P3
 
 ### P3-1. El cruce `fd.dispatch_id` del vendedor es código muerto
+
 `sales-margin.service.ts:175-176`. `fiscal_documents.dispatch_id` solo lo lleva la GRE
 (`invoicing.service.ts:805-811`, CHECK `fiscal_documents_shape_ck`), y la consulta excluye la GRE.
 `dso.seller_id` es siempre NULL. Es coherente con `documentOwnerId` (allí también es muerto para
@@ -85,11 +92,13 @@ que un despacho declara (`dispatches.invoice_id`) **no** toma al vendedor de ese
 no cubre esa rama.
 
 ### P3-2. Bucket de pedido sin vendedor: gana el creador del primer comprobante
+
 `sales-margin.service.ts:670`. El bucket es por `sales_order_id`. Si el pedido tiene
 `seller_id` NULL, cada comprobante puede tener un creador distinto, y la fila toma
 `first.seller_id`. Es un caso raro, pero la atribución depende del orden.
 
 ### P3-3. «Sin vendedor» deja de existir en la práctica, y la UI y los specs lo siguen suponiendo
+
 `apps/web/src/lib/sales-margin-groups.spec.ts:86-91` y `apps/api/src/reports/report-rows.spec.ts:373`
 siguen modelando el grupo «Sin vendedor» para las ventas directas. No se rompen (usan datos
 armados), pero el texto y el grupo de la vista quedan para un caso que ahora casi no ocurre.
@@ -97,6 +106,7 @@ También hay que revisar el guion UAT y la ayuda de la vista si hablan de «Sin 
 directas.
 
 ### P3-4. NC de un comprobante de otro periodo: sigue en No trazable, y Ventas y margen la cuenta
+
 `sales-by-product.ts:218`. `tracedKeys` solo conoce los comprobantes del rango. Una NC del mes
 cuya factura es del mes anterior sigue en No trazable sin restar el costo de su devolución, y
 Ventas y margen (D-647) sí resta ese reingreso en el periodo de la NC. El costo de la pestaña
@@ -104,6 +114,7 @@ UPVC/Reventa y el de su línea en Ventas y margen siguen sin cuadrar entre perio
 anterior al commit, pero el comentario «como en Ventas y margen» lo sugiere resuelto.
 
 ### P3-5. Costo de la devolución frente a un recosteo posterior del despacho
+
 `sales-by-material.service.ts:449-458`. El costo devuelto es el de `sales_return_items` más los
 recosteos del **movimiento de la devolución**. Si después se recostea la salida del despacho
 (D-649) y la entrada de la devolución no se recostea igual, la fila resta un costo distinto del
@@ -111,11 +122,13 @@ que sumó la venta. Habría que confirmar con el motor de recosteo (`inventory-r
 DEV- sigue a su salida. Si no la sigue, la diferencia es del dominio, no de este reporte.
 
 ### P3-6. Una fila con devolución total queda con cantidad 0
+
 `sales-by-product.ts:249-262`. Una devolución total deja la fila en 0 u / 0 / 0, con
 `costPerUnitPen` null y `lineCount` 2. Se lista igual. Es menor, y conviene decidir si se
 muestra.
 
 ### P3-7. `businessLine: 'trading'` con `as never` en el db-spec de E-03
+
 `credit-note-reasons.db-spec.ts:621+`. El cast esconde un desajuste de tipo con el schema de la
 consulta. Si la clave de la línea cambia, el test compila igual.
 
