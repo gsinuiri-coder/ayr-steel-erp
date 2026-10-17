@@ -1855,12 +1855,17 @@ describe('cc57 — anular una NC con devolución × anular su pedido (contra la 
   it('sin deadlock y nunca un pedido anulado con la devolución deshecha', async () => {
     const invoicing = moduleRef.get(InvoicingService);
     const fiscalImport = moduleRef.get(FiscalImportService);
+    // Las pausas tras cada toma de documentos; si otro bloque ya las puso (cc30), se reusan: espiar
+    // dos veces la misma función la vuelve recursiva.
+    const alreadySpied = jest.isMockFunction(documentLocks.lockDocuments);
     const realLockDocuments = documentLocks.lockDocuments;
-    const spy = jest.spyOn(documentLocks, 'lockDocuments').mockImplementation(async (tx, set) => {
-      const locked = await realLockDocuments(tx, set);
-      await sleep(PAUSE_MS);
-      return locked;
-    });
+    const spy = alreadySpied
+      ? null
+      : jest.spyOn(documentLocks, 'lockDocuments').mockImplementation(async (tx, set) => {
+          const locked = await realLockDocuments(tx, set);
+          await sleep(PAUSE_MS);
+          return locked;
+        });
     let correlative = Math.floor(Math.random() * 50_000) + 130_000;
     const tally = newTally();
     const broken: string[] = [];
@@ -1929,7 +1934,7 @@ describe('cc57 — anular una NC con devolución × anular su pedido (contra la 
         if (after.status === 'CANCELLED' && ret.status !== 'ACTIVE') broken.push(`iteración ${i}`);
       }
     } finally {
-      spy.mockRestore();
+      spy?.mockRestore();
     }
     expect(broken).toEqual([]);
     expectClean(tally, 'anular NC con DEV- × anular pedido');

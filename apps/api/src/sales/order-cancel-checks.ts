@@ -323,7 +323,9 @@ export async function fabricatedLooseLines(
     const back = returned
       .filter((r) => r.dispatchItem.salesOrderItemId === item.id && r.itemId === item.productId)
       .reduce<Decimal>((acc, r) => acc.plus(toDecimal(r.reserveQty.toString())), new Decimal(0));
-    const loose = made.minus(shipped).plus(back);
+    // Revisión de cc57 (P2-2): nunca más suelto que lo fabricado (parte del despacho pudo salir de
+    // stock anterior a la OP).
+    const loose = Decimal.min(made, made.minus(shipped).plus(back));
     if (!loose.gt(0)) continue;
     out.push({
       salesOrderItemId: item.id,

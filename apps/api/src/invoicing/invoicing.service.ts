@@ -1503,7 +1503,7 @@ export class InvoicingService {
       // la salida que sí existe en vez de un rechazo sin camino.
       throw new BadRequestException(
         before.status === FiscalDocumentStatus.ANNULLED
-          ? `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}), hoy anulado: un segundo 02 sobre el mismo comprobante todavía no se registra. Para corregirlo, registra una nota de crédito 01 (anulación de la operación) y emite el comprobante correcto`
+          ? `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}), hoy anulado: un segundo 02 sobre el mismo comprobante todavía no se registra. Para corregirlo, anula la nota de crédito 02 si sigue vigente, registra una nota de crédito 01 (anulación de la operación) y emite el comprobante correcto`
           : `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}): un segundo 02 sobre el mismo comprobante no se registra`,
       );
     }
@@ -3193,7 +3193,8 @@ export class InvoicingService {
         `Solo se reintenta un comprobante emitido o con error de envío; este está ${document.status}`,
       );
     }
-    // cc57 (B-04): con un envío todavía en vuelo, el reintento no sale (`claimAttempt` lo
+    await this.assertOwnership(actor, id, 'reintentar su envío');
+    // cc57 (B-04; revisión: después del alcance): con un envío todavía en vuelo, el reintento no sale (`claimAttempt` lo
     // descartaría en silencio); se dice para que no parezca que no hizo nada.
     if (
       document.lastAttemptAt !== null &&
@@ -3203,7 +3204,6 @@ export class InvoicingService {
         'Hay un envío de este comprobante al PSE en curso o recién hecho: espera un minuto y vuelve a intentar',
       );
     }
-    await this.assertOwnership(actor, id, 'reintentar su envío');
     await this.audit.log({
       actorId: actor.id,
       action: 'invoicing.document.retry',
