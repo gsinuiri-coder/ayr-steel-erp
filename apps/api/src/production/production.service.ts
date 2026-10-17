@@ -10,7 +10,6 @@ import {
   ProductSource,
   SalesOrderStatus,
   Prisma,
-  type InventoryMovement,
 } from '@prisma/client';
 import {
   businessToday,
@@ -53,7 +52,7 @@ import { claimIdempotencyKey } from '../common/idempotency';
 import { drywallStripMismatch, drywallStripSpec, drywallStripWhere } from '../common/drywall-strip';
 import { OperationDateService } from '../common/operation-date.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { applyCloseAdjustment, assertNoCloseRecost } from './close-recost';
+import { applyCloseAdjustment, closeCostAudit, assertNoCloseRecost } from './close-recost';
 import { liveMovements } from '../inventory/live-movements';
 import { lockDocuments } from '../inventory/document-locks';
 import { itemRefOf } from '../inventory/row-locks';
@@ -1233,7 +1232,6 @@ export class ProductionService {
         operationDate,
       },
     });
-    const adjusted: InventoryMovement | null = closeAdjust.movement;
 
     // D-360: los flejes que el cierre soltó y quedaron en exactamente 0 se terminan solos
     // (el reporte y la merma de proceso no los terminan: estaban montados). Reabrir la
@@ -1283,10 +1281,7 @@ export class ProductionService {
         scrapped,
         materialCostPen: toFixedString(cost.materialCostPen, 'MONEY'),
         unitCostPen: toFixedString(cost.unitCostPen, 'MONEY'),
-        // cc57 (nota de cc55): como en coberturas, `true` también cuando la merma fue a las
-        // entradas de los partes (D-665) porque el producto ya no tenía saldo.
-        costAdjusted: adjusted !== null || closeAdjust.recostedEntries,
-        ...(closeAdjust.recostedEntries ? { costRecostedIntoEntries: true } : {}),
+        ...closeCostAudit(closeAdjust),
       },
     });
   }
