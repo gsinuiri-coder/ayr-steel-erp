@@ -30,13 +30,11 @@ describe('cc57 (C-06, C-07): roles declarados', () => {
 
 describe('cc57 (C-08): la cubeta por correo, solo en el login', () => {
   const tracker = (path: string, body: unknown, ip = '10.0.0.1') =>
-    (
-      new (
-        AppThrottlerGuard as unknown as new () => {
-          getTracker: (req: unknown) => Promise<string>;
-        }
-      )() as { getTracker: (req: unknown) => Promise<string> }
-    ).getTracker({ path, body, ip });
+    new (
+      AppThrottlerGuard as unknown as new () => {
+        getTracker: (req: unknown) => Promise<string>;
+      }
+    )().getTracker({ path, body, ip });
 
   it('reconoce el login con y sin el prefijo', () => {
     expect(isLoginRoute({ path: '/api/auth/login' })).toBe(true);
