@@ -3,7 +3,7 @@
  * una transacción `READ ONLY`, sin modo execute. Por cada saldo compara la cantidad y el valor
  * guardados (`qty × avg_cost`) contra el kardex reproducido por el motor (costos efectivos, el valor
  * se descarta al pasar por cero: la misma cuenta que `record`, D-649/D-653). Lista lo que difiere en
- * cantidad o en más de S/ 0,01 de valor. Imprime un JSON en stdout (para `local-data/`, fuera del
+ * cantidad o en valor más de lo que explica el promedio a 4 decimales (ver `AVG_HALF_STEP`). Imprime un JSON en stdout (para `local-data/`, fuera del
  * repo) y un resumen en stderr. Pensado para correrlo al cerrar una ventana.
  */
 import 'dotenv/config';
@@ -13,7 +13,12 @@ import { assertExecuteAllowed } from './cli-gate';
 import { assertExternalOutputsOff } from '../src/common/external-outputs';
 import { stockUpToDate } from '../src/inventory/inventory-recost';
 
-const TOLERANCE_PEN = new Decimal('0.01');
+/**
+ * Lo que el promedio guardado a 4 decimales ya explica: `qty × 0,00005` (media diezmilésima por
+ * unidad), y nunca menos de un céntimo (revisión del segundo modelo de cc57).
+ */
+const MIN_TOLERANCE_PEN = new Decimal('0.01');
+const AVG_HALF_STEP = new Decimal('0.00005');
 const KARDEX_END = new Date('9999-12-31T00:00:00.000Z');
 
 async function main(): Promise<void> {
@@ -55,7 +60,8 @@ async function main(): Promise<void> {
           savedTotal = savedTotal.plus(savedValue);
           kardexTotal = kardexTotal.plus(kardex.value);
           const diff = savedValue.minus(kardex.value);
-          if (!savedQty.eq(kardex.qty) || diff.abs().gt(TOLERANCE_PEN)) {
+          const tolerance = Decimal.max(MIN_TOLERANCE_PEN, savedQty.abs().times(AVG_HALF_STEP));
+          if (!savedQty.eq(kardex.qty) || diff.abs().gt(tolerance)) {
             items.push({
               item: label.get(`${b.itemType}:${b.itemId}`) ?? `${b.itemType}:${b.itemId}`,
               savedQty: savedQty.toFixed(3),

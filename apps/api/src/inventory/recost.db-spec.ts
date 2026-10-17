@@ -547,7 +547,7 @@ describe('cc55 (D-665, E-01 de audit-01): recostear entradas ya registradas', ()
   });
 });
 
-describe('cc57 (A-01 de audit-01): recosteo de la madre con una hija ya recosteada (D-045)', () => {
+describe('cc57 (A-01 de audit-01): recosteo de la madre después de corregir una hija (D-045)', () => {
   it('el cambio de la madre llega entero a las hijas vivas, no al ingreso anulado', async () => {
     const mother = randomUUID();
     const child1 = randomUUID();
