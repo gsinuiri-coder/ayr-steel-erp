@@ -429,9 +429,12 @@ export class SalesMarginService {
             ELSE fdi."qty" END) AS "qty"
         FROM "fiscal_document_items" fdi
         JOIN "fiscal_documents" fd ON fd."id" = fdi."document_id"
+        -- cc57 (E-13 de audit-01): solo las líneas de los pedidos del reporte. Sin este filtro
+        -- dentro, Postgres agregaba todas las líneas de comprobante de la base en cada llamada.
+        JOIN "sales_order_items" fsoi ON fsoi."id" = fdi."sales_order_item_id"
         WHERE fd."archived_at" IS NULL
           AND fd."status"::text IN (${LIVE()})
-          AND fdi."sales_order_item_id" IS NOT NULL
+          AND fsoi."sales_order_id" = ANY(${orderIds}::uuid[])
         GROUP BY fdi."sales_order_item_id"
       ) inv ON inv."id" = soi."id"
       LEFT JOIN (
@@ -439,6 +442,7 @@ export class SalesMarginService {
         FROM "dispatch_items" di
         JOIN "dispatches" d ON d."id" = di."dispatch_id"
         WHERE d."status" = 'ISSUED'
+          AND d."sales_order_id" = ANY(${orderIds}::uuid[])
         GROUP BY di."sales_order_item_id"
       ) disp ON disp."id" = soi."id"
       LEFT JOIN (
@@ -448,6 +452,7 @@ export class SalesMarginService {
         JOIN "products" p ON p."id" = di."product_id"
         JOIN "business_lines" bl ON bl."id" = p."business_line_id"
         WHERE d."status" = 'ISSUED'
+          AND d."sales_order_id" = ANY(${orderIds}::uuid[])
           AND di."movement_id" IS NULL
           AND bl."inventory_strategy"::text <> 'NOOP'
         GROUP BY di."sales_order_item_id"

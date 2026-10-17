@@ -95,7 +95,9 @@ function prismaWith(documents: ReturnType<typeof doc>[]) {
       { id: ISSUER, name: 'Caja' },
     ]),
   };
-  return { fiscalDocument, user } as unknown as PrismaService & {
+  // cc57 (E-06): el prefiltro en SQL devuelve los ids con algo que cobrar.
+  const $queryRaw = jest.fn().mockResolvedValue(documents.map((d) => ({ id: d.id })));
+  return { fiscalDocument, user, $queryRaw } as unknown as PrismaService & {
     fiscalDocument: { findMany: jest.Mock };
     user: { findMany: jest.Mock };
   };
@@ -200,7 +202,7 @@ describe('ReceivablesAgingService', () => {
     expect(one.sellerId).toBe(SELLER_1);
   });
 
-  it('dos consultas fijas, sin una por cliente ni por comprobante', async () => {
+  it('tres consultas fijas (prefiltro, comprobantes, vendedores), sin una por cliente ni por comprobante', async () => {
     const many = Array.from({ length: 60 }, (_, i) =>
       doc({
         customer: { ...CUSTOMER_A, id: `00000000-0000-4000-8000-1${String(i).padStart(11, '0')}` },
@@ -213,10 +215,18 @@ describe('ReceivablesAgingService', () => {
     expect(report.customers).toHaveLength(60);
     expect(prisma.fiscalDocument.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.user.findMany).toHaveBeenCalledTimes(1);
+    // cc57 (E-06): el prefiltro del saldo en SQL.
+    expect((prisma as unknown as { $queryRaw: jest.Mock }).$queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('cc57 (E-06): sin nada que cobrar según el prefiltro, no se traen comprobantes', async () => {
+    const prisma = prismaWith([]);
+    expect(await loadCollectibleDocuments(prisma)).toEqual([]);
+    expect(prisma.fiscalDocument.findMany).not.toHaveBeenCalled();
   });
 
   it('la lectura excluye los archivados y solo trae facturas y boletas vivas', async () => {
-    const prisma = prismaWith([]);
+    const prisma = prismaWith([doc({ total: '10.0000' })]);
     await loadCollectibleDocuments(prisma);
     const [[args]] = prisma.fiscalDocument.findMany.mock.calls as [
       [{ where: { archivedAt: unknown; docType: unknown; status: { in: unknown[] } } }],

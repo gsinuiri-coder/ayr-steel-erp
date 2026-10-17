@@ -78,6 +78,8 @@ const ITEM_SEARCH_CANDIDATE_POOL = 100;
 
 /** cc53 (D-649): «hasta el final del kardex», para leer el valor de todas sus filas. */
 const KARDEX_END = '9999-12-31';
+/** D-113: lo que el kardex de un ítem muestra de una vez (sin paginar: el saldo corrido). */
+export const SINGLE_ITEM_KARDEX_MAX_ROWS = 10_000;
 
 /**
  * D-134: los movimientos de un **partido**, que no se comprueban contra el agregado uno por
@@ -1734,8 +1736,10 @@ export class InventoryService {
     // tope de 10 000 es "todo lo que un solo ítem puede acumular", no una página. El
     // listado mezclado sí pagina, y se recorta a los más RECIENTES: cortar por los más
     // antiguos mostraba justo lo contrario de lo que dice la vista.
+    // cc57 (E-12 de audit-01): una fila más que el tope, para saber si lo pasa. Pasado el tope, el
+    // saldo corrido y su Excel saldrían falsos sin aviso: se rechaza y se pide un rango.
     const { skip, take } = singleItem
-      ? { skip: 0, take: 10_000 }
+      ? { skip: 0, take: SINGLE_ITEM_KARDEX_MAX_ROWS + 1 }
       : toSkipTake({ page: query.page ?? 1, pageSize: query.pageSize ?? 50 });
     const [total, movements] = await Promise.all([
       singleItem ? Promise.resolve(0) : this.prisma.inventoryMovement.count({ where }),
@@ -1751,6 +1755,11 @@ export class InventoryService {
         take,
       }),
     ]);
+    if (singleItem && movements.length > SINGLE_ITEM_KARDEX_MAX_ROWS) {
+      throw new BadRequestException(
+        `El kardex de este ítem tiene más de ${String(SINGLE_ITEM_KARDEX_MAX_ROWS)} movimientos en el rango: elige un rango de fechas más corto (desde / hasta)`,
+      );
+    }
     if (!singleItem) movements.reverse();
     // cc53 (D-649): un ajuste de recosteo se pliega en la fila que corrige (costo corregido y marca
     // «recosteado»), así el saldo corrido no salta. Si su fila no está en la página (listado

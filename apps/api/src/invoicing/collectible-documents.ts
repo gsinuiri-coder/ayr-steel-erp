@@ -1,4 +1,4 @@
-import { FiscalDocType, type FiscalDocumentStatus, type Prisma } from '@prisma/client';
+import { FiscalDocType, Prisma, type FiscalDocumentStatus } from '@prisma/client';
 import {
   Decimal,
   documentBalance,
@@ -55,7 +55,7 @@ export interface CollectibleDocument {
   credited: Decimal;
 }
 
-type Reader = Pick<Prisma.TransactionClient, 'fiscalDocument'>;
+type Reader = Pick<Prisma.TransactionClient, 'fiscalDocument' | '$queryRaw'>;
 
 /**
  * Una sola lectura para todos los comprobantes con saldo: Prisma la resuelve en un número fijo de
@@ -63,8 +63,34 @@ type Reader = Pick<Prisma.TransactionClient, 'fiscalDocument'>;
  * resto de fracciones de céntimo (D-377) no son deuda y no se devuelven.
  */
 export async function loadCollectibleDocuments(prisma: Reader): Promise<CollectibleDocument[]> {
+  // cc57 (E-06 de audit-01): primero, en SQL, los que todavía tienen algo que cobrar (total menos
+  // cobros vigentes menos NC vivas, mayor que cero). Es un superconjunto de la regla de
+  // `documentBalance` —que sigue decidiendo abajo, con el céntimo de D-377—: lo único que deja
+  // afuera es lo ya cobrado o acreditado entero. Sin esto se traían todos los comprobantes vivos
+  // de la historia con sus cinco relaciones para descartar en memoria los pagados.
+  const live = Prisma.join(LIVE_STATUSES.map((st) => Prisma.sql`${st}`));
+  const pending = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT fd."id"
+    FROM "fiscal_documents" fd
+    WHERE fd."status"::text IN (${live})
+      AND fd."doc_type"::text IN ('FACTURA', 'BOLETA')
+      AND fd."archived_at" IS NULL
+      AND fd."total_pen"
+        - COALESCE((
+            SELECT SUM(cp."amount_pen") FROM "customer_payments" cp
+            WHERE cp."document_id" = fd."id" AND cp."reversed_at" IS NULL
+          ), 0)
+        - COALESCE((
+            SELECT SUM(nc."total_pen") FROM "fiscal_documents" nc
+            WHERE nc."affected_document_id" = fd."id"
+              AND nc."status"::text IN (${live})
+              AND nc."archived_at" IS NULL
+          ), 0) > 0
+  `;
+  if (pending.length === 0) return [];
   const documents = await prisma.fiscalDocument.findMany({
     where: {
+      id: { in: pending.map((r) => r.id) },
       status: { in: LIVE_STATUSES },
       docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
       // RF-72: sin esto, reimportar un comprobante duplicaba la deuda del cliente — la

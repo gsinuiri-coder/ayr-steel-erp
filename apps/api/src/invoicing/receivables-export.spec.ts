@@ -59,7 +59,9 @@ describe('ReceivablesService.exportReceivables — el Excel es la tabla entera (
     );
     findMany = jest.fn(() => Promise.resolve(docs));
     svc = Object.create(ReceivablesService.prototype) as ReceivablesService;
-    Object.assign(svc, { prisma: { fiscalDocument: { findMany } } });
+    // cc57 (E-06): el prefiltro en SQL devuelve los ids con algo que cobrar.
+    const $queryRaw = jest.fn(() => Promise.resolve(docs.map((d) => ({ id: d.id }))));
+    Object.assign(svc, { prisma: { fiscalDocument: { findMany }, $queryRaw } });
   });
 
   async function allPages() {
@@ -117,7 +119,10 @@ describe('ReceivablesService — buscar en «Por cliente» (cc48, D-630)', () =>
     const docs = Array.from({ length: 12 }, (_, k) => doc(k, k, `${String(100 + k)}.0000`, null));
     svc = Object.create(ReceivablesService.prototype) as ReceivablesService;
     Object.assign(svc, {
-      prisma: { fiscalDocument: { findMany: jest.fn(() => Promise.resolve(docs)) } },
+      prisma: {
+        fiscalDocument: { findMany: jest.fn(() => Promise.resolve(docs)) },
+        $queryRaw: jest.fn(() => Promise.resolve(docs.map((d) => ({ id: d.id })))),
+      },
     });
   });
 
