@@ -80,7 +80,10 @@ export function CoilScrapDialog({
       };
       return api<CoilDto>(`/coils/${coil.id}/scrap`, {
         method: 'POST',
-        body: { ...body, idempotencyKey: scrapKey.current(JSON.stringify(body)) },
+        body: {
+          ...body,
+          idempotencyKey: scrapKey.current(JSON.stringify({ coilId: coil.id, ...body })),
+        },
       });
     },
     onSettled: (_data, error) => {

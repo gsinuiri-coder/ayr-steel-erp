@@ -84,7 +84,10 @@ export function CoilSplitDialog({
       };
       return api<CoilDto[]>(`/coils/${coil.id}/split`, {
         method: 'POST',
-        body: { ...body, idempotencyKey: splitKey.current(JSON.stringify(body)) },
+        body: {
+          ...body,
+          idempotencyKey: splitKey.current(JSON.stringify({ coilId: coil.id, ...body })),
+        },
       });
     },
     onSettled: (_data, error) => {
