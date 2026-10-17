@@ -52,11 +52,16 @@ function build(o: { reason: string; liveReplacement?: boolean; cancelledOrder?: 
       update: jest.fn().mockResolvedValue({}),
     },
     salesReturn: {
-      findFirst: jest
-        .fn()
-        .mockResolvedValue(
-          o.cancelledOrder ? { salesOrder: { status: 'CANCELLED', seq: 7 } } : null,
-        ),
+      findFirst: jest.fn().mockResolvedValue(
+        // cc57 (D-02): la misma lectura da los despachos y el pedido a bloquear.
+        o.cancelledOrder
+          ? {
+              salesOrderId: 'o-1',
+              items: [{ dispatchItem: { dispatchId: 'd-1' } }],
+              salesOrder: { status: 'CANCELLED', seq: 7 },
+            }
+          : null,
+      ),
     },
   };
   const audit = { write: jest.fn() };

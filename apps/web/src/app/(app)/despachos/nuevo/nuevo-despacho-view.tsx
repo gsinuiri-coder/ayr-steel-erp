@@ -62,6 +62,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { formatUnitSums, qtyError, sumByUnit, toFixText, ubigeoError } from './dispatch-form';
 
 const DISPATCH_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR, Role.SUPERVISOR_PLANTA] as const;
@@ -301,53 +302,61 @@ export function NuevoDespachoView() {
     .reduce((acc, w) => acc.plus(toDecimal(w.trim())), toDecimal('0'));
   const allLineWeightsKnown = lineWeights.every((w) => isPositiveDecimal(w));
 
+  // cc57 (B-02 de audit-01): un despacho parcial es repetible; el reintento tras un corte de red
+  // lleva la misma clave y no saca dos veces del kardex.
+  const dispatchKey = useIdempotencyKey();
   const create = useMutation({
-    mutationFn: ({ confirmBackdate }: BackdateAck) =>
-      api<DispatchDto>('/dispatches', {
+    mutationFn: ({ confirmBackdate }: BackdateAck) => {
+      const body = {
+        salesOrderId,
+        // D-124: `dispatchDate` es la fecha de operación del despacho y la que fecha la
+        // salida de kardex. Un VENDEDOR solo puede mandar hoy (el API le da 403 si no).
+        dispatchDate,
+        confirmBackdate: confirmBackdate || undefined,
+        originAddress: originAddress.trim(),
+        originUbigeo: originUbigeo.trim(),
+        destinationAddress: destinationAddress.trim(),
+        destinationUbigeo: destinationUbigeo.trim(),
+        transferMode,
+        // D-103: un recojo en mostrador no genera guía, así que no lleva peso bruto ni
+        // datos de transporte. El API los rechaza si vienen, y con razón: serían datos
+        // inventados sobre un traslado que no hacemos nosotros.
+        ...(transferMode === 'PICKUP' ? {} : { totalWeightKg }),
+        ...(packageCount.trim() ? { packageCount: Number(packageCount) } : {}),
+        ...(transferMode === 'PICKUP'
+          ? {}
+          : transferMode === 'PRIVATE'
+            ? {
+                vehiclePlate: vehiclePlate.trim(),
+                driverGivenNames: driverGivenNames.trim(),
+                driverFamilyNames: driverFamilyNames.trim(),
+                driverDocType,
+                driverDocNumber: driverDocNumber.trim(),
+                driverLicense: driverLicense.trim(),
+              }
+            : {
+                carrierDocNumber: carrierDocNumber.trim(),
+                carrierName: carrierName.trim(),
+              }),
+        // cc31: las observaciones se ven y se mandan en cualquier modalidad, también en recojo.
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+        items: selectedLines.map((l) => {
+          const weightKg = (weightKgByLine[l.salesOrderItemId] ?? '').trim();
+          return {
+            salesOrderItemId: l.salesOrderItemId,
+            qty: (qtyByLine[l.salesOrderItemId] ?? '').trim(),
+            ...(weightKg ? { weightKg } : {}),
+          };
+        }),
+      };
+      return api<DispatchDto>('/dispatches', {
         method: 'POST',
-        body: {
-          salesOrderId,
-          // D-124: `dispatchDate` es la fecha de operación del despacho y la que fecha la
-          // salida de kardex. Un VENDEDOR solo puede mandar hoy (el API le da 403 si no).
-          dispatchDate,
-          confirmBackdate: confirmBackdate || undefined,
-          originAddress: originAddress.trim(),
-          originUbigeo: originUbigeo.trim(),
-          destinationAddress: destinationAddress.trim(),
-          destinationUbigeo: destinationUbigeo.trim(),
-          transferMode,
-          // D-103: un recojo en mostrador no genera guía, así que no lleva peso bruto ni
-          // datos de transporte. El API los rechaza si vienen, y con razón: serían datos
-          // inventados sobre un traslado que no hacemos nosotros.
-          ...(transferMode === 'PICKUP' ? {} : { totalWeightKg }),
-          ...(packageCount.trim() ? { packageCount: Number(packageCount) } : {}),
-          ...(transferMode === 'PICKUP'
-            ? {}
-            : transferMode === 'PRIVATE'
-              ? {
-                  vehiclePlate: vehiclePlate.trim(),
-                  driverGivenNames: driverGivenNames.trim(),
-                  driverFamilyNames: driverFamilyNames.trim(),
-                  driverDocType,
-                  driverDocNumber: driverDocNumber.trim(),
-                  driverLicense: driverLicense.trim(),
-                }
-              : {
-                  carrierDocNumber: carrierDocNumber.trim(),
-                  carrierName: carrierName.trim(),
-                }),
-          // cc31: las observaciones se ven y se mandan en cualquier modalidad, también en recojo.
-          ...(notes.trim() ? { notes: notes.trim() } : {}),
-          items: selectedLines.map((l) => {
-            const weightKg = (weightKgByLine[l.salesOrderItemId] ?? '').trim();
-            return {
-              salesOrderItemId: l.salesOrderItemId,
-              qty: (qtyByLine[l.salesOrderItemId] ?? '').trim(),
-              ...(weightKg ? { weightKg } : {}),
-            };
-          }),
-        },
-      }),
+        body: { ...body, idempotencyKey: dispatchKey.current(JSON.stringify(body)) },
+      });
+    },
+    onSettled: (_data, error) => {
+      dispatchKey.settle(error ?? undefined);
+    },
     onSuccess: (created) => {
       // cc31 (ESPEC §8): el éxito dice qué salió y trae el paso siguiente. Con transporte, la
       // guía se emite desde el despacho; un recojo no lleva guía (D-103).

@@ -1175,6 +1175,11 @@ export type DispatchItemInput = z.infer<typeof dispatchItemInputSchema>;
 
 export const createDispatchSchema = z
   .object({
+    /**
+     * cc57 (B-02 de audit-01): un despacho parcial es repetible; el mismo intento (reintento de
+     * red) no saca dos veces la misma cantidad del kardex (D-182).
+     */
+    ...idempotencyFields,
     salesOrderId: z.string({ required_error: 'El pedido es obligatorio' }).uuid(),
     /**
      * D-124: **es** la fecha de operación del despacho — la que fecha la salida de kardex y

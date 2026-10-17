@@ -12,6 +12,7 @@ import {
   type CoilDto,
 } from '@ayr/shared';
 import { api } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/use-idempotency-key';
 import { isPositiveDecimal } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import {
@@ -67,21 +68,28 @@ export function CoilSplitDialog({
   // D-124: una sola fecha para el partido entero — la salida de la madre y las entradas de
   // todas las hijas quedan el mismo día.
   const [operationDate, setOperationDate] = useState<string | undefined>(undefined);
+  // cc57 (B-02 de audit-01): el reintento tras un corte de red no parte dos veces la bobina.
+  const splitKey = useIdempotencyKey();
   const split = useMutation({
-    mutationFn: ({ confirmBackdate }: BackdateAck) =>
-      api<CoilDto[]>(`/coils/${coil.id}/split`, {
+    mutationFn: ({ confirmBackdate }: BackdateAck) => {
+      const body = {
+        splitWeightKg,
+        kerfLossMm: kerfLossMm.trim() || '0',
+        children: rows.map((r) => ({
+          widthMm: r.widthMm.trim(),
+          count: stripCount(r.count),
+        })),
+        operationDate,
+        confirmBackdate: confirmBackdate || undefined,
+      };
+      return api<CoilDto[]>(`/coils/${coil.id}/split`, {
         method: 'POST',
-        body: {
-          splitWeightKg,
-          kerfLossMm: kerfLossMm.trim() || '0',
-          children: rows.map((r) => ({
-            widthMm: r.widthMm.trim(),
-            count: stripCount(r.count),
-          })),
-          operationDate,
-          confirmBackdate: confirmBackdate || undefined,
-        },
-      }),
+        body: { ...body, idempotencyKey: splitKey.current(JSON.stringify(body)) },
+      });
+    },
+    onSettled: (_data, error) => {
+      splitKey.settle(error ?? undefined);
+    },
     onSuccess: (children) => {
       toast.success(`Partido registrado: ${children.length} bobina(s) hija(s)`);
       onOpenChange(false);

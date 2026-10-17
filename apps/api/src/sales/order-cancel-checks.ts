@@ -8,6 +8,7 @@ import {
   InventoryRefType,
   ProductionOrderStatus,
   ProductionReportStatus,
+  SalesReturnStatus,
   type Prisma,
 } from '@prisma/client';
 import {
@@ -226,7 +227,10 @@ export async function productionCancelBlock(
  * reserva bobina y nunca producto, el despacho exige la reserva de la propia línea y el
  * mostrador excluye coberturas y metros, así que nadie lo toma.
  *
- * Cuatro consultas para todo el pedido, sin importar cuántas líneas ni reportes tenga.
+ * cc57 (D-06 de audit-01): lo que una NC devolvió (DEV- vigente) de esos despachos vuelve a contar como
+ * suelto: está en el almacén, sin pedido, igual que lo nunca despachado.
+ *
+ * Cinco consultas para todo el pedido, sin importar cuántas líneas ni reportes tenga.
  */
 export async function fabricatedLooseLines(
   db: Prisma.TransactionClient,
@@ -256,7 +260,7 @@ export async function fabricatedLooseLines(
     opsOfItem.set(itemId, ops);
   }
   const itemIds = [...opsOfItem.keys()];
-  const [items, entries, dispatched] = await Promise.all([
+  const [items, entries, dispatched, returned] = await Promise.all([
     db.salesOrderItem.findMany({
       where: { id: { in: itemIds } },
       select: {
@@ -286,6 +290,21 @@ export async function fabricatedLooseLines(
       },
       _sum: { reserveQty: true },
     }),
+    db.salesReturnItem.findMany({
+      where: {
+        itemType: InventoryItemType.PRODUCT,
+        salesReturn: { status: SalesReturnStatus.ACTIVE },
+        dispatchItem: {
+          salesOrderItemId: { in: itemIds },
+          dispatch: { status: DispatchStatus.ISSUED },
+        },
+      },
+      select: {
+        itemId: true,
+        reserveQty: true,
+        dispatchItem: { select: { salesOrderItemId: true } },
+      },
+    }),
   ]);
 
   const out: FabricatedLooseLineDto[] = [];
@@ -301,7 +320,10 @@ export async function fabricatedLooseLines(
         (acc, d) => acc.plus(toDecimal((d._sum.reserveQty ?? 0).toString())),
         new Decimal(0),
       );
-    const loose = made.minus(shipped);
+    const back = returned
+      .filter((r) => r.dispatchItem.salesOrderItemId === item.id && r.itemId === item.productId)
+      .reduce<Decimal>((acc, r) => acc.plus(toDecimal(r.reserveQty.toString())), new Decimal(0));
+    const loose = made.minus(shipped).plus(back);
     if (!loose.gt(0)) continue;
     out.push({
       salesOrderItemId: item.id,

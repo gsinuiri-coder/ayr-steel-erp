@@ -60,6 +60,7 @@ import {
   NEGATIVE_TERMINAL_STATUSES,
   statusCondition,
 } from '@ayr/shared';
+import { claimIdempotencyKey } from '../common/idempotency';
 import { duplicateShapeChange } from './duplicate-shape';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -187,8 +188,16 @@ export class QuotationsService {
 
   async create(actor: RequestUser, input: CreateQuotationInput): Promise<QuotationDto> {
     assertNoTypedImportMarker(null, input.notes);
-    const id = await this.prisma.$transaction((tx) => this.createInTx(tx, actor, input));
-    await this.generatePdf(id);
+    // cc57 (B-02 de audit-01): el mismo intento (reintento de red) no crea dos cotizaciones.
+    const { id, created } = await this.prisma.$transaction(async (tx) => {
+      const claim = await claimIdempotencyKey(tx, 'quotation-create', input.idempotencyKey);
+      if (!claim.claimed) return { id: claim.resourceId, created: false };
+      return {
+        id: await this.createInTx(tx, actor, input, { id: claim.resourceId }),
+        created: true,
+      };
+    });
+    if (created) await this.generatePdf(id);
     return this.findOne(id, actor);
   }
 
@@ -224,6 +233,8 @@ export class QuotationsService {
        * bobina libre; el alta a mano sigue exigiendo la bobina (D-254 R1).
        */
       unassignedCoilProducts?: ReadonlySet<string>;
+      /** cc57 (B-02): el id de la cotización, el de la clave de idempotencia. */
+      id?: string;
     } = {},
   ): Promise<string> {
     const customer = await this.requireActiveCustomer(tx, input.customerId);
@@ -249,6 +260,7 @@ export class QuotationsService {
 
     const quotation = await tx.quotation.create({
       data: {
+        ...(options.id === undefined ? {} : { id: options.id }),
         customerId: customer.id,
         // D-184: la cotización nace emitida. El borrador desapareció del flujo: lo que hacía
         // (editar antes de mandarla) ahora lo hace la edición de una emitida, que regenera

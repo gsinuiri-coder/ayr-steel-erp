@@ -178,6 +178,8 @@ describe('anular o dar de baja con una NC en borrador (cc33 N3)', () => {
       customerPayment: { count: jest.fn().mockResolvedValue(0) },
       // cc55 (D-664): los despachos que declara, para bloquearlos y soltarles el enlace.
       dispatch: { findMany: jest.fn().mockResolvedValue([]) },
+      // cc57 (D-02): no es una NC con devolución.
+      salesReturn: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const prisma = { $transaction: (fn: (t: unknown) => Promise<unknown>) => fn(tx) };
     const service = new FiscalImportService(

@@ -289,6 +289,25 @@ function toDateOnly(value: string): Date {
 const RETRYABLE: FiscalDocumentStatus[] = [...RETRYABLE_DOCUMENT_STATUSES];
 
 /**
+ * cc57 (B-04 de audit-01): cuánto dura el reclamo de un envío al PSE. Más que el tope de una
+ * llamada a Nubefact (60 s): mientras un envío puede seguir en vuelo, nadie más sale a la red con
+ * el mismo correlativo.
+ */
+export const SEND_CLAIM_LEASE_MS = 90_000;
+
+/** El `where` del reclamo: reintentable y sin otro envío en vuelo (ver `SEND_CLAIM_LEASE_MS`). */
+export function sendClaimWhere(id: string, now: Date): Prisma.FiscalDocumentWhereInput {
+  return {
+    id,
+    status: { in: RETRYABLE },
+    OR: [
+      { lastAttemptAt: null },
+      { lastAttemptAt: { lt: new Date(now.getTime() - SEND_CLAIM_LEASE_MS) } },
+    ],
+  };
+}
+
+/**
  * Tope de un archivo descargado del PSE. Un PDF de comprobante pesa decenas de kilobytes;
  * veinte megas es holgado y a la vez impide que un cuerpo enorme agote la memoria de una
  * instancia de Cloud Run.
@@ -1475,11 +1494,17 @@ export class InvoicingService {
     // `replaces_document_id` es único: un comprobante se reemplaza una sola vez.
     const before = await tx.fiscalDocument.findFirst({
       where: { replacesDocumentId: affected.id },
-      select: { number: true },
+      select: { number: true, status: true },
     });
     if (before) {
+      // cc57 (D-07 de audit-01): un 02 deshecho (reemplazo y NC 02 anulados) deja al comprobante sin
+      // un segundo 02, porque la columna sigue ocupada por el reemplazo anulado. Admitirlo exige un
+      // índice único parcial (migración, pendiente del OK del dueño); hasta entonces el mensaje dice
+      // la salida que sí existe en vez de un rechazo sin camino.
       throw new BadRequestException(
-        `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}): un segundo 02 sobre el mismo comprobante no se registra`,
+        before.status === FiscalDocumentStatus.ANNULLED
+          ? `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}), hoy anulado: un segundo 02 sobre el mismo comprobante todavía no se registra. Para corregirlo, registra una nota de crédito 01 (anulación de la operación) y emite el comprobante correcto`
+          : `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}): un segundo 02 sobre el mismo comprobante no se registra`,
       );
     }
     const draftBlock = await draftCreditNoteBlock(tx, affected.id, 'antes del 02');
@@ -2921,11 +2946,17 @@ export class InvoicingService {
    * Solo cuenta la emisión real.
    */
   private async claimAttempt(id: string, options: { counts: boolean }): Promise<boolean> {
+    // cc57 (B-04 de audit-01): el reclamo era solo subir el contador, sin cambiar nada que el otro
+    // mirara: dos envíos a la vez (el barrido del job y «Reintentar», o dos instancias) pasaban
+    // los dos y llamaban al PSE dos veces con el mismo correlativo; si el rechazo del duplicado
+    // llegaba primero, el comprobante quedaba rechazado aquí y aceptado en SUNAT. Ahora el reclamo
+    // es exclusivo mientras dure (`SEND_CLAIM_LEASE_MS`), sin columna nueva.
+    const now = new Date();
     const claimed = await this.prisma.fiscalDocument.updateMany({
-      where: { id, status: { in: RETRYABLE } },
+      where: sendClaimWhere(id, now),
       data: {
         ...(options.counts ? { sendAttempts: { increment: 1 } } : {}),
-        lastAttemptAt: new Date(),
+        lastAttemptAt: now,
       },
     });
     return claimed.count === 1;
@@ -3154,12 +3185,22 @@ export class InvoicingService {
     this.assertPseEnabled();
     const document = await this.prisma.fiscalDocument.findUnique({
       where: { id },
-      select: { id: true, status: true, docType: true },
+      select: { id: true, status: true, docType: true, lastAttemptAt: true },
     });
     if (!document) throw new NotFoundException('Comprobante no encontrado');
     if (!RETRYABLE_DOCUMENT_STATUSES.includes(document.status)) {
       throw new BadRequestException(
         `Solo se reintenta un comprobante emitido o con error de envío; este está ${document.status}`,
+      );
+    }
+    // cc57 (B-04): con un envío todavía en vuelo, el reintento no sale (`claimAttempt` lo
+    // descartaría en silencio); se dice para que no parezca que no hizo nada.
+    if (
+      document.lastAttemptAt !== null &&
+      Date.now() - document.lastAttemptAt.getTime() < SEND_CLAIM_LEASE_MS
+    ) {
+      throw new ConflictException(
+        'Hay un envío de este comprobante al PSE en curso o recién hecho: espera un minuto y vuelve a intentar',
       );
     }
     await this.assertOwnership(actor, id, 'reintentar su envío');
