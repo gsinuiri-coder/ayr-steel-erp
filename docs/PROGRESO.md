@@ -15,12 +15,12 @@ checkout principal; revisiones en `docs/revision/cc58-*.md`; UAT en `docs/uat/cc
 - **Corte D, sesión, D-285, D-374, kardex (D-687, D-689..D-691):** API `00145-6qp` (`git-sha=84e31868`), merge
   `c5f1b6a2`. D-688 (login por IP) quedó postergada por el dueño.
 - **Neon:** respaldo `respaldo-pre-cc58-20261019`; se borró `respaldo-pre-cc41-20261010` (regla 18). Sigue en 10 de 10.
+- **Registros del dueño (19/10):** UAT de cc58 aprobado y D-676..D-691 ratificadas, D-683 y D-686 tal como quedaron. Los
+  céntimos de las 2 bobinas se dejan así, porque se corrigen al consumirse. Salieron de `.claude/settings.json` los dos
+  permisos de la herramienta retirada, con su autorización.
 - **Pendiente del dueño:**
-  - UAT y ratificación;
-  - los céntimos (no se ejecutó: la condición no se cumple);
   - la variable de D-688;
-  - los datos de FFA1-00001426 y OP-000029;
-  - los permisos de `opening-date` en `.claude/settings.json`.
+  - los datos de FFA1-00001426 y OP-000029.
 
 **Registro de riesgo (kardex/datos):**
 
