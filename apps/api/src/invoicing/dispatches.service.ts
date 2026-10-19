@@ -1222,6 +1222,9 @@ export class DispatchesService {
    * D-078: valores de transporte ya usados, para autocompletar. Reemplaza al catálogo de
    * vehículos y conductores, que queda diferido: sale de los datos reales y no cuesta una
    * tabla ni un ABM.
+   *
+   * cc58 (D-679, C-11 de audit-01): **compartidas entre vendedores, a propósito.** Placa, conductor
+   * y transportista son datos de la empresa, no de un cliente ni un costo: no llevan `sellerWhere`.
    */
   async transportSuggestions(): Promise<TransportSuggestionsDto> {
     const rows = await this.prisma.dispatch.findMany({

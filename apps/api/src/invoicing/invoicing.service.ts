@@ -261,6 +261,22 @@ interface CreditNotePlan {
   } | null;
 }
 
+/**
+ * cc58 (D-678, C-04 de audit-01): la NC que devuelve stock (01, 06 y 07) reingresa mercadería al
+ * kardex con su costo: la registra un administrador, como el 02. El vendedor sigue con las que solo
+ * mueven importes (03, 04, 05, 13).
+ */
+export function assertStockCreditNoteRole(
+  actor: RequestUser,
+  reason: CreditNoteReason | null,
+): void {
+  if (returnsStock(reason) && actor.role !== Role.ADMINISTRADOR) {
+    throw new ForbiddenException(
+      'Esta nota de crédito devuelve mercadería al almacén (01, 06 o 07): la registra un administrador',
+    );
+  }
+}
+
 /** cc54 (D-655): lo que el reemplazo de un 02 mira del comprobante anulado. */
 interface ReplacementSubject {
   id: string;
@@ -1085,6 +1101,7 @@ export class InvoicingService {
         'La anulación por error en el RUC (02) se registra en un solo paso, con su comprobante de reemplazo',
       );
     }
+    assertStockCreditNoteRole(actor, input.reason);
     const id = await this.prisma.$transaction(async (tx) => {
       const plan = await this.planCreditNote(tx, actor, affectedId, input, 'DRAFT');
       return this.writeCreditNote(tx, actor, plan, input);
@@ -1113,6 +1130,7 @@ export class InvoicingService {
         'La anulación por error en el RUC (02) cambia el cliente del pedido: la registra un administrador',
       );
     }
+    assertStockCreditNoteRole(actor, input.reason);
     const id = await this.prisma.$transaction(async (tx) => {
       const plan = await this.planCreditNote(tx, actor, affectedId, input, 'MANUAL');
       const noteId = await this.writeCreditNote(tx, actor, plan, input);
@@ -1497,14 +1515,15 @@ export class InvoicingService {
       select: { number: true, status: true },
     });
     if (before) {
-      // cc57 (D-07 de audit-01): un 02 deshecho (reemplazo y NC 02 anulados) deja al comprobante sin
-      // un segundo 02, porque la columna sigue ocupada por el reemplazo anulado. Admitirlo exige un
-      // índice único parcial (migración, pendiente del OK del dueño); hasta entonces el mensaje dice
-      // la salida que sí existe en vez de un rechazo sin camino.
+      // cc58 (D-677, D-07 de audit-01): un comprobante admite un solo 02, también si el primero se
+      // deshizo. Decisión del dueño: no hay segundo 02; si el 02 salió mal, el camino es una NC 01 y
+      // volver a emitir. El mensaje lo dice en los dos casos.
+      const reissue =
+        'Un segundo 02 sobre el mismo comprobante no se permite: si el 02 salió mal, registra una nota de crédito 01 (anulación de la operación) y vuelve a emitir el comprobante correcto';
       throw new BadRequestException(
         before.status === FiscalDocumentStatus.ANNULLED
-          ? `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}), hoy anulado: un segundo 02 sobre el mismo comprobante todavía no se registra. Para corregirlo, anula la nota de crédito 02 si sigue vigente, registra una nota de crédito 01 (anulación de la operación) y emite el comprobante correcto`
-          : `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}): un segundo 02 sobre el mismo comprobante no se registra`,
+          ? `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}), hoy anulado. ${reissue} (antes, anula la nota de crédito 02 si sigue vigente)`
+          : `${label} ya tuvo un comprobante de reemplazo (${before.number ?? ''}). ${reissue}`,
       );
     }
     const draftBlock = await draftCreditNoteBlock(tx, affected.id, 'antes del 02');
@@ -1772,6 +1791,9 @@ export class InvoicingService {
     if (document.affectedDocument !== null)
       assertAffectedStillCreditable(document.affectedDocument);
     const isNote = document.docType === FiscalDocType.NOTA_CREDITO;
+    // cc58 (D-678, autorrevisión P1): registrar a mano un borrador 01/06/07 crea la devolución y
+    // reingresa al kardex: lo hace un administrador (también un borrador de antes del deploy).
+    if (isNote) assertStockCreditNoteRole(actor, document.creditNoteReason);
     // cc54 (D-655): el 02 sin su reemplazo no se registra (un borrador viejo no lo guarda).
     if (
       isNote &&
@@ -2421,6 +2443,9 @@ export class InvoicingService {
           rejected.createdById;
         assertSellerAccess(actor, ownerId, 'Comprobante');
       }
+      // cc58 (D-678, revisión del segundo modelo P2-1): corregir una NC rechazada que devuelve
+      // stock la vuelve a emitir: también la registra un administrador.
+      assertStockCreditNoteRole(actor, rejected.creditNoteReason);
       const existing = await tx.fiscalDocument.findFirst({
         where: { replacesDocumentId: id },
         select: { id: true, number: true },
@@ -2512,6 +2537,15 @@ export class InvoicingService {
     // **standalone** de un borrador ya creado (botón "Emitir"), sin nada más atado.
     this.assertPseEnabled();
     await this.assertOwnership(actor, id, 'emitirlo');
+    // cc58 (D-678, revisión del segundo modelo P2-1): la regla va por motivo, como al crearla: el
+    // borrador de una NC 01, 06 o 07 lo emite un administrador.
+    if (actor.role !== Role.ADMINISTRADOR) {
+      const draft = await this.prisma.fiscalDocument.findUnique({
+        where: { id },
+        select: { creditNoteReason: true },
+      });
+      assertStockCreditNoteRole(actor, draft?.creditNoteReason ?? null);
+    }
     await this.assign(actor, id);
     await this.deliver(id);
     return this.findOne(id);

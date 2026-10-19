@@ -2212,6 +2212,8 @@ model FiscalDocument {
   /// (el índice único parcial solo cubre las vigentes).
   @@index([number])
   @@index([importBatchId])
+  // cc58 (D-676, E-14 de audit-01): los reportes de ventas filtran por rango de emisión.
+  @@index([issueDate])
   @@map("fiscal_documents")
 }
 
@@ -2404,6 +2406,8 @@ model DispatchItem {
   @@unique([dispatchId, lineNumber])
   @@index([dispatchId])
   @@index([salesOrderItemId])
+  // cc58 (D-676, E-14 de audit-01): los cruces de costo y despacho van por el movimiento.
+  @@index([movementId])
   @@map("dispatch_items")
 }
 
@@ -2432,6 +2436,8 @@ model CustomerPayment {
   posSale PosSale?
 
   @@index([documentId])
+  // cc58 (D-676, E-14 de audit-01): cobros vigentes por comprobante.
+  @@index([documentId, reversedAt])
   @@map("customer_payments")
 }
 

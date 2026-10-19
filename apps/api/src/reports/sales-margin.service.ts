@@ -639,6 +639,17 @@ export class SalesMarginService {
       const docSalesInView = (d: DocumentRow): Decimal =>
         viewLine === undefined ? signedSubtotal(d) : lineSales(d, viewLine, salesLinesByDocument);
       const sales = viewDocs.reduce((acc, d) => acc.plus(docSalesInView(d)), ZERO);
+      // cc58 (D-681, E-04): la fila mide su margen sobre la misma base que la franja (D-409/D-419):
+      // sin la venta que no tiene costo registrado. Así el pie (margen total ÷ venta total de las
+      // filas) da el porcentaje de la franja, y ninguna fila de Servicios figura con 100 %.
+      const docNoCostInView = (d: DocumentRow): Decimal =>
+        viewLine === undefined
+          ? noCostSalesOf(d, salesLinesByDocument)
+          : noCostView
+            ? docSalesInView(d)
+            : ZERO;
+      const noCostSales = viewDocs.reduce((acc, d) => acc.plus(docNoCostInView(d)), ZERO);
+      const marginBase = sales.minus(noCostSales);
 
       // En `NO_COMPARABLE` el costo del pedido cubre más venta que la del rango, así que no se
       // muestra: un costo entero contra una venta parcial es peor que ningún costo.
@@ -648,6 +659,7 @@ export class SalesMarginService {
 
       const documentDtos: SalesMarginDocumentDto[] = viewDocs.map((d) => {
         const docSales = docSalesInView(d);
+        const docBase = docSales.minus(docNoCostInView(d));
         // Fuera de los totales, el comprobante tampoco muestra costo (autorrevisión P2-7). En
         // la pestaña de una línea, solo lo muestra si un despacho **de esa línea** lo declara:
         // que otra línea lo declare no dice nada del costo de esta (cc23, autorrevisión P3-4).
@@ -668,8 +680,8 @@ export class SalesMarginService {
           issueDate: d.issue_date.toISOString().slice(0, 10),
           salesPen: toFixedString(docSales, 'MONEY'),
           costPen: docCost === null ? null : toFixedString(docCost, 'MONEY'),
-          marginPen: docCost === null ? null : toFixedString(docSales.minus(docCost), 'MONEY'),
-          marginPct: docCost === null ? null : marginPct(docSales, docCost),
+          marginPen: docCost === null ? null : toFixedString(docBase.minus(docCost), 'MONEY'),
+          marginPct: docCost === null ? null : marginPct(docBase, docCost),
         };
       });
 
@@ -682,13 +694,14 @@ export class SalesMarginService {
         sellerId: first.seller_id,
         sellerName: first.seller_name,
         salesPen: toFixedString(sales, 'MONEY'),
+        noCostSalesPen: toFixedString(noCostSales, 'MONEY'),
         costPen: cost === null ? null : toFixedString(cost, 'MONEY'),
         opMaterialCostPen: toFixedString(
           orderId === null ? ZERO : (opMaterialByOrder.get(orderId) ?? ZERO),
           'MONEY',
         ),
-        marginPen: cost === null ? null : toFixedString(sales.minus(cost), 'MONEY'),
-        marginPct: cost === null ? null : marginPct(sales, cost),
+        marginPen: cost === null ? null : toFixedString(marginBase.minus(cost), 'MONEY'),
+        marginPct: cost === null ? null : marginPct(marginBase, cost),
         costStatus,
         inTotals,
         atCost: docs.some((d) => d.at_cost),
@@ -924,6 +937,21 @@ function lineSales(
   const sign = doc.doc_type === 'NOTA_CREDITO' ? -1 : 1;
   return (salesLinesByDocument.get(doc.id) ?? [])
     .filter((r) => r.business_line_code === line)
+    .reduce((acc, r) => acc.plus(toDecimal(r.subtotal_pen.toString()).times(sign)), ZERO);
+}
+
+/**
+ * cc58 (D-681): la venta sin costo registrado de un comprobante, con signo: la de las líneas sin
+ * costo (Servicios, D-409) y la de las escritas a mano sin producto («Sin línea», D-419). La misma
+ * venta que la franja saca de la base del margen en «Todas».
+ */
+function noCostSalesOf(
+  doc: DocumentRow,
+  salesLinesByDocument: Map<string, SalesByLineRow[]>,
+): Decimal {
+  const sign = doc.doc_type === 'NOTA_CREDITO' ? -1 : 1;
+  return (salesLinesByDocument.get(doc.id) ?? [])
+    .filter((r) => r.business_line_code === null || isNoCostLine(r.business_line_code))
     .reduce((acc, r) => acc.plus(toDecimal(r.subtotal_pen.toString()).times(sign)), ZERO);
 }
 

@@ -281,6 +281,11 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect((await invoicing.findOne(s.invoiceId)).balancePen).toBe('0.0000');
     // Lo devuelto no vuelve a quedar pendiente de facturar.
     expect(await pendingOf(s.orderId)).toBe('0.000');
+    // cc58 (D-680): el pedido sigue atendido, y el detalle sabe que volvió entero.
+    const order = await moduleRef.get(SalesOrdersService).findOne(s.orderId, admin);
+    expect(order.status).toBe('FULFILLED');
+    expect(order.returns?.fullyReturned).toBe(true);
+    expect(order.returns?.returns.map((r) => r.creditNoteId)).toEqual([note.id]);
   });
 
   it('01 con despacho parcial: después se puede anular el pedido; la NC ya no se anula (revisiones)', async () => {
@@ -397,9 +402,11 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
       }),
     );
     expect(again.message).toContain('ya tuvo un comprobante de reemplazo');
-    // cc57 (D-07 de audit-01): con el reemplazo anulado, el mensaje da la salida que existe.
+    // cc58 (D-677): no hay segundo 02; el mensaje da el camino (01 y volver a emitir).
     expect(again.message).toContain('hoy anulado');
+    expect(again.message).toContain('no se permite');
     expect(again.message).toContain('nota de crédito 01');
+    expect(again.message).toContain('vuelve a emitir');
   });
 
   it('02: con cobros en el comprobante, se bloquea con un mensaje claro', async () => {
@@ -584,6 +591,21 @@ describe('cc55 (D-664): hallazgos de audit-01 sobre la nota de crédito', () => 
     expect(back.map((m) => [m.qty.toString(), m.totalCost.toString()])).toEqual([['5', '100']]);
     // Lo devuelto no vuelve a quedar pendiente de facturar.
     expect(await pendingOf(s.orderId)).toBe('0.000');
+  });
+
+  it('cc58 (D-678, autorrevisión P1): un borrador 01 no lo registra a mano un vendedor', async () => {
+    const s = await sold();
+    const draft = await invoicing.createCreditNote(
+      admin,
+      s.invoiceId,
+      createCreditNoteSchema.parse({ reason: 'ANULACION_OPERACION', issueDate: TODAY }),
+    );
+    const seller: RequestUser = { ...admin, role: Role.VENDEDOR };
+    const r = await rejection(
+      invoicing.registerManual(seller, draft.id, { series: 'FC77', correlative: 7701 }),
+    );
+    expect(r.message).toContain('la registra un administrador');
+    expect(await returns(s.productId)).toEqual([]);
   });
 
   it('C-01: la vista previa no devuelve costos a quien no es ADMINISTRADOR', async () => {

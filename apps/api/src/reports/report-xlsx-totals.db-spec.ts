@@ -307,6 +307,14 @@ describe('Ventas y margen: «Por pedido» cuadra con las otras vistas y con sus 
       expectSame(total[header.indexOf('Costo (S/)')], pie.cost.toFixed(), 'costo del pie');
       expectSame(total[header.indexOf('Margen (S/)')], pie.margin.toFixed(), 'margen del pie');
       expectSame(total[header.indexOf('Margen %')], pie.marginPct, 'margen % del pie');
+      // cc58 (D-681, E-04): el pie y la franja miden el margen sobre la misma base (sin la venta
+      // sin costo registrado): con todos los pedidos en los totales, dan el mismo número.
+      if (screen.orders.every((o) => o.inTotals)) {
+        expect({ pie: pie.marginPct, margin: pie.margin.toFixed(4) }).toEqual({
+          pie: screen.totals.marginPct,
+          margin: toDecimal(screen.totals.marginPen).toFixed(4),
+        });
+      }
     }
     // «Ver por» Vendedor y Cliente: la suma de los grupos es el mismo total.
     for (const by of ['vendedor', 'cliente'] as const) {

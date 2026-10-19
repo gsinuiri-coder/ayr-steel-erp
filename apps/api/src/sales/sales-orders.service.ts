@@ -163,6 +163,7 @@ import {
   restoreQty,
 } from './reservation-restore';
 import { liveDocumentsByOrder, orderDocuments } from './order-documents';
+import { orderReturns } from './order-returns';
 import { salesOrderOrderBy } from '../common/list-orderings';
 import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { searchSeqOf } from '../common/search-seq';
@@ -3601,7 +3602,7 @@ export class SalesOrdersService {
     if (!row) throw new NotFoundException('Pedido no encontrado');
     if (actor) assertSellerAccess(actor, row.sellerId, 'Pedido');
     const labels = await this.reserveLabels([...row.items.map(toReserveRef), ...row.reservations]);
-    const [actors, context, priceChanges, invoice, dispatches, documentsByOrder] =
+    const [actors, context, priceChanges, invoice, dispatches, documentsByOrder, returns] =
       await Promise.all([
         this.resolveActorNames([row.createdById, row.sellerId].filter(Boolean) as string[]),
         this.computeOrderContext(row),
@@ -3620,6 +3621,7 @@ export class SalesOrdersService {
         // Correcciones 05 / M4: los comprobantes vivos, junto al estado del pedido. UAT de cc13:
         // la misma consulta cuenta también los anulados, para la sección del detalle.
         orderDocuments(this.prisma, id),
+        orderReturns(this.prisma, id),
       ]);
     // D-379: qué reservas liberadas a mano se pueden restaurar desde la línea.
     const lineById = new Map(row.items.map((i) => [i.id, i]));
@@ -3640,6 +3642,7 @@ export class SalesOrdersService {
       isEditable: row.status !== SalesOrderStatus.CANCELLED && !invoice,
       documents: documentsByOrder.live,
       annulledDocumentCount: documentsByOrder.annulledCount,
+      returns,
     };
   }
 

@@ -1,4 +1,5 @@
 import { Prisma, Role } from '@prisma/client';
+import { confirmPriceListImportSchema } from '@ayr/shared';
 import type { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -236,7 +237,7 @@ describe('PriceListImportService.confirm (D-217/M1c)', () => {
     const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
 
     const result = await svc.confirm(ACTOR, {
-      rows: [{ productId: 'p-1', afterValuePen: '10.0000' }],
+      rows: [{ productId: 'p-1', afterValuePen: '10.0000', priceWithIgvPen: '11.80' }],
     });
 
     expect(result.changed).toBe(0);
@@ -288,8 +289,8 @@ describe('PriceListImportService.confirm (D-217/M1c)', () => {
     await expect(
       svc.confirm(ACTOR, {
         rows: [
-          { productId: 'p-1', afterValuePen: '10.0000' },
-          { productId: 'p-2', afterValuePen: '20.0000' },
+          { productId: 'p-1', afterValuePen: '10.0000', priceWithIgvPen: '11.80' },
+          { productId: 'p-2', afterValuePen: '20.0000', priceWithIgvPen: '23.60' },
         ],
       }),
     ).rejects.toMatchObject({ message: expect.stringContaining('desactivado') });
@@ -302,8 +303,8 @@ describe('PriceListImportService.confirm (D-217/M1c)', () => {
     await expect(
       svc.confirm(ACTOR, {
         rows: [
-          { productId: 'p-1', afterValuePen: '10.0000' },
-          { productId: 'p-1', afterValuePen: '20.0000' },
+          { productId: 'p-1', afterValuePen: '10.0000', priceWithIgvPen: '11.80' },
+          { productId: 'p-1', afterValuePen: '20.0000', priceWithIgvPen: '23.60' },
         ],
       }),
     ).rejects.toMatchObject({ message: expect.stringContaining('repetido') });
@@ -317,7 +318,7 @@ describe('PriceListImportService.confirm (D-217/M1c)', () => {
     const svc = new PriceListImportService(prisma, { write: jest.fn() } as unknown as AuditService);
 
     const result = await svc.confirm(ACTOR, {
-      rows: [{ productId: 'p-1', afterValuePen: '12.0000' }],
+      rows: [{ productId: 'p-1', afterValuePen: '12.0000', priceWithIgvPen: '14.16' }],
     });
 
     expect(result.changed).toBe(1);
@@ -384,6 +385,17 @@ function fakePrismaForRevert(options: {
     $transaction: jest.fn().mockImplementation((fn: (tx: unknown) => unknown) => fn(tx)),
   } as unknown as PrismaService;
 }
+
+describe('cc58 (D-682, D-16): el precio con IGV es obligatorio al confirmar', () => {
+  it('una fila sin el precio con IGV no pasa el esquema; con él, sí', () => {
+    const row = { productId: '00000000-0000-4000-8000-000000000001', afterValuePen: '10.0000' };
+    expect(confirmPriceListImportSchema.safeParse({ rows: [row] }).success).toBe(false);
+    expect(
+      confirmPriceListImportSchema.safeParse({ rows: [{ ...row, priceWithIgvPen: '11.80' }] })
+        .success,
+    ).toBe(true);
+  });
+});
 
 describe('PriceListImportService.revert (D-217/M1c)', () => {
   it('revierte un lote sin cambios posteriores: restaura el valor anterior de cada fila', async () => {
