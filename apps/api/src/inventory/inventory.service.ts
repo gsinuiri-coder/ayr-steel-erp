@@ -170,6 +170,12 @@ export interface RecordMovementInput {
    * {@link InventoryService.assertChronological}.
    */
   confirmBackdate?: boolean;
+  /**
+   * cc58 (D-690, D-11 de audit-01): el llamador hace **un** recosteo al final, con el estado ya
+   * completo (`recostForward` con todas sus semillas). Para dos escrituras del mismo ítem en una
+   * operación —reingreso y reversa—, que recosteadas cada una dejaban ajustes que se anulaban entre sí.
+   */
+  deferRecost?: boolean;
 }
 
 /**
@@ -383,7 +389,7 @@ export class InventoryService {
       actorId: input.actorId,
       operationDate: toDateOnly(operationDate),
     });
-    if (laterCount > 0) {
+    if (laterCount > 0 && input.deferRecost !== true) {
       await this.recostForward(
         tx,
         [{ itemType: input.itemType, itemId: input.itemId, afterMovementId: movement.id }],
@@ -856,7 +862,11 @@ export class InventoryService {
      * fecha (recosteo de una bobina, D-045). Como `replaceEntry`, se juzga el estado final: no se
      * aplica D-652 al intermedio ni se recostea acá; recostea el reingreso.
      */
-    options: { reentry?: boolean } = {},
+    options: {
+      reentry?: boolean;
+      /** cc58 (D-690): como `RecordMovementInput.deferRecost` (aplica D-652; no recostea acá). */
+      deferRecost?: boolean;
+    } = {},
   ): Promise<InventoryMovement> {
     const peek = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
     if (!peek) throw new NotFoundException('Movimiento de kardex no encontrado');
@@ -995,7 +1005,7 @@ export class InventoryService {
       operationDate: toDateOnly(reversalDate),
     });
     // cc53 (D-649): una reversa fechada antes de otras filas del ítem les cambia el promedio.
-    if (laterCount > 0 && options.reentry !== true) {
+    if (laterCount > 0 && options.reentry !== true && options.deferRecost !== true) {
       await this.recostForward(
         tx,
         [{ itemType: item.itemType, itemId: item.itemId, afterMovementId: reversal.id }],
