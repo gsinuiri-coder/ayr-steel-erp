@@ -396,10 +396,39 @@ export async function stockUpToDate(
   tx: Prisma.TransactionClient,
   item: RecostItem,
   date: Date,
+  snapshot?: KardexSnapshot,
 ): Promise<{ qty: Decimal; value: Decimal }> {
-  const l = await loadItem(tx, item);
+  const l = snapshot ?? (await loadItem(tx, item));
   const end = l.metas.findIndex((m) => m.operationDate > date);
   return stockBefore(l.rows, end === -1 ? l.rows.length : end);
+}
+
+/**
+ * cc58 (D-691, E-07 de audit-01): **el kardex de un ítem, leído una vez** para todo lo que una
+ * operación decide antes de escribir (D-652, el promedio a su fecha, el valor que queda). Vale
+ * mientras nadie escriba el ítem: se toma con su saldo ya bloqueado (D-474) y se descarta al
+ * escribir; el recosteo de después lee el kardex con la fila nueva.
+ */
+export type KardexSnapshot = LoadedItem;
+
+export function loadKardex(
+  tx: Prisma.TransactionClient,
+  item: RecostItem,
+): Promise<KardexSnapshot> {
+  return loadItem(tx, item);
+}
+
+/** Las filas de cantidad de D-652 sacadas de una foto del kardex: las mismas que `qtyRowsOf`. */
+export function qtyRowsOfSnapshot(snapshot: KardexSnapshot): QtyRow[] {
+  return qtyRowsFromMovements(
+    snapshot.metas.map((m) => ({
+      id: m.id,
+      reversalOfId: m.reversalOfId,
+      date: m.operationDate.toISOString().slice(0, 10),
+      type: m.type,
+      qty: m.qty,
+    })),
+  );
 }
 
 /**

@@ -748,3 +748,50 @@ describe('cc58 (D-690, D-11 de audit-01): mover una entrada a otra fecha recoste
     expect(twice.noise).toBeGreaterThan(0);
   });
 });
+
+describe('cc58 (D-691, E-07 de audit-01): el kardex se lee una vez antes de escribir', () => {
+  it('una salida atrasada lee el kardex del ítem una sola vez para decidir (antes, tres)', async () => {
+    const counted = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    const queries: string[] = [];
+    counted.$on('query', (e) => queries.push(e.query));
+    const service = new InventoryService(
+      counted as unknown as PrismaService,
+      { ROOFING_THICKNESS_TOLERANCE_MM: '0.02' } as Env,
+      new AuditService(counted as unknown as PrismaService),
+    );
+    try {
+      const itemId = randomUUID();
+      await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+      await move(itemId, { type: 'OUT', qty: '2', date: '2026-08-20' });
+      queries.length = 0;
+      await counted.$transaction((tx) =>
+        service.record(tx, {
+          businessLineId,
+          itemType: 'PRODUCT',
+          itemId,
+          type: 'OUT',
+          qty: '3',
+          unit: 'NIU',
+          refType: 'SALE',
+          actorId: adminId,
+          operationDate: '2026-08-10',
+          confirmBackdate: true,
+        }),
+      );
+      const firstInsert = queries.findIndex((q) =>
+        q.startsWith('INSERT INTO "public"."inventory_movements"'),
+      );
+      const kardexReads = queries
+        .slice(0, firstInsert)
+        .filter(
+          (q) =>
+            q.includes('FROM "public"."inventory_movements"') &&
+            q.includes('ORDER BY "public"."inventory_movements"."operation_date" ASC'),
+        );
+      expect(firstInsert).toBeGreaterThan(0);
+      expect(kardexReads).toHaveLength(1);
+    } finally {
+      await counted.$disconnect();
+    }
+  });
+});
