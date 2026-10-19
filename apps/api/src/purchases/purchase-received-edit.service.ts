@@ -55,6 +55,7 @@ import {
   type PurchaseFacts,
   type TargetFacts,
 } from './purchase-received-edit';
+import { hasLandedRecost } from './landed-cost-recost';
 
 type MovementRow = Prisma.InventoryMovementGetPayload<{
   include: { reversals: { select: { id: true } } };
@@ -452,7 +453,10 @@ export class ReceivedPurchaseEditService {
             ownReservation: coil ? (ownReserved.get(coil.id) ?? toDecimal('0')).gt(0) : false,
             // El landed cost es un ajuste de **otra** compra (el flete o la aduana). Los ajustes
             // de esta misma compra son sus correcciones de costo con consumo (cc15).
-            landedCost: live.some((m) => m.type === 'ADJUST' && m.refId !== purchase.id),
+            // cc58 (D-686): o un flete sumado a la entrada por recosteo (revisión de cc58-c, P2-3).
+            landedCost:
+              live.some((m) => m.type === 'ADJUST' && m.refId !== purchase.id) ||
+              (ownIn !== null && (await hasLandedRecost(tx, ownIn.id))),
             sharedProduct: false,
           },
         });

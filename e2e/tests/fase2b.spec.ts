@@ -1062,20 +1062,19 @@ test.describe('Fase 2b — partido, merma, anulación y landed cost', () => {
       const received = await postJson<PurchaseDto>(api, `/api/purchases/${freight.id}/receive`);
       expect(received.status).toBe('RECEIVED');
 
-      // El kardex de la bobina recibe un ADJUST: mueve costo, no cantidad.
+      // cc58 (D-686): el flete se suma a la entrada de la bobina por el recosteo por fecha (un
+      // ADJUST con recost_of_id que el kardex pliega en su fila): sigue una fila, recosteada.
       const movements = await coilMovements(api, coil.id);
-      expect(movements).toHaveLength(2);
-      expect(movements[1]).toMatchObject({
-        type: 'ADJUST',
-        refType: 'PURCHASE',
-        refId: freight.id,
+      expect(movements).toHaveLength(1);
+      expect(movements[0]).toMatchObject({
+        type: 'IN',
         qty: '5000.000',
-        // 2 000 soles sin IGV repartidos por kilo: 0.40 por kg.
-        unitCost: '0.4000',
-        totalCost: '2000.0000',
+        // 2 000 soles sin IGV repartidos por kilo: 0.40 por kg sobre los 4.00 de la compra.
+        unitCost: '4.4000',
+        totalCost: '22000.0000',
         balanceQty: '5000.000',
+        recosted: true,
       });
-      expect(movements[1]!.notes).toContain(`${freight.series}-${freight.number}`);
 
       // El promedio del saldo y el costo del documento suben en la misma proporción.
       const balance = await coilBalance(api, coil.id);

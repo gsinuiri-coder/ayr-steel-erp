@@ -23,6 +23,8 @@ import { FinishesService } from '../finishes/finishes.service';
 import { PurchaseImportService } from '../imports/purchase-import.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
+import { CoilOperationsService } from '../coils/coil-operations.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { PurchasesService } from './purchases.service';
 
 /**
@@ -562,5 +564,133 @@ describe('cc51 (D-639) — anular la factura del corte, en el «Historial» de l
       before,
     );
     expect(await auditsOf('purchases', coils.id, 'purchases.landed-cost-reverse')).toHaveLength(1);
+  });
+});
+
+describe('cc58 (D-686, D-10 de audit-01): el flete que llega después de consumir', () => {
+  const inventory = () => moduleRef.get(InventoryService);
+
+  /** Saca `kg` de la única bobina de la compra, hoy (una venta cualquiera). */
+  async function consume(purchaseId: string, kg: string) {
+    const coil = await prisma.coil.findFirstOrThrow({ where: { purchaseId } });
+    const out = await prisma.$transaction((tx) =>
+      inventory().record(tx, {
+        businessLineId: coil.businessLineId,
+        itemType: 'COIL',
+        itemId: coil.id,
+        type: 'OUT',
+        qty: kg,
+        unit: 'KGM',
+        refType: 'SALE',
+        actorId: admin.id,
+      }),
+    );
+    if (!out) throw new Error('sin salida');
+    return { coil, out };
+  }
+
+  /** Costo efectivo de una fila: el grabado más (o menos, en una salida) sus recosteos. */
+  async function effective(id: bigint): Promise<string> {
+    const m = await prisma.inventoryMovement.findUniqueOrThrow({ where: { id } });
+    const adj = await prisma.inventoryMovement.aggregate({
+      where: { recostOfId: id },
+      _sum: { totalCost: true },
+    });
+    const extra = Number(adj._sum.totalCost?.toString() ?? '0');
+    const total = Number(m.totalCost.toString());
+    return (m.type === 'OUT' ? total - extra : total + extra).toFixed(4);
+  }
+
+  async function entryOf(coilId: string) {
+    return prisma.inventoryMovement.findFirstOrThrow({
+      where: { itemId: coilId, type: 'IN', recostOfId: null },
+    });
+  }
+
+  it('se suma a la entrada y lo que ya salió se lleva su parte; al anularlo, vuelve todo', async () => {
+    const coils = await coilPurchase();
+    const { coil, out } = await consume(coils.id, '400');
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+
+    const entry = await entryOf(coil.id);
+    // 1 000 kg a S/ 4 más S/ 100 de flete: la entrada vale 4 100; la salida de 400 kg, 1 640.
+    expect([await effective(entry.id), await effective(out.id)]).toEqual([
+      '4100.0000',
+      '1640.0000',
+    ]);
+    const balance = await prisma.inventoryBalance.findFirstOrThrow({ where: { itemId: coil.id } });
+    expect([balance.qty.toString(), balance.avgCost.toString()]).toEqual(['600', '4.1']);
+    expect(
+      (await prisma.coil.findUniqueOrThrow({ where: { id: coil.id } })).unitCostPerKg.toString(),
+    ).toBe('4.1');
+    // Ningún ADJUST suelto sobre el saldo de hoy (el D-043 de antes): todo va por recosteo.
+    expect(
+      await prisma.inventoryMovement.count({
+        where: { itemId: coil.id, type: 'ADJUST', recostOfId: null },
+      }),
+    ).toBe(0);
+
+    // La compra de bobinas no se anula por debajo del flete.
+    expect(await rejection(purchases.cancel(admin, coils.id, { reason: 'prueba' }))).toBe(400);
+
+    await purchases.cancel(admin, freight.id, { reason: 'Flete equivocado' });
+    expect([await effective(entry.id), await effective(out.id)]).toEqual([
+      '4000.0000',
+      '1600.0000',
+    ]);
+    const after = await prisma.inventoryBalance.findFirstOrThrow({ where: { itemId: coil.id } });
+    expect(after.avgCost.toString()).toBe('4');
+    expect(
+      (await prisma.coil.findUniqueOrThrow({ where: { id: coil.id } })).unitCostPerKg.toString(),
+    ).toBe('4');
+  });
+
+  it('anular la bobina se lleva el flete; después el flete se anula sin restar dos veces (P1-2)', async () => {
+    const coils = await coilPurchase();
+    const coil = await prisma.coil.findFirstOrThrow({ where: { purchaseId: coils.id } });
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    await moduleRef.get(CoilOperationsService).cancel(admin, coil.id, { reason: 'bobina errada' });
+    // La reversa salió al costo efectivo (4 100): el saldo queda en cero, sin valor.
+    const gone = await prisma.inventoryBalance.findFirstOrThrow({ where: { itemId: coil.id } });
+    expect(gone.qty.toString()).toBe('0');
+    await purchases.cancel(admin, freight.id, { reason: 'Flete de una bobina anulada' });
+    expect(
+      await prisma.inventoryMovement.count({
+        where: { itemId: coil.id, notes: { startsWith: 'Anulación: ' } },
+      }),
+    ).toBe(0);
+    expect((await prisma.purchase.findUniqueOrThrow({ where: { id: freight.id } })).status).toBe(
+      'CANCELLED',
+    );
+  });
+
+  it('sin consumo, la compra de bobinas tampoco se anula con el flete vivo; anulado el flete, sí', async () => {
+    const coils = await coilPurchase();
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    await expect(purchases.cancel(admin, coils.id, { reason: 'prueba' })).rejects.toThrow(
+      'anúlalo primero',
+    );
+    await purchases.cancel(admin, freight.id, { reason: 'Flete equivocado' });
+    await purchases.cancel(admin, coils.id, { reason: 'prueba' });
+    expect((await prisma.purchase.findUniqueOrThrow({ where: { id: coils.id } })).status).toBe(
+      'CANCELLED',
+    );
+  });
+
+  it('una bobina ya consumida entera también lo recibe (antes se perdía)', async () => {
+    const coils = await coilPurchase();
+    const { coil, out } = await consume(coils.id, '1000');
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    expect(await effective(out.id)).toBe('4100.0000');
+    const received = await auditsOf('purchases', freight.id, 'purchases.receive');
+    expect(received[0]?.after).toMatchObject({
+      landedCost: { imputed: true, amountPen: '100.0000' },
+    });
+    const balance = await prisma.inventoryBalance.findFirstOrThrow({ where: { itemId: coil.id } });
+    expect(balance.qty.toString()).toBe('0');
   });
 });

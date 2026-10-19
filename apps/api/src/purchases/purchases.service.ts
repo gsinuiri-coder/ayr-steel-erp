@@ -56,6 +56,7 @@ import {
 import { assertNoLiveDocumentClash } from './purchase-document-clash';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { RECOST_TX_OPTIONS } from '../common/transaction-options';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
@@ -68,6 +69,7 @@ import { findBlockingLaterMovements, type OwnMovement } from './purchase-cancel'
 import { PrismaService } from '../prisma/prisma.service';
 import { assertStripsNotAssigned } from '../production/production-assignments';
 import { prorateByWeight } from './landed-cost';
+import { landedCostEntries, landedCostNote, landedCostShares } from './landed-cost-recost';
 import {
   cuttingInvoiceAuditEntry,
   cuttingInvoiceCancelledAuditEntry,
@@ -751,7 +753,8 @@ export class PurchasesService {
           },
         });
       },
-      { timeout: 30_000 },
+      // cc58 (D-683, D-686): un flete que llega tarde recostea lo que ya salió: el tope del recosteo.
+      RECOST_TX_OPTIONS,
     );
 
     return this.findOne(id);
@@ -850,6 +853,10 @@ export class PurchasesService {
           // Para decidir qué es "posterior" cuentan TODOS los movimientos de la compra,
           // incluidos los ya revertidos y sus reversas: son suyos igual.
           await this.assertNothingMovedAfter(tx, own);
+          // cc58 (D-686): una compra de bobinas con un flete vivo recosteado en sus entradas no se
+          // anula por debajo: primero el flete (antes lo frenaba el `ADJUST` de D-043). Antes de
+          // las reversas, que se llevarían el flete con la entrada (autorrevisión P1-4).
+          await this.assertNoLiveLandedCost(tx, purchase);
 
           // Pero solo se revierte lo que sigue vivo. Un recosteo (D-045) o una bobina
           // anulada (RF-21) dejan bajo el mismo `refId` un ingreso ya revertido más su
@@ -886,6 +893,13 @@ export class PurchasesService {
             }
           }
 
+          // cc58 (D-686): el flete de esta compra de servicio entró por el recosteo de las entradas
+          // de la compra de bobinas: se resta por la misma puerta, con lo que le sumó a cada una.
+          if (purchase.type === PurchaseType.SERVICE && purchase.relatedPurchaseId) {
+            const undone = await this.reverseLandedCost(tx, purchase, actor);
+            landedReversed.coils += undone.coils;
+            landedReversed.amountPen = landedReversed.amountPen.plus(undone.amountPen);
+          }
           // D-050: enviar una bobina a corte tercerizado no genera movimiento de kardex,
           // así que `assertNothingMovedAfter` no la detecta como "posterior". Sin este
           // chequeo, anular la compra la cancelaba igual, dejando la orden de corte
@@ -978,6 +992,66 @@ export class PurchasesService {
       { timeout: 120_000, maxWait: 15_000 },
     );
     return this.findOne(id);
+  }
+
+  /**
+   * cc58 (D-686): resta de cada entrada de la compra de bobinas lo que este servicio le sumó, por
+   * `recostEntries`, y devuelve la ficha de cada bobina a su costo sin el servicio.
+   */
+  private async reverseLandedCost(
+    tx: Prisma.TransactionClient,
+    purchase: Purchase,
+    actor: RequestUser,
+  ): Promise<{ coils: number; amountPen: Decimal }> {
+    if (!purchase.relatedPurchaseId) return { coils: 0, amountPen: new Decimal(0) };
+    const note = landedCostNote(purchase);
+    const shares = await landedCostShares(tx, purchase.relatedPurchaseId, purchase.id);
+    if (shares.length === 0) return { coils: 0, amountPen: new Decimal(0) };
+    await assertStripsNotAssigned(
+      tx,
+      [...new Set(shares.map((sh) => sh.itemId))],
+      'anular este costo',
+    );
+    const outcome = await this.inventory.recostEntries(
+      tx,
+      shares.map((sh) => ({ movementId: sh.movementId, addPen: sh.amountPen.negated() })),
+      { actorId: actor.id, note: `Anulación: ${note}` },
+    );
+    if (outcome?.pending) {
+      throw new BadRequestException(
+        'Anular este costo recostea más filas que el tope en línea (D-649): avísale al administrador del sistema',
+      );
+    }
+    let amountPen = new Decimal(0);
+    for (const sh of shares) {
+      await this.bumpCoilDocumentCost(tx, sh.itemId, sh.amountPen.negated(), sh.qty);
+      amountPen = amountPen.plus(sh.amountPen);
+    }
+    return { coils: shares.length, amountPen };
+  }
+
+  /** cc58 (D-686): la compra de bobinas no se anula con un flete vivo sobre sus entradas. */
+  private async assertNoLiveLandedCost(
+    tx: Prisma.TransactionClient,
+    purchase: Purchase,
+  ): Promise<void> {
+    if (purchase.type !== PurchaseType.COIL) return;
+    const services = await tx.purchase.findMany({
+      where: {
+        relatedPurchaseId: purchase.id,
+        type: PurchaseType.SERVICE,
+        status: PurchaseStatus.RECEIVED,
+      },
+      select: { id: true, series: true, number: true, serviceKind: true },
+    });
+    for (const service of services) {
+      const shares = await landedCostShares(tx, purchase.id, service.id);
+      if (shares.length > 0) {
+        throw new BadRequestException(
+          `La compra tiene un costo de ${service.serviceKind ? SERVICE_KIND_LABELS[service.serviceKind].toLowerCase() : 'servicio'} vivo (${service.series}-${service.number}) sumado a sus bobinas: anúlalo primero`,
+        );
+      }
+    }
   }
 
   /**
@@ -1089,18 +1163,14 @@ export class PurchasesService {
       'imputar este costo',
     );
 
-    const balances = await tx.inventoryBalance.findMany({
-      where: { itemType: 'COIL', itemId: { in: coils.map((c) => c.id) } },
-      select: { itemId: true, qty: true },
-    });
-    const availableKg = new Map(balances.map((b) => [b.itemId, toDecimal(b.qty.toString())]));
-    // Una bobina ya consumida no recibe imputación: su costo salió del inventario y
-    // reescribirlo tocaría movimientos pasados (D-043).
-    const targets = coils.filter((c) => (availableKg.get(c.id) ?? new Decimal(0)).gt(0));
-    if (targets.length === 0) {
-      // La recepción NO se aborta: la deuda con el proveedor del servicio existe igual
-      // y tiene que llegar a la cuenta por pagar (D-030). Solo no hay dónde imputar el
-      // costo, y eso queda dicho en la auditoría de la recepción.
+    // cc58 (D-686, D-10 de audit-01): decisión del dueño, el flete (o la aduana, o el seguro) que
+    // llega después de consumir parte de la bobina **se suma al costo de su entrada** y el recosteo
+    // por fecha lo propaga a lo que ya salió (despachos, partidos, cortes, OPs), con `ADJUST` de
+    // `recost_of_id` en la fecha de cada fila (D-649). Ya no se reparte solo sobre el saldo de hoy:
+    // se reparte por los kilos **recibidos** de cada bobina. Sin cierre de mes todavía: los ajustes
+    // caen en su fecha. Reemplaza el `ADJUST` sobre el saldo de D-043.
+    const entries = await landedCostEntries(tx, related.id, coils);
+    if (entries.length === 0) {
       return { amountPen: '0.0000', coils: 0, imputed: false, relatedDocument };
     }
 
@@ -1109,40 +1179,28 @@ export class PurchasesService {
     );
     const shares = prorateByWeight(
       amountPen,
-      targets.map((c) => ({ id: c.id, qtyKg: availableKg.get(c.id) ?? new Decimal(0) })),
+      entries.map((e) => ({ id: e.id.toString(), qtyKg: e.qty })),
     );
-    const noteLabel = `${SERVICE_KIND_LABELS[purchase.serviceKind]} ${purchase.series}-${purchase.number} (D-043)`;
+    const noteLabel = landedCostNote(purchase);
+    const outcome = await this.inventory.recostEntries(
+      tx,
+      shares.map((s) => ({ movementId: BigInt(s.id), addPen: s.amountPen })),
+      { actorId: actor.id, note: noteLabel },
+    );
+    if (outcome?.pending) {
+      throw new BadRequestException(
+        `El ${service} recostea más filas que el tope en línea (D-649): no se registra así; avísale al administrador del sistema`,
+      );
+    }
 
     let imputedCoils = 0;
     for (const share of shares) {
-      const coil = targets.find((c) => c.id === share.id);
-      const qty = availableKg.get(share.id);
-      if (!coil || !qty || qty.lte(0) || share.amountPen.isZero()) continue;
-
-      const movement = await this.inventory.adjustCost(tx, {
-        businessLineId: coil.businessLineId,
-        itemType: 'COIL',
-        itemId: coil.id,
-        unit: Unit.KGM,
-        amountPen: toFixedString(share.amountPen, 'MONEY'),
-        refType: 'PURCHASE',
-        refId: purchase.id,
-        notes: noteLabel,
-        actorId: actor.id,
-        operationDate,
-      });
-      // Si el kardex no aceptó el ajuste (línea NOOP o saldo en cero), el documento de
-      // la bobina tampoco se toca: un `unitCostPerKg` sin movimiento detrás no se puede
-      // revertir después y quedaría mintiendo para siempre.
-      if (!movement) continue;
+      const entry = entries.find((e) => e.id.toString() === share.id);
+      const coil = entry && coils.find((c) => c.id === entry.itemId);
+      if (!entry || !coil || share.amountPen.isZero()) continue;
 
       imputedCoils += 1;
-      const before = await this.bumpCoilDocumentCost(
-        tx,
-        coil.id,
-        share.amountPen,
-        toDecimal(movement.qty.toString()),
-      );
+      const before = await this.bumpCoilDocumentCost(tx, coil.id, share.amountPen, entry.qty);
       // Auditoría por bobina (RF-95): el `unitCostPerKg` de una bobina también cambia
       // por acá, no solo por RF-20, y con un único registro a nivel de compra no se
       // podría reconstruir después qué costo tenía cada bobina antes del flete.

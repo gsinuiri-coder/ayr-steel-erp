@@ -215,10 +215,15 @@ describe('applyLandedCost — el costo, en la compra de bobinas que lo recibe', 
     const tx = {
       purchase: { findUnique: jest.fn().mockResolvedValue(related) },
       coil: { findMany: jest.fn().mockResolvedValue(coils) },
-      inventoryBalance: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue(coils.map((c) => ({ itemId: c.id, qty: new Prisma.Decimal(500) }))),
+      // cc58 (D-686): la entrada de cada bobina, que recibe el costo por recosteo.
+      inventoryMovement: {
+        findMany: jest.fn().mockResolvedValue(
+          coils.map((c, i) => ({
+            id: BigInt(i + 1),
+            itemId: c.id,
+            qty: new Prisma.Decimal(500),
+          })),
+        ),
       },
     };
     const write = jest.fn().mockResolvedValue(undefined);
@@ -226,7 +231,7 @@ describe('applyLandedCost — el costo, en la compra de bobinas que lo recibe', 
     Object.assign(svc, {
       audit: { write },
       inventory: {
-        adjustCost: jest.fn().mockResolvedValue({ qty: new Prisma.Decimal(500) }),
+        recostEntries: jest.fn().mockResolvedValue({ pending: false, adjusted: [] }),
       },
       bumpCoilDocumentCost: jest.fn().mockResolvedValue({ from: '4.0000', to: '4.1600' }),
     });
