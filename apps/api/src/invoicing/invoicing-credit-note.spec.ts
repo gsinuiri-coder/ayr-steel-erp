@@ -407,6 +407,33 @@ describe('InvoicingService.registerCreditNote — el motivo decide (cc54)', () =
     }).not.toThrow();
   });
 
+  it('cc58 (D-678, revisión P2-1): emitir el borrador de una NC que devuelve stock, tampoco', async () => {
+    const make = (reason: string | null) => {
+      const service = Object.create(InvoicingService.prototype) as InvoicingService;
+      const assign = jest.fn();
+      Object.assign(service, {
+        prisma: {
+          fiscalDocument: { findUnique: jest.fn().mockResolvedValue({ creditNoteReason: reason }) },
+        },
+        assertPseEnabled: jest.fn(),
+        assertOwnership: jest.fn(),
+        assign,
+        deliver: jest.fn(),
+        findOne: jest.fn((id: string) => Promise.resolve({ id })),
+      });
+      return { service, assign };
+    };
+    const stock = make('DEVOLUCION_TOTAL');
+    await expect(stock.service.send(SELLER, 'nc-1')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(stock.assign).not.toHaveBeenCalled();
+    await expect(stock.service.send(ADMIN, 'nc-1')).resolves.toEqual({ id: 'nc-1' });
+    // Una factura (sin motivo) o una NC de rebaja la emite el vendedor como siempre.
+    for (const reason of [null, 'DESCUENTO_ITEM']) {
+      const ok = make(reason);
+      await expect(ok.service.send(SELLER, 'x-1')).resolves.toEqual({ id: 'x-1' });
+    }
+  });
+
   it('un comprobante que no es manual no se registra a mano; el 02 no va por borrador', async () => {
     await expect(
       build({ origin: 'ISSUED_HERE' }).service.registerCreditNote(
