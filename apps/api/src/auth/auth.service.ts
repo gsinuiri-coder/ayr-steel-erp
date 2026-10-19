@@ -30,6 +30,18 @@ const REFRESH_GRACE_MS = 30_000;
  */
 export const SESSION_MAX_DAYS = 30;
 const SESSION_MAX_MS = SESSION_MAX_DAYS * 24 * 60 * 60 * 1000;
+/**
+ * Las sesiones abiertas antes del tope cuentan sus 30 días desde el 19/10 (00:00 de Lima), no desde
+ * su login: si no, el día del despliegue se cerraban todas a la vez en plena jornada (autorrevisión
+ * de cc58-d, P2-2).
+ */
+export const SESSION_CAP_FROM = new Date('2026-10-19T05:00:00.000Z');
+
+/** Cuándo vence, sin importar cuánto se renueve, una sesión abierta en `createdAt`. */
+export function sessionCap(createdAt: Date): Date {
+  const from = createdAt > SESSION_CAP_FROM ? createdAt : SESSION_CAP_FROM;
+  return new Date(from.getTime() + SESSION_MAX_MS);
+}
 
 const hashToken = (raw: string): string => createHash('sha256').update(raw).digest('hex');
 const newRefreshToken = (): string => randomBytes(48).toString('base64url');
@@ -106,7 +118,11 @@ export class AuthService {
    * dos copias dejan de servir) con su registro de auditoría. Y la sesión no pasa de
    * `SESSION_MAX_DAYS` desde el login, por más que se renueve.
    */
-  async refresh(rawRefreshToken: string, meta: ClientMeta = {}): Promise<IssuedTokens> {
+  async refresh(
+    rawRefreshToken: string,
+    meta: ClientMeta = {},
+    retried = false,
+  ): Promise<IssuedTokens> {
     const hash = hashToken(rawRefreshToken);
     const now = new Date();
     const session = await this.prisma.session.findFirst({
@@ -133,21 +149,25 @@ export class AuthService {
       });
       throw new UnauthorizedException('Sesión inválida o expirada');
     }
-    const cap = new Date(session.createdAt.getTime() + SESSION_MAX_MS);
+    if (!session.user.active) {
+      await this.revokeAllSessions(session.userId);
+      throw new ForbiddenException('Usuario desactivado. Contacta al administrador.');
+    }
+    const cap = sessionCap(session.createdAt);
     if (cap <= now) {
       throw new UnauthorizedException(
         `La sesión llegó a su máximo de ${String(SESSION_MAX_DAYS)} días: vuelve a entrar`,
       );
     }
-    if (!session.user.active) {
-      await this.revokeAllSessions(session.userId);
-      throw new ForbiddenException('Usuario desactivado. Contacta al administrador.');
-    }
     const refreshToken = newRefreshToken();
     const sliding = this.refreshExpiry();
     const refreshExpiresAt = sliding < cap ? sliding : cap;
-    await this.prisma.session.update({
-      where: { id: session.id },
+    // La rotación exige el token vigente que se leyó (revisión de cc58-d, P2-2/P2-3): si otra
+    // pestaña rotó en el medio, el token presentado ya es el anterior, dentro de la gracia, y se
+    // vuelve a intentar una vez desde el vigente. Sin esto, la segunda dejaba en el navegador un
+    // token que la base no conocía y después se leía como reuso.
+    const rotated = await this.prisma.session.updateMany({
+      where: { id: session.id, refreshTokenHash: session.refreshTokenHash, revokedAt: null },
       data: {
         refreshTokenHash: hashToken(refreshToken),
         previousTokenHash: session.refreshTokenHash,
@@ -158,6 +178,10 @@ export class AuthService {
         ip: meta.ip?.slice(0, 64) ?? session.ip,
       },
     });
+    if (rotated.count === 0) {
+      if (retried) throw new UnauthorizedException('Sesión inválida o expirada');
+      return this.refresh(rawRefreshToken, meta, true);
+    }
     return {
       user: this.toAuthUser(session.user),
       accessToken: await this.signAccess(session.user, session.id),

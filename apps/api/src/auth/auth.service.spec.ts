@@ -7,7 +7,13 @@ import { AuditService } from '../audit/audit.service';
 import { ENV, loadEnv } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { createHash } from 'node:crypto';
-import { AuthService, DUMMY_PASSWORD_HASH, SESSION_MAX_DAYS } from './auth.service';
+import {
+  AuthService,
+  DUMMY_PASSWORD_HASH,
+  SESSION_CAP_FROM,
+  SESSION_MAX_DAYS,
+  sessionCap,
+} from './auth.service';
 
 const sha = (raw: string) => createHash('sha256').update(raw).digest('hex');
 const DAY = 24 * 60 * 60 * 1000;
@@ -236,9 +242,10 @@ describe('AuthService', () => {
       prisma.session.update.mockResolvedValue({});
       const result = await service.refresh('token-viejo');
       expect(result.refreshToken).toHaveLength(64);
-      expect(prisma.session.update).toHaveBeenCalledWith(
+      // cc58 (revisión de cc58-d): la rotación exige el token vigente leído.
+      expect(prisma.session.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 's1' },
+          where: { id: 's1', refreshTokenHash: sha('token-viejo'), revokedAt: null },
           data: expect.objectContaining({ previousTokenHash: sha('token-viejo') }),
         }),
       );
@@ -278,20 +285,56 @@ describe('AuthService', () => {
         expect(audit.log).toHaveBeenCalledWith(
           expect.objectContaining({ action: 'auth.refresh.reuse', entityId: 's2' }),
         );
-        expect(prisma.session.update).not.toHaveBeenCalled();
+        // Solo la revocación: no rota nada.
+        expect(prisma.session.updateMany).toHaveBeenCalledTimes(1);
+      });
+
+      it('si otra pestaña rotó en el medio, reintenta una vez desde el token vigente', async () => {
+        const auditsBefore = audit.log.mock.calls.length;
+        const updatesBefore = prisma.session.updateMany.mock.calls.length;
+        prisma.session.findFirst
+          .mockResolvedValueOnce(
+            session({ refreshTokenHash: sha('token-x'), previousTokenHash: null }),
+          )
+          .mockResolvedValueOnce(
+            session({ refreshTokenHash: sha('token-y'), previousTokenHash: sha('token-x') }),
+          );
+        prisma.session.updateMany
+          .mockResolvedValueOnce({ count: 0 })
+          .mockResolvedValueOnce({ count: 1 });
+        await expect(service.refresh('token-x')).resolves.toHaveProperty('refreshToken');
+        expect(prisma.session.updateMany.mock.calls.length - updatesBefore).toBe(2);
+        expect(audit.log.mock.calls.length).toBe(auditsBefore);
+        // Si vuelve a perder, no insiste más.
+        prisma.session.findFirst.mockResolvedValue(session({ refreshTokenHash: sha('token-z') }));
+        prisma.session.updateMany.mockResolvedValue({ count: 0 });
+        await expect(service.refresh('token-z')).rejects.toBeInstanceOf(UnauthorizedException);
+      });
+
+      it('una sesión de antes del tope cuenta sus 30 días desde el 19/10, no desde su login', () => {
+        const old = new Date('2026-09-10T15:00:00.000Z');
+        expect(sessionCap(old).getTime()).toBe(SESSION_CAP_FROM.getTime() + SESSION_MAX_DAYS * DAY);
+        const fresh = new Date('2026-10-25T15:00:00.000Z');
+        expect(sessionCap(fresh).getTime()).toBe(fresh.getTime() + SESSION_MAX_DAYS * DAY);
       });
 
       it(`no pasa de ${String(SESSION_MAX_DAYS)} días desde el login, por más que se renueve`, async () => {
-        prisma.session.findFirst.mockResolvedValue(
-          session({ createdAt: new Date(Date.now() - (SESSION_MAX_DAYS * DAY + 1000)) }),
-        );
-        await expect(service.refresh('token-nuevo')).rejects.toThrow('máximo de 30 días');
-        // Cerca del tope, la renovación vence en el tope, no 7 días después.
-        const createdAt = new Date(Date.now() - (SESSION_MAX_DAYS - 2) * DAY);
-        prisma.session.findFirst.mockResolvedValue(session({ createdAt }));
-        prisma.session.update.mockResolvedValue({});
-        const out = await service.refresh('token-nuevo');
-        expect(out.refreshExpiresAt.getTime()).toBe(createdAt.getTime() + SESSION_MAX_DAYS * DAY);
+        jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+        jest.setSystemTime(new Date('2027-01-15T15:00:00.000Z'));
+        try {
+          prisma.session.findFirst.mockResolvedValue(
+            session({ createdAt: new Date(Date.now() - (SESSION_MAX_DAYS * DAY + 1000)) }),
+          );
+          await expect(service.refresh('token-nuevo')).rejects.toThrow('máximo de 30 días');
+          // Cerca del tope, la renovación vence en el tope, no 7 días después.
+          const createdAt = new Date(Date.now() - (SESSION_MAX_DAYS - 2) * DAY);
+          prisma.session.findFirst.mockResolvedValue(session({ createdAt }));
+          prisma.session.updateMany.mockResolvedValue({ count: 1 });
+          const out = await service.refresh('token-nuevo');
+          expect(out.refreshExpiresAt.getTime()).toBe(createdAt.getTime() + SESSION_MAX_DAYS * DAY);
+        } finally {
+          jest.useRealTimers();
+        }
       });
     });
 
