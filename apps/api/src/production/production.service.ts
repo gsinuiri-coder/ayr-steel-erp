@@ -42,7 +42,7 @@ import {
   type ReportPiecesInput,
   type ReverseMovementInput,
 } from '@ayr/shared';
-import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
+import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
 import { AuditService } from '../audit/audit.service';
 import { CLOSE_PREVIEW_TIMEOUT_MS, previewPlantClose } from './close-preview';
 import type { RequestUser } from '../auth/auth.types';
@@ -1049,12 +1049,9 @@ export class ProductionService {
     // D-124: el cierre tiene su propia fecha de operación, distinta de la del arranque:
     // una corrida puede empezar el 12 y cerrarse el 15, y la merma de proceso es del 15.
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    await this.prisma.$transaction(
-      async (tx) => {
-        await this.closeInTx(tx, actor, orderId, input, operationDate);
-      },
-      { timeout: 60_000 },
-    );
+    await this.prisma.$transaction(async (tx) => {
+      await this.closeInTx(tx, actor, orderId, input, operationDate);
+    }, RECOST_TX_OPTIONS);
 
     return this.findOne(orderId);
   }
@@ -1309,205 +1306,202 @@ export class ProductionService {
   ): Promise<ProductionOrderDto> {
     const { reason } = input;
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    await this.prisma.$transaction(
-      async (tx) => {
-        const order = await this.lockOrder(tx, orderId);
-        if (order.status !== ProductionOrderStatus.CLOSED) {
-          throw new BadRequestException(
-            order.status === ProductionOrderStatus.CANCELLED
-              ? 'La orden está anulada: no hay cierre que deshacer'
-              : 'La orden todavía no está cerrada',
-          );
-        }
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, orderId);
+      if (order.status !== ProductionOrderStatus.CLOSED) {
+        throw new BadRequestException(
+          order.status === ProductionOrderStatus.CANCELLED
+            ? 'La orden está anulada: no hay cierre que deshacer'
+            : 'La orden todavía no está cerrada',
+        );
+      }
 
-        const own = await tx.inventoryMovement.findMany({
+      const own = await tx.inventoryMovement.findMany({
+        where: {
+          recostOfId: null,
+          refId: orderId,
+          refType: { in: ['PRODUCTION', 'SCRAP'] },
+        },
+        orderBy: { id: 'asc' },
+        include: { reversals: { select: { id: true } } },
+      });
+      const movements = liveMovements(own);
+      const adjust = movements.find((m) => m.itemType === 'PRODUCT' && m.type === 'ADJUST');
+      const scrapOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
+
+      // D-386: los flejes que vuelven a la orden y los de la merma (con sus agregados), después
+      // los saldos de lo que se revierte, antes de mirar qué se movió después del cierre. Antes
+      // se tomaba primero el saldo del producto (la reversa del ajuste) y después cada fleje.
+      await this.inventory.lockInOrder(tx, {
+        coilIds: (
+          await tx.productionOrderConsumption.findMany({
+            where: { productionOrderId: orderId, releasedAt: order.closedAt },
+            select: { coilId: true },
+          })
+        ).map((r) => r.coilId),
+        items: movements.map(itemRefOf),
+      });
+
+      // cc55 (D-665): ver la reapertura de coberturas.
+      await assertNoCloseRecost(tx, orderId, 'Las piezas de esta orden');
+      // El ajuste de costo se repartió sobre el saldo de piezas del momento del cierre:
+      // si después salieron piezas o entró otro ajuste (el cierre de otra OP del mismo
+      // perfil), revertirlo dejaría el promedio contando algo que ya no es cierto.
+      if (adjust) {
+        const after = await tx.inventoryMovement.findMany({
           where: {
             recostOfId: null,
-            refId: orderId,
-            refType: { in: ['PRODUCTION', 'SCRAP'] },
+            itemType: 'PRODUCT',
+            itemId: order.productId,
+            id: { gt: adjust.id },
           },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
-        const movements = liveMovements(own);
-        const adjust = movements.find((m) => m.itemType === 'PRODUCT' && m.type === 'ADJUST');
-        const scrapOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
-
-        // D-386: los flejes que vuelven a la orden y los de la merma (con sus agregados), después
-        // los saldos de lo que se revierte, antes de mirar qué se movió después del cierre. Antes
-        // se tomaba primero el saldo del producto (la reversa del ajuste) y después cada fleje.
-        await this.inventory.lockInOrder(tx, {
-          coilIds: (
-            await tx.productionOrderConsumption.findMany({
-              where: { productionOrderId: orderId, releasedAt: order.closedAt },
-              select: { coilId: true },
-            })
-          ).map((r) => r.coilId),
-          items: movements.map(itemRefOf),
-        });
-
-        // cc55 (D-665): ver la reapertura de coberturas.
-        await assertNoCloseRecost(tx, orderId, 'Las piezas de esta orden');
-        // El ajuste de costo se repartió sobre el saldo de piezas del momento del cierre:
-        // si después salieron piezas o entró otro ajuste (el cierre de otra OP del mismo
-        // perfil), revertirlo dejaría el promedio contando algo que ya no es cierto.
-        if (adjust) {
-          const after = await tx.inventoryMovement.findMany({
-            where: {
-              recostOfId: null,
-              itemType: 'PRODUCT',
-              itemId: order.productId,
-              id: { gt: adjust.id },
-            },
-            orderBy: { id: 'asc' },
-            include: { reversals: { select: { id: true } } },
-          });
-          const blocking = liveMovements(after).find((m) => m.type !== 'IN');
-          if (blocking) {
-            throw new BadRequestException(
-              `Las piezas de esta orden ya se movieron (${blocking.type} ${blocking.refType}): anula ese movimiento antes de reabrirla`,
-            );
-          }
-        }
-
-        // Solo vuelven a la orden los flejes que soltó el **cierre** (su `releasedAt` es
-        // el mismo instante que el `closedAt` de la orden): los que el operario liberó a
-        // mano antes ya no son suyos y no tienen por qué volver.
-        const rows = await tx.productionOrderConsumption.findMany({
-          where: { productionOrderId: orderId, releasedAt: order.closedAt },
-          include: { coil: { select: { code: true, status: true } } },
-          orderBy: { createdAt: 'asc' },
-        });
-        // Cerrar libera los flejes: entre el cierre y la reapertura pudieron irse a otra
-        // orden (D-060) o moverse en el kardex, y en cualquiera de los dos casos volver a
-        // tomarlos acá inventariaría kilos que ya no están donde esta orden cree.
-        await assertStripsNotAssigned(
-          tx,
-          rows.map((r) => r.coilId),
-          'reabrir la orden',
-        );
-        // D-360: los flejes que el cierre terminó solos vuelven a estar vigentes; los que se
-        // terminaron por otra causa siguen bloqueando la reapertura, como antes.
-        const reopened = await reopenAutoTerminatedCoils(tx, this.audit, {
-          actorId: actor.id,
-          coilIds: rows.map((r) => r.coilId),
-          cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
-          // Revisión C06: también la que terminó el lote después de que esta OP la dejara en 0.
-          zeroedBy: {
-            refIds: [
-              orderId,
-              ...(
-                await tx.productionReport.findMany({
-                  where: { productionOrderId: orderId },
-                  select: { id: true },
-                })
-              ).map((r) => r.id),
-            ],
-          },
-          label: `reapertura de ${productionOrderCode(order.seq)}`,
-          operationDate,
-        });
-        const reopenedIds = new Set(reopened.reopened.map((c) => c.id));
-        const lastOwnByCoil = new Map<string, bigint>();
-        for (const movement of own) {
-          const current = lastOwnByCoil.get(movement.itemId);
-          if (movement.itemType === 'COIL' && (current === undefined || movement.id > current)) {
-            lastOwnByCoil.set(movement.itemId, movement.id);
-          }
-        }
-        for (const row of rows) {
-          await this.coils.lockCoil(tx, row.coilId);
-          // Mismo requisito que `consume`: la orden vuelve a quedarse con el fleje, y
-          // `report` no revalida su estado. Un fleje que se cerró (RF-19) o se anuló
-          // (RF-21) mientras la OP estaba cerrada no puede volver a producción.
-          if (row.coil.status !== CoilStatus.OPEN && !reopenedIds.has(row.coilId)) {
-            throw new BadRequestException(
-              `El fleje ${row.coil.code} ya no está disponible (${row.coil.status}): no se puede reabrir la orden`,
-            );
-          }
-          // Los flejes que se consumieron enteros no dejaron merma, así que no hay
-          // movimiento propio del cierre contra el cual medir "posterior": ahí la
-          // referencia es el `closedAt` de la orden. Saltarlos —como hacía la primera
-          // versión— dejaba volver a la orden un fleje que se partió o se mermó entre
-          // medio.
-          const lastOwn = lastOwnByCoil.get(row.coilId);
-          const after = await tx.inventoryMovement.findMany({
-            where: {
-              recostOfId: null,
-              itemType: 'COIL',
-              itemId: row.coilId,
-              ...(lastOwn === undefined
-                ? { at: { gt: order.closedAt ?? new Date(0) } }
-                : { id: { gt: lastOwn } }),
-            },
-            orderBy: { id: 'asc' },
-            include: { reversals: { select: { id: true } } },
-          });
-          const blocking = liveMovements(after)[0];
-          if (blocking) {
-            throw new BadRequestException(
-              `El fleje ${row.coil.code} ya tiene movimientos posteriores al cierre (${blocking.refType}): anúlalos antes de reabrir la orden`,
-            );
-          }
-        }
-
-        // Primero el costo y después el material: al revés, el ajuste se prorratearía
-        // sobre un saldo que la merma devuelta todavía no terminó de acomodar.
-        if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason, operationDate);
-        const returnedByCoil = new Map<string, Decimal>();
-        for (const movement of scrapOuts) {
-          await this.coils.lockCoil(tx, movement.itemId);
-          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
-          returnedByCoil.set(
-            movement.itemId,
-            (returnedByCoil.get(movement.itemId) ?? new Decimal(0)).plus(
-              toDecimal(movement.qty.toString()),
-            ),
+        const blocking = liveMovements(after).find((m) => m.type !== 'IN');
+        if (blocking) {
+          throw new BadRequestException(
+            `Las piezas de esta orden ya se movieron (${blocking.type} ${blocking.refType}): anula ese movimiento antes de reabrirla`,
           );
         }
+      }
 
-        for (const row of rows) {
-          const returned = returnedByCoil.get(row.coilId) ?? new Decimal(0);
-          await tx.productionOrderConsumption.update({
-            where: { id: row.id },
-            data: {
-              releasedAt: null,
-              consumedKg: toFixedString(toDecimal(row.consumedKg.toString()).minus(returned), 'KG'),
-            },
-          });
+      // Solo vuelven a la orden los flejes que soltó el **cierre** (su `releasedAt` es
+      // el mismo instante que el `closedAt` de la orden): los que el operario liberó a
+      // mano antes ya no son suyos y no tienen por qué volver.
+      const rows = await tx.productionOrderConsumption.findMany({
+        where: { productionOrderId: orderId, releasedAt: order.closedAt },
+        include: { coil: { select: { code: true, status: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+      // Cerrar libera los flejes: entre el cierre y la reapertura pudieron irse a otra
+      // orden (D-060) o moverse en el kardex, y en cualquiera de los dos casos volver a
+      // tomarlos acá inventariaría kilos que ya no están donde esta orden cree.
+      await assertStripsNotAssigned(
+        tx,
+        rows.map((r) => r.coilId),
+        'reabrir la orden',
+      );
+      // D-360: los flejes que el cierre terminó solos vuelven a estar vigentes; los que se
+      // terminaron por otra causa siguen bloqueando la reapertura, como antes.
+      const reopened = await reopenAutoTerminatedCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: rows.map((r) => r.coilId),
+        cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
+        // Revisión C06: también la que terminó el lote después de que esta OP la dejara en 0.
+        zeroedBy: {
+          refIds: [
+            orderId,
+            ...(
+              await tx.productionReport.findMany({
+                where: { productionOrderId: orderId },
+                select: { id: true },
+              })
+            ).map((r) => r.id),
+          ],
+        },
+        label: `reapertura de ${productionOrderCode(order.seq)}`,
+        operationDate,
+      });
+      const reopenedIds = new Set(reopened.reopened.map((c) => c.id));
+      const lastOwnByCoil = new Map<string, bigint>();
+      for (const movement of own) {
+        const current = lastOwnByCoil.get(movement.itemId);
+        if (movement.itemType === 'COIL' && (current === undefined || movement.id > current)) {
+          lastOwnByCoil.set(movement.itemId, movement.id);
         }
+      }
+      for (const row of rows) {
+        await this.coils.lockCoil(tx, row.coilId);
+        // Mismo requisito que `consume`: la orden vuelve a quedarse con el fleje, y
+        // `report` no revalida su estado. Un fleje que se cerró (RF-19) o se anuló
+        // (RF-21) mientras la OP estaba cerrada no puede volver a producción.
+        if (row.coil.status !== CoilStatus.OPEN && !reopenedIds.has(row.coilId)) {
+          throw new BadRequestException(
+            `El fleje ${row.coil.code} ya no está disponible (${row.coil.status}): no se puede reabrir la orden`,
+          );
+        }
+        // Los flejes que se consumieron enteros no dejaron merma, así que no hay
+        // movimiento propio del cierre contra el cual medir "posterior": ahí la
+        // referencia es el `closedAt` de la orden. Saltarlos —como hacía la primera
+        // versión— dejaba volver a la orden un fleje que se partió o se mermó entre
+        // medio.
+        const lastOwn = lastOwnByCoil.get(row.coilId);
+        const after = await tx.inventoryMovement.findMany({
+          where: {
+            recostOfId: null,
+            itemType: 'COIL',
+            itemId: row.coilId,
+            ...(lastOwn === undefined
+              ? { at: { gt: order.closedAt ?? new Date(0) } }
+              : { id: { gt: lastOwn } }),
+          },
+          orderBy: { id: 'asc' },
+          include: { reversals: { select: { id: true } } },
+        });
+        const blocking = liveMovements(after)[0];
+        if (blocking) {
+          throw new BadRequestException(
+            `El fleje ${row.coil.code} ya tiene movimientos posteriores al cierre (${blocking.refType}): anúlalos antes de reabrir la orden`,
+          );
+        }
+      }
 
-        await tx.productionOrder.update({
-          where: { id: orderId },
+      // Primero el costo y después el material: al revés, el ajuste se prorratearía
+      // sobre un saldo que la merma devuelta todavía no terminó de acomodar.
+      if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason, operationDate);
+      const returnedByCoil = new Map<string, Decimal>();
+      for (const movement of scrapOuts) {
+        await this.coils.lockCoil(tx, movement.itemId);
+        await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
+        returnedByCoil.set(
+          movement.itemId,
+          (returnedByCoil.get(movement.itemId) ?? new Decimal(0)).plus(
+            toDecimal(movement.qty.toString()),
+          ),
+        );
+      }
+
+      for (const row of rows) {
+        const returned = returnedByCoil.get(row.coilId) ?? new Decimal(0);
+        await tx.productionOrderConsumption.update({
+          where: { id: row.id },
           data: {
-            status: ProductionOrderStatus.IN_PROGRESS,
-            scrapKg: null,
-            materialCostPen: null,
-            overheadCostPen: null,
-            totalCostPen: null,
-            unitCostPen: null,
-            closedById: null,
-            closedAt: null,
-            closedOperationDate: null,
+            releasedAt: null,
+            consumedKg: toFixedString(toDecimal(row.consumedKg.toString()).minus(returned), 'KG'),
           },
         });
+      }
 
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'production.reopen',
-          entity: 'production_orders',
-          entityId: orderId,
-          before: { status: ProductionOrderStatus.CLOSED },
-          after: {
-            status: ProductionOrderStatus.IN_PROGRESS,
-            reason,
-            revertedScrapMovements: scrapOuts.length,
-            revertedCostAdjustment: adjust !== undefined,
-          },
-        });
-      },
-      { timeout: 60_000 },
-    );
+      await tx.productionOrder.update({
+        where: { id: orderId },
+        data: {
+          status: ProductionOrderStatus.IN_PROGRESS,
+          scrapKg: null,
+          materialCostPen: null,
+          overheadCostPen: null,
+          totalCostPen: null,
+          unitCostPen: null,
+          closedById: null,
+          closedAt: null,
+          closedOperationDate: null,
+        },
+      });
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'production.reopen',
+        entity: 'production_orders',
+        entityId: orderId,
+        before: { status: ProductionOrderStatus.CLOSED },
+        after: {
+          status: ProductionOrderStatus.IN_PROGRESS,
+          reason,
+          revertedScrapMovements: scrapOuts.length,
+          revertedCostAdjustment: adjust !== undefined,
+        },
+      });
+    }, RECOST_TX_OPTIONS);
 
     return this.findOne(orderId);
   }

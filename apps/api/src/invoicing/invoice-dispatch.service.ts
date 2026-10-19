@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { RECOST_TX_OPTIONS } from '../common/transaction-options';
 import {
   DispatchStatus,
   FiscalDocType,
@@ -181,10 +182,9 @@ export class InvoiceDispatchService {
       requestedDate === undefined ? undefined : this.operationDate.resolve(actor, requestedDate);
     return this.prisma.$transaction(
       (tx) => this.executeInTx(tx, actor, invoiceId, undefined, dispatchDate),
-      {
-        // Un despacho por comprobante, con los locks de bobina y saldo de siempre.
-        timeout: 60_000,
-      },
+      // Un despacho por comprobante, con los locks de bobina y saldo de siempre; re-fechar recostea
+      // (cc58, D-683).
+      RECOST_TX_OPTIONS,
     );
   }
 

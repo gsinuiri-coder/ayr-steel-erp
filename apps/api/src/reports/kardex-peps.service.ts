@@ -6,10 +6,12 @@ import {
   INVENTORY_REF_TYPE_LABELS,
   productionOrderCode,
   toDateOnly,
+  toDecimal,
   type KardexPepsQuery,
 } from '@ayr/shared';
 import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
+import { rowCostOfRecost } from '../inventory/recost-engine';
 import { valuePeps, type PepsResult } from './kardex-peps';
 
 /** Documento de la fila (tabla 10 de SUNAT) y tipo de operación (tabla 12). */
@@ -105,6 +107,35 @@ function splitNumber(value: string | null): { series: string; number: string } {
 }
 
 /**
+ * cc58 (D-685): el costo corregido de cada entrada y ajuste con recosteos (`recost_of_id`), como
+ * texto. Las salidas no se corrigen: PEPS saca su costo de las capas.
+ */
+export function pepsCorrectedCosts(
+  movements: readonly {
+    id: bigint;
+    type: 'IN' | 'OUT' | 'ADJUST';
+    totalCost: { toString(): string };
+    recostOfId: bigint | null;
+  }[],
+): Map<bigint, string> {
+  const byId = new Map(movements.map((m) => [m.id, m]));
+  const extra = new Map<bigint, ReturnType<typeof toDecimal>>();
+  for (const m of movements) {
+    if (m.recostOfId === null) continue;
+    const target = byId.get(m.recostOfId);
+    if (!target || target.type === 'OUT') continue;
+    const add = rowCostOfRecost(target.type, toDecimal(m.totalCost.toString()));
+    extra.set(target.id, (extra.get(target.id) ?? toDecimal('0')).plus(add));
+  }
+  const out = new Map<bigint, string>();
+  for (const [id, add] of extra) {
+    const target = byId.get(id);
+    if (target) out.set(id, toDecimal(target.totalCost.toString()).plus(add).toFixed(4));
+  }
+  return out;
+}
+
+/**
  * D-279 — Kardex PEPS de un ítem en el formato 13.1 de SUNAT. Solo lectura; lee los mismos
  * movimientos que `/kardex` y no escribe ni cambia ninguna valorización.
  *
@@ -125,8 +156,6 @@ export class KardexPepsService {
         itemType: query.itemType,
         itemId: query.itemId,
         operationDate: { lte: toDateOnly(query.to) },
-        // cc53 (D-649): PEPS valoriza con sus capas; el recosteo es del promedio y no entra.
-        recostOfId: null,
       },
       // El mismo orden que el saldo corrido del kardex (D-124): fecha de operación, instante
       // de grabación y el id bigserial para desempatar.
@@ -141,16 +170,23 @@ export class KardexPepsService {
         refId: true,
         notes: true,
         reversalOfId: true,
+        recostOfId: true,
         operationDate: true,
       },
     });
 
+    // cc58 (D-685, E-11/A-08 de audit-01): PEPS valoriza las capas con el costo **corregido** de sus
+    // entradas: el grabado más sus recosteos (el flete que llegó tarde, el cierre de una OP, D-665).
+    // El costo de las salidas lo calcula PEPS con sus capas, así que el recosteo de una salida no
+    // entra; las filas de recosteo no son movimientos propios.
+    const corrected = pepsCorrectedCosts(movements);
+    const own = movements.filter((m) => m.recostOfId === null);
     const peps = valuePeps(
-      movements.map((m) => ({
+      own.map((m) => ({
         id: m.id.toString(),
         type: m.type,
         qty: m.qty.toString(),
-        totalCost: m.totalCost.toString(),
+        totalCost: corrected.get(m.id) ?? m.totalCost.toString(),
         operationDate: fromDateOnly(m.operationDate),
         reversalOfId: m.reversalOfId === null ? null : m.reversalOfId.toString(),
       })),
@@ -158,7 +194,7 @@ export class KardexPepsService {
       query.to,
     );
 
-    const inRange = movements.filter((m) => fromDateOnly(m.operationDate) >= query.from);
+    const inRange = own.filter((m) => fromDateOnly(m.operationDate) >= query.from);
     const documents = await this.documentsOf(inRange);
     const unit = movements[0]?.unit ?? item.unit;
 

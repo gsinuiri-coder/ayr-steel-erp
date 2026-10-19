@@ -217,6 +217,7 @@ export class RoofingDraftsService {
 
         await this.commitInTx(tx, actor, orderId, input, operationDate, warnings);
       },
+      // cc58 (D-683): un borrador grande (SM-1 de cc28): 120 s, excepción con nombre.
       { timeout: 120_000, maxWait: 15_000 },
     );
 

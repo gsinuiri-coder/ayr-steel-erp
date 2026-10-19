@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { RequestUser } from '../auth/auth.types';
 import { InvoicingService } from './invoicing.service';
+import { RECOST_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * D-288 en la corrección de la fecha de emisión: con despachos «a la fecha del comprobante» la
@@ -89,7 +90,7 @@ describe('InvoicingService.updateManualIssueDate — despachos a la fecha del co
     expect(tx.fiscalDocument.update.mock.invocationCallOrder[0]).toBeLessThan(
       invoiceDispatch.redateInTx.mock.invocationCallOrder[0]!,
     );
-    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 60_000 });
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), RECOST_TX_OPTIONS);
   });
 
   it('sin despachos automáticos, la decisión no hace falta y no se re-fecha nada', async () => {

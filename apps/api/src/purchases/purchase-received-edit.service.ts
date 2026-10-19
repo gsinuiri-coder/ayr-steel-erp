@@ -228,6 +228,7 @@ export class ReceivedPurchaseEditService {
         return plan;
       },
       // Hasta 200 líneas con reversa y reingreso: el mismo margen que `cancel`.
+      // cc58 (D-683): hasta 200 líneas, como anular la compra: 120 s, excepción con nombre.
       { timeout: 120_000, maxWait: 15_000 },
     );
   }

@@ -124,7 +124,7 @@ import {
   type ListWindow,
 } from '../common/list-export';
 import { lockDocuments } from '../inventory/document-locks';
-import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
+import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
 import {
   amountCreditLines,
   creditsByLine,
@@ -2133,199 +2133,196 @@ export class InvoicingService {
     input: UpdateManualIssueDateInput,
     onRedateRejected: (message: string) => void,
   ): Promise<void> {
-    await this.prisma.$transaction(
-      async (tx) => {
-        // **El lock va antes de leer**, igual que `createCreditNote`, `registerManual`,
-        // `voidDocument` y `annulExternal` sobre esta misma tabla. Los guardrails de abajo
-        // —que no haya cobro ni nota de crédito por delante de la fecha nueva— se evalúan
-        // sobre lo que se lee acá: sin el lock son una foto, y un cobro registrado en paralelo
-        // entra por la ventana que el método dice cerrar.
-        await lockDocuments(tx, { fiscalDocuments: [id] });
-        const document = await tx.fiscalDocument.findUnique({
-          where: { id },
-          select: {
-            id: true,
-            docType: true,
-            origin: true,
-            status: true,
-            issueDate: true,
-            dueDate: true,
-            paymentTerms: true,
-            annulledAt: true,
-            archivedAt: true,
-            // Qué comprobante acredita este, cuando el que se corrige **es** una nota de
-            // crédito: `registerManual` también las cierra como manuales, así que la cota vale
-            // en los dos sentidos.
-            affectedDocument: { select: { number: true, issueDate: true } },
-            creditNotes: {
-              // Por estado y no solo por `archivedAt`: una nota rechazada o dada de baja no
-              // acredita nada, y bloquear la corrección con ella dejaba el comprobante
-              // atascado por un papel que no existe. Misma lista blanca que el resto del módulo.
-              where: { archivedAt: null, status: { in: LIVE_DOCUMENT_STATUSES } },
-              select: { number: true, issueDate: true },
-            },
-            payments: {
-              where: { reversedAt: null },
-              select: { date: true },
-            },
+    await this.prisma.$transaction(async (tx) => {
+      // **El lock va antes de leer**, igual que `createCreditNote`, `registerManual`,
+      // `voidDocument` y `annulExternal` sobre esta misma tabla. Los guardrails de abajo
+      // —que no haya cobro ni nota de crédito por delante de la fecha nueva— se evalúan
+      // sobre lo que se lee acá: sin el lock son una foto, y un cobro registrado en paralelo
+      // entra por la ventana que el método dice cerrar.
+      await lockDocuments(tx, { fiscalDocuments: [id] });
+      const document = await tx.fiscalDocument.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          docType: true,
+          origin: true,
+          status: true,
+          issueDate: true,
+          dueDate: true,
+          paymentTerms: true,
+          annulledAt: true,
+          archivedAt: true,
+          // Qué comprobante acredita este, cuando el que se corrige **es** una nota de
+          // crédito: `registerManual` también las cierra como manuales, así que la cota vale
+          // en los dos sentidos.
+          affectedDocument: { select: { number: true, issueDate: true } },
+          creditNotes: {
+            // Por estado y no solo por `archivedAt`: una nota rechazada o dada de baja no
+            // acredita nada, y bloquear la corrección con ella dejaba el comprobante
+            // atascado por un papel que no existe. Misma lista blanca que el resto del módulo.
+            where: { archivedAt: null, status: { in: LIVE_DOCUMENT_STATUSES } },
+            select: { number: true, issueDate: true },
           },
-        });
-        if (!document) throw new NotFoundException('El comprobante no existe');
-        if (document.origin !== FiscalDocumentOrigin.MANUAL) {
-          throw new ConflictException(
-            'Solo se puede corregir la fecha de un comprobante manual: la de uno electrónico ' +
-              'viajó al PSE y vive en su CDR',
-          );
-        }
-        if (document.annulledAt !== null) {
-          throw new ConflictException('Un comprobante anulado ya no se corrige');
-        }
-        if (document.archivedAt !== null) {
-          throw new ConflictException('Esta versión fue archivada por una reimportación');
-        }
-        // Hoy `origin = MANUAL` implica `ACCEPTED` o `ANNULLED` (`applyManualNumber` los cierra
-        // así), pero eso es una invariante implícita de otro método: si algún día un manual
-        // puede quedar en otro estado, esto corta acá y no se descubre por un dato raro.
-        if (document.status !== FiscalDocumentStatus.ACCEPTED) {
-          throw new ConflictException('Solo se corrige la fecha de un comprobante aceptado');
-        }
-
-        const before = document.issueDate.toISOString().slice(0, 10);
-        if (before === input.issueDate) {
-          throw new ConflictException(`La fecha de emisión ya es ${input.issueDate}`);
-        }
-
-        // Una nota de crédito no puede ser anterior al comprobante que acredita, y un cobro no
-        // puede existir antes de que el comprobante se emita. Las dos son incoherencias que hoy
-        // no se pueden crear por ningún otro camino, así que tampoco se crean por este.
-        const earlierNote = document.creditNotes.find(
-          (n) => n.issueDate.toISOString().slice(0, 10) < input.issueDate,
+          payments: {
+            where: { reversedAt: null },
+            select: { date: true },
+          },
+        },
+      });
+      if (!document) throw new NotFoundException('El comprobante no existe');
+      if (document.origin !== FiscalDocumentOrigin.MANUAL) {
+        throw new ConflictException(
+          'Solo se puede corregir la fecha de un comprobante manual: la de uno electrónico ' +
+            'viajó al PSE y vive en su CDR',
         );
-        if (earlierNote) {
-          throw new ConflictException(
-            `La nota de crédito ${earlierNote.number ?? ''} es del ` +
-              `${earlierNote.issueDate.toISOString().slice(0, 10)}: la emisión no puede quedar después`,
-          );
-        }
-        const earlierPayment = document.payments.find(
-          (p) => p.date.toISOString().slice(0, 10) < input.issueDate,
+      }
+      if (document.annulledAt !== null) {
+        throw new ConflictException('Un comprobante anulado ya no se corrige');
+      }
+      if (document.archivedAt !== null) {
+        throw new ConflictException('Esta versión fue archivada por una reimportación');
+      }
+      // Hoy `origin = MANUAL` implica `ACCEPTED` o `ANNULLED` (`applyManualNumber` los cierra
+      // así), pero eso es una invariante implícita de otro método: si algún día un manual
+      // puede quedar en otro estado, esto corta acá y no se descubre por un dato raro.
+      if (document.status !== FiscalDocumentStatus.ACCEPTED) {
+        throw new ConflictException('Solo se corrige la fecha de un comprobante aceptado');
+      }
+
+      const before = document.issueDate.toISOString().slice(0, 10);
+      if (before === input.issueDate) {
+        throw new ConflictException(`La fecha de emisión ya es ${input.issueDate}`);
+      }
+
+      // Una nota de crédito no puede ser anterior al comprobante que acredita, y un cobro no
+      // puede existir antes de que el comprobante se emita. Las dos son incoherencias que hoy
+      // no se pueden crear por ningún otro camino, así que tampoco se crean por este.
+      const earlierNote = document.creditNotes.find(
+        (n) => n.issueDate.toISOString().slice(0, 10) < input.issueDate,
+      );
+      if (earlierNote) {
+        throw new ConflictException(
+          `La nota de crédito ${earlierNote.number ?? ''} es del ` +
+            `${earlierNote.issueDate.toISOString().slice(0, 10)}: la emisión no puede quedar después`,
         );
-        if (earlierPayment) {
-          throw new ConflictException(
-            `Hay un cobro del ${earlierPayment.date.toISOString().slice(0, 10)}: ` +
-              'la emisión no puede quedar después',
-          );
-        }
-        // La mitad simétrica: si el que se corrige **es** una nota de crédito, no puede quedar
-        // fechada antes del comprobante que acredita. Es la misma incoherencia mirada desde el
-        // otro lado, y sin esto la cota de arriba solo cubría una dirección.
-        // cc52 (D-645): la fecha de una NC con devolución es la de su reingreso al kardex: no se
-        // cambia después (se anula la NC, que revierte la devolución, y se registra otra).
-        const salesReturn =
-          document.docType === FiscalDocType.NOTA_CREDITO
-            ? await tx.salesReturn.findFirst({
-                where: { creditNoteId: id, status: 'ACTIVE' },
-                select: { seq: true },
-              })
-            : null;
-        if (salesReturn) {
-          throw new ConflictException(
-            `Esta nota de crédito generó la devolución ${salesReturnCode(salesReturn.seq)}: su fecha no se cambia. Anúlala (revierte la devolución) y registra otra con la fecha correcta.`,
-          );
-        }
-        const affected = document.affectedDocument;
-        if (affected && input.issueDate < affected.issueDate.toISOString().slice(0, 10)) {
-          throw new ConflictException(
-            `Esta nota acredita a ${affected.number ?? 'un comprobante'} del ` +
-              `${affected.issueDate.toISOString().slice(0, 10)}: no puede quedar fechada antes`,
-          );
-        }
-
-        // El vencimiento se corre los mismos días que la emisión. `CONTADO` no tiene ninguno.
-        const beforeDue = document.dueDate ? document.dueDate.toISOString().slice(0, 10) : null;
-        const afterDue = beforeDue === null ? null : shiftDate(beforeDue, before, input.issueDate);
-        if (afterDue !== beforeDue && !input.confirmDueDateShift) {
-          throw new ConflictException(
-            `Mover la emisión al ${input.issueDate} corre el vencimiento del ${beforeDue} al ` +
-              `${afterDue}: confirmá el cambio para aplicarlo`,
-          );
-        }
-
-        // D-288: los despachos creados «a la fecha del comprobante» quedarían con la fecha
-        // vieja. La decisión es explícita, como la del vencimiento: sin ella no se toca nada.
-        const atIssueDate = (await this.invoiceDispatch.linkedInTx(tx, id)).filter(
-          (d) => d.atIssueDate,
+      }
+      const earlierPayment = document.payments.find(
+        (p) => p.date.toISOString().slice(0, 10) < input.issueDate,
+      );
+      if (earlierPayment) {
+        throw new ConflictException(
+          `Hay un cobro del ${earlierPayment.date.toISOString().slice(0, 10)}: ` +
+            'la emisión no puede quedar después',
         );
-        if (atIssueDate.length > 0 && input.redateDispatches === undefined) {
+      }
+      // La mitad simétrica: si el que se corrige **es** una nota de crédito, no puede quedar
+      // fechada antes del comprobante que acredita. Es la misma incoherencia mirada desde el
+      // otro lado, y sin esto la cota de arriba solo cubría una dirección.
+      // cc52 (D-645): la fecha de una NC con devolución es la de su reingreso al kardex: no se
+      // cambia después (se anula la NC, que revierte la devolución, y se registra otra).
+      const salesReturn =
+        document.docType === FiscalDocType.NOTA_CREDITO
+          ? await tx.salesReturn.findFirst({
+              where: { creditNoteId: id, status: 'ACTIVE' },
+              select: { seq: true },
+            })
+          : null;
+      if (salesReturn) {
+        throw new ConflictException(
+          `Esta nota de crédito generó la devolución ${salesReturnCode(salesReturn.seq)}: su fecha no se cambia. Anúlala (revierte la devolución) y registra otra con la fecha correcta.`,
+        );
+      }
+      const affected = document.affectedDocument;
+      if (affected && input.issueDate < affected.issueDate.toISOString().slice(0, 10)) {
+        throw new ConflictException(
+          `Esta nota acredita a ${affected.number ?? 'un comprobante'} del ` +
+            `${affected.issueDate.toISOString().slice(0, 10)}: no puede quedar fechada antes`,
+        );
+      }
+
+      // El vencimiento se corre los mismos días que la emisión. `CONTADO` no tiene ninguno.
+      const beforeDue = document.dueDate ? document.dueDate.toISOString().slice(0, 10) : null;
+      const afterDue = beforeDue === null ? null : shiftDate(beforeDue, before, input.issueDate);
+      if (afterDue !== beforeDue && !input.confirmDueDateShift) {
+        throw new ConflictException(
+          `Mover la emisión al ${input.issueDate} corre el vencimiento del ${beforeDue} al ` +
+            `${afterDue}: confirmá el cambio para aplicarlo`,
+        );
+      }
+
+      // D-288: los despachos creados «a la fecha del comprobante» quedarían con la fecha
+      // vieja. La decisión es explícita, como la del vencimiento: sin ella no se toca nada.
+      const atIssueDate = (await this.invoiceDispatch.linkedInTx(tx, id)).filter(
+        (d) => d.atIssueDate,
+      );
+      if (atIssueDate.length > 0 && input.redateDispatches === undefined) {
+        throw new ConflictException(
+          `El comprobante tiene despachos a la fecha del comprobante (` +
+            atIssueDate.map((d) => toDispatchCode(d.seq)).join(', ') +
+            `): indicá si se re-fechan a la fecha nueva`,
+        );
+      }
+
+      await tx.fiscalDocument.update({
+        where: { id },
+        data: {
+          issueDate: toDateOnly(input.issueDate),
+          dueDate: afterDue ? toDateOnly(afterDue) : null,
+        },
+      });
+      await tx.fiscalDocumentIssueDateChange.create({
+        data: {
+          documentId: id,
+          beforeIssueDate: toDateOnly(before),
+          afterIssueDate: toDateOnly(input.issueDate),
+          beforeDueDate: beforeDue ? toDateOnly(beforeDue) : null,
+          afterDueDate: afterDue ? toDateOnly(afterDue) : null,
+          reason: input.reason,
+          changedById: actor.id,
+        },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'invoicing.document.update-issue-date',
+        entity: 'fiscal_documents',
+        entityId: id,
+        before: { issueDate: before, dueDate: beforeDue },
+        after: {
+          issueDate: input.issueDate,
+          dueDate: afterDue,
+          reason: input.reason,
+          ...(atIssueDate.length > 0 ? { redateDispatches: input.redateDispatches } : {}),
+        },
+      });
+      // Después de mover la fecha: el plan del despacho nuevo lee la emisión corregida.
+      // Revisión de cc52 (P2): re-fechar revierte el despacho, del que una devolución ya tomó su
+      // costo y su enlace: con una devolución vigente, primero se anula su NC.
+      if (input.redateDispatches === true && atIssueDate.length > 0) {
+        const withReturn = await tx.salesReturn.findFirst({
+          where: { status: 'ACTIVE', creditNote: { affectedDocumentId: id } },
+          select: { seq: true },
+        });
+        if (withReturn) {
           throw new ConflictException(
-            `El comprobante tiene despachos a la fecha del comprobante (` +
-              atIssueDate.map((d) => toDispatchCode(d.seq)).join(', ') +
-              `): indicá si se re-fechan a la fecha nueva`,
+            `La devolución ${salesReturnCode(withReturn.seq)} salió de estos despachos: anula su nota de crédito antes de re-fecharlos`,
           );
         }
-
-        await tx.fiscalDocument.update({
-          where: { id },
-          data: {
-            issueDate: toDateOnly(input.issueDate),
-            dueDate: afterDue ? toDateOnly(afterDue) : null,
-          },
-        });
-        await tx.fiscalDocumentIssueDateChange.create({
-          data: {
-            documentId: id,
-            beforeIssueDate: toDateOnly(before),
-            afterIssueDate: toDateOnly(input.issueDate),
-            beforeDueDate: beforeDue ? toDateOnly(beforeDue) : null,
-            afterDueDate: afterDue ? toDateOnly(afterDue) : null,
-            reason: input.reason,
-            changedById: actor.id,
-          },
-        });
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'invoicing.document.update-issue-date',
-          entity: 'fiscal_documents',
-          entityId: id,
-          before: { issueDate: before, dueDate: beforeDue },
-          after: {
-            issueDate: input.issueDate,
-            dueDate: afterDue,
-            reason: input.reason,
-            ...(atIssueDate.length > 0 ? { redateDispatches: input.redateDispatches } : {}),
-          },
-        });
-        // Después de mover la fecha: el plan del despacho nuevo lee la emisión corregida.
-        // Revisión de cc52 (P2): re-fechar revierte el despacho, del que una devolución ya tomó su
-        // costo y su enlace: con una devolución vigente, primero se anula su NC.
-        if (input.redateDispatches === true && atIssueDate.length > 0) {
-          const withReturn = await tx.salesReturn.findFirst({
-            where: { status: 'ACTIVE', creditNote: { affectedDocumentId: id } },
-            select: { seq: true },
-          });
-          if (withReturn) {
-            throw new ConflictException(
-              `La devolución ${salesReturnCode(withReturn.seq)} salió de estos despachos: anula su nota de crédito antes de re-fecharlos`,
-            );
+      }
+      if (input.redateDispatches === true && atIssueDate.length > 0) {
+        try {
+          await this.invoiceDispatch.redateInTx(tx, actor, id);
+        } catch (err) {
+          // Los rechazos de D-288 son 400 con el motivo (kardex negativo a la fecha nueva, o el
+          // despacho nuevo no sería el mismo): se reportan para la auditoría de afuera.
+          if (err instanceof BadRequestException) {
+            onRedateRejected(err.message);
           }
+          throw err;
         }
-        if (input.redateDispatches === true && atIssueDate.length > 0) {
-          try {
-            await this.invoiceDispatch.redateInTx(tx, actor, id);
-          } catch (err) {
-            // Los rechazos de D-288 son 400 con el motivo (kardex negativo a la fecha nueva, o el
-            // despacho nuevo no sería el mismo): se reportan para la auditoría de afuera.
-            if (err instanceof BadRequestException) {
-              onRedateRejected(err.message);
-            }
-            throw err;
-          }
-        }
-        // Revertir y volver a despachar toma los locks y el kardex de siempre: más que el
-        // default de 5 s de una transacción interactiva.
-      },
-      { timeout: 60_000 },
-    );
+      }
+      // Revertir y volver a despachar toma los locks y el kardex de siempre: más que el
+      // default de 5 s de una transacción interactiva.
+    }, RECOST_TX_OPTIONS);
   }
 
   /**
