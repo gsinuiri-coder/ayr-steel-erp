@@ -661,7 +661,8 @@ describe('cc58 (D-684, E-05 de audit-01): la salida que agota el ítem', () => {
     // 1 × 3.3333 al promedio; la última se lleva lo que queda: 10 − 3.3333 = 6.6667 (no 6.6666).
     expect([first.totalCost.toString(), last.totalCost.toString()]).toEqual(['3.3333', '6.6667']);
     expect((await kardexValue(itemId)).toFixed(4)).toBe('0.0000');
-    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '0' });
+    // Sin cantidad, el saldo no vale nada; el promedio se conserva para el piso de precio.
+    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '3.3333' });
     // Un recosteo posterior no tiene nada que corregir.
     expect(
       await prisma.inventoryMovement.count({ where: { itemId, recostOfId: { not: null } } }),

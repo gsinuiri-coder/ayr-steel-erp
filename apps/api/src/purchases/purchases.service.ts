@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { RECOST_TX_OPTIONS } from '../common/transaction-options';
 import {
   BadRequestException,
   ConflictException,
@@ -986,8 +985,9 @@ export class PurchasesService {
       },
       // Una compra admite 200 líneas y cada reversa son varios viajes a Neon: con 30 s
       // una anulación grande se quedaba sin tiempo, hacía rollback y la compra no se
-      // podía anular nunca. Ver la nota de rendimiento en docs/PROGRESO.md.
-      RECOST_TX_OPTIONS,
+      // podía anular nunca. Ver la nota de rendimiento en docs/PROGRESO.md. cc58 (D-683): por eso
+      // queda en 120 s, excepción con nombre en el centinela de topes.
+      { timeout: 120_000, maxWait: 15_000 },
     );
     return this.findOne(id);
   }

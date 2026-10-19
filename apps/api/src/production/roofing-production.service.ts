@@ -863,8 +863,9 @@ export class RoofingProductionService {
           });
         }
       },
-      // Cada bobina suma su lock, sus lecturas y su asignación: el presupuesto crece con ellas.
-      KARDEX_TX_OPTIONS,
+      // Cada bobina suma su lock, sus lecturas y su asignación: el presupuesto crece con ellas
+      // (hasta 20 bobinas). cc58 (D-683): excepción con nombre en el centinela de topes.
+      { timeout: 30_000 + 3_000 * Math.max(coilIds.length - 1, 0), maxWait: 10_000 },
     );
 
     return this.withWarnings(await this.production.findOne(orderId), warnings);

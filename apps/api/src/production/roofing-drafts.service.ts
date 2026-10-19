@@ -19,7 +19,7 @@ import {
   type RoofingReportDraftDto,
   type RoofingReportDraftInput,
 } from '@ayr/shared';
-import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { claimIdempotencyKey } from '../common/idempotency';
@@ -215,7 +215,8 @@ export class RoofingDraftsService {
       if (!claim.claimed) return;
 
       await this.commitInTx(tx, actor, orderId, input, operationDate, warnings);
-    }, RECOST_TX_OPTIONS);
+      // cc58 (D-683): un borrador grande (SM-1 de cc28): 120 s, excepción con nombre.
+    }, { timeout: 120_000, maxWait: 15_000 });
 
     return this.roofing.withWarnings(await this.production.findOne(orderId), warnings);
   }
