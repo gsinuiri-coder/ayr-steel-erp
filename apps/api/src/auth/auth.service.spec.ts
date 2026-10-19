@@ -6,7 +6,11 @@ import argon2 from 'argon2';
 import { AuditService } from '../audit/audit.service';
 import { ENV, loadEnv } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthService, DUMMY_PASSWORD_HASH } from './auth.service';
+import { createHash } from 'node:crypto';
+import { AuthService, DUMMY_PASSWORD_HASH, SESSION_MAX_DAYS } from './auth.service';
+
+const sha = (raw: string) => createHash('sha256').update(raw).digest('hex');
+const DAY = 24 * 60 * 60 * 1000;
 
 const env = loadEnv({
   NODE_ENV: 'test',
@@ -222,7 +226,10 @@ describe('AuthService', () => {
         id: 's1',
         userId: user.id,
         revokedAt: null,
-        refreshTokenHash: 'hash-viejo',
+        refreshTokenHash: sha('token-viejo'),
+        previousTokenHash: null,
+        rotatedAt: null,
+        createdAt: new Date(),
         expiresAt: new Date(Date.now() + 60_000),
         user,
       });
@@ -232,9 +239,60 @@ describe('AuthService', () => {
       expect(prisma.session.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 's1' },
-          data: expect.objectContaining({ previousTokenHash: 'hash-viejo' }),
+          data: expect.objectContaining({ previousTokenHash: sha('token-viejo') }),
         }),
       );
+    });
+
+    describe('cc58 (D-687, C-09): renovación segura', () => {
+      const session = (over: Record<string, unknown>) => ({
+        id: 's2',
+        userId: user.id,
+        revokedAt: null,
+        refreshTokenHash: sha('token-nuevo'),
+        previousTokenHash: sha('token-anterior'),
+        rotatedAt: new Date(),
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 60_000),
+        user,
+        ...over,
+      });
+
+      it('el token anterior dentro de la gracia sirve (dos pestañas a la vez)', async () => {
+        prisma.session.findFirst.mockResolvedValue(session({}));
+        prisma.session.update.mockResolvedValue({});
+        await expect(service.refresh('token-anterior')).resolves.toHaveProperty('refreshToken');
+      });
+
+      it('el token anterior después de la gracia es un reuso: cierra la sesión y lo audita', async () => {
+        prisma.session.findFirst.mockResolvedValue(
+          session({ rotatedAt: new Date(Date.now() - 5 * 60_000) }),
+        );
+        prisma.session.updateMany.mockResolvedValue({ count: 1 });
+        await expect(service.refresh('token-anterior', { ip: '1.2.3.4' })).rejects.toBeInstanceOf(
+          UnauthorizedException,
+        );
+        expect(prisma.session.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 's2', revokedAt: null } }),
+        );
+        expect(audit.log).toHaveBeenCalledWith(
+          expect.objectContaining({ action: 'auth.refresh.reuse', entityId: 's2' }),
+        );
+        expect(prisma.session.update).not.toHaveBeenCalled();
+      });
+
+      it(`no pasa de ${String(SESSION_MAX_DAYS)} días desde el login, por más que se renueve`, async () => {
+        prisma.session.findFirst.mockResolvedValue(
+          session({ createdAt: new Date(Date.now() - (SESSION_MAX_DAYS * DAY + 1000)) }),
+        );
+        await expect(service.refresh('token-nuevo')).rejects.toThrow('máximo de 30 días');
+        // Cerca del tope, la renovación vence en el tope, no 7 días después.
+        const createdAt = new Date(Date.now() - (SESSION_MAX_DAYS - 2) * DAY);
+        prisma.session.findFirst.mockResolvedValue(session({ createdAt }));
+        prisma.session.update.mockResolvedValue({});
+        const out = await service.refresh('token-nuevo');
+        expect(out.refreshExpiresAt.getTime()).toBe(createdAt.getTime() + SESSION_MAX_DAYS * DAY);
+      });
     });
 
     it('rechaza refresh expirado', async () => {

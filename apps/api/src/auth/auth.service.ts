@@ -24,6 +24,13 @@ export interface IssuedTokens {
 /** Segundos en que se sigue aceptando el refresh token anterior tras rotarlo. */
 const REFRESH_GRACE_MS = 30_000;
 
+/**
+ * cc58 (D-687, C-09 de audit-01): el tope **absoluto** de una sesión, decisión del dueño. Renovar no
+ * la alarga más allá de 30 días desde el login: después, se vuelve a entrar con la contraseña.
+ */
+export const SESSION_MAX_DAYS = 30;
+const SESSION_MAX_MS = SESSION_MAX_DAYS * 24 * 60 * 60 * 1000;
+
 const hashToken = (raw: string): string => createHash('sha256').update(raw).digest('hex');
 const newRefreshToken = (): string => randomBytes(48).toString('base64url');
 
@@ -93,31 +100,52 @@ export class AuthService {
   /**
    * Rota el refresh token y emite un nuevo access token. Acepta el hash anterior
    * durante REFRESH_GRACE_MS para no cerrar la sesión si dos pestañas refrescan a la vez.
+   *
+   * cc58 (D-687, C-09 de audit-01): **renovación segura.** El token anterior presentado después de
+   * la gracia es un reuso —alguien guardó un token que ya se rotó— y cierra la sesión entera (las
+   * dos copias dejan de servir) con su registro de auditoría. Y la sesión no pasa de
+   * `SESSION_MAX_DAYS` desde el login, por más que se renueve.
    */
   async refresh(rawRefreshToken: string, meta: ClientMeta = {}): Promise<IssuedTokens> {
     const hash = hashToken(rawRefreshToken);
     const now = new Date();
     const session = await this.prisma.session.findFirst({
-      where: {
-        OR: [
-          { refreshTokenHash: hash },
-          {
-            previousTokenHash: hash,
-            rotatedAt: { gte: new Date(now.getTime() - REFRESH_GRACE_MS) },
-          },
-        ],
-      },
+      where: { OR: [{ refreshTokenHash: hash }, { previousTokenHash: hash }] },
       include: { user: true },
     });
     if (!session || session.revokedAt || session.expiresAt <= now) {
       throw new UnauthorizedException('Sesión inválida o expirada');
+    }
+    const reused =
+      session.refreshTokenHash !== hash &&
+      (!session.rotatedAt || session.rotatedAt.getTime() < now.getTime() - REFRESH_GRACE_MS);
+    if (reused) {
+      await this.prisma.session.updateMany({
+        where: { id: session.id, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      await this.audit.log({
+        actorId: session.userId,
+        action: 'auth.refresh.reuse',
+        entity: 'sessions',
+        entityId: session.id,
+        after: { ip: meta.ip?.slice(0, 64) ?? null },
+      });
+      throw new UnauthorizedException('Sesión inválida o expirada');
+    }
+    const cap = new Date(session.createdAt.getTime() + SESSION_MAX_MS);
+    if (cap <= now) {
+      throw new UnauthorizedException(
+        `La sesión llegó a su máximo de ${String(SESSION_MAX_DAYS)} días: vuelve a entrar`,
+      );
     }
     if (!session.user.active) {
       await this.revokeAllSessions(session.userId);
       throw new ForbiddenException('Usuario desactivado. Contacta al administrador.');
     }
     const refreshToken = newRefreshToken();
-    const refreshExpiresAt = this.refreshExpiry();
+    const sliding = this.refreshExpiry();
+    const refreshExpiresAt = sliding < cap ? sliding : cap;
     await this.prisma.session.update({
       where: { id: session.id },
       data: {
