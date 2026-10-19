@@ -2810,3 +2810,51 @@ del comprobante que acredita, para que la factura y su NC no queden a nombre de 
 UAT de cc57 aprobado y **D-671 a D-675 RATIFICADAS por el dueño el 19/10** (pasan a firmes en `ARQUITECTURA.md` §0.2).
 Siguen pendientes de su decisión los índices propuestos (migración, con OK por nombre) y las decisiones abiertas que
 lista `docs/handoff/ventana-cc57.md`.
+
+## cc58 — cierre de lo pendiente de cc57 (D-676..D-691)
+
+Sesión de día, atendida. Las decisiones venían en el brief. En la sesión, el dueño contestó además cuatro preguntas: no
+hay cierre de mes por ahora, 30/60 s con los importadores aparte, la base de D-409 para el % y 30 días de sesión. Tabla
+punto por punto en `local-data/cc58/INFORME.md` del checkout principal.
+
+**Por qué el flete va por el recosteo de la entrada y no por un ajuste del saldo (D-686).** El `ADJUST` de D-043 solo
+podía repartir sobre lo que quedaba hoy: lo que ya había salido se quedaba sin su parte, y una bobina consumida entera
+no recibía nada. El dueño pidió sumar el flete «al costo del ingreso», y para eso ya existía una puerta: la de los
+cierres de OP (`recostEntries`, D-665). Usarla tiene tres consecuencias que se aceptan y quedan anotadas:
+
+- **Reportes de meses pasados.** El ajuste cae en la fecha de cada salida, así que el costo de un mes ya reportado
+  cambia. No hay cierre de mes que lo impida.
+- **Tope de 500 filas (D-650).** Si el recosteo lo pasa, la recepción del servicio se rechaza. Se prefirió eso a perder
+  el flete en silencio.
+- **«Editar bobina» (D-672).** No cambia el costo de una bobina con flete.
+
+**Por qué la anulación busca por «compra <id>» (D-686).** La primera versión buscaba la nota entera, con el tipo, la
+serie y el número. Las revisiones mostraron tres casos en los que eso falla:
+
+- dos proveedores con el mismo F001-1 chocan entre sí;
+- un flete anulado y vuelto a registrar suma dos veces;
+- corregir la serie de una compra recibida deja el flete huérfano.
+
+El id de la compra no cambia nunca, y lo neto de alta y anulación es lo que sigue sumado.
+
+**Por qué los topes de 120 s se quedan (D-683).** La decisión fue 30 s para el día y 60 s para el recosteo. Anular o
+editar una compra recibida y el borrador de producción ya estaban en 120 s por un incidente: con menos tiempo, una compra
+de 200 líneas no se podía anular nunca (Fase 2b, SM-1 de cc28). Quedan en 120 s como excepción con nombre en el
+centinela, y se le pide al dueño que lo ratifique.
+
+**Por qué la salida que agota el ítem conserva el promedio (D-684).** La primera versión dejaba el promedio en 0. El
+piso de precio (`price-floor.ts`) lee ese promedio aunque no haya stock, así que un producto vendido hasta agotarse se
+quedaba sin piso. Ahora el valor sale exacto y el promedio queda como estaba.
+
+**Por qué se postergó el límite por IP (D-688).** Detrás del proxy de Vercel, la API ve una sola IP para toda la
+empresa. Con 30 intentos por minuto, un tercero podía dejar a todos sin login. El dueño eligió postergarlo hasta que la
+web le pase a la API la IP real del cliente, firmada con un secreto compartido.
+
+**Céntimos (punto 11): no se ejecutó.** `check:balances` (solo lectura) da las 2 diferencias de cc57, que suman
+S/ 0,31. No hay ningún dry-run que toque solo esos 2 ítems:
+
+- `recosteo:historico` solo acepta SKU de productos, y estas son bobinas;
+- el saldo no se reescribe si el kardex ya está bien;
+- ninguna puerta del kardex resincroniza el promedio guardado.
+
+Queda para decidir entre dejarlo así, porque D-684 lo corrige al consumirse, y una puerta nueva.
