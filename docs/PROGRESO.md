@@ -2,6 +2,33 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-19 — cc58: cierre de lo pendiente de cc57 (D-676..D-691; PR #230 a #233)
+
+Sesión de día, atendida. Una migración con OK por nombre (`20261019_perf_indexes_cc57`), sin `--execute` y sin SQL
+contra producción. Detalle en `docs/handoff/ventana-cc58.md`; tabla punto por punto en `local-data/cc58/INFORME.md` del
+checkout principal; revisiones en `docs/revision/cc58-*.md`; UAT en `docs/uat/cc58.md`.
+
+- **Corte A, índices y decisiones (D-676..D-682):** API `00142-5p2` (`git-sha=db134497`), merge `c664d9ab`.
+- **Corte B, topes, salida que agota el ítem, PEPS (D-683..D-685):** API `00143-ts6` (`git-sha=d78f150e`), merge
+  `11dccd53`.
+- **Corte C, flete que llega tarde (D-686):** API `00144-nv6` (`git-sha=7f9b2c23`), merge `9528090d`.
+- **Corte D, sesión, D-285, D-374, kardex (D-687, D-689..D-691):** API `00145-6qp` (`git-sha=84e31868`), merge
+  `c5f1b6a2`. D-688 (login por IP) quedó postergada por el dueño.
+- **Neon:** respaldo `respaldo-pre-cc58-20261019`; se borró `respaldo-pre-cc41-20261010` (regla 18). Sigue en 10 de 10.
+- **Pendiente del dueño:**
+  - UAT y ratificación;
+  - los céntimos (no se ejecutó: la condición no se cumple);
+  - la variable de D-688;
+  - los datos de FFA1-00001426 y OP-000029;
+  - los permisos de `opening-date` en `.claude/settings.json`.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-684, salida que agota el ítem: `inventory.service.ts` `record()`.
+- D-686, flete por recosteo: `purchases.service.ts` y `landed-cost-recost.ts`.
+- D-690, `deferRecost`.
+- D-691, foto del kardex.
+
 ## 2026-10-17 — cc57: resto del plan de audit-01, P2 y P3 de código (D-671..D-675; PR #223 a #227)
 
 Sesión desatendida. Sin migraciones, sin `--execute`, sin SQL contra producción y sin escrituras de datos. Detalle en

@@ -126,15 +126,19 @@ la lista y, si con la nueva se pasa de 10, proponer al dueño cuáles borrar.
 | `ci`                           | `br-misty-band-ae9s41t7`          | migraciones + smoke de la CI                  | siempre                                                                  |
 | `demo`                         | `br-solitary-smoke-aegbos8k`      | UAT (copia de production)                     | siempre                                                                  |
 | `respaldo-pre-v4-20260915`     | `br-sweet-resonance-aegd7jdg`     | respaldo del día D                            | siempre                                                                  |
-| `respaldo-pre-cc41-20261010`   | `br-old-mountain-aeno2yqp`        | respaldo antes de la migración de cc41        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc51-20261013`   | `br-divine-thunder-aetc4rfe`      | respaldo antes de la migración de cc51        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc53-20261014`   | `br-flat-rice-aetbs1e3`           | respaldo antes de la migración de cc53        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc53b-20261014`  | `br-hidden-sound-ae4ue3jd`        | respaldo antes del recosteo histórico (D-651) | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc56c2-20261016` | `br-bitter-water-aesm4ies`        | respaldo antes de la corrección C2 (cc56)     | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-cc58-20261019`   | `br-spring-hill-aetbkbg9`         | respaldo antes de la migración de cc58        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 
-**10 de 10 desde el 2026-10-16.** La próxima rama nueva exige antes borrar un respaldo por la regla 18 (hoy el más
-viejo que la cubre es `respaldo-pre-cc41-20261010`; los dos más recientes son `respaldo-pre-cc53b-20261014` y
-`respaldo-pre-cc56c2-20261016`).
+**10 de 10 desde el 2026-10-19 (cc58).** La próxima rama nueva exige antes borrar un respaldo por la regla 18 (hoy el más
+viejo que la cubre es `respaldo-pre-cc51-20261013`; los dos más recientes son `respaldo-pre-cc56c2-20261016` y
+`respaldo-pre-cc58-20261019`).
+
+**Borrada el 2026-10-19 por el agente (regla 18, cc58)**, antes de crear `respaldo-pre-cc58-20261019`
+(`br-spring-hill-aetbkbg9`) para la migración de índices: `respaldo-pre-cc41-20261010` (`br-old-mountain-aeno2yqp`), el
+respaldo más viejo que la cubría, sin ramas hijas.
 
 **Borrada el 2026-10-14 al cerrar cc53, por el dueño** (con `!`): `respaldo-pre-cc52-20261014`
 (`br-shy-dew-ae5et5wc`). Los dos respaldos post-día-D más recientes son ahora `respaldo-pre-cc53-20261014` y
