@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import type { Env } from '../config/env';
 import type { PrismaService } from '../prisma/prisma.service';
 import { kardexPepsXlsx } from './kardex-peps-xlsx';
-import { KardexPepsService } from './kardex-peps.service';
+import { KardexPepsService, pepsCorrectedCosts } from './kardex-peps.service';
 
 /**
  * D-279. El cálculo PEPS se prueba en `kardex-peps.spec.ts`; acá, lo que el servicio agrega:
@@ -34,6 +34,7 @@ function movement(
     refId,
     notes: null,
     reversalOfId: null,
+    recostOfId: null,
     operationDate: d(date),
   };
 }
@@ -80,6 +81,41 @@ describe('KardexPepsService', () => {
     from: '2026-09-01',
     to: '2026-09-30',
   };
+
+  it('cc58 (D-685, E-11): las capas toman el costo corregido de sus entradas; el recosteo de una salida no entra', async () => {
+    const { prisma, service } = build();
+    prisma.inventoryMovement.findMany.mockResolvedValue([
+      movement(1, 'IN', '100.000', '1000.0000', '2026-08-10', 'PURCHASE', 'p-1'),
+      movement(2, 'IN', '50.000', '600.0000', '2026-09-02', 'PURCHASE', 'p-2'),
+      movement(3, 'OUT', '120.000', '1333.3333', '2026-09-03', 'SALE', 'd-1'),
+      // El flete de la primera compra llegó tarde: +100 a su entrada, y la salida se recosteó.
+      {
+        ...movement(4, 'ADJUST', '100.000', '100.0000', '2026-08-10', 'PURCHASE', 'p-1'),
+        recostOfId: 1n,
+      },
+      {
+        ...movement(5, 'ADJUST', '120.000', '-80.0000', '2026-09-03', 'SALE', 'd-1'),
+        recostOfId: 3n,
+      },
+    ]);
+    const report = await service.report(query);
+    // La capa de la primera compra vale 1100 (no 1000): el saldo inicial y la salida lo llevan.
+    expect(report.peps.opening.total).toBe('1100.0000');
+    // 100 kg a 11 + 20 kg a 12 = 1340.
+    expect(report.peps.rows.map((r) => r.movementId)).toEqual(['2', '3']);
+    expect(report.peps.rows[1]?.outTotal).toBe('1340.0000');
+  });
+
+  it('pepsCorrectedCosts suma los recosteos de entradas y ajustes, no los de salidas', () => {
+    const rows = [
+      { id: 1n, type: 'IN' as const, totalCost: '10.0000', recostOfId: null },
+      { id: 2n, type: 'OUT' as const, totalCost: '4.0000', recostOfId: null },
+      { id: 3n, type: 'ADJUST' as const, totalCost: '2.5000', recostOfId: 1n },
+      { id: 4n, type: 'ADJUST' as const, totalCost: '-1.0000', recostOfId: 2n },
+      { id: 5n, type: 'ADJUST' as const, totalCost: '-0.5000', recostOfId: 1n },
+    ];
+    expect([...pepsCorrectedCosts(rows)]).toEqual([[1n, '12.0000']]);
+  });
 
   it('arma el saldo inicial con lo anterior y resuelve comprobantes solo del rango', async () => {
     const { prisma, service } = build();

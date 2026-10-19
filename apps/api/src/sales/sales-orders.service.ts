@@ -764,7 +764,7 @@ export class SalesOrdersService {
       // Una confirmación toma un lock por línea (hasta `MAX_SALES_ITEMS`) sobre bobinas y
       // saldos, y desde D-186 además crea una OP por línea a fabricar. Mismo presupuesto que
       // «generar todas las órdenes» (D-148), que hacía la mitad de este trabajo.
-      { timeout: 60_000, maxWait: 15_000 },
+      KARDEX_TX_OPTIONS,
     );
 
     return this.findOne(orderId);
@@ -2880,128 +2880,121 @@ export class SalesOrdersService {
     if (actor.role !== Role.ADMINISTRADOR) {
       throw new ForbiddenException('Solo un administrador restaura una reserva');
     }
-    await this.prisma.$transaction(
-      async (tx) => {
-        const head = await tx.reservation.findUnique({
-          where: { id: reservationId },
-          select: { salesOrderId: true },
-        });
-        if (!head) throw new NotFoundException('Reserva no encontrada');
-        // El mismo orden de locks que el resto del pedido: primero el pedido, después la fila de
-        // la reserva y al final el saldo del ítem (`lockAvailability`).
-        const order = await this.lockOrder(tx, head.salesOrderId);
-        await lockDocuments(tx, { reservations: [reservationId] });
-        const reservation = await tx.reservation.findUniqueOrThrow({
-          where: { id: reservationId },
-          select: {
-            id: true,
-            status: true,
-            itemType: true,
-            itemId: true,
-            qty: true,
-            unit: true,
-            releasedAt: true,
-            releasedById: true,
-            salesOrderItemId: true,
-            salesOrderItem: { select: RESERVATION_LINE_SELECT },
-          },
-        });
-        const events = await latestReleaseEvents(tx, [reservationId]);
-        const lastRelease = events.get(reservationId) ?? null;
-        const block = restoreBlock(
-          {
-            ...reservation,
-            salesOrder: { status: order.status },
-          },
-          lastRelease?.action ?? null,
-        );
-        if (block !== null) throw new BadRequestException(block);
+    await this.prisma.$transaction(async (tx) => {
+      const head = await tx.reservation.findUnique({
+        where: { id: reservationId },
+        select: { salesOrderId: true },
+      });
+      if (!head) throw new NotFoundException('Reserva no encontrada');
+      // El mismo orden de locks que el resto del pedido: primero el pedido, después la fila de
+      // la reserva y al final el saldo del ítem (`lockAvailability`).
+      const order = await this.lockOrder(tx, head.salesOrderId);
+      await lockDocuments(tx, { reservations: [reservationId] });
+      const reservation = await tx.reservation.findUniqueOrThrow({
+        where: { id: reservationId },
+        select: {
+          id: true,
+          status: true,
+          itemType: true,
+          itemId: true,
+          qty: true,
+          unit: true,
+          releasedAt: true,
+          releasedById: true,
+          salesOrderItemId: true,
+          salesOrderItem: { select: RESERVATION_LINE_SELECT },
+        },
+      });
+      const events = await latestReleaseEvents(tx, [reservationId]);
+      const lastRelease = events.get(reservationId) ?? null;
+      const block = restoreBlock(
+        {
+          ...reservation,
+          salesOrder: { status: order.status },
+        },
+        lastRelease?.action ?? null,
+      );
+      if (block !== null) throw new BadRequestException(block);
 
-        const line = reservation.salesOrderItem;
-        const dispatched = await tx.dispatchItem.aggregate({
-          where: {
-            salesOrderItemId: reservation.salesOrderItemId,
-            itemType: reservation.itemType,
-            itemId: reservation.itemId,
-            dispatch: { status: 'ISSUED' },
-          },
-          _sum: { reserveQty: true },
-        });
-        const qty = restoreQty({
-          reservationQty: reservation.qty,
-          reservationUnit: reservation.unit,
-          line,
-          dispatchedOnItem: toDecimal((dispatched._sum.reserveQty ?? 0).toString()),
-          // Autorrevisión cc12 P1-1: lo fabricado vivo de la línea, no lo que la fila guardaba.
-          fabricated: await fabricatedAliveQty(
-            tx,
-            reservation.salesOrderItemId,
-            reservation.itemId,
-          ),
-        });
-        if (qty.lte(0)) {
-          throw new BadRequestException(
-            `A la línea ${String(line.lineNumber)} no le queda nada fabricado sin despachar: no hay reserva que restaurar`,
-          );
-        }
-
-        const product = await tx.product.findUniqueOrThrow({
-          where: { id: reservation.itemId },
-          select: { sku: true, businessLineId: true },
-        });
-        const availability = await this.inventory.lockAvailability(tx, {
-          businessLineId: product.businessLineId,
+      const line = reservation.salesOrderItem;
+      const dispatched = await tx.dispatchItem.aggregate({
+        where: {
+          salesOrderItemId: reservation.salesOrderItemId,
           itemType: reservation.itemType,
           itemId: reservation.itemId,
-          unit: reservation.unit,
-        });
-        if (qty.gt(availability.available)) {
-          throw new BadRequestException(
-            `Línea ${String(line.lineNumber)}: ${product.sku} tiene ${availability.available.toFixed(3)} ${availability.unit} disponibles ` +
-              `(${availability.qty.toFixed(3)} físicos menos ${availability.reserved.toFixed(3)} ya reservados) ` +
-              `y la reserva necesita ${qty.toFixed(3)}: faltan ${qty.minus(availability.available).toFixed(3)}.`,
-          );
-        }
+          dispatch: { status: 'ISSUED' },
+        },
+        _sum: { reserveQty: true },
+      });
+      const qty = restoreQty({
+        reservationQty: reservation.qty,
+        reservationUnit: reservation.unit,
+        line,
+        dispatchedOnItem: toDecimal((dispatched._sum.reserveQty ?? 0).toString()),
+        // Autorrevisión cc12 P1-1: lo fabricado vivo de la línea, no lo que la fila guardaba.
+        fabricated: await fabricatedAliveQty(tx, reservation.salesOrderItemId, reservation.itemId),
+      });
+      if (qty.lte(0)) {
+        throw new BadRequestException(
+          `A la línea ${String(line.lineNumber)} no le queda nada fabricado sin despachar: no hay reserva que restaurar`,
+        );
+      }
 
-        const restored = await tx.reservation.updateMany({
-          where: { id: reservationId, status: ReservationStatus.RELEASED },
-          data: {
-            status: ReservationStatus.ACTIVE,
-            qty: qty.toFixed(3),
-            releasedAt: null,
-            releasedById: null,
-          },
-        });
-        if (restored.count !== 1) {
-          throw new ConflictException('La reserva cambió de estado mientras se restauraba');
-        }
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: RESERVATION_RESTORE_ACTION,
-          entity: 'reservations',
-          entityId: reservationId,
+      const product = await tx.product.findUniqueOrThrow({
+        where: { id: reservation.itemId },
+        select: { sku: true, businessLineId: true },
+      });
+      const availability = await this.inventory.lockAvailability(tx, {
+        businessLineId: product.businessLineId,
+        itemType: reservation.itemType,
+        itemId: reservation.itemId,
+        unit: reservation.unit,
+      });
+      if (qty.gt(availability.available)) {
+        throw new BadRequestException(
+          `Línea ${String(line.lineNumber)}: ${product.sku} tiene ${availability.available.toFixed(3)} ${availability.unit} disponibles ` +
+            `(${availability.qty.toFixed(3)} físicos menos ${availability.reserved.toFixed(3)} ya reservados) ` +
+            `y la reserva necesita ${qty.toFixed(3)}: faltan ${qty.minus(availability.available).toFixed(3)}.`,
+        );
+      }
+
+      const restored = await tx.reservation.updateMany({
+        where: { id: reservationId, status: ReservationStatus.RELEASED },
+        data: {
+          status: ReservationStatus.ACTIVE,
+          qty: qty.toFixed(3),
+          releasedAt: null,
+          releasedById: null,
+        },
+      });
+      if (restored.count !== 1) {
+        throw new ConflictException('La reserva cambió de estado mientras se restauraba');
+      }
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: RESERVATION_RESTORE_ACTION,
+        entity: 'reservations',
+        entityId: reservationId,
+        reason,
+        before: {
+          status: ReservationStatus.RELEASED,
+          qty: toDecimal(reservation.qty.toString()).toFixed(3),
+          // Los campos de la liberación que la fila vacía: quedan acá y en el evento anterior.
+          releasedAt: reservation.releasedAt?.toISOString() ?? null,
+          releasedById: reservation.releasedById,
+          releaseReason: lastRelease?.reason ?? null,
+        },
+        after: {
+          status: ReservationStatus.ACTIVE,
+          qty: qty.toFixed(3),
+          unit: reservation.unit,
+          salesOrder: salesOrderCode(order.seq),
+          lineNumber: line.lineNumber,
+          sku: product.sku,
           reason,
-          before: {
-            status: ReservationStatus.RELEASED,
-            qty: toDecimal(reservation.qty.toString()).toFixed(3),
-            // Los campos de la liberación que la fila vacía: quedan acá y en el evento anterior.
-            releasedAt: reservation.releasedAt?.toISOString() ?? null,
-            releasedById: reservation.releasedById,
-            releaseReason: lastRelease?.reason ?? null,
-          },
-          after: {
-            status: ReservationStatus.ACTIVE,
-            qty: qty.toFixed(3),
-            unit: reservation.unit,
-            salesOrder: salesOrderCode(order.seq),
-            lineNumber: line.lineNumber,
-            sku: product.sku,
-            reason,
-          },
-        });
-      },
-      { timeout: 60_000, maxWait: 15_000 },
-    );
+        },
+      });
+    }, KARDEX_TX_OPTIONS);
     return this.reservationDto(reservationId);
   }
 
@@ -3058,95 +3051,92 @@ export class SalesOrdersService {
     orderId: string,
     reason?: string,
   ): Promise<SalesOrderDto> {
-    await this.prisma.$transaction(
-      async (tx) => {
-        const order = await this.lockOrder(tx, orderId);
-        if (order.status === SalesOrderStatus.CANCELLED) {
-          throw new BadRequestException('El pedido está anulado: no hay reserva que completar');
-        }
-        if (order.status === SalesOrderStatus.FULFILLED) {
-          throw new BadRequestException('El pedido ya está atendido: no hay reserva que completar');
-        }
-        // cc30: las reservas del pedido por la puerta, detrás del pedido (ya tomado).
-        const own = await tx.reservation.findMany({
-          where: { salesOrderId: orderId },
-          select: { id: true },
-        });
-        await lockDocuments(tx, { reservations: own.map((r) => r.id) });
-        // `ACTIVA` o `CONSUMIDA`: la producción o el despacho agotan lo reservado (`qty` llega a 0
-        // y la fila pasa a `CONSUMIDA`) sin tocar `shortfall_qty`, así que el faltante sigue siendo
-        // del pedido. Una `LIBERADA` ya no promete nada (D-341) y no entra.
-        const pending = await tx.reservation.findMany({
-          where: {
-            salesOrderId: orderId,
-            status: { in: [ReservationStatus.ACTIVE, ReservationStatus.CONSUMED] },
-            shortfallQty: { gt: 0 },
-          },
-          include: { salesOrderItem: { select: { lineNumber: true, productId: true } } },
-          orderBy: { id: 'asc' },
-        });
-        if (pending.length === 0) {
-          throw new BadRequestException('El pedido no tiene faltante de reserva por completar');
-        }
-        const byLine = new Map(pending.map((r) => [r.salesOrderItemId, r]));
-        const before = shortfallAudit(pending);
-        let added = new Decimal(0);
+    await this.prisma.$transaction(async (tx) => {
+      const order = await this.lockOrder(tx, orderId);
+      if (order.status === SalesOrderStatus.CANCELLED) {
+        throw new BadRequestException('El pedido está anulado: no hay reserva que completar');
+      }
+      if (order.status === SalesOrderStatus.FULFILLED) {
+        throw new BadRequestException('El pedido ya está atendido: no hay reserva que completar');
+      }
+      // cc30: las reservas del pedido por la puerta, detrás del pedido (ya tomado).
+      const own = await tx.reservation.findMany({
+        where: { salesOrderId: orderId },
+        select: { id: true },
+      });
+      await lockDocuments(tx, { reservations: own.map((r) => r.id) });
+      // `ACTIVA` o `CONSUMIDA`: la producción o el despacho agotan lo reservado (`qty` llega a 0
+      // y la fila pasa a `CONSUMIDA`) sin tocar `shortfall_qty`, así que el faltante sigue siendo
+      // del pedido. Una `LIBERADA` ya no promete nada (D-341) y no entra.
+      const pending = await tx.reservation.findMany({
+        where: {
+          salesOrderId: orderId,
+          status: { in: [ReservationStatus.ACTIVE, ReservationStatus.CONSUMED] },
+          shortfallQty: { gt: 0 },
+        },
+        include: { salesOrderItem: { select: { lineNumber: true, productId: true } } },
+        orderBy: { id: 'asc' },
+      });
+      if (pending.length === 0) {
+        throw new BadRequestException('El pedido no tiene faltante de reserva por completar');
+      }
+      const byLine = new Map(pending.map((r) => [r.salesOrderItemId, r]));
+      const before = shortfallAudit(pending);
+      let added = new Decimal(0);
 
-        await this.reserveLines(
-          tx,
-          pending.map((r) => ({
-            id: r.salesOrderItemId,
-            lineNumber: r.salesOrderItem.lineNumber,
-            productId: r.salesOrderItem.productId,
-            reserveItemType: r.itemType,
-            reserveItemId: r.itemId,
-            // Lo que se pide es el faltante, no la promesa entera: la parte ya reservada ya
-            // está descontada del disponible que `reserveLines` lee.
-            reserveQty: r.shortfallQty,
-            reserveUnit: r.unit,
-          })),
-          'el pedido',
-          async (item, reserved, stillMissing) => {
-            const reservation = byLine.get(item.id);
-            if (!reservation) return;
-            added = added.plus(reserved);
-            await tx.reservation.update({
-              where: { id: reservation.id },
-              data: {
-                qty: { increment: reserved.toFixed(3) },
-                shortfallQty: stillMissing.toFixed(3),
-                // Una reserva consumida vuelve a `ACTIVA` con lo que se le suma, igual que cuando
-                // una reversa restaura la promesa (`restoreReservationQty`).
-                ...(reserved.gt(0) ? { status: ReservationStatus.ACTIVE, consumedAt: null } : {}),
-              },
-            });
-          },
-          actor,
-          { allowShortfall: true },
+      await this.reserveLines(
+        tx,
+        pending.map((r) => ({
+          id: r.salesOrderItemId,
+          lineNumber: r.salesOrderItem.lineNumber,
+          productId: r.salesOrderItem.productId,
+          reserveItemType: r.itemType,
+          reserveItemId: r.itemId,
+          // Lo que se pide es el faltante, no la promesa entera: la parte ya reservada ya
+          // está descontada del disponible que `reserveLines` lee.
+          reserveQty: r.shortfallQty,
+          reserveUnit: r.unit,
+        })),
+        'el pedido',
+        async (item, reserved, stillMissing) => {
+          const reservation = byLine.get(item.id);
+          if (!reservation) return;
+          added = added.plus(reserved);
+          await tx.reservation.update({
+            where: { id: reservation.id },
+            data: {
+              qty: { increment: reserved.toFixed(3) },
+              shortfallQty: stillMissing.toFixed(3),
+              // Una reserva consumida vuelve a `ACTIVA` con lo que se le suma, igual que cuando
+              // una reversa restaura la promesa (`restoreReservationQty`).
+              ...(reserved.gt(0) ? { status: ReservationStatus.ACTIVE, consumedAt: null } : {}),
+            },
+          });
+        },
+        actor,
+        { allowShortfall: true },
+      );
+
+      if (added.lte(0)) {
+        // Sin nada nuevo que reservar no hay cambio que auditar: se avisa y se deshace.
+        throw new BadRequestException(
+          'Todavía no hay material disponible para completar la reserva',
         );
-
-        if (added.lte(0)) {
-          // Sin nada nuevo que reservar no hay cambio que auditar: se avisa y se deshace.
-          throw new BadRequestException(
-            'Todavía no hay material disponible para completar la reserva',
-          );
-        }
-        const after = await tx.reservation.findMany({
-          where: { id: { in: pending.map((r) => r.id) } },
-          select: { id: true, shortfallQty: true },
-        });
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'sales.order.complete-reservation',
-          entity: 'sales_orders',
-          entityId: orderId,
-          ...(reason ? { reason } : {}),
-          before,
-          after: { reservedNow: added.toFixed(3), ...shortfallAudit(after) },
-        });
-      },
-      { timeout: 60_000, maxWait: 15_000 },
-    );
+      }
+      const after = await tx.reservation.findMany({
+        where: { id: { in: pending.map((r) => r.id) } },
+        select: { id: true, shortfallQty: true },
+      });
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.order.complete-reservation',
+        entity: 'sales_orders',
+        entityId: orderId,
+        ...(reason ? { reason } : {}),
+        before,
+        after: { reservedNow: added.toFixed(3), ...shortfallAudit(after) },
+      });
+    }, KARDEX_TX_OPTIONS);
     return this.findOne(orderId);
   }
 

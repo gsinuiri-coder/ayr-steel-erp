@@ -306,6 +306,17 @@ export class InventoryService {
         const kardex = await stockUpToDate(tx, input, toDateOnly(KARDEX_END));
         const value = Decimal.max(kardex.value.minus(totalCost), new Decimal(0));
         newAvgCost = newQty.lte(0) ? new Decimal(0) : value.div(newQty);
+      } else if (qty.gte(balance.qty)) {
+        // cc58 (D-684, E-05 de audit-01): la salida que deja el ítem en cero se lleva **exactamente**
+        // el valor que queda en el kardex (sus filas y recosteos), no cantidad × promedio a cuatro
+        // decimales: así no queda un residuo de céntimos sin cantidad. Es la misma cuenta del motor
+        // (`averageOutCost`, D-653), por eso un recosteo posterior no la corrige. Solo hacia
+        // adelante: la historia no se recostea por esto.
+        const kardex = await stockUpToDate(tx, input, toDateOnly(KARDEX_END));
+        totalCost = averageOutCost(kardex, qty);
+        unitCost = totalCost.div(qty);
+        newQty = balance.qty.minus(qty);
+        newAvgCost = new Decimal(0);
       } else {
         // Una salida no cambia el costo promedio; sale valorizada al promedio vigente.
         unitCost = balance.avgCost;

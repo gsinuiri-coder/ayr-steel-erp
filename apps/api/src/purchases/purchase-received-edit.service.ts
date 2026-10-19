@@ -6,6 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { RECOST_TX_OPTIONS } from '../common/transaction-options';
 import { InventoryItemType, Prisma, PurchaseStatus, PurchaseType } from '@prisma/client';
 import {
   cents,
@@ -228,7 +229,7 @@ export class ReceivedPurchaseEditService {
         return plan;
       },
       // Hasta 200 líneas con reversa y reingreso: el mismo margen que `cancel`.
-      { timeout: 120_000, maxWait: 15_000 },
+      RECOST_TX_OPTIONS,
     );
   }
 

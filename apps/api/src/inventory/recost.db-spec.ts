@@ -645,3 +645,39 @@ describe('cc57 (A-06 de audit-01): la vista del kardex al pasar por cero', () =>
     expect(from.items[0]?.balanceTotalCost).toBe('5.0000');
   });
 });
+
+describe('cc58 (D-684, E-05 de audit-01): la salida que agota el ítem', () => {
+  it('se lleva exactamente el valor que queda y el saldo queda en cero, sin residuo', async () => {
+    const itemId = randomUUID();
+    await move(itemId, {
+      type: 'IN',
+      qty: '3',
+      unitCost: '3.3333',
+      totalCost: '10.0000',
+      date: '2026-08-01',
+    });
+    const first = await move(itemId, { type: 'OUT', qty: '1', date: '2026-08-02' });
+    const last = await move(itemId, { type: 'OUT', qty: '2', date: '2026-08-03' });
+    // 1 × 3.3333 al promedio; la última se lleva lo que queda: 10 − 3.3333 = 6.6667 (no 6.6666).
+    expect([first.totalCost.toString(), last.totalCost.toString()]).toEqual(['3.3333', '6.6667']);
+    expect((await kardexValue(itemId)).toFixed(4)).toBe('0.0000');
+    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '0' });
+    // Un recosteo posterior no tiene nada que corregir.
+    expect(
+      await prisma.inventoryMovement.count({ where: { itemId, recostOfId: { not: null } } }),
+    ).toBe(0);
+  });
+
+  it('una salida parcial sigue al promedio vigente', async () => {
+    const itemId = randomUUID();
+    await move(itemId, {
+      type: 'IN',
+      qty: '3',
+      unitCost: '3.3333',
+      totalCost: '10.0000',
+      date: '2026-08-01',
+    });
+    const out = await move(itemId, { type: 'OUT', qty: '2', date: '2026-08-02' });
+    expect(out.totalCost.toString()).toBe('6.6666');
+  });
+});

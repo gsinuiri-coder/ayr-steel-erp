@@ -131,7 +131,7 @@ import {
 } from './roofing-math';
 import { allocateRoofingScrap } from './roofing-scrap';
 import { sumReportedMeters } from './reported-meters';
-import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
+import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * Producción de coberturas metálicas contra pedido (RF-30..RF-33; D-082..D-091).
@@ -864,7 +864,7 @@ export class RoofingProductionService {
         }
       },
       // Cada bobina suma su lock, sus lecturas y su asignación: el presupuesto crece con ellas.
-      { timeout: 30_000 + 3_000 * Math.max(coilIds.length - 1, 0), maxWait: 10_000 },
+      KARDEX_TX_OPTIONS,
     );
 
     return this.withWarnings(await this.production.findOne(orderId), warnings);
@@ -1980,90 +1980,87 @@ export class RoofingProductionService {
   ): Promise<RoofingBatchCreateResultDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
 
-    return this.prisma.$transaction(
-      async (tx) => {
-        // cc30 (cruce C6): el pedido y todas sus reservas de materia prima al inicio, por id. Antes
-        // el pedido no se tomaba y las reservas se tomaban de a una, en orden de línea, entre alta y
-        // alta de OP: se cruzaba con anular el pedido y con completar su reserva.
-        const raw = await tx.reservation.findMany({
-          where: { salesOrderId, itemType: InventoryItemType.RAW_MATERIAL },
-          select: { id: true },
-        });
-        await lockDocuments(tx, {
-          salesOrders: [salesOrderId],
-          reservations: raw.map((r) => r.id),
-        });
-        const salesOrder = await tx.salesOrder.findUnique({
-          where: { id: salesOrderId },
-          select: { id: true, seq: true, status: true },
-        });
-        if (!salesOrder) throw new NotFoundException('Pedido no encontrado');
-        if (salesOrder.status === SalesOrderStatus.CANCELLED) {
-          throw new BadRequestException('El pedido está anulado');
-        }
+    return this.prisma.$transaction(async (tx) => {
+      // cc30 (cruce C6): el pedido y todas sus reservas de materia prima al inicio, por id. Antes
+      // el pedido no se tomaba y las reservas se tomaban de a una, en orden de línea, entre alta y
+      // alta de OP: se cruzaba con anular el pedido y con completar su reserva.
+      const raw = await tx.reservation.findMany({
+        where: { salesOrderId, itemType: InventoryItemType.RAW_MATERIAL },
+        select: { id: true },
+      });
+      await lockDocuments(tx, {
+        salesOrders: [salesOrderId],
+        reservations: raw.map((r) => r.id),
+      });
+      const salesOrder = await tx.salesOrder.findUnique({
+        where: { id: salesOrderId },
+        select: { id: true, seq: true, status: true },
+      });
+      if (!salesOrder) throw new NotFoundException('Pedido no encontrado');
+      if (salesOrder.status === SalesOrderStatus.CANCELLED) {
+        throw new BadRequestException('El pedido está anulado');
+      }
 
-        const reservations = await tx.reservation.findMany({
-          where: {
-            salesOrderId,
-            status: ReservationStatus.ACTIVE,
-            itemType: InventoryItemType.RAW_MATERIAL,
-          },
-          select: {
-            id: true,
-            salesOrderItem: { select: { lineNumber: true } },
-            productionOrders: {
-              where: {
-                status: {
-                  in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS],
-                },
+      const reservations = await tx.reservation.findMany({
+        where: {
+          salesOrderId,
+          status: ReservationStatus.ACTIVE,
+          itemType: InventoryItemType.RAW_MATERIAL,
+        },
+        select: {
+          id: true,
+          salesOrderItem: { select: { lineNumber: true } },
+          productionOrders: {
+            where: {
+              status: {
+                in: [ProductionOrderStatus.DRAFT, ProductionOrderStatus.IN_PROGRESS],
               },
-              select: { id: true },
             },
+            select: { id: true },
           },
-          orderBy: { salesOrderItem: { lineNumber: 'asc' } },
+        },
+        orderBy: { salesOrderItem: { lineNumber: 'asc' } },
+      });
+
+      const pending = reservations.filter((r) => r.productionOrders.length === 0);
+      const alreadyQueued = reservations.length - pending.length;
+      if (pending.length === 0) {
+        throw new BadRequestException(
+          alreadyQueued > 0
+            ? `Las ${String(alreadyQueued)} líneas a medida de ${salesOrderCode(salesOrder.seq)} ya tienen su orden en cola`
+            : `${salesOrderCode(salesOrder.seq)} no tiene ninguna línea que se fabrique contra el pedido: ` +
+                'una plancha de catálogo se atiende con stock y, si falta, se produce a stock (D-140)',
+        );
+      }
+
+      const created: { orderId: string; code: string }[] = [];
+      for (const reservation of pending) {
+        const orderId = await this.createFromReservationInTx(tx, actor, {
+          reservationId: reservation.id,
+          operationDate,
+          notes: input.notes ?? null,
         });
-
-        const pending = reservations.filter((r) => r.productionOrders.length === 0);
-        const alreadyQueued = reservations.length - pending.length;
-        if (pending.length === 0) {
-          throw new BadRequestException(
-            alreadyQueued > 0
-              ? `Las ${String(alreadyQueued)} líneas a medida de ${salesOrderCode(salesOrder.seq)} ya tienen su orden en cola`
-              : `${salesOrderCode(salesOrder.seq)} no tiene ninguna línea que se fabrique contra el pedido: ` +
-                  'una plancha de catálogo se atiende con stock y, si falta, se produce a stock (D-140)',
-          );
-        }
-
-        const created: { orderId: string; code: string }[] = [];
-        for (const reservation of pending) {
-          const orderId = await this.createFromReservationInTx(tx, actor, {
-            reservationId: reservation.id,
-            operationDate,
-            notes: input.notes ?? null,
-          });
-          const order = await tx.productionOrder.findUniqueOrThrow({
-            where: { id: orderId },
-            select: { seq: true },
-          });
-          created.push({ orderId, code: productionOrderCode(order.seq) });
-        }
-
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'production.roofing.create_batch',
-          entity: 'sales_orders',
-          entityId: salesOrderId,
-          after: {
-            salesOrder: salesOrderCode(salesOrder.seq),
-            created: created.map((c) => c.code),
-            alreadyQueued,
-          },
+        const order = await tx.productionOrder.findUniqueOrThrow({
+          where: { id: orderId },
+          select: { seq: true },
         });
+        created.push({ orderId, code: productionOrderCode(order.seq) });
+      }
 
-        return { created, alreadyQueued };
-      },
-      { timeout: 60_000, maxWait: 15_000 },
-    );
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'production.roofing.create_batch',
+        entity: 'sales_orders',
+        entityId: salesOrderId,
+        after: {
+          salesOrder: salesOrderCode(salesOrder.seq),
+          created: created.map((c) => c.code),
+          alreadyQueued,
+        },
+      });
+
+      return { created, alreadyQueued };
+    }, KARDEX_TX_OPTIONS);
   }
 
   // -------------------------------------------------------------------------
@@ -2078,12 +2075,9 @@ export class RoofingProductionService {
     // D-124: el cierre se fecha aparte del arranque; el despunte es del día del cierre.
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const warnings: RawMaterialShortfall[] = [];
-    await this.prisma.$transaction(
-      async (tx) => {
-        await this.closeInTx(tx, actor, orderId, input, operationDate, warnings);
-      },
-      { timeout: 60_000 },
-    );
+    await this.prisma.$transaction(async (tx) => {
+      await this.closeInTx(tx, actor, orderId, input, operationDate, warnings);
+    }, RECOST_TX_OPTIONS);
 
     return this.withWarnings(await this.production.findOne(orderId), warnings);
   }
@@ -2189,7 +2183,7 @@ export class RoofingProductionService {
       },
       // El presupuesto del cierre, no el del reporte: las dos mitades entran en la misma
       // transacción y la que manda es la más cara.
-      { timeout: 60_000, maxWait: 15_000 },
+      RECOST_TX_OPTIONS,
     );
 
     return this.withWarnings(await this.production.findOne(orderId), [
@@ -2750,196 +2744,193 @@ export class RoofingProductionService {
   ): Promise<ProductionOrderDto> {
     const { reason } = input;
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
-    await this.prisma.$transaction(
-      async (tx) => {
-        const order = await lockOrder(tx, orderId);
-        assertKind(order, ProductionOrderKind.ROOFING);
-        if (order.status !== ProductionOrderStatus.CLOSED) {
-          throw new BadRequestException(
-            order.status === ProductionOrderStatus.CANCELLED
-              ? 'La orden está anulada: no hay cierre que deshacer'
-              : 'La orden todavía no está cerrada',
-          );
-        }
+    await this.prisma.$transaction(async (tx) => {
+      const order = await lockOrder(tx, orderId);
+      assertKind(order, ProductionOrderKind.ROOFING);
+      if (order.status !== ProductionOrderStatus.CLOSED) {
+        throw new BadRequestException(
+          order.status === ProductionOrderStatus.CANCELLED
+            ? 'La orden está anulada: no hay cierre que deshacer'
+            : 'La orden todavía no está cerrada',
+        );
+      }
 
-        const own = await tx.inventoryMovement.findMany({
-          where: { recostOfId: null, refId: orderId, refType: { in: ['PRODUCTION', 'SCRAP'] } },
+      const own = await tx.inventoryMovement.findMany({
+        where: { recostOfId: null, refId: orderId, refType: { in: ['PRODUCTION', 'SCRAP'] } },
+        orderBy: { id: 'asc' },
+        include: { reversals: { select: { id: true } } },
+      });
+      const movements = liveMovements(own);
+      const adjust = movements.find((m) => m.itemType === 'PRODUCT' && m.type === 'ADJUST');
+      const scrapOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
+
+      // D-386: las bobinas que vuelven a la orden y las del despunte (con sus agregados),
+      // después los saldos de lo que se revierte, antes de mirar qué se movió después del
+      // cierre. Antes se tomaba el saldo del producto (la reversa del ajuste) y después cada
+      // bobina.
+      await this.inventory.lockInOrder(tx, {
+        coilIds: (
+          await tx.productionOrderConsumption.findMany({
+            where: { productionOrderId: orderId, releasedAt: order.closedAt },
+            select: { coilId: true },
+          })
+        ).map((r) => r.coilId),
+        items: movements.map(itemRefOf),
+      });
+
+      // cc55 (D-665): si el cierre pasó el despunte a las entradas de los partes (el producto ya
+      // había salido), esas planchas ya se movieron: reabrir devolvería el despunte a la bobina
+      // con su costo ya cargado en las ventas.
+      await assertNoCloseRecost(tx, orderId, 'Las planchas de esta orden');
+      if (adjust) {
+        const after = await tx.inventoryMovement.findMany({
+          where: {
+            recostOfId: null,
+            itemType: 'PRODUCT',
+            itemId: order.productId,
+            id: { gt: adjust.id },
+          },
           orderBy: { id: 'asc' },
           include: { reversals: { select: { id: true } } },
         });
-        const movements = liveMovements(own);
-        const adjust = movements.find((m) => m.itemType === 'PRODUCT' && m.type === 'ADJUST');
-        const scrapOuts = movements.filter((m) => m.itemType === 'COIL' && m.type === 'OUT');
-
-        // D-386: las bobinas que vuelven a la orden y las del despunte (con sus agregados),
-        // después los saldos de lo que se revierte, antes de mirar qué se movió después del
-        // cierre. Antes se tomaba el saldo del producto (la reversa del ajuste) y después cada
-        // bobina.
-        await this.inventory.lockInOrder(tx, {
-          coilIds: (
-            await tx.productionOrderConsumption.findMany({
-              where: { productionOrderId: orderId, releasedAt: order.closedAt },
-              select: { coilId: true },
-            })
-          ).map((r) => r.coilId),
-          items: movements.map(itemRefOf),
-        });
-
-        // cc55 (D-665): si el cierre pasó el despunte a las entradas de los partes (el producto ya
-        // había salido), esas planchas ya se movieron: reabrir devolvería el despunte a la bobina
-        // con su costo ya cargado en las ventas.
-        await assertNoCloseRecost(tx, orderId, 'Las planchas de esta orden');
-        if (adjust) {
-          const after = await tx.inventoryMovement.findMany({
-            where: {
-              recostOfId: null,
-              itemType: 'PRODUCT',
-              itemId: order.productId,
-              id: { gt: adjust.id },
-            },
-            orderBy: { id: 'asc' },
-            include: { reversals: { select: { id: true } } },
-          });
-          const blocking = liveMovements(after).find((m) => m.type !== 'IN');
-          if (blocking) {
-            throw new BadRequestException(
-              `Las planchas de esta orden ya se movieron (${blocking.type} ${blocking.refType}): anula ese movimiento antes de reabrirla`,
-            );
-          }
-        }
-
-        // Solo vuelven a la orden las bobinas que soltó el **cierre**: las que planta bajó a
-        // mano antes ya no son suyas.
-        const rows = await tx.productionOrderConsumption.findMany({
-          where: { productionOrderId: orderId, releasedAt: order.closedAt },
-          include: { coil: { select: { code: true, status: true } } },
-          orderBy: { createdAt: 'asc' },
-        });
-        await assertStripsNotAssigned(
-          tx,
-          rows.map((r) => r.coilId),
-          'reabrir la orden',
-        );
-        // D-360: las bobinas que el cierre terminó solas vuelven a estar vigentes; las que se
-        // terminaron por otra causa siguen bloqueando la reapertura, como antes.
-        const reopened = await reopenAutoTerminatedCoils(tx, this.audit, {
-          actorId: actor.id,
-          coilIds: rows.map((r) => r.coilId),
-          cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
-          // Revisión C06: también la que terminó el lote después de que esta OP la dejara en 0.
-          zeroedBy: {
-            refIds: [
-              orderId,
-              ...(
-                await tx.productionReport.findMany({
-                  where: { productionOrderId: orderId },
-                  select: { id: true },
-                })
-              ).map((r) => r.id),
-            ],
-          },
-          label: `reapertura de ${productionOrderCode(order.seq)}`,
-          operationDate,
-        });
-        const reopenedIds = new Set(reopened.reopened.map((c) => c.id));
-
-        const lastOwnByCoil = new Map<string, bigint>();
-        for (const movement of own) {
-          if (movement.itemType !== 'COIL') continue;
-          const current = lastOwnByCoil.get(movement.itemId);
-          if (current === undefined || movement.id > current) {
-            lastOwnByCoil.set(movement.itemId, movement.id);
-          }
-        }
-        for (const row of rows) {
-          await this.coils.lockCoil(tx, row.coilId);
-          if (row.coil.status !== CoilStatus.OPEN && !reopenedIds.has(row.coilId)) {
-            throw new BadRequestException(
-              `La bobina ${row.coil.code} ya no está disponible (${row.coil.status}): no se puede reabrir la orden`,
-            );
-          }
-          // Una bobina que se consumió entera no dejó despunte, así que no hay movimiento
-          // propio del cierre contra el cual medir "posterior": ahí la referencia es el
-          // `closedAt` de la orden.
-          const lastOwn = lastOwnByCoil.get(row.coilId);
-          const after = await tx.inventoryMovement.findMany({
-            where: {
-              recostOfId: null,
-              itemType: 'COIL',
-              itemId: row.coilId,
-              ...(lastOwn === undefined
-                ? { at: { gt: order.closedAt ?? new Date(0) } }
-                : { id: { gt: lastOwn } }),
-            },
-            orderBy: { id: 'asc' },
-            include: { reversals: { select: { id: true } } },
-          });
-          const blocking = liveMovements(after)[0];
-          if (blocking) {
-            throw new BadRequestException(
-              `La bobina ${row.coil.code} ya tiene movimientos posteriores al cierre (${blocking.refType}): anúlalos antes de reabrir la orden`,
-            );
-          }
-        }
-
-        // Primero el costo y después el material: al revés, el ajuste se prorratearía sobre
-        // un saldo que el despunte devuelto todavía no terminó de acomodar.
-        if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason, operationDate);
-        const returnedByCoil = new Map<string, Decimal>();
-        for (const movement of scrapOuts) {
-          await this.coils.lockCoil(tx, movement.itemId);
-          await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
-          returnedByCoil.set(
-            movement.itemId,
-            (returnedByCoil.get(movement.itemId) ?? new Decimal(0)).plus(
-              toDecimal(movement.qty.toString()),
-            ),
+        const blocking = liveMovements(after).find((m) => m.type !== 'IN');
+        if (blocking) {
+          throw new BadRequestException(
+            `Las planchas de esta orden ya se movieron (${blocking.type} ${blocking.refType}): anula ese movimiento antes de reabrirla`,
           );
         }
+      }
 
-        for (const row of rows) {
-          const returned = returnedByCoil.get(row.coilId) ?? new Decimal(0);
-          await tx.productionOrderConsumption.update({
-            where: { id: row.id },
-            data: {
-              releasedAt: null,
-              consumedKg: toFixedString(toDecimal(row.consumedKg.toString()).minus(returned), 'KG'),
-            },
-          });
+      // Solo vuelven a la orden las bobinas que soltó el **cierre**: las que planta bajó a
+      // mano antes ya no son suyas.
+      const rows = await tx.productionOrderConsumption.findMany({
+        where: { productionOrderId: orderId, releasedAt: order.closedAt },
+        include: { coil: { select: { code: true, status: true } } },
+        orderBy: { createdAt: 'asc' },
+      });
+      await assertStripsNotAssigned(
+        tx,
+        rows.map((r) => r.coilId),
+        'reabrir la orden',
+      );
+      // D-360: las bobinas que el cierre terminó solas vuelven a estar vigentes; las que se
+      // terminaron por otra causa siguen bloqueando la reapertura, como antes.
+      const reopened = await reopenAutoTerminatedCoils(tx, this.audit, {
+        actorId: actor.id,
+        coilIds: rows.map((r) => r.coilId),
+        cause: { kind: 'PRODUCTION_ORDER_CLOSE', refId: orderId },
+        // Revisión C06: también la que terminó el lote después de que esta OP la dejara en 0.
+        zeroedBy: {
+          refIds: [
+            orderId,
+            ...(
+              await tx.productionReport.findMany({
+                where: { productionOrderId: orderId },
+                select: { id: true },
+              })
+            ).map((r) => r.id),
+          ],
+        },
+        label: `reapertura de ${productionOrderCode(order.seq)}`,
+        operationDate,
+      });
+      const reopenedIds = new Set(reopened.reopened.map((c) => c.id));
+
+      const lastOwnByCoil = new Map<string, bigint>();
+      for (const movement of own) {
+        if (movement.itemType !== 'COIL') continue;
+        const current = lastOwnByCoil.get(movement.itemId);
+        if (current === undefined || movement.id > current) {
+          lastOwnByCoil.set(movement.itemId, movement.id);
         }
+      }
+      for (const row of rows) {
+        await this.coils.lockCoil(tx, row.coilId);
+        if (row.coil.status !== CoilStatus.OPEN && !reopenedIds.has(row.coilId)) {
+          throw new BadRequestException(
+            `La bobina ${row.coil.code} ya no está disponible (${row.coil.status}): no se puede reabrir la orden`,
+          );
+        }
+        // Una bobina que se consumió entera no dejó despunte, así que no hay movimiento
+        // propio del cierre contra el cual medir "posterior": ahí la referencia es el
+        // `closedAt` de la orden.
+        const lastOwn = lastOwnByCoil.get(row.coilId);
+        const after = await tx.inventoryMovement.findMany({
+          where: {
+            recostOfId: null,
+            itemType: 'COIL',
+            itemId: row.coilId,
+            ...(lastOwn === undefined
+              ? { at: { gt: order.closedAt ?? new Date(0) } }
+              : { id: { gt: lastOwn } }),
+          },
+          orderBy: { id: 'asc' },
+          include: { reversals: { select: { id: true } } },
+        });
+        const blocking = liveMovements(after)[0];
+        if (blocking) {
+          throw new BadRequestException(
+            `La bobina ${row.coil.code} ya tiene movimientos posteriores al cierre (${blocking.refType}): anúlalos antes de reabrir la orden`,
+          );
+        }
+      }
 
-        await tx.productionOrder.update({
-          where: { id: orderId },
+      // Primero el costo y después el material: al revés, el ajuste se prorratearía sobre
+      // un saldo que el despunte devuelto todavía no terminó de acomodar.
+      if (adjust) await this.inventory.reverse(tx, adjust.id, actor.id, reason, operationDate);
+      const returnedByCoil = new Map<string, Decimal>();
+      for (const movement of scrapOuts) {
+        await this.coils.lockCoil(tx, movement.itemId);
+        await this.inventory.reverse(tx, movement.id, actor.id, reason, operationDate);
+        returnedByCoil.set(
+          movement.itemId,
+          (returnedByCoil.get(movement.itemId) ?? new Decimal(0)).plus(
+            toDecimal(movement.qty.toString()),
+          ),
+        );
+      }
+
+      for (const row of rows) {
+        const returned = returnedByCoil.get(row.coilId) ?? new Decimal(0);
+        await tx.productionOrderConsumption.update({
+          where: { id: row.id },
           data: {
-            status: ProductionOrderStatus.IN_PROGRESS,
-            scrapKg: null,
-            consumedKg: null,
-            materialCostPen: null,
-            overheadCostPen: null,
-            totalCostPen: null,
-            unitCostPen: null,
-            closedById: null,
-            closedAt: null,
-            closedOperationDate: null,
+            releasedAt: null,
+            consumedKg: toFixedString(toDecimal(row.consumedKg.toString()).minus(returned), 'KG'),
           },
         });
+      }
 
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'production.roofing.reopen',
-          entity: 'production_orders',
-          entityId: orderId,
-          before: { status: ProductionOrderStatus.CLOSED },
-          after: {
-            status: ProductionOrderStatus.IN_PROGRESS,
-            reason,
-            revertedScrapMovements: scrapOuts.length,
-            revertedCostAdjustment: adjust !== undefined,
-          },
-        });
-      },
-      { timeout: 60_000 },
-    );
+      await tx.productionOrder.update({
+        where: { id: orderId },
+        data: {
+          status: ProductionOrderStatus.IN_PROGRESS,
+          scrapKg: null,
+          consumedKg: null,
+          materialCostPen: null,
+          overheadCostPen: null,
+          totalCostPen: null,
+          unitCostPen: null,
+          closedById: null,
+          closedAt: null,
+          closedOperationDate: null,
+        },
+      });
+
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'production.roofing.reopen',
+        entity: 'production_orders',
+        entityId: orderId,
+        before: { status: ProductionOrderStatus.CLOSED },
+        after: {
+          status: ProductionOrderStatus.IN_PROGRESS,
+          reason,
+          revertedScrapMovements: scrapOuts.length,
+          revertedCostAdjustment: adjust !== undefined,
+        },
+      });
+    }, RECOST_TX_OPTIONS);
 
     return this.production.findOne(orderId);
   }

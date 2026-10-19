@@ -34,13 +34,14 @@ import { lockOrder } from './production-shared';
  */
 
 /**
- * cc28: el tope de la transacción de la vista previa es **el de su acción real** (120 s el
- * borrador, 60 s los cierres). SM-8 de cc27 proponía 20 s para soltar antes los candados, pero con
+ * cc28: el tope de la transacción de la vista previa es **el de su acción real** (cc58, D-683: 60 s,
+ * el borrador y los cierres). SM-8 de cc27 proponía 20 s para soltar antes los candados, pero con
  * eso un borrador grande que el cierre real sí ejecuta fallaba en la vista previa con un 500
  * (segundo modelo de cc28, SM-1). Los candados que retiene son los mismos y por el mismo tiempo
  * que retendría el cierre real.
  */
-export const COMMIT_PREVIEW_TIMEOUT_MS = 120_000;
+// cc58 (D-683): las vistas previas de cierre recostean como el cierre: 60 s, el tope del recosteo.
+export const COMMIT_PREVIEW_TIMEOUT_MS = 60_000;
 export const CLOSE_PREVIEW_TIMEOUT_MS = 60_000;
 
 class PreviewRollback extends Error {

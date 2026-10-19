@@ -46,6 +46,7 @@ describe('KardexSheetService', () => {
           refType: 'PURCHASE',
           notes: null,
           reversalOfId: null,
+          recostOfId: null,
           operationDate: '2026-09-02',
           balanceQty: '10.000',
           balanceAvgCost: '5.0000',

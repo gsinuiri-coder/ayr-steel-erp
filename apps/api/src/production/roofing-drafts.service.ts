@@ -19,7 +19,7 @@ import {
   type RoofingReportDraftDto,
   type RoofingReportDraftInput,
 } from '@ayr/shared';
-import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
+import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { claimIdempotencyKey } from '../common/idempotency';
@@ -202,23 +202,20 @@ export class RoofingDraftsService {
   ): Promise<ProductionOrderDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const warnings: RawMaterialShortfall[] = [];
-    await this.prisma.$transaction(
-      async (tx) => {
-        // D-182: un doble click en «Ejecutar» no ejecuta el borrador dos veces. Alcance propio:
-        // el efecto es el de N reportes (y quizá un cierre), no el de uno.
-        // El alcance lleva la orden: la misma clave reusada en otra orden no es un reintento, y
-        // devolverle un 200 que no ejecutó nada sería mentirle.
-        const claim = await claimIdempotencyKey(
-          tx,
-          `roofing-drafts-commit:${orderId}`,
-          input.idempotencyKey,
-        );
-        if (!claim.claimed) return;
+    await this.prisma.$transaction(async (tx) => {
+      // D-182: un doble click en «Ejecutar» no ejecuta el borrador dos veces. Alcance propio:
+      // el efecto es el de N reportes (y quizá un cierre), no el de uno.
+      // El alcance lleva la orden: la misma clave reusada en otra orden no es un reintento, y
+      // devolverle un 200 que no ejecutó nada sería mentirle.
+      const claim = await claimIdempotencyKey(
+        tx,
+        `roofing-drafts-commit:${orderId}`,
+        input.idempotencyKey,
+      );
+      if (!claim.claimed) return;
 
-        await this.commitInTx(tx, actor, orderId, input, operationDate, warnings);
-      },
-      { timeout: 120_000, maxWait: 15_000 },
-    );
+      await this.commitInTx(tx, actor, orderId, input, operationDate, warnings);
+    }, RECOST_TX_OPTIONS);
 
     return this.roofing.withWarnings(await this.production.findOne(orderId), warnings);
   }

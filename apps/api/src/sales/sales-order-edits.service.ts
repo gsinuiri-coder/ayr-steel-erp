@@ -1,4 +1,5 @@
 import { assertSellerAccess } from '../auth/seller-scope';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 import {
   BadRequestException,
   ForbiddenException,
@@ -739,7 +740,7 @@ export class SalesOrderEditsService {
         });
       },
       // Mismo presupuesto que confirmar (D-186): un lock por línea y una OP por línea a fabricar.
-      { timeout: 60_000, maxWait: 15_000 },
+      KARDEX_TX_OPTIONS,
     );
     return this.orders.findOne(orderId);
   }
@@ -772,7 +773,7 @@ export class SalesOrderEditsService {
     await this.prisma.$transaction(
       (tx) => this.changeItemQtyInTx(tx, actor, orderId, itemId, input, false),
       // Como agregar ítems: puede reservar y crear una OP.
-      { timeout: 60_000, maxWait: 15_000 },
+      KARDEX_TX_OPTIONS,
     );
     return this.orders.findOne(orderId);
   }
@@ -790,44 +791,41 @@ export class SalesOrderEditsService {
     input: SalesOrderItemQtyPreviewInput,
   ): Promise<SalesOrderItemQtyPreviewDto> {
     try {
-      await this.prisma.$transaction(
-        async (tx) => {
-          const context = await this.qtyContextInTx(tx, actor, orderId, itemId);
-          let outcome: SalesOrderItemQtyOutcomeDto | null = null;
-          if (context.blocked === null && input.qty !== undefined) {
-            try {
-              const result = await this.changeItemQtyInTx(
-                tx,
-                actor,
-                orderId,
-                itemId,
-                {
-                  qty: input.qty,
-                  ...(input.pieces !== undefined ? { pieces: input.pieces } : {}),
-                  confirmShortfall: true,
-                },
-                true,
-              );
-              outcome = { ok: true, message: null, ...result };
-            } catch (error) {
-              if (!(error instanceof HttpException) || error.getStatus() >= 500) throw error;
-              outcome = {
-                ok: false,
-                message: httpMessage(error),
-                qty: null,
-                meters: null,
-                pieces: null,
-                totalPen: null,
-                orderTotalPen: null,
-                effects: [],
-                shortfallQty: null,
-              };
-            }
+      await this.prisma.$transaction(async (tx) => {
+        const context = await this.qtyContextInTx(tx, actor, orderId, itemId);
+        let outcome: SalesOrderItemQtyOutcomeDto | null = null;
+        if (context.blocked === null && input.qty !== undefined) {
+          try {
+            const result = await this.changeItemQtyInTx(
+              tx,
+              actor,
+              orderId,
+              itemId,
+              {
+                qty: input.qty,
+                ...(input.pieces !== undefined ? { pieces: input.pieces } : {}),
+                confirmShortfall: true,
+              },
+              true,
+            );
+            outcome = { ok: true, message: null, ...result };
+          } catch (error) {
+            if (!(error instanceof HttpException) || error.getStatus() >= 500) throw error;
+            outcome = {
+              ok: false,
+              message: httpMessage(error),
+              qty: null,
+              meters: null,
+              pieces: null,
+              totalPen: null,
+              orderTotalPen: null,
+              effects: [],
+              shortfallQty: null,
+            };
           }
-          throw new QtyPreviewRollback({ ...context, outcome });
-        },
-        { timeout: 60_000, maxWait: 15_000 },
-      );
+        }
+        throw new QtyPreviewRollback({ ...context, outcome });
+      }, KARDEX_TX_OPTIONS);
     } catch (error) {
       if (error instanceof QtyPreviewRollback) return error.result;
       throw error;

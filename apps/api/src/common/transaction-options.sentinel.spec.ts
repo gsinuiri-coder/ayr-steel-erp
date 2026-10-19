@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import * as ts from 'typescript';
-import { CLOSE_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
-import { KARDEX_TX_OPTIONS } from './transaction-options';
+import { CLOSE_PREVIEW_TIMEOUT_MS, COMMIT_PREVIEW_TIMEOUT_MS } from '../production/close-preview';
+import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from './transaction-options';
 
 /**
  * cc53 (hotfix) — **el tope de las transacciones que tocan kardex.** Registrar una NC de devolución
@@ -21,11 +21,12 @@ const SRC = join(__dirname, '..');
 const MIN_TIMEOUT_MS = 30_000;
 const KNOWN: Record<string, number> = {
   KARDEX_TX_OPTIONS: KARDEX_TX_OPTIONS.timeout,
+  RECOST_TX_OPTIONS: RECOST_TX_OPTIONS.timeout,
   REACTIVATION_TX_TIMEOUT_MS: 30_000,
-  COMMIT_PREVIEW_TIMEOUT_MS: 30_000,
-  // cc57: el parámetro de `previewPlantClose`; sus llamadores pasan CLOSE_PREVIEW_TIMEOUT_MS
-  // (60 s) o COMMIT_PREVIEW_TIMEOUT_MS (120 s). Se cuenta el menor.
-  timeoutMs: CLOSE_PREVIEW_TIMEOUT_MS,
+  COMMIT_PREVIEW_TIMEOUT_MS,
+  // cc57: el parámetro de `previewPlantClose`; sus llamadores pasan CLOSE_PREVIEW_TIMEOUT_MS o
+  // COMMIT_PREVIEW_TIMEOUT_MS (cc58: los dos, 60 s).
+  timeoutMs: Math.max(CLOSE_PREVIEW_TIMEOUT_MS, COMMIT_PREVIEW_TIMEOUT_MS),
 };
 /**
  * cc54 (P2-5 de la revisión de cc53): con o sin `this.` (un auxiliar que recibe `inventory` como
@@ -191,5 +192,76 @@ describe('cc53 (hotfix): tope de las transacciones del kardex', () => {
     expect(timeoutOf('{ timeout: 120_000 }')).toBe(120_000);
     expect(timeoutOf('{ timeout: REACTIVATION_TX_TIMEOUT_MS }')).toBe(30_000);
     expect(timeoutOf('{ timeout: 30 * 60_000 }')).toBe(1_800_000);
+  });
+});
+
+/**
+ * cc58 (D-683, B-03 de audit-01) — **el techo.** Decisión del dueño: una operación del día tiene
+ * 30 s; la que recostea en bloque, 60 s. Los importadores de Excel y las herramientas de una vez
+ * quedan como excepciones con nombre (una carga grande no se parte por un tope). Un tope nuevo por
+ * encima de 30 s exige entrar a una de estas dos listas, con su motivo.
+ */
+const DAY_MAX_MS = KARDEX_TX_OPTIONS.timeout;
+const RECOST_MAX_MS = RECOST_TX_OPTIONS.timeout;
+/** Las que recostean en bloque: hasta 60 s. */
+const RECOST_PATHS: readonly (readonly [string, string])[] = [
+  ['purchases/purchases.service.ts', 'cancel'],
+  ['purchases/purchase-received-edit.service.ts', 'commit'],
+  ['production/production.service.ts', 'close'],
+  ['production/production.service.ts', 'reopen'],
+  ['production/roofing-drafts.service.ts', 'commit'],
+  ['production/roofing-production.service.ts', 'close'],
+  ['production/roofing-production.service.ts', 'reportAndClose'],
+  ['production/roofing-production.service.ts', 'reopen'],
+  ['production/close-preview.ts', 'previewPlantClose'],
+  ['invoicing/invoicing.service.ts', 'updateManualIssueDateInTx'],
+  ['invoicing/invoice-dispatch.service.ts', 'executeForInvoice'],
+];
+/** Importadores y herramientas de una vez: sin techo, con su motivo. */
+const BULK_EXCEPTIONS: readonly (readonly [string, string, string])[] = [
+  ['imports/purchase-import.service.ts', 'confirm', 'importador de compras (Excel)'],
+  ['imports/quotation-import.service.ts', 'confirm', 'importador de cotizaciones (Excel)'],
+  ['imports/initial-inventory-import.service.ts', 'run', 'inventario inicial de bobinas'],
+  ['imports/initial-inventory-product-import.service.ts', 'run', 'inventario inicial de productos'],
+  ['imports/imported-documents-sweep.service.ts', 'fixDocument', 'barrido de importados'],
+  ['catalog/price-list-import.service.ts', 'confirm', 'carga de precios (Excel)'],
+  ['catalog/price-list-import.service.ts', 'revert', 'deshacer una carga de precios'],
+  ['catalog/coil-sku-normalization.service.ts', 'plan', 'normalización de SKU'],
+  ['catalog/coil-sku-normalization.service.ts', 'execute', 'normalización de SKU'],
+  ['catalog/coil-sku-normalization.service.ts', 'planRevert', 'normalización de SKU'],
+  ['catalog/coil-sku-normalization.service.ts', 'executeRevert', 'normalización de SKU'],
+  ['invoicing/invoice-dispatch.service.ts', 'planAll', 'plan de D-288 para todos los comprobantes'],
+  ['colors/colors.service.ts', 'planRetirement', 'retiro de un color comercial'],
+  ['colors/colors.service.ts', 'retire', 'retiro de un color comercial'],
+  ['invoicing/opening-date-move.service.ts', 'plan', 'herramienta D-285'],
+  ['invoicing/opening-date-move.service.ts', 'execute', 'herramienta D-285'],
+  ['invoicing/opening-date-move.service.ts', 'executeLocked', 'herramienta D-285'],
+];
+
+describe('cc58 (D-683): techo de las transacciones', () => {
+  const all = transactions();
+  const key = (file: string, method: string) => `${file} · ${method}`;
+  const recost = new Set(RECOST_PATHS.map(([f, m]) => key(f, m)));
+  const bulk = new Set(BULK_EXCEPTIONS.map(([f, m]) => key(f, m)));
+
+  it('los topes con nombre son los de la decisión: 30 s el día, 60 s el recosteo', () => {
+    expect(RECOST_TX_OPTIONS).toEqual({ timeout: 60_000, maxWait: 15_000 });
+    expect([CLOSE_PREVIEW_TIMEOUT_MS, COMMIT_PREVIEW_TIMEOUT_MS]).toEqual([60_000, 60_000]);
+  });
+
+  it('ninguna transacción pasa de 30 s salvo las que recostean (60 s) y las excepciones con nombre', () => {
+    const offenders = all
+      .filter((t) => t.options !== null && !bulk.has(key(t.file, t.method)))
+      .flatMap((t) => {
+        const ms = timeoutOf(t.options);
+        const max = recost.has(key(t.file, t.method)) ? RECOST_MAX_MS : DAY_MAX_MS;
+        return ms !== null && ms <= max ? [] : [`${key(t.file, t.method)} (${t.options ?? ''})`];
+      });
+    expect(offenders).toEqual([]);
+  });
+
+  it('las listas no nombran caminos que ya no existen', () => {
+    const present = new Set(all.map((t) => key(t.file, t.method)));
+    expect([...recost, ...bulk].filter((k) => !present.has(k))).toEqual([]);
   });
 });
