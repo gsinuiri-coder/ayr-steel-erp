@@ -1,7 +1,7 @@
 # Ventana cc57 — resto del plan de audit-01 (P2 y P3 de código)
 
 2026-10-17, Lima, sesión desatendida. Cinco cortes, cada uno con su PR, su despliegue de la API antes del merge y su
-smoke; después este cierre de docs. Decisiones D-671..D-675 (provisionales). **Sin migraciones, sin `--execute`, sin
+smoke; después este cierre de docs. Decisiones D-671..D-675 (**ratificadas por el dueño el 2026-10-19**). **Sin migraciones, sin `--execute`, sin
 SQL contra producción y sin escrituras de datos.** No se crearon ramas de Neon: sigue en 10 de 10. La única corrida
 contra producción fue `pnpm check:balances`, de solo lectura.
 
@@ -88,7 +88,7 @@ Corregido antes del deploy:
 - **E:** D-16 redondeaba el precio de la celda, lo que daba falsos rechazos en el 22 % de los precios con decimales
   completos.
 
-Revisión del dueño: UAT en `docs/uat/cc57.md`, pendiente.
+Revisión del dueño: UAT en `docs/uat/cc57.md`, **aprobado por el dueño el 2026-10-19**.
 
 ## Pendiente / para la siguiente sesión
 
@@ -120,4 +120,4 @@ Revisión del dueño: UAT en `docs/uat/cc57.md`, pendiente.
 - **Datos:**
   - P1-09, el vencimiento de FFA1-00001426;
   - P1-10, la unidad suelta de OP-000029.
-- Siguen en pie el Excel de saldos de cc56 y el UAT de cc57.
+- Sigue en pie el Excel de saldos de cc56. ~~UAT de cc57; ratificar D-671..D-675~~ — **hecho el 2026-10-19**.

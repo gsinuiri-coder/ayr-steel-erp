@@ -2804,3 +2804,9 @@ del comprobante que acredita, para que la factura y su NC no queden a nombre de 
 - **E-10:** D-444 está ratificada (D-459).
 - **El `$executeRawUnsafe` de A-04:** tiene usos legítimos (savepoints de los importadores, herramientas de drift) y ninguno
   nombra el kardex.
+
+## Ratificación del dueño (2026-10-19, pieza cc57)
+
+UAT de cc57 aprobado y **D-671 a D-675 RATIFICADAS por el dueño el 19/10** (pasan a firmes en `ARQUITECTURA.md` §0.2).
+Siguen pendientes de su decisión los índices propuestos (migración, con OK por nombre) y las decisiones abiertas que
+lista `docs/handoff/ventana-cc57.md`.

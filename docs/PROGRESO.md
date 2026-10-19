@@ -6,7 +6,8 @@
 
 Sesión desatendida. Sin migraciones, sin `--execute`, sin SQL contra producción y sin escrituras de datos. Detalle en
 `docs/handoff/ventana-cc57.md`; tabla id por id de audit-01 en `local-data/cc57/INFORME.md` del checkout principal;
-revisiones en `docs/revision/cc57-*.md`; UAT en `docs/uat/cc57.md`.
+revisiones en `docs/revision/cc57-*.md`; UAT en `docs/uat/cc57.md`. **UAT aprobado y D-671..D-675 ratificadas por el
+dueño el 19/10.**
 
 - **Corte A, reversas e idempotencia (D-671):** API `00137-tzq` (`git-sha=dcdb8576`), merge `e6c8d113`.
   - Anular una NC con devolución bloquea despachos y pedido.
