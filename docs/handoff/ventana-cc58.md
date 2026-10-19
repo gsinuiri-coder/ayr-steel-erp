@@ -3,7 +3,7 @@
 2026-10-19, Lima, sesión de día y atendida. Cuatro cortes. Cada uno tuvo su PR, la revisión de un segundo modelo y una
 autorrevisión, la CI completa, el despliegue de la API antes del merge y su smoke. Después vino este cierre de docs.
 
-- **Decisiones:** D-676..D-691, provisionales; D-688 quedó postergada por el dueño.
+- **Decisiones:** D-676..D-691, **ratificadas por el dueño el 2026-10-19**; D-688 quedó postergada por el dueño.
 - **Migración:** una sola, con el OK del dueño por nombre: `20261019_perf_indexes_cc57`.
 - **Escrituras de datos:** ninguna. No hubo `--execute` ni SQL contra producción.
 
@@ -74,12 +74,10 @@ P1 corregidos antes del deploy:
 
 ## Pendiente / para la siguiente sesión
 
-- **Revisión del dueño:**
-  - UAT en `docs/uat/cc58.md`;
-  - ratificar D-676..D-691, incluidos los 120 s de D-683.
-- **Céntimos (punto 11): no se ejecutó, la condición no se cumple.** Decidir entre:
-  - (a) dejarlo así, porque D-684 lo corrige al consumirse;
-  - (b) una puerta `InventoryService.resyncBalance`, que es una excepción nueva al centinela.
+- ~~Revisión del dueño: UAT y ratificar D-676..D-691~~ — **hecho el 2026-10-19**: UAT de cc58 aprobado y D-676..D-691
+  ratificadas, D-683 y D-686 tal como quedaron.
+- ~~Céntimos (punto 11)~~ — **el dueño decidió el 2026-10-19 dejarlos así**: se corrigen solos al consumirse esas bobinas
+  (D-684).
 - **D-688, login por IP:**
   - una variable nueva en Vercel y en Cloud Run (secreto compartido);
   - que el proxy de la web reenvíe la IP real del cliente firmada.
@@ -87,8 +85,8 @@ P1 corregidos antes del deploy:
   - FFA1-00001426: poner el vencimiento desde el detalle del comprobante;
   - OP-000029: vender o dar de baja la unidad suelta.
   - La lectura nueva de producción para revisarlos se negó por permisos; se usó la de audit-01 (15/10).
-- **`.claude/settings.json` (lo cambia el dueño):** quitar `Bash(node *scripts/opening-date.mjs*)` y
-  `Bash(pnpm *inventory:opening-date*)`.
+- ~~`.claude/settings.json`~~ — **hecho con la autorización del dueño (19/10)**: salieron solo los dos permisos de la
+  herramienta retirada.
 - **Riesgos anotados:**
   - el tope de 500 filas puede rechazar la recepción de un flete tardío;
   - «Editar bobina» no cambia el costo de una bobina con flete;

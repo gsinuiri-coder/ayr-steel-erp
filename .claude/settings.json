@@ -102,8 +102,6 @@
       "Bash(pnpm *retire:unused-color*)",
       "Bash(node *scripts/dispatch-at-issue-date.mjs*)",
       "Bash(pnpm *dispatch:at-issue-date*)",
-      "Bash(node *scripts/opening-date.mjs*)",
-      "Bash(pnpm *inventory:opening-date*)",
       "Bash(node *scripts/color-comercial-dry-run.mjs*)",
       "Bash(pnpm *check:color-comercial*)",
       "Bash(neonctl branches delete * --project-id frosty-cherry-97873994 --output json)"

@@ -2858,3 +2858,16 @@ S/ 0,31. No hay ningún dry-run que toque solo esos 2 ítems:
 - ninguna puerta del kardex resincroniza el promedio guardado.
 
 Queda para decidir entre dejarlo así, porque D-684 lo corrige al consumirse, y una puerta nueva.
+
+## Ratificación del dueño (2026-10-19, pieza cc58)
+
+UAT de cc58 aprobado y **D-676 a D-691 RATIFICADAS por el dueño el 19/10**: pasan a firmes en `ARQUITECTURA.md` §0.2. Se
+ratifican tal como quedaron:
+
+- D-683, con los 120 s de anular o editar una compra recibida y del borrador de producción;
+- D-686, con sus consecuencias aceptadas;
+- D-688, postergada.
+
+**Céntimos de las 2 bobinas:** el dueño decide dejarlos así. Se corrigen solos cuando esas bobinas se terminen de
+consumir (D-684), y no se hace una puerta nueva. Con su autorización salieron de `.claude/settings.json` solo los dos
+permisos de la herramienta retirada (`opening-date.mjs` e `inventory:opening-date`).
