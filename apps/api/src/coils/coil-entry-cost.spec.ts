@@ -8,7 +8,13 @@ jest.mock('../inventory/row-locks', () => ({ lockCoilRows: jest.fn(() => Promise
 const D = (v: string) => new Prisma.Decimal(v);
 
 function fakeTx(
-  over: { entries?: unknown[]; recost?: string | null; coil?: unknown; ownAdjusts?: number } = {},
+  over: {
+    entries?: unknown[];
+    recost?: string | null;
+    coil?: unknown;
+    ownAdjusts?: number;
+    landed?: number;
+  } = {},
 ) {
   return {
     coil: {
@@ -36,10 +42,17 @@ function fakeTx(
         Promise.resolve(over.entries ?? [{ id: 101n, qty: D('2000'), totalCost: D('6000') }]),
       ),
       count: jest.fn(() => Promise.resolve(over.ownAdjusts ?? 0)),
-      aggregate: jest.fn(() =>
-        Promise.resolve({
-          _sum: { totalCost: over.recost === undefined ? null : over.recost && D(over.recost) },
-        }),
+      // El de las notas es el del flete por recosteo (cc58, D-686); el otro, los recosteos.
+      aggregate: jest.fn((a?: { where?: { notes?: unknown } }) =>
+        Promise.resolve(
+          a?.where?.notes
+            ? { _sum: { totalCost: D(String(over.landed ?? 0)) } }
+            : {
+                _sum: {
+                  totalCost: over.recost === undefined ? null : over.recost && D(over.recost),
+                },
+              },
+        ),
       ),
     },
   };
@@ -135,6 +148,7 @@ describe('correctCoilEntryCost (D-669)', () => {
     [{ coil: { status: 'CANCELLED' } }, /anulada/],
     [{ entries: [] }, /0 entradas vivas/],
     [{ ownAdjusts: 1 }, 'ajuste(s) de costo propios'],
+    [{ landed: 1 }, 'costo de servicio (flete, aduana o seguro)'],
     [{ coil: { status: 'CLOSED', parentCoilId: 'madre', kind: 'COIL' } }, 'hija de un partido'],
   ])('rechaza %o', async (over, message) => {
     await expect(

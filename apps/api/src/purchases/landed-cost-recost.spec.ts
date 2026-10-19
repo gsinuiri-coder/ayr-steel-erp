@@ -1,18 +1,47 @@
-import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { landedCostEntries, landedCostNote, landedCostShares } from './landed-cost-recost';
+import {
+  hasLandedRecost,
+  landedCostEntries,
+  landedCostKey,
+  landedCostNote,
+  landedCostShares,
+} from './landed-cost-recost';
 
 /** cc58 (D-686): las piezas del flete por recosteo de entradas, sin base. */
 const D = (v: string) => new Prisma.Decimal(v);
 
 describe('landedCostNote', () => {
   it('nombra el servicio y su documento, igual al recibir y al anular', () => {
-    expect(landedCostNote({ serviceKind: 'FREIGHT', series: 'F002', number: '123' })).toBe(
-      'Flete F002-123 (D-686)',
+    expect(
+      landedCostNote({ id: 'p-1', serviceKind: 'FREIGHT', series: 'F002', number: '123' }),
+    ).toBe('Flete F002-123 (D-686, compra p-1)');
+    // Mismo número, otra compra (otro proveedor): otra nota (revisión P1-1).
+    expect(landedCostNote({ id: 'p-2', serviceKind: null, series: 'F002', number: '123' })).toBe(
+      'Servicio F002-123 (D-686, compra p-2)',
     );
-    expect(landedCostNote({ serviceKind: null, series: 'F002', number: '9' })).toBe(
-      'Servicio F002-9 (D-686)',
-    );
+  });
+});
+
+describe('hasLandedRecost', () => {
+  it('mira el neto de los recosteos de la entrada con la marca del flete', async () => {
+    const aggregate = jest
+      .fn()
+      .mockResolvedValueOnce({ _sum: { totalCost: D('60') } })
+      // Alta y anulación: neto cero, ya no bloquea (P2-5 de la autorrevisión).
+      .mockResolvedValueOnce({ _sum: { totalCost: D('0') } })
+      .mockResolvedValueOnce({ _sum: { totalCost: null } });
+    const tx = { inventoryMovement: { aggregate } } as never;
+    expect(await hasLandedRecost(tx, 7n)).toBe(true);
+    expect(await hasLandedRecost(tx, 8n)).toBe(false);
+    expect(await hasLandedRecost(tx, 9n)).toBe(false);
+    expect(aggregate).toHaveBeenCalledWith({
+      where: { recostOfId: 7n, notes: { contains: '(D-686, compra ' } },
+      _sum: { totalCost: true },
+    });
+  });
+
+  it('la llave del servicio va también en la nota de su anulación', () => {
+    expect(landedCostKey('p-1')).toBe('(D-686, compra p-1)');
   });
 });
 
@@ -55,6 +84,7 @@ describe('landedCostShares', () => {
     id,
     itemId: `c-${String(id)}`,
     qty: D('1000'),
+    totalCost: D('1000'),
     reversalOfId: null,
     reversals: [],
     ...over,
@@ -83,20 +113,28 @@ describe('landedCostShares', () => {
     ]);
   });
 
-  it('una entrada reemplazada o anulada después del flete no se resta a ciegas', async () => {
-    await expect(
-      landedCostShares(
-        tx([{ totalCost: D('60'), recostOf: entry(1n, { reversals: [{ id: 9n }] }) }]),
-        'p-1',
-        'n',
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(
-      landedCostShares(
-        tx([{ totalCost: D('60'), recostOf: entry(1n, { reversalOfId: 5n }) }], 'BOB-7'),
-        'p-1',
-        'n',
-      ),
-    ).rejects.toThrow('BOB-7');
+  it('una entrada reemplazada después del flete no se resta a ciegas', async () => {
+    // «Editar compra recibida» la revirtió a su costo grabado (1000): el flete quedó en el saldo.
+    const replaced = entry(1n, {
+      totalCost: D('1000'),
+      reversals: [{ id: 9n, totalCost: D('1000') }],
+    });
+    const t = tx([{ totalCost: D('60'), recostOf: replaced }], 'BOB-7');
+    (t as { inventoryMovement: Record<string, unknown> }).inventoryMovement.aggregate = jest
+      .fn()
+      .mockResolvedValue({ _sum: { totalCost: D('60') } });
+    await expect(landedCostShares(t, 'p-1', 'n')).rejects.toThrow('BOB-7');
+  });
+
+  it('una entrada anulada con su costo efectivo ya se llevó el flete: no se resta (P1-2)', async () => {
+    const annulled = entry(1n, {
+      totalCost: D('1000'),
+      reversals: [{ id: 9n, totalCost: D('1060') }],
+    });
+    const t = tx([{ totalCost: D('60'), recostOf: annulled }]);
+    (t as { inventoryMovement: Record<string, unknown> }).inventoryMovement.aggregate = jest
+      .fn()
+      .mockResolvedValue({ _sum: { totalCost: D('60') } });
+    expect(await landedCostShares(t, 'p-1', 'n')).toEqual([]);
   });
 });

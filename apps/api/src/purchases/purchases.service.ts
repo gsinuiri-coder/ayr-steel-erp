@@ -853,6 +853,10 @@ export class PurchasesService {
           // Para decidir qué es "posterior" cuentan TODOS los movimientos de la compra,
           // incluidos los ya revertidos y sus reversas: son suyos igual.
           await this.assertNothingMovedAfter(tx, own);
+          // cc58 (D-686): una compra de bobinas con un flete vivo recosteado en sus entradas no se
+          // anula por debajo: primero el flete (antes lo frenaba el `ADJUST` de D-043). Antes de
+          // las reversas, que se llevarían el flete con la entrada (autorrevisión P1-4).
+          await this.assertNoLiveLandedCost(tx, purchase);
 
           // Pero solo se revierte lo que sigue vivo. Un recosteo (D-045) o una bobina
           // anulada (RF-21) dejan bajo el mismo `refId` un ingreso ya revertido más su
@@ -896,10 +900,6 @@ export class PurchasesService {
             landedReversed.coils += undone.coils;
             landedReversed.amountPen = landedReversed.amountPen.plus(undone.amountPen);
           }
-          // cc58 (D-686): una compra de bobinas con un flete vivo recosteado en sus entradas no se
-          // anula por debajo: primero el flete (antes lo frenaba el `ADJUST` de D-043).
-          await this.assertNoLiveLandedCost(tx, purchase);
-
           // D-050: enviar una bobina a corte tercerizado no genera movimiento de kardex,
           // así que `assertNothingMovedAfter` no la detecta como "posterior". Sin este
           // chequeo, anular la compra la cancelaba igual, dejando la orden de corte
@@ -1005,7 +1005,7 @@ export class PurchasesService {
   ): Promise<{ coils: number; amountPen: Decimal }> {
     if (!purchase.relatedPurchaseId) return { coils: 0, amountPen: new Decimal(0) };
     const note = landedCostNote(purchase);
-    const shares = await landedCostShares(tx, purchase.relatedPurchaseId, note);
+    const shares = await landedCostShares(tx, purchase.relatedPurchaseId, purchase.id);
     if (shares.length === 0) return { coils: 0, amountPen: new Decimal(0) };
     await assertStripsNotAssigned(
       tx,
@@ -1042,10 +1042,10 @@ export class PurchasesService {
         type: PurchaseType.SERVICE,
         status: PurchaseStatus.RECEIVED,
       },
-      select: { series: true, number: true, serviceKind: true },
+      select: { id: true, series: true, number: true, serviceKind: true },
     });
     for (const service of services) {
-      const shares = await landedCostShares(tx, purchase.id, landedCostNote(service));
+      const shares = await landedCostShares(tx, purchase.id, service.id);
       if (shares.length > 0) {
         throw new BadRequestException(
           `La compra tiene un costo de ${service.serviceKind ? SERVICE_KIND_LABELS[service.serviceKind].toLowerCase() : 'servicio'} vivo (${service.series}-${service.number}) sumado a sus bobinas: anúlalo primero`,

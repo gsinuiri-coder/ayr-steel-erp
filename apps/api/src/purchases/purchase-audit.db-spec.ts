@@ -23,6 +23,7 @@ import { FinishesService } from '../finishes/finishes.service';
 import { PurchaseImportService } from '../imports/purchase-import.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
+import { CoilOperationsService } from '../coils/coil-operations.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PurchasesService } from './purchases.service';
 
@@ -643,6 +644,40 @@ describe('cc58 (D-686, D-10 de audit-01): el flete que llega después de consumi
     expect(
       (await prisma.coil.findUniqueOrThrow({ where: { id: coil.id } })).unitCostPerKg.toString(),
     ).toBe('4');
+  });
+
+  it('anular la bobina se lleva el flete; después el flete se anula sin restar dos veces (P1-2)', async () => {
+    const coils = await coilPurchase();
+    const coil = await prisma.coil.findFirstOrThrow({ where: { purchaseId: coils.id } });
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    await moduleRef.get(CoilOperationsService).cancel(admin, coil.id, { reason: 'bobina errada' });
+    // La reversa salió al costo efectivo (4 100): el saldo queda en cero, sin valor.
+    const gone = await prisma.inventoryBalance.findFirstOrThrow({ where: { itemId: coil.id } });
+    expect(gone.qty.toString()).toBe('0');
+    await purchases.cancel(admin, freight.id, { reason: 'Flete de una bobina anulada' });
+    expect(
+      await prisma.inventoryMovement.count({
+        where: { itemId: coil.id, notes: { startsWith: 'Anulación: ' } },
+      }),
+    ).toBe(0);
+    expect((await prisma.purchase.findUniqueOrThrow({ where: { id: freight.id } })).status).toBe(
+      'CANCELLED',
+    );
+  });
+
+  it('sin consumo, la compra de bobinas tampoco se anula con el flete vivo; anulado el flete, sí', async () => {
+    const coils = await coilPurchase();
+    const freight = await service({ serviceKind: 'FREIGHT', relatedPurchaseId: coils.id });
+    await purchases.receive(admin, freight.id);
+    await expect(purchases.cancel(admin, coils.id, { reason: 'prueba' })).rejects.toThrow(
+      'anúlalo primero',
+    );
+    await purchases.cancel(admin, freight.id, { reason: 'Flete equivocado' });
+    await purchases.cancel(admin, coils.id, { reason: 'prueba' });
+    expect((await prisma.purchase.findUniqueOrThrow({ where: { id: coils.id } })).status).toBe(
+      'CANCELLED',
+    );
   });
 
   it('una bobina ya consumida entera también lo recibe (antes se perdía)', async () => {

@@ -157,6 +157,8 @@ function makeTx(opts: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     inventoryMovement: {
+      // cc58 (D-686): sin flete sumado por recosteo.
+      aggregate: jest.fn().mockResolvedValue({ _sum: { totalCost: null } }),
       findMany: jest.fn((args: { where: { itemType?: string; refType?: string } }) =>
         Promise.resolve(
           args.where.itemType === 'COIL'

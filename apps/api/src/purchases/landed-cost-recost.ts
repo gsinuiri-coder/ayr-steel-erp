@@ -36,14 +36,41 @@ export async function landedCostEntries(
 }
 
 /**
- * La nota de los ajustes del servicio: la misma en la recepción y en la anulación, que la usa para
- * encontrar lo que el servicio le sumó a cada entrada.
+ * La nota de los ajustes del servicio. La anulación encuentra lo que el servicio sumó por la marca
+ * `compra <id>` (`landedCostKey`), no por la nota entera: la serie y el número se pueden corregir
+ * en una compra recibida (autorrevisión de cc58-c, P1-2).
  */
 export function landedCostNote(
-  purchase: Pick<Purchase, 'serviceKind' | 'series' | 'number'>,
+  purchase: Pick<Purchase, 'id' | 'serviceKind' | 'series' | 'number'>,
 ): string {
   const label = purchase.serviceKind ? SERVICE_KIND_LABELS[purchase.serviceKind] : 'Servicio';
-  return `${label} ${purchase.series}-${purchase.number} (D-686)`;
+  // El id de la compra hace la nota única: dos proveedores pueden tener el mismo F001-1 sobre la
+  // misma compra de bobinas (revisión de cc58-c, P1-1).
+  return `${label} ${purchase.series}-${purchase.number} (${LANDED_COST_MARK}, compra ${purchase.id})`;
+}
+
+/** La marca de las notas del flete por recosteo: la buscan las correcciones que no lo contemplan. */
+export const LANDED_COST_MARK = 'D-686';
+
+/** La parte de la nota que identifica al servicio, también en las filas de su anulación. */
+export function landedCostKey(servicePurchaseId: string): string {
+  return `(${LANDED_COST_MARK}, compra ${servicePurchaseId})`;
+}
+
+/**
+ * Si la entrada recibió un costo de servicio por recosteo (D-686). «Editar compra recibida» y la
+ * corrección del costo de la bobina no lo contemplan y lo avisan.
+ */
+export async function hasLandedRecost(
+  tx: Prisma.TransactionClient,
+  entryId: bigint,
+): Promise<boolean> {
+  // El neto: un servicio ya anulado suma su alta y su anulación, y no bloquea (P2-5).
+  const sum = await tx.inventoryMovement.aggregate({
+    where: { recostOfId: entryId, notes: { contains: `(${LANDED_COST_MARK}, compra ` } },
+    _sum: { totalCost: true },
+  });
+  return !toDecimal(sum._sum.totalCost?.toString() ?? '0').isZero();
 }
 
 /**
@@ -55,14 +82,15 @@ export function landedCostNote(
 export async function landedCostShares(
   tx: Prisma.TransactionClient,
   relatedPurchaseId: string,
-  note: string,
+  servicePurchaseId: string,
 ): Promise<{ movementId: bigint; itemId: string; qty: Decimal; amountPen: Decimal }[]> {
   const rows = await tx.inventoryMovement.findMany({
     // Solo las entradas de la compra de bobinas: las hijas de un partido y los flejes reciben su
     // parte en cascada con la misma nota, y restarla también ahí la restaría dos veces.
     where: {
       type: 'ADJUST',
-      notes: note,
+      // Alta y anulación del mismo servicio: el neto es lo que sigue sumado.
+      notes: { contains: landedCostKey(servicePurchaseId) },
       recostOf: { type: 'IN', refType: 'PURCHASE', refId: relatedPurchaseId },
     },
     select: {
@@ -72,8 +100,9 @@ export async function landedCostShares(
           id: true,
           itemId: true,
           qty: true,
+          totalCost: true,
           reversalOfId: true,
-          reversals: { select: { id: true } },
+          reversals: { select: { id: true, totalCost: true } },
         },
       },
     },
@@ -86,12 +115,17 @@ export async function landedCostShares(
     const entry = r.recostOf;
     if (!entry) continue;
     if (entry.reversalOfId !== null || entry.reversals.length > 0) {
+      // Anular la bobina (o la compra) revierte la entrada a su costo **efectivo**: el flete ya
+      // salió con esa reversa y no hay nada que restar (revisión de cc58-c, P1-2). Un reemplazo
+      // («Editar compra recibida») la revierte a su costo grabado y el flete queda en el saldo sin
+      // entrada viva a la que restárselo: eso sí se rechaza, con la bobina.
+      if (await leftWithReversal(tx, entry.id, entry.totalCost, entry.reversals)) continue;
       const coil = await tx.coil.findUnique({
         where: { id: entry.itemId },
         select: { code: true },
       });
       throw new BadRequestException(
-        `La entrada de la bobina ${coil?.code ?? entry.itemId} se reemplazó o se anuló después de este costo: no se puede restar sin saber a qué entrada va`,
+        `La entrada de la bobina ${coil?.code ?? entry.itemId} se reemplazó después de este costo: no se puede restar sin saber a qué entrada va`,
       );
     }
     const prev = byEntry.get(entry.id);
@@ -104,4 +138,26 @@ export async function landedCostShares(
     });
   }
   return [...byEntry.values()].filter((s) => !s.amountPen.isZero());
+}
+
+/**
+ * La reversa de la entrada se llevó su costo efectivo (el grabado más **todos** sus recosteos): lo
+ * que el servicio le sumó salió con ella.
+ */
+async function leftWithReversal(
+  tx: Prisma.TransactionClient,
+  entryId: bigint,
+  recorded: { toString(): string },
+  reversals: readonly { totalCost: { toString(): string } }[],
+): Promise<boolean> {
+  const [reversal] = reversals;
+  if (!reversal) return false;
+  const recosts = await tx.inventoryMovement.aggregate({
+    where: { recostOfId: entryId },
+    _sum: { totalCost: true },
+  });
+  const effective = toDecimal(recorded.toString()).plus(
+    toDecimal(recosts._sum.totalCost?.toString() ?? '0'),
+  );
+  return toDecimal(reversal.totalCost.toString()).minus(effective).abs().lt('0.0001');
 }

@@ -11,6 +11,7 @@ import type { AuditService } from '../audit/audit.service';
 import type { InventoryService, RecostOutcome } from '../inventory/inventory.service';
 import { rowCostOfRecost } from '../inventory/recost-engine';
 import { lockCoilRows } from '../inventory/row-locks';
+import { hasLandedRecost } from '../purchases/landed-cost-recost';
 
 /**
  * cc56 (D-669, C2 de cc55) — **corregir el costo de la entrada de una bobina que ya se movió.**
@@ -85,6 +86,13 @@ export async function correctCoilEntryCost(
   if (ownAdjusts > 0) {
     throw new BadRequestException(
       `La bobina ${coil.code} tiene ${String(ownAdjusts)} ajuste(s) de costo propios (landed cost o servicios): esta corrección no los contempla`,
+    );
+  }
+  // cc58 (D-686, revisión de cc58-c P2-2): un flete o una aduana sumados a la entrada por recosteo
+  // tampoco: la corrección los pisaría y anular el servicio los restaría otra vez.
+  if (await hasLandedRecost(tx, entry.id)) {
+    throw new BadRequestException(
+      `La bobina ${coil.code} tiene un costo de servicio (flete, aduana o seguro) sumado a su entrada: esta corrección no lo contempla`,
     );
   }
   const recosts = await tx.inventoryMovement.aggregate({

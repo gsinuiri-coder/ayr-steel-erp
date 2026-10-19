@@ -48,7 +48,7 @@ function build(o: { pending?: boolean; entries?: unknown[]; adjusts?: unknown[] 
         .mockResolvedValue({ id: 'p-coils', status: 'RECEIVED', series: 'F001', number: '7' }),
       findMany: jest
         .fn()
-        .mockResolvedValue([{ series: 'F002', number: '9', serviceKind: 'FREIGHT' }]),
+        .mockResolvedValue([{ id: 'p-svc', series: 'F002', number: '9', serviceKind: 'FREIGHT' }]),
     },
     coil: {
       findMany: jest.fn().mockResolvedValue([
@@ -100,7 +100,7 @@ describe('PurchasesService — flete por recosteo de entradas (cc58, D-686)', ()
       [1n, '60.00'],
       [2n, '40.00'],
     ]);
-    expect(ctx.note).toBe('Flete F002-9 (D-686)');
+    expect(ctx.note).toBe('Flete F002-9 (D-686, compra p-svc)');
     expect(bump).toHaveBeenCalledTimes(2);
   });
 
@@ -129,7 +129,7 @@ describe('PurchasesService — flete por recosteo de entradas (cc58, D-686)', ()
       { note: string },
     ];
     expect(entries.map((e) => e.addPen.toString())).toEqual(['-60']);
-    expect(ctx.note).toBe('Anulación: Flete F002-9 (D-686)');
+    expect(ctx.note).toBe('Anulación: Flete F002-9 (D-686, compra p-svc)');
     expect(bump.mock.calls.map((c: unknown[]) => [c[1], String(c[2]), String(c[3])])).toEqual([
       ['c-1', '-60', '600'],
     ]);
