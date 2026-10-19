@@ -107,13 +107,6 @@ function splitNumber(value: string | null): { series: string; number: string } {
 }
 
 /**
- * D-279 — Kardex PEPS de un ítem en el formato 13.1 de SUNAT. Solo lectura; lee los mismos
- * movimientos que `/kardex` y no escribe ni cambia ninguna valorización.
- *
- * Presupuesto de consultas fijo: el ítem, sus movimientos hasta `to` y una consulta por tipo
- * de documento referido (despachos, comprobantes, compras, reportes de producción), sin N+1.
- */
-/**
  * cc58 (D-685): el costo corregido de cada entrada y ajuste con recosteos (`recost_of_id`), como
  * texto. Las salidas no se corrigen: PEPS saca su costo de las capas.
  */
@@ -142,6 +135,13 @@ export function pepsCorrectedCosts(
   return out;
 }
 
+/**
+ * D-279 — Kardex PEPS de un ítem en el formato 13.1 de SUNAT. Solo lectura; lee los mismos
+ * movimientos que `/kardex` y no escribe ni cambia ninguna valorización.
+ *
+ * Presupuesto de consultas fijo: el ítem, sus movimientos hasta `to` y una consulta por tipo
+ * de documento referido (despachos, comprobantes, compras, reportes de producción), sin N+1.
+ */
 @Injectable()
 export class KardexPepsService {
   constructor(

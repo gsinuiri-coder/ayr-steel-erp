@@ -25,8 +25,8 @@ const KNOWN: Record<string, number> = {
   REACTIVATION_TX_TIMEOUT_MS: 30_000,
   COMMIT_PREVIEW_TIMEOUT_MS,
   // cc57: el parámetro de `previewPlantClose`; sus llamadores pasan CLOSE_PREVIEW_TIMEOUT_MS o
-  // COMMIT_PREVIEW_TIMEOUT_MS (cc58: los dos, 60 s).
-  timeoutMs: Math.max(CLOSE_PREVIEW_TIMEOUT_MS, COMMIT_PREVIEW_TIMEOUT_MS),
+  // COMMIT_PREVIEW_TIMEOUT_MS (120 s). Para el piso se cuenta el menor.
+  timeoutMs: Math.min(CLOSE_PREVIEW_TIMEOUT_MS, COMMIT_PREVIEW_TIMEOUT_MS),
 };
 /**
  * cc54 (P2-5 de la revisión de cc53): con o sin `this.` (un auxiliar que recibe `inventory` como
@@ -205,15 +205,11 @@ const DAY_MAX_MS = KARDEX_TX_OPTIONS.timeout;
 const RECOST_MAX_MS = RECOST_TX_OPTIONS.timeout;
 /** Las que recostean en bloque: hasta 60 s. */
 const RECOST_PATHS: readonly (readonly [string, string])[] = [
-  ['purchases/purchases.service.ts', 'cancel'],
-  ['purchases/purchase-received-edit.service.ts', 'commit'],
   ['production/production.service.ts', 'close'],
   ['production/production.service.ts', 'reopen'],
-  ['production/roofing-drafts.service.ts', 'commit'],
   ['production/roofing-production.service.ts', 'close'],
   ['production/roofing-production.service.ts', 'reportAndClose'],
   ['production/roofing-production.service.ts', 'reopen'],
-  ['production/close-preview.ts', 'previewPlantClose'],
   ['invoicing/invoicing.service.ts', 'updateManualIssueDateInTx'],
   ['invoicing/invoice-dispatch.service.ts', 'executeForInvoice'],
 ];
@@ -231,6 +227,17 @@ const BULK_EXCEPTIONS: readonly (readonly [string, string, string])[] = [
   ['catalog/coil-sku-normalization.service.ts', 'planRevert', 'normalización de SKU'],
   ['catalog/coil-sku-normalization.service.ts', 'executeRevert', 'normalización de SKU'],
   ['invoicing/invoice-dispatch.service.ts', 'planAll', 'plan de D-288 para todos los comprobantes'],
+  [
+    'production/roofing-production.service.ts',
+    'mountCoil',
+    '30 s + 3 s por bobina extra (hasta 20)',
+  ],
+  // Recostean, pero por tamaño quedan en 120 s: con menos, una compra de 200 líneas no se podía
+  // anular nunca (Fase 2b) y un borrador grande fallaba en su vista previa (SM-1 de cc28).
+  ['purchases/purchases.service.ts', 'cancel', 'hasta 200 líneas, cada una con su reversa'],
+  ['purchases/purchase-received-edit.service.ts', 'commit', 'hasta 200 líneas, como anular'],
+  ['production/roofing-drafts.service.ts', 'commit', 'un borrador grande (SM-1 de cc28)'],
+  ['production/close-preview.ts', 'previewPlantClose', 'toma el tope de su acción (60 o 120 s)'],
   ['colors/colors.service.ts', 'planRetirement', 'retiro de un color comercial'],
   ['colors/colors.service.ts', 'retire', 'retiro de un color comercial'],
   ['invoicing/opening-date-move.service.ts', 'plan', 'herramienta D-285'],
@@ -246,7 +253,7 @@ describe('cc58 (D-683): techo de las transacciones', () => {
 
   it('los topes con nombre son los de la decisión: 30 s el día, 60 s el recosteo', () => {
     expect(RECOST_TX_OPTIONS).toEqual({ timeout: 60_000, maxWait: 15_000 });
-    expect([CLOSE_PREVIEW_TIMEOUT_MS, COMMIT_PREVIEW_TIMEOUT_MS]).toEqual([60_000, 60_000]);
+    expect([CLOSE_PREVIEW_TIMEOUT_MS, COMMIT_PREVIEW_TIMEOUT_MS]).toEqual([60_000, 120_000]);
   });
 
   it('ninguna transacción pasa de 30 s salvo las que recostean (60 s) y las excepciones con nombre', () => {

@@ -316,7 +316,9 @@ export class InventoryService {
         totalCost = averageOutCost(kardex, qty);
         unitCost = totalCost.div(qty);
         newQty = balance.qty.minus(qty);
-        newAvgCost = new Decimal(0);
+        // El saldo queda en cero por cantidad; el promedio guardado se conserva, como en toda
+        // salida: el piso de precio (`price-floor.ts`) lo lee aunque no quede stock (revisión P1).
+        newAvgCost = balance.avgCost;
       } else {
         // Una salida no cambia el costo promedio; sale valorizada al promedio vigente.
         unitCost = balance.avgCost;

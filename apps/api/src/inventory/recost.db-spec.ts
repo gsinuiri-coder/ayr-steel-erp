@@ -339,7 +339,8 @@ describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
     await move(itemId, { type: 'OUT', qty: '8', date: '2026-08-05' });
     const ok = await move(itemId, { type: 'OUT', qty: '2', date: '2026-08-03' });
     expect(ok.totalCost.toString()).toBe('20');
-    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '0' });
+    // Sin cantidad, el saldo no vale nada; el promedio se conserva para el piso de precio.
+    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '3.3333' });
   });
 
   it('una salida anulada el mismo día no cuenta: re-fechar un despacho a una fecha anterior (D-288)', async () => {
