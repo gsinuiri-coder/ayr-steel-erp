@@ -42,6 +42,8 @@ function fakePrisma(options: {
 }
 
 const NOW = new Date('2026-09-16T12:00:00.000Z');
+// Las paginaciones de abajo fijan `to` en el día de NOW: sin él, el rango por defecto son los
+// últimos 31 días de hoy y desde el 2026-10-17 las filas de NOW quedaban fuera (vacío).
 
 // -----------------------------------------------------------------------------------------
 // RF-S2-CIERRE/M2 (D-220): a diferencia de `fakePrisma` (arriba), que siempre devuelve el
@@ -386,7 +388,7 @@ describe('AuditQueryService.findPage — paginación completa sin pérdidas (D-2
     const prisma = fakeQueryablePrisma({ auditLogRows, salesPriceRows, productPriceRows });
     const service = new AuditQueryService(prisma);
 
-    const items = await drainAllPages(service, { pageSize: 4 });
+    const items = await drainAllPages(service, { pageSize: 4, to: '2026-09-16' });
 
     expect(items).toHaveLength(30);
     const keys = items.map((i) => `${i.source}:${i.id}`);
@@ -410,7 +412,11 @@ describe('AuditQueryService.findPage — paginación completa sin pérdidas (D-2
     const prisma = fakeQueryablePrisma({ productPriceRows });
     const service = new AuditQueryService(prisma);
 
-    const items = await drainAllPages(service, { pageSize: 4, entityType: 'products' });
+    const items = await drainAllPages(service, {
+      pageSize: 4,
+      entityType: 'products',
+      to: '2026-09-16',
+    });
 
     expect(items).toHaveLength(25);
     expect(new Set(items.map((i) => i.id)).size).toBe(25);
@@ -445,7 +451,11 @@ describe('AuditQueryService.findPage — paginación completa sin pérdidas (D-2
     ];
     const service = new AuditQueryService(fakeQueryablePrisma({ auditLogRows, productPriceRows }));
 
-    const items = await drainAllPages(service, { pageSize: 4, entityType: 'products' });
+    const items = await drainAllPages(service, {
+      pageSize: 4,
+      entityType: 'products',
+      to: '2026-09-16',
+    });
 
     expect(items).toHaveLength(52);
     expect(new Set(items.map((i) => `${i.source}:${i.id}`)).size).toBe(52);
