@@ -8,7 +8,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { ColorsModule } from './colors/colors.module';
 import { CoilsModule } from './coils/coils.module';
 import { LockConflictFilter } from './common/lock-conflict.filter';
-import { AppThrottlerGuard } from './common/throttler.guard';
+import { AppThrottlerGuard, loginIpThrottler } from './common/throttler.guard';
 import { ConfigModule } from './config/config.module';
 import { ENV, type Env } from './config/env';
 import { CustomersModule } from './customers/customers.module';
@@ -42,7 +42,10 @@ import { UsersModule } from './users/users.module';
       imports: [ConfigModule],
       inject: [ENV],
       useFactory: (env: Env) => ({
-        throttlers: [{ name: 'default', ttl: 60_000, limit: 120 }],
+        throttlers: [
+          { name: 'default', ttl: 60_000, limit: 120 },
+          loginIpThrottler(env.THROTTLE_DISABLED),
+        ],
         // En E2E/CI se apaga para que la suite no reciba 429.
         skipIf: () => env.THROTTLE_DISABLED,
       }),

@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Injectable, type ExecutionContext } from '@nestjs/common';
+import { ThrottlerGuard, type ThrottlerOptions } from '@nestjs/throttler';
 import type { Request } from 'express';
 
 /**
@@ -30,4 +30,24 @@ export class AppThrottlerGuard extends ThrottlerGuard {
     if (email) return Promise.resolve(`email|${email}`);
     return Promise.resolve(req.ip ?? 'sin-ip');
   }
+}
+
+/**
+ * cc58 (D-688, C-08 de audit-01): la **segunda cubeta del login, por IP**. La del correo frena a
+ * quien ataca una cuenta; esta, a quien prueba muchas cuentas desde la misma IP. Solo en
+ * `/auth/login`. Detrás del proxy del web todos comparten la IP de salida de Vercel, así que el
+ * límite es holgado: 30 intentos por minuto, el triple del de una cuenta.
+ */
+export const LOGIN_IP_LIMIT = 30;
+
+export function loginIpThrottler(disabled: boolean): ThrottlerOptions {
+  return {
+    name: 'loginIp',
+    ttl: 60_000,
+    limit: LOGIN_IP_LIMIT,
+    getTracker: (req: Record<string, unknown>) =>
+      `ip|${typeof req.ip === 'string' ? req.ip : 'sin-ip'}`,
+    skipIf: (context: ExecutionContext) =>
+      disabled || !isLoginRoute(context.switchToHttp().getRequest<Request>()),
+  };
 }
