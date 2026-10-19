@@ -1,4 +1,12 @@
-import { ForbiddenException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { User } from '@prisma/client';
 import argon2 from 'argon2';
@@ -8,11 +16,23 @@ import { AuditService } from '../audit/audit.service';
 import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AccessTokenPayload, RequestUser } from './auth.types';
+import { loginIpKey, type ClientIpCheck } from './client-ip';
 
 export interface ClientMeta {
   userAgent?: string;
   ip?: string;
+  /** cc59 (D-692): la IP real del cliente que firmó la web, ya verificada (o por qué no). */
+  clientIp?: ClientIpCheck;
 }
+
+/**
+ * cc59 (D-693): **el límite por IP del login, sobre los intentos fallidos.** 20 en 15 minutos por
+ * IP verificada; el 21 responde 429 (la web muestra «Demasiados intentos…», cc31). Un login correcto
+ * no reinicia la cuenta. Los intentos se cuentan en `audit_log` (`entity = 'login_ip'`, clave con
+ * hash, D-694): valen con varias instancias de Cloud Run y no piden migración.
+ */
+export const LOGIN_IP_MAX_FAILURES = 20;
+export const LOGIN_IP_WINDOW_MS = 15 * 60_000;
 
 export interface IssuedTokens {
   user: AuthUser;
@@ -59,6 +79,8 @@ export const DUMMY_PASSWORD_HASH =
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -68,6 +90,22 @@ export class AuthService {
 
   /** RF-01: login con correo y contraseña. Crea una sesión con refresh token. */
   async login(input: LoginInput, meta: ClientMeta = {}): Promise<IssuedTokens> {
+    const ipKey = this.loginIpKeyOf(meta.clientIp);
+    if (ipKey) {
+      const failures = await this.prisma.auditLog.count({
+        where: {
+          entity: 'login_ip',
+          entityId: ipKey,
+          at: { gt: new Date(Date.now() - LOGIN_IP_WINDOW_MS) },
+        },
+      });
+      if (failures >= LOGIN_IP_MAX_FAILURES) {
+        throw new HttpException(
+          'Demasiados intentos fallidos desde esta conexión. Espera unos minutos y vuelve a probar.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
     const user = await this.prisma.user.findUnique({ where: { email: input.email } });
     const ok = await argon2.verify(user?.passwordHash ?? DUMMY_PASSWORD_HASH, input.password);
     if (!user || !ok) {
@@ -78,6 +116,14 @@ export class AuthService {
         entityId: user?.id ?? null,
         after: { email: input.email },
       });
+      if (ipKey) {
+        await this.audit.log({
+          actorId: null,
+          action: 'auth.login.failed.ip',
+          entity: 'login_ip',
+          entityId: ipKey,
+        });
+      }
       throw new UnauthorizedException('Credenciales inválidas');
     }
     if (!user.active) {
@@ -290,6 +336,22 @@ export class AuthService {
       role: user.role,
       mustChangePassword: user.mustChangePassword,
     };
+  }
+
+  /**
+   * cc59 (D-692): la clave del conteo por IP, solo con la IP verificada. Sin firma válida se sigue
+   * con el límite por correo de siempre y queda dicho en el log (sin la IP).
+   */
+  private loginIpKeyOf(check: ClientIpCheck | undefined): string | null {
+    const secret = this.env.AYR_CLIENT_IP_SECRET;
+    if (!check || !secret) return null;
+    if (!check.ok) {
+      if (check.reason !== 'no-secret')
+        this.logger.warn(`IP del cliente no verificada: ${check.reason}`);
+      return null;
+    }
+    this.logger.log('IP del cliente verificada');
+    return loginIpKey(secret, check.ip);
   }
 
   private signAccess(user: User, sessionId: string): Promise<string> {

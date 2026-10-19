@@ -27,6 +27,7 @@ import { ACCESS_COOKIE, REFRESH_COOKIE, type RequestUser } from './auth.types';
 import { clearAuthCookies, setAuthCookies } from './cookies';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
+import { verifyClientIp } from './client-ip';
 
 type Cookies = Partial<Record<string, string>>;
 
@@ -46,7 +47,11 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ user: AuthUser }> {
-    const tokens = await this.auth.login(body, { userAgent: req.get('user-agent'), ip: req.ip });
+    const tokens = await this.auth.login(body, {
+      userAgent: req.get('user-agent'),
+      ip: req.ip,
+      clientIp: verifyClientIp(req.headers, this.env.AYR_CLIENT_IP_SECRET, Date.now()),
+    });
     setAuthCookies(res, this.env, tokens);
     return { user: tokens.user };
   }

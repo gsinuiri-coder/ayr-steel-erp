@@ -35,6 +35,8 @@ const SECRET_NAMES = [
   'R2_SECRET_ACCESS_KEY',
   'R2_BUCKET',
   'R2_ENDPOINT',
+  // cc59 (D-692): la firma de la IP real del cliente en el login (scripts/client-ip-secret.mjs).
+  'AYR_CLIENT_IP_SECRET',
 ];
 const secretVersions = Object.fromEntries(
   SECRET_NAMES.map((name) => {

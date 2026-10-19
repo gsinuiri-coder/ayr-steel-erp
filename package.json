@@ -28,6 +28,7 @@
     "dev:preview": "node scripts/dev-preview.mjs",
     "db:local": "node scripts/db-local.mjs",
     "secrets:gh": "node scripts/gh-secrets.mjs",
+    "secrets:client-ip": "node scripts/client-ip-secret.mjs",
     "secrets:gcp": "node scripts/gcp-secrets.mjs",
     "deploy:api": "node scripts/deploy-api.mjs",
     "deploy:web": "node scripts/deploy-web.mjs",
