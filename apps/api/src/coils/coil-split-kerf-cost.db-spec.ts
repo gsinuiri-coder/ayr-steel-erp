@@ -297,9 +297,10 @@ describe('D-608 — el kerf y el borde del partido interno quedan en el costo de
       '20.00',
     );
     const { record, out, ins } = await splitMovements(motherId);
-    // La compra entra por S/ 30 925.50 (2 000 kg × 4.1234 USD × 3.75), promedio 15.4628 a 4
-    // decimales: los 2 000 kg salen por S/ 30 925.60.
-    expect(out.totalCost.toFixed(4)).toBe('30925.6000');
+    // La compra entra por S/ 30 925.50 (2 000 kg × 4.1234 USD × 3.75). cc58 (D-684): los 2 000 kg
+    // salen por lo que vale el kardex, S/ 30 925.50 (antes, al promedio 15.4628 a 4 decimales,
+    // S/ 30 925.60: diez céntimos que nadie compró).
+    expect(out.totalCost.toFixed(4)).toBe('30925.5000');
     expect(sum(ins.map((m) => dec(m.totalCost))).toFixed(4)).toBe(out.totalCost.toFixed(4));
     const children = await prisma.coil.findMany({ where: { splitId: record.id } });
     for (const c of children) {

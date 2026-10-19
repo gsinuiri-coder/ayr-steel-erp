@@ -339,8 +339,7 @@ describe('cc53 (D-652): nada atrasado deja el kardex en negativo', () => {
     await move(itemId, { type: 'OUT', qty: '8', date: '2026-08-05' });
     const ok = await move(itemId, { type: 'OUT', qty: '2', date: '2026-08-03' });
     expect(ok.totalCost.toString()).toBe('20');
-    // Sin cantidad, el saldo no vale nada; el promedio se conserva para el piso de precio.
-    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '3.3333' });
+    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '0' });
   });
 
   it('una salida anulada el mismo día no cuenta: re-fechar un despacho a una fecha anterior (D-288)', async () => {
@@ -662,7 +661,8 @@ describe('cc58 (D-684, E-05 de audit-01): la salida que agota el ítem', () => {
     // 1 × 3.3333 al promedio; la última se lleva lo que queda: 10 − 3.3333 = 6.6667 (no 6.6666).
     expect([first.totalCost.toString(), last.totalCost.toString()]).toEqual(['3.3333', '6.6667']);
     expect((await kardexValue(itemId)).toFixed(4)).toBe('0.0000');
-    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '0' });
+    // Sin cantidad, el saldo no vale nada; el promedio se conserva para el piso de precio.
+    expect(await balanceOf(itemId)).toEqual({ qty: '0', avg: '3.3333' });
     // Un recosteo posterior no tiene nada que corregir.
     expect(
       await prisma.inventoryMovement.count({ where: { itemId, recostOfId: { not: null } } }),
