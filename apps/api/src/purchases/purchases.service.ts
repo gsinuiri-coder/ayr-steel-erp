@@ -56,6 +56,7 @@ import {
 import { assertNoLiveDocumentClash } from './purchase-document-clash';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
+import { RECOST_TX_OPTIONS } from '../common/transaction-options';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
@@ -752,7 +753,8 @@ export class PurchasesService {
           },
         });
       },
-      { timeout: 30_000 },
+      // cc58 (D-683, D-686): un flete que llega tarde recostea lo que ya salió: el tope del recosteo.
+      RECOST_TX_OPTIONS,
     );
 
     return this.findOne(id);

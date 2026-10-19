@@ -212,6 +212,8 @@ const RECOST_PATHS: readonly (readonly [string, string])[] = [
   ['production/roofing-production.service.ts', 'reopen'],
   ['invoicing/invoicing.service.ts', 'updateManualIssueDateInTx'],
   ['invoicing/invoice-dispatch.service.ts', 'executeForInvoice'],
+  // cc58 (D-686): recibir un flete que llega tarde recostea lo que ya salió.
+  ['purchases/purchases.service.ts', 'receive'],
 ];
 /** Importadores y herramientas de una vez: sin techo, con su motivo. */
 const BULK_EXCEPTIONS: readonly (readonly [string, string, string])[] = [
