@@ -562,6 +562,28 @@ export function PedidoDetalleView({ id }: { id: string }) {
       />
       <Stages {...orderStages(o.stage)} />
 
+      {/* cc58 (D-680, D-05 de audit-01): atendido, pero todo lo despachado volvió por NC. */}
+      {o.status === 'FULFILLED' && o.returns?.fullyReturned === true && (
+        <Alert variant="warning" data-testid="order-fully-returned">
+          <AlertDescription>
+            <span className="font-medium text-foreground">
+              Atendido, pero devuelto por completo:
+            </span>{' '}
+            todo lo despachado volvió al almacén en{' '}
+            {o.returns.returns.map((r, index) => (
+              <span key={r.id}>
+                {index > 0 && ', '}
+                <Link href={`/devoluciones/${r.id}`} className={LINK_CLASSNAME}>
+                  {r.code}
+                </Link>
+                {r.creditNoteNumber !== null && ` (NC ${r.creditNoteNumber})`}
+              </span>
+            ))}
+            .
+          </AlertDescription>
+        </Alert>
+      )}
+
       {o.shortfalls.length > 0 && o.status !== 'CANCELLED' && (
         <Alert variant="warning">
           <AlertDescription className="grid gap-1">

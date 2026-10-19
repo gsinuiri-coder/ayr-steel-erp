@@ -7,7 +7,7 @@ import {
   registerCreditNoteSchema,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
-import { InvoicingService } from './invoicing.service';
+import { assertStockCreditNoteRole, InvoicingService } from './invoicing.service';
 
 /**
  * cc54 (D-654..D-663) — la NC por motivo en el servicio, sin base: un doble de la transacción con el
@@ -382,6 +382,29 @@ describe('InvoicingService.registerCreditNote — el motivo decide (cc54)', () =
     await expect(
       build({ priorReplacement: true }).service.registerCreditNote(ADMIN, 'f-1', body),
     ).rejects.toThrow('ya tuvo un comprobante de reemplazo');
+  });
+
+  it('cc58 (D-678, C-04): 01, 06 y 07 devuelven mercadería: solo un administrador', async () => {
+    for (const reason of ['ANULACION_OPERACION', 'DEVOLUCION_TOTAL', 'DEVOLUCION_ITEM'] as const) {
+      await expect(
+        // El rol se mira antes que el cuerpo: alcanza el motivo (sin líneas, que el esquema pediría).
+        build().service.registerCreditNote(SELLER, 'f-1', {
+          reason,
+          issueDate: TODAY,
+          series: 'FC01',
+          correlative: 45,
+        }),
+      ).rejects.toThrow('la registra un administrador');
+      await expect(
+        build().service.createCreditNote(SELLER, 'f-1', { reason, issueDate: TODAY }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    }
+    expect(() => {
+      assertStockCreditNoteRole(SELLER, 'DESCUENTO_ITEM');
+    }).not.toThrow();
+    expect(() => {
+      assertStockCreditNoteRole(ADMIN, 'DEVOLUCION_ITEM');
+    }).not.toThrow();
   });
 
   it('un comprobante que no es manual no se registra a mano; el 02 no va por borrador', async () => {

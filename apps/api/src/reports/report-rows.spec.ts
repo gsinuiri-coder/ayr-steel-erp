@@ -370,6 +370,22 @@ describe('cc40: búsqueda y textos buscables de @ayr/shared', () => {
     ]);
   });
 
+  it('cc58 (D-681, E-04): el % del pie es margen total ÷ venta con costo, como la franja', () => {
+    const row = (salesPen: string, noCostSalesPen: string | undefined, marginPen: string | null) =>
+      ({ salesOrderId: 'o', salesPen, noCostSalesPen, costPen: '0', marginPen }) as never;
+    // Fila 1: 1000 de venta, 200 de ellas de Servicios, margen 200 sobre los 800 con costo.
+    // Fila 2: 100 con margen 50. Fila 3: sin costo comparable, no entra a la base.
+    const s = summarizeSalesMargin([
+      row('1000', '200', '200'),
+      row('100', undefined, '50'),
+      row('500', '0', null),
+    ]);
+    expect(s.sales.toFixed(2)).toBe('1600.00');
+    expect(s.margin.toFixed(2)).toBe('250.00');
+    // 250 ÷ 900, no el promedio de 25 % y 50 %, ni 250 ÷ 1100 (con Servicios en la base).
+    expect(s.marginPct).toBe('27.78');
+  });
+
   it('el agrupado por vendedor pone sin vendedor aparte, y la etiqueta cuenta ventas directas', () => {
     const base = {
       customerId: 'c1',

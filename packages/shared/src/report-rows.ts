@@ -248,8 +248,16 @@ export function summarizeSalesMargin(orders: readonly SalesMarginOrderDto[]): Sa
   const sales = sumDecimal(orders, (o) => o.salesPen);
   const margin = sumDecimal(orders, (o) => o.marginPen);
   // La base del porcentaje es la venta de las filas que tienen margen: una fila sin costo
-  // comparable no puede bajar ni subir el porcentaje.
-  const marginBase = sumDecimal(orders, (o) => (o.marginPen === null ? null : o.salesPen));
+  // comparable no puede bajar ni subir el porcentaje. cc58 (D-681, E-04): sin la venta que no tiene
+  // costo registrado (D-409), la misma base que la franja: margen total ÷ venta total, no un
+  // promedio de porcentajes.
+  const marginBase = sumDecimal(orders, (o) =>
+    o.marginPen === null
+      ? null
+      : toDecimal(o.salesPen)
+          .minus(toDecimal(o.noCostSalesPen ?? '0'))
+          .toFixed(4),
+  );
   const orderCount = orders.filter((o) => o.salesOrderId !== null).length;
   return {
     count: orders.length,

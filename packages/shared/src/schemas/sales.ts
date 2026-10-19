@@ -1398,6 +1398,19 @@ export const salesOrderDocumentLinkSchema = z.object({
 });
 export type SalesOrderDocumentLinkDto = z.infer<typeof salesOrderDocumentLinkSchema>;
 
+export const salesOrderReturnsSchema = z.object({
+  returns: z.array(
+    z.object({
+      id: z.string().uuid(),
+      code: z.string(),
+      creditNoteId: z.string().uuid(),
+      creditNoteNumber: z.string().nullable(),
+    }),
+  ),
+  fullyReturned: z.boolean(),
+});
+export type SalesOrderReturnsDto = z.infer<typeof salesOrderReturnsSchema>;
+
 export const salesOrderSchema = z.object({
   id: z.string().uuid(),
   /** `PED-000123`, derivado del correlativo (D-068). */
@@ -1460,6 +1473,11 @@ export const salesOrderSchema = z.object({
    * detalle, con la misma consulta de `documents`: con 0, el web no pide la sección de anulados.
    */
   annulledDocumentCount: z.number().int().optional(),
+  /**
+   * cc58 (D-680): las devoluciones vivas (DEV-) del pedido y si volvió todo lo despachado. Solo lo
+   * llena el detalle; con `fullyReturned` en un pedido atendido, el detalle lo avisa.
+   */
+  returns: salesOrderReturnsSchema.optional(),
 });
 export type SalesOrderDto = z.infer<typeof salesOrderSchema>;
 

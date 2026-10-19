@@ -272,13 +272,12 @@ export class PriceListImportService {
               `Un producto desactivado no admite precio de lista (${row.productId})`,
             );
           }
-          if (row.priceWithIgvPen !== undefined) {
-            const derived = money(saleValueFromPrice(row.priceWithIgvPen)).toFixed(4);
-            if (!toDecimal(derived).eq(toDecimal(row.afterValuePen))) {
-              throw new BadRequestException(
-                `El valor sin IGV de ${product.sku} no corresponde a su precio con IGV (${row.priceWithIgvPen}): vuelve a cargar el archivo`,
-              );
-            }
+          // cc58 (D-682): siempre; el precio con IGV ya es obligatorio en el cuerpo.
+          const derived = money(saleValueFromPrice(row.priceWithIgvPen)).toFixed(4);
+          if (!toDecimal(derived).eq(toDecimal(row.afterValuePen))) {
+            throw new BadRequestException(
+              `El valor sin IGV de ${product.sku} no corresponde a su precio con IGV (${row.priceWithIgvPen}): vuelve a cargar el archivo`,
+            );
           }
           if (!priceListValueChanged(product.listPricePen, row.afterValuePen)) continue;
           await tx.product.update({

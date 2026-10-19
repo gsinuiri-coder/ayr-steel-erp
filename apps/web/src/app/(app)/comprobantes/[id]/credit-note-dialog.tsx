@@ -12,6 +12,7 @@ import {
   CREDIT_NOTE_REASON_INFO,
   CREDIT_NOTE_REASON_LABELS,
   CREDIT_NOTE_REASON_SUNAT_CODE,
+  returnsStock,
   toDecimal,
   type CreditNoteGroup,
   type CreditNotePreviewDto,
@@ -71,9 +72,12 @@ export function CreditNoteDialog({
 }) {
   const today = businessToday();
   const manual = d.origin === 'MANUAL';
+  // cc58 (D-678): las NC que devuelven mercadería (01, 06, 07) son del administrador; el vendedor
+  // arranca en una que sí puede registrar.
+  const initialReason: CreditNoteReason = isAdmin ? 'DEVOLUCION_ITEM' : 'DESCUENTO_ITEM';
   const [step, setStep] = useState<1 | 2>(1);
   const [draft, setDraft] = useState<CreditNoteDraft>(() =>
-    emptyCreditNoteDraft('DEVOLUCION_ITEM', today),
+    emptyCreditNoteDraft(initialReason, today),
   );
   const [series, setSeries] = useState('');
   const [correlative, setCorrelative] = useState('');
@@ -86,11 +90,11 @@ export function CreditNoteDialog({
   useEffect(() => {
     if (open) return;
     setStep(1);
-    setDraft(emptyCreditNoteDraft('DEVOLUCION_ITEM', businessToday()));
+    setDraft(emptyCreditNoteDraft(initialReason, businessToday()));
     setSeries('');
     setCorrelative('');
     setCustomerLabel('');
-  }, [open]);
+  }, [open, initialReason]);
 
   const disabledReason = (reason: CreditNoteReason): string | null => {
     if (!manual && (reason === 'DEVOLUCION_ITEM' || reason === 'DEVOLUCION_TOTAL')) {
@@ -101,6 +105,9 @@ export function CreditNoteDialog({
     }
     if (!isAdmin && reason === 'ANULACION_ERROR_RUC') {
       return 'Cambia el cliente del pedido: lo registra un administrador';
+    }
+    if (!isAdmin && returnsStock(reason)) {
+      return 'Devuelve mercadería al almacén: lo registra un administrador';
     }
     if (reason === 'OTROS_AJUSTES' && !(d.docType === 'FACTURA' && d.paymentTerms === 'CREDITO')) {
       return 'Solo en una factura al crédito';

@@ -135,7 +135,7 @@ export const confirmPriceListImportSchema = z.object({
         /**
          * cc57 (D-16 de audit-01): el precio con IGV de la fila del archivo. Con él, el API vuelve a
          * derivar `afterValuePen` y rechaza si no coincide (no graba un valor que no salió del
-         * archivo). Opcional para el navegador de antes del deploy. **Tal cual vino de la celda**, sin
+         * archivo). cc58 (D-682): obligatorio; ya no hay navegador de antes del deploy. **Tal cual vino de la celda**, sin
          * redondear: la vista previa derivó el valor del texto crudo, y redondearlo acá a 4
          * decimales hacía que una celda con toda la precisión de una fórmula no coincidiera
          * (autorrevisión de cc57-e, P1-1).
@@ -144,8 +144,7 @@ export const confirmPriceListImportSchema = z.object({
           .string()
           .trim()
           .regex(/^\d+(\.\d+)?$/, 'El precio con IGV no es un número válido')
-          .max(40)
-          .optional(),
+          .max(40),
       }),
     )
     .min(1, 'No hay filas para confirmar')

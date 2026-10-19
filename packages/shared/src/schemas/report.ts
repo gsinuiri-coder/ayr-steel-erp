@@ -338,6 +338,11 @@ export const salesMarginOrderSchema = z.object({
   sellerId: z.string().uuid().nullable(),
   sellerName: z.string().nullable(),
   salesPen: z.string(),
+  /**
+   * cc58 (D-681, E-04): la venta sin costo registrado de la fila (Servicios y «Sin línea», D-409 y
+   * D-419). Suma a la venta y no a la base del margen, igual que en la franja. Ausente es 0.
+   */
+  noCostSalesPen: z.string().optional(),
   costPen: z.string().nullable(),
   /** Material que consumieron las OPs de este pedido. Columna de planta, no de margen. */
   opMaterialCostPen: z.string(),

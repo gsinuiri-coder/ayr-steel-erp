@@ -1,6 +1,11 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { Prisma } from '@prisma/client';
-import { LIVE_DOCUMENT_STATUSES, salesMarginQuerySchema, sum as decimalSum } from '@ayr/shared';
+import {
+  LIVE_DOCUMENT_STATUSES,
+  salesMarginQuerySchema,
+  sum as decimalSum,
+  summarizeSalesMargin,
+} from '@ayr/shared';
 import { SalesMarginService } from './sales-margin.service';
 import { SalesByMaterialService } from './sales-by-material.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -727,6 +732,30 @@ describe('SalesMarginService — por línea (cc23)', () => {
       marginPen: '610.0000',
     });
     expect(all.totalsByLine.find((t) => t.businessLine === null)?.costPen).toBe('0.0000');
+  });
+
+  it('cc58 (D-681, E-04): la fila y el pie miden el margen sobre la misma base que la franja', async () => {
+    const { service } = await buildService(seeds);
+    const all = await service.salesMargin(RANGE);
+    const o1 = all.orders.find((o) => o.salesOrderId === 'o1');
+    // o1: 1300 de venta, 100 de Servicios; margen (1300 − 100) − 950 = 250 sobre 1200.
+    expect(o1).toMatchObject({
+      salesPen: '1300.0000',
+      noCostSalesPen: '100.0000',
+      marginPen: '250.0000',
+      marginPct: '20.83',
+    });
+    // d6, venta directa: 30 de «Sin línea» fuera de la base.
+    expect(all.orders.find((o) => o.salesOrderId === null)).toMatchObject({
+      noCostSalesPen: '30.0000',
+      marginPen: '60.0000',
+    });
+    const pie = summarizeSalesMargin(all.orders.filter((o) => o.inTotals));
+    expect([pie.margin.toFixed(4), pie.marginPct]).toEqual([
+      all.totals.marginPen,
+      all.totals.marginPct,
+    ]);
+    expect(all.totals.marginPct).toBe('29.61');
   });
 
   it('la fila de un pedido mixto es su porción de la línea, con sus comprobantes', async () => {
