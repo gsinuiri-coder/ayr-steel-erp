@@ -593,6 +593,21 @@ describe('cc55 (D-664): hallazgos de audit-01 sobre la nota de crédito', () => 
     expect(await pendingOf(s.orderId)).toBe('0.000');
   });
 
+  it('cc58 (D-678, autorrevisión P1): un borrador 01 no lo registra a mano un vendedor', async () => {
+    const s = await sold();
+    const draft = await invoicing.createCreditNote(
+      admin,
+      s.invoiceId,
+      createCreditNoteSchema.parse({ reason: 'ANULACION_OPERACION', issueDate: TODAY }),
+    );
+    const seller: RequestUser = { ...admin, role: Role.VENDEDOR };
+    const r = await rejection(
+      invoicing.registerManual(seller, draft.id, { series: 'FC77', correlative: 7701 }),
+    );
+    expect(r.message).toContain('la registra un administrador');
+    expect(await returns(s.productId)).toEqual([]);
+  });
+
   it('C-01: la vista previa no devuelve costos a quien no es ADMINISTRADOR', async () => {
     const s = await sold();
     const body = createCreditNoteSchema.parse({ reason: 'ANULACION_OPERACION', issueDate: TODAY });
