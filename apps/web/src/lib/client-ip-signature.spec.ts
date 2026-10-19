@@ -17,24 +17,20 @@ describe('client-ip-signature', () => {
     expect(clientIpOf(new Headers())).toBeNull();
   });
 
-  it('en el login firma la IP; borra siempre lo que haya mandado el navegador', () => {
+  it('con secreto firma la IP en toda petición; borra siempre lo que haya mandado el navegador', () => {
     const incoming = new Headers({ 'x-real-ip': '190.42.1.7', 'x-ayr-client-ip': '1.1.1.1' });
     const out = new Headers(incoming);
-    applyClientIpHeaders(out, incoming, 'auth/login', 'secreto', 1_760_000_000_000);
+    applyClientIpHeaders(out, incoming, 'secreto', 1_760_000_000_000);
     expect(out.get('x-ayr-client-ip')).toBe('190.42.1.7');
     expect(out.get('x-ayr-client-ip-ts')).toBe('1760000000000');
     expect(out.get('x-ayr-client-ip-sig')).toBe(
       signClientIp('secreto', '190.42.1.7', '1760000000000'),
     );
 
-    for (const [path, secret] of [
-      ['customers', 'secreto'],
-      ['auth/login', undefined],
-    ] as const) {
-      const other = new Headers(incoming);
-      applyClientIpHeaders(other, incoming, path, secret, 1_760_000_000_000);
-      expect(other.get('x-ayr-client-ip')).toBeNull();
-      expect(other.get('x-ayr-client-ip-sig')).toBeNull();
-    }
+    // Sin secreto, nada: y la copia del navegador tampoco pasa.
+    const other = new Headers(incoming);
+    applyClientIpHeaders(other, incoming, undefined, 1_760_000_000_000);
+    expect(other.get('x-ayr-client-ip')).toBeNull();
+    expect(other.get('x-ayr-client-ip-sig')).toBeNull();
   });
 });

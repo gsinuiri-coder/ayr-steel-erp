@@ -25,17 +25,18 @@ export function clientIpOf(headers: Headers): string | null {
 
 /**
  * Prepara las cabeceras hacia el API: **siempre** borra las de la IP que haya mandado el navegador
- * (el proxy reenvía todo) y, en el login y con secreto, pone la IP real con su firma.
+ * (el proxy reenvía todo) y, con secreto, pone la IP real con su firma en **toda** petición. No se
+ * elige por ruta: el API enruta sin distinguir mayúsculas ni barra final, y `/api/Auth/login/`
+ * llegaba al login sin firma (revisión de cc59, P1-1). Hoy solo el login la usa.
  */
 export function applyClientIpHeaders(
   out: Headers,
   incoming: Headers,
-  path: string,
   secret: string | undefined,
   now: number,
 ): void {
   for (const h of CLIENT_IP_HEADERS) out.delete(h);
-  if (path !== 'auth/login' || !secret) return;
+  if (!secret) return;
   const ip = clientIpOf(incoming);
   if (!ip) return;
   const ts = String(now);

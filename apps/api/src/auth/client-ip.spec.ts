@@ -2,6 +2,7 @@ import {
   CLIENT_IP_HEADER,
   CLIENT_IP_SIG_HEADER,
   CLIENT_IP_TS_HEADER,
+  ipBucket,
   loginIpKey,
   signClientIp,
   verifyClientIp,
@@ -74,6 +75,19 @@ describe('verifyClientIp', () => {
   it('el vector que también prueba la web (mismo formato de firma)', () => {
     expect(signClientIp('k', '1.2.3.4', '1760000000000')).toBe(
       'GnmF5uxJ161SC8yqdMAvnK6IXNqKR8rVo_eMDtbyFfE',
+    );
+  });
+});
+
+describe('ipBucket', () => {
+  it('IPv4 entera; IPv6 por su /64; IPv4 mapeada como IPv4', () => {
+    expect(ipBucket('190.42.1.7')).toBe('190.42.1.7');
+    expect(ipBucket('2800:200:e840:1f2a:1:2:3:4')).toBe('2800:200:e840:1f2a::/64');
+    expect(ipBucket('2800:0200::1')).toBe('2800:200:0:0::/64');
+    expect(ipBucket('::ffff:190.42.1.7')).toBe('190.42.1.7');
+    // Dos direcciones del mismo /64 cuentan juntas.
+    expect(loginIpKey(SECRET, '2800:200:e840:1f2a::a')).toBe(
+      loginIpKey(SECRET, '2800:200:e840:1f2a:ffff::1'),
     );
   });
 });

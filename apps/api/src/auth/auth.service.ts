@@ -350,7 +350,7 @@ export class AuthService {
         this.logger.warn(`IP del cliente no verificada: ${check.reason}`);
       return null;
     }
-    this.logger.log('IP del cliente verificada');
+    this.logger.debug('IP del cliente verificada');
     return loginIpKey(secret, check.ip);
   }
 

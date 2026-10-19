@@ -64,5 +64,27 @@ export function verifyClientIp(
  * corresponder a cualquier IP. 43 caracteres, cabe en `entity_id`.
  */
 export function loginIpKey(secret: string, ip: string): string {
-  return createHmac('sha256', secret).update(`login-ip:${ip}`).digest('base64url');
+  return createHmac('sha256', secret)
+    .update(`login-ip:${ipBucket(ip)}`)
+    .digest('base64url');
+}
+
+/**
+ * Lo que se cuenta junto: la IPv4 entera y, en IPv6, su /64 (revisión de cc59, P2): un cliente con
+ * un /64 rota direcciones dentro de él sin costo. Una IPv4 mapeada (`::ffff:a.b.c.d`) es la IPv4.
+ */
+export function ipBucket(ip: string): string {
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped?.[1]) return mapped[1];
+  if (isIP(ip) !== 6) return ip;
+  const [head = '', tail = ''] = ip.toLowerCase().split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::')
+    ? [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right]
+    : left;
+  return `${groups
+    .slice(0, 4)
+    .map((g) => g.replace(/^0+(?=.)/, ''))
+    .join(':')}::/64`;
 }
