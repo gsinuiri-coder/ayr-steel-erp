@@ -132,9 +132,9 @@ describe('ejecución del lote', () => {
       tx,
       expect.objectContaining({ deferRecost: true }),
     );
-    expect(inventory.reverse.mock.calls[0]?.[6]).toEqual({ deferRecost: true });
+    expect((inventory.reverse.mock.calls[0] as unknown[])[6]).toEqual({ deferRecost: true });
     expect(inventory.recostForward).toHaveBeenCalledTimes(1);
-    expect(inventory.recostForward.mock.calls[0]?.[1]).toEqual([
+    expect((inventory.recostForward.mock.calls[0] as unknown[])[1]).toEqual([
       { itemType: 'PRODUCT', itemId: 'p-1', afterMovementId: 2n },
       { itemType: 'PRODUCT', itemId: 'p-1', afterMovementId: 3n },
     ]);
