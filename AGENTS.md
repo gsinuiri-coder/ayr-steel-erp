@@ -156,11 +156,11 @@ Reglas de convivencia, sin excepción:
    recosteo por fecha; escribe `ADJUST` con `recost_of_id` hacia la fila cuyo costo corrige, con
    su fecha y su `ref`). Cambiar una fecha es reversa más movimiento
    nuevo (D-364, D-374, D-376/D-288), nunca editar `operation_date`. Ningún otro código escribe
-   `inventory_movements` ni `inventory_balances`, salvo estas excepciones, nombradas con su
+   `inventory_movements` ni `inventory_balances`, salvo una excepción, nombrada con su
    decisión en el test centinela (`apps/api/src/inventory/kardex-writers.sentinel.spec.ts`):
-   la herramienta de fecha de la carga inicial (D-285: solo `operation_date`, con el permiso del
-   trigger y auditoría) y el reset de la base de pruebas (D-018, `TRUNCATE` con el guard de
-   D-181). La limpia de V-4 (D-208) se retiró del repo (D-384). El centinela barre `apps/api/src`,
+   el reset de la base de pruebas (D-018, `TRUNCATE` con el guard de D-181). La limpia de V-4
+   (D-208) se retiró del repo (D-384) y la herramienta de fecha de la carga inicial (D-285), en
+   cc58 (D-689). El centinela barre `apps/api/src`,
    `apps/api/prisma`, `scripts/`, `packages/` y `e2e/`, y falla si aparece un escritor nuevo. El
    kardex es append-only: las reversas son movimientos inversos, nunca edición de saldos.
    **D-649/D-650 (cc53):** cada salida toma el promedio vigente **a su fecha** (`operationDate` y,

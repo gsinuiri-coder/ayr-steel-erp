@@ -14,7 +14,6 @@ import {
   type InventoryItemType,
 } from '@prisma/client';
 import {
-  businessToday,
   carriesInventory,
   Decimal,
   dispatchCode,
@@ -488,86 +487,6 @@ export class DispatchesService {
       },
     });
     return dispatch.id;
-  }
-
-  /**
-   * D-285: registra la salida de kardex que le falta a una línea de despacho **ya registrada**
-   * sin movimiento (la entregada «antes del inventario inicial» de D-278, cuando el inventario
-   * inicial se refechó). No rehace el despacho: agrega el `OUT` con la fecha del despacho, lo
-   * enlaza a la línea y deja auditoría con el motivo. La reserva ya se descontó al despachar.
-   */
-  async addMissingMovementInTx(
-    tx: Prisma.TransactionClient,
-    actor: RequestUser,
-    dispatchItemId: string,
-    reason: string,
-  ): Promise<{ movementId: bigint; totalCost: string; terminatedCoils: string[] }> {
-    const item = await tx.dispatchItem.findUniqueOrThrow({
-      where: { id: dispatchItemId },
-      include: { dispatch: { include: { salesOrder: { select: { seq: true } } } } },
-    });
-    if (item.movementId !== null) {
-      throw new BadRequestException('La línea del despacho ya tiene su salida de kardex');
-    }
-    if (item.dispatch.status !== DispatchStatus.ISSUED) {
-      throw new BadRequestException('El despacho está revertido: no se le agrega una salida');
-    }
-    const operationDate = item.dispatch.dispatchDate.toISOString().slice(0, 10);
-    const movement = await this.inventory.record(tx, {
-      businessLineId: await this.inventory.resolveItemBusinessLineId(
-        tx,
-        item.itemType,
-        item.itemId,
-      ),
-      itemType: item.itemType,
-      itemId: item.itemId,
-      type: 'OUT',
-      qty: toFixedString(toDecimal(item.reserveQty.toString()), 'KG'),
-      unit: await this.kardexUnit(tx, item.itemType, item.itemId, item.unit),
-      refType: 'SALE',
-      refId: item.dispatchId,
-      notes:
-        `Despacho ${dispatchCode(item.dispatch.seq)} de ${salesOrderCode(item.dispatch.salesOrder.seq)}: ${reason}`.slice(
-          0,
-          240,
-        ),
-      actorId: actor.id,
-      viewer: actor,
-      confirmBackdate: true,
-      operationDate,
-    });
-    if (movement === null) throw new BadRequestException('La línea no lleva inventario');
-    await tx.dispatchItem.update({ where: { id: item.id }, data: { movementId: movement.id } });
-    await this.audit.write(tx, {
-      actorId: actor.id,
-      action: 'invoicing.dispatch.add-movement',
-      entity: 'dispatches',
-      entityId: item.dispatchId,
-      after: {
-        code: dispatchCode(item.dispatch.seq),
-        line: item.lineNumber,
-        movementId: movement.id.toString(),
-        qty: item.reserveQty.toFixed(3),
-        totalCost: movement.totalCost.toFixed(4),
-        operationDate,
-        reason,
-      },
-    });
-    // D-360: si la salida que faltaba deja la bobina en 0, se termina. La auditoría de la
-    // terminación lleva la fecha **real** de ejecución, no la del despacho: es un arreglo de
-    // datos de hoy, y la corrida las cuenta aparte.
-    const terminatedCoils =
-      item.itemType === 'COIL'
-        ? await this.closeEmptySoldCoils(
-            tx,
-            actor,
-            [item.itemId],
-            { id: item.dispatchId, seq: item.dispatch.seq },
-            businessToday(),
-            'DISPATCH_MISSING',
-          )
-        : [];
-    return { movementId: movement.id, totalCost: movement.totalCost.toFixed(4), terminatedCoils };
   }
 
   /** La unidad del saldo del ítem, que es la del kardex; si no tiene saldo, la de la línea. */

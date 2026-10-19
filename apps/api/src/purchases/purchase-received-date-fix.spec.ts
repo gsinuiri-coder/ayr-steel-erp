@@ -109,8 +109,9 @@ describe('ejecución del lote', () => {
     };
     const inventory = {
       lockInOrder: jest.fn().mockResolvedValue(undefined),
-      record: jest.fn().mockResolvedValue({ id: 2n }),
-      reverse: jest.fn().mockResolvedValue({}),
+      record: jest.fn().mockResolvedValue({ id: 2n, itemType: 'PRODUCT', itemId: 'p-1' }),
+      reverse: jest.fn().mockResolvedValue({ id: 3n }),
+      recostForward: jest.fn().mockResolvedValue({ pending: false }),
     };
     const audit = { write: jest.fn().mockResolvedValue({}) };
     await executePurchaseReceivedDates(
@@ -125,6 +126,18 @@ describe('ejecución del lote', () => {
     expect(inventory.record.mock.invocationCallOrder[0]).toBeLessThan(
       Number(inventory.reverse.mock.invocationCallOrder[0]),
     );
+    // cc58 (D-690, D-11): ninguna de las dos recostea por su cuenta; un solo recosteo al final,
+    // desde las dos filas.
+    expect(inventory.record).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ deferRecost: true }),
+    );
+    expect((inventory.reverse.mock.calls[0] as unknown[])[6]).toEqual({ deferRecost: true });
+    expect(inventory.recostForward).toHaveBeenCalledTimes(1);
+    expect((inventory.recostForward.mock.calls[0] as unknown[])[1]).toEqual([
+      { itemType: 'PRODUCT', itemId: 'p-1', afterMovementId: 2n },
+      { itemType: 'PRODUCT', itemId: 'p-1', afterMovementId: 3n },
+    ]);
   });
 });
 
@@ -185,8 +198,9 @@ describe('undo de lote', () => {
     };
     const inventory = {
       lockInOrder: jest.fn().mockResolvedValue(undefined),
-      reverse: jest.fn().mockResolvedValue({}),
-      record: jest.fn().mockResolvedValue({}),
+      reverse: jest.fn().mockResolvedValue({ id: 9n }),
+      record: jest.fn().mockResolvedValue({ id: 8n, itemType: 'PRODUCT', itemId: 'p-1' }),
+      recostForward: jest.fn().mockResolvedValue({ pending: false }),
     };
     const audit = { write: jest.fn().mockResolvedValue({}) };
     await expect(
@@ -205,7 +219,9 @@ describe('undo de lote', () => {
       expect.any(String),
       '2026-08-20',
       true,
+      { deferRecost: true },
     );
+    expect(inventory.recostForward).toHaveBeenCalledTimes(1);
     expect(inventory.record).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({

@@ -290,17 +290,21 @@ export async function executePurchaseReceivedDates(
         actorId,
         operationDate: c.destinationDate,
         confirmBackdate: true,
+        deferRecost: true,
         notes: `Fecha recibida corregida; lote ${batchId}`,
       });
       if (!created) throw new Error('La línea no genera kardex');
-      await inventory.reverse(
+      const reversal = await inventory.reverse(
         tx,
         m.id,
         actorId,
         `Corrección de fecha recibida ${batchId}`,
         c.currentDate,
         true,
+        { deferRecost: true },
       );
+      // cc58 (D-690, D-11 de audit-01): un solo recosteo, con el reingreso y la reversa ya escritos.
+      await recostOnce(inventory, tx, actorId, created, reversal);
       replacementIds.push(created.id.toString());
       if (m.itemType === 'COIL')
         await tx.coil.update({
@@ -331,6 +335,28 @@ export async function executePurchaseReceivedDates(
     });
   }
   return safe;
+}
+
+/**
+ * cc58 (D-690): el recosteo del par reingreso + reversa, una sola vez y desde el primero de los dos
+ * (`planRecost` toma la semilla más temprana del ítem).
+ */
+async function recostOnce(
+  inventory: InventoryService,
+  tx: Prisma.TransactionClient,
+  actorId: string,
+  entry: InventoryMovement,
+  reversal: InventoryMovement,
+): Promise<void> {
+  const item = { itemType: entry.itemType, itemId: entry.itemId };
+  await inventory.recostForward(
+    tx,
+    [
+      { ...item, afterMovementId: entry.id },
+      { ...item, afterMovementId: reversal.id },
+    ],
+    { actorId, trigger: entry },
+  );
 }
 
 export function parseFixAudit(after: unknown): FixAuditAfter {
@@ -428,7 +454,7 @@ export async function undoPurchaseReceivedDates(
     for (const id of [...a.movementIds].reverse()) {
       const m = await tx.inventoryMovement.findUniqueOrThrow({ where: { id: BigInt(id) } });
       // El undo conserva la misma invariante de reservas: reingresa primero el saldo viejo.
-      await inventory.record(tx, {
+      const reentry = await inventory.record(tx, {
         businessLineId: m.businessLineId,
         itemType: m.itemType,
         itemId: m.itemId,
@@ -442,16 +468,20 @@ export async function undoPurchaseReceivedDates(
         actorId,
         operationDate: a.currentDate,
         confirmBackdate: true,
+        deferRecost: true,
         notes: `Undo fecha recibida; lote ${batchId}`,
       });
-      await inventory.reverse(
+      if (!reentry) throw new Error('La línea no genera kardex');
+      const reversal = await inventory.reverse(
         tx,
         m.id,
         actorId,
         `Undo fecha recibida ${batchId}`,
         a.destinationDate,
         true,
+        { deferRecost: true },
       );
+      await recostOnce(inventory, tx, actorId, reentry, reversal);
       if (m.itemType === 'COIL')
         await tx.coil.update({
           where: { id: m.itemId },

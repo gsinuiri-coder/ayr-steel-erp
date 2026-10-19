@@ -58,15 +58,6 @@ const EXCEPTIONS = new Map<string, Exception>([
     },
   ],
   [
-    'apps/api/src/invoicing/opening-date-move.service.ts',
-    {
-      decision: 'D-285',
-      what: 'mueve solo operation_date de la carga inicial, con el permiso del trigger y auditoría',
-      mustMatch:
-        /set_config\('ayr\.opening_date_move'[\s\S]*inventoryMovement\.update\(\{\s*where:\s*\{[^}]*\},\s*data:\s*\{\s*operationDate:\s*\w+\s*\},?\s*\}\)/,
-    },
-  ],
-  [
     'apps/api/prisma/reset-test-db.ts',
     {
       decision: 'D-018 (guard D-181)',

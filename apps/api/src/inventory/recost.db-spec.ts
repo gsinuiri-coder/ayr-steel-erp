@@ -682,3 +682,116 @@ describe('cc58 (D-684, E-05 de audit-01): la salida que agota el ítem', () => {
     expect(out.totalCost.toString()).toBe('6.6666');
   });
 });
+
+describe('cc58 (D-690, D-11 de audit-01): mover una entrada a otra fecha recostea una vez', () => {
+  /** Reingresa `entry` en `date` y revierte la original, como la herramienta de D-374. */
+  async function moveEntry(entry: InventoryMovement, date: string, deferRecost: boolean) {
+    await prisma.$transaction(async (tx) => {
+      const created = await inventory.record(tx, {
+        businessLineId,
+        itemType: 'PRODUCT',
+        itemId: entry.itemId,
+        type: 'IN',
+        qty: entry.qty.toString(),
+        unit: 'NIU',
+        unitCost: entry.unitCost.toString(),
+        totalCost: entry.totalCost.toString(),
+        refType: 'PURCHASE',
+        actorId: adminId,
+        operationDate: date,
+        confirmBackdate: true,
+        deferRecost,
+      });
+      if (!created) throw new Error('sin entrada');
+      const reversal = await inventory.reverse(
+        tx,
+        entry.id,
+        adminId,
+        'prueba D-11',
+        '2026-08-20',
+        true,
+        { deferRecost },
+      );
+      if (deferRecost) {
+        await inventory.recostForward(
+          tx,
+          [
+            { itemType: 'PRODUCT', itemId: entry.itemId, afterMovementId: created.id },
+            { itemType: 'PRODUCT', itemId: entry.itemId, afterMovementId: reversal.id },
+          ],
+          { actorId: adminId, trigger: created },
+        );
+      }
+    });
+  }
+
+  async function scenario(deferRecost: boolean) {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+    const late = await move(itemId, { type: 'IN', qty: '10', unitCost: '20', date: '2026-08-20' });
+    const out = await move(itemId, { type: 'OUT', qty: '5', date: '2026-08-25' });
+    // La entrada del 20 pasa al 10: sigue antes de la salida, así que su promedio no cambia (15).
+    await moveEntry(late, '2026-08-10', deferRecost);
+    return {
+      noise: await prisma.inventoryMovement.count({ where: { itemId, recostOfId: { not: null } } }),
+      out: await effective(out.id),
+      balance: await balanceOf(itemId),
+    };
+  }
+
+  it('sin filas de ruido; el camino de antes dejaba ajustes que se anulaban entre sí', async () => {
+    const once = await scenario(true);
+    expect(once).toEqual({ noise: 0, out: '75.0000', balance: { qty: '15', avg: '15' } });
+    const twice = await scenario(false);
+    // El mismo estado final, con ruido: el reingreso recosteó con la entrada vieja todavía viva.
+    expect([twice.out, twice.balance]).toEqual(['75.0000', { qty: '15', avg: '15' }]);
+    expect(twice.noise).toBeGreaterThan(0);
+  });
+});
+
+describe('cc58 (D-691, E-07 de audit-01): el kardex se lee una vez antes de escribir', () => {
+  it('una salida atrasada lee el kardex del ítem una sola vez para decidir (antes, tres)', async () => {
+    const counted = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    const queries: string[] = [];
+    counted.$on('query', (e) => queries.push(e.query));
+    const service = new InventoryService(
+      counted as unknown as PrismaService,
+      { ROOFING_THICKNESS_TOLERANCE_MM: '0.02' } as Env,
+      new AuditService(counted as unknown as PrismaService),
+    );
+    try {
+      const itemId = randomUUID();
+      await move(itemId, { type: 'IN', qty: '10', unitCost: '10', date: '2026-08-01' });
+      await move(itemId, { type: 'OUT', qty: '2', date: '2026-08-20' });
+      queries.length = 0;
+      await counted.$transaction((tx) =>
+        service.record(tx, {
+          businessLineId,
+          itemType: 'PRODUCT',
+          itemId,
+          type: 'OUT',
+          qty: '3',
+          unit: 'NIU',
+          refType: 'SALE',
+          actorId: adminId,
+          operationDate: '2026-08-10',
+          confirmBackdate: true,
+        }),
+      );
+      const firstInsert = queries.findIndex((q) =>
+        q.startsWith('INSERT INTO "public"."inventory_movements"'),
+      );
+      const kardexReads = queries
+        .slice(0, firstInsert)
+        .filter(
+          (q) =>
+            q.includes('FROM "public"."inventory_movements"') &&
+            q.includes('ORDER BY "public"."inventory_movements"."operation_date" ASC'),
+        );
+      expect(firstInsert).toBeGreaterThan(0);
+      expect(kardexReads).toHaveLength(1);
+    } finally {
+      await counted.$disconnect();
+    }
+  });
+});

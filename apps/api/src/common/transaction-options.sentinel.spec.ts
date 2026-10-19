@@ -242,9 +242,6 @@ const BULK_EXCEPTIONS: readonly (readonly [string, string, string])[] = [
   ['production/close-preview.ts', 'previewPlantClose', 'toma el tope de su acción (60 o 120 s)'],
   ['colors/colors.service.ts', 'planRetirement', 'retiro de un color comercial'],
   ['colors/colors.service.ts', 'retire', 'retiro de un color comercial'],
-  ['invoicing/opening-date-move.service.ts', 'plan', 'herramienta D-285'],
-  ['invoicing/opening-date-move.service.ts', 'execute', 'herramienta D-285'],
-  ['invoicing/opening-date-move.service.ts', 'executeLocked', 'herramienta D-285'],
 ];
 
 describe('cc58 (D-683): techo de las transacciones', () => {

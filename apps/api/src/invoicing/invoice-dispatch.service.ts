@@ -61,11 +61,11 @@ export interface PlanItemInfo {
 }
 
 /**
- * D-285: lo que el dry-run del arreglo del inventario inicial simula antes de escribir: la
- * fecha nueva de cada movimiento de carga inicial (por id) y las salidas que se agregan antes.
+ * Lo que un plan simula antes de escribir: las salidas que se agregan antes y la fecha destino de
+ * entradas ya clasificadas. cc58 (D-15 de audit-01): sin la fecha movida de la carga inicial, la
+ * herramienta D-285 se retiró.
  */
 export interface PlanSimulation {
-  movedOpening?: ReadonlyMap<string, string>;
   /** Proyección de solo lectura: fecha destino de entradas PURCHASE ya clasificadas como seguras. */
   movedPurchaseEntries?: ReadonlyMap<string, string>;
   priorOuts?: ReadonlyMap<string, readonly { date: string; qty: Decimal }[]>;
@@ -747,16 +747,12 @@ export class InvoiceDispatchService {
       tx.product.findMany({ where: { id: { in: ids } }, select: { id: true, sku: true } }),
       tx.coil.findMany({ where: { id: { in: ids } }, select: { id: true, code: true } }),
     ]);
-    // D-285: con la fecha de la carga inicial movida (simulación del dry-run), el kardex se
-    // vuelve a ordenar como lo ordena la base: fecha de operación, grabación, id.
-    const moved = sim.movedOpening ?? new Map<string, string>();
+    // Con una fecha simulada (D-374), el kardex se vuelve a ordenar como lo ordena la base: fecha
+    // de operación, grabación, id.
     const dated = dropSameDayReversals(
       movements.map((m) => ({
         ...m,
-        date:
-          sim.movedPurchaseEntries?.get(m.id.toString()) ??
-          moved.get(m.id.toString()) ??
-          day(m.operationDate),
+        date: sim.movedPurchaseEntries?.get(m.id.toString()) ?? day(m.operationDate),
       })),
     ).sort((a, b) =>
       a.date !== b.date

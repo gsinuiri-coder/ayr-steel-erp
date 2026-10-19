@@ -48,8 +48,11 @@ import { AuditService } from '../audit/audit.service';
 import {
   laterMovementsNote,
   planRecost,
+  loadKardex,
   qtyRowsOf,
+  qtyRowsOfSnapshot,
   stockUpToDate,
+  type KardexSnapshot,
   type MovementMeta,
   type PlannedAdjust,
   type RecostSeed,
@@ -170,6 +173,12 @@ export interface RecordMovementInput {
    * {@link InventoryService.assertChronological}.
    */
   confirmBackdate?: boolean;
+  /**
+   * cc58 (D-690, D-11 de audit-01): el llamador hace **un** recosteo al final, con el estado ya
+   * completo (`recostForward` con todas sus semillas). Para dos escrituras del mismo ítem en una
+   * operación —reingreso y reversa—, que recosteadas cada una dejaban ajustes que se anulaban entre sí.
+   */
+  deferRecost?: boolean;
 }
 
 /**
@@ -260,10 +269,20 @@ export class InventoryService {
     // cc53 (D-649, D-650): una fila con fecha anterior a otras del ítem ya no se rechaza por costo
     // (D-648): sale al promedio **de su fecha** y lo posterior se recostea. Cero consultas hoy.
     const laterCount = await this.laterMovementCount(tx, input, operationDate);
+    // cc58 (D-691, E-07): una sola lectura del kardex para todo lo que se decide antes de escribir.
+    let snapshot: Promise<KardexSnapshot> | null = null;
+    const kardex = (): Promise<KardexSnapshot> => (snapshot ??= loadKardex(tx, input));
     // cc54 (P2-1 de la revisión de cc53): D-652 va **antes** del acuse de retrofecha. Si la fecha no
     // cabe, se dice de entrada; antes el usuario confirmaba la retrofecha y recién ahí chocaba.
     if (input.type === 'OUT' && laterCount > 0) {
-      await this.assertNoNegativeAtDate(tx, input, operationDate, qty, 'Registrar esta salida');
+      await this.assertNoNegativeAtDate(
+        tx,
+        input,
+        operationDate,
+        qty,
+        'Registrar esta salida',
+        await kardex(),
+      );
     }
     await this.assertChronological(tx, input, operationDate, input.confirmBackdate);
 
@@ -294,7 +313,9 @@ export class InventoryService {
         );
       }
       const atDate =
-        laterCount > 0 ? await stockUpToDate(tx, input, toDateOnly(operationDate)) : null;
+        laterCount > 0
+          ? await stockUpToDate(tx, input, toDateOnly(operationDate), await kardex())
+          : null;
       if (atDate?.qty.gt(0)) {
         // cc53 (D-649): sale al promedio que el ítem tenía a su fecha; el saldo de hoy pierde
         // ese valor y el recosteo corrige lo posterior.
@@ -303,8 +324,8 @@ export class InventoryService {
         newQty = balance.qty.minus(qty);
         // El valor que queda sale del kardex (sus filas y recosteos), no del promedio guardado a
         // cuatro decimales: así el saldo no arrastra redondeo de una retrofecha a otra.
-        const kardex = await stockUpToDate(tx, input, toDateOnly(KARDEX_END));
-        const value = Decimal.max(kardex.value.minus(totalCost), new Decimal(0));
+        const kardexValue = await stockUpToDate(tx, input, toDateOnly(KARDEX_END), await kardex());
+        const value = Decimal.max(kardexValue.value.minus(totalCost), new Decimal(0));
         newAvgCost = newQty.lte(0) ? new Decimal(0) : value.div(newQty);
       } else if (qty.gte(balance.qty)) {
         // cc58 (D-684, E-05 de audit-01): la salida que deja el ítem en cero se lleva **exactamente**
@@ -312,8 +333,8 @@ export class InventoryService {
         // decimales: así no queda un residuo de céntimos sin cantidad. Es la misma cuenta del motor
         // (`averageOutCost`, D-653), por eso un recosteo posterior no la corrige. Solo hacia
         // adelante: la historia no se recostea por esto.
-        const kardex = await stockUpToDate(tx, input, toDateOnly(KARDEX_END));
-        totalCost = averageOutCost(kardex, qty);
+        const kardexValue = await stockUpToDate(tx, input, toDateOnly(KARDEX_END), await kardex());
+        totalCost = averageOutCost(kardexValue, qty);
         unitCost = totalCost.div(qty);
         newQty = balance.qty.minus(qty);
         // El saldo queda en cero por cantidad; el promedio guardado se conserva, como en toda
@@ -383,7 +404,7 @@ export class InventoryService {
       actorId: input.actorId,
       operationDate: toDateOnly(operationDate),
     });
-    if (laterCount > 0) {
+    if (laterCount > 0 && input.deferRecost !== true) {
       await this.recostForward(
         tx,
         [{ itemType: input.itemType, itemId: input.itemId, afterMovementId: movement.id }],
@@ -405,8 +426,9 @@ export class InventoryService {
     operationDate: string,
     qty: Decimal,
     action: string,
+    snapshot?: KardexSnapshot,
   ): Promise<void> {
-    const rows = await qtyRowsOf(tx, item);
+    const rows = snapshot ? qtyRowsOfSnapshot(snapshot) : await qtyRowsOf(tx, item);
     if (fitsWithoutNegative(rows, operationDate, qty)) return;
     const first = firstValidDate(rows, operationDate, qty, businessToday());
     const labels = await this.resolveItemLabels([item]);
@@ -856,7 +878,11 @@ export class InventoryService {
      * fecha (recosteo de una bobina, D-045). Como `replaceEntry`, se juzga el estado final: no se
      * aplica D-652 al intermedio ni se recostea acá; recostea el reingreso.
      */
-    options: { reentry?: boolean } = {},
+    options: {
+      reentry?: boolean;
+      /** cc58 (D-690): como `RecordMovementInput.deferRecost` (aplica D-652; no recostea acá). */
+      deferRecost?: boolean;
+    } = {},
   ): Promise<InventoryMovement> {
     const peek = await tx.inventoryMovement.findUnique({ where: { id: movementId } });
     if (!peek) throw new NotFoundException('Movimiento de kardex no encontrado');
@@ -995,7 +1021,7 @@ export class InventoryService {
       operationDate: toDateOnly(reversalDate),
     });
     // cc53 (D-649): una reversa fechada antes de otras filas del ítem les cambia el promedio.
-    if (laterCount > 0 && options.reentry !== true) {
+    if (laterCount > 0 && options.reentry !== true && options.deferRecost !== true) {
       await this.recostForward(
         tx,
         [{ itemType: item.itemType, itemId: item.itemId, afterMovementId: reversal.id }],

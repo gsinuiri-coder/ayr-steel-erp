@@ -92,7 +92,8 @@ describe('AuditService: toda escritura de dominio pasa por una transacción real
       ]),
     );
     expect(counts).toEqual({
-      'auth/auth.service.ts': 4,
+      // cc58 (D-687): +1, el reuso de un refresh token (`auth.refresh.reuse`), como el login fallido.
+      'auth/auth.service.ts': 5,
       // D-376: +1, el re-fechado rechazado de D-288 (`invoicing.dispatch.redate-rejected`). Va
       // fuera de la transacción a propósito: esa transacción se deshace y se llevaría la fila.
       'invoicing/invoicing.service.ts': 6,

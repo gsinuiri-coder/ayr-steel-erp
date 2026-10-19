@@ -7,7 +7,6 @@ import { JobsModule } from '../jobs/jobs.module';
 import { DispatchesController } from './dispatches.controller';
 import { DispatchesService } from './dispatches.service';
 import { InvoiceDispatchService } from './invoice-dispatch.service';
-import { OpeningDateMoveService } from './opening-date-move.service';
 import { FiscalImportService } from './fiscal-import.service';
 import { MoveDocumentToOrderService } from './move-to-order.service';
 import { ReceivablesService } from './receivables.service';
@@ -42,7 +41,6 @@ import { NubefactProvider } from './providers/nubefact/nubefact.provider';
     InvoicingService,
     DispatchesService,
     InvoiceDispatchService,
-    OpeningDateMoveService,
     ReceivablesService,
     SalesReturnsService,
     FiscalImportService,
