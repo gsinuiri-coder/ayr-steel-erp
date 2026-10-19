@@ -671,7 +671,14 @@ function orderColumns(cost: boolean): ReportColumn<SalesMarginOrderDto>[] {
       key: 'margin',
       header: 'Margen (S/)',
       align: 'right',
-      cell: (o) => (o.marginPen === null ? '—' : formatAmount(o.marginPen)),
+      // cc58 (D-681): como la franja, sin la venta que no tiene costo registrado (Servicios y
+      // «Sin línea», D-409); la celda lo dice cuando la fila la tiene.
+      cell: (o) =>
+        o.marginPen === null ? (
+          '—'
+        ) : (
+          <span title={noCostHint(o.noCostSalesPen)}>{formatAmount(o.marginPen)}</span>
+        ),
       sortValue: { decimal: (o) => o.marginPen ?? '' },
       total: (rows) => formatAmount(summarizeSalesMargin(rows).margin),
     },
@@ -690,6 +697,12 @@ function orderColumns(cost: boolean): ReportColumn<SalesMarginOrderDto>[] {
       sortValue: { text: (o) => COST_STATUS_LABELS[o.costStatus] },
     },
   ];
+}
+
+/** cc58 (D-681): el aviso de la celda de margen cuando la fila tiene venta sin costo registrado. */
+function noCostHint(noCostSalesPen: string | undefined): string | undefined {
+  if (noCostSalesPen === undefined || toDecimal(noCostSalesPen).isZero()) return undefined;
+  return `Sobre la venta con costo: no cuenta S/ ${formatAmount(noCostSalesPen)} de venta sin costo registrado (Servicios o líneas sin producto)`;
 }
 
 /** Los comprobantes del pedido, alineados con sus columnas, y el material de sus órdenes. */

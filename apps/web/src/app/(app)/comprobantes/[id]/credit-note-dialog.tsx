@@ -107,7 +107,7 @@ export function CreditNoteDialog({
       return 'Cambia el cliente del pedido: lo registra un administrador';
     }
     if (!isAdmin && returnsStock(reason)) {
-      return 'Devuelve mercadería al almacén: lo registra un administrador';
+      return 'Devuelve mercadería al almacén: pídeselo a un administrador';
     }
     if (reason === 'OTROS_AJUSTES' && !(d.docType === 'FACTURA' && d.paymentTerms === 'CREDITO')) {
       return 'Solo en una factura al crédito';

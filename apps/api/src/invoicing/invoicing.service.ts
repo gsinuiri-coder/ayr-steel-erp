@@ -266,7 +266,10 @@ interface CreditNotePlan {
  * kardex con su costo: la registra un administrador, como el 02. El vendedor sigue con las que solo
  * mueven importes (03, 04, 05, 13).
  */
-export function assertStockCreditNoteRole(actor: RequestUser, reason: CreditNoteReason): void {
+export function assertStockCreditNoteRole(
+  actor: RequestUser,
+  reason: CreditNoteReason | null,
+): void {
   if (returnsStock(reason) && actor.role !== Role.ADMINISTRADOR) {
     throw new ForbiddenException(
       'Esta nota de crédito devuelve mercadería al almacén (01, 06 o 07): la registra un administrador',
@@ -1788,6 +1791,9 @@ export class InvoicingService {
     if (document.affectedDocument !== null)
       assertAffectedStillCreditable(document.affectedDocument);
     const isNote = document.docType === FiscalDocType.NOTA_CREDITO;
+    // cc58 (D-678, autorrevisión P1): registrar a mano un borrador 01/06/07 crea la devolución y
+    // reingresa al kardex: lo hace un administrador (también un borrador de antes del deploy).
+    if (isNote) assertStockCreditNoteRole(actor, document.creditNoteReason);
     // cc54 (D-655): el 02 sin su reemplazo no se registra (un borrador viejo no lo guarda).
     if (
       isNote &&
@@ -2434,6 +2440,9 @@ export class InvoicingService {
           rejected.createdById;
         assertSellerAccess(actor, ownerId, 'Comprobante');
       }
+      // cc58 (D-678, revisión del segundo modelo P2-1): corregir una NC rechazada que devuelve
+      // stock la vuelve a emitir: también la registra un administrador.
+      assertStockCreditNoteRole(actor, rejected.creditNoteReason);
       const existing = await tx.fiscalDocument.findFirst({
         where: { replacesDocumentId: id },
         select: { id: true, number: true },
@@ -2525,6 +2534,15 @@ export class InvoicingService {
     // **standalone** de un borrador ya creado (botón "Emitir"), sin nada más atado.
     this.assertPseEnabled();
     await this.assertOwnership(actor, id, 'emitirlo');
+    // cc58 (D-678, revisión del segundo modelo P2-1): la regla va por motivo, como al crearla: el
+    // borrador de una NC 01, 06 o 07 lo emite un administrador.
+    if (actor.role !== Role.ADMINISTRADOR) {
+      const draft = await this.prisma.fiscalDocument.findUnique({
+        where: { id },
+        select: { creditNoteReason: true },
+      });
+      assertStockCreditNoteRole(actor, draft?.creditNoteReason ?? null);
+    }
     await this.assign(actor, id);
     await this.deliver(id);
     return this.findOne(id);
