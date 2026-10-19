@@ -202,21 +202,24 @@ export class RoofingDraftsService {
   ): Promise<ProductionOrderDto> {
     const operationDate = this.operationDate.resolve(actor, input.operationDate);
     const warnings: RawMaterialShortfall[] = [];
-    await this.prisma.$transaction(async (tx) => {
-      // D-182: un doble click en «Ejecutar» no ejecuta el borrador dos veces. Alcance propio:
-      // el efecto es el de N reportes (y quizá un cierre), no el de uno.
-      // El alcance lleva la orden: la misma clave reusada en otra orden no es un reintento, y
-      // devolverle un 200 que no ejecutó nada sería mentirle.
-      const claim = await claimIdempotencyKey(
-        tx,
-        `roofing-drafts-commit:${orderId}`,
-        input.idempotencyKey,
-      );
-      if (!claim.claimed) return;
+    await this.prisma.$transaction(
+      async (tx) => {
+        // D-182: un doble click en «Ejecutar» no ejecuta el borrador dos veces. Alcance propio:
+        // el efecto es el de N reportes (y quizá un cierre), no el de uno.
+        // El alcance lleva la orden: la misma clave reusada en otra orden no es un reintento, y
+        // devolverle un 200 que no ejecutó nada sería mentirle.
+        const claim = await claimIdempotencyKey(
+          tx,
+          `roofing-drafts-commit:${orderId}`,
+          input.idempotencyKey,
+        );
+        if (!claim.claimed) return;
 
-      await this.commitInTx(tx, actor, orderId, input, operationDate, warnings);
+        await this.commitInTx(tx, actor, orderId, input, operationDate, warnings);
+      },
       // cc58 (D-683): un borrador grande (SM-1 de cc28): 120 s, excepción con nombre.
-    }, { timeout: 120_000, maxWait: 15_000 });
+      { timeout: 120_000, maxWait: 15_000 },
+    );
 
     return this.roofing.withWarnings(await this.production.findOne(orderId), warnings);
   }
