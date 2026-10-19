@@ -13,7 +13,6 @@
     "prisma/retire-unused-color-cli.ts",
     "prisma/retire-boms-cli.ts",
     "prisma/dispatch-at-issue-date-cli.ts",
-    "prisma/opening-date-cli.ts",
     "prisma/dispatch-redate-cli.ts",
     "prisma/purge-cancelled-quotations-cli.ts",
     "prisma/terminate-zero-coils-cli.ts",
