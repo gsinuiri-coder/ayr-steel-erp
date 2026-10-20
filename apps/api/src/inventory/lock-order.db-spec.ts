@@ -78,7 +78,9 @@ import * as rowLocks from './row-locks';
  * mutación (cc18): con `lockInOrder` sin ordenar, estos mismos pares fallan con 40P01 (resultado
  * en `docs/revision/cc18-segundo-modelo.md`).
  *
- * Corre en `pnpm --filter @ayr/api test:db` (base de pruebas recién reseteada y sembrada).
+ * Corre en `pnpm --filter @ayr/api test:db` (base de pruebas recién reseteada y sembrada). cc61: para
+ * medir, siempre así; `jest` suelto sobre una base de corridas anteriores acumula filas y cambia
+ * quién llega primero en cada carrera (audit-02).
  */
 // `pg-boss` es ESM y Jest no lo transforma; con `JOBS_ENABLED=false` las colas nunca arrancan.
 jest.mock('pg-boss', () => ({ PgBoss: class {} }));
@@ -537,6 +539,37 @@ async function race(tally: Tally, label: string, ops: (() => Promise<unknown>)[]
     })
     .join(' / ');
   tally.outcomes.set(shape, (tally.outcomes.get(shape) ?? 0) + 1);
+}
+
+/**
+ * cc61 (audit-02, la prueba intermitente): `expectClean` exige que cada operación del par termine
+ * bien al menos una vez. En una carrera pura eso es probabilístico: con la base cargada de la suite
+ * completa, el lado que hace más lecturas antes de bloquear dejaba de ganar las 20 y el par salía en
+ * rojo sin ningún problema de bloqueos. Con turnos, dos de cada diez iteraciones no son carrera: en
+ * la 0 el primero termina antes de que arranque el segundo, y en la 5 al revés. Así cada lado gana
+ * al menos una vez por construcción, y las otras 18 siguen cruzándose como antes.
+ */
+function withTurns(i: number, ops: (() => Promise<unknown>)[]): (() => Promise<unknown>)[] {
+  const lead = i % 10 === 0 ? 0 : i % 10 === 5 ? ops.length - 1 : null;
+  if (lead === null) return ops;
+  let release!: () => void;
+  const led = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return ops.map((op, k) =>
+    k === lead
+      ? async () => {
+          try {
+            return await op();
+          } finally {
+            release();
+          }
+        }
+      : async () => {
+          await led;
+          return op();
+        },
+  );
 }
 
 function expectClean(
@@ -1304,7 +1337,7 @@ describe('cc30 — grupo C: pedido, OP y reserva (contra la base)', () => {
         if (i % 2 === 0) await sleep(delay);
         return salesOrders.completeReservation(admin, agg.salesOrder.id, 'cc30 completar');
       };
-      await race(tally, `iteración ${i}`, [close, complete]);
+      await race(tally, `iteración ${i}`, withTurns(i, [close, complete]));
     }
     expectClean(tally, '(d) cerrar coberturas × completar reserva');
   });
@@ -1912,15 +1945,30 @@ describe('cc57 — anular una NC con devolución × anular su pedido (contra la 
             correlative: (correlative += 1),
           }),
         );
-        await race(tally, `iteración ${i}`, [
-          () => fiscalImport.annulExternal(admin, note.id, 'cc57 anular NC'),
-          () =>
-            salesOrders.cancel(
-              admin,
-              order.id,
-              cancelSalesOrderSchema.parse({ reason: 'cc57 anular', acknowledgeFabricated: true }),
-            ),
-        ]);
+        // cc61: escalón alternado, como (d), y turnos (`withTurns`): sin ellos, el lado que lee
+        // más antes de bloquear podía no ganar ninguna de las 20 en la suite completa.
+        const delay = (i % 10) * 12;
+        await race(
+          tally,
+          `iteración ${i}`,
+          withTurns(i, [
+            async () => {
+              if (i % 2 === 1) await sleep(delay);
+              return fiscalImport.annulExternal(admin, note.id, 'cc57 anular NC');
+            },
+            async () => {
+              if (i % 2 === 0) await sleep(delay);
+              return salesOrders.cancel(
+                admin,
+                order.id,
+                cancelSalesOrderSchema.parse({
+                  reason: 'cc57 anular',
+                  acknowledgeFabricated: true,
+                }),
+              );
+            },
+          ]),
+        );
         const [after, ret] = await Promise.all([
           prisma.salesOrder.findUniqueOrThrow({
             where: { id: order.id },
