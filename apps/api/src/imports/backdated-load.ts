@@ -318,7 +318,11 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     const net = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.netAmount)) ?? ZERO;
     const totalCell = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.totalAmount, false));
     const total = totalCell ?? net.times('1.18');
-    const sale = sales.get(doc) ?? { issueDate: issue, total: ZERO, qtyBySku: new Map() };
+    const sale = sales.get(doc) ?? {
+      issueDate: issue,
+      total: ZERO,
+      qtyBySku: new Map<string, Decimal>(),
+    };
     if (sale.issueDate !== issue) err(sheet, row, `${doc} tiene dos fechas de emisión`);
     sale.total = sale.total.plus(total);
     sale.qtyBySku.set(sku, (sale.qtyBySku.get(sku) ?? ZERO).plus(q));

@@ -144,7 +144,10 @@ async function main(): Promise<void> {
       if (!(err instanceof DryRun)) throw err;
       preview = err.preview;
       if (execute) {
-        writeFileSync(resolve(outDir, `RECHAZADA-${branch}.json`), JSON.stringify(preview, null, 2));
+        writeFileSync(
+          resolve(outDir, `RECHAZADA-${branch}.json`),
+          JSON.stringify(preview, null, 2),
+        );
         throw new Error(
           `NO SE ESCRIBIÓ NADA en ${branch}: el resultado no coincide con la vista previa (corre el dry-run otra vez)`,
         );
