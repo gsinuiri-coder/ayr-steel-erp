@@ -1579,18 +1579,27 @@ export class InvoicingService {
       }
       const others = await tx.fiscalDocument.findMany({
         where: {
-          salesOrderId: affected.salesOrderId,
           id: { not: affected.id },
-          // Las guías de remisión también llevan al cliente anterior.
-          docType: {
-            in: [
-              FiscalDocType.FACTURA,
-              FiscalDocType.BOLETA,
-              FiscalDocType.GUIA_REMISION_REMITENTE,
-            ],
-          },
           status: { in: [...STANDING_DOCUMENT_STATUSES] },
           archivedAt: null,
+          OR: [
+            {
+              salesOrderId: affected.salesOrderId,
+              docType: {
+                in: [
+                  FiscalDocType.FACTURA,
+                  FiscalDocType.BOLETA,
+                  FiscalDocType.GUIA_REMISION_REMITENTE,
+                ],
+              },
+            },
+            // Las guías de remisión también llevan al cliente anterior. cc63 (pendiente de cc61, R-3):
+            // una guía no cuelga del pedido sino de su despacho; se busca por el pedido del despacho.
+            {
+              docType: FiscalDocType.GUIA_REMISION_REMITENTE,
+              dispatch: { salesOrderId: affected.salesOrderId },
+            },
+          ],
         },
         select: { number: true },
       });
