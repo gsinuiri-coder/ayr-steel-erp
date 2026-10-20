@@ -56,7 +56,7 @@ import {
 import { assertNoLiveDocumentClash } from './purchase-document-clash';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
-import { RECOST_TX_OPTIONS } from '../common/transaction-options';
+import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
@@ -1445,7 +1445,10 @@ export class PurchasesService {
           ? toDecimal(input.exchangeRate)
           : (await this.rateFor(paymentDate, rateCurrency)).rate;
 
-    await this.prisma.$transaction((tx) => this.addPaymentInTx(tx, actor, purchaseId, input, rate));
+    await this.prisma.$transaction(
+      (tx) => this.addPaymentInTx(tx, actor, purchaseId, input, rate),
+      KARDEX_TX_OPTIONS,
+    );
     return this.findOne(purchaseId);
   }
 
@@ -1531,8 +1534,9 @@ export class PurchasesService {
     paymentId: string,
     input: ReversePaymentInput,
   ): Promise<PurchaseDto> {
-    await this.prisma.$transaction((tx) =>
-      this.reversePaymentInTx(tx, actor, purchaseId, paymentId, input),
+    await this.prisma.$transaction(
+      (tx) => this.reversePaymentInTx(tx, actor, purchaseId, paymentId, input),
+      KARDEX_TX_OPTIONS,
     );
     return this.findOne(purchaseId);
   }

@@ -23,6 +23,8 @@ const KNOWN: Record<string, number> = {
   KARDEX_TX_OPTIONS: KARDEX_TX_OPTIONS.timeout,
   RECOST_TX_OPTIONS: RECOST_TX_OPTIONS.timeout,
   REACTIVATION_TX_TIMEOUT_MS: 30_000,
+  // cc63: el retiro de un color (`colors.service.ts`), excepción con nombre más abajo.
+  RETIREMENT_TX: 60_000,
   COMMIT_PREVIEW_TIMEOUT_MS,
   // cc57: el parámetro de `previewPlantClose`; sus llamadores pasan CLOSE_PREVIEW_TIMEOUT_MS o
   // COMMIT_PREVIEW_TIMEOUT_MS (120 s). Para el piso se cuenta el menor.
@@ -269,5 +271,134 @@ describe('cc58 (D-683): techo de las transacciones', () => {
   it('las listas no nombran caminos que ya no existen', () => {
     const present = new Set(all.map((t) => key(t.file, t.method)));
     expect([...recost, ...bulk].filter((k) => !present.has(k))).toEqual([]);
+  });
+});
+
+/**
+ * cc63 (LK-01 de audit-02) — **también por `this.`.** El barrido de arriba ve los bloqueos en el
+ * cuerpo de la transacción o en funciones sueltas, pero no la llamada a un método de la misma clase
+ * (`this.<método>`): `reactivateExternal` abría su transacción sin opciones (5 s de Prisma) y tomaba
+ * comprobante, borradores, pedido y despachos por un método propio. Este barrido sigue `this.` dentro
+ * del archivo, mira además las puertas de bloqueo y los `FOR UPDATE`, y exige tope declarado (el de
+ * `KARDEX_TX_OPTIONS` o mayor) a toda transacción que llegue a uno.
+ */
+const LOCK_CALL =
+  /\b(inventory\.(record|reverse|adjustCost|replaceEntry|recostForward|recostEntries|linkInvoiceToDispatch|unlinkInvoiceFromDispatches|moveInvoiceDispatches)|salesReturns\.[a-zA-Z]+InTx|dispatches\.[a-zA-Z]+InTx|lockDocuments|lockInOrder|lockCoilRows|lockBalance|lockRawMaterialCoils|FOR UPDATE)/;
+
+interface IndexedTx {
+  file: string;
+  line: number;
+  method: string;
+  options: string | null;
+  body: string;
+}
+
+function indexLocks(): {
+  txs: IndexedTx[];
+  methodsByFile: Map<string, Map<string, string[]>>;
+  freeFns: Map<string, string[]>;
+} {
+  const freeFns = new Map<string, string[]>();
+  const methodsByFile = new Map<string, Map<string, string[]>>();
+  const txs: IndexedTx[] = [];
+  const add = (map: Map<string, string[]>, name: string, body: string) => {
+    map.set(name, [...(map.get(name) ?? []), body]);
+  };
+  for (const path of sources(SRC)) {
+    const text = readFileSync(path, 'utf8');
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+    const file = relative(SRC, path).replace(/\\/g, '/');
+    const methods = new Map<string, string[]>();
+    methodsByFile.set(file, methods);
+    const visit = (node: ts.Node, method: string) => {
+      let name = method;
+      if (ts.isMethodDeclaration(node) && node.body) {
+        name = node.name.getText(sf);
+        add(methods, name, node.body.getText(sf));
+      } else if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+        name = node.name.getText(sf);
+        add(freeFns, name, node.body.getText(sf));
+      } else if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+      ) {
+        add(freeFns, node.name.getText(sf), node.initializer.body.getText(sf));
+      }
+      if (ts.isCallExpression(node) && node.expression.getText(sf).endsWith('$transaction')) {
+        const [body, options] = node.arguments;
+        if (body && !ts.isArrayLiteralExpression(body)) {
+          txs.push({
+            file,
+            line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+            method: name,
+            options: options ? options.getText(sf) : null,
+            body: body.getText(sf),
+          });
+        }
+      }
+      ts.forEachChild(node, (c) => {
+        visit(c, name);
+      });
+    };
+    visit(sf, '');
+  }
+  return { txs, methodsByFile, freeFns };
+}
+
+describe('cc63 (LK-01 de audit-02): tope de las transacciones que bloquean, también por `this.`', () => {
+  const { txs, methodsByFile, freeFns } = indexLocks();
+  const free = new Set<string>();
+  for (const [name, bodies] of freeFns) if (bodies.some((b) => LOCK_CALL.test(b))) free.add(name);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [name, bodies] of freeFns) {
+      if (free.has(name)) continue;
+      if (bodies.some((b) => [...free].some((h) => new RegExp(`\\b${h}\\(`).test(b)))) {
+        free.add(name);
+        grew = true;
+      }
+    }
+  }
+  const direct = (b: string) =>
+    LOCK_CALL.test(b) || [...free].some((h) => new RegExp(`\\b${h}\\(`).test(b));
+  const reaches = (file: string, body: string, seen = new Set<string>()): boolean => {
+    if (direct(body)) return true;
+    const methods = methodsByFile.get(file) ?? new Map<string, string[]>();
+    for (const m of body.matchAll(/this\.([A-Za-z_]\w*)\(/g)) {
+      const name = m[1] ?? '';
+      if (seen.has(name)) continue;
+      seen.add(name);
+      for (const mb of methods.get(name) ?? []) if (reaches(file, mb, seen)) return true;
+    }
+    return false;
+  };
+
+  it('ninguna transacción que llega a un bloqueo de fila queda con los 5 s de Prisma', () => {
+    const offenders = txs
+      .filter((t) => reaches(t.file, t.body))
+      .filter((t) => (timeoutOf(t.options) ?? 0) < MIN_TIMEOUT_MS)
+      .map((t) => `${t.file}:${String(t.line)} · ${t.method} (${t.options ?? 'sin opciones'})`);
+    expect(offenders).toEqual([]);
+  });
+
+  it('ve el bloqueo por `this.`: una transacción que solo llama a un método propio que bloquea', () => {
+    const methods = new Map([['lockIt', ['await lockDocuments(tx, { salesOrders: [id] });']]]);
+    methodsByFile.set('__prueba__.ts', methods);
+    expect(reaches('__prueba__.ts', 'async (tx) => { await this.lockIt(tx); }')).toBe(true);
+    expect(reaches('__prueba__.ts', 'async (tx) => { await this.other(tx); }')).toBe(false);
+    methodsByFile.delete('__prueba__.ts');
+  });
+});
+
+describe('cc63 (LK-02 de audit-02): el tope del día se nombra, no se copia', () => {
+  it('nadie repite el literal de KARDEX_TX_OPTIONS fuera de su archivo', () => {
+    const literal = /\{\s*timeout:\s*30_000,\s*maxWait:\s*10_000\s*\}/;
+    const offenders = sources(SRC)
+      .filter((p) => !p.endsWith('transaction-options.ts'))
+      .filter((p) => literal.test(readFileSync(p, 'utf8')))
+      .map((p) => relative(SRC, p));
+    expect(offenders).toEqual([]);
   });
 });

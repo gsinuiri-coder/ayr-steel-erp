@@ -362,7 +362,7 @@ export class SalesOrderEditsService {
           ...(imported ? { priceFloorExempt: 'D-163/D-256: pedido importado' } : {}),
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.orders.findOne(orderId);
   }
 
@@ -383,8 +383,9 @@ export class SalesOrderEditsService {
     paper: { netAmountPen: string; igvAmountPen?: string; totalAmountPen?: string },
     reason: string,
   ): Promise<void> {
-    await this.prisma.$transaction((tx) =>
-      this.restorePaperAmountsInTx(tx, actor, orderId, itemId, paper, reason),
+    await this.prisma.$transaction(
+      (tx) => this.restorePaperAmountsInTx(tx, actor, orderId, itemId, paper, reason),
+      KARDEX_TX_OPTIONS,
     );
   }
 
@@ -624,7 +625,7 @@ export class SalesOrderEditsService {
           reason: input.reason,
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.orders.findOne(orderId);
   }
 

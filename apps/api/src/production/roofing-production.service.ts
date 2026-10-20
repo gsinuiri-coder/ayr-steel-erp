@@ -247,7 +247,7 @@ export class RoofingProductionService {
         operationDate: orderOperationDate,
         notes: input.notes ?? null,
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.production.findOne(orderId);
   }

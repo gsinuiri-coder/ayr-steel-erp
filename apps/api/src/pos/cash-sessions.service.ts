@@ -24,6 +24,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * Turnos de caja del punto de venta (RF-60; D-101).
@@ -85,7 +86,7 @@ export class CashSessionsService {
         },
       });
       return created.id;
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.findOne(actor, id);
   }
 
@@ -178,7 +179,7 @@ export class CashSessionsService {
           reason: input.notes ?? null,
         },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
     return this.findOne(actor, id);
   }
 

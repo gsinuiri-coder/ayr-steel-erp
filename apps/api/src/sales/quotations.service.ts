@@ -483,7 +483,7 @@ export class QuotationsService {
       // La validación del pool en el servidor (D-254) suma consultas por línea de bobina. Con
       // los 5 s por defecto de Prisma, el barrido contra Neon vencía la transacción a mitad
       // (lo mostró el ensayo en demo); mismo margen que `updateItemCoil`.
-      { timeout: 30_000, maxWait: 10_000 },
+      KARDEX_TX_OPTIONS,
     );
 
     await this.generatePdf(id);
@@ -769,107 +769,104 @@ export class QuotationsService {
     lineNumber: number,
     input: SetQuotationItemCoilInput,
   ): Promise<QuotationDto> {
-    await this.prisma.$transaction(
-      async (tx) => {
-        const current = await this.lockQuotation(tx, quotationId);
-        assertSellerAccess(actor, current.sellerId, 'Cotización');
-        if (
-          current.status === QuotationStatus.CONFIRMED ||
-          current.status === QuotationStatus.CANCELLED
-        ) {
+    await this.prisma.$transaction(async (tx) => {
+      const current = await this.lockQuotation(tx, quotationId);
+      assertSellerAccess(actor, current.sellerId, 'Cotización');
+      if (
+        current.status === QuotationStatus.CONFIRMED ||
+        current.status === QuotationStatus.CANCELLED
+      ) {
+        throw new BadRequestException(
+          `La cotización está ${current.status === QuotationStatus.CONFIRMED ? 'confirmada' : 'anulada'}: su bobina ya no se cambia`,
+        );
+      }
+      const item = await this.requireImportedCoilLine(tx, current, lineNumber);
+      const before = {
+        lineNumber,
+        productSku: item.product.sku,
+        coilId: item.reserveItemType === InventoryItemType.COIL ? item.reserveItemId : null,
+      };
+      let after: Record<string, string | number | null>;
+      if (input.saleCoilId === null) {
+        if (before.coilId === null) return;
+        // Una línea sin bobina no tiene qué apartar: con una reserva temporal vigente,
+        // recalcularla intentaría reservar el producto de venta de bobina, que nunca tiene
+        // saldo, y la operación moría con un error de stock (segundo modelo cc17, P2-3).
+        const temporary = await tx.quotationReservation.findFirst({
+          where: { quotationId, ...liveTemporaryWhere() },
+          select: { id: true },
+        });
+        if (temporary) {
           throw new BadRequestException(
-            `La cotización está ${current.status === QuotationStatus.CONFIRMED ? 'confirmada' : 'anulada'}: su bobina ya no se cambia`,
+            'La cotización tiene una reserva temporal vigente: libérala antes de quitar la bobina.',
           );
         }
-        const item = await this.requireImportedCoilLine(tx, current, lineNumber);
-        const before = {
-          lineNumber,
-          productSku: item.product.sku,
-          coilId: item.reserveItemType === InventoryItemType.COIL ? item.reserveItemId : null,
-        };
-        let after: Record<string, string | number | null>;
-        if (input.saleCoilId === null) {
-          if (before.coilId === null) return;
-          // Una línea sin bobina no tiene qué apartar: con una reserva temporal vigente,
-          // recalcularla intentaría reservar el producto de venta de bobina, que nunca tiene
-          // saldo, y la operación moría con un error de stock (segundo modelo cc17, P2-3).
-          const temporary = await tx.quotationReservation.findFirst({
-            where: { quotationId, ...liveTemporaryWhere() },
-            select: { id: true },
-          });
-          if (temporary) {
-            throw new BadRequestException(
-              'La cotización tiene una reserva temporal vigente: libérala antes de quitar la bobina.',
-            );
-          }
-          // El producto se queda: es el de la bobina que tenía, del pool del papel.
-          await tx.quotationItem.update({
-            where: { id: item.id },
-            data: {
-              reserveItemType: InventoryItemType.PRODUCT,
-              reserveItemId: item.productId,
-              reserveQty: item.qty,
-              reserveUnit: Unit.KGM,
-            },
-          });
-          after = { lineNumber, productSku: item.product.sku, coilId: null };
-        } else {
-          const { candidates } = await this.itemCoilCandidates(tx, quotationId, item);
-          const chosen = candidates.find((c) => c.coilId === input.saleCoilId);
-          if (!chosen) {
-            throw new BadRequestException(
-              `Línea ${String(lineNumber)}: esa bobina no es candidata (libre, del color del papel, espesor dentro de ±${roofingToleranceMm(this.env)} mm y con ${toFixedString(item.qty.toString(), 'KG')} kg o más). Para una más liviana, quita la bobina y elígela al confirmar.`,
-            );
-          }
-          const sameCoil = await tx.quotationItem.findFirst({
-            where: {
-              quotationId,
-              id: { not: item.id },
-              reserveItemType: InventoryItemType.COIL,
-              reserveItemId: chosen.coilId,
-            },
-            select: { lineNumber: true },
-          });
-          if (sameCoil) {
-            throw new BadRequestException(
-              `Línea ${String(lineNumber)}: ${chosen.code} ya la vende la línea ${String(sameCoil.lineNumber)}`,
-            );
-          }
-          const product = (await coilSaleProductsByCoil(tx, [chosen.coilId])).get(chosen.coilId);
-          if (!product) {
-            throw new BadRequestException(`${chosen.code} no tiene producto de venta de bobina`);
-          }
-          await tx.quotationItem.update({
-            where: { id: item.id },
-            data: {
-              productId: product.id,
-              reserveItemType: InventoryItemType.COIL,
-              reserveItemId: chosen.coilId,
-              reserveQty: item.qty,
-              reserveUnit: Unit.KGM,
-            },
-          });
-          after = {
-            lineNumber,
-            productSku: product.sku,
-            coilId: chosen.coilId,
-            coilCode: chosen.code,
-            thicknessMm: chosen.thicknessMm,
-          };
-        }
-        await this.audit.write(tx, {
-          actorId: actor.id,
-          action: 'sales.quotation.item-coil',
-          entity: 'quotations',
-          entityId: quotationId,
-          before: { code: quotationCode(current.seq), ...before },
-          after,
+        // El producto se queda: es el de la bobina que tenía, del pool del papel.
+        await tx.quotationItem.update({
+          where: { id: item.id },
+          data: {
+            reserveItemType: InventoryItemType.PRODUCT,
+            reserveItemId: item.productId,
+            reserveQty: item.qty,
+            reserveUnit: Unit.KGM,
+          },
         });
-        // D-185: con reserva temporal vigente, lo reservado sigue a la línea.
-        await this.orders.recalculateTemporaryInTx(tx, actor, quotationId);
-      },
-      { timeout: 30_000, maxWait: 10_000 },
-    );
+        after = { lineNumber, productSku: item.product.sku, coilId: null };
+      } else {
+        const { candidates } = await this.itemCoilCandidates(tx, quotationId, item);
+        const chosen = candidates.find((c) => c.coilId === input.saleCoilId);
+        if (!chosen) {
+          throw new BadRequestException(
+            `Línea ${String(lineNumber)}: esa bobina no es candidata (libre, del color del papel, espesor dentro de ±${roofingToleranceMm(this.env)} mm y con ${toFixedString(item.qty.toString(), 'KG')} kg o más). Para una más liviana, quita la bobina y elígela al confirmar.`,
+          );
+        }
+        const sameCoil = await tx.quotationItem.findFirst({
+          where: {
+            quotationId,
+            id: { not: item.id },
+            reserveItemType: InventoryItemType.COIL,
+            reserveItemId: chosen.coilId,
+          },
+          select: { lineNumber: true },
+        });
+        if (sameCoil) {
+          throw new BadRequestException(
+            `Línea ${String(lineNumber)}: ${chosen.code} ya la vende la línea ${String(sameCoil.lineNumber)}`,
+          );
+        }
+        const product = (await coilSaleProductsByCoil(tx, [chosen.coilId])).get(chosen.coilId);
+        if (!product) {
+          throw new BadRequestException(`${chosen.code} no tiene producto de venta de bobina`);
+        }
+        await tx.quotationItem.update({
+          where: { id: item.id },
+          data: {
+            productId: product.id,
+            reserveItemType: InventoryItemType.COIL,
+            reserveItemId: chosen.coilId,
+            reserveQty: item.qty,
+            reserveUnit: Unit.KGM,
+          },
+        });
+        after = {
+          lineNumber,
+          productSku: product.sku,
+          coilId: chosen.coilId,
+          coilCode: chosen.code,
+          thicknessMm: chosen.thicknessMm,
+        };
+      }
+      await this.audit.write(tx, {
+        actorId: actor.id,
+        action: 'sales.quotation.item-coil',
+        entity: 'quotations',
+        entityId: quotationId,
+        before: { code: quotationCode(current.seq), ...before },
+        after,
+      });
+      // D-185: con reserva temporal vigente, lo reservado sigue a la línea.
+      await this.orders.recalculateTemporaryInTx(tx, actor, quotationId);
+    }, KARDEX_TX_OPTIONS);
     await this.generatePdf(quotationId);
     return this.findOne(quotationId);
   }
@@ -1324,7 +1321,7 @@ export class QuotationsService {
         before: { status: current.status },
         after: { status: QuotationStatus.CANCELLED, reason },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.findOne(id, actor);
   }

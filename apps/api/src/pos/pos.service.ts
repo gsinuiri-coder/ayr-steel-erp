@@ -50,6 +50,7 @@ import { reservedByItem } from '../sales/reserved-ledger';
 import { SalesOrdersService } from '../sales/sales-orders.service';
 import { assertAtCostRequest } from '../sales/at-cost';
 import { CashSessionsService } from './cash-sessions.service';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * Punto de venta de mostrador (RF-60; D-098..D-104).
@@ -485,7 +486,7 @@ export class PosService {
           after: { status: PosSaleStatus.VOIDING, reason },
         });
       }
-    });
+    }, KARDEX_TX_OPTIONS);
 
     // 1. El cobro.
     if (sale.customerPayment.reversedAt === null) {
