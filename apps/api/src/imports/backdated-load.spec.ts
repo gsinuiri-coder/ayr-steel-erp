@@ -201,6 +201,32 @@ describe('reviewBackdatedLoad (cc63)', () => {
     );
   });
 
+  it('autorrevisión: la NC del export se salta, la venta en USD no se compara con soles y la bobina sin código avisa', () => {
+    const sheets = empty();
+    sheets.purchases = [
+      purchase({ 'TIPO DE COMPRA': 'BOBINAS', SKU: '', KG: '100', 'CÓDIGO EXTERNO': '' }),
+    ];
+    sheets.sales = [
+      sale({ 'TIPO COMPROBANTE': 'NOTA DE CRÉDITO', 'SERIE - NÚMERO': 'FC01-1', CANTIDAD: '-1' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-9', MONEDA: 'USD' }),
+    ];
+    sheets.collections = [{ 'SERIE - NÚMERO': 'FFA1-9', FECHA: '2026-10-25', MONTO: '500' }];
+    const r = reviewBackdatedLoad(sheets, ctx());
+    expect(r.errors).toEqual([]);
+    expect(r.counts.sales).toBe(1);
+    expect(r.warnings.map((w) => w.message)).toEqual([
+      'bobina sin CÓDIGO EXTERNO: entra, pero la hoja de producción no la puede nombrar ni se revisa su consumo',
+      'FC01-1 es una nota de crédito: no entra como venta (se registra aparte)',
+    ]);
+  });
+
+  it('montos con separadores de miles', () => {
+    const sheets = empty();
+    sheets.sales = [sale({ 'VALOR DE VENTA': '1,234.50', 'PRECIO DE VENTA': '' })];
+    sheets.collections = [{ 'SERIE - NÚMERO': 'FFA1-1', FECHA: '2026-10-25', MONTO: '1.456,71' }];
+    expect(reviewBackdatedLoad(sheets, ctx()).errors).toEqual([]);
+  });
+
   it('la ventana de 90 días de la emisión: fuera, error; cerca, aviso', () => {
     const sheets = empty();
     sheets.sales = [

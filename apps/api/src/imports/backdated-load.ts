@@ -1,4 +1,12 @@
-import { Decimal, PURCHASE_IMPORT_COLUMNS, QUOTATION_IMPORT_COLUMNS, toDecimal } from '@ayr/shared';
+import {
+  Decimal,
+  IGV_RATE_PCT,
+  MAX_BACKDATED_ISSUE_DAYS,
+  PURCHASE_IMPORT_COLUMNS,
+  purchaseTypeOf,
+  QUOTATION_IMPORT_COLUMNS,
+} from '@ayr/shared';
+import { parseAmount } from './opening-balances-plan';
 import {
   firstNegativeDate,
   firstValidDate,
@@ -97,7 +105,7 @@ export const LOAD_ORDER = [
 ] as const;
 
 /** Días hacia atrás que acepta la emisión de un comprobante (D-072/D-210). */
-export const ISSUE_WINDOW_DAYS = 90;
+export const ISSUE_WINDOW_DAYS = MAX_BACKDATED_ISSUE_DAYS;
 /** Desde cuántos días antes del límite se avisa. */
 const ISSUE_WINDOW_WARN_DAYS = 15;
 
@@ -185,11 +193,12 @@ function cell(raw: Record<string, unknown>, header: string, required = true): st
   return getField(raw, { key: header, header, required });
 }
 
+/** El monto de una celda, con los separadores que trae un Excel (`1.234,50`, `1,234.50`, `S/ 10`). */
 function amountOf(text: string): Decimal | null {
-  const clean = text.replaceAll(/s\/\.?|\s/gi, '').replace(',', '.');
-  if (!/^-?\d+(\.\d+)?$/.test(clean)) return null;
-  return toDecimal(clean);
+  return parseAmount(text);
 }
+
+const IGV_FACTOR = new Decimal(IGV_RATE_PCT).div(100).plus(1);
 
 /**
  * La revisión. Pura: el kardex actual y lo que existe llegan en `ctx`; los movimientos del plan se
@@ -261,7 +270,17 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     const sku = cell(raw, PURCHASE_IMPORT_COLUMNS.sku.header, false);
     const external = cell(raw, PURCHASE_IMPORT_COLUMNS.externalCode.header, false);
     const kg = cell(raw, PURCHASE_IMPORT_COLUMNS.kg.header, false);
-    if (kg !== '' && external !== '') {
+    // Autorrevisión de cc63: una bobina se reconoce por el tipo de compra, como el importador.
+    const isCoil = purchaseTypeOf(cell(raw, PURCHASE_IMPORT_COLUMNS.type.header, false)) === 'COIL';
+    if (isCoil && external === '') {
+      warn(
+        sheet,
+        row,
+        'bobina sin CÓDIGO EXTERNO: entra, pero la hoja de producción no la puede nombrar ni se revisa su consumo',
+      );
+      return;
+    }
+    if (isCoil || (kg !== '' && external !== '')) {
       // Una bobina nueva: la nombra su código externo dentro del plan.
       const q = qtyOf(sheet, row, kg, 'KG');
       if (!q) return;
@@ -299,6 +318,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   });
 
   // 2. Ventas: no mueven stock; dan los comprobantes, sus cantidades por SKU y sus totales.
+  const foreignSales = new Set<string>();
   const sales = new Map<
     string,
     { issueDate: string; total: Decimal; qtyBySku: Map<string, Decimal> }
@@ -307,6 +327,15 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     const sheet = LOAD_SHEETS.sales;
     const row = rowNumber(i);
     const doc = cell(raw, QUOTATION_IMPORT_COLUMNS.documentKey);
+    // Autorrevisión de cc63: el importador de cotizaciones salta las notas de crédito del export
+    // (D-152); la revisión también.
+    const docType = cell(raw, QUOTATION_IMPORT_COLUMNS.docType, false).toLowerCase();
+    if (docType.includes('nota') || cell(raw, QUOTATION_IMPORT_COLUMNS.adjustedDocument, false)) {
+      warn(sheet, row, `${doc} es una nota de crédito: no entra como venta (se registra aparte)`);
+      return;
+    }
+    const currency = cell(raw, QUOTATION_IMPORT_COLUMNS.currency, false).toUpperCase();
+    if (currency !== '' && currency !== 'PEN' && currency !== 'SOLES') foreignSales.add(doc);
     const issue = dateOf(
       sheet,
       row,
@@ -329,7 +358,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       );
     const net = netCell ?? ZERO;
     const totalCell = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.totalAmount, false));
-    const total = totalCell ?? net.times('1.18');
+    const total = totalCell ?? net.times(IGV_FACTOR);
     const sale = sales.get(doc) ?? {
       issueDate: issue,
       total: ZERO,
@@ -461,7 +490,8 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       warn(sheet, row, `el cobro del ${date} es anterior a la emisión (${sale.issueDate})`);
     const sum = (collected.get(doc) ?? ZERO).plus(amount);
     collected.set(doc, sum);
-    if (sum.gt(sale.total.toDecimalPlaces(2, Decimal.ROUND_CEIL))) {
+    // Una venta en otra moneda: el cobro va en su moneda y la revisión no la convierte.
+    if (!foreignSales.has(doc) && sum.gt(sale.total.toDecimalPlaces(2, Decimal.ROUND_CEIL))) {
       err(sheet, row, `${doc} cobra ${sum.toFixed(2)} y su total es ${sale.total.toFixed(2)}`);
     }
   });
