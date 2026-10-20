@@ -1,6 +1,6 @@
 # Ventana cc59 · límite de intentos fallidos de login por IP
 
-19/10/2026, de 18:30 a 20:15 en Lima. Decisiones nuevas: D-692, D-693 y D-694, todas provisionales.
+19/10/2026, de 18:30 a 20:15 en Lima. Decisiones nuevas: D-692, D-693 y D-694, **ratificadas por el dueño el 2026-10-19**.
 
 No hubo migración, ni `--execute`, ni SQL contra producción. Lo único que se creó en producción fue un secreto nuevo, con
 el OK del dueño por nombre.
@@ -68,8 +68,8 @@ no se corta.
 
 ## Pendiente
 
-- **Dueño:** ratificar D-692..D-694 (sobre todo la política de D-693 con IP compartida) y hacer el UAT en
-  `docs/uat/cc59.md`.
+- ~~Dueño: ratificar D-692..D-694 y hacer el UAT~~ — **hecho el 2026-10-19**: el dueño las ratificó y dio por
+  aprobado el UAT de cc59 con las pruebas y la verificación en producción.
 - **Prueba intermitente, solo anotada.** El par de cc57 «anular una NC con devolución × anular su pedido» de
   `lock-order.db-spec.ts` falló una vez en la suite completa local (234/235). Corrida sola, pasó 2 de 2. No se tocó.
 - **Secret Manager.** La versión 1 de `AYR_CLIENT_IP_SECRET` sigue habilitada sin uso. Se puede deshabilitar.

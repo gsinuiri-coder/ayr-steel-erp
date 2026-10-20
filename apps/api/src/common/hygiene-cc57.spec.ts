@@ -3,7 +3,7 @@ import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { CuttingController } from '../cutting/cutting.controller';
 import { DashboardController } from '../sales/dashboard.controller';
 import { QuotationsService } from '../sales/quotations.service';
-import { AppThrottlerGuard, isLoginRoute } from './throttler.guard';
+import { throttleTracker, isLoginRoute } from './throttler.guard';
 
 /**
  * cc57 — P3 de higiene de audit-01: permisos declarados (C-06, C-07), la cubeta por correo solo en
@@ -29,12 +29,11 @@ describe('cc57 (C-06, C-07): roles declarados', () => {
 });
 
 describe('cc57 (C-08): la cubeta por correo, solo en el login', () => {
+  // cc60: la clave sale de `throttleTracker` (sin firma de la web, como acá, es `req.ip`).
   const tracker = (path: string, body: unknown, ip = '10.0.0.1') =>
-    new (
-      AppThrottlerGuard as unknown as new () => {
-        getTracker: (req: unknown) => Promise<string>;
-      }
-    )().getTracker({ path, body, ip });
+    Promise.resolve(
+      throttleTracker({ path, body, ip, headers: {} } as never, undefined, Date.now()),
+    );
 
   it('reconoce el login con y sin el prefijo', () => {
     expect(isLoginRoute({ path: '/api/auth/login' })).toBe(true);

@@ -15,7 +15,8 @@ Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/h
   quedó en argv, en logs, en `local-data` ni en el historial.
 - **También en esta pieza:** la regex de versiones de secreto de `deploy-api.mjs`, que no aceptaba la versión 10 o
   mayores.
-- **Pendiente del dueño:** ratificar D-692..D-694 y hacer el UAT.
+- **Registro del dueño (19/10):** D-692..D-694 ratificadas y UAT de cc59 aprobado, con las pruebas y la verificación en
+  producción.
 
 ## 2026-10-19 — cc58: cierre de lo pendiente de cc57 (D-676..D-691; PR #230 a #233)
 

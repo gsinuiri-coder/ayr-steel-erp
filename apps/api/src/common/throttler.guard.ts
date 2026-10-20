@@ -1,6 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import {
+  InjectThrottlerOptions,
+  InjectThrottlerStorage,
+  ThrottlerGuard,
+  type ThrottlerModuleOptions,
+  type ThrottlerStorage,
+} from '@nestjs/throttler';
 import type { Request } from 'express';
+import { loginIpKey, verifyClientIp, type ClientIpCheck } from '../auth/client-ip';
+import { ENV, type Env } from '../config/env';
 
 /**
  * Detrás del proxy del web todos los usuarios comparten la IP de salida, así que el
@@ -12,22 +21,70 @@ import type { Request } from 'express';
  * anulara el límite de `/auth/login` por completo. Se usa `req.ip`, que Express resuelve
  * con `trust proxy` según la cadena real, y para el login manda el correo: un atacante
  * no puede cambiarlo sin dejar de atacar esa cuenta.
+ *
+ * cc60 (D-695): con la IP del cliente **firmada por la web** (D-692) y válida, la clave de las
+ * demás rutas —la cubeta general y la de renovación de sesión— es esa IP, con el bloque /64 en
+ * IPv6 y el mismo código derivado de D-694 (nunca la IP en claro). Sin firma válida, como antes:
+ * `req.ip`. Los conteos siguen en memoria por instancia (D-696).
  */
 /** `POST /auth/login` (con o sin el prefijo global `/api`). */
 export function isLoginRoute(req: Pick<Request, 'path'>): boolean {
   return /\/auth\/login\/?$/.test(req.path);
 }
 
+/** La clave de la cubeta: el correo en el login; si no, la IP verificada o `req.ip`. */
+export function throttleTracker(req: Request, secret: string | undefined, now: number): string {
+  return trackerFor(req, secret, verifyClientIp(req.headers, secret, now));
+}
+
+/** Lo mismo, con la verificación ya hecha (una sola por petición; revisión de cc60, P2). */
+function trackerFor(req: Request, secret: string | undefined, check: ClientIpCheck): string {
+  // cc57 (C-08 de audit-01): el correo es la clave **solo en el login**. En cualquier otra ruta
+  // con `email` en el cuerpo (alta de cliente o de usuario) compartían cubeta usuarios distintos
+  // que grababan el mismo correo.
+  const body = req.body as { email?: unknown } | undefined;
+  const email =
+    isLoginRoute(req) && typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+  if (email) return `email|${email}`;
+  if (check.ok && secret) return `ip|${loginIpKey(secret, check.ip)}`;
+  return req.ip ?? 'sin-ip';
+}
+
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
-  protected override async getTracker(req: Request): Promise<string> {
-    // cc57 (C-08 de audit-01): el correo es la clave **solo en el login**. En cualquier otra ruta
-    // con `email` en el cuerpo (alta de cliente o de usuario) compartían cubeta usuarios distintos
-    // que grababan el mismo correo.
-    const body = req.body as { email?: unknown } | undefined;
-    const email =
-      isLoginRoute(req) && typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
-    if (email) return Promise.resolve(`email|${email}`);
-    return Promise.resolve(req.ip ?? 'sin-ip');
+  private readonly logger = new Logger('Throttle');
+  /**
+   * Los estados ya avisados en esta instancia: cada uno, una vez. Tráfico firmado y sin firmar
+   * mezclado (sondas) no escribe una línea por petición (revisión de cc60, P2).
+   */
+  private readonly noted = new Set<string>();
+
+  constructor(
+    @InjectThrottlerOptions() options: ThrottlerModuleOptions,
+    @InjectThrottlerStorage() storage: ThrottlerStorage,
+    reflector: Reflector,
+    @Inject(ENV) private readonly env: Env,
+  ) {
+    super(options, storage, reflector);
+  }
+
+  protected override getTracker(req: Request): Promise<string> {
+    const secret = this.env.AYR_CLIENT_IP_SECRET;
+    const check = verifyClientIp(req.headers, secret, Date.now());
+    const tracker = trackerFor(req, secret, check);
+    if (!tracker.startsWith('email|')) this.noteState(check);
+    return Promise.resolve(tracker);
+  }
+
+  /** Deja en el log (sin la IP) si la instancia cuenta por IP verificada o por qué no. */
+  private noteState(check: ClientIpCheck): void {
+    const state = check.ok ? 'verificada' : check.reason;
+    if (this.noted.has(state)) return;
+    this.noted.add(state);
+    this.logger.log(
+      check.ok
+        ? 'Límites por IP verificada del cliente'
+        : `Límites por la IP de la conexión (IP del cliente: ${state})`,
+    );
   }
 }
