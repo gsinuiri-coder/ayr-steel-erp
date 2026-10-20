@@ -2923,3 +2923,29 @@ así: el doble de cupo en el peor caso es aceptable para un límite contra abuso
   ruta vieja de respaldo. No se movieron ni copiaron archivos de credenciales.
 - La versión 1 de `AYR_CLIENT_IP_SECRET` quedó **deshabilitada**, no destruida, después de confirmar que la API usa la
   versión 2.
+
+## Registro del dueño (2026-10-19 y 2026-10-20)
+
+- **D-695 ratificada** y el UAT de cc60 aprobado. Pasa a firme en `ARQUITECTURA.md` §0.2.
+- **El accesorio suelto de A2-03 (audit-02) se queda en stock** para venderse más adelante. Habilitar esa venta es la
+  pieza cc64 y lleva el número D-697, reservado.
+- **NC-02 (una NC 01 sobre una factura ya cobrada) dejará el monto como saldo a favor del cliente.** Se hace en cc62,
+  junto al importador.
+
+## cc61 — P1 de audit-02, vencimiento editable e importador (D-698..D-700)
+
+**Por qué D-698 corta por pedido y no por líneas.** Es la misma consulta con la que el alta del 02 se niega a cambiar
+el cliente (`planReplacement`). Si el pedido recibió otro comprobante mientras el 02 estaba vivo, devolver el original
+lo deja con dos comprobantes y con el cliente cambiado otra vez. Comparar línea por línea dejaría pasar un caso que el
+alta del 02 ya no deja pasar. La guía se busca por el pedido de su despacho y frena solo si va a otro cliente: una guía
+al cliente del original no factura nada y no debe trabar la vuelta atrás de D-655.
+
+**Por qué D-699 es una excepción a D-657 y no un cambio de D-657.** El vencimiento de un comprobante emitido se sigue
+cambiando con una NC 13 cuando hay que declararlo ante SUNAT. La edición directa existe para los comprobantes que
+quedaron sin vencimiento o con uno mal tipeado (hoy todos manuales). Con una NC 13 viva se rechaza, porque el
+vencimiento vigente es el de la nota y el cambio no se vería.
+
+**Por qué D-700 redondea HALF_UP y no hacia arriba.** «La misma regla de los comprobantes» es la de D-377: un resto de
+fracción de céntimo no es deuda, y se redondea HALF_UP. Redondear hacia arriba lo debido al corte pedía un céntimo de
+más cuando el total tenía cuatro decimales, y en compras el saldo de hoy va hacia abajo (D-039), así que el lote entero
+se rechazaba.

@@ -2,6 +2,28 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-20 — cc61: P1 de audit-02, vencimiento editable e importador (D-698..D-700; PR #240)
+
+Sin migración y sin SQL contra producción. Un `--execute` con OK del dueño por nombre. Detalle en
+`docs/handoff/ventana-cc61.md`; UAT en `docs/uat/cc61.md`; revisión en `docs/revision/cc61-segundo-modelo.md`.
+
+- **API:** `00148-q6w` (`git-sha=b29fdf55`).
+- **Merge:** `c131044d`, que publicó la web en las dos URLs.
+- **Smoke:** en verde.
+- **Punto 3:** el comprobante de A2-02 vence el 11/10/2026. Se puso con `pnpm fix:vencimiento`: primero dry-run y
+  después `--execute`, con el respaldo previo `respaldo-pre-cc61-20261020`.
+- **Neon:** se borró `respaldo-pre-cc51-20261013` por la regla 18. Sigue en 10 de 10.
+- **Registro del dueño (19 y 20/10):**
+  - D-695 ratificada y UAT de cc60 aprobado.
+  - El accesorio suelto de A2-03 se queda en stock; su venta va en cc64 (D-697, reservada).
+  - NC-02 dejará el monto como saldo a favor del cliente, en cc62.
+- **Pendiente del dueño:** ratificar D-698..D-700 y hacer el UAT de cc61.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-698: `fiscal-import.service.ts`, `annulExternal` de una NC 02 (toma pedido y despachos del reemplazo).
+- D-700: `opening-balances-plan.ts`, redondeo del saldo al corte.
+
 ## 2026-10-19 — cc60: límites por IP verificada y restos de cc59 (D-695, D-696; PR #238)
 
 Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc60.md`; UAT en
