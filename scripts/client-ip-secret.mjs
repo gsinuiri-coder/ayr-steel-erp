@@ -73,6 +73,8 @@ console.log(`- ${NAME}: acceso de Cloud Run otorgado`);
 // 2) Vercel (API REST con el token del CLI, como deploy-web.mjs; nunca se imprime).
 function cliToken() {
   const candidates = [
+    // El CLI 64 guarda el login acá; los anteriores, en xdg.data.
+    resolve(process.env.APPDATA ?? '', 'com.vercel.cli/Data/auth.json'),
     resolve(process.env.APPDATA ?? '', 'xdg.data/com.vercel.cli/auth.json'),
     resolve(homedir(), '.local/share/com.vercel.cli/auth.json'),
     resolve(homedir(), 'Library/Application Support/com.vercel.cli/auth.json'),
