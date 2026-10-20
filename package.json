@@ -77,6 +77,7 @@
     "fix:costo-bobina": "node scripts/fix-coil-entry-cost.mjs",
     "fix:vencimiento": "node scripts/set-due-date.mjs",
     "recosteo:historico": "node scripts/recost-historic.mjs",
+    "recosteo:pendientes": "node scripts/recost-pending.mjs",
     "restore:cancelled-coils": "node scripts/restore-cancelled-coils.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },

@@ -32,7 +32,8 @@
     "prisma/inspect-cc55-cli.ts",
     "prisma/import-opening-balances-cli.ts",
     "prisma/fix-coil-entry-cost-cli.ts",
-    "prisma/set-due-date-cli.ts"
+    "prisma/set-due-date-cli.ts",
+    "prisma/recost-pending-cli.ts"
   ],
   "exclude": ["node_modules", "test", "dist", "dist-cli", "**/*.spec.ts"]
 }

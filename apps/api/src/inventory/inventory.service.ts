@@ -4,6 +4,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -33,6 +34,7 @@ import {
   toSkipTake,
   type BusinessLine,
   type InventoryBalanceDto,
+  type RecostPendingDto,
   type InventoryItemOptionDto,
   type InventoryItemResolveQuery,
   type InventoryMovementDto,
@@ -75,6 +77,7 @@ import {
 import { assertReservationInvariant, reservedQty } from '../sales/reservation-guard';
 import { reservedByItem as sumReservedByItem, type HolderViewer } from '../sales/reserved-ledger';
 import { balanceLockKey, compareLockKeys, markBalanceHeld, sortedUniqueIds } from './row-locks';
+import { listPendingRecosts } from './recost-pending';
 
 /** Candidatos que se traen antes de rankear y recortar el buscador de ítems (D-290). */
 const ITEM_SEARCH_CANDIDATE_POOL = 100;
@@ -226,6 +229,7 @@ interface ItemRef {
  */
 @Injectable()
 export class InventoryService {
+  private readonly logger = new Logger('Recosteo');
   constructor(
     private readonly prisma: PrismaService,
     @Inject(ENV) private readonly env: Env,
@@ -612,7 +616,17 @@ export class InventoryService {
         maxRows: RECOST_MAX_ROWS,
       },
     });
+    // cc63 (RC-01 de audit-02): además de la marca, el aviso en el log (sin datos del negocio) y la
+    // lista para ADMINISTRADOR en Inventario; lo completa `pnpm recosteo:pendientes`.
+    this.logger.warn(
+      `Recosteo por fecha pendiente: ${String(rowsReplayed)} movimientos (tope ${String(RECOST_MAX_ROWS)}), ${String(seeds.length)} ítem(s). Completarlo con pnpm recosteo:pendientes.`,
+    );
     return { pending: true, rowsReplayed, adjusted: [] };
+  }
+
+  /** cc63 (RC-01): los recosteos pendientes, para ADMINISTRADOR. */
+  findPendingRecosts(): Promise<RecostPendingDto[]> {
+    return listPendingRecosts(this.prisma);
   }
 
   /**

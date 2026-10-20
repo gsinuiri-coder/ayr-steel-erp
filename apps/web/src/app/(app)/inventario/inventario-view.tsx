@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LINK_CLASSNAME } from '@/lib/utils';
+import { RecostPendingNotice } from './recost-pending-notice';
 import {
   Table,
   TableBody,
@@ -81,6 +82,8 @@ export function InventarioView() {
           ]}
         />
       </div>
+
+      {user.role === Role.ADMINISTRADOR && <RecostPendingNotice />}
 
       <Tabs
         value={line}
