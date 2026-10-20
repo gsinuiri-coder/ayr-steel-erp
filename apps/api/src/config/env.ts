@@ -30,6 +30,11 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
+  /**
+   * cc59 (D-692): el secreto compartido con la web para firmar la IP real del cliente en el login.
+   * Sin él, el API ignora la IP declarada y queda solo el límite por correo.
+   */
+  AYR_CLIENT_IP_SECRET: z.string().min(32).optional(),
   /** Apaga el rate limit (solo E2E/CI). */
   THROTTLE_DISABLED: z
     .enum(['true', 'false'])

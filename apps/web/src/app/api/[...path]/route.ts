@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { applyClientIpHeaders } from '@/lib/client-ip-signature';
 
 /**
  * Proxy same-origin hacia el API (D-015): el navegador solo habla con `/api/*`,
@@ -28,6 +29,8 @@ async function proxy(req: NextRequest, path: string[]): Promise<NextResponse> {
 
   const headers = new Headers(req.headers);
   for (const h of HOP_BY_HOP_REQUEST_HEADERS) headers.delete(h);
+  // cc59 (D-692): la IP real del cliente, firmada; la que mande el navegador se borra siempre.
+  applyClientIpHeaders(headers, req.headers, process.env.AYR_CLIENT_IP_SECRET, Date.now());
 
   const hasBody = !['GET', 'HEAD'].includes(req.method);
   const upstream = await fetch(target, {

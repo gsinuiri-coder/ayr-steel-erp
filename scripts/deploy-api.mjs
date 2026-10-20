@@ -35,12 +35,14 @@ const SECRET_NAMES = [
   'R2_SECRET_ACCESS_KEY',
   'R2_BUCKET',
   'R2_ENDPOINT',
+  // cc59 (D-692): la firma de la IP real del cliente en el login (scripts/client-ip-secret.mjs).
+  'AYR_CLIENT_IP_SECRET',
 ];
 const secretVersions = Object.fromEntries(
   SECRET_NAMES.map((name) => {
     const forced = process.env[`SECRET_VERSION_${name}`];
     if (forced !== undefined) {
-      if (!/^[1-9]d*$/.test(forced))
+      if (!/^[1-9]\d*$/.test(forced))
         throw new Error(`SECRET_VERSION_${name} no es un número de versión`);
       return [name, forced];
     }
@@ -59,7 +61,7 @@ const secretVersions = Object.fromEntries(
       .trim()
       .split('/')
       .pop();
-    if (!latest || !/^[1-9]d*$/.test(latest)) {
+    if (!latest || !/^[1-9]\d*$/.test(latest)) {
       throw new Error(`No se pudo resolver la versión habilitada de ${name}`);
     }
     return [name, latest];
@@ -205,7 +207,7 @@ const mounted = Object.fromEntries(
     .map((e) => [e.name, e.valueFrom.secretKeyRef.key]),
 );
 const notPinned = SECRET_NAMES.filter(
-  (n) => !/^[1-9]d*$/.test(String(mounted[n])) || mounted[n] !== secretVersions[n],
+  (n) => !/^[1-9]\d*$/.test(String(mounted[n])) || mounted[n] !== secretVersions[n],
 );
 if (notPinned.length) {
   throw new Error(
