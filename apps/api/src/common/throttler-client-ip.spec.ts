@@ -1,6 +1,8 @@
 import { Test } from '@nestjs/testing';
 import { type ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
-import type { ExecutionContext } from '@nestjs/common';
+import { Controller, HttpCode, Post, Req, type ExecutionContext } from '@nestjs/common';
+import type { Request } from 'express';
+import request from 'supertest';
 import { Reflector } from '@nestjs/core';
 import {
   CLIENT_IP_HEADER,
@@ -10,7 +12,7 @@ import {
   signClientIp,
 } from '../auth/client-ip';
 import { ENV, loadEnv } from '../config/env';
-import { AppThrottlerGuard, throttleTracker } from './throttler.guard';
+import { AppThrottlerGuard, isLoginRoute, throttleTracker } from './throttler.guard';
 
 /**
  * cc60 (D-695): la cubeta general y la de renovación de sesión cuentan por la IP del cliente cuando
@@ -104,5 +106,63 @@ describe('AppThrottlerGuard (cc60): la renovación de un usuario no frena a otro
     await expect(guard.canActivate(ctx('190.42.1.7'))).rejects.toThrow();
     await expect(guard.canActivate(ctx('190.42.1.8'))).resolves.toBe(true);
     await moduleRef.close();
+  });
+});
+
+/**
+ * cc61 (SEC-01 de audit-02): Express enruta sin distinguir mayúsculas y con la barra final opcional;
+ * el reconocimiento del login tiene que hacer lo mismo, o una variante de la ruta cae en la cubeta
+ * de la IP (120 por minuto) en vez de la del correo (10 por minuto).
+ */
+const LOGIN_VARIANTS = [
+  '/api/auth/login',
+  '/api/auth/login/',
+  '/api/Auth/login',
+  '/api/AUTH/LOGIN',
+  '/api/auth/Login/',
+  '/auth/login',
+  '/Auth/Login/',
+];
+
+describe('isLoginRoute (cc61, SEC-01)', () => {
+  it.each(LOGIN_VARIANTS)('%s es el login y cuenta por correo', (path) => {
+    expect(isLoginRoute({ path })).toBe(true);
+    const r = { path, headers: {}, body: { email: 'Ana@AYR.pe' }, ip: VERCEL } as never;
+    expect(throttleTracker(r, SECRET, Date.now())).toBe('email|ana@ayr.pe');
+  });
+
+  it.each(['/api/auth/login-x', '/api/auth/logins', '/api/auth/login//', '/api/auth/refresh'])(
+    '%s no es el login',
+    (path) => {
+      expect(isLoginRoute({ path })).toBe(false);
+    },
+  );
+});
+
+@Controller('auth')
+class LoginProbeController {
+  @Post('login')
+  @HttpCode(200)
+  login(@Req() r: Request): { path: string } {
+    return { path: r.path };
+  }
+}
+
+describe('isLoginRoute frente al enrutado real de Express (cc61, SEC-01)', () => {
+  it('toda variante que llega al handler del login la reconoce el guard', async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [LoginProbeController],
+    }).compile();
+    const app = moduleRef.createNestApplication();
+    await app.init();
+    try {
+      for (const path of ['/auth/login', '/Auth/login', '/AUTH/LOGIN', '/auth/Login/']) {
+        const res = await request(app.getHttpServer()).post(path).send({});
+        expect(res.status).toBe(200);
+        expect(isLoginRoute({ path: (res.body as { path: string }).path })).toBe(true);
+      }
+    } finally {
+      await app.close();
+    }
   });
 });
