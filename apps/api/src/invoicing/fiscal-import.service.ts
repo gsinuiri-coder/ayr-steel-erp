@@ -1359,7 +1359,7 @@ export async function lockAnnulledForReactivation(
  * declara su reemplazo y el pedido del comprobante original—, leído antes del bloqueo para tomarlo
  * todo en una sola llamada (regla 17). Lo que decide se vuelve a leer después. Vacío si no es un 02.
  */
-async function replacementLockScope(
+export async function replacementLockScope(
   tx: Prisma.TransactionClient,
   noteId: string,
 ): Promise<{ dispatchIds: string[]; salesOrderIds: string[] }> {
@@ -1391,7 +1391,7 @@ async function replacementLockScope(
  * del pedido. Es la misma consulta con la que el alta del 02 se niega a cambiar el cliente
  * (`planReplacement`), hecha con el pedido ya bloqueado. Devuelve el mensaje, o `null`.
  */
-async function otherOrderDocumentsBlock(
+export async function otherOrderDocumentsBlock(
   tx: Prisma.TransactionClient,
   affectedId: string,
 ): Promise<string | null> {
