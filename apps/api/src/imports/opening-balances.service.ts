@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { FiscalDocType, PurchaseStatus, type Currency, type Prisma } from '@prisma/client';
+import {
+  FiscalDocType,
+  FiscalDocumentStatus,
+  PurchaseStatus,
+  type Currency,
+  type Prisma,
+} from '@prisma/client';
 import {
   Decimal,
+  effectiveDueDate,
   fromDateOnly,
   LIVE_DOCUMENT_STATUSES,
   payableBalance,
@@ -125,7 +132,15 @@ export class OpeningBalancesImporter {
         payments: { select: { amountPen: true, reversedAt: true, date: true } },
         creditNotes: {
           where: { status: { in: [...LIVE_DOCUMENT_STATUSES] }, archivedAt: null },
-          select: { totalPen: true, issueDate: true },
+          // cc61 (IMP-05 de audit-02): lo que pide el vencimiento vigente (D-657).
+          select: {
+            totalPen: true,
+            issueDate: true,
+            creditNoteReason: true,
+            dueDate: true,
+            status: true,
+            createdAt: true,
+          },
         },
       },
       orderBy: [{ issueDate: 'asc' }, { number: 'asc' }],
@@ -149,6 +164,8 @@ export class OpeningBalancesImporter {
         paidUpToCutoff: paid,
         payableNow: payableBalance(balance),
         currency: 'PEN',
+        // cc61 (IMP-08 de audit-02): con la baja en trámite no se le supone un cobro.
+        voidPending: d.status === FiscalDocumentStatus.VOID_PENDING,
       });
       // La plantilla trae lo emitido hasta el corte: lo posterior no es saldo inicial.
       if (fromDateOnly(d.issueDate) > cutoff) continue;
@@ -157,7 +174,16 @@ export class OpeningBalancesImporter {
         customer: d.customer.name,
         customerDoc: d.customer.docNumber,
         issueDate: fromDateOnly(d.issueDate),
-        dueDate: d.dueDate ? fromDateOnly(d.dueDate) : null,
+        dueDate: effectiveDueDate(
+          d.dueDate ? fromDateOnly(d.dueDate) : null,
+          d.creditNotes.map((n) => ({
+            creditNoteReason: n.creditNoteReason,
+            status: n.status,
+            dueDate: n.dueDate ? fromDateOnly(n.dueDate) : null,
+            issueDate: fromDateOnly(n.issueDate),
+            createdAt: n.createdAt.toISOString(),
+          })),
+        ).dueDate,
         totalPen: d.totalPen.toFixed(2),
         balancePen: balance.toFixed(2),
       });
@@ -404,6 +430,8 @@ export class OpeningBalancesImporter {
     batchId: string,
     reason: string,
   ): Promise<{ reversed: number; alreadyReversed: number }> {
+    // cc61 (IMP-04 de audit-02): el mismo candado que `run`; dos deshacer a la vez se serializan.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${OPENING_ADVISORY_LOCK})::text AS "lock"`;
     const live = await this.liveBatches(tx);
     if (!live.some((b) => b.batchId === batchId)) {
       throw new OpeningBatchRejected(`No hay un lote vivo ${batchId} (no existe o ya se deshizo).`);
