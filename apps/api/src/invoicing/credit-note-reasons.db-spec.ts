@@ -31,6 +31,7 @@ import { SalesOrdersService } from '../sales/sales-orders.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { DispatchesService } from './dispatches.service';
 import { FiscalImportService } from './fiscal-import.service';
+import { invoicedByOrderItem } from './invoicing-net';
 import { InvoicingService } from './invoicing.service';
 import { ReceivablesService } from './receivables.service';
 
@@ -407,6 +408,74 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect(again.message).toContain('no se permite');
     expect(again.message).toContain('nota de crédito 01');
     expect(again.message).toContain('vuelve a emitir');
+  });
+
+  it('cc61 (D-698, NC-01 de audit-02): la 02 no se anula si el pedido ya tiene otro comprobante vivo', async () => {
+    const s = await sold({ declare: true });
+    const note = await register(s.invoiceId, {
+      reason: 'ANULACION_ERROR_RUC',
+      replacement: {
+        customerId: otherCustomerId,
+        issueDate: TODAY,
+        series: 'F955',
+        correlative: correlative + 5000,
+      },
+    });
+    const replacement = await prisma.fiscalDocument.findFirstOrThrow({
+      where: { replacesDocumentId: s.invoiceId },
+    });
+    const fiscalImport = moduleRef.get(FiscalImportService);
+    // Anulado el reemplazo, las líneas quedan pendientes de facturar y se registra otro comprobante
+    // sobre ellas, al cliente que hoy tiene el pedido.
+    await fiscalImport.annulExternal(admin, replacement.id, 'prueba');
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    const orderItem = await prisma.salesOrderItem.findFirstOrThrow({
+      where: { salesOrderId: s.orderId },
+    });
+    expect((await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3)).toBe(
+      '0.000',
+    );
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId: otherCustomerId,
+        salesOrderId: s.orderId,
+        issueDate: TODAY,
+        paymentTerms: 'CONTADO',
+        dispatchId: dispatch.id,
+        items: [{ salesOrderItemId: orderItem.id, qty: '5' }],
+      }),
+    );
+    const third = await invoicing.registerManual(admin, draft.id, {
+      series: 'F956',
+      correlative: (correlative += 1),
+    });
+    // Anular la 02 ahora devolvería el original a la vida: la línea quedaría facturada dos veces.
+    const r = await rejection(fiscalImport.annulExternal(admin, note.id, 'prueba'));
+    expect(r.status).toBe(400);
+    expect(r.message).toContain(third.number ?? '');
+    expect(r.message).toContain('anúlalo antes de anular esta nota de crédito 02');
+    expect((await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3)).toBe(
+      '5.000',
+    );
+    const f1 = await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: s.invoiceId } });
+    expect(f1.status).toBe('ACCEPTED');
+    expect((await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: note.id } })).status).toBe(
+      'ACCEPTED',
+    );
+    const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: s.orderId } });
+    expect(order.customerId).toBe(otherCustomerId);
+    // Anulado ese comprobante, la 02 sí se anula y el pedido vuelve a su cliente (D-655). El
+    // despacho que el otro comprobante declaró quedó suelto al anularlo (D-664): el original
+    // vuelve sin despacho declarado.
+    await fiscalImport.annulExternal(admin, third.id, 'prueba');
+    await fiscalImport.annulExternal(admin, note.id, 'prueba');
+    const back = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    expect(back.invoiceId).toBeNull();
+    expect(
+      (await prisma.salesOrder.findUniqueOrThrow({ where: { id: s.orderId } })).customerId,
+    ).toBe(customerId);
   });
 
   it('02: con cobros en el comprobante, se bloquea con un mensaje claro', async () => {
