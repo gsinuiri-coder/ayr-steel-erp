@@ -432,9 +432,9 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     const orderItem = await prisma.salesOrderItem.findFirstOrThrow({
       where: { salesOrderId: s.orderId },
     });
-    expect((await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3)).toBe(
-      '0.000',
-    );
+    expect(
+      (await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3),
+    ).toBe('0.000');
     const draft = await invoicing.create(
       admin,
       createInvoiceSchema.parse({
@@ -456,9 +456,9 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect(r.status).toBe(400);
     expect(r.message).toContain(third.number ?? '');
     expect(r.message).toContain('anúlalo antes de anular esta nota de crédito 02');
-    expect((await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3)).toBe(
-      '5.000',
-    );
+    expect(
+      (await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3),
+    ).toBe('5.000');
     const f1 = await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: s.invoiceId } });
     expect(f1.status).toBe('ACCEPTED');
     expect((await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: note.id } })).status).toBe(
