@@ -162,6 +162,11 @@ interface Movement {
   type: 'IN' | 'OUT';
   /** Una salida de bobina para producir: lo producido recostea en cascada. */
   producesKey?: string;
+  /**
+   * Revisión de cc63 (H-1): el parte es una sola operación. Si la salida de la bobina se rechaza,
+   * la entrada del producto tampoco entra (en el sistema real el parte falla entero).
+   */
+  part?: number;
 }
 
 const ZERO = new Decimal(0);
@@ -315,7 +320,14 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     const sku = cell(raw, QUOTATION_IMPORT_COLUMNS.sku);
     if (!ctx.products.has(sku)) err(sheet, row, `el SKU ${sku} no existe en el catálogo`);
     const q = qtyOf(sheet, row, cell(raw, QUOTATION_IMPORT_COLUMNS.qty), 'La cantidad') ?? ZERO;
-    const net = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.netAmount)) ?? ZERO;
+    const netCell = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.netAmount));
+    if (netCell === null)
+      err(
+        sheet,
+        row,
+        `valor de venta inválido: «${cell(raw, QUOTATION_IMPORT_COLUMNS.netAmount)}»`,
+      );
+    const net = netCell ?? ZERO;
     const totalCell = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.totalAmount, false));
     const total = totalCell ?? net.times('1.18');
     const sale = sales.get(doc) ?? {
@@ -387,11 +399,25 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
         qty: kg,
         type: 'OUT',
         producesKey: `PRODUCT:${sku}`,
+        part: i,
       });
     }
-    movements.push({ sheet, row, itemKey: `PRODUCT:${sku}`, date, qty: q, type: 'IN' });
+    movements.push({ sheet, row, itemKey: `PRODUCT:${sku}`, date, qty: q, type: 'IN', part: i });
     producedBySale.set(`${doc}|${sku}`, (producedBySale.get(`${doc}|${sku}`) ?? ZERO).plus(q));
   });
+
+  // Revisión de cc63 (H-2): lo producido para una venta no pasa de lo que vendió de ese SKU.
+  for (const [key, made] of producedBySale) {
+    const [doc, sku] = key.split('|') as [string, string];
+    const sold = sales.get(doc)?.qtyBySku.get(sku);
+    if (sold && made.gt(sold)) {
+      warn(
+        LOAD_SHEETS.production,
+        null,
+        `${doc} produce ${made.toFixed(3)} de ${sku} y vendió ${sold.toFixed(3)}`,
+      );
+    }
+  }
 
   // 4. Despachos: salidas del producto en su fecha, contra lo vendido.
   const dispatchedBySale = new Map<string, Decimal>();
@@ -466,7 +492,9 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     return at === -1 ? list.length : at;
   };
   let rejected = 0;
+  const failedParts = new Set<number>();
   for (const m of movements) {
+    if (m.part !== undefined && failedParts.has(m.part)) continue;
     const list = rowsOf(m.itemKey);
     const at = insertAt(list, m.date);
     let rowsAfter = list.length - at;
@@ -487,6 +515,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
               : '; no alcanza ni a la fecha de carga'),
         );
         rejected += 1;
+        if (m.part !== undefined) failedParts.add(m.part);
         continue;
       }
     }

@@ -156,6 +156,51 @@ describe('reviewBackdatedLoad (cc63)', () => {
     expect(messages).toContain('la bobina NOPE no existe ni entra en la hoja de compras');
   });
 
+  it('revisión H-1: si la bobina no alcanza, el parte entero falla y el despacho de lo fabricado también', () => {
+    const sheets = empty();
+    sheets.purchases = [
+      purchase({
+        SKU: '',
+        KG: '10',
+        'CÓDIGO EXTERNO': 'EXT-2',
+        'FECHA DE RECEPCIÓN': '2026-10-15',
+      }),
+    ];
+    sheets.sales = [sale({ 'CÓDIGO PRODUCTO': 'COB030ROJO' })];
+    sheets.production = [
+      {
+        'SERIE - NÚMERO': 'FFA1-1',
+        FECHA: '2026-10-16',
+        'CÓDIGO PRODUCTO': 'COB030ROJO',
+        CANTIDAD: '10',
+        'CÓDIGO BOBINA': 'EXT-2',
+        'KG CONSUMIDOS': '50',
+      },
+    ];
+    sheets.dispatches = [dispatch({ 'CÓDIGO PRODUCTO': 'COB030ROJO', FECHA: '2026-10-17' })];
+    const r = reviewBackdatedLoad(sheets, ctx());
+    expect(r.movements.rejected).toBe(2);
+    expect(r.errors.map((e) => e.sheet)).toEqual(['Producción', 'Despachos']);
+  });
+
+  it('revisión H-2 y H-3: producir de más avisa; un valor de venta ilegible es error', () => {
+    const sheets = empty();
+    sheets.sales = [sale({ 'VALOR DE VENTA': 'abc' })];
+    sheets.production = [
+      {
+        'SERIE - NÚMERO': 'FFA1-1',
+        FECHA: '2026-10-21',
+        'CÓDIGO PRODUCTO': 'PERFIL-1',
+        CANTIDAD: '12',
+      },
+    ];
+    const r = reviewBackdatedLoad(sheets, ctx());
+    expect(r.errors.map((e) => e.message)).toContain('valor de venta inválido: «abc»');
+    expect(r.warnings.map((w) => w.message)).toContain(
+      'FFA1-1 produce 12.000 de PERFIL-1 y vendió 10.000',
+    );
+  });
+
   it('la ventana de 90 días de la emisión: fuera, error; cerca, aviso', () => {
     const sheets = empty();
     sheets.sales = [

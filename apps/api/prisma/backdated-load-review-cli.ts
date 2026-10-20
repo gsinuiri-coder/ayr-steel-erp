@@ -144,7 +144,16 @@ async function main(): Promise<void> {
     const v = getField(raw, { key: header, header, required: false });
     if (v) skus.add(v);
   };
-  for (const r of sheets.purchases) sku(r, 'SKU');
+  for (const r of sheets.purchases) {
+    sku(r, 'SKU');
+    // Revisión de cc63 (H-4): una bobina nueva que ya existe en la base tiene que verse como tal.
+    const external = getField(r, {
+      key: 'externalCode',
+      header: 'CÓDIGO EXTERNO',
+      required: false,
+    });
+    if (external) coilCodes.add(external);
+  }
   for (const r of [...sheets.sales, ...sheets.production, ...sheets.dispatches]) {
     sku(r, LOAD_COLUMNS.sku.header);
   }
