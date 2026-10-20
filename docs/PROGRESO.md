@@ -2,6 +2,18 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-19 — cc60: límites por IP verificada y restos de cc59 (D-695, D-696; PR #238)
+
+Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc60.md`; UAT en
+`docs/uat/cc60.md`; revisión en `docs/revision/cc60-segundo-modelo.md`.
+
+- **API:** `00147-5bk` (`git-sha=66a4b797`), con `AYR_CLIENT_IP_SECRET:2`.
+- **Merge:** `c9280065`. Smoke en verde.
+- **Log de producción:** las peticiones que entran por la web cuentan por «IP verificada del cliente».
+- **Secreto:** la versión 1 de `AYR_CLIENT_IP_SECRET` quedó deshabilitada.
+- **Registro del dueño (19/10):** D-692..D-694 ratificadas y UAT de cc59 aprobado; va en el PR #238.
+- **Pendiente del dueño:** ratificar D-695 y hacer el UAT de cc60.
+
 ## 2026-10-19 — cc59: límite de intentos fallidos de login por IP (D-692..D-694; PR #236)
 
 Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc59.md`; UAT en

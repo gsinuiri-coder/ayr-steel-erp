@@ -2906,3 +2906,20 @@ corta el login.
 
 **D-692 a D-694 RATIFICADAS por el dueño el 19/10**, y el UAT de cc59 aprobado con las pruebas y la verificación en
 producción. Pasan a firmes en `ARQUITECTURA.md` §0.2.
+
+## cc60 — límites por IP verificada y restos de cc59 (D-695, D-696)
+
+La cubeta general (120 por minuto) y la de renovación de sesión (30 por minuto) contaban por la IP de salida de
+Vercel, que es una sola para toda la empresa. Ahora cuentan por la IP del cliente que firma la web (D-692), con el
+mismo código de D-694. Sin firma válida, siguen como antes.
+
+**Por qué no hay tabla (D-696).** Los conteos de `@nestjs/throttler` están en memoria por instancia. Compartirlos entre
+las dos instancias de Cloud Run pediría una tabla y una escritura en la base en cada petición. El dueño decidió dejarlo
+así: el doble de cupo en el peor caso es aceptable para un límite contra abuso.
+
+**Higiene.**
+
+- `deploy-web.mjs` encuentra el login del CLI 64 de Vercel (`%APPDATA%/com.vercel.cli/Data/auth.json`) y conserva la
+  ruta vieja de respaldo. No se movieron ni copiaron archivos de credenciales.
+- La versión 1 de `AYR_CLIENT_IP_SECRET` quedó **deshabilitada**, no destruida, después de confirmar que la API usa la
+  versión 2.
