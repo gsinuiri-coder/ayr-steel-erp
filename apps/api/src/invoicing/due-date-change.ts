@@ -40,7 +40,12 @@ export function dueDateChangeBlock(
   const governing = effectiveDueDate(document.dueDate, document.creditNotes);
   if (governing.changedByNote) {
     const note = document.creditNotes
-      .filter((n) => n.creditNoteReason === 'OTROS_AJUSTES' && n.dueDate === governing.dueDate)
+      .filter(
+        (n) =>
+          n.creditNoteReason === 'OTROS_AJUSTES' &&
+          n.dueDate === governing.dueDate &&
+          LIVE_DOCUMENT_STATUSES.includes(n.status as never),
+      )
       .map((n) => n.number)
       .find((n) => n !== null);
     return `Este comprobante tiene una NC 13 vigente${note ? ` (${note})` : ''} que fija su vencimiento: anúlala o registra otra`;

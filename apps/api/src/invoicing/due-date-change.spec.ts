@@ -1,3 +1,7 @@
+import { Reflector } from '@nestjs/core';
+import { Role, updateDueDateSchema } from '@ayr/shared';
+import { ROLES_KEY } from '../auth/decorators/roles.decorator';
+import { InvoicingController } from './invoicing.controller';
 import {
   dueDateChangeBlock,
   dueDateViolations,
@@ -65,6 +69,19 @@ describe('dueDateChangeBlock (cc61, D-699)', () => {
     expect(
       dueDateChangeBlock({ ...base, creditNotes: [note13({ status: 'ANNULLED' })] }, '2026-10-11'),
     ).toBeNull();
+    // Una 13 anulada con la misma fecha que la vigente no es la que se nombra (revisión R-4).
+    expect(
+      dueDateChangeBlock(
+        {
+          ...base,
+          creditNotes: [
+            note13({ number: 'FC01-00000009', status: 'ANNULLED' }),
+            note13({ createdAt: '2026-09-19T15:00:00.000Z' }),
+          ],
+        },
+        '2026-10-11',
+      ),
+    ).toContain('(FC01-00000001)');
     // Otra nota viva (no 13) no fija el vencimiento.
     expect(
       dueDateChangeBlock(
@@ -127,5 +144,26 @@ describe('dueDateViolations (cc61, CLI de vencimiento)', () => {
     expect(dueDateViolations({ ...ok, dueDateAfter: '2026-10-12' }, '2026-10-11')[0]).toContain(
       'quedó en 2026-10-12',
     );
+  });
+});
+
+describe('vencimiento editable: puerta y schema (revisión de cc61, R-1 y R-6)', () => {
+  it('la ruta es solo de ADMINISTRADOR', () => {
+    const roles = new Reflector().get<Role[]>(
+      ROLES_KEY,
+      InvoicingController.prototype.updateDueDate,
+    );
+    expect(roles).toEqual([Role.ADMINISTRADOR]);
+  });
+
+  it('una fecha que no existe en el calendario se rechaza (Date.parse aceptaba 2026-02-31)', () => {
+    expect(updateDueDateSchema.safeParse({ dueDate: '2026-02-31' }).success).toBe(false);
+    expect(updateDueDateSchema.safeParse({ dueDate: '2026-02-28' }).success).toBe(true);
+  });
+
+  it('el motivo vacío no se guarda', () => {
+    expect(
+      updateDueDateSchema.parse({ dueDate: '2026-10-11', reason: '  ' }).reason,
+    ).toBeUndefined();
   });
 });

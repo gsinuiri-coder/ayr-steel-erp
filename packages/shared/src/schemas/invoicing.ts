@@ -22,7 +22,7 @@ import {
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyFields, idempotencyKeySchema } from './idempotency';
-import { backdatableFields, operationDateSchema } from './operation';
+import { backdatableFields, isCalendarDate, operationDateSchema } from './operation';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { listExportQuerySchema } from './list-export';
 import { statusListSchema } from './status-filter';
@@ -1680,7 +1680,8 @@ export type UpdateManualIssueDateInput = z.infer<typeof updateManualIssueDateSch
  * con el antes y el después.
  */
 export const updateDueDateSchema = z.object({
-  dueDate: isoDateSchema,
+  // Revisión de cc61 (R-1): `Date.parse` acepta 2026-02-31 (lo lleva al 3 de marzo).
+  dueDate: isoDateSchema.refine(isCalendarDate, 'Esa fecha no existe en el calendario'),
   reason: z
     .string()
     .trim()

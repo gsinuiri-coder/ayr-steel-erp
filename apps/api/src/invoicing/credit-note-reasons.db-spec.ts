@@ -470,6 +470,21 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     // despacho que el otro comprobante declaró quedó suelto al anularlo (D-664): el original
     // vuelve sin despacho declarado.
     await fiscalImport.annulExternal(admin, third.id, 'prueba');
+    // Un borrador sobre el pedido también frena, nombrado como borrador (revisiones de cc61).
+    const pendingDraft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId: otherCustomerId,
+        salesOrderId: s.orderId,
+        issueDate: TODAY,
+        paymentTerms: 'CONTADO',
+        items: [{ salesOrderItemId: orderItem.id, qty: '5' }],
+      }),
+    );
+    const byDraft = await rejection(fiscalImport.annulExternal(admin, note.id, 'prueba'));
+    expect(byDraft.message).toContain('factura en borrador');
+    await invoicing.discardDraft(admin, pendingDraft.id, 'prueba cc61');
     await fiscalImport.annulExternal(admin, note.id, 'prueba');
     const back = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
     expect(back.invoiceId).toBeNull();

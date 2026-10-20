@@ -1397,21 +1397,35 @@ async function otherOrderDocumentsBlock(
 ): Promise<string | null> {
   const affected = await tx.fiscalDocument.findUniqueOrThrow({
     where: { id: affectedId },
-    select: { number: true, salesOrderId: true, salesOrder: { select: { seq: true } } },
+    select: {
+      number: true,
+      customerId: true,
+      salesOrderId: true,
+      salesOrder: { select: { seq: true } },
+    },
   });
   if (!affected.salesOrderId) return null;
-  // Ya tomado en la primera llamada; si el comprobante cambió de pedido entre la lectura y el
-  // bloqueo, este llega tarde y fuera de orden: NOWAIT y 409 (D-475).
+  // Ya tomado en la primera llamada. Si el comprobante cambió de pedido entre la lectura y el
+  // bloqueo, se toma ahora: es la misma clase y la puerta decide si espera o sale con NOWAIT (D-475).
   await lockDocuments(tx, { salesOrders: [affected.salesOrderId] });
   const others = await tx.fiscalDocument.findMany({
     where: {
-      salesOrderId: affected.salesOrderId,
       id: { not: affectedId },
-      docType: {
-        in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA, FiscalDocType.GUIA_REMISION_REMITENTE],
-      },
       status: { in: [...STANDING_DOCUMENT_STATUSES] },
       archivedAt: null,
+      OR: [
+        {
+          salesOrderId: affected.salesOrderId,
+          docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+        },
+        // Revisión de cc61 (R-3): la guía no cuelga del pedido sino del despacho. Frena solo si va a
+        // otro cliente que el del original: con él, el pedido quedaría con una guía ajena.
+        {
+          docType: FiscalDocType.GUIA_REMISION_REMITENTE,
+          dispatch: { salesOrderId: affected.salesOrderId },
+          customerId: { not: affected.customerId },
+        },
+      ],
     },
     select: { number: true, docType: true },
     orderBy: { createdAt: 'asc' },
@@ -1420,7 +1434,7 @@ async function otherOrderDocumentsBlock(
   const names = others
     .map((o) => o.number ?? `${DOC_TYPE_LABEL[o.docType] ?? 'comprobante'} en borrador`)
     .join(', ');
-  return `El pedido ${affected.salesOrder ? salesOrderCode(affected.salesOrder.seq) : ''} tiene otro comprobante vigente o en borrador (${names}): anúlalo antes de anular esta nota de crédito 02. Si no, ${affected.number ?? 'el comprobante original'} volvería a valer y la venta quedaría facturada dos veces`;
+  return `El pedido ${affected.salesOrder ? salesOrderCode(affected.salesOrder.seq) : ''} tiene otro comprobante vigente o en borrador (${names}): anúlalo antes de anular esta nota de crédito 02. Si no, ${affected.number ?? 'el comprobante original'} volvería a valer junto a él y el pedido podría quedar facturado dos veces`;
 }
 
 const DOC_TYPE_LABEL: Partial<Record<FiscalDocType, string>> = {

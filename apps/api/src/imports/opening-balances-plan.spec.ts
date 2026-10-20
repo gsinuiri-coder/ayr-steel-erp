@@ -446,3 +446,29 @@ describe('cc61 (IMP-08 de audit-02): baja en trámite con «pagado al corte»', 
     ]);
   });
 });
+
+describe('revisión de cc61 (R-2): empate de medio céntimo', () => {
+  it('99.9950 al corte con 100.00 declarado: no registra nada y no rechaza', () => {
+    const plan = planOpeningBalances(
+      [account('F1', { netAtCutoff: new Decimal('99.9950'), payableNow: new Decimal('100.00') })],
+      [row('F1', { balance: '100.00' })],
+      options(),
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.payments).toEqual([]);
+  });
+});
+
+describe('revisión de cc61 (IMP-08): baja en trámite con filas en el Excel', () => {
+  it('registra lo que dice la fila y avisa', () => {
+    const plan = planOpeningBalances(
+      [account('F1', { voidPending: true })],
+      [row('F1', { balance: '0' })],
+      options(),
+    );
+    expect(plan.payments).toHaveLength(1);
+    expect(plan.warnings.map((w) => w.message)).toEqual([
+      'tiene la baja en trámite ante SUNAT: si se acepta, este pago quedará sobre un comprobante anulado',
+    ]);
+  });
+});

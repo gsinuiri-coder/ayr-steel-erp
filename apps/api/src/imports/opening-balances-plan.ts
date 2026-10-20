@@ -387,6 +387,15 @@ export function planOpeningBalances(
       continue;
     }
 
+    // Revisión de cc61 (IMP-08): con filas en el Excel se registra lo que dicen, pero se avisa.
+    if (account.voidPending) {
+      warnings.push({
+        rowNumber: parsed[0]?.row.rowNumber ?? null,
+        key: account.key,
+        message:
+          'tiene la baja en trámite ante SUNAT: si se acepta, este pago quedará sobre un comprobante anulado',
+      });
+    }
     const balances = parsed.filter((r) => r.kind === 'BALANCE');
     const rowNumbers = parsed.map((r) => r.row.rowNumber);
     if (balances.length > 0 && (balances.length > 1 || parsed.length > 1)) {
@@ -402,7 +411,9 @@ export function planOpeningBalances(
       // cc61 (D-700, IMP-01 de audit-02): lo que se registra es la diferencia redondeada al céntimo
       // con la regla de los comprobantes (HALF_UP), no el saldo redondeado hacia arriba menos lo
       // declarado: con un total a cuatro decimales (117,9999) aquello pedía un céntimo de más.
-      let toRegister = before.minus(declared).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+      // Revisión de cc61 (R-2): se redondea lo debido y después se resta lo declarado (dos decimales):
+      // con 99,9950 y 100,00 declarado, redondear la diferencia daba −0,01 y un rechazo falso.
+      let toRegister = before.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).minus(declared);
       // Si el redondeo pasa por un céntimo lo que hoy se puede registrar (el saldo de hoy va hacia
       // abajo en compras, D-039), se registra lo que se puede y se avisa en la vista previa: el
       // resto es una fracción de céntimo que ya cuenta como saldada.

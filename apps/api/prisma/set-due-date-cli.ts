@@ -87,7 +87,7 @@ async function main(): Promise<void> {
     console.error(line);
   });
   const branch = process.env.AYR_CLI_BRANCH;
-  if (!branch) throw new Error('Ejecutá este subcomando mediante runApiCli');
+  if (!branch) throw new Error('Ejecuta este subcomando mediante runApiCli');
   const number = flag('--comprobante') ?? '';
   const input = updateDueDateSchema.parse({
     dueDate: flag('--vence'),
