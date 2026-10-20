@@ -23,6 +23,7 @@ import {
   createInvoiceSchema,
   discardDraftSchema,
   registerManualSchema,
+  updateDueDateSchema,
   updateManualIssueDateSchema,
   businessToday,
   fiscalDocumentExportQuerySchema,
@@ -43,6 +44,7 @@ import {
   type CreateInvoiceInput,
   type DiscardDraftInput,
   type RegisterManualInput,
+  type UpdateDueDateInput,
   type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
   type SalesReturnDto,
@@ -360,6 +362,20 @@ export class InvoicingController {
     @Body(new ZodValidationPipe(updateManualIssueDateSchema)) body: UpdateManualIssueDateInput,
   ): Promise<FiscalDocumentDto> {
     return this.invoicing.updateManualIssueDate(actor, id, body);
+  }
+
+  /**
+   * cc61 (D-699): pone o corrige el vencimiento de un comprobante al crédito. Solo ADMINISTRADOR,
+   * como la fecha de emisión: corrige un hecho ya registrado.
+   */
+  @Roles(Role.ADMINISTRADOR)
+  @Patch('documents/:id/due-date')
+  updateDueDate(
+    @CurrentUser() actor: RequestUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(new ZodValidationPipe(updateDueDateSchema)) body: UpdateDueDateInput,
+  ): Promise<FiscalDocumentDto> {
+    return this.invoicing.updateDueDate(actor, id, body);
   }
 
   /** D-073: reintento manual de un envío que no entró. */

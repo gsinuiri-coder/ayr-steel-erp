@@ -559,6 +559,35 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect((await invoicing.findOne(s.invoiceId)).dueDate).toBe(PREV(25));
   });
 
+  it('cc61 (D-699): el ADMINISTRADOR pone el vencimiento; con una NC 13 viva se rechaza', async () => {
+    const s = await sold({ paymentTerms: 'CREDITO' });
+    // Antes de la emisión: no.
+    const early = await rejection(
+      invoicing.updateDueDate(admin, s.invoiceId, { dueDate: PREV(9) }),
+    );
+    expect(early.message).toContain('anterior a la emisión');
+    const updated = await invoicing.updateDueDate(admin, s.invoiceId, {
+      dueDate: PREV(27),
+      reason: 'se tipeó mal',
+    });
+    expect(updated.dueDate).toBe(PREV(27));
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { entityId: s.invoiceId, action: 'invoicing.document.update-due-date' },
+    });
+    expect(audit.before).toEqual({ dueDate: PREV(25) });
+    expect(audit.after).toMatchObject({ dueDate: PREV(27), reason: 'se tipeó mal' });
+    // Con una NC 13 viva, el vencimiento es el de la nota: el cambio no se vería.
+    const note = await register(s.invoiceId, { reason: 'OTROS_AJUSTES', dueDate: PREV(28) });
+    const r = await rejection(invoicing.updateDueDate(admin, s.invoiceId, { dueDate: TODAY }));
+    expect(r.status).toBe(400);
+    expect(r.message).toContain('NC 13 vigente');
+    expect(r.message).toContain(note.number ?? '');
+    // Al contado no hay vencimiento.
+    const cash = await sold();
+    const c = await rejection(invoicing.updateDueDate(admin, cash.invoiceId, { dueDate: TODAY }));
+    expect(c.message).toContain('al crédito');
+  });
+
   it('13 sobre una factura al contado: no corresponde', async () => {
     const s = await sold();
     const r = await rejection(register(s.invoiceId, { reason: 'OTROS_AJUSTES', dueDate: TODAY }));

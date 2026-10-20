@@ -97,6 +97,7 @@ import {
 import { DocumentProfitability } from './document-profitability';
 import { AtCostBadge } from '@/components/sales/at-cost-control';
 import { CreditNoteDialog } from './credit-note-dialog';
+import { DueDateDialog } from './due-date-dialog';
 import { SalesReturnLink } from '@/components/invoicing/sales-return-link';
 
 const SALES_ROLES = [Role.ADMINISTRADOR, Role.VENDEDOR] as const;
@@ -182,6 +183,7 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
 
   // F8-S7/M1: corrección de la fecha de emisión de un manual.
   const [issueDateOpen, setIssueDateOpen] = useState(false);
+  const [dueDateOpen, setDueDateOpen] = useState(false);
   const [newIssueDate, setNewIssueDate] = useState('');
   const [issueDateReason, setIssueDateReason] = useState('');
   // D-288: re-fechar también los despachos «a la fecha del comprobante». Marcado por defecto:
@@ -464,6 +466,16 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
    */
   const canEditIssueDate =
     isAdmin && d.origin === 'MANUAL' && d.annulledAt === null && d.archivedAt === null;
+  /**
+   * cc61 (D-699): el vencimiento de una factura o boleta al crédito y vigente lo pone o corrige un
+   * ADMINISTRADOR. Con una NC 13 viva se muestra deshabilitado: el vencimiento es el de la nota.
+   */
+  const canEditDueDate =
+    isAdmin &&
+    (d.docType === 'FACTURA' || d.docType === 'BOLETA') &&
+    d.paymentTerms === 'CREDITO' &&
+    LIVE_DOCUMENT_STATUSES.includes(d.status) &&
+    d.archivedAt === null;
   // El vencimiento se corre los mismos días que la emisión. **La misma `shiftDate` que usa
   // el API**, no una copia: lo que la pantalla promete antes de confirmar y lo que el
   // servicio guarda tienen que ser el mismo número.
@@ -670,6 +682,19 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
                   setNewIssueDate(d.issueDate);
                   setIssueDateReason('');
                   setIssueDateOpen(true);
+                },
+              },
+              {
+                key: 'due-date',
+                label: 'Cambiar vencimiento',
+                show: canEditDueDate,
+                disabled: busy || Boolean(d.dueDateChangedByNumber),
+                title: d.dueDateChangedByNumber
+                  ? `El vencimiento lo fija la NC ${d.dueDateChangedByNumber}: anúlala o registra otra`
+                  : undefined,
+                onSelect: () => {
+                  if (busy) return;
+                  setDueDateOpen(true);
                 },
               },
               {
@@ -1362,6 +1387,13 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <DueDateDialog
+        document={d}
+        open={dueDateOpen}
+        onOpenChange={setDueDateOpen}
+        onDone={refresh}
+      />
 
       <Dialog open={issueDateOpen} onOpenChange={setIssueDateOpen}>
         <DialogContent>
