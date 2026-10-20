@@ -17,6 +17,8 @@ const vercel = (args, opts = {}) => run('vercel', ['--cwd', ROOT, ...args], opts
 /** Token del CLI de Vercel (nunca se imprime). */
 function cliToken() {
   const candidates = [
+    // cc60: el CLI 64 de Vercel guarda el login acá; la ruta vieja (xdg.data) queda de respaldo.
+    resolve(process.env.APPDATA ?? '', 'com.vercel.cli/Data/auth.json'),
     resolve(process.env.APPDATA ?? '', 'xdg.data/com.vercel.cli/auth.json'),
     resolve(homedir(), '.local/share/com.vercel.cli/auth.json'),
     resolve(homedir(), 'Library/Application Support/com.vercel.cli/auth.json'),

@@ -2901,3 +2901,8 @@ con una sola IP se bloquea 15 minutos con 20 fallos de cualquiera. Queda para qu
 
 Mientras el API y la web no tienen el mismo valor, el API ignora la IP declarada y queda el límite por correo. Rotar no
 corta el login.
+
+## Ratificación del dueño (2026-10-19, pieza cc59)
+
+**D-692 a D-694 RATIFICADAS por el dueño el 19/10**, y el UAT de cc59 aprobado con las pruebas y la verificación en
+producción. Pasan a firmes en `ARQUITECTURA.md` §0.2.
