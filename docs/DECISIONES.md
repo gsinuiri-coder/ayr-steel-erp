@@ -2871,3 +2871,33 @@ ratifican tal como quedaron:
 **Céntimos de las 2 bobinas:** el dueño decide dejarlos así. Se corrigen solos cuando esas bobinas se terminen de
 consumir (D-684), y no se hace una puerta nueva. Con su autorización salieron de `.claude/settings.json` solo los dos
 permisos de la herramienta retirada (`opening-date.mjs` e `inventory:opening-date`).
+
+## cc59 — límite de intentos fallidos de login por IP (D-692..D-694)
+
+La pieza retoma D-688, que cc58 había postergado. Detrás del proxy de Vercel, el API veía una sola IP para toda la empresa.
+Ahora la web le pasa la IP real del cliente firmada con un secreto compartido.
+
+**Por qué se cuenta en `audit_log` (D-694).** El limitador de antes (`@nestjs/throttler`) guarda en memoria por instancia,
+y Cloud Run corre hasta dos instancias, así que no sirve. La alternativa era una tabla nueva, que es una migración. En
+cambio, `audit_log` ya registra los ingresos fallidos y ya tiene el índice `(entity, entity_id, at)`. La IP no se guarda:
+se guarda un hash con el secreto. Al rotar el secreto, los hashes viejos dejan de corresponder a cualquier IP. Se descartó
+`idempotency_keys`, porque su `resource_id` es obligatorio y su semántica es otra. Diagnóstico completo en
+`local-data/cc59/diagnostico.md` del checkout principal.
+
+**Por qué la web firma toda petición y no solo el login (D-692).** El API enruta sin distinguir mayúsculas ni barra
+final. Con la firma solo en `auth/login`, una petición a `/api/Auth/login/` llegaba al login sin firma (P1-1 de la
+revisión). Firmar siempre cuesta un HMAC por petición, y hoy solo el login la usa.
+
+**Por qué se cuenta antes de mirar la contraseña (D-693).** El brief pide que el intento 21 dé 429. Si se contara después
+de verificar la contraseña, un atacante sabría cuándo acertó por la diferencia de respuesta. El costo es que una oficina
+con una sola IP se bloquea 15 minutos con 20 fallos de cualquiera. Queda para que el dueño lo ratifique.
+
+**Rotar el secreto:**
+
+1. Correr `pnpm secrets:client-ip`. Crea una versión nueva en Secret Manager y la variable nueva en Vercel, sin imprimir
+   el valor.
+2. Correr `pnpm deploy:api --web-origin …`, que fija la versión nueva.
+3. Disparar un deploy de la web, con un PR o con el «Redeploy» de Vercel.
+
+Mientras el API y la web no tienen el mismo valor, el API ignora la IP declarada y queda el límite por correo. Rotar no
+corta el login.

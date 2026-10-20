@@ -2,6 +2,21 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-19 — cc59: límite de intentos fallidos de login por IP (D-692..D-694; PR #236)
+
+Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc59.md`; UAT en
+`docs/uat/cc59.md`; revisión en `docs/revision/cc59-segundo-modelo.md`.
+
+- **API:** `00146-8ch` (`git-sha=f960984f`), con `AYR_CLIENT_IP_SECRET:2`.
+- **Merge:** `28061ead`, que publicó la web en las dos URLs.
+- **Smoke:** en verde. El login del smoke llegó por la web con la firma válida: el log de la API dice «IP del cliente
+  verificada» y no hay ningún aviso de firma rechazada.
+- **Secreto:** creado con `pnpm secrets:client-ip`, por stdin hacia Secret Manager y por la API de Vercel. El valor no
+  quedó en argv, en logs, en `local-data` ni en el historial.
+- **También en esta pieza:** la regex de versiones de secreto de `deploy-api.mjs`, que no aceptaba la versión 10 o
+  mayores.
+- **Pendiente del dueño:** ratificar D-692..D-694 y hacer el UAT.
+
 ## 2026-10-19 — cc58: cierre de lo pendiente de cc57 (D-676..D-691; PR #230 a #233)
 
 Sesión de día, atendida. Una migración con OK por nombre (`20261019_perf_indexes_cc57`), sin `--execute` y sin SQL
