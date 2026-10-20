@@ -34,6 +34,11 @@ export function isLoginRoute(req: Pick<Request, 'path'>): boolean {
 
 /** La clave de la cubeta: el correo en el login; si no, la IP verificada o `req.ip`. */
 export function throttleTracker(req: Request, secret: string | undefined, now: number): string {
+  return trackerFor(req, secret, verifyClientIp(req.headers, secret, now));
+}
+
+/** Lo mismo, con la verificación ya hecha (una sola por petición; revisión de cc60, P2). */
+function trackerFor(req: Request, secret: string | undefined, check: ClientIpCheck): string {
   // cc57 (C-08 de audit-01): el correo es la clave **solo en el login**. En cualquier otra ruta
   // con `email` en el cuerpo (alta de cliente o de usuario) compartían cubeta usuarios distintos
   // que grababan el mismo correo.
@@ -41,7 +46,6 @@ export function throttleTracker(req: Request, secret: string | undefined, now: n
   const email =
     isLoginRoute(req) && typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (email) return `email|${email}`;
-  const check = verifyClientIp(req.headers, secret, now);
   if (check.ok && secret) return `ip|${loginIpKey(secret, check.ip)}`;
   return req.ip ?? 'sin-ip';
 }
@@ -49,8 +53,11 @@ export function throttleTracker(req: Request, secret: string | undefined, now: n
 @Injectable()
 export class AppThrottlerGuard extends ThrottlerGuard {
   private readonly logger = new Logger('Throttle');
-  /** El último estado avisado en esta instancia: se avisa al cambiar, no en cada petición. */
-  private lastState: string | null = null;
+  /**
+   * Los estados ya avisados en esta instancia: cada uno, una vez. Tráfico firmado y sin firmar
+   * mezclado (sondas) no escribe una línea por petición (revisión de cc60, P2).
+   */
+  private readonly noted = new Set<string>();
 
   constructor(
     @InjectThrottlerOptions() options: ThrottlerModuleOptions,
@@ -62,19 +69,18 @@ export class AppThrottlerGuard extends ThrottlerGuard {
   }
 
   protected override getTracker(req: Request): Promise<string> {
-    const now = Date.now();
-    const tracker = throttleTracker(req, this.env.AYR_CLIENT_IP_SECRET, now);
-    if (!tracker.startsWith('email|')) {
-      this.noteState(verifyClientIp(req.headers, this.env.AYR_CLIENT_IP_SECRET, now));
-    }
+    const secret = this.env.AYR_CLIENT_IP_SECRET;
+    const check = verifyClientIp(req.headers, secret, Date.now());
+    const tracker = trackerFor(req, secret, check);
+    if (!tracker.startsWith('email|')) this.noteState(check);
     return Promise.resolve(tracker);
   }
 
   /** Deja en el log (sin la IP) si la instancia cuenta por IP verificada o por qué no. */
   private noteState(check: ClientIpCheck): void {
     const state = check.ok ? 'verificada' : check.reason;
-    if (state === this.lastState) return;
-    this.lastState = state;
+    if (this.noted.has(state)) return;
+    this.noted.add(state);
     this.logger.log(
       check.ok
         ? 'Límites por IP verificada del cliente'
