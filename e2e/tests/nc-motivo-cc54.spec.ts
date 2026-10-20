@@ -214,6 +214,25 @@ test.describe('cc54 — nota de crédito por motivo SUNAT', () => {
     await expect(page.getByTestId('due-changed-by')).toBeVisible();
   });
 
+  test('cc61 (D-699): «Cambiar vencimiento» en «Más opciones» lo pone sin nota de crédito', async ({
+    page,
+  }) => {
+    const s = await sell(api, { credit: true });
+    track(s);
+    const due = addDays(today(), 20);
+    await loginAsAdmin(page);
+    await page.goto(`/comprobantes/${s.invoiceId}`);
+    await (await headerAction(page, 'Cambiar vencimiento')).click();
+    const dialog = page.getByRole('dialog', { name: 'Cambiar el vencimiento' });
+    await dialog.getByLabel('Vencimiento').fill(due);
+    await dialog.getByLabel('Motivo (opcional)').fill('prueba cc61');
+    await dialog.getByRole('button', { name: 'Guardar' }).click();
+    await expect(dialog).toBeHidden({ timeout: 30_000 });
+    const res = await api.get(`/api/invoicing/documents/${s.invoiceId}`);
+    expect(((await res.json()) as { dueDate: string }).dueDate).toBe(due);
+    await expect(page.getByTestId('due-changed-by')).toHaveCount(0);
+  });
+
   test('Anular por error en el RUC (02): reemplazo al cliente correcto, sin salida nueva', async ({
     page,
   }) => {

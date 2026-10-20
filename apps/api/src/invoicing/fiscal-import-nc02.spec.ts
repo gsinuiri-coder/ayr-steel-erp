@@ -1,118 +1,125 @@
-import { Prisma } from '@prisma/client';
-import type { RequestUser } from '../auth/auth.types';
-import { FiscalImportService } from './fiscal-import.service';
+import { lockDocuments } from '../inventory/document-locks';
+import { otherOrderDocumentsBlock, replacementLockScope } from './fiscal-import.service';
 
-/**
- * cc54 (D-655, D-656) — anular una NC: la 02 con su reemplazo anulado devuelve el despacho y el
- * cliente del pedido; la que devolvió mercadería no se anula con el pedido ya anulado.
- */
-const ADMIN = { id: 'u-admin', role: 'ADMINISTRADOR' } as RequestUser;
+jest.mock('../inventory/document-locks', () => ({
+  lockDocuments: jest.fn(() => Promise.resolve({})),
+}));
 
-function build(o: { reason: string; liveReplacement?: boolean; cancelledOrder?: boolean }) {
-  const note = {
-    id: 'nc-1',
-    number: 'FC01-00000045',
-    origin: 'MANUAL',
-    status: 'ACCEPTED',
-    totalPen: new Prisma.Decimal('295'),
-    archivedAt: null,
-    creditNoteReason: o.reason,
-    affectedDocumentId: 'f-1',
-  };
-  const tx = {
-    $queryRaw: jest.fn((_s: TemplateStringsArray, ids: string[]) =>
-      Promise.resolve(ids.map((id) => ({ id }))),
-    ),
+/** cc61 (D-698, NC-01 de audit-02): qué bloquea y qué decide anular una NC 02, con una base falsa. */
+type Tx = Parameters<typeof replacementLockScope>[0];
+
+function fakeTx(over: {
+  note?: unknown;
+  dispatches?: { id: string }[];
+  affected?: unknown;
+  others?: { number: string | null; docType: string }[];
+}) {
+  return {
     fiscalDocument: {
-      findUnique: jest.fn().mockResolvedValue(note),
-      findMany: jest.fn().mockResolvedValue([]),
-      findFirst: jest.fn(({ where }: { where: Record<string, unknown> }) =>
-        Promise.resolve(
-          'status' in where
-            ? o.liveReplacement
-              ? { number: 'F002-00000009' }
-              : null
-            : { id: 'rep-1', number: 'F002-00000009' },
-        ),
-      ),
-      findUniqueOrThrow: jest.fn().mockResolvedValue({
-        number: 'F001-00000001',
-        customerId: 'c-1',
-        salesOrderId: 'so-1',
-        customer: { name: 'Cliente original' },
-      }),
-      update: jest.fn().mockResolvedValue({ id: 'nc-1', number: note.number }),
+      findUnique: jest.fn(() => Promise.resolve(over.note ?? null)),
+      findUniqueOrThrow: jest.fn(() => Promise.resolve(over.affected)),
+      findMany: jest.fn(() => Promise.resolve(over.others ?? [])),
     },
-    customerPayment: { count: jest.fn().mockResolvedValue(0) },
-    dispatch: { findMany: jest.fn().mockResolvedValue([{ id: 'd-1' }]) },
-    salesOrder: {
-      findUniqueOrThrow: jest
-        .fn()
-        .mockResolvedValue({ customerId: 'c-2', customer: { name: 'Cliente correcto' } }),
-      update: jest.fn().mockResolvedValue({}),
-    },
-    salesReturn: {
-      findFirst: jest.fn().mockResolvedValue(
-        // cc57 (D-02): la misma lectura da los despachos y el pedido a bloquear.
-        o.cancelledOrder
-          ? {
-              salesOrderId: 'o-1',
-              items: [{ dispatchItem: { dispatchId: 'd-1' } }],
-              salesOrder: { status: 'CANCELLED', seq: 7 },
-            }
-          : null,
-      ),
-    },
+    dispatch: { findMany: jest.fn(() => Promise.resolve(over.dispatches ?? [])) },
   };
-  const audit = { write: jest.fn() };
-  const inventory = {
-    moveInvoiceDispatches: jest.fn().mockResolvedValue(1),
-    // cc55 (D-664): la anulación suelta el enlace de los despachos que el comprobante declara.
-    unlinkInvoiceFromDispatches: jest.fn().mockResolvedValue(undefined),
-  };
-  const salesReturns = { reverseForCreditNoteInTx: jest.fn().mockResolvedValue(null) };
-  const service = new FiscalImportService(
-    { $transaction: (cb: (t: unknown) => unknown) => cb(tx) } as never,
-    audit as never,
-    salesReturns as never,
-    inventory as never,
-  );
-  return { service, tx, audit, inventory };
 }
 
-describe('anular una NC (cc54)', () => {
-  it('02 con el reemplazo vivo: no se anula', async () => {
-    const { service } = build({ reason: 'ANULACION_ERROR_RUC', liveReplacement: true });
-    await expect(service.annulExternal(ADMIN, 'nc-1', 'prueba')).rejects.toThrow(
-      'reemplazo vivo (F002-00000009)',
-    );
-  });
-
-  it('02 con el reemplazo anulado: vuelven el despacho y el cliente del pedido', async () => {
-    const { service, tx, inventory, audit } = build({ reason: 'ANULACION_ERROR_RUC' });
-    await service.annulExternal(ADMIN, 'nc-1', 'prueba');
-    expect(inventory.moveInvoiceDispatches).toHaveBeenCalledWith(expect.anything(), 'rep-1', 'f-1');
-    expect(tx.salesOrder.update).toHaveBeenCalledWith({
-      where: { id: 'so-1' },
-      data: { customerId: 'c-1' },
+describe('replacementLockScope (cc61, D-698)', () => {
+  it('una NC 02 suma los despachos del reemplazo y el pedido del original', async () => {
+    const tx = fakeTx({
+      note: {
+        creditNoteReason: 'ANULACION_ERROR_RUC',
+        affectedDocument: { id: 'f1', salesOrderId: 'p1' },
+      },
+      dispatches: [{ id: 'd1' }, { id: 'd2' }],
     });
-    const actions = (audit.write.mock.calls as unknown[][]).map(
-      (c) => (c[1] as { action: string }).action,
-    );
-    expect(actions).toEqual(
-      expect.arrayContaining([
-        'sales.order.customer',
-        'invoicing.credit-note.replacement-undone',
-        'invoicing.import.annul',
-      ]),
-    );
+    await expect(replacementLockScope(tx as unknown as Tx, 'nc')).resolves.toEqual({
+      dispatchIds: ['d1', 'd2'],
+      salesOrderIds: ['p1'],
+    });
+    expect(tx.dispatch.findMany).toHaveBeenCalledWith({
+      where: { invoice: { replacesDocumentId: 'f1' } },
+      select: { id: true },
+    });
   });
 
-  it('con la devolución vigente y el pedido anulado: no se anula', async () => {
-    const { service, tx } = build({ reason: 'ANULACION_OPERACION', cancelledOrder: true });
-    await expect(service.annulExternal(ADMIN, 'nc-1', 'prueba')).rejects.toThrow(
-      'PED-000007 está anulado',
+  it('un original sin pedido no suma pedido', async () => {
+    const tx = fakeTx({
+      note: {
+        creditNoteReason: 'ANULACION_ERROR_RUC',
+        affectedDocument: { id: 'f1', salesOrderId: null },
+      },
+    });
+    await expect(replacementLockScope(tx as unknown as Tx, 'nc')).resolves.toEqual({
+      dispatchIds: [],
+      salesOrderIds: [],
+    });
+  });
+
+  it('otro comprobante (o una NC de otro motivo) no suma nada', async () => {
+    for (const note of [
+      null,
+      { creditNoteReason: null, affectedDocument: null },
+      {
+        creditNoteReason: 'ANULACION_OPERACION',
+        affectedDocument: { id: 'f1', salesOrderId: 'p1' },
+      },
+    ]) {
+      const tx = fakeTx({ note });
+      await expect(replacementLockScope(tx as unknown as Tx, 'x')).resolves.toEqual({
+        dispatchIds: [],
+        salesOrderIds: [],
+      });
+      expect(tx.dispatch.findMany).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('otherOrderDocumentsBlock (cc61, D-698)', () => {
+  const affected = {
+    number: 'F954-00000001',
+    customerId: 'cA',
+    salesOrderId: 'p1',
+    salesOrder: { seq: 49 },
+  };
+
+  it('sin otro comprobante del pedido, deja anular', async () => {
+    const tx = fakeTx({ affected });
+    await expect(otherOrderDocumentsBlock(tx as unknown as Tx, 'f1')).resolves.toBeNull();
+    // Con el pedido bloqueado (ya tomado en la primera llamada: la puerta no lo repite).
+    expect(lockDocuments).toHaveBeenCalledWith(tx, { salesOrders: ['p1'] });
+  });
+
+  it('con otro comprobante vigente o un borrador, rechaza nombrándolos', async () => {
+    const tx = fakeTx({
+      affected,
+      others: [
+        { number: 'F956-00000002', docType: 'FACTURA' },
+        { number: null, docType: 'BOLETA' },
+        { number: null, docType: 'GUIA_REMISION_REMITENTE' },
+      ],
+    });
+    const message = await otherOrderDocumentsBlock(tx as unknown as Tx, 'f1');
+    expect(message).toBe(
+      'El pedido PED-000049 tiene otro comprobante vigente o en borrador (F956-00000002, boleta en borrador, guía de remisión en borrador): anúlalo antes de anular esta nota de crédito 02. Si no, F954-00000001 volvería a valer junto a él y el pedido podría quedar facturado dos veces',
     );
-    expect(tx.fiscalDocument.update).not.toHaveBeenCalled();
+    // Facturas y boletas por el pedido; la guía, por el pedido de su despacho y a otro cliente.
+    const call = tx.fiscalDocument.findMany.mock.calls[0] as unknown as [
+      { where: { OR: unknown[] } },
+    ];
+    expect(call[0].where.OR).toEqual([
+      { salesOrderId: 'p1', docType: { in: ['FACTURA', 'BOLETA'] } },
+      {
+        docType: 'GUIA_REMISION_REMITENTE',
+        dispatch: { salesOrderId: 'p1' },
+        customerId: { not: 'cA' },
+      },
+    ]);
+  });
+
+  it('un original sin pedido no tiene con qué chocar', async () => {
+    const tx = fakeTx({ affected: { ...affected, salesOrderId: null, salesOrder: null } });
+    await expect(otherOrderDocumentsBlock(tx as unknown as Tx, 'f1')).resolves.toBeNull();
+    expect(tx.fiscalDocument.findMany).not.toHaveBeenCalled();
   });
 });

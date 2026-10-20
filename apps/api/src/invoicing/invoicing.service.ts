@@ -48,6 +48,7 @@ import {
   type CreateCreditNoteInput,
   type CreateInvoiceInput,
   type RegisterManualInput,
+  type UpdateDueDateInput,
   type UpdateManualIssueDateInput,
   type FiscalDocumentDto,
   type FiscalDocumentListItemDto,
@@ -124,6 +125,7 @@ import {
   type ListWindow,
 } from '../common/list-export';
 import { lockDocuments } from '../inventory/document-locks';
+import { dueDateChangeBlock } from './due-date-change';
 import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
 import {
   amountCreditLines,
@@ -2323,6 +2325,94 @@ export class InvoicingService {
       // Revertir y volver a despachar toma los locks y el kardex de siempre: más que el
       // default de 5 s de una transacción interactiva.
     }, RECOST_TX_OPTIONS);
+  }
+
+  /**
+   * cc61 (D-699): pone o corrige el vencimiento de un comprobante al crédito. Excepción explícita a
+   * D-657 por decisión del dueño (el vencimiento se cambiaba solo con una NC 13). Las reglas, en
+   * `dueDateChangeBlock`; el rol (ADMINISTRADOR) lo exige el controlador. Con el comprobante
+   * bloqueado antes de leer, como toda escritura sobre esta tabla, y la auditoría con el antes y
+   * el después.
+   */
+  async updateDueDate(
+    actor: RequestUser,
+    id: string,
+    input: UpdateDueDateInput,
+  ): Promise<FiscalDocumentDto> {
+    await this.prisma.$transaction((tx) => this.updateDueDateInTx(tx, actor, id, input));
+    return this.findOne(id);
+  }
+
+  /** La misma corrección en una transacción ajena: la CLI de cc61 la corre así para el dry-run. */
+  async updateDueDateInTx(
+    tx: Prisma.TransactionClient,
+    actor: Pick<RequestUser, 'id'>,
+    id: string,
+    input: UpdateDueDateInput,
+  ): Promise<void> {
+    await lockDocuments(tx, { fiscalDocuments: [id] });
+    const document = await tx.fiscalDocument.findUnique({
+      where: { id },
+      select: {
+        number: true,
+        docType: true,
+        status: true,
+        paymentTerms: true,
+        archivedAt: true,
+        issueDate: true,
+        dueDate: true,
+        creditNotes: {
+          where: { archivedAt: null },
+          select: {
+            number: true,
+            creditNoteReason: true,
+            status: true,
+            dueDate: true,
+            issueDate: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+    if (!document) throw new NotFoundException('El comprobante no existe');
+    const before = document.dueDate ? fromDateOnly(document.dueDate) : null;
+    const block = dueDateChangeBlock(
+      {
+        docType: document.docType,
+        status: document.status,
+        paymentTerms: document.paymentTerms,
+        archivedAt: document.archivedAt,
+        issueDate: fromDateOnly(document.issueDate),
+        dueDate: before,
+        creditNotes: document.creditNotes.map((n) => ({
+          number: n.number,
+          creditNoteReason: n.creditNoteReason,
+          status: n.status,
+          dueDate: n.dueDate ? fromDateOnly(n.dueDate) : null,
+          issueDate: fromDateOnly(n.issueDate),
+          createdAt: n.createdAt.toISOString(),
+        })),
+      },
+      input.dueDate,
+    );
+    if (block) throw new BadRequestException(block);
+    await tx.fiscalDocument.update({
+      where: { id },
+      data: { dueDate: toDateOnly(input.dueDate) },
+    });
+    await this.audit.write(tx, {
+      actorId: actor.id,
+      action: 'invoicing.document.update-due-date',
+      entity: 'fiscal_documents',
+      entityId: id,
+      before: { dueDate: before },
+      after: {
+        dueDate: input.dueDate,
+        number: document.number,
+        ...(input.reason ? { reason: input.reason } : {}),
+      },
+      reason: input.reason ?? null,
+    });
   }
 
   /**

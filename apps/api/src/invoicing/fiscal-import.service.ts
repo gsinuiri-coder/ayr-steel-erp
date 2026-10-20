@@ -20,6 +20,7 @@ import {
   GENERIC_CUSTOMER_MAX_TOTAL_PEN,
   LIVE_DOCUMENT_STATUSES as SHARED_LIVE_DOCUMENT_STATUSES,
   salesOrderCode,
+  STANDING_DOCUMENT_STATUSES,
   toDecimal,
   type OrderAnnulledDocumentDto,
   type ReactivationAvailabilityDto,
@@ -96,13 +97,21 @@ export class FiscalImportService {
           items: { select: { dispatchItem: { select: { dispatchId: true } } } },
         },
       });
+      // cc61 (D-698, NC-01 de audit-02): una NC 02 toma además, en la misma llamada, los despachos
+      // que su reemplazo declara y el pedido del comprobante original, porque deshacerla los mueve y
+      // la decisión de abajo («otro comprobante vivo del pedido») se lee con el pedido ya bloqueado.
+      const replacementScope = await replacementLockScope(tx, id);
       await lockDocuments(tx, {
         fiscalDocuments: [id],
         dispatches: [
           ...declared.map((d) => d.id),
           ...(returnScope?.items.map((it) => it.dispatchItem.dispatchId) ?? []),
+          ...replacementScope.dispatchIds,
         ],
-        salesOrders: returnScope ? [returnScope.salesOrderId] : [],
+        salesOrders: [
+          ...(returnScope ? [returnScope.salesOrderId] : []),
+          ...replacementScope.salesOrderIds,
+        ],
       });
       // Revisiones de cc55 (R-3, D-474): lo que decide se lee después del bloqueo. Un despacho que se
       // enlazó entre la lectura y el lock se bloquea también (fuera de orden sale con 409, D-475).
@@ -202,6 +211,8 @@ export class FiscalImportService {
             `Esta nota de crédito 02 tiene su comprobante de reemplazo vivo (${replacement.number ?? ''}): anúlalo primero`,
           );
         }
+        const otherBlock = await otherOrderDocumentsBlock(tx, document.affectedDocumentId);
+        if (otherBlock) throw new BadRequestException(otherBlock);
         await this.undoReplacementInTx(tx, actor, id, document.affectedDocumentId);
       }
       // cc54 (D-656): con el pedido anulado, la devolución de la NC ya no se deshace: la
@@ -1342,3 +1353,92 @@ export async function lockAnnulledForReactivation(
   }
   return { document, label, statusBeforeAnnul, annulledAt };
 }
+
+/**
+ * cc61 (D-698): lo que anular una NC 02 tiene que bloquear además de la nota —los despachos que
+ * declara su reemplazo y el pedido del comprobante original—, leído antes del bloqueo para tomarlo
+ * todo en una sola llamada (regla 17). Lo que decide se vuelve a leer después. Vacío si no es un 02.
+ */
+export async function replacementLockScope(
+  tx: Prisma.TransactionClient,
+  noteId: string,
+): Promise<{ dispatchIds: string[]; salesOrderIds: string[] }> {
+  const note = await tx.fiscalDocument.findUnique({
+    where: { id: noteId },
+    select: {
+      creditNoteReason: true,
+      affectedDocument: { select: { id: true, salesOrderId: true } },
+    },
+  });
+  const affected = note?.affectedDocument;
+  if (note?.creditNoteReason !== 'ANULACION_ERROR_RUC' || !affected) {
+    return { dispatchIds: [], salesOrderIds: [] };
+  }
+  const dispatches = await tx.dispatch.findMany({
+    where: { invoice: { replacesDocumentId: affected.id } },
+    select: { id: true },
+  });
+  return {
+    dispatchIds: dispatches.map((d) => d.id),
+    salesOrderIds: affected.salesOrderId ? [affected.salesOrderId] : [],
+  };
+}
+
+/**
+ * cc61 (D-698, NC-01 de audit-02): anular la NC 02 devuelve el comprobante original a la vida. Si
+ * mientras tanto el pedido recibió otro comprobante (o guía, o un borrador) sobre las mismas líneas,
+ * la venta quedaría facturada dos veces y ese comprobante, a nombre de un cliente que ya no es el
+ * del pedido. Es la misma consulta con la que el alta del 02 se niega a cambiar el cliente
+ * (`planReplacement`), hecha con el pedido ya bloqueado. Devuelve el mensaje, o `null`.
+ */
+export async function otherOrderDocumentsBlock(
+  tx: Prisma.TransactionClient,
+  affectedId: string,
+): Promise<string | null> {
+  const affected = await tx.fiscalDocument.findUniqueOrThrow({
+    where: { id: affectedId },
+    select: {
+      number: true,
+      customerId: true,
+      salesOrderId: true,
+      salesOrder: { select: { seq: true } },
+    },
+  });
+  if (!affected.salesOrderId) return null;
+  // Ya tomado en la primera llamada. Si el comprobante cambió de pedido entre la lectura y el
+  // bloqueo, se toma ahora: es la misma clase y la puerta decide si espera o sale con NOWAIT (D-475).
+  await lockDocuments(tx, { salesOrders: [affected.salesOrderId] });
+  const others = await tx.fiscalDocument.findMany({
+    where: {
+      id: { not: affectedId },
+      status: { in: [...STANDING_DOCUMENT_STATUSES] },
+      archivedAt: null,
+      OR: [
+        {
+          salesOrderId: affected.salesOrderId,
+          docType: { in: [FiscalDocType.FACTURA, FiscalDocType.BOLETA] },
+        },
+        // Revisión de cc61 (R-3): la guía no cuelga del pedido sino del despacho. Frena solo si va a
+        // otro cliente que el del original: con él, el pedido quedaría con una guía ajena.
+        {
+          docType: FiscalDocType.GUIA_REMISION_REMITENTE,
+          dispatch: { salesOrderId: affected.salesOrderId },
+          customerId: { not: affected.customerId },
+        },
+      ],
+    },
+    select: { number: true, docType: true },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (others.length === 0) return null;
+  const names = others
+    .map((o) => o.number ?? `${DOC_TYPE_LABEL[o.docType] ?? 'comprobante'} en borrador`)
+    .join(', ');
+  return `El pedido ${affected.salesOrder ? salesOrderCode(affected.salesOrder.seq) : ''} tiene otro comprobante vigente o en borrador (${names}): anúlalo antes de anular esta nota de crédito 02. Si no, ${affected.number ?? 'el comprobante original'} volvería a valer junto a él y el pedido podría quedar facturado dos veces`;
+}
+
+const DOC_TYPE_LABEL: Partial<Record<FiscalDocType, string>> = {
+  [FiscalDocType.FACTURA]: 'factura',
+  [FiscalDocType.BOLETA]: 'boleta',
+  [FiscalDocType.GUIA_REMISION_REMITENTE]: 'guía de remisión',
+};

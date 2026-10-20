@@ -74,6 +74,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
     'Comprobante manual reactivado con las líneas del pedido',
   'invoicing.document.register-manual': 'Comprobante manual registrado',
   'invoicing.document.retry': 'Reintento de envío de comprobante',
+  'invoicing.document.update-due-date': 'Vencimiento de comprobante corregido',
   'invoicing.document.update-issue-date': 'Fecha de emisión de comprobante manual corregida',
   'invoicing.document.void': 'Comprobante dado de baja',
   'invoicing.document.void-confirmed': 'Baja de comprobante confirmada por SUNAT',

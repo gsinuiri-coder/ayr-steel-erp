@@ -27,9 +27,13 @@ import { ENV, type Env } from '../config/env';
  * IPv6 y el mismo código derivado de D-694 (nunca la IP en claro). Sin firma válida, como antes:
  * `req.ip`. Los conteos siguen en memoria por instancia (D-696).
  */
-/** `POST /auth/login` (con o sin el prefijo global `/api`). */
+/**
+ * `POST /auth/login` (con o sin el prefijo global `/api`). cc61 (SEC-01 de audit-02): sin distinguir
+ * mayúsculas y con la barra final opcional, como enruta Express (`caseSensitive` y `strict`
+ * apagados): `/Auth/login` o `/AUTH/LOGIN/` llegan al mismo login y cuentan por correo, no por IP.
+ */
 export function isLoginRoute(req: Pick<Request, 'path'>): boolean {
-  return /\/auth\/login\/?$/.test(req.path);
+  return /\/auth\/login\/?$/i.test(req.path);
 }
 
 /** La clave de la cubeta: el correo en el login; si no, la IP verificada o `req.ip`. */

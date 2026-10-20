@@ -1,4 +1,4 @@
-import { Decimal } from '@ayr/shared';
+import { Decimal, hasCollectibleBalance } from '@ayr/shared';
 import {
   parseAmount,
   parseMethod,
@@ -124,7 +124,7 @@ describe('planOpeningBalances', () => {
     expect(plan.accounts[0]?.treatment).toBe('EXCEL');
   });
 
-  it('saldo al corte 0 salda el comprobante, también con cola de diezmilésimas (D-169)', () => {
+  it('saldo al corte 0 salda el comprobante, también con cola de diezmilésimas (D-169, D-700)', () => {
     const plan = planOpeningBalances(
       [
         account('F1', {
@@ -135,7 +135,9 @@ describe('planOpeningBalances', () => {
       [row('F1', { balance: '0' })],
       options(),
     );
-    expect(plan.payments[0]?.amount).toBe('1180.01');
+    // cc61 (D-700): al céntimo HALF_UP, como los comprobantes; el resto (0,0049) no es deuda (D-377).
+    expect(plan.payments[0]?.amount).toBe('1180.00');
+    expect(hasCollectibleBalance(new Decimal('1180.0049').minus('1180.00'))).toBe(false);
   });
 
   it('descuenta lo ya cobrado en la app hasta el corte', () => {
@@ -325,5 +327,148 @@ describe('planOpeningBalances', () => {
       options(),
     );
     expect(plan.payments[0]?.exchangeRate).toBe('3.75');
+  });
+});
+
+describe('cc61 (D-700, IMP-01/IMP-02 de audit-02): redondeo al céntimo del saldo al corte', () => {
+  const supplier = options({ noun: { account: 'compra', payment: 'pago' } });
+
+  it('compra con total 117.9999 y saldo 0: registra 117.99, avisa y no rechaza el lote', () => {
+    const plan = planOpeningBalances(
+      [
+        account('20999 · F001-9', {
+          netAtCutoff: new Decimal('117.9999'),
+          payableNow: new Decimal('117.99'),
+          currency: 'PEN',
+        }),
+      ],
+      [row('20999 · F001-9', { balance: '0' })],
+      supplier,
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.payments[0]?.amount).toBe('117.99');
+    expect(plan.warnings.map((w) => w.message)).toEqual([
+      'redondeo al céntimo: el total tiene más de dos decimales (117.9999); se registra 117.99 en vez de 118.00',
+    ]);
+  });
+
+  it('la misma compra con saldo 18: registra 99.9999 → 100.00 sin aviso', () => {
+    const plan = planOpeningBalances(
+      [
+        account('20999 · F001-9', {
+          netAtCutoff: new Decimal('117.9999'),
+          payableNow: new Decimal('117.99'),
+        }),
+      ],
+      [row('20999 · F001-9', { balance: '18' })],
+      supplier,
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.payments[0]?.amount).toBe('100.00');
+    expect(plan.warnings).toEqual([]);
+  });
+
+  it('comprobante 1180.0001 con saldo 100: registra 1080.00 y el saldo queda en 100.00', () => {
+    const plan = planOpeningBalances(
+      [
+        account('F1', {
+          netAtCutoff: new Decimal('1180.0001'),
+          payableNow: new Decimal('1180.01'),
+        }),
+      ],
+      [row('F1', { balance: '100' })],
+      options(),
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.payments[0]?.amount).toBe('1080.00');
+    expect(plan.accounts[0]?.balanceAtCutoffAfter).toBe('100.00');
+  });
+
+  it('una diferencia real de más de un céntimo sigue rechazando con el mensaje de siempre', () => {
+    const plan = planOpeningBalances(
+      [
+        account('F1', {
+          netAtCutoff: new Decimal('1180.0001'),
+          payableNow: new Decimal('1000.00'),
+        }),
+      ],
+      [row('F1', { balance: '0' })],
+      options(),
+    );
+    expect(plan.errors.map((e) => e.message)).toEqual([
+      expect.stringContaining('habría que registrar 1180.00 y hoy solo se puede 1000.00'),
+    ]);
+  });
+
+  it('un saldo declarado a dos decimales exactos no se toca aunque falte un céntimo', () => {
+    // Sin cola de diezmilésimas no hay redondeo que avisar: un céntimo de diferencia es real.
+    const plan = planOpeningBalances(
+      [account('F1', { netAtCutoff: new Decimal('1180.00'), payableNow: new Decimal('1179.99') })],
+      [row('F1', { balance: '0' })],
+      options(),
+    );
+    expect(plan.errors).toHaveLength(1);
+  });
+
+  it('saldo al corte con más de dos decimales: se rechaza como el monto de un cobro', () => {
+    const plan = planOpeningBalances(
+      [account('F1')],
+      [row('F1', { balance: '100.005' })],
+      options(),
+    );
+    expect(plan.errors.map((e) => e.message)).toEqual([
+      'saldo al corte con más de dos decimales: «100.005»',
+    ]);
+  });
+
+  it('un saldo declarado igual a lo debido no registra nada ni da error', () => {
+    const plan = planOpeningBalances(
+      [account('F1', { netAtCutoff: new Decimal('1180.0001') })],
+      [row('F1', { balance: '1180.00' })],
+      options(),
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.payments).toEqual([]);
+  });
+});
+
+describe('cc61 (IMP-08 de audit-02): baja en trámite con «pagado al corte»', () => {
+  it('no recibe el cobro supuesto: queda pendiente, con aviso', () => {
+    const plan = planOpeningBalances(
+      [account('F1', { voidPending: true }), account('F2')],
+      [],
+      options({ missing: 'PAID' }),
+    );
+    expect(plan.payments.map((p) => p.key)).toEqual(['F2']);
+    expect(plan.accounts.find((a) => a.key === 'F1')?.treatment).toBe('MISSING_PENDING');
+    expect(plan.warnings.map((w) => w.message)).toEqual([
+      'tiene la baja en trámite ante SUNAT: no se le supone el cobro; queda pendiente',
+    ]);
+  });
+});
+
+describe('revisión de cc61 (R-2): empate de medio céntimo', () => {
+  it('99.9950 al corte con 100.00 declarado: no registra nada y no rechaza', () => {
+    const plan = planOpeningBalances(
+      [account('F1', { netAtCutoff: new Decimal('99.9950'), payableNow: new Decimal('100.00') })],
+      [row('F1', { balance: '100.00' })],
+      options(),
+    );
+    expect(plan.errors).toEqual([]);
+    expect(plan.payments).toEqual([]);
+  });
+});
+
+describe('revisión de cc61 (IMP-08): baja en trámite con filas en el Excel', () => {
+  it('registra lo que dice la fila y avisa', () => {
+    const plan = planOpeningBalances(
+      [account('F1', { voidPending: true })],
+      [row('F1', { balance: '0' })],
+      options(),
+    );
+    expect(plan.payments).toHaveLength(1);
+    expect(plan.warnings.map((w) => w.message)).toEqual([
+      'tiene la baja en trámite ante SUNAT: si se acepta, este pago quedará sobre un comprobante anulado',
+    ]);
   });
 });

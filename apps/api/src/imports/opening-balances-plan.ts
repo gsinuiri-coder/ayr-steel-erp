@@ -46,6 +46,11 @@ export interface OpeningAccount {
   payableNow: Decimal;
   /** Moneda de la cuenta (`PEN` en ventas; la de la compra en compras). */
   currency?: string;
+  /**
+   * cc61 (IMP-08 de audit-02): comprobante con la baja en trámite ante SUNAT. Con «pagado al corte»
+   * no recibe el cobro supuesto: si la baja se acepta, quedaría dinero de un comprobante anulado.
+   */
+  voidPending?: boolean;
 }
 
 /** Una fila del Excel ya leída (texto tal como vino; el plan lo valida). */
@@ -112,6 +117,7 @@ export interface PlanOptions {
 }
 
 const ZERO = new Decimal(0);
+const ONE_CENT = new Decimal('0.01');
 
 /** `1 234,50`, `1,234.50`, `1234.5`, `S/ 1234` → Decimal. `null` si no es un número. */
 export function parseAmount(raw: string): Decimal | null {
@@ -218,6 +224,11 @@ function parseRow(
     const balance = parseAmount(row.balance);
     if (balance === null || balance.isNegative()) {
       errors.push(issue(`saldo al corte inválido: «${row.balance.trim()}»`));
+      return null;
+    }
+    // cc61 (IMP-02 de audit-02): el mismo criterio que el monto de un pago, sin redondear en silencio.
+    if (balance.decimalPlaces() > 2) {
+      errors.push(issue(`saldo al corte con más de dos decimales: «${row.balance.trim()}»`));
       return null;
     }
     return { row, kind: 'BALANCE', date: options.cutoff, amount: null, balance, method };
@@ -344,6 +355,15 @@ export function planOpeningBalances(
 
     let planned: PlannedPayment[] = [];
     if (parsed.length === 0) {
+      if (options.missing === 'PAID' && account.voidPending && room.gt(0)) {
+        warnings.push({
+          rowNumber: null,
+          key: account.key,
+          message: 'tiene la baja en trámite ante SUNAT: no se le supone el cobro; queda pendiente',
+        });
+        outcome(ZERO, 'MISSING_PENDING');
+        continue;
+      }
       if (options.missing === 'PENDING' || room.lte(0)) {
         outcome(ZERO, options.missing === 'PAID' ? 'MISSING_PAID' : 'MISSING_PENDING');
         continue;
@@ -367,6 +387,15 @@ export function planOpeningBalances(
       continue;
     }
 
+    // Revisión de cc61 (IMP-08): con filas en el Excel se registra lo que dicen, pero se avisa.
+    if (account.voidPending) {
+      warnings.push({
+        rowNumber: parsed[0]?.row.rowNumber ?? null,
+        key: account.key,
+        message:
+          'tiene la baja en trámite ante SUNAT: si se acepta, este pago quedará sobre un comprobante anulado',
+      });
+    }
     const balances = parsed.filter((r) => r.kind === 'BALANCE');
     const rowNumbers = parsed.map((r) => r.row.rowNumber);
     if (balances.length > 0 && (balances.length > 1 || parsed.length > 1)) {
@@ -379,8 +408,29 @@ export function planOpeningBalances(
     if (balances.length === 1) {
       const [only] = balances as [ParsedRow];
       const declared = only.balance ?? ZERO;
-      const toRegister = cents(before).minus(declared);
-      if (toRegister.isNegative()) {
+      // cc61 (D-700, IMP-01 de audit-02): lo que se registra es la diferencia redondeada al céntimo
+      // con la regla de los comprobantes (HALF_UP), no el saldo redondeado hacia arriba menos lo
+      // declarado: con un total a cuatro decimales (117,9999) aquello pedía un céntimo de más.
+      // Revisión de cc61 (R-2): se redondea lo debido y después se resta lo declarado (dos decimales):
+      // con 99,9950 y 100,00 declarado, redondear la diferencia daba −0,01 y un rechazo falso.
+      let toRegister = before.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).minus(declared);
+      // Si el redondeo pasa por un céntimo lo que hoy se puede registrar (el saldo de hoy va hacia
+      // abajo en compras, D-039), se registra lo que se puede y se avisa en la vista previa: el
+      // resto es una fracción de céntimo que ya cuenta como saldada.
+      if (
+        before.decimalPlaces() > 2 &&
+        toRegister.gt(room) &&
+        toRegister.minus(room).lte(ONE_CENT) &&
+        room.gt(0)
+      ) {
+        warnings.push({
+          rowNumber: rowNumbers[0] ?? null,
+          key: account.key,
+          message: `redondeo al céntimo: el total tiene más de dos decimales (${account.netAtCutoff.toFixed(4)}); se registra ${room.toFixed(2)} en vez de ${toRegister.toFixed(2)}`,
+        });
+        toRegister = room;
+      }
+      if (toRegister.lt(0)) {
         accountError(
           `el saldo al corte declarado (${declared.toFixed(2)}) es mayor que lo que se debía al corte (${before.toFixed(2)})`,
           rowNumbers,

@@ -31,6 +31,7 @@ import { SalesOrdersService } from '../sales/sales-orders.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { DispatchesService } from './dispatches.service';
 import { FiscalImportService } from './fiscal-import.service';
+import { invoicedByOrderItem } from './invoicing-net';
 import { InvoicingService } from './invoicing.service';
 import { ReceivablesService } from './receivables.service';
 
@@ -409,6 +410,89 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect(again.message).toContain('vuelve a emitir');
   });
 
+  it('cc61 (D-698, NC-01 de audit-02): la 02 no se anula si el pedido ya tiene otro comprobante vivo', async () => {
+    const s = await sold({ declare: true });
+    const note = await register(s.invoiceId, {
+      reason: 'ANULACION_ERROR_RUC',
+      replacement: {
+        customerId: otherCustomerId,
+        issueDate: TODAY,
+        series: 'F955',
+        correlative: correlative + 5000,
+      },
+    });
+    const replacement = await prisma.fiscalDocument.findFirstOrThrow({
+      where: { replacesDocumentId: s.invoiceId },
+    });
+    const fiscalImport = moduleRef.get(FiscalImportService);
+    // Anulado el reemplazo, las líneas quedan pendientes de facturar y se registra otro comprobante
+    // sobre ellas, al cliente que hoy tiene el pedido.
+    await fiscalImport.annulExternal(admin, replacement.id, 'prueba');
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    const orderItem = await prisma.salesOrderItem.findFirstOrThrow({
+      where: { salesOrderId: s.orderId },
+    });
+    expect(
+      (await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3),
+    ).toBe('0.000');
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId: otherCustomerId,
+        salesOrderId: s.orderId,
+        issueDate: TODAY,
+        paymentTerms: 'CONTADO',
+        dispatchId: dispatch.id,
+        items: [{ salesOrderItemId: orderItem.id, qty: '5' }],
+      }),
+    );
+    const third = await invoicing.registerManual(admin, draft.id, {
+      series: 'F956',
+      correlative: (correlative += 1),
+    });
+    // Anular la 02 ahora devolvería el original a la vida: la línea quedaría facturada dos veces.
+    const r = await rejection(fiscalImport.annulExternal(admin, note.id, 'prueba'));
+    expect(r.status).toBe(400);
+    expect(r.message).toContain(third.number ?? '');
+    expect(r.message).toContain('anúlalo antes de anular esta nota de crédito 02');
+    expect(
+      (await invoicedByOrderItem(prisma, [orderItem.id])).get(orderItem.id)?.qty.toFixed(3),
+    ).toBe('5.000');
+    const f1 = await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: s.invoiceId } });
+    expect(f1.status).toBe('ACCEPTED');
+    expect((await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: note.id } })).status).toBe(
+      'ACCEPTED',
+    );
+    const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: s.orderId } });
+    expect(order.customerId).toBe(otherCustomerId);
+    // Anulado ese comprobante, la 02 sí se anula y el pedido vuelve a su cliente (D-655). El
+    // despacho que el otro comprobante declaró quedó suelto al anularlo (D-664): el original
+    // vuelve sin despacho declarado.
+    await fiscalImport.annulExternal(admin, third.id, 'prueba');
+    // Un borrador sobre el pedido también frena, nombrado como borrador (revisiones de cc61).
+    const pendingDraft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId: otherCustomerId,
+        salesOrderId: s.orderId,
+        issueDate: TODAY,
+        paymentTerms: 'CONTADO',
+        items: [{ salesOrderItemId: orderItem.id, qty: '5' }],
+      }),
+    );
+    const byDraft = await rejection(fiscalImport.annulExternal(admin, note.id, 'prueba'));
+    expect(byDraft.message).toContain('factura en borrador');
+    await invoicing.discardDraft(admin, pendingDraft.id, 'prueba cc61');
+    await fiscalImport.annulExternal(admin, note.id, 'prueba');
+    const back = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    expect(back.invoiceId).toBeNull();
+    expect(
+      (await prisma.salesOrder.findUniqueOrThrow({ where: { id: s.orderId } })).customerId,
+    ).toBe(customerId);
+  });
+
   it('02: con cobros en el comprobante, se bloquea con un mensaje claro', async () => {
     const s = await sold();
     await moduleRef.get(ReceivablesService).addPayment(admin, s.invoiceId, {
@@ -488,6 +572,35 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     expect(row?.dueDate).toBe(due);
     await moduleRef.get(FiscalImportService).annulExternal(admin, note.id, 'prueba');
     expect((await invoicing.findOne(s.invoiceId)).dueDate).toBe(PREV(25));
+  });
+
+  it('cc61 (D-699): el ADMINISTRADOR pone el vencimiento; con una NC 13 viva se rechaza', async () => {
+    const s = await sold({ paymentTerms: 'CREDITO' });
+    // Antes de la emisión: no.
+    const early = await rejection(
+      invoicing.updateDueDate(admin, s.invoiceId, { dueDate: PREV(9) }),
+    );
+    expect(early.message).toContain('anterior a la emisión');
+    const updated = await invoicing.updateDueDate(admin, s.invoiceId, {
+      dueDate: PREV(27),
+      reason: 'se tipeó mal',
+    });
+    expect(updated.dueDate).toBe(PREV(27));
+    const audit = await prisma.auditLog.findFirstOrThrow({
+      where: { entityId: s.invoiceId, action: 'invoicing.document.update-due-date' },
+    });
+    expect(audit.before).toEqual({ dueDate: PREV(25) });
+    expect(audit.after).toMatchObject({ dueDate: PREV(27), reason: 'se tipeó mal' });
+    // Con una NC 13 viva, el vencimiento es el de la nota: el cambio no se vería.
+    const note = await register(s.invoiceId, { reason: 'OTROS_AJUSTES', dueDate: PREV(28) });
+    const r = await rejection(invoicing.updateDueDate(admin, s.invoiceId, { dueDate: TODAY }));
+    expect(r.status).toBe(400);
+    expect(r.message).toContain('NC 13 vigente');
+    expect(r.message).toContain(note.number ?? '');
+    // Al contado no hay vencimiento.
+    const cash = await sold();
+    const c = await rejection(invoicing.updateDueDate(admin, cash.invoiceId, { dueDate: TODAY }));
+    expect(c.message).toContain('al crédito');
   });
 
   it('13 sobre una factura al contado: no corresponde', async () => {

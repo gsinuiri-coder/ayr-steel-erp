@@ -39,8 +39,22 @@ function fakeTx(audit: { action: string; entityId: string; after: unknown; at: D
               { amountPen: D('99'), reversedAt: new Date(), date: date('2026-08-16') },
             ],
             creditNotes: [
-              { totalPen: D('5'), issueDate: date('2026-08-20') },
-              { totalPen: D('7'), issueDate: date('2026-10-03') },
+              {
+                totalPen: D('5'),
+                issueDate: date('2026-08-20'),
+                creditNoteReason: 'DESCUENTO_GLOBAL',
+                dueDate: null,
+                status: 'ACCEPTED',
+                createdAt: new Date('2026-08-20T15:00:00.000Z'),
+              },
+              {
+                totalPen: D('7'),
+                issueDate: date('2026-10-03'),
+                creditNoteReason: 'DESCUENTO_GLOBAL',
+                dueDate: null,
+                status: 'ACCEPTED',
+                createdAt: new Date('2026-10-03T15:00:00.000Z'),
+              },
             ],
           },
           {
@@ -52,7 +66,17 @@ function fakeTx(audit: { action: string; entityId: string; after: unknown; at: D
             totalPen: D('100'),
             customer: { name: 'ACME', docNumber: '20111' },
             payments: [],
-            creditNotes: [],
+            // cc61 (IMP-05): una NC 13 viva fija el vencimiento que muestra la plantilla.
+            creditNotes: [
+              {
+                totalPen: D('0'),
+                issueDate: date('2026-08-25'),
+                creditNoteReason: 'OTROS_AJUSTES',
+                dueDate: date('2026-10-15'),
+                status: 'ACCEPTED',
+                createdAt: new Date('2026-08-25T15:00:00.000Z'),
+              },
+            ],
           },
         ]),
       ),
@@ -162,7 +186,7 @@ describe('OpeningBalancesImporter', () => {
     // 295 − 45 − 10 − 5 − 7 = 228
     expect(b?.payableNow.toFixed(2)).toBe('228.00');
     expect(template.find((t) => t.number === 'F1-1')).toMatchObject({
-      dueDate: '2026-09-09',
+      dueDate: '2026-10-15',
       balancePen: '100.00',
     });
 
@@ -311,6 +335,8 @@ describe('OpeningBalancesImporter', () => {
       reversed: 2,
       alreadyReversed: 1,
     });
+    // cc61 (IMP-04): el deshacer toma el mismo candado asesor que la ejecución.
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     expect(receivables.reversePaymentInTx).toHaveBeenCalledWith(
       tx,
       actor,

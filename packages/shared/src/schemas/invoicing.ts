@@ -22,7 +22,7 @@ import {
 } from '../enums';
 import { reasonSchema } from './coil';
 import { idempotencyFields, idempotencyKeySchema } from './idempotency';
-import { backdatableFields, operationDateSchema } from './operation';
+import { backdatableFields, isCalendarDate, operationDateSchema } from './operation';
 import { paginationQuerySchema, sortQueryFields } from './pagination';
 import { listExportQuerySchema } from './list-export';
 import { statusListSchema } from './status-filter';
@@ -1671,6 +1671,25 @@ export const updateManualIssueDateSchema = z
     assertIssueDateWindow(input.issueDate, ctx, ['issueDate']);
   });
 export type UpdateManualIssueDateInput = z.infer<typeof updateManualIssueDateSchema>;
+
+/**
+ * cc61 (D-699): pone o corrige el vencimiento de un comprobante al crédito, desde su detalle. Es
+ * una excepción explícita a D-657 («el comprobante no se edita: el vencimiento lo cambia una NC
+ * 13»), por decisión del dueño: un comprobante que quedó sin vencimiento, o con uno mal tipeado, se
+ * arregla sin emitir una nota. Solo ADMINISTRADOR; el motivo es opcional y queda en la auditoría
+ * con el antes y el después.
+ */
+export const updateDueDateSchema = z.object({
+  // Revisión de cc61 (R-1): `Date.parse` acepta 2026-02-31 (lo lleva al 3 de marzo).
+  dueDate: isoDateSchema.refine(isCalendarDate, 'Esa fecha no existe en el calendario'),
+  reason: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .transform((v) => (v === '' ? undefined : v)),
+});
+export type UpdateDueDateInput = z.infer<typeof updateDueDateSchema>;
 
 /**
  * HOTFIX-401/M2: descartar un borrador ya pedía confirmación en la UI, pero no dejaba
