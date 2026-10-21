@@ -376,7 +376,7 @@ export class FiscalImportService {
     return this.prisma.$transaction(async (tx) => {
       const checked = await this.checkReactivateExternal(tx, id);
       return this.writeReactivateExternal(tx, actor, id, input, checked);
-    });
+    }, KARDEX_TX_OPTIONS);
   }
 
   /**

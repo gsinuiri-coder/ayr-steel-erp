@@ -36,6 +36,7 @@ import {
   loadCollectibleDocuments,
 } from './collectible-documents';
 import { lockDocuments } from '../inventory/document-locks';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /**
  * Cobranza y cuentas por cobrar (RF-86..RF-88; D-075).
@@ -83,7 +84,10 @@ export class ReceivablesService {
     documentId: string,
     input: CreateCustomerPaymentInput,
   ): Promise<void> {
-    await this.prisma.$transaction((tx) => this.addPaymentInTx(tx, actor, documentId, input));
+    await this.prisma.$transaction(
+      (tx) => this.addPaymentInTx(tx, actor, documentId, input),
+      KARDEX_TX_OPTIONS,
+    );
   }
 
   /**
@@ -205,8 +209,9 @@ export class ReceivablesService {
     paymentId: string,
     reason: string,
   ): Promise<void> {
-    await this.prisma.$transaction((tx) =>
-      this.reversePaymentInTx(tx, actor, documentId, paymentId, reason),
+    await this.prisma.$transaction(
+      (tx) => this.reversePaymentInTx(tx, actor, documentId, paymentId, reason),
+      KARDEX_TX_OPTIONS,
     );
   }
 

@@ -493,6 +493,43 @@ describe('cc54: nota de crédito por motivo SUNAT', () => {
     ).toBe(customerId);
   });
 
+  it('cc63 (pendiente de cc61): una guía del despacho del pedido frena el 02, aunque no cuelgue del pedido', async () => {
+    const s = await sold({ declare: true });
+    const dispatch = await prisma.dispatch.findFirstOrThrow({ where: { salesOrderId: s.orderId } });
+    // La guía cuelga del despacho (sin pedido propio). Con el PSE apagado no se emite: se deja como
+    // el borrador que queda cuando la emisión falla a mitad (D-073).
+    const guide = await prisma.fiscalDocument.create({
+      data: {
+        docType: 'GUIA_REMISION_REMITENTE',
+        status: 'DRAFT',
+        customerId,
+        dispatchId: dispatch.id,
+        issueDate: new Date(`${TODAY}T00:00:00.000Z`),
+        subtotalPen: '0',
+        igvPen: '0',
+        totalPen: '0',
+        createdById: admin.id,
+      },
+    });
+    try {
+      const r = await rejection(
+        register(s.invoiceId, {
+          reason: 'ANULACION_ERROR_RUC',
+          replacement: {
+            customerId: otherCustomerId,
+            issueDate: TODAY,
+            series: 'F955',
+            correlative: correlative + 7000,
+          },
+        }),
+      );
+      expect(r.status).toBe(400);
+      expect(r.message).toContain('otros comprobantes o guías del cliente anterior');
+    } finally {
+      await prisma.fiscalDocument.delete({ where: { id: guide.id } });
+    }
+  });
+
   it('02: con cobros en el comprobante, se bloquea con un mensaje claro', async () => {
     const s = await sold();
     await moduleRef.get(ReceivablesService).addPayment(admin, s.invoiceId, {

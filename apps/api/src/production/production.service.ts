@@ -1228,6 +1228,8 @@ export class ProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: merma de proceso ${scrapKg.toFixed(3)} kg imputada a ${pieces} piezas`,
         actorId: actor.id,
         operationDate,
+        // cc63 (D-701): el acuse de retrofecha del cierre llega también a su ajuste de costo.
+        confirmBackdate: input.confirmBackdate,
       },
     });
 

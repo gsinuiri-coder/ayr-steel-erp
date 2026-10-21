@@ -56,7 +56,7 @@ import {
 import { assertNoLiveDocumentClash } from './purchase-document-clash';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
-import { RECOST_TX_OPTIONS } from '../common/transaction-options';
+import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
 import { toPrismaLineCode, toSharedLineCode } from '../common/business-line-code';
 import { claimIdempotencyKey } from '../common/idempotency';
 import { OperationDateService } from '../common/operation-date.service';
@@ -736,7 +736,13 @@ export class PurchasesService {
         // Costo de corte tercerizado (RF-41): igual que el landed cost, pero prorrateado
         // entre los flejes ya recibidos de la orden de corte vinculada, sin importar si
         // esta compra llega antes o después de la recepción física (D-033).
-        const cuttingCost = await this.applyCuttingOrderCost(tx, purchase, actor, operationDate);
+        const cuttingCost = await this.applyCuttingOrderCost(
+          tx,
+          purchase,
+          actor,
+          operationDate,
+          input.confirmBackdate,
+        );
 
         await this.audit.write(tx, {
           actorId: actor.id,
@@ -1255,6 +1261,8 @@ export class PurchasesService {
     purchase: Purchase,
     actor: RequestUser,
     operationDate: string,
+    /** cc63 (D-701): el acuse de retrofecha de la recepción llega al ajuste de los flejes. */
+    confirmBackdate?: boolean,
   ): Promise<{ amountPen: string; strips: number; imputed: boolean } | null> {
     if (purchase.type !== PurchaseType.SERVICE || !purchase.relatedCuttingOrderId) return null;
     if (purchase.serviceKind !== ServiceKind.CUTTING) return null;
@@ -1328,6 +1336,7 @@ export class PurchasesService {
         notes: noteLabel,
         actorId: actor.id,
         operationDate,
+        confirmBackdate,
       });
       if (!movement) continue;
 
@@ -1445,7 +1454,10 @@ export class PurchasesService {
           ? toDecimal(input.exchangeRate)
           : (await this.rateFor(paymentDate, rateCurrency)).rate;
 
-    await this.prisma.$transaction((tx) => this.addPaymentInTx(tx, actor, purchaseId, input, rate));
+    await this.prisma.$transaction(
+      (tx) => this.addPaymentInTx(tx, actor, purchaseId, input, rate),
+      KARDEX_TX_OPTIONS,
+    );
     return this.findOne(purchaseId);
   }
 
@@ -1531,8 +1543,9 @@ export class PurchasesService {
     paymentId: string,
     input: ReversePaymentInput,
   ): Promise<PurchaseDto> {
-    await this.prisma.$transaction((tx) =>
-      this.reversePaymentInTx(tx, actor, purchaseId, paymentId, input),
+    await this.prisma.$transaction(
+      (tx) => this.reversePaymentInTx(tx, actor, purchaseId, paymentId, input),
+      KARDEX_TX_OPTIONS,
     );
     return this.findOne(purchaseId);
   }

@@ -179,3 +179,21 @@ export const inventoryItemResolveQuerySchema = z.object({
   itemId: z.string().uuid(),
 });
 export type InventoryItemResolveQuery = z.infer<typeof inventoryItemResolveQuerySchema>;
+
+/**
+ * cc63 (RC-01 de audit-02): un recosteo por fecha que superó el tope (`RECOST_MAX_ROWS`) y quedó
+ * pendiente. Lo lee ADMINISTRADOR en Inventario; lo completa `pnpm recosteo:pendientes`.
+ */
+export const recostPendingItemSchema = z.object({
+  itemType: z.enum(['COIL', 'PRODUCT']),
+  itemId: z.string(),
+  /** Código de bobina o SKU del producto. */
+  label: z.string(),
+});
+export const recostPendingSchema = z.object({
+  auditId: z.string(),
+  at: z.string(),
+  rowsReplayed: z.number().int(),
+  items: z.array(recostPendingItemSchema),
+});
+export type RecostPendingDto = z.infer<typeof recostPendingSchema>;

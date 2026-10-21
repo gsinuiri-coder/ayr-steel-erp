@@ -247,7 +247,7 @@ export class RoofingProductionService {
         operationDate: orderOperationDate,
         notes: input.notes ?? null,
       });
-    });
+    }, KARDEX_TX_OPTIONS);
 
     return this.production.findOne(orderId);
   }
@@ -2467,6 +2467,10 @@ export class RoofingProductionService {
         notes: `Cierre de ${productionOrderCode(order.seq)}: despunte ${scrapKg.toFixed(3)} kg imputado a ${outputQty.toFixed(3)}`,
         actorId: actor.id,
         operationDate,
+        // cc63 (D-701): el acuse de retrofecha del cierre llega también a su ajuste de costo. Sin
+        // él, un cierre fechado antes de movimientos posteriores del producto se rechazaba con
+        // «registrá primero lo más antiguo» aunque el usuario ya lo hubiera confirmado.
+        confirmBackdate: input.confirmBackdate,
       },
     });
 

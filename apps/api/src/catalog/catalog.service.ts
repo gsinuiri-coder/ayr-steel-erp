@@ -56,6 +56,7 @@ import {
   productsRealUsage,
   structureLockReason,
 } from './product-real-usage';
+import { KARDEX_TX_OPTIONS } from '../common/transaction-options';
 
 /** Mismo criterio que `SEARCH_CANDIDATE_POOL` de `CustomersService` (RF-S3/M1). */
 const SEARCH_CANDIDATE_POOL = 100;
@@ -517,7 +518,7 @@ export class CatalogService {
           }
         }
         return this.writeUpdate(tx, actor, before, data, listPriceChanged);
-      })
+      }, KARDEX_TX_OPTIONS)
       .catch((err: unknown) => {
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
           throw new ConflictException({
@@ -615,7 +616,7 @@ export class CatalogService {
         entityId: product.id,
         before: auditView(product),
       });
-    });
+    }, KARDEX_TX_OPTIONS);
   }
 
   /** Órdenes de coberturas vivas de este producto: las que el cambio de color rompería. */

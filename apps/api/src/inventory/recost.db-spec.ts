@@ -7,6 +7,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import { assertTestDatabase } from '../../prisma/test-db-guard';
 import { InventoryService } from './inventory.service';
 import { qtyRowsOf } from './inventory-recost';
+import { completePendingRecosts, listPendingRecosts } from './recost-pending';
 
 /**
  * cc53 (D-649, D-650) — **recosteo del promedio por fecha**, contra una base real. Cada caso usa
@@ -793,5 +794,56 @@ describe('cc58 (D-691, E-07 de audit-01): el kardex se lee una vez antes de escr
     } finally {
       await counted.$disconnect();
     }
+  });
+});
+
+describe('cc63 (RC-01, RC-03 de audit-02): completar los recosteos pendientes', () => {
+  it('la lista los muestra, la herramienta los completa (también la salida que agota) y los cierra', async () => {
+    const itemId = randomUUID();
+    await move(itemId, { type: 'IN', qty: '10', unitCost: '20', date: '2026-08-01' });
+    const first = await move(itemId, { type: 'OUT', qty: '5', date: '2026-08-10' });
+    // La entrada atrasada recostearía la salida, pero se pasa del tope (forzado a 0 filas): queda
+    // pendiente y la salida conserva el costo viejo.
+    const original = inventory.recostForward.bind(inventory);
+    const spy = jest
+      .spyOn(inventory, 'recostForward')
+      .mockImplementation((tx, seeds, ctx) =>
+        original(tx, seeds, ctx.historic ? ctx : { ...ctx, maxRows: 0 }),
+      );
+    try {
+      await move(itemId, { type: 'IN', qty: '10', unitCost: '40', date: '2026-08-05' });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await effective(first.id)).toBe('100.0000');
+    // RC-03: la salida que agota el ítem se lleva el valor sin corregir (500 en vez de 450).
+    const last = await move(itemId, { type: 'OUT', qty: '15', date: '2026-08-20' });
+    expect(await effective(last.id)).toBe('500.0000');
+
+    const pending = await listPendingRecosts(prisma);
+    const mine = pending.filter((p) => p.items.some((i) => i.itemId === itemId));
+    expect(mine).toHaveLength(1);
+
+    const audit = new AuditService(prisma as unknown as PrismaService);
+    const result = await prisma.$transaction((tx) =>
+      completePendingRecosts(
+        tx,
+        {
+          recostForward: (t, seeds, ctx) => inventory.recostForward(t, seeds, ctx),
+          write: (t, entry) => audit.write(t, entry),
+        },
+        adminId,
+      ),
+    );
+    expect(result.pendingAuditIds).toContain(mine[0]?.auditId);
+    expect(await effective(first.id)).toBe('150.0000');
+    expect(await effective(last.id)).toBe('450.0000');
+    expect((await kardexValue(itemId)).toFixed(4)).toBe('0.0000');
+    expect(
+      (await listPendingRecosts(prisma)).filter((p) => p.items.some((i) => i.itemId === itemId)),
+    ).toEqual([]);
+    expect(
+      await prisma.auditLog.count({ where: { action: 'inventory.recost-pending-resolved' } }),
+    ).toBeGreaterThan(0);
   });
 });

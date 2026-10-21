@@ -1157,129 +1157,126 @@ export class InvoicingService {
     affectedId: string,
     input: CreateCreditNoteInput,
   ): Promise<CreditNotePreviewDto> {
-    return this.prisma.$transaction(
-      async (tx) => {
-        const plan = await this.planCreditNote(tx, actor, affectedId, input, 'PREVIEW');
-        const { affected } = plan;
-        // cc55 (D-664, C-01 de audit-01): el costo de lo que vuelve es del kardex; quien no es
-        // ADMINISTRADOR no lo recibe (mismo criterio que `GET /invoicing/returns/:id`).
-        const showCost = actor.role === Role.ADMINISTRADOR;
-        // La devolución nace solo al registrar a mano (un electrónico va por borrador y envío).
-        const allocations =
-          returnsStock(input.reason) && affected.origin === FiscalDocumentOrigin.MANUAL
-            ? await this.salesReturns.planForLines(
-                tx,
-                plan.lines.map((l) => ({
-                  lineNumber: l.original.lineNumber,
-                  orderItemId: l.original.salesOrderItemId,
-                  qty: l.qty,
-                })),
-                {
-                  affectedInvoiceId: affected.id,
-                  asOf: input.issueDate,
-                  ...(input.reason === CreditNoteReason.ANULACION_OPERACION
-                    ? { upToAvailable: true, onlyAffected: true }
-                    : {}),
-                },
-              )
-            : [];
-        const flat = allocations.flat();
-        const labels = await this.kardexItemLabels(
-          tx,
-          flat.map((a) => ({ itemType: a.stock.itemType, itemId: a.stock.itemId })),
+    return this.prisma.$transaction(async (tx) => {
+      const plan = await this.planCreditNote(tx, actor, affectedId, input, 'PREVIEW');
+      const { affected } = plan;
+      // cc55 (D-664, C-01 de audit-01): el costo de lo que vuelve es del kardex; quien no es
+      // ADMINISTRADOR no lo recibe (mismo criterio que `GET /invoicing/returns/:id`).
+      const showCost = actor.role === Role.ADMINISTRADOR;
+      // La devolución nace solo al registrar a mano (un electrónico va por borrador y envío).
+      const allocations =
+        returnsStock(input.reason) && affected.origin === FiscalDocumentOrigin.MANUAL
+          ? await this.salesReturns.planForLines(
+              tx,
+              plan.lines.map((l) => ({
+                lineNumber: l.original.lineNumber,
+                orderItemId: l.original.salesOrderItemId,
+                qty: l.qty,
+              })),
+              {
+                affectedInvoiceId: affected.id,
+                asOf: input.issueDate,
+                ...(input.reason === CreditNoteReason.ANULACION_OPERACION
+                  ? { upToAvailable: true, onlyAffected: true }
+                  : {}),
+              },
+            )
+          : [];
+      const flat = allocations.flat();
+      const labels = await this.kardexItemLabels(
+        tx,
+        flat.map((a) => ({ itemType: a.stock.itemType, itemId: a.stock.itemId })),
+      );
+      const notDispatched =
+        input.reason === CreditNoteReason.ANULACION_OPERACION
+          ? plan.lines.flatMap((l, i) => {
+              const back = (allocations[i] ?? []).reduce(
+                (acc, a) => acc.plus(a.qty),
+                new Decimal(0),
+              );
+              const left = toDecimal(l.qty).minus(back);
+              return left.gt(0)
+                ? [{ lineNumber: l.original.lineNumber, qty: left.toFixed(3) }]
+                : [];
+            })
+          : [];
+      const before = documentBalance({
+        status: affected.status,
+        totalPen: affected.totalPen.toString(),
+        paidPen: affected.payments.reduce(
+          (acc, p) => acc.plus(toDecimal(p.amountPen.toString())),
+          new Decimal(0),
+        ),
+        creditedPen: affected.creditNotes.reduce(
+          (acc, n) => acc.plus(toDecimal(n.totalPen.toString())),
+          new Decimal(0),
+        ),
+      });
+      const after = Decimal.max(toDecimal(before).minus(plan.totals.total), new Decimal(0));
+      const warnings: string[] = [];
+      const late = creditNoteDeadlineWarning(
+        input.reason,
+        fromDateOnly(affected.issueDate),
+        input.issueDate,
+      );
+      if (late) warnings.push(late);
+      if (
+        DISCOUNT_CREDIT_NOTE_REASONS.includes(input.reason) &&
+        affected.docType === FiscalDocType.BOLETA
+      ) {
+        warnings.push(
+          'SUNAT observa una nota de descuento sobre una boleta (observación 4367): se acepta, pero queda observada.',
         );
-        const notDispatched =
-          input.reason === CreditNoteReason.ANULACION_OPERACION
-            ? plan.lines.flatMap((l, i) => {
-                const back = (allocations[i] ?? []).reduce(
-                  (acc, a) => acc.plus(a.qty),
-                  new Decimal(0),
-                );
-                const left = toDecimal(l.qty).minus(back);
-                return left.gt(0)
-                  ? [{ lineNumber: l.original.lineNumber, qty: left.toFixed(3) }]
-                  : [];
-              })
-            : [];
-        const before = documentBalance({
-          status: affected.status,
-          totalPen: affected.totalPen.toString(),
-          paidPen: affected.payments.reduce(
-            (acc, p) => acc.plus(toDecimal(p.amountPen.toString())),
-            new Decimal(0),
-          ),
-          creditedPen: affected.creditNotes.reduce(
-            (acc, n) => acc.plus(toDecimal(n.totalPen.toString())),
-            new Decimal(0),
-          ),
-        });
-        const after = Decimal.max(toDecimal(before).minus(plan.totals.total), new Decimal(0));
-        const warnings: string[] = [];
-        const late = creditNoteDeadlineWarning(
-          input.reason,
-          fromDateOnly(affected.issueDate),
-          input.issueDate,
+      }
+      if (notDispatched.length > 0) {
+        warnings.push(
+          'Parte de lo facturado no salió del almacén: no vuelve nada de eso y queda otra vez pendiente de facturar en el pedido.',
         );
-        if (late) warnings.push(late);
-        if (
-          DISCOUNT_CREDIT_NOTE_REASONS.includes(input.reason) &&
-          affected.docType === FiscalDocType.BOLETA
-        ) {
-          warnings.push(
-            'SUNAT observa una nota de descuento sobre una boleta (observación 4367): se acepta, pero queda observada.',
-          );
-        }
-        if (notDispatched.length > 0) {
-          warnings.push(
-            'Parte de lo facturado no salió del almacén: no vuelve nada de eso y queda otra vez pendiente de facturar en el pedido.',
-          );
-        }
-        return {
-          reason: input.reason,
-          sunatCode: CREDIT_NOTE_REASON_SUNAT_CODE[input.reason],
-          ...serializeSalesTotals(plan.totals),
-          lines: plan.lines.map((l) => ({
-            affectedItemId: l.original.id,
-            lineNumber: l.original.lineNumber,
-            description: l.description,
-            qty: l.qty,
-            totalPen: l.totalPen,
-          })),
-          stock: flat.map((a) => ({
-            label: labels.get(`${a.stock.itemType}:${a.stock.itemId}`) ?? a.stock.itemId,
-            qty: toFixedString(a.reserveQty, 'KG'),
-            unit: a.stock.unit,
-            costPen: showCost ? toFixedString(a.totalCost, 'MONEY') : null,
-            dispatch: a.stock.dispatchCode,
-          })),
-          notDispatched,
-          costPen: showCost
-            ? toFixedString(
-                flat.reduce((acc, a) => acc.plus(a.totalCost), new Decimal(0)),
-                'MONEY',
-              )
-            : null,
-          receivable: {
-            beforePen: toFixedString(before, 'MONEY'),
-            afterPen: toFixedString(after, 'MONEY'),
-            dueDateBefore: plan.dueDate,
-            dueDateAfter:
-              input.reason === CreditNoteReason.OTROS_AJUSTES
-                ? (input.dueDate ?? null)
-                : plan.dueDate,
-          },
-          replacement: plan.replacement
-            ? {
-                customerName: plan.replacement.customerName,
-                number: plan.replacement.number,
-                totalPen: affected.totalPen.toFixed(4),
-              }
-            : null,
-          warnings,
-        };
-      },
-      { timeout: 30_000, maxWait: 10_000 },
-    );
+      }
+      return {
+        reason: input.reason,
+        sunatCode: CREDIT_NOTE_REASON_SUNAT_CODE[input.reason],
+        ...serializeSalesTotals(plan.totals),
+        lines: plan.lines.map((l) => ({
+          affectedItemId: l.original.id,
+          lineNumber: l.original.lineNumber,
+          description: l.description,
+          qty: l.qty,
+          totalPen: l.totalPen,
+        })),
+        stock: flat.map((a) => ({
+          label: labels.get(`${a.stock.itemType}:${a.stock.itemId}`) ?? a.stock.itemId,
+          qty: toFixedString(a.reserveQty, 'KG'),
+          unit: a.stock.unit,
+          costPen: showCost ? toFixedString(a.totalCost, 'MONEY') : null,
+          dispatch: a.stock.dispatchCode,
+        })),
+        notDispatched,
+        costPen: showCost
+          ? toFixedString(
+              flat.reduce((acc, a) => acc.plus(a.totalCost), new Decimal(0)),
+              'MONEY',
+            )
+          : null,
+        receivable: {
+          beforePen: toFixedString(before, 'MONEY'),
+          afterPen: toFixedString(after, 'MONEY'),
+          dueDateBefore: plan.dueDate,
+          dueDateAfter:
+            input.reason === CreditNoteReason.OTROS_AJUSTES
+              ? (input.dueDate ?? null)
+              : plan.dueDate,
+        },
+        replacement: plan.replacement
+          ? {
+              customerName: plan.replacement.customerName,
+              number: plan.replacement.number,
+              totalPen: affected.totalPen.toFixed(4),
+            }
+          : null,
+        warnings,
+      };
+    }, KARDEX_TX_OPTIONS);
   }
 
   /** SKU o código de bobina de cada ítem del kardex, para mostrarlo. Dos consultas como mucho. */
@@ -1582,18 +1579,27 @@ export class InvoicingService {
       }
       const others = await tx.fiscalDocument.findMany({
         where: {
-          salesOrderId: affected.salesOrderId,
           id: { not: affected.id },
-          // Las guías de remisión también llevan al cliente anterior.
-          docType: {
-            in: [
-              FiscalDocType.FACTURA,
-              FiscalDocType.BOLETA,
-              FiscalDocType.GUIA_REMISION_REMITENTE,
-            ],
-          },
           status: { in: [...STANDING_DOCUMENT_STATUSES] },
           archivedAt: null,
+          OR: [
+            {
+              salesOrderId: affected.salesOrderId,
+              docType: {
+                in: [
+                  FiscalDocType.FACTURA,
+                  FiscalDocType.BOLETA,
+                  FiscalDocType.GUIA_REMISION_REMITENTE,
+                ],
+              },
+            },
+            // Las guías de remisión también llevan al cliente anterior. cc63 (pendiente de cc61, R-3):
+            // una guía no cuelga del pedido sino de su despacho; se busca por el pedido del despacho.
+            {
+              docType: FiscalDocType.GUIA_REMISION_REMITENTE,
+              dispatch: { salesOrderId: affected.salesOrderId },
+            },
+          ],
         },
         select: { number: true },
       });
@@ -2339,7 +2345,10 @@ export class InvoicingService {
     id: string,
     input: UpdateDueDateInput,
   ): Promise<FiscalDocumentDto> {
-    await this.prisma.$transaction((tx) => this.updateDueDateInTx(tx, actor, id, input));
+    await this.prisma.$transaction(
+      (tx) => this.updateDueDateInTx(tx, actor, id, input),
+      KARDEX_TX_OPTIONS,
+    );
     return this.findOne(id);
   }
 
@@ -2678,7 +2687,7 @@ export class InvoicingService {
 
   /** Fase 1: correlativo y estado `ISSUED`, en su propia transacción. */
   private async assign(actor: RequestUser, id: string): Promise<void> {
-    await this.prisma.$transaction((tx) => this.assignInTx(tx, actor, id));
+    await this.prisma.$transaction((tx) => this.assignInTx(tx, actor, id), KARDEX_TX_OPTIONS);
   }
 
   /**

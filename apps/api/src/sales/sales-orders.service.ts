@@ -2222,7 +2222,7 @@ export class SalesOrdersService {
         entityId: quotationId,
         after: { code: quotationCode(head.seq), lines: released, reason },
       });
-    });
+    }, KARDEX_TX_OPTIONS);
   }
 
   /**

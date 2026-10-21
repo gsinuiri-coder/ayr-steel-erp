@@ -15,6 +15,7 @@ import {
   type InventoryQuery,
   type InventorySummaryDto,
   type PaginatedResult,
+  type RecostPendingDto,
   type SearchQuery,
 } from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
@@ -60,6 +61,13 @@ export class InventoryController {
     @Query(new ZodValidationPipe(inventoryQuerySchema)) query: InventoryQuery,
   ): Promise<PaginatedResult<InventoryMovementDto>> {
     return this.inventory.findMovements(query, canSeeCosts(actor));
+  }
+
+  /** cc63 (RC-01 de audit-02): recosteos por fecha que superaron el tope y siguen pendientes. */
+  @Get('recost-pending')
+  @Roles(Role.ADMINISTRADOR)
+  findPendingRecosts(): Promise<RecostPendingDto[]> {
+    return this.inventory.findPendingRecosts();
   }
 
   /**
