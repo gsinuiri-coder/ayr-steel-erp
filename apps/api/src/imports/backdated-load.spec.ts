@@ -296,3 +296,138 @@ describe('reviewBackdatedLoad (cc63)', () => {
     expect(addDaysIso('2026-10-14', 90)).toBe('2027-01-12');
   });
 });
+
+describe('cc64 (D-705): columnas opcionales y drywall', () => {
+  const info = new Map([
+    ['PERFIL-1', { drywall: false, needsLengths: false }],
+    ['COB030ROJO', { drywall: false, needsLengths: true }],
+    ['DRY-1', { drywall: true, needsLengths: false }],
+  ]);
+  const withInfo = (over: Partial<LoadContext> = {}) =>
+    ctx({ products: new Set(['PERFIL-1', 'COB030ROJO', 'DRY-1']), productInfo: info, ...over });
+
+  it('una línea a medida exige LARGOS que sumen la cantidad', () => {
+    const sheets = empty();
+    sheets.sales = [
+      sale({ 'CÓDIGO PRODUCTO': 'COB030ROJO', CANTIDAD: '12', 'SERIE - NÚMERO': 'FFA1-1' }),
+      sale({
+        'CÓDIGO PRODUCTO': 'COB030ROJO',
+        CANTIDAD: '12',
+        'SERIE - NÚMERO': 'FFA1-2',
+        LARGOS: '4,5x2; 3x1',
+      }),
+      sale({
+        'CÓDIGO PRODUCTO': 'COB030ROJO',
+        CANTIDAD: '12',
+        'SERIE - NÚMERO': 'FFA1-3',
+        LARGOS: '4.5 x 2;3x2',
+      }),
+      sale({
+        'CÓDIGO PRODUCTO': 'COB030ROJO',
+        CANTIDAD: '12',
+        'SERIE - NÚMERO': 'FFA1-4',
+        LARGOS: 'doce',
+      }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-5', LARGOS: '3x1' }),
+    ];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    // FFA1-2 (4,5 × 2 + 3 × 1 = 12 m) está bien; FFA1-3 suma 15 m.
+    expect(r.errors.map((e) => e.message)).toEqual([
+      'COB030ROJO es a medida: falta LARGOS (por ejemplo «4.5x10; 3x8», metros x piezas)',
+      'LARGOS suman 15.000 m y la cantidad es 12.000',
+      'LARGOS inválidos: «doce» (usa metros x piezas, separados por «;»)',
+    ]);
+    expect(r.warnings.map((w) => w.message)).toContain(
+      'PERFIL-1 no lleva largos: la columna LARGOS se ignora',
+    );
+  });
+
+  it('condición de pago y vencimiento', () => {
+    const sheets = empty();
+    sheets.sales = [
+      sale({
+        'SERIE - NÚMERO': 'FFA1-1',
+        'CONDICIÓN DE PAGO': 'Crédito',
+        VENCIMIENTO: '2026-11-20',
+      }),
+      sale({
+        'SERIE - NÚMERO': 'FFA1-2',
+        'CONDICIÓN DE PAGO': 'contado',
+        VENCIMIENTO: '2026-11-20',
+      }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-3', 'CONDICIÓN DE PAGO': 'a 30 días' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-4', VENCIMIENTO: '2026-10-01' }),
+    ];
+    expect(reviewBackdatedLoad(sheets, withInfo()).errors.map((e) => e.message)).toEqual([
+      'una venta al contado no lleva VENCIMIENTO',
+      'CONDICIÓN DE PAGO inválida: «a 30 días» (CONTADO o CRÉDITO)',
+      'el vencimiento 2026-10-01 es anterior a la emisión 2026-10-20',
+    ]);
+  });
+
+  it('modalidad del despacho: vacía avisa, entrega exige destino y ubigeo', () => {
+    const sheets = empty();
+    sheets.purchases = [purchase({ CANTIDAD: '100' })];
+    sheets.sales = [sale({ CANTIDAD: '40' })];
+    sheets.dispatches = [
+      dispatch({ CANTIDAD: '1' }),
+      dispatch({ CANTIDAD: '1', MODALIDAD: 'Recojo' }),
+      dispatch({ CANTIDAD: '1', MODALIDAD: 'ENTREGA' }),
+      dispatch({
+        CANTIDAD: '1',
+        MODALIDAD: 'entrega',
+        'DIRECCIÓN DESTINO': 'Av. Uno 123',
+        UBIGEO: '150101',
+      }),
+      dispatch({ CANTIDAD: '1', MODALIDAD: 'courier' }),
+    ];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    expect(r.errors.map((e) => [e.row, e.message])).toEqual([
+      [4, 'una entrega exige DIRECCIÓN DESTINO'],
+      [4, 'una entrega exige UBIGEO de 6 dígitos'],
+      [6, 'MODALIDAD inválida: «courier» (RECOJO o ENTREGA)'],
+    ]);
+    expect(
+      r.warnings.filter((w) => w.sheet === 'Despachos').map((w) => [w.row, w.message]),
+    ).toEqual([[2, 'sin MODALIDAD: se cargará como recojo']]);
+  });
+
+  it('un parte de drywall se carga a mano y no se simula', () => {
+    const sheets = empty();
+    sheets.sales = [sale({ 'CÓDIGO PRODUCTO': 'DRY-1' })];
+    sheets.production = [
+      {
+        'SERIE - NÚMERO': 'FFA1-1',
+        FECHA: '2026-10-21',
+        'CÓDIGO PRODUCTO': 'DRY-1',
+        CANTIDAD: '10',
+      },
+    ];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    expect(r.movements.planned).toBe(0);
+    expect(r.warnings.map((w) => w.message)).toContain(
+      'DRY-1 es de drywall: este parte se carga a mano (no se ejecuta ni se simula)',
+    );
+  });
+
+  it('la simulación carga cada paso por fecha, no en el orden del archivo', () => {
+    const sheets = empty();
+    sheets.purchases = [
+      purchase({ 'FECHA DE RECEPCIÓN': '2026-10-18', CANTIDAD: '5' }),
+      purchase({ 'SERIE-NÚMERO': 'F001-2', 'FECHA DE RECEPCIÓN': '2026-10-15', CANTIDAD: '5' }),
+    ];
+    sheets.sales = [sale()];
+    sheets.dispatches = [
+      dispatch({ FECHA: '2026-10-19', CANTIDAD: '5', MODALIDAD: 'RECOJO' }),
+      dispatch({ FECHA: '2026-10-16', CANTIDAD: '5', MODALIDAD: 'RECOJO' }),
+    ];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    expect(r.errors).toEqual([]);
+    // Por fecha: la compra del 15 no recostea la del 18, ni el despacho del 19 al del 16. Solo el
+    // despacho del 16 queda antes de la compra del 18 (las compras van todas primero): 1 fila.
+    // En el orden del archivo serían 2 recosteos, uno de 2 filas.
+    expect(r.recosts.map((x) => [x.sheet, x.date, x.rowsAfter])).toEqual([
+      ['Despachos', '2026-10-16', 1],
+    ]);
+  });
+});

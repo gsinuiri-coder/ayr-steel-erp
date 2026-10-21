@@ -140,7 +140,11 @@ export async function readManifest(
       };
     } else if (r.action === LOAD_OP_ACTION) {
       const key = String(after.key);
-      manifest.done.set(key, { step: after.step as LoadStep, ids: (after.ids ?? {}) as OpIds });
+      // La primera anotación manda: una segunda (la misma operación reconocida tras un corte) diría
+      // «adoptada» y la reversa saltaría lo que este lote sí creó.
+      if (!manifest.done.has(key)) {
+        manifest.done.set(key, { step: after.step as LoadStep, ids: (after.ids ?? {}) as OpIds });
+      }
       manifest.reverted.delete(key);
     } else if (r.action === LOAD_REVERTED_ACTION) {
       const key = String(after.key);
@@ -595,7 +599,7 @@ export class BackdatedLoadRunner {
       select: { id: true },
     });
     if (!doc) throw new Error(`${number}: el comprobante no está registrado`);
-    const reference = `CA ${this.batchId.slice(0, 12)} · ${op.reference}`.slice(0, 120);
+    const reference = loadReference(this.batchId, op.reference, 120);
     const idempotencyKey = this.key(op);
     await this.deps.receivables.addPayment(
       this.actor,
@@ -617,7 +621,7 @@ export class BackdatedLoadRunner {
   ): Promise<OpIds> {
     const purchase = await this.findPurchase(op.supplierRuc, op.document);
     if (!purchase) throw new Error(`${op.document}: la compra no está registrada`);
-    const reference = `CA ${this.batchId.slice(0, 12)} · ${op.reference}`.slice(0, 80);
+    const reference = loadReference(this.batchId, op.reference, 80);
     await this.deps.purchases.addPayment(
       this.actor,
       purchase.id,
@@ -779,4 +783,13 @@ export function takeFromPlan(
     if (left.isZero()) break;
   }
   return left.isZero() && out.length > 0 ? out : null;
+}
+
+/**
+ * La referencia de un cobro o pago de la carga: la marca del lote y la del Excel, ya recortada como
+ * la guarda el schema (sin espacios en los bordes), para poder encontrarla después.
+ */
+export function loadReference(batchId: string, reference: string, max: number): string {
+  const ref = reference.trim();
+  return `CA ${batchId.slice(0, 12)}${ref ? ` · ${ref}` : ''}`.slice(0, max).trim();
 }
