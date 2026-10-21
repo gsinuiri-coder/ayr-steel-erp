@@ -399,6 +399,11 @@ package.json pnpm-lock.yaml pnpm-workspace.yaml`. Exit 0 permite cerrar; exit 1 
   worktree nace con `local-data/` vacía y lo que guarda ahí —planes de dry-run, fotos de
   reportes, capturas— no está en git: borrar el worktree lo borra para siempre. Pasó con las
   capturas «antes» de M8 de correcciones 02 (`local-data/capturas-corr02/`), que se perdieron.
+- **Al terminar la limpieza, se actualiza el checkout principal (D-708):**
+  `git -C C:/Users/User/Documents/workspace/ayr/ayr-steel-erp pull --ff-only`, y el informe final
+  dice el SHA en que quedó. Si no avanza en fast-forward (cambios locales, o el checkout está en una
+  rama distinta de `main`), no se fuerza nada —ni `reset`, ni `stash`, ni `checkout`—: se para y se
+  reporta el mensaje exacto al dueño.
 
 ---
 
