@@ -177,7 +177,12 @@ de Neon (`GET /projects/{id}/endpoints`), con `NEON_API_KEY` en el header y nunc
 Existe para lo que antes se hacía contra producción: ensayar el flujo completo, capacitar a
 un vendedor, cargar datos de prueba y romperlos sin consecuencias.
 
-**Estado al 2026-10-20 (cc63): demo restablecida desde `production`** con OK del dueño (D-227), migrada y con el
+**Estado al 2026-10-21 (cc64): demo restablecida desde `production`** con OK del dueño (D-227) para el ensayo del
+cargador. Los lotes `ensayo-cc64` y `ensayo-cc64b` se cargaron y se revirtieron con `carga:revertir`: los reportes
+están como en `production` al restablecerla, más las cotizaciones, pedidos y compras anulados de los lotes. Está
+apagada: se levanta con `local-data/cc64/start-demo.mjs` del checkout principal.
+
+**Estado anterior, al 2026-10-20 (cc63): demo restablecida desde `production`** con OK del dueño (D-227), migrada y con el
 ensayo de la carga atrasada cargado (datos sintéticos «ensayo cc63»). Está apagada: se levanta con build de producción
 con el script de `local-data/cc63/start-demo.mjs` del worktree de cc63, copiado al checkout principal.
 

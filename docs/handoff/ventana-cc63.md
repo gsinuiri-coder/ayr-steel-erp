@@ -101,3 +101,9 @@ Los scripts y la evidencia (`ensayo.mjs`, `verificar.mjs`, `state.json`, `tiempo
 - **cc62:** el importador de saldos (al final de todo) y NC-02.
 - **cc64:** la venta del accesorio suelto (D-697).
 - **cc65:** higiene de auth y docs.
+
+## Registro posterior (21/10/2026)
+
+- D-701..D-704 ratificadas y UAT de cc63 aprobado por el dueño.
+- El cargador automático se hizo en cc64 (D-705..D-707), antes que la venta del accesorio suelto (D-697, pasa a
+  cc65) y la higiene de auth y docs (pasa a cc66).
