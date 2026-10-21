@@ -528,9 +528,17 @@ export class BackdatedLoadRunner {
         };
       }
     }
+    // Sin líneas de plan, la cantidad del pedido; en planchas de largo fijo es un conteo, y se pasa
+    // a metros para compararla con lo reportado.
+    const fixedLengthMm =
+      !isAccessory(po.product) && !detailsLengths(po.product) && po.product.lengthMm !== null
+        ? toDecimal(po.product.lengthMm.toString())
+        : null;
     const planMeters =
       po.items.length === 0
-        ? toDecimal(item.qty.toString())
+        ? fixedLengthMm
+          ? fixedLengthMm.times(item.qty.toString()).div(1000)
+          : toDecimal(item.qty.toString())
         : po.items.reduce(
             (acc, i) => acc.plus(toDecimal(i.lengthMm.toString()).times(i.qty).div(1000)),
             new Decimal(0),
