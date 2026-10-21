@@ -446,7 +446,15 @@ export class BackdatedLoadRunner {
         id: true,
         customerId: true,
         items: {
-          select: { id: true, qty: true, product: { select: { sku: true } } },
+          select: {
+            id: true,
+            qty: true,
+            product: { select: { sku: true } },
+            dispatchItems: {
+              where: { dispatch: { reversedAt: null } },
+              select: { qty: true },
+            },
+          },
           orderBy: { lineNumber: 'asc' },
         },
       },
@@ -464,7 +472,18 @@ export class BackdatedLoadRunner {
   private async runProduction(op: Extract<LoadOp, { step: 'production' }>): Promise<OpIds> {
     const { order } = await this.orderOf(op.document);
     if (!order) throw new Error(`${op.document}: el pedido no está confirmado`);
-    const item = order.items.find((i) => i.product.sku === op.sku);
+    const lines = order.items.filter((i) => i.product.sku === op.sku);
+    if (lines.length === 0) throw new Error(`${op.document}: el pedido no vende ${op.sku}`);
+    // Con varias líneas del mismo SKU, la primera cuya OP no está cerrada (autorrevisión, P1-1).
+    const open = await this.db.productionOrder.findFirst({
+      where: {
+        reservation: { salesOrderItemId: { in: lines.map((l) => l.id) } },
+        status: { notIn: ['CANCELLED', 'CLOSED'] },
+      },
+      orderBy: { seq: 'asc' },
+      select: { reservation: { select: { salesOrderItemId: true } } },
+    });
+    const item = lines.find((l) => l.id === open?.reservation?.salesOrderItemId) ?? lines[0];
     if (!item) throw new Error(`${op.document}: el pedido no vende ${op.sku}`);
     const po = await this.db.productionOrder.findFirst({
       where: { reservation: { salesOrderItemId: item.id }, status: { not: 'CANCELLED' } },
@@ -509,10 +528,13 @@ export class BackdatedLoadRunner {
         };
       }
     }
-    const planMeters = po.items.reduce(
-      (acc, i) => acc.plus(toDecimal(i.lengthMm.toString()).times(i.qty).div(1000)),
-      new Decimal(0),
-    );
+    const planMeters =
+      po.items.length === 0
+        ? toDecimal(item.qty.toString())
+        : po.items.reduce(
+            (acc, i) => acc.plus(toDecimal(i.lengthMm.toString()).times(i.qty).div(1000)),
+            new Decimal(0),
+          );
     const reportedMeters = po.reports.reduce(
       (acc, r) =>
         acc.plus(
@@ -548,10 +570,16 @@ export class BackdatedLoadRunner {
       addMeters = qty;
     }
     if (op.coil !== '') {
-      const coil = await this.db.coil.findFirst({
-        where: { status: { not: 'CANCELLED' }, OR: [{ code: op.coil }, { externalCode: op.coil }] },
-        select: { id: true },
-      });
+      const coil =
+        (await this.db.coil.findFirst({
+          where: { status: { not: 'CANCELLED' }, code: op.coil },
+          select: { id: true },
+        })) ??
+        (await this.db.coil.findFirst({
+          where: { status: { not: 'CANCELLED' }, externalCode: op.coil },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true },
+        }));
       if (!coil) throw new Error(`la bobina ${op.coil} no existe`);
       if (!po.consumptions.some((c) => c.coilId === coil.id)) {
         await this.deps.roofing.mountCoil(
@@ -565,6 +593,9 @@ export class BackdatedLoadRunner {
     const closes = reportedMeters.plus(addMeters).gte(planMeters);
     const base = {
       ...form,
+      ...(op.coilKg.trim() === ''
+        ? {}
+        : { consumedKg: amountOf(op.coilKg, `${op.document}: KG CONSUMIDOS`).toFixed(3) }),
       operationDate: op.date,
       confirmBackdate: true,
       idempotencyKey: this.key(op),
@@ -591,14 +622,17 @@ export class BackdatedLoadRunner {
   private async runDispatch(op: Extract<LoadOp, { step: 'dispatches' }>): Promise<OpIds> {
     const { order } = await this.orderOf(op.document);
     if (!order) throw new Error(`${op.document}: el pedido no está confirmado`);
-    const items = op.items.map((it) => {
-      const line = order.items.find((i) => i.product.sku === it.sku);
-      if (!line) throw new Error(`${op.document}: el pedido no vende ${it.sku}`);
-      return {
-        salesOrderItemId: line.id,
-        qty: amountOf(it.qty, `${op.document}: cantidad`).toFixed(3),
-      };
-    });
+    const items = allocateDispatch(
+      op.document,
+      order.items.map((i) => ({
+        id: i.id,
+        sku: i.product.sku,
+        pending: toDecimal(i.qty.toString()).minus(
+          i.dispatchItems.reduce((s, d) => s.plus(d.qty.toString()), new Decimal(0)),
+        ),
+      })),
+      op.items.map((it) => ({ sku: it.sku, qty: amountOf(it.qty, `${op.document}: cantidad`) })),
+    );
     // D-707: la entrega se registra con su destino real y sin datos de transporte: la guía
     // salió del otro sistema; acá queda como recojo.
     const delivery = op.mode === 'DELIVERY';
@@ -635,9 +669,13 @@ export class BackdatedLoadRunner {
     const { series, correlative, number } = this.numberOf(op.document);
     const existing = await this.db.fiscalDocument.findFirst({
       where: { number, archivedAt: null },
-      select: { id: true, status: true },
+      select: { id: true, status: true, salesOrderId: true },
     });
     if (existing?.status === 'ACCEPTED') {
+      const { order: mine } = await this.orderOf(op.document);
+      if (existing.salesOrderId !== mine?.id) {
+        throw new Error(`${number} ya está registrado y no es del pedido de esta venta`);
+      }
       return { invoiceId: existing.id, adopted: !this.resumed };
     }
     if (existing) {
@@ -654,8 +692,19 @@ export class BackdatedLoadRunner {
     const terms = op.paymentTerms ?? (customer.creditDays > 0 ? 'CREDITO' : 'CONTADO');
     const dispatches = await this.db.dispatch.findMany({
       where: { salesOrderId: order.id, reversedAt: null, invoiceId: null },
-      select: { id: true },
+      select: { id: true, items: { select: { salesOrderItemId: true, qty: true } } },
     });
+    // D-205: el comprobante declara el despacho que cubre. Se enlaza solo un despacho único que
+    // lleva todo el pedido; si no, el comprobante queda sin despacho declarado.
+    const covers = (d: (typeof dispatches)[number]) =>
+      order.items.every((i) =>
+        d.items
+          .filter((x) => x.salesOrderItemId === i.id)
+          .reduce((s, x) => s.plus(x.qty.toString()), new Decimal(0))
+          .eq(i.qty.toString()),
+      );
+    const linked =
+      dispatches.length === 1 && dispatches[0] && covers(dispatches[0]) ? dispatches[0] : null;
     const draft = await this.deps.invoicing.create(
       this.actor,
       createInvoiceSchema.parse({
@@ -665,7 +714,7 @@ export class BackdatedLoadRunner {
         issueDate: op.date,
         paymentTerms: terms,
         ...(terms === 'CREDITO' && op.dueDate ? { dueDate: op.dueDate } : {}),
-        ...(dispatches.length === 1 && dispatches[0] ? { dispatchId: dispatches[0].id } : {}),
+        ...(linked ? { dispatchId: linked.id } : {}),
         items: order.items.map((i) => ({ salesOrderItemId: i.id, qty: i.qty.toString() })),
         idempotencyKey: this.key(op),
       }),
@@ -876,6 +925,38 @@ export class BackdatedLoadRunner {
   }
 }
 
+/**
+ * Reparte las filas de un despacho entre las líneas del pedido con ese SKU, según lo que le falta a
+ * cada una, y suma las filas del mismo SKU (autorrevisión de cc64, P1-1 y P3-18).
+ */
+export function allocateDispatch(
+  document: string,
+  lines: readonly { id: string; sku: string; pending: Decimal }[],
+  rows: readonly { sku: string; qty: Decimal }[],
+): { salesOrderItemId: string; qty: string }[] {
+  const left = new Map(lines.map((l) => [l.id, l.pending]));
+  const out = new Map<string, Decimal>();
+  for (const row of rows) {
+    const candidates = lines.filter((l) => l.sku === row.sku);
+    if (candidates.length === 0) throw new Error(`${document}: el pedido no vende ${row.sku}`);
+    let need = row.qty;
+    for (const l of candidates) {
+      if (need.isZero()) break;
+      const room = Decimal.max(left.get(l.id) ?? new Decimal(0), new Decimal(0));
+      const take = Decimal.min(room, need);
+      if (take.gt(0)) {
+        out.set(l.id, (out.get(l.id) ?? new Decimal(0)).plus(take));
+        left.set(l.id, room.minus(take));
+        need = need.minus(take);
+      }
+    }
+    // Lo que no cabe va a la última línea: el servicio lo rechaza con su mensaje («de más»).
+    const last = candidates.at(-1);
+    if (need.gt(0) && last) out.set(last.id, (out.get(last.id) ?? new Decimal(0)).plus(need));
+  }
+  return [...out].map(([salesOrderItemId, qty]) => ({ salesOrderItemId, qty: qty.toFixed(3) }));
+}
+
 /** Una cantidad o un monto del Excel, con el mismo parser que la revisión (`1.234,50`, `1,234.50`). */
 function amountOf(text: string, label: string): Decimal {
   const value = parseAmount(text);
@@ -901,23 +982,32 @@ export function takeFromPlan(
       reported.set(k, (reported.get(k) ?? 0) + p.qty);
     }
   }
-  let left = meters;
-  const out: { lengthMm: string; qty: number }[] = [];
+  // Lo que queda de cada largo, en el orden del plan.
+  const free: { k: string; each: Decimal; qty: number }[] = [];
   for (const item of plan) {
     const k = toDecimal(item.lengthMm.toString()).toFixed(2);
     const done = Math.min(reported.get(k) ?? 0, item.qty);
     reported.set(k, (reported.get(k) ?? 0) - done);
-    const free = item.qty - done;
-    const each = toDecimal(k).div(1000);
-    let take = 0;
-    while (take < free && left.gte(each)) {
-      take += 1;
-      left = left.minus(each);
-    }
-    if (take > 0) out.push({ lengthMm: k, qty: take });
-    if (left.isZero()) break;
+    if (item.qty - done > 0) free.push({ k, each: toDecimal(k).div(1000), qty: item.qty - done });
   }
-  return left.isZero() && out.length > 0 ? out : null;
+  // Revisión de cc64 (P2-10): búsqueda exacta, prefiriendo los largos del principio del plan; un
+  // reparto voraz rechazaba combinaciones que sí existen.
+  const take: number[] = free.map(() => 0);
+  const search = (i: number, left: Decimal): boolean => {
+    if (left.isZero()) return true;
+    if (i >= free.length) return false;
+    const f = free[i];
+    if (!f) return false;
+    const max = Math.min(f.qty, left.div(f.each).floor().toNumber());
+    for (let n = max; n >= 0; n -= 1) {
+      take[i] = n;
+      if (search(i + 1, left.minus(f.each.times(n)))) return true;
+    }
+    take[i] = 0;
+    return false;
+  };
+  if (meters.lte(0) || !search(0, meters)) return null;
+  return free.flatMap((f, i) => ((take[i] ?? 0) > 0 ? [{ lengthMm: f.k, qty: take[i] ?? 0 }] : []));
 }
 
 /**

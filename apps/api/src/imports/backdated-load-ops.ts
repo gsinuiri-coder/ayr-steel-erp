@@ -64,6 +64,8 @@ export type LoadOp =
       sku: string;
       qty: string;
       coil: string;
+      /** KG CONSUMIDOS del Excel: el consumo real del parte (autorrevisión de cc64, P1-3). */
+      coilKg: string;
     })
   | (Base & {
       step: 'dispatches';
@@ -106,7 +108,15 @@ const cell = (raw: Record<string, unknown>, header: string) =>
   getField(raw, { key: header, header, required: false });
 const dateOf = (raw: Record<string, unknown>, header: string) =>
   parseCalendarDate(cell(raw, header)) ?? '';
-const rowNumber = (i: number) => i + 2;
+/**
+ * El número de fila del Excel. SheetJS lo deja en `__rowNum__` (base 0); sin él (filas armadas en
+ * memoria), la posición más el encabezado. Las filas en blanco se descartan al leer, así que la
+ * posición sola apuntaría a otra fila (autorrevisión de cc64, P3-20).
+ */
+export function rowNumber(i: number, raw?: Record<string, unknown>): number {
+  const n = (raw as { __rowNum__?: unknown } | undefined)?.__rowNum__;
+  return typeof n === 'number' ? n + 1 : i + 2;
+}
 const norm = (s: string) => s.trim().toUpperCase().replaceAll(/\s/g, '');
 
 /**
@@ -149,10 +159,19 @@ export function planLoadOps(
       rows: [],
     };
     op.raws.push(raw);
-    op.rows.push({ sheet: LOAD_SHEETS.purchases, row: rowNumber(i) });
+    op.rows.push({ sheet: LOAD_SHEETS.purchases, row: rowNumber(i, raw) });
     purchases.set(key, op);
   });
   ops.push(...purchases.values());
+
+  // La serie y el número como los escribe la hoja Ventas (el importador guarda ese texto en la
+  // cotización); las demás hojas la nombran igual salvo mayúsculas y espacios.
+  const rawDoc = new Map<string, string>();
+  for (const raw of sheets.sales) {
+    const text = cell(raw, QUOTATION_IMPORT_COLUMNS.documentKey).trim();
+    if (text !== '' && !rawDoc.has(norm(text))) rawDoc.set(norm(text), text);
+  }
+  const docOf = (doc: string) => rawDoc.get(doc) ?? doc;
 
   // 2. Ventas: importar la cotización y confirmar el pedido; sus datos del comprobante.
   const sales = new Map<string, Extract<LoadOp, { step: 'sales' }>>();
@@ -164,12 +183,12 @@ export function planLoadOps(
     }
     const doc = norm(cell(raw, QUOTATION_IMPORT_COLUMNS.documentKey));
     const date = dateOf(raw, QUOTATION_IMPORT_COLUMNS.issueDate);
-    const row = { sheet: LOAD_SHEETS.sales, row: rowNumber(i) };
+    const row = { sheet: LOAD_SHEETS.sales, row: rowNumber(i, raw) };
     const sale = sales.get(doc) ?? {
       step: 'sales' as const,
       key: `venta|${doc}`,
       date,
-      document: doc,
+      document: docOf(doc),
       raws: [],
       rows: [],
     };
@@ -181,7 +200,7 @@ export function planLoadOps(
       step: 'invoices' as const,
       key: `comprobante|${doc}`,
       date,
-      document: doc,
+      document: docOf(doc),
       docType: docType.includes('boleta') ? ('BOLETA' as const) : ('FACTURA' as const),
       paymentTerms: terms === 'INVALID' ? null : terms,
       dueDate: parseCalendarDate(cell(raw, LOAD_COLUMNS.dueDate.header)) ?? null,
@@ -194,7 +213,7 @@ export function planLoadOps(
     ops.push(sale);
     ops.push({
       step: 'orders',
-      key: `pedido|${sale.document}`,
+      key: `pedido|${sale.key.slice('venta|'.length)}`,
       date: sale.date,
       document: sale.document,
       rows: sale.rows,
@@ -205,7 +224,7 @@ export function planLoadOps(
   sheets.production.forEach((raw, i) => {
     const doc = norm(cell(raw, LOAD_COLUMNS.saleDocument.header));
     const sku = cell(raw, LOAD_COLUMNS.sku.header);
-    const row = { sheet: LOAD_SHEETS.production, row: rowNumber(i) };
+    const row = { sheet: LOAD_SHEETS.production, row: rowNumber(i, raw) };
     const key = `parte|${doc}|${sku}|${String(nth(`parte|${doc}|${sku}`))}`;
     if (productInfo.get(sku)?.drywall) {
       manual.push({ ...row, reason: `${sku} es de drywall: el parte se carga a mano` });
@@ -215,10 +234,11 @@ export function planLoadOps(
       step: 'production',
       key,
       date: dateOf(raw, LOAD_COLUMNS.date.header),
-      document: doc,
+      document: docOf(doc),
       sku,
       qty: cell(raw, LOAD_COLUMNS.qty.header),
       coil: cell(raw, LOAD_COLUMNS.coil.header),
+      coilKg: cell(raw, LOAD_COLUMNS.coilKg.header),
       rows: [row],
     });
   });
@@ -238,7 +258,7 @@ export function planLoadOps(
         step: 'dispatches',
         key: `despacho|${doc}|${date}|${String(nth(`despacho|${doc}|${date}`))}`,
         date,
-        document: doc,
+        document: docOf(doc),
         items: [],
         mode,
         destination,
@@ -251,7 +271,7 @@ export function planLoadOps(
       sku: cell(raw, LOAD_COLUMNS.sku.header),
       qty: cell(raw, LOAD_COLUMNS.qty.header),
     });
-    op.rows.push({ sheet: LOAD_SHEETS.dispatches, row: rowNumber(i) });
+    op.rows.push({ sheet: LOAD_SHEETS.dispatches, row: rowNumber(i, raw) });
   });
   ops.push(...dispatches.values());
 
@@ -265,11 +285,11 @@ export function planLoadOps(
       step: 'collections',
       key: `cobro|${doc}|${String(nth(`cobro|${doc}`))}`,
       date: dateOf(raw, LOAD_COLUMNS.date.header),
-      document: doc,
+      document: docOf(doc),
       amount: cell(raw, LOAD_COLUMNS.amount.header),
       method: cell(raw, LOAD_COLUMNS.method.header),
       reference: cell(raw, LOAD_COLUMNS.reference.header),
-      rows: [{ sheet: LOAD_SHEETS.collections, row: rowNumber(i) }],
+      rows: [{ sheet: LOAD_SHEETS.collections, row: rowNumber(i, raw) }],
     });
   });
   sheets.supplierPayments.forEach((raw, i) => {
@@ -284,7 +304,7 @@ export function planLoadOps(
       amount: cell(raw, LOAD_COLUMNS.amount.header),
       method: cell(raw, LOAD_COLUMNS.method.header),
       reference: cell(raw, LOAD_COLUMNS.reference.header),
-      rows: [{ sheet: LOAD_SHEETS.supplierPayments, row: rowNumber(i) }],
+      rows: [{ sheet: LOAD_SHEETS.supplierPayments, row: rowNumber(i, raw) }],
     });
   });
 

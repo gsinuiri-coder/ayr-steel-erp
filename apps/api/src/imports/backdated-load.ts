@@ -6,7 +6,7 @@ import {
   purchaseTypeOf,
   QUOTATION_IMPORT_COLUMNS,
 } from '@ayr/shared';
-import { parseAmount } from './opening-balances-plan';
+import { parseAmount, parseMethod } from './opening-balances-plan';
 import {
   firstNegativeDate,
   firstValidDate,
@@ -199,6 +199,8 @@ export interface LoadContext {
   coils: ReadonlySet<string>;
   /** cc64 (D-705): lo que se sabe de cada SKU que existe (drywall, largos). Sin él, nada se marca. */
   productInfo?: ReadonlyMap<string, LoadProductInfo>;
+  /** cc64: documentos (RUC o DNI) de clientes que existen. Sin él, no se avisa de clientes nuevos. */
+  customers?: ReadonlySet<string>;
 }
 
 export interface LoadIssue {
@@ -260,8 +262,9 @@ export function addDaysIso(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function rowNumber(i: number): number {
-  return i + 2;
+function rowNumber(i: number, raw?: Record<string, unknown>): number {
+  const n = (raw as { __rowNum__?: unknown } | undefined)?.__rowNum__;
+  return typeof n === 'number' ? n + 1 : i + 2;
 }
 
 function cell(raw: Record<string, unknown>, header: string, required = true): string {
@@ -325,7 +328,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   const purchaseDocs = new Map<string, string>();
   sheets.purchases.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.purchases;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = `${rawToString(cell(raw, PURCHASE_IMPORT_COLUMNS.supplierRuc.header))} · ${cell(raw, PURCHASE_IMPORT_COLUMNS.document.header)}`;
     const issue = dateOf(
       sheet,
@@ -409,7 +412,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   >();
   sheets.sales.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.sales;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, QUOTATION_IMPORT_COLUMNS.documentKey);
     // Autorrevisión de cc63: el importador de cotizaciones salta las notas de crédito del export
     // (D-152); la revisión también.
@@ -432,6 +435,22 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     }
     const sku = cell(raw, QUOTATION_IMPORT_COLUMNS.sku);
     if (!ctx.products.has(sku)) err(sheet, row, `el SKU ${sku} no existe en el catálogo`);
+    const customerDoc = /^(\d{8,11})\s*-/.exec(cell(raw, QUOTATION_IMPORT_COLUMNS.customer))?.[1];
+    if (ctx.customers && !sales.has(doc)) {
+      if (!customerDoc) {
+        err(
+          sheet,
+          row,
+          `CLIENTE sin RUC o DNI al inicio: «${cell(raw, QUOTATION_IMPORT_COLUMNS.customer)}»`,
+        );
+      } else if (!ctx.customers.has(customerDoc)) {
+        warn(
+          sheet,
+          row,
+          `el cliente ${customerDoc} no está en el maestro: se dará de alta desde el padrón al cargar (consulta externa)`,
+        );
+      }
+    }
     const q = qtyOf(sheet, row, cell(raw, QUOTATION_IMPORT_COLUMNS.qty), 'La cantidad') ?? ZERO;
     const netCell = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.netAmount));
     if (netCell === null)
@@ -521,7 +540,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   const producedBySale = new Map<string, Decimal>();
   sheets.production.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.production;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, LOAD_COLUMNS.saleDocument.header);
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del parte');
     const sku = cell(raw, LOAD_COLUMNS.sku.header);
@@ -544,6 +563,9 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       return;
     }
     const coil = cell(raw, LOAD_COLUMNS.coil.header, false);
+    if (coil === '') {
+      warn(sheet, row, 'sin CÓDIGO BOBINA: la OP tiene que tener ya una bobina montada');
+    }
     if (coil !== '') {
       const kg = qtyOf(
         sheet,
@@ -590,7 +612,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     const [doc, sku] = key.split('|') as [string, string];
     const sold = sales.get(doc)?.qtyBySku.get(sku);
     if (sold && made.gt(sold)) {
-      warn(
+      err(
         LOAD_SHEETS.production,
         null,
         `${doc} produce ${made.toFixed(3)} de ${sku} y vendió ${sold.toFixed(3)}`,
@@ -602,7 +624,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   const dispatchedBySale = new Map<string, Decimal>();
   sheets.dispatches.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.dispatches;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, LOAD_COLUMNS.saleDocument.header);
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del despacho');
     const sku = cell(raw, LOAD_COLUMNS.sku.header);
@@ -637,15 +659,23 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     movements.push({ sheet, row, itemKey: `PRODUCT:${sku}`, date, qty: q, type: 'OUT', step: 4 });
   });
 
+  // Autorrevisión de cc64 (P3-17): un medio que no se entiende se carga como «Otro»; se avisa.
+  const unknownMethod = (sheet: string, row: number, text: string) => {
+    if (text.trim() !== '' && parseMethod(text) === null) {
+      warn(sheet, row, `MEDIO DE PAGO desconocido: «${text.trim()}»; se registra como «Otro»`);
+    }
+  };
+
   // 5. Cobros y pagos: fechas y montos contra su comprobante.
   const collected = new Map<string, Decimal>();
   sheets.collections.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.collections;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, LOAD_COLUMNS.saleDocument.header);
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del cobro');
     const amount = qtyOf(sheet, row, cell(raw, LOAD_COLUMNS.amount.header), 'El monto');
     if (!date || !amount) return;
+    unknownMethod(sheet, row, cell(raw, LOAD_COLUMNS.method.header, false));
     const sale = sales.get(doc);
     if (!sale) {
       err(sheet, row, `${doc} no está en la hoja de ventas`);
@@ -662,10 +692,11 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   });
   sheets.supplierPayments.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.supplierPayments;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = `${rawToString(cell(raw, LOAD_COLUMNS.supplierRuc.header))} · ${cell(raw, LOAD_COLUMNS.purchaseDocument.header)}`;
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del pago');
     if (!date || !qtyOf(sheet, row, cell(raw, LOAD_COLUMNS.amount.header), 'El monto')) return;
+    unknownMethod(sheet, row, cell(raw, LOAD_COLUMNS.method.header, false));
     const issue = purchaseDocs.get(doc);
     if (issue && date < issue)
       warn(sheet, row, `el pago del ${date} es anterior a la emisión de la compra (${issue})`);

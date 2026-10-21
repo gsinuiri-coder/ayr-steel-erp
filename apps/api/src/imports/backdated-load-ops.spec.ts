@@ -1,7 +1,7 @@
 import { Decimal } from '@ayr/shared';
 import type { Sheets } from './backdated-load';
 import { idempotencyKeyOf, planLoadOps } from './backdated-load-ops';
-import { loadReference, takeFromPlan } from './backdated-load-runner';
+import { allocateDispatch, loadReference, takeFromPlan } from './backdated-load-runner';
 
 /** cc64 (D-705): las operaciones del cargador, en orden y con clave estable. */
 const empty = (): Sheets => ({
@@ -153,5 +153,58 @@ describe('loadReference (cc64)', () => {
     expect(loadReference('lote-123456789012345', '', 80)).toBe('CA lote-1234567');
     expect(loadReference('lote-1', ' op 55 ', 80)).toBe('CA lote-1 · op 55');
     expect(loadReference('lote-1', 'x'.repeat(200), 30)).toHaveLength(30);
+  });
+});
+
+describe('revisiones de cc64: reparto, búsqueda exacta y documento', () => {
+  it('takeFromPlan encuentra la combinación aunque el reparto voraz no la vea', () => {
+    const plan = [
+      { lineNumber: 1, lengthMm: '3000.00', qty: 1 },
+      { lineNumber: 2, lengthMm: '2000.00', qty: 3 },
+    ];
+    expect(takeFromPlan(plan, [], new Decimal('6'))).toEqual([{ lengthMm: '2000.00', qty: 3 }]);
+    expect(takeFromPlan(plan, [], new Decimal('9'))).toEqual([
+      { lengthMm: '3000.00', qty: 1 },
+      { lengthMm: '2000.00', qty: 3 },
+    ]);
+  });
+
+  it('allocateDispatch reparte entre líneas del mismo SKU según lo que falta y suma filas', () => {
+    const lines = [
+      { id: 'l1', sku: 'A', pending: new Decimal('3') },
+      { id: 'l2', sku: 'A', pending: new Decimal('5') },
+      { id: 'l3', sku: 'B', pending: new Decimal('2') },
+    ];
+    expect(
+      allocateDispatch('F1', lines, [
+        { sku: 'A', qty: new Decimal('4') },
+        { sku: 'A', qty: new Decimal('2') },
+        { sku: 'B', qty: new Decimal('2') },
+      ]),
+    ).toEqual([
+      { salesOrderItemId: 'l1', qty: '3.000' },
+      { salesOrderItemId: 'l2', qty: '3.000' },
+      { salesOrderItemId: 'l3', qty: '2.000' },
+    ]);
+    // Lo que no cabe va a la última línea y el servicio lo rechaza con su mensaje.
+    expect(allocateDispatch('F1', lines, [{ sku: 'B', qty: new Decimal('3') }])).toEqual([
+      { salesOrderItemId: 'l3', qty: '3.000' },
+    ]);
+    expect(() => allocateDispatch('F1', lines, [{ sku: 'C', qty: new Decimal('1') }])).toThrow(
+      'F1: el pedido no vende C',
+    );
+  });
+
+  it('la serie y el número de las operaciones son los de la hoja Ventas; la clave, normalizada', () => {
+    const sheets = empty();
+    sheets.sales = [{ 'F. EMISIÓN': '2026-10-14', 'SERIE - NÚMERO': 'f930 - 1' }];
+    sheets.collections = [{ 'SERIE - NÚMERO': 'F930-1', FECHA: '2026-10-15', MONTO: '1' }];
+    const { ops } = planLoadOps(sheets);
+    expect(ops.map((o) => [o.key, 'document' in o ? o.document : ''])).toEqual([
+      ['venta|F930-1', 'f930 - 1'],
+      ['pedido|F930-1', 'f930 - 1'],
+      ['comprobante|F930-1', 'f930 - 1'],
+      ['cobro|F930-1|1', 'f930 - 1'],
+    ]);
   });
 });

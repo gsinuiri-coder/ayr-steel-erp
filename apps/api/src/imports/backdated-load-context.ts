@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { detailsLengths } from '@ayr/shared';
+import { detailsLengths, QUOTATION_IMPORT_COLUMNS } from '@ayr/shared';
 import { qtyRowsOf } from '../inventory/inventory-recost';
 import type { QtyRow } from '../inventory/recost-engine';
 import * as XLSX from 'xlsx';
@@ -88,9 +88,20 @@ export async function loadReviewContext(
       }
     }
   }
+  const customerDocs = sheets.sales.flatMap((r) => {
+    const m = /^(\d{8,11})\s*-/.exec(
+      getField(r, { key: 'customer', header: QUOTATION_IMPORT_COLUMNS.customer, required: false }),
+    );
+    return m?.[1] ? [m[1]] : [];
+  });
+  const customers = await tx.customer.findMany({
+    where: { docNumber: { in: [...new Set(customerDocs)] } },
+    select: { docNumber: true },
+  });
   return {
     loadDate: opts.loadDate,
     historicalFloor: opts.historicalFloor,
+    customers: new Set(customers.map((c) => c.docNumber)),
     kardex,
     products: new Set(products.map((p) => p.sku)),
     coils: coilNames,

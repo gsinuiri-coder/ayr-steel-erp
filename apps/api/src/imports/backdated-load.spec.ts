@@ -183,7 +183,7 @@ describe('reviewBackdatedLoad (cc63)', () => {
     expect(r.errors.map((e) => e.sheet)).toEqual(['Producción', 'Despachos']);
   });
 
-  it('revisión H-2 y H-3: producir de más avisa; un valor de venta ilegible es error', () => {
+  it('revisión H-2 y H-3: producir de más es error (cc64); un valor de venta ilegible también', () => {
     const sheets = empty();
     sheets.sales = [sale({ 'VALOR DE VENTA': 'abc' })];
     sheets.production = [
@@ -196,7 +196,7 @@ describe('reviewBackdatedLoad (cc63)', () => {
     ];
     const r = reviewBackdatedLoad(sheets, ctx());
     expect(r.errors.map((e) => e.message)).toContain('valor de venta inválido: «abc»');
-    expect(r.warnings.map((w) => w.message)).toContain(
+    expect(r.errors.map((e) => e.message)).toContain(
       'FFA1-1 produce 12.000 de PERFIL-1 y vendió 10.000',
     );
   });
@@ -476,5 +476,38 @@ describe('cc64: una bobina no pasa a otra OP mientras la primera no se completa'
       part('FFA1-2', '2026-10-17', '10'),
     ];
     expect(reviewBackdatedLoad(sheets, ctx()).errors).toEqual([]);
+  });
+});
+
+describe('autorrevisión de cc64: cliente nuevo, parte sin bobina y medio desconocido', () => {
+  it('avisa lo que el cargador va a resolver solo o va a necesitar', () => {
+    const sheets = empty();
+    sheets.sales = [
+      sale({ 'SERIE - NÚMERO': 'FFA1-1', CLIENTE: '20111111111 - Cliente conocido' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-2', CLIENTE: '20999999999 - Cliente nuevo' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-3', CLIENTE: 'Sin documento' }),
+    ];
+    sheets.production = [
+      {
+        'SERIE - NÚMERO': 'FFA1-1',
+        FECHA: '2026-10-21',
+        'CÓDIGO PRODUCTO': 'PERFIL-1',
+        CANTIDAD: '1',
+      },
+    ];
+    sheets.collections = [
+      { 'SERIE - NÚMERO': 'FFA1-1', FECHA: '2026-10-21', MONTO: '10', 'MEDIO DE PAGO': 'trueque' },
+    ];
+    const r = reviewBackdatedLoad(sheets, ctx({ customers: new Set(['20111111111']) }));
+    expect(r.errors.map((e) => e.message)).toContain(
+      'CLIENTE sin RUC o DNI al inicio: «Sin documento»',
+    );
+    expect(r.warnings.map((w) => w.message)).toEqual(
+      expect.arrayContaining([
+        'el cliente 20999999999 no está en el maestro: se dará de alta desde el padrón al cargar (consulta externa)',
+        'sin CÓDIGO BOBINA: la OP tiene que tener ya una bobina montada',
+        'MEDIO DE PAGO desconocido: «trueque»; se registra como «Otro»',
+      ]),
+    );
   });
 });
