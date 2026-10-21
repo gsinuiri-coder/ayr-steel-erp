@@ -31,6 +31,11 @@ description: 'Cierra una sesión de AYR Steel ERP después de revisión y QA: co
    despliegues de Vercel en GitHub como prueba. Si falla **solo** «web publicada» con `health` y
    las lecturas en verde, no hay vuelta atrás: se reintenta el despliegue de la web, se repite el
    smoke y se avisa al dueño (D-644).
+9. Al terminar la limpieza (worktree, ramas, bases y procesos; `AGENTS.md` §4), actualiza el
+   checkout principal con
+   `git -C C:/Users/User/Documents/workspace/ayr/ayr-steel-erp pull --ff-only` y reporta el SHA en
+   que quedó (D-708). Si no avanza en fast-forward —cambios locales o una rama distinta de `main`—,
+   no fuerces nada (ni `reset`, ni `stash`, ni `checkout`): para y reporta el mensaje exacto.
 
 Fuentes: protocolo de cierre de `AGENTS.md` §5 y `$ayr-handoff`. No existe un
 comando `/goal` versionado; no se inventa uno.
