@@ -431,3 +431,50 @@ describe('cc64 (D-705): columnas opcionales y drywall', () => {
     ]);
   });
 });
+
+describe('cc64: una bobina no pasa a otra OP mientras la primera no se completa', () => {
+  it('la segunda OP con la misma bobina se rechaza hasta que la primera completa lo vendido', () => {
+    const sheets = empty();
+    sheets.purchases = [
+      purchase({
+        SKU: '',
+        'TIPO DE COMPRA': 'BOBINAS',
+        KG: '5000',
+        'CÓDIGO EXTERNO': 'EXT-1',
+        'FECHA DE RECEPCIÓN': '2026-10-14',
+      }),
+    ];
+    sheets.sales = [
+      sale({ 'SERIE - NÚMERO': 'FFA1-1', 'CÓDIGO PRODUCTO': 'COB030ROJO', CANTIDAD: '10' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-2', 'CÓDIGO PRODUCTO': 'COB030ROJO', CANTIDAD: '10' }),
+    ];
+    const part = (doc: string, date: string, qty: string) => ({
+      'SERIE - NÚMERO': doc,
+      FECHA: date,
+      'CÓDIGO PRODUCTO': 'COB030ROJO',
+      CANTIDAD: qty,
+      'CÓDIGO BOBINA': 'EXT-1',
+      'KG CONSUMIDOS': '50',
+    });
+    // FFA1-1 hace 5 de 10 el 15; FFA1-2 quiere la bobina el 16; FFA1-1 completa el 17.
+    sheets.production = [
+      part('FFA1-1', '2026-10-15', '5'),
+      part('FFA1-2', '2026-10-16', '10'),
+      part('FFA1-1', '2026-10-17', '5'),
+    ];
+    const r = reviewBackdatedLoad(sheets, ctx());
+    expect(r.errors.map((e) => [e.row, e.message])).toEqual([
+      [
+        3,
+        'bobina EXT-1 sigue montada en la OP de FFA1-1 · COB030ROJO, que no está completa: usa otra bobina o completa esa OP antes del 2026-10-16',
+      ],
+    ]);
+    // Con FFA1-2 después de que FFA1-1 se completa, pasa.
+    sheets.production = [
+      part('FFA1-1', '2026-10-15', '5'),
+      part('FFA1-1', '2026-10-16', '5'),
+      part('FFA1-2', '2026-10-17', '10'),
+    ];
+    expect(reviewBackdatedLoad(sheets, ctx()).errors).toEqual([]);
+  });
+});

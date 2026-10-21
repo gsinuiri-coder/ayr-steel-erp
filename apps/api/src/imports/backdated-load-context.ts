@@ -64,6 +64,7 @@ export async function loadReviewContext(
   });
   const coils = await tx.coil.findMany({
     where: {
+      status: { not: 'CANCELLED' },
       OR: [{ code: { in: [...named.coils] } }, { externalCode: { in: [...named.coils] } }],
     },
     select: { id: true, code: true, externalCode: true },

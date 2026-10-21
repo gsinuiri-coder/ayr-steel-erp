@@ -241,6 +241,10 @@ interface Movement {
   step: number;
   /** Una salida de bobina para producir: lo producido recostea en cascada. */
   producesKey?: string;
+  /** cc64: la OP del parte (venta y SKU), lo que vendió y la bobina que lo alimenta. */
+  opKey?: string;
+  opTarget?: Decimal;
+  coilKey?: string;
   /**
    * Revisión de cc63 (H-1): el parte es una sola operación. Si la salida de la bobina se rechaza,
    * la entrada del producto tampoco entra (en el sistema real el parte falla entero).
@@ -561,6 +565,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
         type: 'OUT',
         step: 3,
         producesKey: `PRODUCT:${sku}`,
+        opKey: `${doc}|${sku}`,
         part: i,
       });
     }
@@ -573,6 +578,9 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       type: 'IN',
       step: 3,
       part: i,
+      opKey: `${doc}|${sku}`,
+      opTarget: sale?.qtyBySku.get(sku),
+      ...(coil === '' ? {} : { coilKey: `COIL:${coil}` }),
     });
     producedBySale.set(`${doc}|${sku}`, (producedBySale.get(`${doc}|${sku}`) ?? ZERO).plus(q));
   });
@@ -680,6 +688,11 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   };
   let rejected = 0;
   const failedParts = new Set<number>();
+  // cc64: una bobina que ya alimentó un parte de una OP solo se baja de ella cuando la OP se
+  // cierra (`releaseCoil` rechaza con kilos consumidos). Mientras la OP de una venta y un SKU no
+  // complete lo vendido, su bobina no puede alimentar otra OP.
+  const coilHolder = new Map<string, string>();
+  const madeByOp = new Map<string, Decimal>();
   // cc64: el cargador carga cada paso de la fecha más antigua a la más nueva; la revisión, igual.
   const ordered = movements
     .map((m, i) => ({ m, i }))
@@ -687,6 +700,19 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     .map((x) => x.m);
   for (const m of ordered) {
     if (m.part !== undefined && failedParts.has(m.part)) continue;
+    if (m.opKey !== undefined && m.producesKey !== undefined) {
+      const holder = coilHolder.get(m.itemKey);
+      if (holder !== undefined && holder !== m.opKey) {
+        err(
+          m.sheet,
+          m.row,
+          `${labelOf(m.itemKey)} sigue montada en la OP de ${holder.replace('|', ' · ')}, que no está completa: usa otra bobina o completa esa OP antes del ${m.date}`,
+        );
+        rejected += 1;
+        if (m.part !== undefined) failedParts.add(m.part);
+        continue;
+      }
+    }
     const list = rowsOf(m.itemKey);
     const at = insertAt(list, m.date);
     let rowsAfter = list.length - at;
@@ -722,6 +748,16 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       });
     }
     list.splice(at, 0, { date: m.date, delta: m.type === 'IN' ? m.qty : m.qty.negated() });
+    // La OP de esta venta y este SKU: con su bobina ocupada hasta completar lo vendido.
+    if (m.opKey !== undefined && m.type === 'IN' && m.step === 3) {
+      const made = (madeByOp.get(m.opKey) ?? ZERO).plus(m.qty);
+      madeByOp.set(m.opKey, made);
+      const coilKey = m.coilKey;
+      if (coilKey !== undefined) {
+        if (made.gte(m.opTarget ?? made)) coilHolder.delete(coilKey);
+        else coilHolder.set(coilKey, m.opKey);
+      }
+    }
   }
   for (const r of recosts.filter((x) => x.overLimit)) {
     warn(

@@ -471,7 +471,7 @@ export class BackdatedLoadRunner {
     }
     if (op.coil !== '') {
       const coil = await this.db.coil.findFirst({
-        where: { OR: [{ code: op.coil }, { externalCode: op.coil }] },
+        where: { status: { not: 'CANCELLED' }, OR: [{ code: op.coil }, { externalCode: op.coil }] },
         select: { id: true },
       });
       if (!coil) throw new Error(`la bobina ${op.coil} no existe`);
