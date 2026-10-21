@@ -555,11 +555,20 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     }
     // cc64 (D-705): la producción de drywall sale de flejes de un corte que el plan no trae.
     if (ctx.productInfo?.get(sku)?.drywall) {
-      warn(
+      warn(sheet, row, `${sku} es de drywall: este parte se carga a mano (no se ejecuta)`);
+      // Lo que produce sí entra a la simulación: sin él, su despacho daría un negativo falso. El
+      // consumo de flejes no se simula (sale de un corte que el plan no trae).
+      movements.push({
         sheet,
         row,
-        `${sku} es de drywall: este parte se carga a mano (no se ejecuta ni se simula)`,
-      );
+        itemKey: `PRODUCT:${sku}`,
+        date,
+        qty: q,
+        type: 'IN',
+        step: 3,
+        part: i,
+      });
+      producedBySale.set(`${doc}|${sku}`, (producedBySale.get(`${doc}|${sku}`) ?? ZERO).plus(q));
       return;
     }
     const coil = cell(raw, LOAD_COLUMNS.coil.header, false);

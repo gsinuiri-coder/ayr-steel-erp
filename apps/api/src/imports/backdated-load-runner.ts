@@ -755,7 +755,11 @@ export class BackdatedLoadRunner {
   ): Promise<OpIds> {
     const purchase = await this.findPurchase(op.supplierRuc, op.document);
     if (!purchase) throw new Error(`${op.document}: la compra no está registrada`);
-    const reference = loadReference(this.batchId, op.reference, 80);
+    // El servicio no devuelve el id del pago: se lo busca por su referencia, que lleva el número
+    // del pago dentro de la compra para que dos pagos sin REFERENCIA no se confundan
+    // (autorrevisión de cc64, P3-19).
+    const nth = op.key.split('|').at(-1) ?? '1';
+    const reference = loadReference(this.batchId, `#${nth} ${op.reference}`, 80);
     await this.deps.purchases.addPayment(
       this.actor,
       purchase.id,

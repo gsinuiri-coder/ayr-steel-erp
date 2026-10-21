@@ -392,7 +392,7 @@ describe('cc64 (D-705): columnas opcionales y drywall', () => {
     ).toEqual([[2, 'sin MODALIDAD: se cargará como recojo']]);
   });
 
-  it('un parte de drywall se carga a mano y no se simula', () => {
+  it('un parte de drywall se carga a mano; su producto entra a la simulación y se despacha', () => {
     const sheets = empty();
     sheets.sales = [sale({ 'CÓDIGO PRODUCTO': 'DRY-1' })];
     sheets.production = [
@@ -403,10 +403,13 @@ describe('cc64 (D-705): columnas opcionales y drywall', () => {
         CANTIDAD: '10',
       },
     ];
+    sheets.dispatches = [dispatch({ 'CÓDIGO PRODUCTO': 'DRY-1', MODALIDAD: 'RECOJO' })];
     const r = reviewBackdatedLoad(sheets, withInfo());
-    expect(r.movements.planned).toBe(0);
+    // Sin la entrada del parte a mano, el despacho daría un negativo falso y frenaría la carga.
+    expect(r.errors).toEqual([]);
+    expect(r.movements.planned).toBe(2);
     expect(r.warnings.map((w) => w.message)).toContain(
-      'DRY-1 es de drywall: este parte se carga a mano (no se ejecuta ni se simula)',
+      'DRY-1 es de drywall: este parte se carga a mano (no se ejecuta)',
     );
   });
 
