@@ -2,6 +2,38 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-20 — cc63: topes de audit-02, recosteos pendientes y carga atrasada (D-701..D-704; PR #242)
+
+Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc63.md`; UAT en
+`docs/uat/cc63.md`; operación en `docs/operacion/carga-atrasada.md`; revisión en `docs/revision/cc63-segundo-modelo.md`.
+
+- **API:** `00149-798` (`git-sha=3d2425c4`).
+- **Merge:** `11152d28`, que publicó la web en las dos URLs.
+- **Smoke:** en verde.
+- **Registro del dueño (20/10):** D-698..D-700 ratificadas y UAT de cc61 aprobado.
+- **A2-01, respuesta del dueño (20/10):** el cliente trabaja por fuera desde mediados de octubre y va a cargar todo
+  después:
+  - ventas por el importador de cotizaciones;
+  - compras con su fecha;
+  - producción a mano con fecha atrasada.
+
+  Vuelve a la app cuando vea que funciona sin errores. La carga será de golpe, de semanas.
+
+- **Ensayo en demo:** 0 rechazos y los reportes cuadran.
+  - Encontró D-701 (el cierre atrasado se trababa) y quedó corregido.
+  - Demo restablecida desde producción con el ensayo cargado; apagada al cerrar.
+- **Riesgo para la carga real:** la emisión acepta hasta 90 días atrás. Lo más antiguo (14/10/2026) se puede registrar
+  hasta el **12/01/2027**.
+- **Pendiente del dueño:**
+  - ratificar D-701..D-704 y hacer el UAT de cc63;
+  - decidir el cargador automático desde la plantilla.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-701: `roofing-production.service.ts` y `production.service.ts` (ajuste de cierre), `purchases.service.ts`
+  (corte tercerizado).
+- D-702: `recost-pending.ts`, `recostForward` en modo histórico.
+
 ## 2026-10-20 — cc61: P1 de audit-02, vencimiento editable e importador (D-698..D-700; PR #240)
 
 Sin migración y sin SQL contra producción. Un `--execute` con OK del dueño por nombre. Detalle en

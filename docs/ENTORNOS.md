@@ -177,7 +177,11 @@ de Neon (`GET /projects/{id}/endpoints`), con `NEON_API_KEY` en el header y nunc
 Existe para lo que antes se hacía contra producción: ensayar el flujo completo, capacitar a
 un vendedor, cargar datos de prueba y romperlos sin consecuencias.
 
-**Estado al 2026-10-10 (cc43): demo está apagada.** El `pnpm dev:demo` que corría desde cc38 en
+**Estado al 2026-10-20 (cc63): demo restablecida desde `production`** con OK del dueño (D-227), migrada y con el
+ensayo de la carga atrasada cargado (datos sintéticos «ensayo cc63»). Está apagada: se levanta con build de producción
+con el script de `local-data/cc63/start-demo.mjs` del worktree de cc63, copiado al checkout principal.
+
+**Estado anterior, al 2026-10-10 (cc43): demo está apagada.** El `pnpm dev:demo` que corría desde cc38 en
 3100/3101, con código anterior, se detuvo. La rama Neon `demo` y sus datos siguen intactos, pero
 **no tienen la migración de cc41** (D-591). Antes de volver a usarla se restablece desde
 `production` con OK del dueño (D-227; ver «Rehacer demo desde producción», más abajo). Para los

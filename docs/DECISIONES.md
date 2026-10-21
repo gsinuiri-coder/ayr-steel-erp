@@ -2949,3 +2949,40 @@ vencimiento vigente es el de la nota y el cambio no se vería.
 fracción de céntimo no es deuda, y se redondea HALF_UP. Redondear hacia arriba lo debido al corte pedía un céntimo de
 más cuando el total tenía cuatro decimales, y en compras el saldo de hoy va hacia abajo (D-039), así que el lote entero
 se rechazaba.
+
+## Registro del dueño (2026-10-20, pieza cc61 y A2-01)
+
+- **D-698, D-699 y D-700 ratificadas**, y el UAT de cc61 aprobado. Pasan a firmes en `ARQUITECTURA.md` §0.2.
+- **A2-01 (¿el cliente sigue usando la app?):** el cliente trabaja por fuera desde mediados de octubre y va a cargar
+  todo después:
+  - las ventas siguen en el otro sistema de facturación y entran por el importador de cotizaciones;
+  - las compras se registran o importan con su fecha;
+  - la producción está en Excel y se registra a mano con fecha atrasada.
+
+  Volverán a la app cuando el cliente vea que funciona sin errores y cumple sus requisitos. La carga será de semanas
+  de operaciones con fecha atrasada, de golpe.
+
+## cc63 — topes de audit-02, recosteos pendientes y carga atrasada (D-701..D-704)
+
+**Por qué D-701 es un defecto y no un tope.** La retrofecha de un cierre ya la confirma el usuario (D-124/D-133). El
+ajuste de costo del cierre volvía a pedirla y no tenía cómo recibirla, así que una carga atrasada de producción
+quedaba trabada: cerrar una OP con fecha anterior a otro parte del mismo producto era imposible. No cambia quién puede
+retrofechar ni el aviso. El mismo caso estaba en la recepción de una orden de corte tercerizada, y se corrigió igual.
+
+**Por qué los recosteos pendientes se resuelven con auditoría y no con una tabla (D-702).** La marca ya existía en
+`audit_log`. Lo pendiente es la marca sin su «resuelto», y el «resuelto» nombra las marcas que cerró. Sin migración y
+sin estado guardado que haya que mantener sincronizado.
+
+**Por qué la revisión de la carga simula y no ejecuta (D-704).** Lo que traba una carga atrasada no es un tope de
+antigüedad: no hay ninguno en compras, producción, despachos ni cobros. Es D-652 (una salida atrasada que deja
+negativo) y el orden. La revisión usa el mismo cálculo del kardex sobre el estado real de la base antes de escribir
+nada. Un cargador futuro puede leer el mismo archivo.
+
+**Ensayo en demo (20/10/2026).**
+
+- **Volumen:** 30 compras, 150 ventas, 60 partes, 150 despachos, 150 comprobantes y 150 cobros. Volumen de 4 semanas
+  comprimido entre el 14 y el 20/10.
+- **Resultado:** 0 rechazos y 1 h 45 min de tiempo de máquina. Ninguna operación del día pasó de 30 s.
+- **Reportes:** Ventas y margen, CxC, inventario valorizado y kardex cuadran al céntimo.
+- **Recosteo:** 490 filas en 3,3 s. Un pendiente de 1000 filas se completa en 3,3 s.
+- **Cargado a mano:** unas 16 horas por cada 4 semanas. El detalle está en `docs/operacion/carga-atrasada.md`.
