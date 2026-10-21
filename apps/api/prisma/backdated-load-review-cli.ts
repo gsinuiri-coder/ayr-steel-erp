@@ -15,18 +15,18 @@ import { PrismaClient } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { businessToday, DEFAULT_HISTORICAL_LOAD_START, isCalendarDate } from '@ayr/shared';
 import { assertExecuteAllowed } from './cli-gate';
-import { qtyRowsOf } from '../src/inventory/inventory-recost';
-import type { QtyRow } from '../src/inventory/recost-engine';
 import {
-  LOAD_COLUMNS,
+  loadReviewContext,
+  readLoadSheets,
+  reviewMarkdown,
+} from '../src/imports/backdated-load-context';
+import {
   LOAD_ORDER,
   LOAD_SHEET_HEADERS,
   LOAD_SHEETS,
   reviewBackdatedLoad,
   type LoadReview,
-  type Sheets,
 } from '../src/imports/backdated-load';
-import { getField } from '../src/imports/parse-spreadsheet';
 
 const args = process.argv.slice(2);
 const ROOT = resolve(__dirname, '../../../..');
@@ -68,59 +68,6 @@ function writeTemplate(out: string): void {
   XLSX.writeFile(book, out);
 }
 
-function readSheets(file: string): Sheets {
-  const book = XLSX.read(readFileSync(file), { type: 'buffer', cellDates: true });
-  const out = {} as Sheets;
-  for (const [key, name] of Object.entries(LOAD_SHEETS) as [keyof typeof LOAD_SHEETS, string][]) {
-    const sheet = book.Sheets[name];
-    out[key] = sheet
-      ? XLSX.utils
-          .sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
-          .filter((r) => Object.values(r).some((v) => String(v).trim() !== ''))
-      : [];
-  }
-  return out;
-}
-
-function markdown(r: LoadReview): string {
-  const lines = [
-    `# Revisión previa de la carga atrasada`,
-    '',
-    `Fecha de carga simulada: ${r.loadDate}. Movimientos de kardex: ${String(r.movements.planned)} (${String(r.movements.rejected)} rechazados por D-652).`,
-    '',
-    `Hojas: ${Object.entries(r.counts)
-      .map(([k, v]) => `${k} ${String(v)}`)
-      .join(' · ')}`,
-    r.oldestIssue
-      ? `Comprobante más antiguo: ${r.oldestIssue.document} del ${r.oldestIssue.issueDate}; se puede registrar hasta el ${r.oldestIssue.lastLoadDate}.`
-      : 'Sin comprobantes.',
-    '',
-    '## Orden de carga',
-    '',
-    ...r.order.map((s, i) => `${String(i + 1)}. ${s}`),
-    '',
-    `## Errores (${String(r.errors.length)})`,
-    '',
-    ...r.errors.map((e) => `- ${e.sheet}${e.row ? ` fila ${String(e.row)}` : ''}: ${e.message}`),
-    '',
-    `## Avisos (${String(r.warnings.length)})`,
-    '',
-    ...r.warnings.map((e) => `- ${e.sheet}${e.row ? ` fila ${String(e.row)}` : ''}: ${e.message}`),
-    '',
-    `## Recosteos (${String(r.recosts.length)}; máximo ${String(Math.max(0, ...r.recosts.map((x) => x.rowsAfter)))} filas)`,
-    '',
-    ...r.recosts
-      .slice()
-      .sort((a, b) => b.rowsAfter - a.rowsAfter)
-      .slice(0, 50)
-      .map(
-        (x) =>
-          `- ${x.item} el ${x.date} (${x.sheet} fila ${String(x.row)}): ${String(x.rowsAfter)} filas${x.overLimit ? ' — PASA EL TOPE' : ''}`,
-      ),
-  ];
-  return `${lines.join('\n')}\n`;
-}
-
 async function main(): Promise<void> {
   assertArgs();
   assertExecuteAllowed(false);
@@ -135,32 +82,7 @@ async function main(): Promise<void> {
   const loadDate = flag('--fecha-carga') ?? businessToday();
   if (!isCalendarDate(loadDate)) throw new Error('--fecha-carga: fecha inválida');
   const branch = process.env.AYR_CLI_BRANCH ?? 'local';
-  const sheets = readSheets(file);
-
-  // Los SKU y las bobinas que nombra el plan, para leer solo su kardex.
-  const skus = new Set<string>();
-  const coilCodes = new Set<string>();
-  const sku = (raw: Record<string, unknown>, header: string) => {
-    const v = getField(raw, { key: header, header, required: false });
-    if (v) skus.add(v);
-  };
-  for (const r of sheets.purchases) {
-    sku(r, 'SKU');
-    // Revisión de cc63 (H-4): una bobina nueva que ya existe en la base tiene que verse como tal.
-    const external = getField(r, {
-      key: 'externalCode',
-      header: 'CÓDIGO EXTERNO',
-      required: false,
-    });
-    if (external) coilCodes.add(external);
-  }
-  for (const r of [...sheets.sales, ...sheets.production, ...sheets.dispatches]) {
-    sku(r, LOAD_COLUMNS.sku.header);
-  }
-  for (const r of sheets.production) {
-    const c = getField(r, LOAD_COLUMNS.coil);
-    if (c) coilCodes.add(c);
-  }
+  const sheets = readLoadSheets(readFileSync(file));
 
   const prisma = new PrismaClient();
   let review: LoadReview;
@@ -168,31 +90,11 @@ async function main(): Promise<void> {
     review = await prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-        const products = await tx.product.findMany({
-          where: { sku: { in: [...skus] } },
-          select: { id: true, sku: true },
-        });
-        const coils = await tx.coil.findMany({
-          where: { code: { in: [...coilCodes] } },
-          select: { id: true, code: true },
-        });
-        const kardex = new Map<string, QtyRow[]>();
-        for (const p of products) {
-          kardex.set(
-            `PRODUCT:${p.sku}`,
-            await qtyRowsOf(tx, { itemType: 'PRODUCT', itemId: p.id }),
-          );
-        }
-        for (const c of coils) {
-          kardex.set(`COIL:${c.code}`, await qtyRowsOf(tx, { itemType: 'COIL', itemId: c.id }));
-        }
-        return reviewBackdatedLoad(sheets, {
+        const ctx = await loadReviewContext(tx, sheets, {
           loadDate,
           historicalFloor: process.env.HISTORICAL_LOAD_START ?? DEFAULT_HISTORICAL_LOAD_START,
-          kardex,
-          products: new Set(products.map((p) => p.sku)),
-          coils: new Set(coils.map((c) => c.code)),
         });
+        return reviewBackdatedLoad(sheets, ctx);
       },
       { timeout: 10 * 60_000, maxWait: 30_000 },
     );
@@ -204,8 +106,8 @@ async function main(): Promise<void> {
   const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
   const base = resolve(outDir, `revision-${branch}-${stamp}`);
   writeFileSync(`${base}.json`, JSON.stringify(review, null, 2));
-  writeFileSync(`${base}.md`, markdown(review));
-  console.error(markdown(review));
+  writeFileSync(`${base}.md`, reviewMarkdown(review));
+  console.error(reviewMarkdown(review));
   console.error(`Informe en ${base}.md`);
   if (review.errors.length > 0) process.exitCode = 2;
 }
