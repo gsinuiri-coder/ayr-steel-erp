@@ -49,14 +49,26 @@ function assertArgs(): void {
 function writeTemplate(out: string): void {
   const book = XLSX.utils.book_new();
   const instructions = [
-    ['Plan de carga atrasada (cc63)'],
+    ['Plan de carga atrasada (cc63, cc64)'],
     ['Una hoja por tipo de operación. Las fechas, en AAAA-MM-DD o DD/MM/AAAA.'],
     ['«Compras» tiene las columnas del importador de compras más FECHA DE RECEPCIÓN.'],
     [
       '«Ventas» es el export del sistema de facturación (el que lee el importador de cotizaciones).',
     ],
+    [
+      'Ventas, opcionales al final: LARGOS (obligatoria en líneas a medida: «4.5x10; 3x8», metros x piezas), CONDICIÓN DE PAGO (CONTADO o CRÉDITO; vacía = el plazo del cliente) y VENCIMIENTO.',
+    ],
     ['«Producción», «Despachos» y «Cobros» se enlazan con la venta por SERIE - NÚMERO.'],
+    [
+      'Producción: CANTIDAD en planchas, o en metros si es a medida o accesorio. Los partes de drywall se cargan a mano.',
+    ],
+    [
+      'Despachos: MODALIDAD RECOJO o ENTREGA (vacía = recojo, con aviso). Con ENTREGA, DIRECCIÓN DESTINO y UBIGEO (6 dígitos).',
+    ],
     ['Una bobina nueva se nombra por su CÓDIGO EXTERNO en Compras y en Producción.'],
+    [
+      'Revísalo con pnpm carga:revisar y cárgalo con pnpm carga:ejecutar (docs/operacion/carga-atrasada.md).',
+    ],
     [''],
     ['Orden de carga:'],
     ...LOAD_ORDER.map((step, i) => [`${String(i + 1)}. ${step}`]),
