@@ -109,3 +109,7 @@ Logs: `vencimiento-dry-prod.log`, `vencimiento-exec-prod.log` y `vencimiento-dry
 - **cc63:** LK-01, LK-02, RC-01..RC-03.
 - **cc64:** habilitar la venta del accesorio suelto (D-697).
 - **cc65:** SEC-02, SEC-03, SEC-05/A2-07, NC-03, PERM-01, REG-01 y REG-02.
+
+## Registro posterior (20/10/2026)
+
+El dueño ratificó D-698, D-699 y D-700 y aprobó el UAT de cc61. Lo anota cc63.
