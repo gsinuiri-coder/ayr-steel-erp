@@ -57,3 +57,36 @@ Corregí todo antes del deploy, junto con la autorrevisión (otro subagente; no 
 | R-08      | **Corregido** junto con el punto 13 de la autorrevisión. El comprobante lleva todas las líneas, porque el pedido nace de ese mismo comprobante. Enlaza el despacho solo si es uno y cubre el pedido entero.                                                |
 | R-09      | **Corregido.** Las claves de los partes se calculan antes de filtrar drywall.                                                                                                                                                                              |
 | R-10      | Aceptado: el id del pago a proveedor se busca por referencia. La referencia lleva el lote y la del Excel.                                                                                                                                                  |
+
+## Segunda pasada (delta 848a1bb5..70f5e286)
+
+Alcance: `backdated-load.ts`, `backdated-load-runner.ts`, `backdated-load-review-cli.ts`, las dos unitarias nuevas y `docs/operacion/carga-atrasada.md`. Verificado contra el código: `--hasta` es inclusivo (`run-cli.ts:242`, `indexOf(o.step) <= indexOf(until)`), `--hasta pedidos` corta justo después de confirmar los pedidos (las OP de drywall ya existen) y antes de la producción; la entrada simulada del drywall no lleva `opKey`, así que no entra en la regla «una bobina en una sola OP abierta»; la conversión de planchas a metros de `runProduction` es la misma que usa la rama de reporte (`!detailsLengths && lengthMm !== null`), de modo que plan y reportado quedan en la misma unidad; la referencia `#<n>` coincide con el sufijo de la clave `pago|ruc|doc|n` (el `.at(-1)` es seguro aunque el documento tuviera `|`) y `#n` va al principio, así que el recorte a 80 no lo pierde.
+
+**P0:** ninguno. **P1:** ninguno. **P2:** ninguno.
+
+### R-11 (P3) La revisión da por buena la entrada de drywall aunque el parte a mano no se haga o tenga otra fecha
+
+`backdated-load.ts:556-572` y `docs/operacion/carga-atrasada.md` (sección «Drywall se carga a mano»). La simulación pone el IN del drywall con la fecha y cantidad del Excel, pero lo que entra de verdad es lo que el operador registre a mano. Escenario: revisión en verde; el operador registra el parte del drywall con fecha posterior al primer despacho (o se olvida); en la segunda corrida el despacho se rechaza por D-652 (negativo), la carga se detiene en esa fila. No corrompe datos y es reanudable, pero la guía no lo advierte. Recomendación: agregar a la guía que el parte a mano debe tener la misma fecha (o anterior) que la del Excel y cantidad suficiente antes de la segunda corrida; la revisión ya dice «se carga a mano», basta ampliar el aviso.
+
+### R-12 (P3) Pagos a proveedor de un lote iniciado con el código anterior no se reencuentran
+
+`backdated-load-runner.ts:766-770, 782-787`. El pago se busca por la referencia nueva (`#n …`). Un lote que ya hubiera cargado pagos antes de este delta (p. ej. el lote del ensayo en demo, si se reanuda o se revierte con el código nuevo) los grabó sin `#n`: el `findFirst` no los halla, `paymentId` queda `null` y la reversa dice «falta paymentId» o los deja sin revertir. Solo afecta a lotes viejos de demo; en producción no hay lotes previos. Recomendación: no cargar ni revertir con este código un lote iniciado con el anterior, o anotarlo en la guía; no hace falta código.
+
+### R-13 (P3) La unitaria de planchas sin plan solo prueba un lado de la frontera
+
+`backdated-load-runner.spec.ts:782-791`. Verifica que 5 planchas de 3,6 m en un pedido de 10 no cierran (antes del arreglo cerraba por comparar 18 m con 10): es un buen discriminador. Falta el caso complementario (la cantidad total, p. ej. 10 planchas, sí cierra con `reportAndClose`), que protegería de un arreglo que dejara de cerrar nunca. Las demás aserciones nuevas (referencia `#2` comparada contra la llamada a `addPayment` y la consulta de búsqueda; contexto con `productInfo` y kardex) son útiles, no solo ejecutan.
+
+### R-14 (P3) Plantilla: el texto de drywall omite `--lote`
+
+`backdated-load-review-cli.ts:63`: «carga:ejecutar --hasta pedidos» sin `--archivo`/`--lote`; la segunda corrida debe usar el mismo lote y archivo (misma huella). La guía sí lo dice («con el mismo lote»), la plantilla no. Texto menor; sugerir «con el mismo --archivo y --lote».
+
+Guía vs. código: sin discrepancias de fondo (orden de pasos, `--hasta pedidos` inclusivo, reversa de pasos y «lo cargado a mano no se revierte», revisión como candado de la primera vez, avisos de drywall/modalidad/medio de pago/ventana de 90 días). No se verificó con ejecución; es lectura del código y de las unitarias.
+
+### Respuesta del autor (segunda pasada)
+
+- **R-11:** la guía advierte que la segunda corrida se detiene en el despacho si el parte de drywall a mano falta o
+  queda con fecha posterior, y que se corrige en la app y se vuelve a correr. La plantilla pide cargarlo con la fecha y
+  la cantidad de la hoja.
+- **R-12:** no aplica: ningún lote anterior cargó pagos a proveedor (el ensayo tuvo 0) y en producción no hay lotes.
+- **R-13:** agregado el caso de las 10 planchas que cierran la OP con `reportAndClose`.
+- **R-14:** la plantilla dice «con el mismo --archivo y el mismo --lote».

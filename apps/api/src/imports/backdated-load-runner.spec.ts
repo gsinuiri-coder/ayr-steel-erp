@@ -788,6 +788,14 @@ describe('BackdatedLoadRunner: producción (cc64)', () => {
     expect(result.failure).toBeNull();
     expect(deps.roofing.report).toHaveBeenCalled();
     expect(deps.roofing.reportAndClose).not.toHaveBeenCalled();
+
+    // Las 10 planchas del pedido sí completan el plan y cierran la OP.
+    const all = production(
+      po({ product: { unit: 'NIU', roofingKind: 'ESTANDAR', lengthMm: new Decimal('3600') } }),
+    );
+    const done = await runOne(all.runner, productionOp({ qty: '10', coil: '' }));
+    expect(done.result.failure).toBeNull();
+    expect(all.deps.roofing.reportAndClose).toHaveBeenCalled();
   });
 
   it('a medida: toma del plan los largos que quedan; la bobina ya montada no se vuelve a montar', async () => {

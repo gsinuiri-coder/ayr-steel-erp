@@ -60,7 +60,7 @@ function writeTemplate(out: string): void {
     ],
     ['«Producción», «Despachos» y «Cobros» se enlazan con la venta por SERIE - NÚMERO.'],
     [
-      'Producción: CANTIDAD en planchas, o en metros si es a medida o accesorio. Los partes de drywall se cargan a mano: carga:ejecutar --hasta pedidos, el corte y los partes de drywall en la app, y otra vez carga:ejecutar.',
+      'Producción: CANTIDAD en planchas, o en metros si es a medida o accesorio. Los partes de drywall se cargan a mano: carga:ejecutar --hasta pedidos, el corte y los partes de drywall en la app con la fecha y la cantidad de esta hoja, y otra vez carga:ejecutar con el mismo --archivo y el mismo --lote.',
     ],
     [
       'Despachos: MODALIDAD RECOJO o ENTREGA (vacía = recojo, con aviso). Con ENTREGA, DIRECCIÓN DESTINO y UBIGEO (6 dígitos).',

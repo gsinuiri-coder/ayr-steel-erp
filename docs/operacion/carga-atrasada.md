@@ -78,8 +78,12 @@ marcan esas filas como «se carga a mano» y no las ejecutan. En qué punto del 
 1. corre `pnpm carga:ejecutar … --hasta pedidos`: entran las compras (las bobinas) y las ventas, y al confirmar los
    pedidos nacen las OP de drywall;
 2. registra **a mano**, con su fecha, el corte (partido o tercerizado) y los partes y cierres de las OP de drywall;
-3. corre otra vez `pnpm carga:ejecutar …` con el mismo lote: sigue con el resto de la producción, los despachos, los
-   comprobantes y los cobros.
+3. corre otra vez `pnpm carga:ejecutar …` con el mismo `--archivo` y el mismo `--lote`: sigue con el resto de la
+   producción, los despachos, los comprobantes y los cobros.
+
+La revisión da por hecho que los partes de drywall a mano entran con la fecha y la cantidad del Excel. Si falta uno,
+o se registra con una fecha posterior a su despacho, la segunda corrida se detiene en ese despacho (D-652). Se
+corrige el parte en la app y se vuelve a correr.
 
 ### Despachos ← guías de remisión o el registro de salidas
 
