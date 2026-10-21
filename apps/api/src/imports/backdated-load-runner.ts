@@ -40,7 +40,7 @@ import {
   type LoadOp,
   type LoadStep,
 } from './backdated-load-ops';
-import { parseMethod } from './opening-balances-plan';
+import { parseAmount, parseMethod } from './opening-balances-plan';
 import { parsePurchaseRows } from './purchase-import-parse';
 import type { PurchaseImportService } from './purchase-import.service';
 import type { QuotationImportService } from './quotation-import.service';
@@ -60,6 +60,11 @@ export const LOAD_ENTITY = 'backdated_load_batches';
 export const LOAD_START_ACTION = 'imports.backdated-load';
 export const LOAD_OP_ACTION = 'imports.backdated-load.op';
 export const LOAD_REVERTED_ACTION = 'imports.backdated-load.op-reverted';
+/**
+ * Revisión de cc64 (R-02): la intención de una operación, anotada **antes** de llamar al servicio.
+ * Si al reanudar la operación ya existe y tiene su intención, la creó este lote (no es «adoptada»).
+ */
+export const LOAD_STARTED_ACTION = 'imports.backdated-load.op-start';
 
 /** Lo que una operación creó o adoptó: lo necesita la reversa. */
 export type OpIds = Record<string, string | boolean | null>;
@@ -69,6 +74,8 @@ export interface LoadManifest {
   /** Operaciones hechas (y no revertidas), en el orden en que se hicieron. */
   done: Map<string, { step: LoadStep; ids: OpIds }>;
   reverted: Set<string>;
+  /** Operaciones que el lote intentó alguna vez (R-02). */
+  started: Set<string>;
 }
 
 export interface LoadDeps {
@@ -130,7 +137,12 @@ export async function readManifest(
     orderBy: { id: 'asc' },
     select: { action: true, after: true },
   });
-  const manifest: LoadManifest = { start: null, done: new Map(), reverted: new Set() };
+  const manifest: LoadManifest = {
+    start: null,
+    done: new Map(),
+    reverted: new Set(),
+    started: new Set(),
+  };
   for (const r of rows) {
     const after = (r.after ?? {}) as Record<string, unknown>;
     if (r.action === LOAD_START_ACTION && manifest.start === null) {
@@ -146,6 +158,8 @@ export async function readManifest(
         manifest.done.set(key, { step: after.step as LoadStep, ids: (after.ids ?? {}) as OpIds });
       }
       manifest.reverted.delete(key);
+    } else if (r.action === LOAD_STARTED_ACTION) {
+      manifest.started.add(String(after.key));
     } else if (r.action === LOAD_REVERTED_ACTION) {
       const key = String(after.key);
       manifest.reverted.add(key);
@@ -162,8 +176,24 @@ export class BackdatedLoadRunner {
     private readonly batchId: string,
   ) {}
 
+  /** La operación en curso ya se había intentado antes (reanudación, R-02/R-03). */
+  private resumed = false;
+  /** Pedidos que creó este lote: sus OP se pueden anular en la reversa (R-04). */
+  private readonly ownedOrders = new Set<string>();
+
   private get db(): PrismaService {
     return this.deps.prisma;
+  }
+
+  /** Anota en el manifiesto una operación hecha. Las pruebas lo reemplazan para simular un corte. */
+  protected async recordOp(op: LoadOp, ids: OpIds): Promise<void> {
+    await this.deps.audit.log({
+      actorId: this.actor.id,
+      action: LOAD_OP_ACTION,
+      entity: LOAD_ENTITY,
+      entityId: this.batchId,
+      after: { key: op.key, step: op.step, ids },
+    });
   }
 
   private key(op: LoadOp, part = ''): string {
@@ -186,10 +216,41 @@ export class BackdatedLoadRunner {
     const t0 = Date.now();
     const executed: string[] = [];
     const skipped: string[] = [];
+    // Revisión de cc64 (R-07): un lote revertido no se vuelve a cargar (los recursos de sus claves
+    // de idempotencia ya están revertidos): el plan corregido va con otro lote (D-706).
+    if (manifest.reverted.size > 0) {
+      return {
+        executed,
+        skipped,
+        failure: {
+          key: '',
+          step: 'purchases',
+          rows: [],
+          message: 'este lote ya se revirtió: carga el plan con otro --lote',
+        },
+        ms: 0,
+      };
+    }
+    for (const [, d] of manifest.done) {
+      if (d.step === 'orders' && d.ids.adopted !== true && typeof d.ids.orderId === 'string') {
+        this.ownedOrders.add(d.ids.orderId);
+      }
+    }
     for (const op of ops) {
       if (manifest.done.has(op.key)) {
         skipped.push(op.key);
         continue;
+      }
+      this.resumed = manifest.started.has(op.key);
+      if (!this.resumed) {
+        await this.deps.audit.log({
+          actorId: this.actor.id,
+          action: LOAD_STARTED_ACTION,
+          entity: LOAD_ENTITY,
+          entityId: this.batchId,
+          after: { key: op.key, step: op.step },
+        });
+        manifest.started.add(op.key);
       }
       let ids: OpIds;
       try {
@@ -202,14 +263,11 @@ export class BackdatedLoadRunner {
           ms: Date.now() - t0,
         };
       }
-      await this.deps.audit.log({
-        actorId: this.actor.id,
-        action: LOAD_OP_ACTION,
-        entity: LOAD_ENTITY,
-        entityId: this.batchId,
-        after: { key: op.key, step: op.step, ids },
-      });
+      await this.recordOp(op, ids);
       manifest.done.set(op.key, { step: op.step, ids });
+      if (op.step === 'orders' && ids.adopted !== true && typeof ids.orderId === 'string') {
+        this.ownedOrders.add(ids.orderId);
+      }
       executed.push(op.key);
     }
     return { executed, skipped, failure: null, ms: Date.now() - t0 };
@@ -282,7 +340,7 @@ export class BackdatedLoadRunner {
 
   private async runPurchase(op: Extract<LoadOp, { step: 'purchases' }>): Promise<OpIds> {
     let purchase = await this.findPurchase(op.supplierRuc, op.document);
-    let adopted = purchase !== null;
+    let adopted = purchase !== null && !this.resumed;
     if (!purchase) {
       const parsed = parsePurchaseRows(op.raws);
       await this.deps.purchaseImport.confirm(
@@ -319,7 +377,7 @@ export class BackdatedLoadRunner {
 
   private async runSale(op: Extract<LoadOp, { step: 'sales' }>): Promise<OpIds> {
     const existing = await this.findQuotation(op.document);
-    if (existing) return { quotationId: existing.id, adopted: true };
+    if (existing) return { quotationId: existing.id, adopted: !this.resumed };
     // El importador lee la primera hoja: se le arma una con las filas de esta venta.
     const book = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(op.raws), 'Ventas');
@@ -398,7 +456,7 @@ export class BackdatedLoadRunner {
 
   private async runOrder(op: Extract<LoadOp, { step: 'orders' }>): Promise<OpIds> {
     const { quotation, order } = await this.orderOf(op.document);
-    if (order) return { orderId: order.id, adopted: true };
+    if (order) return { orderId: order.id, adopted: !this.resumed };
     const created = await this.deps.salesOrders.confirm(this.actor, quotation.id, {});
     return { orderId: created.id, adopted: false };
   }
@@ -430,7 +488,27 @@ export class BackdatedLoadRunner {
       },
     });
     if (!po) throw new Error(`${op.document}: el pedido no tiene OP para ${op.sku}`);
-    const qty = toDecimal(op.qty);
+    const qty = amountOf(op.qty, `${op.document}: cantidad`);
+    const orderOwned = this.ownedOrders.has(order.id);
+    // Revisión de cc64 (R-03): un parte hecho y no anotado se reconoce por su clave de
+    // idempotencia (cualquier alcance: parte o parte y cierre) y no se vuelve a calcular.
+    if (this.resumed) {
+      const seen = await this.db.idempotencyKey.findUnique({ where: { key: this.key(op) } });
+      if (seen) {
+        const last = await this.db.productionReport.findFirst({
+          where: { productionOrderId: po.id, status: 'ACTIVE' },
+          orderBy: { seq: 'desc' },
+          select: { id: true },
+        });
+        if (!last) throw new Error(`${op.document}: el parte ya se hizo, pero no se encuentra`);
+        return {
+          productionOrderId: po.id,
+          reportId: last.id,
+          closed: po.status === 'CLOSED',
+          orderOwned,
+        };
+      }
+    }
     const planMeters = po.items.reduce(
       (acc, i) => acc.plus(toDecimal(i.lengthMm.toString()).times(i.qty).div(1000)),
       new Decimal(0),
@@ -505,7 +583,9 @@ export class BackdatedLoadRunner {
       orderBy: { seq: 'desc' },
       select: { id: true },
     });
-    return { productionOrderId: po.id, reportId: report?.id ?? null, closed: closes };
+    // Revisión de cc64 (R-04): sin el parte, la reversa no podría deshacerlo.
+    if (!report) throw new Error(`${op.document}: el parte no quedó registrado`);
+    return { productionOrderId: po.id, reportId: report.id, closed: closes, orderOwned };
   }
 
   private async runDispatch(op: Extract<LoadOp, { step: 'dispatches' }>): Promise<OpIds> {
@@ -514,7 +594,10 @@ export class BackdatedLoadRunner {
     const items = op.items.map((it) => {
       const line = order.items.find((i) => i.product.sku === it.sku);
       if (!line) throw new Error(`${op.document}: el pedido no vende ${it.sku}`);
-      return { salesOrderItemId: line.id, qty: it.qty };
+      return {
+        salesOrderItemId: line.id,
+        qty: amountOf(it.qty, `${op.document}: cantidad`).toFixed(3),
+      };
     });
     // D-707: la entrega se registra con su destino real y sin datos de transporte: la guía
     // salió del otro sistema; acá queda como recojo.
@@ -554,7 +637,9 @@ export class BackdatedLoadRunner {
       where: { number, archivedAt: null },
       select: { id: true, status: true },
     });
-    if (existing?.status === 'ACCEPTED') return { invoiceId: existing.id, adopted: true };
+    if (existing?.status === 'ACCEPTED') {
+      return { invoiceId: existing.id, adopted: !this.resumed };
+    }
     if (existing) {
       throw new Error(
         `${number} existe con estado ${existing.status}: si está anulado, se reactiva a mano (D-373)`,
@@ -606,7 +691,7 @@ export class BackdatedLoadRunner {
       doc.id,
       createCustomerPaymentSchema.parse({
         date: op.date,
-        amountPen: op.amount.replace(',', '.'),
+        amountPen: amountOf(op.amount, `${op.document}: monto`).toFixed(2),
         method: parseMethod(op.method) ?? 'OTHER',
         reference,
         idempotencyKey,
@@ -627,7 +712,7 @@ export class BackdatedLoadRunner {
       purchase.id,
       createSupplierPaymentSchema.parse({
         date: op.date,
-        amount: op.amount.replace(',', '.'),
+        amount: amountOf(op.amount, `${op.document}: monto`).toFixed(2),
         currency: purchase.currency,
         ...(purchase.currency === 'PEN' ? {} : { exchangeRate: purchase.exchangeRate.toString() }),
         method: parseMethod(op.method) ?? 'OTHER',
@@ -656,12 +741,23 @@ export class BackdatedLoadRunner {
       return v;
     };
     switch (step) {
-      case 'supplierPayments':
+      case 'supplierPayments': {
+        const payment = await this.db.supplierPayment.findUnique({
+          where: { id: id('paymentId') },
+          select: { reversedAt: true },
+        });
+        if (payment?.reversedAt) return;
         await this.deps.purchases.reversePayment(this.actor, id('purchaseId'), id('paymentId'), {
           reason,
         });
         return;
-      case 'collections':
+      }
+      case 'collections': {
+        const payment = await this.db.customerPayment.findUnique({
+          where: { id: id('paymentId') },
+          select: { reversedAt: true },
+        });
+        if (payment?.reversedAt) return;
         await this.deps.receivables.reversePayment(
           this.actor,
           id('invoiceId'),
@@ -669,35 +765,66 @@ export class BackdatedLoadRunner {
           reason,
         );
         return;
-      case 'invoices':
+      }
+      case 'invoices': {
         if (ids.adopted === true) return; // no lo creó este lote
+        const doc = await this.db.fiscalDocument.findUnique({
+          where: { id: id('invoiceId') },
+          select: { status: true },
+        });
+        if (doc?.status === 'ANNULLED') return;
         await this.deps.fiscalImport.annulExternal(this.actor, id('invoiceId'), reason);
         return;
-      case 'dispatches':
+      }
+      case 'dispatches': {
+        const dispatch = await this.db.dispatch.findUnique({
+          where: { id: id('dispatchId') },
+          select: { reversedAt: true },
+        });
+        if (dispatch?.reversedAt) return;
         await this.deps.dispatches.reverse(
           this.actor,
           id('dispatchId'),
           reverseMovementSchema.parse({ reason }),
         );
         return;
+      }
       case 'production':
         await this.undoProduction(id('productionOrderId'), ids, reason);
         return;
-      case 'orders':
+      case 'orders': {
         if (ids.adopted === true) return;
+        const order = await this.db.salesOrder.findUnique({
+          where: { id: id('orderId') },
+          select: { status: true },
+        });
+        if (order?.status === 'CANCELLED') return;
         await this.deps.salesOrders.cancel(this.actor, id('orderId'), {
           reason,
           acknowledgeFabricated: true,
         });
         return;
-      case 'sales':
+      }
+      case 'sales': {
         if (ids.adopted === true) return;
+        const quotation = await this.db.quotation.findUnique({
+          where: { id: id('quotationId') },
+          select: { status: true },
+        });
+        if (quotation?.status === 'CANCELLED') return;
         await this.deps.quotations.cancel(this.actor, id('quotationId'), reason);
         return;
-      case 'purchases':
+      }
+      case 'purchases': {
         if (ids.adopted === true) return;
+        const purchase = await this.db.purchase.findUnique({
+          where: { id: id('purchaseId') },
+          select: { status: true },
+        });
+        if (purchase?.status === 'CANCELLED') return;
         await this.deps.purchases.cancel(this.actor, id('purchaseId'), { reason });
         return;
+      }
     }
   }
 
@@ -738,7 +865,8 @@ export class BackdatedLoadRunner {
       where: { id: orderId },
       select: { status: true },
     });
-    if (live === 0 && now.status !== 'CANCELLED') {
+    // Revisión de cc64 (R-04): la OP de un pedido que el lote no creó no se anula.
+    if (live === 0 && now.status !== 'CANCELLED' && ids.orderOwned !== false) {
       await this.deps.roofing.cancel(
         this.actor,
         orderId,
@@ -746,6 +874,13 @@ export class BackdatedLoadRunner {
       );
     }
   }
+}
+
+/** Una cantidad o un monto del Excel, con el mismo parser que la revisión (`1.234,50`, `1,234.50`). */
+function amountOf(text: string, label: string): Decimal {
+  const value = parseAmount(text);
+  if (!value || value.lte(0)) throw new Error(`${label} inválido: «${text}»`);
+  return value;
 }
 
 /**

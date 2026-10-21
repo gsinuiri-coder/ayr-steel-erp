@@ -206,13 +206,14 @@ export function planLoadOps(
     const doc = norm(cell(raw, LOAD_COLUMNS.saleDocument.header));
     const sku = cell(raw, LOAD_COLUMNS.sku.header);
     const row = { sheet: LOAD_SHEETS.production, row: rowNumber(i) };
+    const key = `parte|${doc}|${sku}|${String(nth(`parte|${doc}|${sku}`))}`;
     if (productInfo.get(sku)?.drywall) {
       manual.push({ ...row, reason: `${sku} es de drywall: el parte se carga a mano` });
       return;
     }
     ops.push({
       step: 'production',
-      key: `parte|${doc}|${sku}|${String(nth(`parte|${doc}|${sku}`))}`,
+      key,
       date: dateOf(raw, LOAD_COLUMNS.date.header),
       document: doc,
       sku,

@@ -97,6 +97,26 @@ function runner(batchId: string): BackdatedLoadRunner {
   );
 }
 
+/**
+ * Simula un corte de luz entre la operación y su anotación en el manifiesto: la primera vez que se
+ * anota cada operación, el proceso «muere».
+ */
+class CrashingRunner extends BackdatedLoadRunner {
+  private readonly crashed = new Set<string>();
+  constructor(base: BackdatedLoadRunner) {
+    const inner = base as unknown as { deps: never; actor: never; batchId: never };
+    super(inner.deps, inner.actor, inner.batchId);
+  }
+  protected override async recordOp(...args: Parameters<BackdatedLoadRunner['recordOp']>) {
+    const [op] = args;
+    if (!this.crashed.has(op.key)) {
+      this.crashed.add(op.key);
+      throw new Error('corte simulado');
+    }
+    return super.recordOp(...args);
+  }
+}
+
 /** Un lote de reventa: 10 u compradas a S/ 20, 5 vendidas a S/ 50 + IGV, despachadas y cobradas. */
 async function resaleLot(): Promise<{
   sheets: Sheets;
@@ -275,15 +295,7 @@ describe('cc64 (D-705, D-706): carga:ejecutar y carga:revertir contra la base', 
     expect(third.executed).toHaveLength(0);
     expect(await counts(sku, sale)).toEqual(loaded);
 
-    // 4. Un corte entre la operación y su anotación: el manifiesto no la tiene, pero se reconoce
-    //    (clave natural o idempotencia del lote) y no se crea otra vez.
-    const manifest = await readManifest(prisma, batch);
-    for (const op of ops) manifest.done.delete(op.key);
-    const fourth = await runner(batch).execute(ops, manifest);
-    expect(fourth.failure).toBeNull();
-    expect(await counts(sku, sale)).toEqual(loaded);
-
-    // 5. La reversa deja todo como antes de la carga.
+    // 4. La reversa deja todo como antes de la carga.
     const back = await runner(batch).revert(await readManifest(prisma, batch));
     expect(back.failure).toBeNull();
     expect(await counts(sku, sale)).toEqual({
@@ -295,6 +307,53 @@ describe('cc64 (D-705, D-706): carga:ejecutar y carga:revertir contra la base', 
       stock: '0',
     });
     expect((await readManifest(prisma, batch)).done.size).toBe(0);
+  });
+
+  it('un corte entre cada operación y su anotación: al reanudar no duplica y la reversa la deshace', async () => {
+    const { sheets, sku, sale } = await resaleLot();
+    // Montos con separadores, como los trae un Excel (revisión de cc64, R-01).
+    const collection = sheets.collections[0];
+    if (collection) collection.MONTO = '295,00';
+    const batch = `cc64-test-${letters(6)}`;
+    const { ops } = planLoadOps(sheets);
+    // Cada operación se hace y el proceso «muere» antes de anotarla (una vez por operación).
+    const crashing = new CrashingRunner(runner(batch));
+    await crashing.start('prueba.xlsx', 'huella', ops.length);
+    let crashes = 0;
+    for (let round = 0; round < ops.length + 2; round += 1) {
+      try {
+        const r = await crashing.execute(ops, await readManifest(prisma, batch));
+        expect(r.failure).toBeNull();
+        break;
+      } catch (err) {
+        expect((err as Error).message).toBe('corte simulado');
+        crashes += 1;
+      }
+    }
+    expect(crashes).toBe(ops.length);
+    expect(await counts(sku, sale)).toEqual({
+      purchases: 1,
+      quotations: 1,
+      invoices: 1,
+      payments: 1,
+      dispatches: 1,
+      stock: '5',
+    });
+    // Nada quedó como «adoptado»: lo creó el lote, y la reversa lo deshace todo.
+    const manifest = await readManifest(prisma, batch);
+    expect([...manifest.done.values()].filter((d) => d.ids.adopted === true)).toEqual([]);
+    expect((await runner(batch).revert(manifest)).failure).toBeNull();
+    expect(await counts(sku, sale)).toEqual({
+      purchases: 0,
+      quotations: 0,
+      invoices: 0,
+      payments: 0,
+      dispatches: 0,
+      stock: '0',
+    });
+    // Un lote revertido no se vuelve a cargar (R-07).
+    const again = await runner(batch).execute(ops, await readManifest(prisma, batch));
+    expect(again.failure?.message).toContain('ya se revirtió');
   });
 
   it('se detiene en la primera fila que falla y dice cuál y por qué', async () => {
