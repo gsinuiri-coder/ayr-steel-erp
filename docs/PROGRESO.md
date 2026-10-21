@@ -2,6 +2,33 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-21 — cc64: cargador de la carga atrasada (D-705..D-707; PR #244)
+
+Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc64.md`; UAT en
+`docs/uat/cc64.md`; operación en `docs/operacion/carga-atrasada.md`; revisión en `docs/revision/cc64-segundo-modelo.md`.
+
+- **API:** `00150-75k` (`git-sha=25e0afce`).
+- **Merge:** `dcc990cd`, que publicó la web en las dos URLs.
+- **Smoke:** en verde.
+- **Registro del dueño (21/10):** D-701..D-704 ratificadas y UAT de cc63 aprobado. El cargador va antes que el
+  accesorio suelto (D-697, cc65) y la higiene (cc66). Decisiones 1 a 6 para cc64, en `DECISIONES.md`.
+- **Qué entró:** `pnpm carga:ejecutar` y `pnpm carga:revertir` sobre la plantilla de `carga:revisar`, con columnas
+  opcionales nuevas (LARGOS, CONDICIÓN DE PAGO, VENCIMIENTO, MODALIDAD, DIRECCIÓN DESTINO, UBIGEO). El lote vive en
+  `audit_log`. Drywall se carga a mano después de `--hasta pedidos`.
+- **Ensayo en demo:** 845 operaciones, 0 fallas, 1 h 47 min. Reanuda sin duplicar y se revierte en 1 h 9 min, con los
+  reportes al céntimo. Demo restablecida desde producción y apagada al cerrar.
+- **Panel:** lee la emisión del comprobante o de la cotización (mes de venta). Solo el pedido y la OP quedan con la
+  fecha del día de la carga, y planta va por estado.
+- **Pendiente del dueño:**
+  - ratificar D-705..D-707 y el alta de clientes desde el padrón al cargar;
+  - hacer el UAT de cc64;
+  - preparar el plan real y dar el OK por nombre del lote en producción, antes del **12/01/2027**.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-705/D-706: `imports/backdated-load-runner.ts` (escribe por los servicios de compras, ventas, producción,
+  despachos, comprobantes y cobros; la reversa reabre OP cerradas por el lote, excepción a D-578).
+
 ## 2026-10-20 — cc63: topes de audit-02, recosteos pendientes y carga atrasada (D-701..D-704; PR #242)
 
 Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc63.md`; UAT en

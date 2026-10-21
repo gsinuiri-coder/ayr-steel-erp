@@ -2986,3 +2986,50 @@ nada. Un cargador futuro puede leer el mismo archivo.
 - **Reportes:** Ventas y margen, CxC, inventario valorizado y kardex cuadran al céntimo.
 - **Recosteo:** 490 filas en 3,3 s. Un pendiente de 1000 filas se completa en 3,3 s.
 - **Cargado a mano:** unas 16 horas por cada 4 semanas. El detalle está en `docs/operacion/carga-atrasada.md`.
+
+## Registro del dueño (2026-10-21, pieza cc63 y cc64)
+
+- **D-701, D-702, D-703 y D-704 ratificadas**, y el UAT de cc63 aprobado. Pasan a firmes en `ARQUITECTURA.md` §0.2.
+- **Cargador automático:** se hace (cc64), antes de la venta del accesorio suelto (D-697, pasa a cc65) y de la higiene
+  de auth y docs (pasa a cc66).
+- **Decisiones para cc64 (21/10):**
+  1. el lote se registra en `audit_log`, sin tabla nueva;
+  2. columnas opcionales: LARGOS (obligatoria en a medida), CONDICIÓN DE PAGO, VENCIMIENTO (vacío: plazo del
+     cliente) y MODALIDAD RECOJO/ENTREGA (vacía: recojo con aviso fila por fila), con DIRECCIÓN DESTINO y UBIGEO
+     obligatorias en una entrega;
+  3. la OP se cierra solo con el parte que completa el plan;
+  4. drywall queda fuera del cargador: se carga a mano, documentando cómo y en qué punto;
+  5. excepción a D-578 solo para `carga:revertir` y solo para las OP que cerró el mismo lote;
+  6. un lote revertido se corrige con otro lote, y sus comprobantes se reactivan a mano (D-373).
+
+## cc64 — el cargador de la carga atrasada (D-705..D-707)
+
+**Por qué el lote vive en la auditoría y no en una tabla (D-705).** Lo que el cargador necesita para reanudar y
+revertir es una lista de operaciones con su clave y lo que crearon. `audit_log` ya es append-only y ya lo leen los
+recosteos pendientes de D-702 y el «Historial». Una tabla nueva pedía migración contra producción para guardar lo mismo.
+
+**Por qué la reanudación anota la intención antes de llamar al servicio.** Un corte entre la llamada y la anotación
+dejaba hecho algo que el lote no conocía. La anotación «op-start» marca que el lote lo intentó: al volver, lo que
+encuentra por su clave natural o por la clave de idempotencia del lote es suyo, no adoptado, y la reversa lo deshace.
+Solo lo que existía antes del primer intento queda como adoptado y no se toca.
+
+**Por qué una bobina no puede pasar a otra OP abierta (regla de la revisión).** El ensayo se detuvo en un parte que
+usaba una bobina montada en otra OP que aún no se cerraba: la app no baja una bobina con kg consumidos. La revisión lo
+marca antes, en lugar de dejar la carga parada a mitad.
+
+**Por qué una entrega queda como recojo (D-707).** La app pide peso, vehículo y conductor (o transportista) para un
+traslado que no es recojo. Esos datos están en la guía que emitió el otro sistema y la plantilla no los trae.
+Inventarlos sería peor que registrar el destino real con una nota.
+
+**Por qué el drywall a mano entra a la simulación.** La revisión no ejecuta sus partes, pero su producto se despacha
+después: sin su entrada simulada, cada despacho de drywall daba un negativo falso y frenaba la carga entera.
+
+**Ensayo en demo (21/10/2026).** El plan de cc63 en la plantilla nueva:
+
+- corte manual a los 10 minutos y reanudación sin duplicar;
+- parada en la primera fila que falla (la de la bobina ocupada);
+- carga completa de 845 operaciones con 0 fallas en 1 h 47 min;
+- segunda corrida que saltó todo;
+- reversa completa en 1 h 9 min, con los reportes de vuelta al céntimo.
+
+Ventas y margen (S/ 120 178,00) y CxC del lote (S/ 12 564,64) iguales a cc63.
