@@ -6,7 +6,7 @@ import {
   purchaseTypeOf,
   QUOTATION_IMPORT_COLUMNS,
 } from '@ayr/shared';
-import { parseAmount } from './opening-balances-plan';
+import { parseAmount, parseMethod } from './opening-balances-plan';
 import {
   firstNegativeDate,
   firstValidDate,
@@ -54,7 +54,66 @@ export const LOAD_COLUMNS = {
   reference: { key: 'reference', header: 'REFERENCIA', required: false },
   supplierRuc: { key: 'supplierRuc', header: 'RUC PROVEEDOR', required: true },
   purchaseDocument: { key: 'purchaseDocument', header: 'SERIE-NÚMERO', required: true },
+  // cc64 (D-705): columnas opcionales, al final de su hoja; un archivo sin ellas sigue valiendo.
+  lengths: { key: 'lengths', header: 'LARGOS', required: false },
+  paymentTerms: { key: 'paymentTerms', header: 'CONDICIÓN DE PAGO', required: false },
+  dueDate: { key: 'dueDate', header: 'VENCIMIENTO', required: false },
+  mode: { key: 'mode', header: 'MODALIDAD', required: false },
+  destination: { key: 'destination', header: 'DIRECCIÓN DESTINO', required: false },
+  ubigeo: { key: 'ubigeo', header: 'UBIGEO', required: false },
 } as const;
+
+/** cc64 (D-705): lo que el plan necesita saber de un producto del catálogo. */
+export interface LoadProductInfo {
+  /** Línea de drywall: su producción se carga a mano (D-705). */
+  drywall: boolean;
+  /** La línea lleva desglose de largos (`detailsLengths`, regla 13). */
+  needsLengths: boolean;
+}
+
+/**
+ * cc64 (D-705): `LARGOS` de una línea a medida, en metros por cantidad de piezas:
+ * `4.5x10; 3x8` (también `4,5 x 10`). Devuelve los tramos en mm, o `null` si no se entiende.
+ */
+export function parseLengths(text: string): { lengthMm: Decimal; qty: number }[] | null {
+  const parts = text
+    .split(/[;\n]/)
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
+  if (parts.length === 0) return null;
+  const out: { lengthMm: Decimal; qty: number }[] = [];
+  for (const part of parts) {
+    const match = /^(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+)$/i.exec(part);
+    if (!match?.[1] || !match[2]) return null;
+    const meters = new Decimal(match[1].replace(',', '.'));
+    const qty = Number(match[2]);
+    if (meters.lte(0) || qty <= 0) return null;
+    out.push({ lengthMm: meters.times(1000).toDecimalPlaces(2), qty });
+  }
+  return out;
+}
+
+/** Los metros que suman unos tramos. */
+export function metersOf(pieces: readonly { lengthMm: Decimal; qty: number }[]): Decimal {
+  return pieces.reduce((acc, p) => acc.plus(p.lengthMm.times(p.qty).div(1000)), new Decimal(0));
+}
+
+/** cc64 (D-705): la modalidad del despacho. Vacía → recojo, con aviso. */
+export function dispatchModeOf(text: string): 'PICKUP' | 'DELIVERY' | null {
+  const t = text.trim().toUpperCase().normalize('NFD').replaceAll(/[̀-ͯ]/g, '');
+  if (t === '' || t === 'RECOJO') return 'PICKUP';
+  if (t === 'ENTREGA') return 'DELIVERY';
+  return null;
+}
+
+/** cc64 (D-705): la condición de pago. Vacía → `null` (el plazo del cliente). */
+export function paymentTermsOf(text: string): 'CONTADO' | 'CREDITO' | 'INVALID' | null {
+  const t = text.trim().toUpperCase().normalize('NFD').replaceAll(/[̀-ͯ]/g, '');
+  if (t === '') return null;
+  if (t === 'CONTADO') return 'CONTADO';
+  if (t === 'CREDITO') return 'CREDITO';
+  return 'INVALID';
+}
 
 /** Encabezados de cada hoja, en el orden en que la plantilla los escribe. */
 export const LOAD_SHEET_HEADERS: Record<keyof typeof LOAD_SHEETS, string[]> = {
@@ -62,7 +121,12 @@ export const LOAD_SHEET_HEADERS: Record<keyof typeof LOAD_SHEETS, string[]> = {
     ...Object.values(PURCHASE_IMPORT_COLUMNS).map((c) => c.header),
     LOAD_COLUMNS.receivedDate.header,
   ],
-  sales: Object.values(QUOTATION_IMPORT_COLUMNS),
+  sales: [
+    ...Object.values(QUOTATION_IMPORT_COLUMNS),
+    LOAD_COLUMNS.lengths.header,
+    LOAD_COLUMNS.paymentTerms.header,
+    LOAD_COLUMNS.dueDate.header,
+  ],
   production: [
     LOAD_COLUMNS.saleDocument.header,
     LOAD_COLUMNS.date.header,
@@ -76,6 +140,9 @@ export const LOAD_SHEET_HEADERS: Record<keyof typeof LOAD_SHEETS, string[]> = {
     LOAD_COLUMNS.date.header,
     LOAD_COLUMNS.sku.header,
     LOAD_COLUMNS.qty.header,
+    LOAD_COLUMNS.mode.header,
+    LOAD_COLUMNS.destination.header,
+    LOAD_COLUMNS.ubigeo.header,
   ],
   collections: [
     LOAD_COLUMNS.saleDocument.header,
@@ -130,6 +197,10 @@ export interface LoadContext {
   products: ReadonlySet<string>;
   /** Códigos de bobina que existen. */
   coils: ReadonlySet<string>;
+  /** cc64 (D-705): lo que se sabe de cada SKU que existe (drywall, largos). Sin él, nada se marca. */
+  productInfo?: ReadonlyMap<string, LoadProductInfo>;
+  /** cc64: documentos (RUC o DNI) de clientes que existen. Sin él, no se avisa de clientes nuevos. */
+  customers?: ReadonlySet<string>;
 }
 
 export interface LoadIssue {
@@ -168,8 +239,14 @@ interface Movement {
   date: string;
   qty: Decimal;
   type: 'IN' | 'OUT';
+  /** cc64: el paso del orden de carga (1 compras, 3 producción, 4 despachos). */
+  step: number;
   /** Una salida de bobina para producir: lo producido recostea en cascada. */
   producesKey?: string;
+  /** cc64: la OP del parte (venta y SKU), lo que vendió y la bobina que lo alimenta. */
+  opKey?: string;
+  opTarget?: Decimal;
+  coilKey?: string;
   /**
    * Revisión de cc63 (H-1): el parte es una sola operación. Si la salida de la bobina se rechaza,
    * la entrada del producto tampoco entra (en el sistema real el parte falla entero).
@@ -185,8 +262,9 @@ export function addDaysIso(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function rowNumber(i: number): number {
-  return i + 2;
+function rowNumber(i: number, raw?: Record<string, unknown>): number {
+  const n = (raw as { __rowNum__?: unknown } | undefined)?.__rowNum__;
+  return typeof n === 'number' ? n + 1 : i + 2;
 }
 
 function cell(raw: Record<string, unknown>, header: string, required = true): string {
@@ -250,7 +328,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   const purchaseDocs = new Map<string, string>();
   sheets.purchases.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.purchases;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = `${rawToString(cell(raw, PURCHASE_IMPORT_COLUMNS.supplierRuc.header))} · ${cell(raw, PURCHASE_IMPORT_COLUMNS.document.header)}`;
     const issue = dateOf(
       sheet,
@@ -296,6 +374,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
         date: received,
         qty: q,
         type: 'IN',
+        step: 1,
       });
       return;
     }
@@ -314,7 +393,15 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       'La cantidad',
     );
     if (!q) return;
-    movements.push({ sheet, row, itemKey: `PRODUCT:${sku}`, date: received, qty: q, type: 'IN' });
+    movements.push({
+      sheet,
+      row,
+      itemKey: `PRODUCT:${sku}`,
+      date: received,
+      qty: q,
+      type: 'IN',
+      step: 1,
+    });
   });
 
   // 2. Ventas: no mueven stock; dan los comprobantes, sus cantidades por SKU y sus totales.
@@ -325,7 +412,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   >();
   sheets.sales.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.sales;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, QUOTATION_IMPORT_COLUMNS.documentKey);
     // Autorrevisión de cc63: el importador de cotizaciones salta las notas de crédito del export
     // (D-152); la revisión también.
@@ -348,6 +435,22 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     }
     const sku = cell(raw, QUOTATION_IMPORT_COLUMNS.sku);
     if (!ctx.products.has(sku)) err(sheet, row, `el SKU ${sku} no existe en el catálogo`);
+    const customerDoc = /^(\d{8,11})\s*-/.exec(cell(raw, QUOTATION_IMPORT_COLUMNS.customer))?.[1];
+    if (ctx.customers && !sales.has(doc)) {
+      if (!customerDoc) {
+        err(
+          sheet,
+          row,
+          `CLIENTE sin RUC o DNI al inicio: «${cell(raw, QUOTATION_IMPORT_COLUMNS.customer)}»`,
+        );
+      } else if (!ctx.customers.has(customerDoc)) {
+        warn(
+          sheet,
+          row,
+          `el cliente ${customerDoc} no está en el maestro: se dará de alta desde el padrón al cargar (consulta externa)`,
+        );
+      }
+    }
     const q = qtyOf(sheet, row, cell(raw, QUOTATION_IMPORT_COLUMNS.qty), 'La cantidad') ?? ZERO;
     const netCell = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.netAmount));
     if (netCell === null)
@@ -359,6 +462,49 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     const net = netCell ?? ZERO;
     const totalCell = amountOf(cell(raw, QUOTATION_IMPORT_COLUMNS.totalAmount, false));
     const total = totalCell ?? net.times(IGV_FACTOR);
+    // cc64 (D-705): una línea a medida trae su plan de corte en LARGOS, que suma la cantidad.
+    const lengthsText = cell(raw, LOAD_COLUMNS.lengths.header, false);
+    if (ctx.productInfo?.get(sku)?.needsLengths) {
+      const pieces = parseLengths(lengthsText);
+      if (lengthsText === '') {
+        err(
+          sheet,
+          row,
+          `${sku} es a medida: falta LARGOS (por ejemplo «4.5x10; 3x8», metros x piezas)`,
+        );
+      } else if (!pieces) {
+        err(
+          sheet,
+          row,
+          `LARGOS inválidos: «${lengthsText}» (usa metros x piezas, separados por «;»)`,
+        );
+      } else if (!metersOf(pieces).eq(q)) {
+        err(
+          sheet,
+          row,
+          `LARGOS suman ${metersOf(pieces).toFixed(3)} m y la cantidad es ${q.toFixed(3)}`,
+        );
+      }
+    } else if (lengthsText !== '') {
+      warn(sheet, row, `${sku} no lleva largos: la columna LARGOS se ignora`);
+    }
+    const terms = paymentTermsOf(cell(raw, LOAD_COLUMNS.paymentTerms.header, false));
+    const dueText = cell(raw, LOAD_COLUMNS.dueDate.header, false);
+    if (terms === 'INVALID') {
+      err(
+        sheet,
+        row,
+        `CONDICIÓN DE PAGO inválida: «${cell(raw, LOAD_COLUMNS.paymentTerms.header, false)}» (CONTADO o CRÉDITO)`,
+      );
+    } else if (terms === 'CONTADO' && dueText !== '') {
+      err(sheet, row, 'una venta al contado no lleva VENCIMIENTO');
+    }
+    if (dueText !== '') {
+      const due = parseCalendarDate(dueText);
+      if (!due) err(sheet, row, `VENCIMIENTO inválido: «${dueText}»`);
+      else if (due < issue)
+        err(sheet, row, `el vencimiento ${due} es anterior a la emisión ${issue}`);
+    }
     const sale = sales.get(doc) ?? {
       issueDate: issue,
       total: ZERO,
@@ -394,7 +540,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   const producedBySale = new Map<string, Decimal>();
   sheets.production.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.production;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, LOAD_COLUMNS.saleDocument.header);
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del parte');
     const sku = cell(raw, LOAD_COLUMNS.sku.header);
@@ -407,7 +553,28 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       err(sheet, row, `el SKU ${sku} no existe en el catálogo`);
       return;
     }
+    // cc64 (D-705): la producción de drywall sale de flejes de un corte que el plan no trae.
+    if (ctx.productInfo?.get(sku)?.drywall) {
+      warn(sheet, row, `${sku} es de drywall: este parte se carga a mano (no se ejecuta)`);
+      // Lo que produce sí entra a la simulación: sin él, su despacho daría un negativo falso. El
+      // consumo de flejes no se simula (sale de un corte que el plan no trae).
+      movements.push({
+        sheet,
+        row,
+        itemKey: `PRODUCT:${sku}`,
+        date,
+        qty: q,
+        type: 'IN',
+        step: 3,
+        part: i,
+      });
+      producedBySale.set(`${doc}|${sku}`, (producedBySale.get(`${doc}|${sku}`) ?? ZERO).plus(q));
+      return;
+    }
     const coil = cell(raw, LOAD_COLUMNS.coil.header, false);
+    if (coil === '') {
+      warn(sheet, row, 'sin CÓDIGO BOBINA: la OP tiene que tener ya una bobina montada');
+    }
     if (coil !== '') {
       const kg = qtyOf(
         sheet,
@@ -427,11 +594,25 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
         date,
         qty: kg,
         type: 'OUT',
+        step: 3,
         producesKey: `PRODUCT:${sku}`,
+        opKey: `${doc}|${sku}`,
         part: i,
       });
     }
-    movements.push({ sheet, row, itemKey: `PRODUCT:${sku}`, date, qty: q, type: 'IN', part: i });
+    movements.push({
+      sheet,
+      row,
+      itemKey: `PRODUCT:${sku}`,
+      date,
+      qty: q,
+      type: 'IN',
+      step: 3,
+      part: i,
+      opKey: `${doc}|${sku}`,
+      opTarget: sale?.qtyBySku.get(sku),
+      ...(coil === '' ? {} : { coilKey: `COIL:${coil}` }),
+    });
     producedBySale.set(`${doc}|${sku}`, (producedBySale.get(`${doc}|${sku}`) ?? ZERO).plus(q));
   });
 
@@ -440,7 +621,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     const [doc, sku] = key.split('|') as [string, string];
     const sold = sales.get(doc)?.qtyBySku.get(sku);
     if (sold && made.gt(sold)) {
-      warn(
+      err(
         LOAD_SHEETS.production,
         null,
         `${doc} produce ${made.toFixed(3)} de ${sku} y vendió ${sold.toFixed(3)}`,
@@ -452,7 +633,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   const dispatchedBySale = new Map<string, Decimal>();
   sheets.dispatches.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.dispatches;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, LOAD_COLUMNS.saleDocument.header);
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del despacho');
     const sku = cell(raw, LOAD_COLUMNS.sku.header);
@@ -464,23 +645,46 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       err(sheet, row, `${doc} no vende ${sku} en la hoja de ventas`);
       return;
     }
+    // cc64 (D-705): sin modalidad se carga como recojo, y se avisa para corregirlo antes.
+    const modeText = cell(raw, LOAD_COLUMNS.mode.header, false);
+    const mode = dispatchModeOf(modeText);
+    if (mode === null) {
+      err(sheet, row, `MODALIDAD inválida: «${modeText}» (RECOJO o ENTREGA)`);
+    } else if (modeText.trim() === '') {
+      warn(sheet, row, 'sin MODALIDAD: se cargará como recojo');
+    } else if (mode === 'DELIVERY') {
+      if (cell(raw, LOAD_COLUMNS.destination.header, false) === '') {
+        err(sheet, row, 'una entrega exige DIRECCIÓN DESTINO');
+      }
+      if (!/^\d{6}$/.test(cell(raw, LOAD_COLUMNS.ubigeo.header, false))) {
+        err(sheet, row, 'una entrega exige UBIGEO de 6 dígitos');
+      }
+    }
     const key = `${doc}|${sku}`;
     const total = (dispatchedBySale.get(key) ?? ZERO).plus(q);
     dispatchedBySale.set(key, total);
     if (total.gt(sold))
       err(sheet, row, `${doc} despacha ${total.toFixed(3)} de ${sku} y vendió ${sold.toFixed(3)}`);
-    movements.push({ sheet, row, itemKey: `PRODUCT:${sku}`, date, qty: q, type: 'OUT' });
+    movements.push({ sheet, row, itemKey: `PRODUCT:${sku}`, date, qty: q, type: 'OUT', step: 4 });
   });
+
+  // Autorrevisión de cc64 (P3-17): un medio que no se entiende se carga como «Otro»; se avisa.
+  const unknownMethod = (sheet: string, row: number, text: string) => {
+    if (text.trim() !== '' && parseMethod(text) === null) {
+      warn(sheet, row, `MEDIO DE PAGO desconocido: «${text.trim()}»; se registra como «Otro»`);
+    }
+  };
 
   // 5. Cobros y pagos: fechas y montos contra su comprobante.
   const collected = new Map<string, Decimal>();
   sheets.collections.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.collections;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = cell(raw, LOAD_COLUMNS.saleDocument.header);
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del cobro');
     const amount = qtyOf(sheet, row, cell(raw, LOAD_COLUMNS.amount.header), 'El monto');
     if (!date || !amount) return;
+    unknownMethod(sheet, row, cell(raw, LOAD_COLUMNS.method.header, false));
     const sale = sales.get(doc);
     if (!sale) {
       err(sheet, row, `${doc} no está en la hoja de ventas`);
@@ -497,10 +701,11 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   });
   sheets.supplierPayments.forEach((raw, i) => {
     const sheet = LOAD_SHEETS.supplierPayments;
-    const row = rowNumber(i);
+    const row = rowNumber(i, raw);
     const doc = `${rawToString(cell(raw, LOAD_COLUMNS.supplierRuc.header))} · ${cell(raw, LOAD_COLUMNS.purchaseDocument.header)}`;
     const date = dateOf(sheet, row, cell(raw, LOAD_COLUMNS.date.header), 'La fecha del pago');
     if (!date || !qtyOf(sheet, row, cell(raw, LOAD_COLUMNS.amount.header), 'El monto')) return;
+    unknownMethod(sheet, row, cell(raw, LOAD_COLUMNS.method.header, false));
     const issue = purchaseDocs.get(doc);
     if (issue && date < issue)
       warn(sheet, row, `el pago del ${date} es anterior a la emisión de la compra (${issue})`);
@@ -523,8 +728,31 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
   };
   let rejected = 0;
   const failedParts = new Set<number>();
-  for (const m of movements) {
+  // cc64: una bobina que ya alimentó un parte de una OP solo se baja de ella cuando la OP se
+  // cierra (`releaseCoil` rechaza con kilos consumidos). Mientras la OP de una venta y un SKU no
+  // complete lo vendido, su bobina no puede alimentar otra OP.
+  const coilHolder = new Map<string, string>();
+  const madeByOp = new Map<string, Decimal>();
+  // cc64: el cargador carga cada paso de la fecha más antigua a la más nueva; la revisión, igual.
+  const ordered = movements
+    .map((m, i) => ({ m, i }))
+    .sort((a, b) => a.m.step - b.m.step || a.m.date.localeCompare(b.m.date) || a.i - b.i)
+    .map((x) => x.m);
+  for (const m of ordered) {
     if (m.part !== undefined && failedParts.has(m.part)) continue;
+    if (m.opKey !== undefined && m.producesKey !== undefined) {
+      const holder = coilHolder.get(m.itemKey);
+      if (holder !== undefined && holder !== m.opKey) {
+        err(
+          m.sheet,
+          m.row,
+          `${labelOf(m.itemKey)} sigue montada en la OP de ${holder.replace('|', ' · ')}, que no está completa: usa otra bobina o completa esa OP antes del ${m.date}`,
+        );
+        rejected += 1;
+        if (m.part !== undefined) failedParts.add(m.part);
+        continue;
+      }
+    }
     const list = rowsOf(m.itemKey);
     const at = insertAt(list, m.date);
     let rowsAfter = list.length - at;
@@ -560,6 +788,16 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
       });
     }
     list.splice(at, 0, { date: m.date, delta: m.type === 'IN' ? m.qty : m.qty.negated() });
+    // La OP de esta venta y este SKU: con su bobina ocupada hasta completar lo vendido.
+    if (m.opKey !== undefined && m.type === 'IN' && m.step === 3) {
+      const made = (madeByOp.get(m.opKey) ?? ZERO).plus(m.qty);
+      madeByOp.set(m.opKey, made);
+      const coilKey = m.coilKey;
+      if (coilKey !== undefined) {
+        if (made.gte(m.opTarget ?? made)) coilHolder.delete(coilKey);
+        else coilHolder.set(coilKey, m.opKey);
+      }
+    }
   }
   for (const r of recosts.filter((x) => x.overLimit)) {
     warn(

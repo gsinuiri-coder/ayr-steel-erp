@@ -79,6 +79,8 @@
     "recosteo:historico": "node scripts/recost-historic.mjs",
     "recosteo:pendientes": "node scripts/recost-pending.mjs",
     "carga:revisar": "node scripts/backdated-load-review.mjs",
+    "carga:ejecutar": "node scripts/backdated-load-run.mjs ejecutar",
+    "carga:revertir": "node scripts/backdated-load-run.mjs revertir",
     "restore:cancelled-coils": "node scripts/restore-cancelled-coils.mjs",
     "setup:agentes": "node scripts/setup-agentes.mjs"
   },

@@ -183,7 +183,7 @@ describe('reviewBackdatedLoad (cc63)', () => {
     expect(r.errors.map((e) => e.sheet)).toEqual(['Producción', 'Despachos']);
   });
 
-  it('revisión H-2 y H-3: producir de más avisa; un valor de venta ilegible es error', () => {
+  it('revisión H-2 y H-3: producir de más es error (cc64); un valor de venta ilegible también', () => {
     const sheets = empty();
     sheets.sales = [sale({ 'VALOR DE VENTA': 'abc' })];
     sheets.production = [
@@ -196,7 +196,7 @@ describe('reviewBackdatedLoad (cc63)', () => {
     ];
     const r = reviewBackdatedLoad(sheets, ctx());
     expect(r.errors.map((e) => e.message)).toContain('valor de venta inválido: «abc»');
-    expect(r.warnings.map((w) => w.message)).toContain(
+    expect(r.errors.map((e) => e.message)).toContain(
       'FFA1-1 produce 12.000 de PERFIL-1 y vendió 10.000',
     );
   });
@@ -294,5 +294,223 @@ describe('reviewBackdatedLoad (cc63)', () => {
     expect(LOAD_SHEET_HEADERS.purchases.at(-1)).toBe('FECHA DE RECEPCIÓN');
     expect(LOAD_SHEET_HEADERS.sales).toContain('SERIE - NÚMERO');
     expect(addDaysIso('2026-10-14', 90)).toBe('2027-01-12');
+  });
+});
+
+describe('cc64 (D-705): columnas opcionales y drywall', () => {
+  const info = new Map([
+    ['PERFIL-1', { drywall: false, needsLengths: false }],
+    ['COB030ROJO', { drywall: false, needsLengths: true }],
+    ['DRY-1', { drywall: true, needsLengths: false }],
+  ]);
+  const withInfo = (over: Partial<LoadContext> = {}) =>
+    ctx({ products: new Set(['PERFIL-1', 'COB030ROJO', 'DRY-1']), productInfo: info, ...over });
+
+  it('una línea a medida exige LARGOS que sumen la cantidad', () => {
+    const sheets = empty();
+    sheets.sales = [
+      sale({ 'CÓDIGO PRODUCTO': 'COB030ROJO', CANTIDAD: '12', 'SERIE - NÚMERO': 'FFA1-1' }),
+      sale({
+        'CÓDIGO PRODUCTO': 'COB030ROJO',
+        CANTIDAD: '12',
+        'SERIE - NÚMERO': 'FFA1-2',
+        LARGOS: '4,5x2; 3x1',
+      }),
+      sale({
+        'CÓDIGO PRODUCTO': 'COB030ROJO',
+        CANTIDAD: '12',
+        'SERIE - NÚMERO': 'FFA1-3',
+        LARGOS: '4.5 x 2;3x2',
+      }),
+      sale({
+        'CÓDIGO PRODUCTO': 'COB030ROJO',
+        CANTIDAD: '12',
+        'SERIE - NÚMERO': 'FFA1-4',
+        LARGOS: 'doce',
+      }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-5', LARGOS: '3x1' }),
+    ];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    // FFA1-2 (4,5 × 2 + 3 × 1 = 12 m) está bien; FFA1-3 suma 15 m.
+    expect(r.errors.map((e) => e.message)).toEqual([
+      'COB030ROJO es a medida: falta LARGOS (por ejemplo «4.5x10; 3x8», metros x piezas)',
+      'LARGOS suman 15.000 m y la cantidad es 12.000',
+      'LARGOS inválidos: «doce» (usa metros x piezas, separados por «;»)',
+    ]);
+    expect(r.warnings.map((w) => w.message)).toContain(
+      'PERFIL-1 no lleva largos: la columna LARGOS se ignora',
+    );
+  });
+
+  it('condición de pago y vencimiento', () => {
+    const sheets = empty();
+    sheets.sales = [
+      sale({
+        'SERIE - NÚMERO': 'FFA1-1',
+        'CONDICIÓN DE PAGO': 'Crédito',
+        VENCIMIENTO: '2026-11-20',
+      }),
+      sale({
+        'SERIE - NÚMERO': 'FFA1-2',
+        'CONDICIÓN DE PAGO': 'contado',
+        VENCIMIENTO: '2026-11-20',
+      }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-3', 'CONDICIÓN DE PAGO': 'a 30 días' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-4', VENCIMIENTO: '2026-10-01' }),
+    ];
+    expect(reviewBackdatedLoad(sheets, withInfo()).errors.map((e) => e.message)).toEqual([
+      'una venta al contado no lleva VENCIMIENTO',
+      'CONDICIÓN DE PAGO inválida: «a 30 días» (CONTADO o CRÉDITO)',
+      'el vencimiento 2026-10-01 es anterior a la emisión 2026-10-20',
+    ]);
+  });
+
+  it('modalidad del despacho: vacía avisa, entrega exige destino y ubigeo', () => {
+    const sheets = empty();
+    sheets.purchases = [purchase({ CANTIDAD: '100' })];
+    sheets.sales = [sale({ CANTIDAD: '40' })];
+    sheets.dispatches = [
+      dispatch({ CANTIDAD: '1' }),
+      dispatch({ CANTIDAD: '1', MODALIDAD: 'Recojo' }),
+      dispatch({ CANTIDAD: '1', MODALIDAD: 'ENTREGA' }),
+      dispatch({
+        CANTIDAD: '1',
+        MODALIDAD: 'entrega',
+        'DIRECCIÓN DESTINO': 'Av. Uno 123',
+        UBIGEO: '150101',
+      }),
+      dispatch({ CANTIDAD: '1', MODALIDAD: 'courier' }),
+    ];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    expect(r.errors.map((e) => [e.row, e.message])).toEqual([
+      [4, 'una entrega exige DIRECCIÓN DESTINO'],
+      [4, 'una entrega exige UBIGEO de 6 dígitos'],
+      [6, 'MODALIDAD inválida: «courier» (RECOJO o ENTREGA)'],
+    ]);
+    expect(
+      r.warnings.filter((w) => w.sheet === 'Despachos').map((w) => [w.row, w.message]),
+    ).toEqual([[2, 'sin MODALIDAD: se cargará como recojo']]);
+  });
+
+  it('un parte de drywall se carga a mano; su producto entra a la simulación y se despacha', () => {
+    const sheets = empty();
+    sheets.sales = [sale({ 'CÓDIGO PRODUCTO': 'DRY-1' })];
+    sheets.production = [
+      {
+        'SERIE - NÚMERO': 'FFA1-1',
+        FECHA: '2026-10-21',
+        'CÓDIGO PRODUCTO': 'DRY-1',
+        CANTIDAD: '10',
+      },
+    ];
+    sheets.dispatches = [dispatch({ 'CÓDIGO PRODUCTO': 'DRY-1', MODALIDAD: 'RECOJO' })];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    // Sin la entrada del parte a mano, el despacho daría un negativo falso y frenaría la carga.
+    expect(r.errors).toEqual([]);
+    expect(r.movements.planned).toBe(2);
+    expect(r.warnings.map((w) => w.message)).toContain(
+      'DRY-1 es de drywall: este parte se carga a mano (no se ejecuta)',
+    );
+  });
+
+  it('la simulación carga cada paso por fecha, no en el orden del archivo', () => {
+    const sheets = empty();
+    sheets.purchases = [
+      purchase({ 'FECHA DE RECEPCIÓN': '2026-10-18', CANTIDAD: '5' }),
+      purchase({ 'SERIE-NÚMERO': 'F001-2', 'FECHA DE RECEPCIÓN': '2026-10-15', CANTIDAD: '5' }),
+    ];
+    sheets.sales = [sale()];
+    sheets.dispatches = [
+      dispatch({ FECHA: '2026-10-19', CANTIDAD: '5', MODALIDAD: 'RECOJO' }),
+      dispatch({ FECHA: '2026-10-16', CANTIDAD: '5', MODALIDAD: 'RECOJO' }),
+    ];
+    const r = reviewBackdatedLoad(sheets, withInfo());
+    expect(r.errors).toEqual([]);
+    // Por fecha: la compra del 15 no recostea la del 18, ni el despacho del 19 al del 16. Solo el
+    // despacho del 16 queda antes de la compra del 18 (las compras van todas primero): 1 fila.
+    // En el orden del archivo serían 2 recosteos, uno de 2 filas.
+    expect(r.recosts.map((x) => [x.sheet, x.date, x.rowsAfter])).toEqual([
+      ['Despachos', '2026-10-16', 1],
+    ]);
+  });
+});
+
+describe('cc64: una bobina no pasa a otra OP mientras la primera no se completa', () => {
+  it('la segunda OP con la misma bobina se rechaza hasta que la primera completa lo vendido', () => {
+    const sheets = empty();
+    sheets.purchases = [
+      purchase({
+        SKU: '',
+        'TIPO DE COMPRA': 'BOBINAS',
+        KG: '5000',
+        'CÓDIGO EXTERNO': 'EXT-1',
+        'FECHA DE RECEPCIÓN': '2026-10-14',
+      }),
+    ];
+    sheets.sales = [
+      sale({ 'SERIE - NÚMERO': 'FFA1-1', 'CÓDIGO PRODUCTO': 'COB030ROJO', CANTIDAD: '10' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-2', 'CÓDIGO PRODUCTO': 'COB030ROJO', CANTIDAD: '10' }),
+    ];
+    const part = (doc: string, date: string, qty: string) => ({
+      'SERIE - NÚMERO': doc,
+      FECHA: date,
+      'CÓDIGO PRODUCTO': 'COB030ROJO',
+      CANTIDAD: qty,
+      'CÓDIGO BOBINA': 'EXT-1',
+      'KG CONSUMIDOS': '50',
+    });
+    // FFA1-1 hace 5 de 10 el 15; FFA1-2 quiere la bobina el 16; FFA1-1 completa el 17.
+    sheets.production = [
+      part('FFA1-1', '2026-10-15', '5'),
+      part('FFA1-2', '2026-10-16', '10'),
+      part('FFA1-1', '2026-10-17', '5'),
+    ];
+    const r = reviewBackdatedLoad(sheets, ctx());
+    expect(r.errors.map((e) => [e.row, e.message])).toEqual([
+      [
+        3,
+        'bobina EXT-1 sigue montada en la OP de FFA1-1 · COB030ROJO, que no está completa: usa otra bobina o completa esa OP antes del 2026-10-16',
+      ],
+    ]);
+    // Con FFA1-2 después de que FFA1-1 se completa, pasa.
+    sheets.production = [
+      part('FFA1-1', '2026-10-15', '5'),
+      part('FFA1-1', '2026-10-16', '5'),
+      part('FFA1-2', '2026-10-17', '10'),
+    ];
+    expect(reviewBackdatedLoad(sheets, ctx()).errors).toEqual([]);
+  });
+});
+
+describe('autorrevisión de cc64: cliente nuevo, parte sin bobina y medio desconocido', () => {
+  it('avisa lo que el cargador va a resolver solo o va a necesitar', () => {
+    const sheets = empty();
+    sheets.sales = [
+      sale({ 'SERIE - NÚMERO': 'FFA1-1', CLIENTE: '20111111111 - Cliente conocido' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-2', CLIENTE: '20999999999 - Cliente nuevo' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-3', CLIENTE: 'Sin documento' }),
+    ];
+    sheets.production = [
+      {
+        'SERIE - NÚMERO': 'FFA1-1',
+        FECHA: '2026-10-21',
+        'CÓDIGO PRODUCTO': 'PERFIL-1',
+        CANTIDAD: '1',
+      },
+    ];
+    sheets.collections = [
+      { 'SERIE - NÚMERO': 'FFA1-1', FECHA: '2026-10-21', MONTO: '10', 'MEDIO DE PAGO': 'trueque' },
+    ];
+    const r = reviewBackdatedLoad(sheets, ctx({ customers: new Set(['20111111111']) }));
+    expect(r.errors.map((e) => e.message)).toContain(
+      'CLIENTE sin RUC o DNI al inicio: «Sin documento»',
+    );
+    expect(r.warnings.map((w) => w.message)).toEqual(
+      expect.arrayContaining([
+        'el cliente 20999999999 no está en el maestro: se dará de alta desde el padrón al cargar (consulta externa)',
+        'sin CÓDIGO BOBINA: la OP tiene que tener ya una bobina montada',
+        'MEDIO DE PAGO desconocido: «trueque»; se registra como «Otro»',
+      ]),
+    );
   });
 });
