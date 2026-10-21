@@ -120,11 +120,12 @@ describe('SalesOrdersService.stockPanel — presupuesto de consultas (D-280)', (
     service = moduleRef.get(SalesOrdersService);
   });
 
-  async function countFor(n: number) {
+  async function countFor(n: number, counter = false) {
     products = Array.from({ length: n }, (_, i) => madeToOrderProduct(i + 1));
     calls = 0;
     const panel = await service.stockPanel(ADMIN, {
       productIds: products.map((p) => p.id),
+      counter,
     });
     return { calls, panel };
   }
@@ -144,6 +145,16 @@ describe('SalesOrdersService.stockPanel — presupuesto de consultas (D-280)', (
       // 1000 kg de su bobina, nada reservado.
       expect(row.rawMaterialAvailableKg).toBe('1000.000');
       expect(row.minValuePen).not.toBeNull();
+    }
+  });
+
+  it('cc65 (D-697): en el mostrador la cobertura no mira el agregado de bobinas', async () => {
+    const { panel } = await countFor(3, true);
+    expect(panel.products).toHaveLength(3);
+    for (const row of panel.products) {
+      // Se sirve de su saldo terminado: ni kilos de bobina ni kilo por metro.
+      expect(row.rawMaterialAvailableKg).toBeNull();
+      expect(row.kgPerMeter).toBeNull();
     }
   });
 });

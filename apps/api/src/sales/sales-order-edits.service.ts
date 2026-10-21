@@ -1791,9 +1791,24 @@ export class SalesOrderEditsService {
     await lockDocuments(tx, { salesOrders: [orderId] });
     const found = await tx.salesOrder.findUnique({
       where: { id: orderId },
-      select: { id: true, seq: true, status: true, createdById: true, sellerId: true, notes: true },
+      select: {
+        id: true,
+        seq: true,
+        status: true,
+        createdById: true,
+        sellerId: true,
+        notes: true,
+        posSale: { select: { id: true } },
+      },
     });
     if (!found) throw new NotFoundException('Pedido no encontrado');
+    // cc65 (D-697): un pedido del mostrador no se edita. Su línea de cobertura se sirvió del
+    // saldo terminado, y volver a resolverla la convertiría en una línea que se fabrica.
+    if (found.posSale) {
+      throw new BadRequestException(
+        `El pedido nació en el mostrador: no se puede ${_what}. Anula la venta y vuelve a hacerla.`,
+      );
+    }
     const head = {
       id: found.id,
       seq: found.seq,
