@@ -214,6 +214,8 @@ a la primera, con las reversas de la app. Los pasos son:
 - **Carga completa del plan corregido:** 845 operaciones, 0 fallas, **1 h 47 min** (6415,4 s), lo mismo que la carga
   por la API de cc63.
 - **Sin duplicados:** volver a correr el lote completo saltó las 845 operaciones en menos de un segundo.
+- **Reversa del lote completo:** 845 operaciones en **1 h 9 min** (4159,0 s). Ventas y margen, cuentas por cobrar,
+  inventario valorizado y `check:balances` volvieron al céntimo a la foto de antes, sin recosteos pendientes.
 
 **Al final cuadraba todo al céntimo con cc63:**
 
