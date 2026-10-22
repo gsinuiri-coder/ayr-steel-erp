@@ -1828,9 +1828,9 @@ export const productStockSchema = z.object({
    * API va a exigir al guardar, calculado por la misma función: el formulario no puede
    * prometer un mínimo distinto del que el `POST` rechaza.
    *
-   * El costo se puede despejar de acá (margen mínimo ÷ precio), y el margen lo lee todo el
-   * equipo comercial. Es el costo de que el vendedor pueda ver su piso antes de tipear;
-   * sin eso el piso solo se descubre chocando contra el 400.
+   * El costo no viaja: desde D-664 el vendedor no lee el margen (lo ve el ADMINISTRADOR), así que
+   * del mínimo no se despeja el costo. Es lo que permite que el vendedor vea su piso antes de
+   * tipear; sin eso el piso solo se descubre chocando contra el 400 (PERM-01 de audit-02).
    */
   minPricePen: z.string().nullable(),
   /**

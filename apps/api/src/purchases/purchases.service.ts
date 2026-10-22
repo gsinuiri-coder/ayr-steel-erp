@@ -287,7 +287,7 @@ export class PurchasesService {
           docType: input.docType,
           series: input.series,
           number,
-          issueDate: new Date(`${input.issueDate}T00:00:00.000Z`),
+          issueDate: toDateOnly(input.issueDate),
           currency: input.currency,
           exchangeRate: toFixedString(rate, 'RATE'),
           exchangeRateSource: source,

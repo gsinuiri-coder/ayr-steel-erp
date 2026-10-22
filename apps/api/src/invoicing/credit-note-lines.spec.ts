@@ -206,6 +206,34 @@ describe('zeroCreditLines (03, 13)', () => {
     expect(out.map((l) => l.totalPen)).toEqual(['0.0000', '0.0000']);
   });
 
+  it('cc65 (NC-03): sobre un comprobante acreditado por completo, ni 03 ni 13', () => {
+    const full = new Map<string, LineCredits>([
+      [
+        'a',
+        {
+          ...NO_CREDITS,
+          qty: d('20'),
+          byQty: { subtotal: d('1200'), igv: d('216'), total: d('1416') },
+        },
+      ],
+      [
+        'b',
+        {
+          ...NO_CREDITS,
+          qty: d('400'),
+          byQty: { subtotal: d('400'), igv: d('72'), total: d('472') },
+        },
+      ],
+    ]);
+    expect(() => zeroCreditLines(lines(), null, full)).toThrow('No queda nada por acreditar');
+    expect(() =>
+      zeroCreditLines(lines(), [{ affectedItemId: 'b', description: 'Tornillo corregido' }], full),
+    ).toThrow('No queda nada por acreditar');
+    // Con algo por acreditar en una línea, el 13 sigue entrando.
+    const partial = new Map([...full].filter(([id]) => id === 'a'));
+    expect(zeroCreditLines(lines(), null, partial)).toHaveLength(2);
+  });
+
   it('remainingOf resta cantidad solo de los motivos de cantidad', () => {
     const rest = remainingOf(lines()[0]!, {
       qty: d('5'),

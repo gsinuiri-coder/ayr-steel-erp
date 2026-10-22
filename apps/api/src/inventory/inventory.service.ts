@@ -527,7 +527,7 @@ export class InventoryService {
     }
     if (!settled) {
       throw new ConflictException(
-        'El recosteo por fecha no pudo tomar todos los ítems de la cadena: reintentá la operación',
+        'El recosteo por fecha no pudo tomar todos los ítems de la cadena: reintenta la operación',
       );
     }
 
@@ -735,7 +735,7 @@ export class InventoryService {
       message:
         `La fecha ${operationDate} queda ANTES de ${laterCount} movimiento(s) que ${label} ya ` +
         `tiene registrados (el más reciente, del ${fromDateOnly(newest.operationDate)}). La carga ` +
-        'histórica va en orden cronológico: registrá primero lo más antiguo.' +
+        'histórica va en orden cronológico: registra primero lo más antiguo.' +
         laterMovementsNote(laterCount),
       statusCode: 400,
       error: 'Bad Request',

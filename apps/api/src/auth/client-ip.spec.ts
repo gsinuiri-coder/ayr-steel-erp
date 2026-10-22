@@ -90,6 +90,25 @@ describe('ipBucket', () => {
       loginIpKey(SECRET, '2800:200:e840:1f2a:ffff::1'),
     );
   });
+
+  // cc65 (SEC-03 de audit-02): toda escritura de la IPv4 mapeada es la IPv4.
+  it.each([
+    '::ffff:102:304',
+    '::FFFF:1.2.3.4',
+    '0:0:0:0:0:ffff:1.2.3.4',
+    '0000:0000:0000:0000:0000:ffff:0102:0304',
+  ])('%s es 1.2.3.4', (form) => {
+    expect(ipBucket(form)).toBe('1.2.3.4');
+  });
+
+  it('::1 no comparte clave con una IPv4 mapeada', () => {
+    expect(ipBucket('::1')).toBe('0:0:0:0::/64');
+    expect(loginIpKey(SECRET, '::1')).not.toBe(loginIpKey(SECRET, '::ffff:102:304'));
+  });
+
+  it('una IPv6 con IPv4 incrustada fuera del rango mapeado sigue por su /64', () => {
+    expect(ipBucket('2800:200::1.2.3.4')).toBe('2800:200:0:0::/64');
+  });
 });
 
 describe('loginIpKey', () => {

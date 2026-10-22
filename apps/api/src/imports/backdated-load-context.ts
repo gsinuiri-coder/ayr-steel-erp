@@ -138,6 +138,16 @@ export function reviewMarkdown(r: LoadReview): string {
       ? `Comprobante más antiguo: ${r.oldestIssue.document} del ${r.oldestIssue.issueDate}; se puede registrar hasta el ${r.oldestIssue.lastLoadDate}.`
       : 'Sin comprobantes.',
     '',
+    // cc65: los clientes que se crearán desde el padrón, al inicio, para revisarlos antes.
+    `## Clientes que se crearán desde el padrón (${String(r.newCustomers.length)})`,
+    '',
+    ...(r.newCustomers.length === 0
+      ? ['Ninguno: todos los clientes ya existen.']
+      : r.newCustomers.map(
+          (c) =>
+            `- ${c.document} · ${c.name === '' ? '(sin nombre en el export)' : c.name} · Ventas fila${c.rows.length === 1 ? '' : 's'} ${c.rows.join(', ')}`,
+        )),
+    '',
     '## Orden de carga',
     '',
     ...r.order.map((s, i) => `${String(i + 1)}. ${s}`),

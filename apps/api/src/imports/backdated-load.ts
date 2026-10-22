@@ -230,6 +230,11 @@ export interface LoadReview {
   movements: { planned: number; rejected: number };
   /** El comprobante más antiguo y la última fecha en que todavía se puede registrar. */
   oldestIssue: { document: string; issueDate: string; lastLoadDate: string } | null;
+  /**
+   * cc65: los clientes que no existen y se darán de alta desde el padrón al cargar, con su RUC o
+   * DNI, el nombre que trae el export y las filas de la hoja Ventas donde aparecen.
+   */
+  newCustomers: { document: string; name: string; rows: number[] }[];
 }
 
 interface Movement {
@@ -286,6 +291,7 @@ const IGV_FACTOR = new Decimal(IGV_RATE_PCT).div(100).plus(1);
 export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadReview {
   const errors: LoadIssue[] = [];
   const warnings: LoadIssue[] = [];
+  const newCustomers = new Map<string, { document: string; name: string; rows: number[] }>();
   const recosts: LoadRecost[] = [];
   const err = (sheet: string, row: number | null, message: string) =>
     errors.push({ sheet, row, message });
@@ -435,7 +441,9 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     }
     const sku = cell(raw, QUOTATION_IMPORT_COLUMNS.sku);
     if (!ctx.products.has(sku)) err(sheet, row, `el SKU ${sku} no existe en el catálogo`);
-    const customerDoc = /^(\d{8,11})\s*-/.exec(cell(raw, QUOTATION_IMPORT_COLUMNS.customer))?.[1];
+    const customerText = cell(raw, QUOTATION_IMPORT_COLUMNS.customer);
+    const customerMatch = /^(\d{8,11})\s*-\s*(.*)$/.exec(customerText);
+    const customerDoc = customerMatch?.[1];
     if (ctx.customers && !sales.has(doc)) {
       if (!customerDoc) {
         err(
@@ -449,6 +457,13 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
           row,
           `el cliente ${customerDoc} no está en el maestro: se dará de alta desde el padrón al cargar (consulta externa)`,
         );
+        const seen = newCustomers.get(customerDoc) ?? {
+          document: customerDoc,
+          name: customerMatch?.[2]?.trim() ?? '',
+          rows: [],
+        };
+        seen.rows.push(row);
+        newCustomers.set(customerDoc, seen);
       }
     }
     const q = qtyOf(sheet, row, cell(raw, QUOTATION_IMPORT_COLUMNS.qty), 'La cantidad') ?? ZERO;
@@ -823,6 +838,7 @@ export function reviewBackdatedLoad(sheets: Sheets, ctx: LoadContext): LoadRevie
     recosts,
     movements: { planned: movements.length, rejected },
     oldestIssue: oldest,
+    newCustomers: [...newCustomers.values()],
   };
 }
 

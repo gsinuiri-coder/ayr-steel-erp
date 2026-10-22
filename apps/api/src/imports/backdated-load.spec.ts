@@ -512,5 +512,19 @@ describe('autorrevisión de cc64: cliente nuevo, parte sin bobina y medio descon
         'MEDIO DE PAGO desconocido: «trueque»; se registra como «Otro»',
       ]),
     );
+    // cc65: la lista de clientes que se crearán, para el bloque del inicio del informe.
+    expect(r.newCustomers).toEqual([{ document: '20999999999', name: 'Cliente nuevo', rows: [3] }]);
+  });
+
+  it('cc65: un cliente nuevo con varias ventas se lista una vez, con todas sus filas', () => {
+    const sheets = empty();
+    sheets.sales = [
+      sale({ 'SERIE - NÚMERO': 'FFA1-1', CLIENTE: '20999999999 - Cliente nuevo' }),
+      sale({ 'SERIE - NÚMERO': 'FFA1-2', CLIENTE: '20999999999 - Cliente nuevo' }),
+    ];
+    const r = reviewBackdatedLoad(sheets, ctx({ customers: new Set() }));
+    expect(r.newCustomers).toEqual([
+      { document: '20999999999', name: 'Cliente nuevo', rows: [2, 3] },
+    ]);
   });
 });

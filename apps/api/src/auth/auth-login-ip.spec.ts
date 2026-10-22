@@ -130,3 +130,69 @@ describe('AuthService.login — límite por IP (cc59)', () => {
     }
   });
 });
+
+describe('cc65 (SEC-05/A2-07): qué se guarda de la IP', () => {
+  function build(secretEnv = env) {
+    const prisma = {
+      session: {
+        create: jest.fn().mockResolvedValue({ id: 'sess-1' }),
+        findFirst: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const audit = { log: jest.fn().mockResolvedValue(undefined) };
+    const service = new AuthService(
+      prisma as never,
+      new JwtService({ secret: 'x'.repeat(40) }),
+      audit as never,
+      secretEnv,
+    );
+    return { service, prisma, audit };
+  }
+
+  it('el reuso de un refresh guarda el código de D-694 de la IP verificada, no la IP', async () => {
+    const { service, prisma, audit } = build();
+    prisma.session.findFirst.mockResolvedValue({
+      id: 's2',
+      userId: 'u1',
+      revokedAt: null,
+      refreshTokenHash: 'otro',
+      previousTokenHash: 'x',
+      rotatedAt: new Date(Date.now() - 5 * 60_000),
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { active: true },
+    });
+    await expect(
+      service.refresh('token-anterior', { clientIp: verified('190.42.1.7') }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'auth.refresh.reuse',
+        after: { ip: loginIpKey(SECRET, '190.42.1.7') },
+      }),
+    );
+    expect(JSON.stringify(audit.log.mock.calls)).not.toContain('190.42.1.7');
+  });
+
+  it('sin firma válida no se guarda nada', async () => {
+    const { service, prisma, audit } = build();
+    prisma.session.findFirst.mockResolvedValue({
+      id: 's2',
+      userId: 'u1',
+      revokedAt: null,
+      refreshTokenHash: 'otro',
+      previousTokenHash: 'x',
+      rotatedAt: new Date(Date.now() - 5 * 60_000),
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { active: true },
+    });
+    await expect(
+      service.refresh('token-anterior', { clientIp: { ok: false, reason: 'bad-signature' } }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'auth.refresh.reuse', after: { ip: null } }),
+    );
+  });
+});

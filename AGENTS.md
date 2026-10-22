@@ -154,7 +154,9 @@ Reglas de convivencia, sin excepción:
    ajustes posteriores a ese ingreso, y con las reservas —D-066— y la materia prima —D-134—
    comprobadas sobre el estado final, nunca a mitad) y `recostForward()` (cc53, D-649: el
    recosteo por fecha; escribe `ADJUST` con `recost_of_id` hacia la fila cuyo costo corrige, con
-   su fecha y su `ref`). Cambiar una fecha es reversa más movimiento
+   su fecha y su `ref`) y `recostEntries()` (cc55, D-665: el despunte de una OP cuyo producto ya
+   no tiene saldo, cargado como recosteos a las entradas de sus partes; nombrada en cc65, REG-01
+   de audit-02). Cambiar una fecha es reversa más movimiento
    nuevo (D-364, D-374, D-376/D-288), nunca editar `operation_date`. Ningún otro código escribe
    `inventory_movements` ni `inventory_balances`, salvo una excepción, nombrada con su
    decisión en el test centinela (`apps/api/src/inventory/kardex-writers.sentinel.spec.ts`):

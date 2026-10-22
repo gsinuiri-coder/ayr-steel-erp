@@ -20,8 +20,10 @@ import { loginIpKey, type ClientIpCheck } from './client-ip';
 
 export interface ClientMeta {
   userAgent?: string;
-  ip?: string;
-  /** cc59 (D-692): la IP real del cliente que firmó la web, ya verificada (o por qué no). */
+  /**
+   * cc59 (D-692): la IP real del cliente que firmó la web, ya verificada (o por qué no). cc65
+   * (SEC-05/A2-07 de audit-02): es lo único que se guarda de la IP, como su código de D-694.
+   */
   clientIp?: ClientIpCheck;
 }
 
@@ -138,7 +140,7 @@ export class AuthService {
         refreshTokenHash: hashToken(refreshToken),
         expiresAt: refreshExpiresAt,
         userAgent: meta.userAgent?.slice(0, 512),
-        ip: meta.ip?.slice(0, 64),
+        ip: this.ipCodeOf(meta.clientIp),
       },
     });
     await this.audit.log({
@@ -191,7 +193,7 @@ export class AuthService {
         action: 'auth.refresh.reuse',
         entity: 'sessions',
         entityId: session.id,
-        after: { ip: meta.ip?.slice(0, 64) ?? null },
+        after: { ip: this.ipCodeOf(meta.clientIp) },
       });
       throw new UnauthorizedException('Sesión inválida o expirada');
     }
@@ -221,7 +223,7 @@ export class AuthService {
         expiresAt: refreshExpiresAt,
         lastUsedAt: now,
         userAgent: meta.userAgent?.slice(0, 512) ?? session.userAgent,
-        ip: meta.ip?.slice(0, 64) ?? session.ip,
+        ip: this.ipCodeOf(meta.clientIp),
       },
     });
     if (rotated.count === 0) {
@@ -304,6 +306,11 @@ export class AuthService {
     if (!session || session.revokedAt || session.userId !== payload.sub) {
       throw new UnauthorizedException('Sesión invalidada');
     }
+    // cc65 (SEC-02 de audit-02): el tope de la sesión vale también para el access token, que si no
+    // seguía sirviendo hasta 15 minutos después de los 30 días.
+    if (sessionCap(session.createdAt) <= new Date()) {
+      throw new UnauthorizedException('Sesión expirada');
+    }
     const { user } = session;
     if (!user.active || user.role !== payload.role) {
       throw new UnauthorizedException('Sesión invalidada');
@@ -351,6 +358,17 @@ export class AuthService {
       return null;
     }
     this.logger.debug('IP del cliente verificada');
+    return loginIpKey(secret, check.ip);
+  }
+
+  /**
+   * cc65 (SEC-05/A2-07 de audit-02): lo que se guarda de la IP en `sessions.ip` y en el reuso de un
+   * refresh: el código de D-694 de la IP verificada, nunca la IP en claro. La IP que ve el API es la
+   * de salida de Vercel, la misma para todos, y no sirve para nada. Sin firma válida, nada.
+   */
+  private ipCodeOf(check: ClientIpCheck | undefined): string | null {
+    const secret = this.env.AYR_CLIENT_IP_SECRET;
+    if (!check?.ok || !secret) return null;
     return loginIpKey(secret, check.ip);
   }
 

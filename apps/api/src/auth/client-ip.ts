@@ -74,17 +74,33 @@ export function loginIpKey(secret: string, ip: string): string {
  * un /64 rota direcciones dentro de él sin costo. Una IPv4 mapeada (`::ffff:a.b.c.d`) es la IPv4.
  */
 export function ipBucket(ip: string): string {
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
-  if (mapped?.[1]) return mapped[1];
   if (isIP(ip) !== 6) return ip;
-  const [head = '', tail = ''] = ip.toLowerCase().split('::');
-  const left = head ? head.split(':') : [];
-  const right = tail ? tail.split(':') : [];
-  const groups = ip.includes('::')
-    ? [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right]
-    : left;
+  const groups = expandIpv6(ip);
+  // cc65 (SEC-03 de audit-02): la IPv4 mapeada en cualquier escritura —decimal, hexadecimal o sin
+  // comprimir— es la IPv4, y no cae en el /64 de ceros que comparte con `::1`.
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    const [hi = 0, lo = 0] = groups.slice(6);
+    return [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.');
+  }
   return `${groups
     .slice(0, 4)
-    .map((g) => g.replace(/^0+(?=.)/, ''))
+    .map((g) => g.toString(16))
     .join(':')}::/64`;
+}
+
+/** Los ocho grupos de una IPv6 válida, con `::` y una IPv4 final (`…:1.2.3.4`) ya expandidos. */
+function expandIpv6(ip: string): number[] {
+  let text = ip.toLowerCase();
+  const v4 = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number) as [number, number, number, number];
+    text = `${text.slice(0, v4.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head = '', tail = ''] = text.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const parts = text.includes('::')
+    ? [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right]
+    : left;
+  return parts.map((g) => parseInt(g, 16));
 }
