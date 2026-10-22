@@ -229,6 +229,23 @@ describe('zeroCreditLines (03, 13)', () => {
     expect(() =>
       zeroCreditLines(lines(), [{ affectedItemId: 'b', description: 'Tornillo corregido' }], full),
     ).toThrow('No queda nada por acreditar');
+    // Una línea de importe cero no cuenta como «por acreditar» ni como acreditada: con la otra
+    // acreditada entera, no queda nada (autorrevisión de cc65-b, P2-2).
+    const withFree = [
+      ...lines(),
+      {
+        ...lines()[1]!,
+        id: 'c',
+        lineNumber: 3,
+        subtotalPen: d('0'),
+        igvPen: d('0'),
+        totalPen: d('0'),
+      },
+    ];
+    expect(() => zeroCreditLines(withFree, null, full)).toThrow('No queda nada por acreditar');
+    // Un comprobante sin ninguna línea con importe nunca está «acreditado por completo».
+    const free = withFree.filter((l) => l.id === 'c');
+    expect(zeroCreditLines(free, null, full)).toHaveLength(1);
     // Con algo por acreditar en una línea, el 13 sigue entrando.
     const partial = new Map([...full].filter(([id]) => id === 'a'));
     expect(zeroCreditLines(lines(), null, partial)).toHaveLength(2);

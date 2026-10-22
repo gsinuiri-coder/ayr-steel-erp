@@ -328,11 +328,13 @@ export function zeroCreditLines(
   descriptions: readonly { affectedItemId: string; description: string }[] | null,
   credited: ReadonlyMap<string, LineCredits> = new Map(),
 ): NoteLine[] {
-  const nothingLeft = lines.every((l) =>
-    remainingOf(l, credited.get(l.id) ?? NO_CREDITS).amounts.total.lte(0),
-  );
-  // Solo si algo se acreditó: un comprobante de importe cero no está «acreditado por completo».
-  if (lines.some((l) => credited.has(l.id)) && nothingLeft) {
+  // Solo cuentan las líneas con importe: una de total cero no está «acreditada por completo», y un
+  // comprobante sin ninguna línea con importe nunca lo está (autorrevisión de cc65-b, P2-2).
+  const priced = lines.filter((l) => l.totalPen.gt(0));
+  const nothingLeft =
+    priced.length > 0 &&
+    priced.every((l) => remainingOf(l, credited.get(l.id) ?? NO_CREDITS).amounts.total.lte(0));
+  if (nothingLeft) {
     throw new BadRequestException('No queda nada por acreditar en este comprobante');
   }
   const zero: SalesLineTotals = { subtotal: ZERO, igv: ZERO, total: ZERO };

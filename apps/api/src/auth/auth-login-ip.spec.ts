@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { HttpException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
@@ -103,11 +104,15 @@ describe('AuthService.login — límite por IP (cc59)', () => {
   });
 
   it('un login correcto no escribe nada por IP (no reinicia la cuenta)', async () => {
-    const { service, audit } = build(5);
+    const { service, audit, prisma } = build(5);
     await service.login(
       { email: 'admin@ayr.test', password: 'Secreta123' },
       { clientIp: verified('190.42.1.7') },
     );
+    // cc65 (SEC-05/A2-07): la sesión guarda el código de D-694 de la IP, no la IP en claro.
+    expect(prisma.session.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ ip: loginIpKey(SECRET, '190.42.1.7') }),
+    });
     expect(
       audit.log.mock.calls.some(([e]) => (e as { entity: string }).entity === 'login_ip'),
     ).toBe(false);
@@ -149,6 +154,43 @@ describe('cc65 (SEC-05/A2-07): qué se guarda de la IP', () => {
     );
     return { service, prisma, audit };
   }
+
+  it('la renovación guarda en sessions.ip el código de la IP verificada, no la IP', async () => {
+    const { service, prisma } = build();
+    const raw = 'token-vigente';
+    const hash = createHash('sha256').update(raw).digest('hex');
+    prisma.session.findFirst.mockResolvedValue({
+      id: 's3',
+      userId: 'u1',
+      revokedAt: null,
+      refreshTokenHash: hash,
+      previousTokenHash: null,
+      rotatedAt: null,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+      userAgent: null,
+      ip: null,
+      user: { id: 'u1', active: true, role: Role.ADMINISTRADOR, email: 'a@b.c', name: 'A' },
+    });
+    await service.refresh(raw, { clientIp: verified('190.42.1.7') });
+    const data = (prisma.session.updateMany.mock.calls[0]?.[0] as { data: { ip: unknown } }).data;
+    expect(data.ip).toBe(loginIpKey(SECRET, '190.42.1.7'));
+    // Sin firma válida no se guarda nada nuevo: se conserva el código anterior…
+    const previous = loginIpKey(SECRET, '190.42.1.8');
+    const base = prisma.session.findFirst.mock.results[0]?.value as Promise<object>;
+    prisma.session.findFirst.mockResolvedValue({ ...(await base), ip: previous });
+    prisma.session.updateMany.mockClear();
+    await service.refresh(raw, { clientIp: { ok: false, reason: 'absent' } });
+    const kept = (prisma.session.updateMany.mock.calls[0]?.[0] as { data: { ip: unknown } }).data;
+    expect(kept.ip).toBe(previous);
+    // …y una IP en claro heredada se borra.
+    prisma.session.findFirst.mockResolvedValue({ ...(await base), ip: '10.0.0.1' });
+    prisma.session.updateMany.mockClear();
+    await service.refresh(raw, { clientIp: { ok: false, reason: 'expired' } });
+    const cleared = (prisma.session.updateMany.mock.calls[0]?.[0] as { data: { ip: unknown } })
+      .data;
+    expect(cleared.ip).toBeNull();
+  });
 
   it('el reuso de un refresh guarda el código de D-694 de la IP verificada, no la IP', async () => {
     const { service, prisma, audit } = build();

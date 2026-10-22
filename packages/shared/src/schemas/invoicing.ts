@@ -1682,8 +1682,8 @@ export type UpdateManualIssueDateInput = z.infer<typeof updateManualIssueDateSch
  * con el antes y el después.
  */
 export const updateDueDateSchema = z.object({
-  // Revisión de cc61 (R-1): `Date.parse` acepta 2026-02-31 (lo lleva al 3 de marzo).
-  dueDate: isoDateSchema.refine(isCalendarDate, 'Esa fecha no existe en el calendario'),
+  // Revisión de cc61 (R-1): 2026-02-31 se rechaza; desde cc65 lo hace `isoDateSchema` mismo.
+  dueDate: isoDateSchema,
   reason: z
     .string()
     .trim()

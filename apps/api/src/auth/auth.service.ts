@@ -65,6 +65,10 @@ export function sessionCap(createdAt: Date): Date {
   return new Date(from.getTime() + SESSION_MAX_MS);
 }
 
+/** El código de D-694 (HMAC-SHA256 en base64url, 43 caracteres), no una IP en claro. */
+const isIpCode = (value: string | null): value is string =>
+  value !== null && /^[A-Za-z0-9_-]{43}$/.test(value);
+
 const hashToken = (raw: string): string => createHash('sha256').update(raw).digest('hex');
 const newRefreshToken = (): string => randomBytes(48).toString('base64url');
 
@@ -223,7 +227,9 @@ export class AuthService {
         expiresAt: refreshExpiresAt,
         lastUsedAt: now,
         userAgent: meta.userAgent?.slice(0, 512) ?? session.userAgent,
-        ip: this.ipCodeOf(meta.clientIp),
+        // Sin firma válida no se guarda nada nuevo: se conserva el código anterior, y una IP en
+        // claro heredada (de antes de cc65) se borra (autorrevisión de cc65-b, P2-1).
+        ip: this.ipCodeOf(meta.clientIp) ?? (isIpCode(session.ip) ? session.ip : null),
       },
     });
     if (rotated.count === 0) {
