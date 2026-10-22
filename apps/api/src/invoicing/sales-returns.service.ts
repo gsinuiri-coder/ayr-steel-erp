@@ -46,7 +46,7 @@ import {
  * despachado menos lo ya devuelto. No vuelve a reservar ni cambia el estado del pedido: la venta
  * de esa cantidad se deshizo (D-646). Una bobina se devuelve entera, vuelve con su peso y, si
  * estaba terminada, se reabre. Un producto a medida reingresa como producto terminado sobrante,
- * sin pedido (hoy ningún otro pedido ni el mostrador toma ese stock).
+ * sin pedido (ningún otro pedido lo toma; desde cc65, D-697, el mostrador lo vende).
  *
  * Anular la NC la revierte con `InventoryService.reverse` (movimiento inverso al mismo costo); si
  * esa mercadería ya se volvió a vender, 409. Las NC no se reactivan.

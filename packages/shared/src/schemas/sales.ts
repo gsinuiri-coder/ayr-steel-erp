@@ -1205,7 +1205,8 @@ export const fabricatedLooseLineSchema = z.object({
   productionOrders: z.array(z.object({ code: z.string(), status: z.string() })),
   /**
    * `true` si la línea se fabrica contra pedido (`isMadeToOrder`: cobertura, plancha, accesorio):
-   * al anular, ese stock queda suelto porque ningún pedido ni el mostrador toma producto así.
+   * al anular, ese stock queda suelto porque ningún pedido toma producto así (desde cc65, D-697,
+   * el mostrador sí lo vende).
    * `false` (p. ej. drywall): queda libre en inventario y otro pedido lo puede reservar.
    */
   madeToOrder: z.boolean(),
@@ -1872,6 +1873,15 @@ export const stockPanelQuerySchema = z.object({
     .optional()
     .transform((v) => (v === undefined || v === '' ? [] : v.split(',')))
     .pipe(z.array(z.string().uuid()).max(50)),
+  /**
+   * cc65 (D-697): el panel del **mostrador**, que vende la cobertura terminada de su saldo. Con
+   * `counter=1` la cobertura muestra el disponible de su producto y el piso por el costo del
+   * kardex (por unidad de venta), los mismos que exige la venta.
+   */
+  counter: z
+    .enum(['1'])
+    .optional()
+    .transform((v) => v === '1'),
 });
 export type StockPanelQuery = z.infer<typeof stockPanelQuerySchema>;
 

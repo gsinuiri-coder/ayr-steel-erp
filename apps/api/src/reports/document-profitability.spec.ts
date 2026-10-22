@@ -922,3 +922,49 @@ describe('engineLineCosts (cc55, D-667): el mismo costo por línea que la rentab
     expect(costs.get(rows[1]!.item_id)?.status).toBe('PARTIAL');
   });
 });
+
+describe('cc65 (D-697): cobertura servida desde stock, sin OP', () => {
+  it('se costea por la salida de su despacho, no queda «desde stock» sin costo', () => {
+    // Un sobrante de accesorio vendido por mostrador: ninguna OP del pedido, despachado entero.
+    const rows = [row({ kind: 'ACCESORIO', orderItem: 'soi-1', qty: '1', subtotal: '16.95' })];
+    const engine = engineFacts({
+      'soi-1': { invoicedQty: '1', producedQty: '0', orderCount: 0, dispatchedQty: '1' },
+    });
+    const doc = assembleDocumentProfitability({
+      document: HEADER,
+      rows,
+      engine,
+      declared: new Map([
+        [
+          'soi-1',
+          {
+            dispatchedQty: '1',
+            costedQty: '1',
+            costPen: '7.94',
+            withoutMovement: false,
+            dispatchSeqs: [3],
+          },
+        ],
+      ]),
+      hasDeclaredDispatch: true,
+    });
+    const [line] = doc.lines;
+    expect([line?.costBasis, line?.status, line?.costPen]).toEqual([
+      'DISPATCH_SALE',
+      'COMPLETE',
+      '7.9400',
+    ]);
+  });
+
+  it('con OP propia sin producir sigue siendo «sin costo aún» del motor', () => {
+    const rows = [row({ kind: 'ACCESORIO', orderItem: 'soi-1', qty: '1', subtotal: '16.95' })];
+    const doc = assembleDocumentProfitability({
+      document: HEADER,
+      rows,
+      engine: engineFacts({ 'soi-1': { invoicedQty: '1', producedQty: '0', orderCount: 1 } }),
+      declared: new Map(),
+      hasDeclaredDispatch: false,
+    });
+    expect([doc.lines[0]?.costBasis, doc.lines[0]?.status]).toEqual(['COIL_KG', 'NO_COST_YET']);
+  });
+});

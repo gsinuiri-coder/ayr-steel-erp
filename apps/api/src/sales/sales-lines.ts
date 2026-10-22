@@ -228,6 +228,22 @@ export interface ResolveSalesLinesOptions {
    * Sin él, el mensaje da el precio mínimo y nada más (`assertPriceFloor`).
    */
   showCost?: boolean;
+  /**
+   * cc65 (D-697): la línea de una **cobertura terminada** se sirve de su saldo en el almacén,
+   * no se fabrica. Solo lo pasa el mostrador: reserva el propio producto (no la bobina), no
+   * pide desglose de largos y el piso sale del costo del kardex. Cotizaciones, pedidos y OP no
+   * lo usan y siguen fabricando contra el pedido. Un producto en metros que no es cobertura
+   * sigue igual (D-098).
+   */
+  fromFinishedStock?: boolean;
+}
+
+/** cc65 (D-697): ¿esta línea de mostrador se sirve del saldo de su cobertura terminada? */
+function servedFromFinishedStock(
+  product: { roofingKind: unknown },
+  options: ResolveSalesLinesOptions,
+): boolean {
+  return options.fromFinishedStock === true && product.roofingKind !== null;
 }
 
 export async function resolveSalesLines(
@@ -273,7 +289,7 @@ export async function resolveSalesLines(
   // mismo agregado — que es justamente lo que hace que la invariante las sume.
   const specByProductId = new Map<string, RawMaterialSpecRef>();
   for (const product of products) {
-    if (!isMadeToOrder(product)) continue;
+    if (!isMadeToOrder(product) || servedFromFinishedStock(product, options)) continue;
     if (product.thicknessMm === null || product.finish === null) continue;
     specByProductId.set(
       product.id,
@@ -501,8 +517,11 @@ export async function resolveSalesLines(
     // (d) D-343: ¿la línea lleva **desglose de largos**? La decide `detailsLengths`: la unidad
     //     `MTR` **y** que no sea un accesorio. Es la pregunta que hasta D-343 se contestaba con
     //     `sellsByLength`; esa sigue diciendo solo que la unidad de venta es el metro.
-    const byLength = detailsLengths(product);
-    const madeToOrder = isMadeToOrder(product);
+    // cc65 (D-697): la cobertura terminada del mostrador sale de su saldo, en metros o planchas,
+    // sin desglose: el kardex del producto no guarda largos.
+    const fromStock = servedFromFinishedStock(product, options);
+    const byLength = detailsLengths(product) && !fromStock;
+    const madeToOrder = isMadeToOrder(product) && !fromStock;
     if (byLength && item.pieces === undefined) {
       throw new BadRequestException(
         `${at}: ${product.sku} se vende por metro lineal: detalla cuántas planchas de cada largo lleva la línea`,

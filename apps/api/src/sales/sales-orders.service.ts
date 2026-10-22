@@ -1429,7 +1429,8 @@ export class SalesOrdersService {
       priceFloor: { toleranceMm: roofingToleranceMm(this.env) },
       // cc55 (D-664): el rechazo del piso dice el costo solo a un ADMINISTRADOR.
       showCost: actor.role === Role.ADMINISTRADOR,
-      ...(options.counterSale === true ? { allowAtCost: true } : {}),
+      // cc65 (D-697): el mostrador sirve la cobertura terminada de su saldo, sin fabricar.
+      ...(options.counterSale === true ? { allowAtCost: true, fromFinishedStock: true } : {}),
       // D-310: una bobina entera atada a una cotización abierta ajena no se vende por el lado.
       coilTies: { viewer: actor },
     });
@@ -1456,7 +1457,8 @@ export class SalesOrdersService {
 
     // D-098: el mostrador vende **stock del propio producto**. Una línea respaldada por
     // otro ítem —la bobina de una cobertura a medida— es justo la que hay que fabricar,
-    // y ese camino es el de la Fase 6, no el del mostrador. El esquema del POS ni
+    // y ese camino es el de la Fase 6, no el del mostrador. cc65 (D-697): la cobertura
+    // terminada con saldo llega acá ya respaldada por su producto (`fromFinishedStock`). El esquema del POS ni
     // siquiera tiene el campo para pedirlo; esto es el cinturón por si algún día otro
     // llamador reusa este método con `counterSale`.
     if (options.counterSale === true) {
@@ -3764,7 +3766,7 @@ export class SalesOrdersService {
       query.businessLine === undefined
         ? Promise.resolve<RawMaterialStockDto[]>([])
         : this.rawMaterialStock(query.businessLine),
-      this.productStock(query.productIds, actor),
+      this.productStock(query.productIds, actor, query.counter),
     ]);
     return { rawMaterial, products };
   }
@@ -3894,6 +3896,8 @@ export class SalesOrdersService {
   private async productStock(
     productIds: string[],
     actor: Pick<RequestUser, 'role'>,
+    /** cc65 (D-697): el mostrador, que sirve la cobertura terminada de su saldo. */
+    counter = false,
   ): Promise<ProductStockDto[]> {
     if (productIds.length === 0) return [];
     const products = await this.prisma.product.findMany({
@@ -3932,7 +3936,10 @@ export class SalesOrdersService {
     // «Elegir producto» pide veinte. D-136: el panel es una **lectura**, así que las specs se
     // buscan sin crearlas; el disponible de un agregado que nadie prometió todavía es el mismo.
     const madeToOrder = products.flatMap((product) =>
-      isMadeToOrder(product) && product.thicknessMm !== null && product.finish !== null
+      isMadeToOrder(product) &&
+      !(counter && product.roofingKind !== null) &&
+      product.thicknessMm !== null &&
+      product.finish !== null
         ? [
             {
               productId: product.id,
@@ -3980,12 +3987,15 @@ export class SalesOrdersService {
       let perMeter: string | null = null;
       // D-161: si el SKU se cotiza por metro contra su largo fijo, el mínimo se calcula —y se
       // muestra— **por metro**, que es la unidad en la que el vendedor lo va a tipear.
+      // cc65 (D-697): el mostrador cobra la plancha por unidad, no por metro.
       const basis: PriceFloorCandidate['basis'] =
+        !counter &&
         sellsByFixedLength({
           roofingKind: product.roofingKind,
           unit: product.unit,
           lengthMm: product.lengthMm === null ? null : product.lengthMm.toFixed(2),
-        }) && product.lengthMm !== null
+        }) &&
+        product.lengthMm !== null
           ? { kind: 'PER_METER', lengthMm: product.lengthMm.toFixed(2) }
           : { kind: 'UNIT', unitLabel: product.unit };
       // D-134: una cobertura no se atiende con stock del producto —siempre cero— sino con el
