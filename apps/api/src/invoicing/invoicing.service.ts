@@ -1421,9 +1421,9 @@ export class InvoicingService {
     } else if (reason === CreditNoteReason.DESCUENTO_GLOBAL) {
       lines = amountCreditLines(affectedLines, input.amountPen ?? '0', credited);
     } else if (reason === CreditNoteReason.CORRECCION_DESCRIPCION) {
-      lines = zeroCreditLines(affectedLines, input.descriptions ?? []);
+      lines = zeroCreditLines(affectedLines, input.descriptions ?? [], credited);
     } else {
-      lines = zeroCreditLines(affectedLines, null);
+      lines = zeroCreditLines(affectedLines, null, credited);
     }
     if (lines.length === 0) {
       throw new BadRequestException('No queda nada por acreditar en este comprobante');

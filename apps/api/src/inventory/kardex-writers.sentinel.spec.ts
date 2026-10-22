@@ -53,7 +53,7 @@ const EXCEPTIONS = new Map<string, Exception>([
     'apps/api/src/inventory/inventory.service.ts',
     {
       decision: 'regla dura 8',
-      what: 'la puerta misma: record, reverse, adjustCost y replaceEntry',
+      what: 'la puerta misma: record, reverse, adjustCost, replaceEntry, recostForward y recostEntries',
       mustMatch: /async replaceEntry\(/,
     },
   ],

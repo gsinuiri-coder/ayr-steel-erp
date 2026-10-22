@@ -183,7 +183,9 @@ export function hasCollectibleBalance(balancePen: DecimalInput): boolean {
 const isoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
-  .refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00.000Z`)), 'Fecha inválida');
+  // cc65: una fecha que no existe (`2026-02-31`) se rechaza en todos los campos de fecha de
+  // comprobantes, no solo en el vencimiento (pendiente de cc61): `Date.parse` la rodaba.
+  .refine(isCalendarDate, 'Esa fecha no existe en el calendario');
 
 /**
  * Días hacia atrás que se admiten como fecha de emisión. **Nunca** una fecha futura.
@@ -1680,8 +1682,8 @@ export type UpdateManualIssueDateInput = z.infer<typeof updateManualIssueDateSch
  * con el antes y el después.
  */
 export const updateDueDateSchema = z.object({
-  // Revisión de cc61 (R-1): `Date.parse` acepta 2026-02-31 (lo lleva al 3 de marzo).
-  dueDate: isoDateSchema.refine(isCalendarDate, 'Esa fecha no existe en el calendario'),
+  // Revisión de cc61 (R-1): 2026-02-31 se rechaza; desde cc65 lo hace `isoDateSchema` mismo.
+  dueDate: isoDateSchema,
   reason: z
     .string()
     .trim()

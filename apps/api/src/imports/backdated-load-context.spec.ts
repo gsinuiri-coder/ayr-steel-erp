@@ -283,6 +283,25 @@ describe('readLoadSheets (cc63)', () => {
 });
 
 describe('reviewMarkdown (cc63)', () => {
+  it('cc65: los clientes que se crearán desde el padrón van al inicio, con sus filas', () => {
+    const text = reviewMarkdown({
+      ...base(),
+      newCustomers: [
+        { document: '20100000001', name: 'CLIENTE NUEVO SAC', rows: [2, 7] },
+        { document: '12345678', name: '', rows: [4] },
+      ],
+    });
+    expect(text).toContain(
+      [
+        '## Clientes que se crearán desde el padrón (2)',
+        '',
+        '- 20100000001 · CLIENTE NUEVO SAC · Ventas filas 2, 7',
+        '- 12345678 · (sin nombre en el export) · Ventas fila 4',
+      ].join('\n'),
+    );
+    expect(text.indexOf('## Clientes')).toBeLessThan(text.indexOf('## Orden de carga'));
+  });
+
   const base = (): LoadReview => ({
     loadDate: '2026-10-21',
     order: ['Compras', 'Ventas'],
@@ -299,6 +318,7 @@ describe('reviewMarkdown (cc63)', () => {
     recosts: [],
     movements: { planned: 3, rejected: 1 },
     oldestIssue: null,
+    newCustomers: [],
   });
 
   it('un informe sin hallazgos', () => {
@@ -310,6 +330,10 @@ describe('reviewMarkdown (cc63)', () => {
         '',
         'Hojas: purchases 1 · sales 2 · production 0 · dispatches 0 · collections 0 · supplierPayments 0',
         'Sin comprobantes.',
+        '',
+        '## Clientes que se crearán desde el padrón (0)',
+        '',
+        'Ninguno: todos los clientes ya existen.',
         '',
         '## Orden de carga',
         '',

@@ -219,6 +219,40 @@ describe('AuthService', () => {
       );
     });
 
+    it('cc65 (SEC-02): rechaza el access token de una sesión que pasó su tope de días', async () => {
+      // Solo el reloj: una sesión abierta después del 19/10 y con más de 30 días.
+      jest.useFakeTimers({
+        now: new Date('2027-01-01T12:00:00.000Z'),
+        doNotFake: ['nextTick', 'setImmediate', 'setTimeout', 'setInterval', 'queueMicrotask'],
+      });
+      try {
+        const createdAt = new Date(Date.now() - (SESSION_MAX_DAYS * DAY + 1000));
+        prisma.session.findUnique.mockResolvedValue({
+          id: 's1',
+          userId: user.id,
+          revokedAt: null,
+          createdAt,
+          user,
+        });
+        await expect(service.validateAccessToken(await tokenFor('s1'))).rejects.toThrow(
+          'Sesión expirada',
+        );
+        // Un segundo antes del tope, todavía sirve.
+        prisma.session.findUnique.mockResolvedValue({
+          id: 's1',
+          userId: user.id,
+          revokedAt: null,
+          createdAt: new Date(Date.now() - (SESSION_MAX_DAYS * DAY - 1000)),
+          user,
+        });
+        await expect(service.validateAccessToken(await tokenFor('s1'))).resolves.toMatchObject({
+          sessionId: 's1',
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('rechaza token firmado con otro secreto', async () => {
       const other = new JwtService({ secret: 'y'.repeat(40) });
       const token = await other.signAsync({ sub: user.id, sid: 's1', role: Role.ADMINISTRADOR });
@@ -276,14 +310,19 @@ describe('AuthService', () => {
           session({ rotatedAt: new Date(Date.now() - 5 * 60_000) }),
         );
         prisma.session.updateMany.mockResolvedValue({ count: 1 });
-        await expect(service.refresh('token-anterior', { ip: '1.2.3.4' })).rejects.toBeInstanceOf(
-          UnauthorizedException,
-        );
+        await expect(
+          service.refresh('token-anterior', { clientIp: { ok: true, ip: '1.2.3.4' } }),
+        ).rejects.toBeInstanceOf(UnauthorizedException);
         expect(prisma.session.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({ where: { id: 's2', revokedAt: null } }),
         );
+        // cc65 (SEC-05): sin secreto no hay código, y la IP nunca queda en claro.
         expect(audit.log).toHaveBeenCalledWith(
-          expect.objectContaining({ action: 'auth.refresh.reuse', entityId: 's2' }),
+          expect.objectContaining({
+            action: 'auth.refresh.reuse',
+            entityId: 's2',
+            after: { ip: null },
+          }),
         );
         // Solo la revocación: no rota nada.
         expect(prisma.session.updateMany).toHaveBeenCalledTimes(1);

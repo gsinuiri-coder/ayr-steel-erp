@@ -49,7 +49,6 @@ export class AuthController {
   ): Promise<{ user: AuthUser }> {
     const tokens = await this.auth.login(body, {
       userAgent: req.get('user-agent'),
-      ip: req.ip,
       clientIp: verifyClientIp(req.headers, this.env.AYR_CLIENT_IP_SECRET, Date.now()),
     });
     setAuthCookies(res, this.env, tokens);
@@ -70,7 +69,10 @@ export class AuthController {
       throw new UnauthorizedException('Sin sesión');
     }
     try {
-      const tokens = await this.auth.refresh(raw, { userAgent: req.get('user-agent'), ip: req.ip });
+      const tokens = await this.auth.refresh(raw, {
+        userAgent: req.get('user-agent'),
+        clientIp: verifyClientIp(req.headers, this.env.AYR_CLIENT_IP_SECRET, Date.now()),
+      });
       setAuthCookies(res, this.env, tokens);
       return { user: tokens.user };
     } catch (err) {

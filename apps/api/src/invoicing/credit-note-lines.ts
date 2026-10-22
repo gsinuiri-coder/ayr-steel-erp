@@ -319,11 +319,24 @@ export function amountCreditLines(
 /**
  * 03 y 13 · **importe cero**. El 03 lleva solo las líneas corregidas, con su descripción nueva; el
  * 13, todas (el comprobante electrónico pide al menos una línea).
+ *
+ * cc65 (NC-03 de audit-02): sobre un comprobante ya acreditado por completo —una NC 01 total, por
+ * ejemplo— no queda nada que corregir ni que cambiar de plazo, y se rechaza como los demás motivos.
  */
 export function zeroCreditLines(
   lines: readonly AffectedLine[],
   descriptions: readonly { affectedItemId: string; description: string }[] | null,
+  credited: ReadonlyMap<string, LineCredits> = new Map(),
 ): NoteLine[] {
+  // Solo cuentan las líneas con importe: una de total cero no está «acreditada por completo», y un
+  // comprobante sin ninguna línea con importe nunca lo está (autorrevisión de cc65-b, P2-2).
+  const priced = lines.filter((l) => l.totalPen.gt(0));
+  const nothingLeft =
+    priced.length > 0 &&
+    priced.every((l) => remainingOf(l, credited.get(l.id) ?? NO_CREDITS).amounts.total.lte(0));
+  if (nothingLeft) {
+    throw new BadRequestException('No queda nada por acreditar en este comprobante');
+  }
   const zero: SalesLineTotals = { subtotal: ZERO, igv: ZERO, total: ZERO };
   if (descriptions === null) {
     return lines.map((l) => toNoteLine(l, l.qty, zero, ZERO));

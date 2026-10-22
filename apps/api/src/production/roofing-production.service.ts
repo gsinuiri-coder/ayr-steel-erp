@@ -2469,7 +2469,7 @@ export class RoofingProductionService {
         operationDate,
         // cc63 (D-701): el acuse de retrofecha del cierre llega también a su ajuste de costo. Sin
         // él, un cierre fechado antes de movimientos posteriores del producto se rechazaba con
-        // «registrá primero lo más antiguo» aunque el usuario ya lo hubiera confirmado.
+        // «registra primero lo más antiguo» aunque el usuario ya lo hubiera confirmado.
         confirmBackdate: input.confirmBackdate,
       },
     });
