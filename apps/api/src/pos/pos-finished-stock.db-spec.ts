@@ -17,6 +17,7 @@ import { CustomersService } from '../customers/customers.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DocumentProfitabilityService } from '../reports/document-profitability.service';
 import { SalesMarginService } from '../reports/sales-margin.service';
 import { SalesOrderEditsService } from '../sales/sales-order-edits.service';
 import { SalesOrdersService } from '../sales/sales-orders.service';
@@ -231,6 +232,17 @@ describe('cc65 (D-697): venta por mostrador de la cobertura terminada en stock',
     const row = margin.orders.find((o) => o.salesOrderId === sale.salesOrderId);
     expect(row?.salesPen).toBe('16.9500');
     expect(row?.costPen).toBe('7.9400');
+    // Rentabilidad del comprobante: el mismo costo, por la salida del despacho (A-01 de la
+    // autorrevisión: el motor la dejaba sin costo, «desde stock»).
+    const profit = await moduleRef
+      .get(DocumentProfitabilityService)
+      .profitability(sale.fiscalDocumentId);
+    const line = profit.lines[0];
+    expect([line?.costBasis, line?.status, line?.costPen]).toEqual([
+      'DISPATCH_SALE',
+      'COMPLETE',
+      '7.9400',
+    ]);
   });
 
   it('un sobrante a medida se vende en parte, en metros y sin largos; anular devuelve el stock al mismo costo', async () => {

@@ -1205,7 +1205,8 @@ export const fabricatedLooseLineSchema = z.object({
   productionOrders: z.array(z.object({ code: z.string(), status: z.string() })),
   /**
    * `true` si la línea se fabrica contra pedido (`isMadeToOrder`: cobertura, plancha, accesorio):
-   * al anular, ese stock queda suelto porque ningún pedido ni el mostrador toma producto así.
+   * al anular, ese stock queda suelto porque ningún pedido toma producto así (desde cc65, D-697,
+   * el mostrador sí lo vende).
    * `false` (p. ej. drywall): queda libre en inventario y otro pedido lo puede reservar.
    */
   madeToOrder: z.boolean(),

@@ -113,9 +113,9 @@ export class PosService {
    * Productos vendibles en mostrador: **con disponible real** y de venta simple.
    *
    * Los dos filtros son la misma regla de D-098 vista desde el buscador. Se excluye la
-   * unidad `MTR` porque es la marca de una cobertura a medida (D-083): esa se cotiza, no se
-   * despacha del mostrador. Y se ordena por disponible descendente porque en un mostrador
-   * lo primero que importa es qué hay.
+   * unidad `MTR` de lo que no es cobertura; desde cc65 (D-697), la cobertura terminada con
+   * saldo libre sí entra, servida de su saldo. Y se ordena por disponible descendente porque
+   * en un mostrador lo primero que importa es qué hay.
    *
    * **La consulta arranca por el saldo y no por el catálogo**, que es lo contrario de lo
    * intuitivo. Empezando por `products` con un `take` hacía falta cortar por algún orden, y

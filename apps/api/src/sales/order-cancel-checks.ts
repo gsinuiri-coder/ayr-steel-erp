@@ -373,7 +373,7 @@ export function fabricatedNeedsAcknowledgement(
     )
     .join('; ');
   const loose = lines.some((l) => l.madeToOrder)
-    ? ' Lo fabricado contra pedido no lo toma ningún otro pedido ni el mostrador hasta revertir la producción.'
+    ? ' Lo fabricado contra pedido no lo toma ningún otro pedido: se puede vender en el mostrador o revertir la producción.'
     : '';
   return `El pedido ${orderCode} tiene producto fabricado sin despachar (${detail}). Al anularlo queda en inventario sin pedido.${loose} Confirma que lo entiendes para anular`;
 }

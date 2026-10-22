@@ -233,7 +233,7 @@ export function PosView() {
   // ADMINISTRADOR). Sin esto el cajero lo descubría al cobrar, con el cliente delante.
   const cartProductIds = cart.map((l) => l.product.productId);
   const floors = useQuery({
-    queryKey: ['stock-panel', '', cartProductIds.join(',')],
+    queryKey: ['stock-panel', 'counter', cartProductIds.join(',')],
     queryFn: () =>
       api<StockPanelDto>(
         // cc65 (D-697): `counter` hace que la cobertura terminada muestre su saldo y su piso.
