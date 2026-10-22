@@ -11,6 +11,7 @@ import {
   assembleDocumentProfitability,
   notApplicable,
   type DeclaredSale,
+  stockOnlyEngineRows,
 } from './document-profitability';
 import { SalesByMaterialService } from './sales-by-material.service';
 
@@ -63,17 +64,20 @@ export class DocumentProfitabilityService {
       .filter((r) => r.in_engine)
       .map((r) => r.sales_order_item_id)
       .filter((v): v is string => v !== null);
-    const needsDispatch =
-      doc.docType !== FiscalDocType.NOTA_CREDITO && rows.some((r) => !r.is_credit && !r.in_engine);
+    const isCreditNote = doc.docType === FiscalDocType.NOTA_CREDITO;
     // cc54 (D-663): las líneas de NC fuera del motor restan el costo de lo que devolvieron.
     const creditItems = rows
       .filter((r) => !r.in_engine && (r.is_credit || doc.docType === FiscalDocType.NOTA_CREDITO))
       .map((r) => r.item_id);
-    const [engine, declared, returnCostByItem] = await Promise.all([
+    const [engine, returnCostByItem] = await Promise.all([
       this.material.engineFacts(engineItems),
-      needsDispatch ? this.declaredSales(documentId) : Promise.resolve([]),
       this.returnCosts(creditItems),
     ]);
+    // cc65 (D-697): una línea del motor servida solo desde stock también se costea por su despacho.
+    const stockOnly = stockOnlyEngineRows(rows, engine);
+    const needsDispatch =
+      !isCreditNote && rows.some((r) => !r.is_credit && (!r.in_engine || stockOnly.has(r.item_id)));
+    const declared = needsDispatch ? await this.declaredSales(documentId) : [];
 
     return assembleDocumentProfitability({
       document: header,

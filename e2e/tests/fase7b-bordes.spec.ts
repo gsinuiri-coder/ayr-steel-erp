@@ -168,8 +168,9 @@ test.describe('Fase 7b — bordes del mostrador y caja', () => {
       // pasa por vacío y no prueba nada.
       const madeToMeasure = await setupMeasuredStock(api);
       const listed = await posProducts(api);
+      // cc65 (D-697): una **cobertura terminada** en metros con saldo sí se ofrece (sobrante de una
+      // OP); lo que D-098 deja fuera es un producto en metros que no es cobertura, como este.
       expect(listed.some((p) => p.productId === madeToMeasure.product.id)).toBe(false);
-      expect(listed.every((p) => p.unit !== 'MTR')).toBe(true);
       // Y si alguien lo pide por id, el API lo rechaza igual: el buscador es cortesía, no
       // el control.
       const refusedMeasured = await posSellExpectingError(api, {

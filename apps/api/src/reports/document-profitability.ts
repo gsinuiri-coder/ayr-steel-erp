@@ -132,6 +132,11 @@ interface LineResult {
   dto: DocumentProfitLineDto;
   sum: Sum;
   engine: boolean;
+  /**
+   * cc65 (D-697): la línea del motor se sirvió **solo** desde stock terminado (sin OP propia, como
+   * la venta de mostrador de un sobrante). Se costea por su despacho, igual que «Ventas y margen».
+   */
+  fromStockOnly?: boolean;
 }
 
 function baseDto(
@@ -214,6 +219,8 @@ function engineLine(
   const coils = trace.coils.map((c) => `${c.code} (${toFixedString(c.kg, 'KG')} kg)`).join(', ');
   return {
     engine: true,
+    fromStockOnly:
+      trace.traced === null && reasons.length > 0 && reasons.every((r) => r === 'DESDE_STOCK'),
     sum,
     dto: finish(row, sum, {
       costBasis: 'COIL_KG',
@@ -225,6 +232,24 @@ function engineLine(
           : reasons.map((r) => SALES_MATERIAL_UNTRACEABLE_LABELS[r]).join('; '),
     }),
   };
+}
+
+/**
+ * cc65 (D-697): las líneas del motor que se sirvieron **solo** desde stock terminado (sin OP), por
+ * `item_id`. Se costean por su despacho, como en «Ventas y margen».
+ */
+export function stockOnlyEngineRows(
+  rows: readonly DocumentLineRow[],
+  engine: EngineFacts,
+): Set<string> {
+  const usageByLine = usageByOrderLine(engine.usage);
+  return new Set(
+    rows.flatMap((r) =>
+      r.in_engine && !r.is_credit && engineLine(r, engine, usageByLine).fromStockOnly === true
+        ? [r.item_id]
+        : [],
+    ),
+  );
 }
 
 /** cc55 (D-667): el costo del motor de una línea de comprobante y su estado. */
@@ -422,13 +447,14 @@ export function assembleDocumentProfitability(
   const usageByLine = usageByOrderLine(input.engine.usage);
   const own = input.rows.filter((r) => !r.is_credit);
   const credit = input.rows.filter((r) => r.is_credit);
+  const stockOnly = stockOnlyEngineRows(own, input.engine);
 
   // Lo facturado de cada línea de pedido en este comprobante, fuera del motor: dos líneas que
   // comparten la línea de pedido se reparten lo despachado.
   const invoicedByItem = new Map<string, Decimal>();
   for (const r of own) {
     const item = r.own_order_item_id ?? r.sales_order_item_id;
-    if (r.in_engine || item === null) continue;
+    if ((r.in_engine && !stockOnly.has(r.item_id)) || item === null) continue;
     invoicedByItem.set(item, (invoicedByItem.get(item) ?? ZERO).plus(toDecimal(r.qty.toString())));
   }
   // cc34 (N6, D-540): las NC por anulación o devolución **quitan unidades** de su línea de pedido
@@ -448,13 +474,18 @@ export function assembleDocumentProfitability(
   // Una nota de crédito vista por sí misma no tiene despacho propio: sus líneas fuera del
   // motor van como las acreditadas de su comprobante.
   const isCreditNote = input.document.docType === 'NOTA_CREDITO';
-  const ownResults = own.map((row) =>
-    row.in_engine
-      ? engineLine(row, input.engine, usageByLine)
-      : isCreditNote
-        ? creditLine(row, returnCostOf(row))
-        : dispatchLine(row, input, invoicedByItem, creditedByItem),
-  );
+  const ownResults = own.map((row) => {
+    if (row.in_engine) {
+      // cc65 (D-697): servida desde stock, sin OP: la salida de su despacho es su costo.
+      if (!stockOnly.has(row.item_id) || isCreditNote) {
+        return engineLine(row, input.engine, usageByLine);
+      }
+      return dispatchLine(row, input, invoicedByItem, creditedByItem);
+    }
+    return isCreditNote
+      ? creditLine(row, returnCostOf(row))
+      : dispatchLine(row, input, invoicedByItem, creditedByItem);
+  });
   const creditResults = credit.map((row): LineResult =>
     row.in_engine ? engineLine(row, input.engine, usageByLine) : creditLine(row, returnCostOf(row)),
   );

@@ -113,9 +113,9 @@ export class PosService {
    * Productos vendibles en mostrador: **con disponible real** y de venta simple.
    *
    * Los dos filtros son la misma regla de D-098 vista desde el buscador. Se excluye la
-   * unidad `MTR` porque es la marca de una cobertura a medida (D-083): esa se cotiza, no se
-   * despacha del mostrador. Y se ordena por disponible descendente porque en un mostrador
-   * lo primero que importa es qué hay.
+   * unidad `MTR` de lo que no es cobertura; desde cc65 (D-697), la cobertura terminada con
+   * saldo libre sí entra, servida de su saldo. Y se ordena por disponible descendente porque
+   * en un mostrador lo primero que importa es qué hay.
    *
    * **La consulta arranca por el saldo y no por el catálogo**, que es lo contrario de lo
    * intuitivo. Empezando por `products` con un `take` hacía falta cortar por algún orden, y
@@ -138,16 +138,14 @@ export class PosService {
       where: {
         id: { in: stockIds },
         isActive: true,
-        // D-098: `MTR` es la unidad de la cobertura a medida. El mostrador no la vende.
-        unit: { not: 'MTR' },
-        // D-171: **ninguna cobertura**, tampoco la plancha. Desde que se fabrica contra el
-        // pedido, su línea reserva materia prima y el despacho de la misma transacción del
-        // mostrador se cae —«se fabrica contra el pedido y no tiene producto terminado
-        // reservado»— porque no hay nada producido todavía. Un saldo de plancha ya no tiene
-        // salida por acá: se vende cotizando, que es donde se le arma la orden de producción.
-        // Sin este filtro, la plancha con saldo legado aparecía en el buscador y el mostrador
-        // fallaba al cobrar, que es el callejón que D-156 prohíbe.
-        roofingKind: null,
+        // cc65 (D-697): la **cobertura terminada** con saldo (accesorio, a medida o plancha que
+        // sobró de una OP) se vende acá: la línea la sirve su saldo, sin fabricar
+        // (`fromFinishedStock`), así que el despacho de la misma transacción ya no se cae como
+        // en D-171. Lo reservado a un pedido se descuenta abajo y lo vuelve a comprobar la
+        // reserva con bloqueo. D-098 sigue para lo demás: un producto en `MTR` que no es
+        // cobertura no se vende en mostrador.
+        // En `AND` porque la búsqueda de más abajo usa su propio `OR`.
+        AND: [{ OR: [{ roofingKind: { not: null } }, { unit: { not: 'MTR' } }] }],
         businessLine: {
           // D-167: el mostrador **sigue** sin ofrecer líneas sin inventario, y ahora es una
           // decisión y no un descarte automático. La lista del POS nace del saldo —arranca en

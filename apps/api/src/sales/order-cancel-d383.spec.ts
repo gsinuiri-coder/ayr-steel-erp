@@ -452,7 +452,7 @@ describe('D-383 — anular un pedido', () => {
       await rejects(
         withFabricated(happy()),
         ConflictException,
-        'El pedido PED-000007 tiene producto fabricado sin despachar (línea 1 COB-ROJO: 24.6 MTR (OP-000012)). Al anularlo queda en inventario sin pedido. Lo fabricado contra pedido no lo toma ningún otro pedido ni el mostrador hasta revertir la producción. Confirma que lo entiendes para anular',
+        'El pedido PED-000007 tiene producto fabricado sin despachar (línea 1 COB-ROJO: 24.6 MTR (OP-000012)). Al anularlo queda en inventario sin pedido. Lo fabricado contra pedido no lo toma ningún otro pedido: se puede vender en el mostrador o revertir la producción. Confirma que lo entiendes para anular',
       );
     });
 
