@@ -3033,3 +3033,33 @@ después: sin su entrada simulada, cada despacho de drywall daba un negativo fal
 - reversa completa en 1 h 9 min, con los reportes de vuelta al céntimo.
 
 Ventas y margen (S/ 120 178,00) y CxC del lote (S/ 12 564,64) iguales a cc63.
+
+## Registro del dueño (2026-10-21, piezas cc64 y cc65)
+
+- **D-705, D-706 y D-707 ratificadas**, y el UAT de cc64 aprobado. Pasan a firmes en `ARQUITECTURA.md` §0.2.
+- **El cargador da de alta desde el padrón** a los clientes que no existen (aprobado). Desde cc65, `carga:revisar` los
+  lista al inicio del informe.
+- **Regla de cierre (D-708):** al terminar la limpieza, `git -C …/ayr-steel-erp pull --ff-only` y el SHA en el informe.
+- **cc65, respuestas al plan:** costo de salida al promedio del saldo; sobrante a medida en metros sin desglose; solo la
+  cobertura terminada (D-098 sigue para lo demás); un pedido del mostrador no se edita; SEC-05 con el código de D-694;
+  NC-03 como corrección; `inspect:audit02` queda en `local-data`.
+
+## cc65 — venta por mostrador de la cobertura en stock e higiene (D-697, D-709)
+
+**Por qué la línea del mostrador se sirve del saldo y no se fabrica (D-697).** El mostrador ya arma un pedido directo
+que nunca crea OP. Lo único que mandaba una cobertura a «contra pedido» era `resolveSalesLines`. Una línea que reserva su
+propio producto ya la tratan bien el despacho, su reversa, la anulación, la restauración de reservas y la facturación
+(es la misma forma que la plancha de stock de antes de D-171). Con una opción que solo pasa el mostrador, el cambio no
+toca cotizaciones, pedidos ni OP.
+
+**Por qué el costo es el promedio y no el de la OP del sobrante.** El kardex no tiene costo por lote. Cuando el saldo del
+código es solo ese sobrante, el promedio es exactamente su costo (el de su OP); con saldo de varias OP, sale al
+promedio. El costo por lote necesitaría migración y un modelo de lotes.
+
+**Por qué «Rentabilidad» cambió también.** Su motor costea lo fabricado por la OP y dejaba esa línea «desde stock», sin
+costo, mientras «Ventas y margen» la costeaba por el despacho. D-667 pide que los dos den lo mismo: la línea servida solo
+desde stock se costea por su despacho en los dos.
+
+**Por qué el código de D-694 y no la IP (D-709).** La IP que ve el API es la de salida de Vercel, igual para todos: no
+sirve para nada y es un dato personal. El código de la IP verificada sí sirve para ver si un reuso de refresh vino de
+otro lugar, y nunca deja la IP en claro.
