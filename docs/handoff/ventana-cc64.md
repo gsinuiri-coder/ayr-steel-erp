@@ -110,3 +110,8 @@ carga (no se pueden retrofechar). No se cambió nada.
 - **cc65:** la venta del accesorio suelto (D-697).
 - **cc66:** higiene de auth y docs.
 - **cc62:** el importador de saldos (al final de todo) y NC-02.
+
+## Registro posterior (21/10/2026)
+
+- D-705..D-707 ratificadas, alta de clientes desde el padrón aprobada y UAT de cc64 aprobado por el dueño.
+- Desde cc65, `carga:revisar` lista al inicio del informe los clientes que se crearán desde el padrón.

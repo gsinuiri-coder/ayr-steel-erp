@@ -2,6 +2,36 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-21 — cc65: venta por mostrador de la cobertura en stock e higiene de audit-02 (D-697, D-709; PR #247 y #248)
+
+Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc65.md`; UAT en
+`docs/uat/cc65.md`; revisiones en `docs/revision/cc65-a-*.md` y `docs/revision/cc65-b-*.md`.
+
+- **Corte A (D-697), PR #247:** API `00151-qn4` (`git-sha=06acf58c`), merge `6f7c2844`, smoke en verde.
+- **Corte B (higiene), PR #248:** API `00152-7hz` (`git-sha=cc569224`), merge `1ba03313`, smoke en verde.
+- **Registro del dueño (21/10):**
+  - D-705..D-707 ratificadas;
+  - el cargador da de alta desde el padrón a los clientes que no existen (aprobado);
+  - UAT de cc64 aprobado;
+  - regla de cierre nueva (D-708, PR #246): actualizar el checkout principal con `pull --ff-only` y reportar el SHA.
+- **D-697:** el mostrador vende la cobertura terminada con saldo libre (accesorio, a medida en metros, plancha por
+  unidad), sin OP, al costo promedio del saldo. El caso real de A2-03 queda habilitado y **no se vendió**.
+- **D-709:** de la IP del cliente solo se guarda su código de D-694, nunca la IP en claro.
+- **Higiene:** SEC-02, SEC-03, NC-03, PERM-01, REG-01, REG-02, fechas imposibles en comprobantes, voseo y el bloque de
+  clientes nuevos en `carga:revisar`.
+- **Incidente externo (22/10, 02:58–03:21 UTC):** el deploy del corte B falló tres veces porque el registro de npm
+  respondía 502/503 al bajar pnpm dentro de Cloud Build. El tráfico nunca dejó `00151-qn4`. Se desplegó al volver el
+  registro.
+- **Pendiente del dueño:**
+  - ratificar D-697 y D-709;
+  - hacer el UAT de cc65;
+  - decidir si revertir un reporte de OP sigue trabándose por una venta posterior de mostrador del mismo código.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-697: `sales/sales-lines.ts` (`fromFinishedStock`), `pos/pos.service.ts` (`findProducts`) y
+  `reports/document-profitability.ts` (costo de lo servido desde stock).
+
 ## 2026-10-21 — cc64: cargador de la carga atrasada (D-705..D-707; PR #244)
 
 Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc64.md`; UAT en

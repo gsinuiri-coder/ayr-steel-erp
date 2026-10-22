@@ -108,8 +108,9 @@ Un medio de pago que la app no conoce se registra como «Otro», con aviso.
 ### Clientes nuevos
 
 Un cliente de la hoja Ventas que no está en la app se da de alta **desde el padrón al cargar** (consulta externa), como
-hace el importador de cotizaciones. La revisión lo avisa fila por fila. Si prefieres revisarlo antes, créalo a mano en
-la app.
+hace el importador de cotizaciones (aprobado por el dueño el 21/10/2026). La revisión lo avisa fila por fila y, desde
+cc65, los lista al inicio del informe («Clientes que se crearán desde el padrón»), con su RUC o DNI, el nombre del
+export y las filas donde aparece. Si prefieres revisarlo antes, créalo a mano en la app.
 
 ## Antes de cargar: `pnpm carga:revisar`
 
