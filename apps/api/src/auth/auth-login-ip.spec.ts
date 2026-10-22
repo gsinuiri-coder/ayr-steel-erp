@@ -173,23 +173,22 @@ describe('cc65 (SEC-05/A2-07): qué se guarda de la IP', () => {
       user: { id: 'u1', active: true, role: Role.ADMINISTRADOR, email: 'a@b.c', name: 'A' },
     });
     await service.refresh(raw, { clientIp: verified('190.42.1.7') });
-    const data = (prisma.session.updateMany.mock.calls[0]?.[0] as { data: { ip: unknown } }).data;
-    expect(data.ip).toBe(loginIpKey(SECRET, '190.42.1.7'));
+    const rotatedIp = (): unknown =>
+      (prisma.session.updateMany.mock.calls as unknown as [{ data: { ip: unknown } }][])[0]?.[0]
+        .data.ip;
+    expect(rotatedIp()).toBe(loginIpKey(SECRET, '190.42.1.7'));
     // Sin firma válida no se guarda nada nuevo: se conserva el código anterior…
     const previous = loginIpKey(SECRET, '190.42.1.8');
     const base = prisma.session.findFirst.mock.results[0]?.value as Promise<object>;
     prisma.session.findFirst.mockResolvedValue({ ...(await base), ip: previous });
     prisma.session.updateMany.mockClear();
     await service.refresh(raw, { clientIp: { ok: false, reason: 'absent' } });
-    const kept = (prisma.session.updateMany.mock.calls[0]?.[0] as { data: { ip: unknown } }).data;
-    expect(kept.ip).toBe(previous);
+    expect(rotatedIp()).toBe(previous);
     // …y una IP en claro heredada se borra.
     prisma.session.findFirst.mockResolvedValue({ ...(await base), ip: '10.0.0.1' });
     prisma.session.updateMany.mockClear();
     await service.refresh(raw, { clientIp: { ok: false, reason: 'expired' } });
-    const cleared = (prisma.session.updateMany.mock.calls[0]?.[0] as { data: { ip: unknown } })
-      .data;
-    expect(cleared.ip).toBeNull();
+    expect(rotatedIp()).toBeNull();
   });
 
   it('el reuso de un refresh guarda el código de D-694 de la IP verificada, no la IP', async () => {
