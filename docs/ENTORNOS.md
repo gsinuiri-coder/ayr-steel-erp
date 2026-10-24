@@ -114,7 +114,7 @@ y rescates.
   con el nombre, sin tocar las fijas. Se conservan los dos respaldos post-día-D más recientes y
   los checkpoints declarados hasta su fecha.
 
-### Ramas vigentes (2026-10-20, después de cc61): 10 de 10
+### Ramas vigentes (2026-10-24, después de dw-01): 10 de 10
 
 Ninguna se borra sin OK del dueño por nombre (`AGENTS.md` §3.3). Antes de crear una rama que deje 10 de 10, mirar
 la lista y, si con la nueva se pasa de 10, proponer al dueño cuáles borrar.
@@ -126,15 +126,19 @@ la lista y, si con la nueva se pasa de 10, proponer al dueño cuáles borrar.
 | `ci`                           | `br-misty-band-ae9s41t7`          | migraciones + smoke de la CI                  | siempre                                                                  |
 | `demo`                         | `br-solitary-smoke-aegbos8k`      | UAT (copia de production)                     | siempre                                                                  |
 | `respaldo-pre-v4-20260915`     | `br-sweet-resonance-aegd7jdg`     | respaldo del día D                            | siempre                                                                  |
-| `respaldo-pre-cc53-20261014`   | `br-flat-rice-aetbs1e3`           | respaldo antes de la migración de cc53        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc53b-20261014`  | `br-hidden-sound-ae4ue3jd`        | respaldo antes del recosteo histórico (D-651) | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc56c2-20261016` | `br-bitter-water-aesm4ies`        | respaldo antes de la corrección C2 (cc56)     | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc58-20261019`   | `br-spring-hill-aetbkbg9`         | respaldo antes de la migración de cc58        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 | `respaldo-pre-cc61-20261020`   | `br-shy-snow-aeuauyf9`            | respaldo antes del vencimiento de cc61        | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-dw01-20261024`   | `br-fragrant-truth-aeh2i9i7`      | respaldo antes de la carga de Drywall (dw-01) | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 
-**10 de 10 desde el 2026-10-20 (cc61).** La próxima rama nueva exige antes borrar un respaldo por la regla 18 (hoy el más
-viejo que la cubre es `respaldo-pre-cc53-20261014`; los dos más recientes son `respaldo-pre-cc58-20261019` y
-`respaldo-pre-cc61-20261020`).
+**10 de 10 desde el 2026-10-24 (dw-01).** La próxima rama nueva exige antes borrar un respaldo por la regla 18 (hoy el más
+viejo que la cubre es `respaldo-pre-cc53b-20261014`; los dos más recientes son `respaldo-pre-cc61-20261020` y
+`respaldo-pre-dw01-20261024`).
+
+**Borrada el 2026-10-24 por el agente (regla 18, dw-01)**, antes de crear `respaldo-pre-dw01-20261024`
+(`br-fragrant-truth-aeh2i9i7`) para el `--execute` de la carga de Drywall: `respaldo-pre-cc53-20261014` (`br-flat-rice-aetbs1e3`),
+sin ramas hijas, id verificado contra el nombre.
 
 **Borrada el 2026-10-20 por el agente (regla 18, cc61)**, antes de crear `respaldo-pre-cc61-20261020`
 (`br-shy-snow-aeuauyf9`) para el `--execute` del vencimiento: `respaldo-pre-cc51-20261013` (`br-divine-thunder-aetc4rfe`),

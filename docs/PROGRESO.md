@@ -2,6 +2,25 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-24 — dw-01: inventario inicial de bobinas de Drywall (D-710)
+
+Sin cambio de código, sin migración y sin SQL contra producción. Un solo `--execute --confirm-production`, con el OK
+del dueño por nombre (D-460) para este archivo.
+
+- **D-710:** extiende D-206 (condición 4) a esta carga única; no generaliza la herramienta.
+- **Acabado:** el catálogo de producción tiene un solo galvanizado activo, y es de Drywall; las 18 filas lo llevan.
+- **Dry-run** contra `production` con `--operation-date 2026-08-01`: 18 OK, 0 errores; ningún código de origen
+  existente; totales iguales al archivo.
+- **Respaldo:** `respaldo-pre-dw01-20261024` (`br-fragrant-truth-aeh2i9i7`). Para hacer lugar se borró
+  `respaldo-pre-cc53-20261014` (regla 18; `docs/ENTORNOS.md`).
+- **Ejecución:** 18 bobinas creadas en Drywall, abiertas y fechadas el 01/08/2026. El valorizado de Drywall pasó de
+  cero al total exacto del archivo; el valorizado general subió exactamente eso.
+- **Verificación:** sin negativos, sin recosteos pendientes, `smoke:prod` en verde (web `55a1758c`, API `cc569224`).
+- **Observación fuera de alcance:** `check:balances` muestra 2 bobinas de coberturas, que esta carga no tocó, con
+  diferencias de valor de céntimos entre el saldo guardado y el kardex (S/ 0,12 y S/ 0,19; cantidades iguales). No se
+  corrigió nada.
+- **Archivo, códigos asignados e informe:** en `local-data/drywall/`, fuera del repo.
+
 ## 2026-10-21 — cc65: venta por mostrador de la cobertura en stock e higiene de audit-02 (D-697, D-709; PR #247 y #248)
 
 Sin migración, sin `--execute` y sin SQL contra producción. Detalle en `docs/handoff/ventana-cc65.md`; UAT en
