@@ -13,6 +13,8 @@ de fondo, para dos clases de saldo distintas:
 - **`products`**: stock por unidades de **cobertura UPVC y reventa** — las dos líneas donde el
   producto ya es compra-venta pura (D-091) y no hay bobina detrás. El resto de este documento
   describe primero `coils` y después `products` (ver «Productos (UPVC y reventa)» más abajo).
+  Desde dw-03 (D-712), `products` acepta además **perfiles de Drywall fabricados** con su ficha
+  completa, para la carga única del stock inicial de agosto (ver «Perfiles de Drywall» al final).
 
 Reglas que importan antes de tocar nada:
 
@@ -124,15 +126,16 @@ completo se rechazó — corregí las filas marcadas y volvé a correr el dry-ru
 `--kind products` da de alta el saldo inicial de un producto de catálogo que se compra y se
 revende tal cual — cobertura UPVC (línea `Coberturas (UPVC)`) y reventa (línea `Reventa`). Cada
 fila **suma unidades a un SKU que ya existe**: no crea productos, no crea líneas de negocio y
-nunca toca un producto de fabricación propia (Drywall, Metallic Roofing) — eso lo decide el
-mismo campo `source` del producto (`PURCHASED` vs `MANUFACTURED`), nunca el SKU ni su texto.
+no toca coberturas fabricadas (Metallic Roofing) — eso lo decide el mismo campo `source` del
+producto (`PURCHASED` vs `MANUFACTURED`) junto con la línea, nunca el SKU ni su texto. La única
+fabricación propia que acepta es el perfil de Drywall de D-712 (sección siguiente).
 
 Reglas propias de este modo, además de las generales de arriba (todo o nada, dry-run por
 defecto):
 
 - **El SKU tiene que existir ya en el Catálogo**, estar activo, ser de la línea UPVC o Reventa, y
-  su `source` tiene que ser `Comprado` (`PURCHASED`). Un SKU de Drywall o Metallic Roofing, o uno
-  `Fabricado`, se rechaza con el motivo puntual.
+  su `source` tiene que ser `Comprado` (`PURCHASED`). Un SKU de Metallic Roofing, o uno
+  `Fabricado` de UPVC/Reventa, se rechaza con el motivo puntual (Drywall: sección siguiente).
 - **Nunca actualiza un producto con historial.** Si el SKU ya tiene algún movimiento de kardex
   (de cualquier origen, no solo de esta herramienta), la fila se rechaza: esto es solo para el
   arranque, antes de que el producto tenga movimiento real.
@@ -161,25 +164,25 @@ inválidas** al final:
 
 - `INVALIDO-SKU-INEXISTENTE`: no está en ningún catálogo.
 - `EJ-UPVC-BLANCO` con `0` unidades: la cantidad tiene que ser mayor a cero.
-- `EJ-PERFIL-FABRICADO`: existe, pero es de Drywall — fuera de las líneas compra-reventa (UPVC,
-  Reventa) que alcanza esta herramienta. Un SKU fabricado **dentro** de UPVC/Reventa se rechaza
-  igual, con el motivo puntual ("es un producto fabricado").
+- `EJ-COBERTURA-FABRICADA`: existe, pero es una cobertura fabricada de Metallic Roofing — fuera
+  de alcance. Un SKU fabricado **dentro** de UPVC/Reventa se rechaza igual, con el motivo puntual
+  ("es un producto fabricado").
 
 ### Antes de ensayarlo
 
 El archivo referencia ocho SKU de ejemplo que no existen en ninguna base real — hay que crearlos
 primero en **Catálogo**:
 
-| SKU                   | Nombre                        | Línea             | Unidad | Origen    |
-| --------------------- | ----------------------------- | ----------------- | ------ | --------- |
-| `EJ-UPVC-BLANCO`      | Cobertura UPVC blanca         | Coberturas (UPVC) | `NIU`  | Comprado  |
-| `EJ-UPVC-GRIS`        | Cobertura UPVC gris           | Coberturas (UPVC) | `NIU`  | Comprado  |
-| `EJ-UPVC-TEJA`        | Cobertura UPVC teja           | Coberturas (UPVC) | `NIU`  | Comprado  |
-| `EJ-REVENTA-TORNILLO` | Tornillo autorroscante        | Reventa           | `NIU`  | Comprado  |
-| `EJ-REVENTA-SELLADOR` | Sellador de silicona          | Reventa           | `NIU`  | Comprado  |
-| `EJ-REVENTA-CLAVO`    | Clavo de acero                | Reventa           | `NIU`  | Comprado  |
-| `EJ-REVENTA-CINTA`    | Cinta para juntas             | Reventa           | `NIU`  | Comprado  |
-| `EJ-PERFIL-FABRICADO` | Perfil (solo para el rechazo) | Drywall           | `NIU`  | Fabricado |
+| SKU                      | Nombre                           | Línea             | Unidad | Origen    |
+| ------------------------ | -------------------------------- | ----------------- | ------ | --------- |
+| `EJ-UPVC-BLANCO`         | Cobertura UPVC blanca            | Coberturas (UPVC) | `NIU`  | Comprado  |
+| `EJ-UPVC-GRIS`           | Cobertura UPVC gris              | Coberturas (UPVC) | `NIU`  | Comprado  |
+| `EJ-UPVC-TEJA`           | Cobertura UPVC teja              | Coberturas (UPVC) | `NIU`  | Comprado  |
+| `EJ-REVENTA-TORNILLO`    | Tornillo autorroscante           | Reventa           | `NIU`  | Comprado  |
+| `EJ-REVENTA-SELLADOR`    | Sellador de silicona             | Reventa           | `NIU`  | Comprado  |
+| `EJ-REVENTA-CLAVO`       | Clavo de acero                   | Reventa           | `NIU`  | Comprado  |
+| `EJ-REVENTA-CINTA`       | Cinta para juntas                | Reventa           | `NIU`  | Comprado  |
+| `EJ-COBERTURA-FABRICADA` | Cobertura (solo para el rechazo) | Metallic Roofing  | `NIU`  | Fabricado |
 
 Con eso, el dry-run del archivo de ejemplo muestra 8 filas OK y 3 con error.
 
@@ -200,7 +203,47 @@ pnpm import:initial-inventory --file "Productos cliente.xlsx" --kind products --
 
 - No crea productos ni líneas de negocio.
 - No factura, no genera una compra ni aparece en reportes de compras.
-- No toca un producto de fabricación propia (Drywall, Metallic Roofing): eso es lo que existe la
-  carga de bobinas y la producción para hacer.
+- No toca coberturas fabricadas (Metallic Roofing): eso es lo que existe la carga de bobinas y la
+  producción para hacer.
 - No permite corregir una fila ya importada: si el costo o la cantidad están mal, se ajusta desde
   **Inventario** (ajuste manual) como cualquier otro movimiento.
+
+---
+
+## Perfiles de Drywall — dw-03 (D-712)
+
+Carga **única** del stock inicial de perfiles de Drywall de agosto (parantes, rieles, omegas)
+que ya estaban terminados en el almacén. Mismo modo `--kind products`, mismas columnas y mismas
+reglas generales (todo o nada, dry-run por defecto, nunca un SKU con kardex, el mismo SKU puede
+repetirse). D-712 no generaliza la herramienta: cualquier otro uso necesita una decisión nueva.
+
+El SKU de Drywall entra solo si:
+
+- es `Fabricado` (`MANUFACTURED`) — un SKU de Drywall `Comprado` se rechaza;
+- va en unidades (`NIU`);
+- tiene en el Catálogo **espesor, ancho del fleje, largo y peso por pieza**. Si le falta alguno, la
+  fila se rechaza nombrando el dato («al perfil le falta en el catálogo el peso por pieza»). El
+  Catálogo de hoy ya los exige al crear un perfil; la regla protege a los SKU viejos.
+
+`UNIDADES` son piezas y `COSTO UNITARIO (SIN IGV)` es el costo por pieza. El perfil entra al
+kardex como producto terminado (entrada `IMPORT`) y se vende por pedido contra ese stock, igual
+que uno producido a stock (D-598).
+
+### El archivo de ejemplo
+
+`inventario-inicial-perfiles-drywall-ejemplo.csv` (esta misma carpeta), con datos inventados: 4
+filas válidas (tres SKU, uno repetido con otro costo para ver el promedio) y 1 inválida al final,
+`EJ-DRYWALL-COMPRADO` (Drywall, pero `Comprado`). Antes de ensayarlo, crear en **Catálogo**:
+
+| SKU                   | Nombre        | Línea   | Unidad | Origen    | Espesor | Ancho fleje | Largo | Peso/pieza |
+| --------------------- | ------------- | ------- | ------ | --------- | ------- | ----------- | ----- | ---------- |
+| `EJ-PARANTE-A`        | Parante A     | Drywall | `NIU`  | Fabricado | 0.43    | 120         | 3000  | 1.30       |
+| `EJ-PARANTE-B`        | Parante B     | Drywall | `NIU`  | Fabricado | 0.43    | 150         | 3000  | 1.60       |
+| `EJ-RIEL-A`           | Riel A        | Drywall | `NIU`  | Fabricado | 0.43    | 90          | 3000  | 0.95       |
+| `EJ-DRYWALL-COMPRADO` | Perfil compra | Drywall | `NIU`  | Comprado  | 0.43    | 90          | 3000  | 0.95       |
+
+Con eso, el dry-run muestra 4 filas OK y 1 con error.
+
+```
+pnpm import:initial-inventory --file docs/plantillas/inventario-inicial-perfiles-drywall-ejemplo.csv --kind products --branch local
+```
