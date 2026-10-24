@@ -2,6 +2,27 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-24 — dw-02: espesor de las bobinas de Drywall de dw-01, 0.45 → 0.43 (D-711)
+
+Sin cambio de código, sin migración y sin SQL contra producción. Un solo `--execute --confirm-production` y 18
+anulaciones por la API, con el OK del dueño por nombre (D-460).
+
+- **D-711:** extiende D-206/D-710 a esta recarga única.
+- **Verificación previa (solo lectura):** las 18 bobinas de dw-01 estaban vigentes, sin reservas, sin partidos,
+  hijas ni consumos, y su único movimiento era el ingreso del 01/08.
+- **Dry-run** de la copia corregida (0.43 mm, códigos de origen nuevos): 18 OK, mismos totales, línea Drywall.
+- **Respaldo:** `respaldo-pre-dw02-20261024` (`br-cold-flower-aebx48jp`). Para hacer lugar se borró
+  `respaldo-pre-cc53b-20261014` (regla 18; `docs/ENTORNOS.md`).
+- **Anulación:** las 18 por `POST /coils/:id/cancel` (RF-21), con fecha 2026-08-01; primero una, para confirmar que la
+  API aceptaba la fecha.
+- **Recarga:** 18 bobinas nuevas en Drywall, 0.43 mm, abiertas y fechadas el 01/08/2026.
+- **Comprobación:** el valorizado de Drywall de hoy y el reporte mensual de bobinas al cierre de agosto, setiembre y
+  octubre dan lo mismo que antes, sin duplicado. Sin negativos, sin recosteos pendientes, `check:balances` igual que
+  tras dw-01 (las 2 diferencias de céntimos ajenas) y `smoke:prod` en verde.
+- **Observación fuera de alcance:** el SKU de venta directa de la bobina galvanizada de 0.45 sigue activo sin ninguna
+  bobina vigente de ese espesor. No se tocó.
+- **Archivo, códigos viejos y nuevos e informe:** en `local-data/drywall/`, fuera del repo.
+
 ## 2026-10-24 — dw-01: inventario inicial de bobinas de Drywall (D-710)
 
 Sin cambio de código, sin migración y sin SQL contra producción. Un solo `--execute --confirm-production`, con el OK
