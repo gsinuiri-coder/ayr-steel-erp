@@ -245,5 +245,10 @@ filas válidas (tres SKU, uno repetido con otro costo para ver el promedio) y 1 
 Con eso, el dry-run muestra 4 filas OK y 1 con error.
 
 ```
-pnpm import:initial-inventory --file docs/plantillas/inventario-inicial-perfiles-drywall-ejemplo.csv --kind products --branch local
+pnpm import:initial-inventory --file docs/plantillas/inventario-inicial-perfiles-drywall-ejemplo.csv --kind products --branch local --operation-date 2026-08-01
 ```
+
+`UNIDADES` tiene que ser un número entero de piezas. **La fecha de operación va siempre**: sin
+`--operation-date` el kardex entra con la fecha de hoy, y un stock de agosto fechado hoy deja mal
+los cierres de mes intermedios y hace que una salida fechada antes de hoy deje el kardex en
+negativo (D-652). La carga real de dw-03 va con `--operation-date 2026-08-01`, como dw-01/dw-02.

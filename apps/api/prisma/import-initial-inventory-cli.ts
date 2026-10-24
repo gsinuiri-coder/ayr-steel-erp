@@ -47,7 +47,8 @@ const execute = process.argv.includes('--execute');
 const operationDate = argValue('--operation-date');
 const actorEmailFlag = argValue('--actor-email');
 // F8-S6a2: `coils` (default, retrocompatible) carga bobinas; `products` carga productos
-// UPVC/reventa por unidades. Dos servicios de dominio distintos, un solo CLI de arranque.
+// UPVC/reventa por unidades y, desde D-712 (dw-03), perfiles de Drywall fabricados. Dos
+// servicios de dominio distintos, un solo CLI de arranque.
 const kindFlag = argValue('--kind') ?? 'coils';
 if (kindFlag !== 'coils' && kindFlag !== 'products') {
   throw new Error(`--kind tiene que ser "coils" o "products" (recibido: "${kindFlag}").`);

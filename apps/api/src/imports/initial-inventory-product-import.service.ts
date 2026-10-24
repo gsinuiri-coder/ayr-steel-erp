@@ -31,8 +31,8 @@ import type { RunInput } from './initial-inventory-import.service';
  * ya deja el rastro sin necesitar el proveedor `isSystem` de la carga de bobinas), y el
  * alcance no se generaliza a otro importador de productos.
  *
- * **Solo líneas compra-reventa.** El producto terminado propio (Drywall, Metallic Roofing)
- * no entra por acá: lo decide `businessLine.code` (UPVC = `ROOFING`, Reventa = `TRADING`) más
+ * **Líneas compra-reventa** (y, desde D-712, el perfil de Drywall; ver abajo). Las coberturas
+ * fabricadas (Metallic Roofing) no entran por acá: lo decide `businessLine.code` (UPVC = `ROOFING`, Reventa = `TRADING`) más
  * `source === PURCHASED`, nunca el SKU ni su texto — la misma lección de D-131 aplicada a una
  * pregunta nueva: esto no es "¿tiene largo?" ni "¿es a medida?", es "¿este producto se compra
  * o se fabrica?", y la responde `ProductSource` (el mismo campo que ya usa
@@ -427,6 +427,14 @@ function parseRow(
   }
 
   const units = decimalField(raw, 'units', 'KG', MAX_VALUE.KG, errors);
+  // D-712: el perfil de drywall se cuenta en piezas enteras (UPVC y Reventa siguen como antes).
+  if (
+    units !== null &&
+    product?.businessLine.code === BusinessLineCode.DRYWALL &&
+    !toDecimal(units).isInteger()
+  ) {
+    errors.push(`${COLUMN_DEFS.units}: un perfil de Drywall se carga en piezas enteras.`);
+  }
   const unitCostPerUnit = decimalField(raw, 'unitCostPerUnit', 'MONEY', MAX_VALUE.MONEY, errors);
 
   const currencyRaw = field(raw, 'currency').toUpperCase();

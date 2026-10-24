@@ -146,6 +146,14 @@ describe('carga inicial de perfiles de Drywall (D-712)', () => {
     expect(await kardexOf(incomplete)).toEqual([]);
   });
 
+  it('un perfil se carga en piezas enteras', async () => {
+    const sku = await profile();
+    const report = await run([`${sku},120.5,3.11,PEN,,,`], true);
+    expect(report).toMatchObject({ ok: false, executed: false });
+    expect(report.rows[0]?.errors.join(' ')).toMatch(/piezas enteras/);
+    expect(await kardexOf(sku)).toEqual([]);
+  });
+
   it('una cobertura fabricada sigue rechazada', async () => {
     const sku = `E-DW03${letters(8)}`;
     await prisma.product.create({
