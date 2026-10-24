@@ -3074,3 +3074,14 @@ una decisión nueva.
 
 **La primera hoja manda.** La herramienta lee la primera hoja del libro. El archivo traía «Instrucciones» primero, así
 que la copia de trabajo puso «Bobinas» primero sin tocar ningún dato; el dry-run lo confirmó antes de ejecutar.
+
+## dw-02 — espesor de las bobinas de Drywall de dw-01 (D-711)
+
+**Por qué anular y recargar, y no editar (D-711).** El espesor forma el tipo de la bobina y su código (RF-13/RF-14), y
+el kardex no se edita: la única corrección limpia es la reversa del ingreso y un ingreso nuevo. Anular con la acción de
+siempre (RF-21) deja la reversa en la misma fecha que el ingreso, así que el saldo de cada día queda como si la bobina
+nunca hubiera entrado, y la recarga al 01/08 vuelve a poner el mismo material con el espesor correcto. El valorizado de
+hoy y el de los cierres de mes no cambian, y las bobinas anuladas siguen a la vista con su motivo.
+
+**Primero una.** La anulación con fecha atrasada se probó con una sola bobina, y se revisó su reversa antes de anular
+las otras 17: si la API la hubiera rechazado, ninguna otra se habría tocado.
