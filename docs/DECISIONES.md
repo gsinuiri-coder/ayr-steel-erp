@@ -3063,3 +3063,14 @@ desde stock se costea por su despacho en los dos.
 **Por qué el código de D-694 y no la IP (D-709).** La IP que ve el API es la de salida de Vercel, igual para todos: no
 sirve para nada y es un dato personal. El código de la IP verificada sí sirve para ver si un reuso de refresh vino de
 otro lugar, y nunca deja la IP en claro.
+
+## dw-01 — inventario inicial de bobinas de Drywall (D-710)
+
+**Por qué una extensión de D-206 y no una herramienta nueva (D-710).** El stock de bobinas de Drywall existía desde
+agosto pero no entró en la carga del arranque. D-206 ya resolvía exactamente ese caso (bobinas físicas sin historia en el
+sistema) con sus cuatro condiciones, y su condición 4 dice que otro uso necesita una decisión del dueño: D-710 es esa
+decisión, para esta carga y nada más. Se reusó la herramienta tal cual, sin cambio de código; otro uso vuelve a pedir
+una decisión nueva.
+
+**La primera hoja manda.** La herramienta lee la primera hoja del libro. El archivo traía «Instrucciones» primero, así
+que la copia de trabajo puso «Bobinas» primero sin tocar ningún dato; el dry-run lo confirmó antes de ejecutar.
