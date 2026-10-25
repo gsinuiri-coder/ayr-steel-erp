@@ -1,6 +1,13 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { BusinessLineCode, Currency } from '@prisma/client';
-import { CURRENCIES, decimalStringSchema, MAX_VALUE, toDecimal, toFixedString } from '@ayr/shared';
+import { BusinessLineCode, Currency, type Prisma } from '@prisma/client';
+import {
+  CURRENCIES,
+  decimalStringSchema,
+  MAX_VALUE,
+  toDecimal,
+  toFixedString,
+  Unit,
+} from '@ayr/shared';
 import type { RequestUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { OperationDateService } from '../common/operation-date.service';
@@ -24,12 +31,16 @@ import type { RunInput } from './initial-inventory-import.service';
  * ya deja el rastro sin necesitar el proveedor `isSystem` de la carga de bobinas), y el
  * alcance no se generaliza a otro importador de productos.
  *
- * **Solo líneas compra-reventa.** El producto terminado propio (Drywall, Metallic Roofing)
- * no entra por acá: lo decide `businessLine.code` (UPVC = `ROOFING`, Reventa = `TRADING`) más
+ * **Líneas compra-reventa** (y, desde D-712, el perfil de Drywall; ver abajo). Las coberturas
+ * fabricadas (Metallic Roofing) no entran por acá: lo decide `businessLine.code` (UPVC = `ROOFING`, Reventa = `TRADING`) más
  * `source === PURCHASED`, nunca el SKU ni su texto — la misma lección de D-131 aplicada a una
  * pregunta nueva: esto no es "¿tiene largo?" ni "¿es a medida?", es "¿este producto se compra
  * o se fabrica?", y la responde `ProductSource` (el mismo campo que ya usa
  * `BomsService` para lo contrario, RF-59).
+ *
+ * **D-712 (dw-03):** la excepción se extiende a una carga única, el stock inicial de perfiles de
+ * Drywall de agosto: perfiles fabricados por unidades con su ficha completa (`productScopeError`).
+ * Entran como producto terminado por la misma puerta `record()`. Coberturas fabricadas sigue fuera.
  */
 @Injectable()
 export class InitialInventoryProductImportService {
@@ -62,6 +73,10 @@ export class InitialInventoryProductImportService {
             source: true,
             businessLineId: true,
             businessLine: { select: { code: true } },
+            thicknessMm: true,
+            widthMm: true,
+            lengthMm: true,
+            pieceWeightKg: true,
           },
         })
       : [];
@@ -128,7 +143,7 @@ export class InitialInventoryProductImportService {
           // `ok` ya confirmó que todas las filas tienen `parsed`; el chequeo es para el tipo.
           if (!row.parsed) continue;
           // `record` devuelve `null` para una línea `NOOP` (§2.2) sin escribir nada — hoy
-          // inalcanzable (ROOFING/TRADING nacen `STOCK` y no hay ruta que las cambie), pero a
+          // inalcanzable (ROOFING/TRADING/DRYWALL nacen `STOCK` y no hay ruta que las cambie), pero a
           // diferencia de `CoilsService.create` (nunca null) esta fila llama a `record` directo,
           // así que se respeta el contrato en vez de asumir que siempre escribió.
           const movement = await this.inventory.record(tx, {
@@ -240,8 +255,8 @@ function assertColumns(first: Record<string, unknown>): void {
   }
 }
 
-/** Líneas de negocio compra-reventa a las que alcanza esta herramienta (D-206, extensión). */
-const ALLOWED_LINE_CODES: readonly BusinessLineCode[] = [
+/** Líneas de negocio compra-reventa a las que alcanza esta herramienta (D-207). */
+const PURCHASED_LINE_CODES: readonly BusinessLineCode[] = [
   BusinessLineCode.ROOFING,
   BusinessLineCode.TRADING,
 ];
@@ -258,6 +273,69 @@ interface ProductRow {
   source: 'MANUFACTURED' | 'PURCHASED';
   businessLineId: string;
   businessLine: { code: BusinessLineCode };
+  thicknessMm: Prisma.Decimal | null;
+  widthMm: Prisma.Decimal | null;
+  lengthMm: Prisma.Decimal | null;
+  pieceWeightKg: Prisma.Decimal | null;
+}
+
+/** Un dato de catálogo que el perfil de drywall necesita cargado y mayor que cero. */
+function isMissing(value: Prisma.Decimal | null): boolean {
+  return value === null || value.lte(0);
+}
+
+/**
+ * ¿Este producto entra en la carga inicial? Devuelve `null` si entra o el motivo por el que no.
+ *
+ * - **Compra-reventa (D-207):** línea UPVC (`ROOFING`) o Reventa (`TRADING`) y `source PURCHASED`.
+ * - **Perfil de drywall (D-712, dw-03):** línea Drywall, `source MANUFACTURED`, en unidades (NIU)
+ *   y con espesor, ancho del fleje, largo y peso por pieza cargados: los datos con los que la
+ *   planta lo fabrica (D-344). Si falta alguno, se nombra.
+ *
+ * Coberturas fabricadas (`METALLIC_ROOFING`) sigue fuera. Lo deciden la línea y `ProductSource`,
+ * nunca el SKU ni su texto (D-207).
+ */
+export function productScopeError(
+  product: Pick<
+    ProductRow,
+    'unit' | 'source' | 'businessLine' | 'thicknessMm' | 'widthMm' | 'lengthMm' | 'pieceWeightKg'
+  >,
+): string | null {
+  const line = product.businessLine.code;
+  if (line === BusinessLineCode.DRYWALL) {
+    if (product.source !== 'MANUFACTURED') {
+      return (
+        'es de Drywall pero no es un perfil fabricado (source PURCHASED) — en Drywall esta ' +
+        'herramienta solo carga perfiles fabricados.'
+      );
+    }
+    if (product.unit !== Unit.NIU) {
+      return `es un perfil de Drywall en ${product.unit}: tiene que llevarse en unidades (NIU).`;
+    }
+    const lacking = [
+      isMissing(product.thicknessMm) ? 'el espesor' : null,
+      isMissing(product.widthMm) ? 'el ancho del fleje' : null,
+      isMissing(product.lengthMm) ? 'el largo' : null,
+      isMissing(product.pieceWeightKg) ? 'el peso por pieza' : null,
+    ].filter((v): v is string => v !== null);
+    if (lacking.length > 0) {
+      return `al perfil le falta en el catálogo ${lacking.join(', ')}. Complétalo antes de cargarlo.`;
+    }
+    return null;
+  }
+  if (!PURCHASED_LINE_CODES.includes(line)) {
+    return (
+      'no es de una línea compra-reventa (UPVC o Reventa) ni un perfil de Drywall — fuera de ' +
+      'alcance de esta herramienta.'
+    );
+  }
+  if (product.source !== 'PURCHASED') {
+    return (
+      'es un producto fabricado (source MANUFACTURED), no de compra-reventa — fuera de alcance ' +
+      'de esta herramienta.'
+    );
+  }
+  return null;
 }
 
 interface ParsedRow {
@@ -333,18 +411,11 @@ function parseRow(
       const [match] = matches;
       product = match ?? null;
       if (product) {
+        const scopeError = productScopeError(product);
         if (!product.isActive) {
           errors.push(`${COLUMN_DEFS.sku} "${product.sku}": el producto está desactivado.`);
-        } else if (!ALLOWED_LINE_CODES.includes(product.businessLine.code)) {
-          errors.push(
-            `${COLUMN_DEFS.sku} "${product.sku}": no es de una línea compra-reventa (UPVC o ` +
-              'Reventa) — fuera de alcance de esta herramienta.',
-          );
-        } else if (product.source !== 'PURCHASED') {
-          errors.push(
-            `${COLUMN_DEFS.sku} "${product.sku}": es un producto fabricado (source ` +
-              'MANUFACTURED), no de compra-reventa — fuera de alcance de esta herramienta.',
-          );
+        } else if (scopeError !== null) {
+          errors.push(`${COLUMN_DEFS.sku} "${product.sku}": ${scopeError}`);
         } else if (hasKardex.has(product.id)) {
           errors.push(
             `${COLUMN_DEFS.sku} "${product.sku}": ya tiene movimientos de kardex — esta ` +
@@ -356,6 +427,14 @@ function parseRow(
   }
 
   const units = decimalField(raw, 'units', 'KG', MAX_VALUE.KG, errors);
+  // D-712: el perfil de drywall se cuenta en piezas enteras (UPVC y Reventa siguen como antes).
+  if (
+    units !== null &&
+    product?.businessLine.code === BusinessLineCode.DRYWALL &&
+    !toDecimal(units).isInteger()
+  ) {
+    errors.push(`${COLUMN_DEFS.units}: un perfil de Drywall se carga en piezas enteras.`);
+  }
   const unitCostPerUnit = decimalField(raw, 'unitCostPerUnit', 'MONEY', MAX_VALUE.MONEY, errors);
 
   const currencyRaw = field(raw, 'currency').toUpperCase();

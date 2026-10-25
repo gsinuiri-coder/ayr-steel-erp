@@ -2,6 +2,36 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-24 — dw-03: carga inicial de perfiles de Drywall, parte 1: código (D-712)
+
+Sin migración, sin `--execute` y sin SQL contra producción. Sin merge ni carga: la parte 2 va con el OK del dueño.
+
+- **D-712:** extiende D-206 (condición 4) a la carga única del stock inicial de Drywall de agosto.
+- **M4 (solo lectura contra producción):** seis de los siete perfiles tienen SKU único. Uno de los rieles tiene dos
+  candidatos, así que su fila queda sin SKU. El esquinero de reventa también tiene SKU. Los siete perfiles figuran con
+  espesor 0.45 en el catálogo y el dueño dice 0.43. Informe y borrador del archivo en `local-data/drywall/`, fuera del
+  repo.
+- **M2:** `--kind products` acepta perfiles de Drywall fabricados en `NIU`. Exige espesor, ancho del fleje, largo y peso
+  por pieza, y piezas enteras. Las coberturas fabricadas y el Drywall comprado siguen rechazados.
+- **M3:** unitaria, db-spec, E2E (perfil inicial → pedido con stock) y la plantilla
+  `docs/plantillas/inventario-inicial-perfiles-drywall-ejemplo.csv` con datos inventados.
+- **M1 (flejes) en espera:** falta que el dueño confirme que hay flejes cortados y dé sus kg y costo. El diseño está en
+  `docs/handoff/dw-03.md`.
+- **Pruebas:** API unitarias 3929 passed / 2 skipped; E2E completa con builds de producción 630 passed / 10 failed / 2
+  skipped. Los 10 rojos son de infraestructura local: 8 por el PSE apagado, 1 por R2 apagado y el XML de fase2a.
+  Ninguno toca la carga inicial.
+- **Pendiente del dueño:**
+  - el espesor de los perfiles;
+  - elegir el SKU del riel;
+  - si el esquinero va por caja o por pieza;
+  - si hay flejes para M1;
+  - el OK por nombre para la parte 2.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-712: `imports/initial-inventory-product-import.service.ts` (`productScopeError`, alcance de la carga inicial por
+  `record()` `IN`/`IMPORT`).
+
 ## 2026-10-24 — dw-02: espesor de las bobinas de Drywall de dw-01, 0.45 → 0.43 (D-711)
 
 Sin cambio de código, sin migración y sin SQL contra producción. Un solo `--execute --confirm-production` y 18

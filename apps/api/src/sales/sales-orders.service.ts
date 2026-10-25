@@ -4059,6 +4059,11 @@ export class SalesOrdersService {
             cost: floorCost.cost,
           });
           if (floorCost.cost.kind === 'STRIP_SKU') stripSkuProductIds.add(product.id);
+          // D-713: al perfil sin espesor, ancho o peso lo costea su saldo; si no tiene, se dice
+          // qué le falta al SKU, como antes.
+          if (floorCost.noStockReason !== undefined) {
+            staticReasons.set(product.id, floorCost.noStockReason);
+          }
         } else {
           staticReasons.set(product.id, floorCost.noFloorReason);
         }

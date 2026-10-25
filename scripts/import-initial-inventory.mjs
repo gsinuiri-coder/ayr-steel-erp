@@ -12,7 +12,8 @@
 //   pnpm import:initial-inventory --file "Inventario.xlsx" --execute --branch production --confirm-production
 //
 // `--kind coils` (default) carga bobinas; `--kind products` carga productos UPVC/reventa por
-// unidades (F8-S6a2) — dos archivos y dos servicios de dominio distintos, mismo wrapper:
+// unidades (F8-S6a2) y, desde D-712 (dw-03), perfiles de Drywall fabricados con su ficha
+// completa — dos archivos y dos servicios de dominio distintos, mismo wrapper:
 //   pnpm import:initial-inventory --file "Productos.xlsx" --kind products [--execute]
 //
 // `production` es una rama válida (D-206 es exactamente para el arranque real), pero `--execute`

@@ -24,14 +24,10 @@
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
-import {
-  Decimal,
-  minAllowedValue,
-  salePriceFromValue,
-  toDecimal,
-  type BusinessLine,
-} from '@ayr/shared';
+import { Decimal, salePriceFromValue, toDecimal, type BusinessLine } from '@ayr/shared';
 import { toSharedLineCode } from '../src/common/business-line-code';
+import { computePriceFloorOutcomes, type PriceFloorCost } from '../src/sales/price-floor';
+import { FLOOR_COST_SELECT, productFloorCost } from '../src/sales/price-floor-cost';
 
 const prisma = new PrismaClient();
 
@@ -41,7 +37,7 @@ interface Row {
   businessLine: BusinessLine;
   /** Valor de lista sin IGV, tal como está en el maestro. */
   listValuePen: Decimal;
-  /** Costo promedio del kardex, en la unidad de venta del SKU. */
+  /** Costo del piso en la unidad de venta (kardex; flejes en un perfil sin saldo, D-713). */
   costPen: Decimal;
   /** Piso en valor sin IGV: `costo ÷ (1 − margen mínimo)`. */
   minValuePen: Decimal;
@@ -61,29 +57,24 @@ async function main(): Promise<void> {
   const products = await prisma.product.findMany({
     where: { isActive: true, listPricePen: { not: null } },
     select: {
-      id: true,
       sku: true,
       name: true,
       unit: true,
       listPricePen: true,
-      businessLineId: true,
-      businessLine: { select: { code: true } },
+      ...FLOOR_COST_SELECT,
     },
     orderBy: { sku: 'asc' },
   });
-
-  // Un solo viaje por los saldos, no uno por SKU: el catálogo real pasa el millar.
-  const balances = await prisma.inventoryBalance.findMany({
-    where: { itemType: 'PRODUCT', itemId: { in: products.map((p) => p.id) } },
-    select: { itemId: true, avgCost: true },
-  });
-  const costById = new Map(balances.map((b) => [b.itemId, toDecimal(b.avgCost.toString())]));
 
   const below: Row[] = [];
   let sinCosto = 0;
   let sinMargen = 0;
   let sobreElPiso = 0;
 
+  // D-713 (dw-03): el costo de cada SKU sale de `productFloorCost` + `computePriceFloorOutcomes`,
+  // las mismas funciones que aplican el piso al vender: un perfil de drywall con saldo usa su
+  // kardex y uno sin saldo, sus flejes compatibles. Antes este guion leía el saldo a secas.
+  const priced: { product: (typeof products)[number]; cost: PriceFloorCost }[] = [];
   for (const p of products) {
     const minMarginPct = minMarginByLine.get(p.businessLineId);
     // Sin fila en `pricing_settings` no hay margen que aplicar y el API deja pasar la línea
@@ -92,13 +83,39 @@ async function main(): Promise<void> {
       sinMargen += 1;
       continue;
     }
-    const costPen = costById.get(p.id) ?? new Decimal(0);
-    if (costPen.lte(0)) {
+    const floorCost = productFloorCost(p);
+    // Un perfil al que le falta espesor, ancho o peso en el SKU no tiene piso (D-342/D-344).
+    if (!('cost' in floorCost)) {
       sinCosto += 1;
       continue;
     }
+    priced.push({ product: p, cost: floorCost.cost });
+  }
+  // Una sola tanda de costos, no una consulta por SKU: el catálogo real pasa el millar. La
+  // tolerancia solo la usa el costo por bobina de una cobertura a medida, que aquí no entra.
+  const outcomes = await computePriceFloorOutcomes(
+    prisma,
+    priced.map(({ product, cost }) => ({
+      at: product.id,
+      sku: product.sku,
+      businessLineId: product.businessLineId,
+      basis: { kind: 'UNIT' as const, unitLabel: product.unit },
+      unitValuePen: '0',
+      cost,
+    })),
+    '0',
+  );
+
+  for (const { product: p } of priced) {
+    const outcome = outcomes.get(p.id);
+    if (outcome === undefined || !('minValuePen' in outcome)) {
+      sinCosto += 1;
+      continue;
+    }
+    const costPen = toDecimal(outcome.costPen);
+    const minMarginPct = outcome.minMarginPct;
     const listValuePen = toDecimal(p.listPricePen?.toString() ?? '0');
-    const minValuePen = toDecimal(minAllowedValue(costPen.toFixed(4), minMarginPct));
+    const minValuePen = toDecimal(outcome.minValuePen);
     if (listValuePen.gte(minValuePen)) {
       sobreElPiso += 1;
       continue;
@@ -119,7 +136,7 @@ async function main(): Promise<void> {
 
   console.log(`SKU activos con precio de lista en ${label}: ${products.length}`);
   console.log(`  por encima del piso de D-163 ....... ${sobreElPiso}`);
-  console.log(`  sin costo en el kardex (sin piso) .. ${sinCosto}`);
+  console.log(`  sin costo (sin piso) .............. ${sinCosto}`);
   if (sinMargen > 0) {
     console.log(`  sin margen mínimo configurado ...... ${sinMargen}`);
   }

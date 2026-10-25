@@ -10,11 +10,13 @@ import type { PriceFloorCost } from './price-floor';
  *
  * - Un producto cualquiera (trading, perfil comprado, plancha): el costo promedio de su saldo en
  *   el kardex, como siempre (D-163).
- * - **Un perfil de drywall fabricado**: el kardex no sirve —un perfil que nadie produjo todavía
- *   no tiene saldo, y el que sí lo tiene arrastra un costo histórico— así que el costo sale de su
- *   **SKU**: kilos de la pieza × costo por kilo ponderado de los flejes galvanizados de su
+ * - **Un perfil de drywall fabricado sin saldo**: un perfil que nadie produjo todavía no tiene
+ *   costo en el kardex, así que el costo sale de su **SKU**: kilos de la pieza × costo por kilo ponderado de los flejes galvanizados de su
  *   espesor y su ancho (`STRIP_SKU`, misma cuenta por kilo que el agregado de una cobertura).
  *   Desde D-344 no hay receta: el espesor y el ancho del fleje son datos del SKU.
+ *   **D-713 (dw-03):** si el perfil sí tiene saldo en el kardex (fabricado o de la carga inicial),
+ *   manda el costo promedio de ese saldo; los flejes quedan para el perfil sin saldo. Lo decide
+ *   `computePriceFloors` al leer saldos: aquí solo se arma el costo `STRIP_SKU` con el producto.
  *
  * Lo que decide «esto es un perfil de drywall» es la línea de negocio y el origen del SKU, no un
  * subtipo.
@@ -54,19 +56,38 @@ export function isDrywallProfile(
   );
 }
 
-export type ProductFloorCost = { cost: PriceFloorCost } | { noFloorReason: NoFloorReason };
+export type ProductFloorCost =
+  | {
+      cost: PriceFloorCost;
+      /**
+       * D-713: un perfil al que le falta espesor, ancho o peso en el SKU no puede costearse por
+       * flejes, pero si tiene saldo su piso sale del kardex (`PROFILE_STOCK`), y
+       * este es el motivo que se muestra cuando, además, no tiene saldo.
+       */
+      noStockReason?: NoFloorReason;
+    }
+  | { noFloorReason: NoFloorReason };
 
 /** El costo de piso de un producto, o el motivo por el que no lo tiene. */
 export function productFloorCost(product: FloorCostProduct): ProductFloorCost {
   if (!isDrywallProfile(product)) return { cost: { kind: 'PRODUCT', productId: product.id } };
   const strip = drywallStripSpec(product);
-  if ('noFloorReason' in strip) return strip;
+  if ('noFloorReason' in strip) {
+    return {
+      cost: { kind: 'PROFILE_STOCK', productId: product.id },
+      noStockReason: strip.noFloorReason,
+    };
+  }
   if (product.pieceWeightKg === null || product.pieceWeightKg.lte(0)) {
-    return { noFloorReason: 'NO_PIECE_WEIGHT' };
+    return {
+      cost: { kind: 'PROFILE_STOCK', productId: product.id },
+      noStockReason: 'NO_PIECE_WEIGHT',
+    };
   }
   return {
     cost: {
       kind: 'STRIP_SKU',
+      productId: product.id,
       businessLineId: product.businessLineId,
       thicknessMm: strip.thicknessMm,
       widthMm: strip.widthMm,
@@ -84,7 +105,20 @@ export function productFloorCost(product: FloorCostProduct): ProductFloorCost {
  */
 export function staticNoFloorReason(product: FloorCostProduct): NoFloorReason | null {
   const result = productFloorCost(product);
-  return 'noFloorReason' in result ? result.noFloorReason : null;
+  return 'noFloorReason' in result ? result.noFloorReason : (result.noStockReason ?? null);
+}
+
+/**
+ * D-713: el motivo de un producto que salió **sin** piso de `computePriceFloorOutcomes`. Primero el
+ * dato que le falta al SKU (lo que el dueño tiene que cargar); si no le falta nada, en un perfil
+ * costeado por flejes, la falta de flejes o de margen; en cualquier otro, ninguno.
+ */
+export function missingFloorReason(
+  floorCost: Extract<ProductFloorCost, { cost: PriceFloorCost }>,
+  outcome: 'NO_COST' | 'NO_MARGIN',
+): NoFloorReason | null {
+  if (floorCost.noStockReason !== undefined) return floorCost.noStockReason;
+  return floorCost.cost.kind === 'STRIP_SKU' ? stripSkuNoFloorReason(outcome) : null;
 }
 
 /**
