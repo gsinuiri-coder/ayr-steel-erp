@@ -18,6 +18,7 @@ import {
   type PriceFloorCandidate,
 } from './price-floor';
 import {
+  missingFloorReason,
   productFloorCost,
   staticNoFloorReason,
   stripSkuNoFloorReason,
@@ -73,17 +74,23 @@ describe('productFloorCost: de dónde sale el costo del piso', () => {
     ['ancho en cero', { widthMm: D('0') }, 'NO_WIDTH'],
     ['sin peso por pieza', { pieceWeightKg: null }, 'NO_PIECE_WEIGHT'],
     ['peso en cero', { pieceWeightKg: D('0') }, 'NO_PIECE_WEIGHT'],
-  ] as const)('%s: motivo %s', (_name, over, reason) => {
-    expect(productFloorCost(profile(over))).toEqual({ noFloorReason: reason });
-    expect(staticNoFloorReason(profile(over))).toBe(reason);
-  });
+  ] as const)(
+    '%s: motivo %s (D-713: solo el saldo propio puede darle piso)',
+    (_name, over, reason) => {
+      expect(productFloorCost(profile(over))).toEqual({
+        cost: { kind: 'PROFILE_STOCK', productId: 'perfil-1' },
+        noStockReason: reason,
+      });
+      expect(staticNoFloorReason(profile(over))).toBe(reason);
+    },
+  );
 
   it('el espesor se dice primero: es lo que el dueño tiene que cargar', () => {
     expect(
       productFloorCost(profile({ thicknessMm: null, widthMm: null, pieceWeightKg: null })),
-    ).toEqual({ noFloorReason: 'NO_THICKNESS' });
-    expect(productFloorCost(profile({ widthMm: null, pieceWeightKg: null }))).toEqual({
-      noFloorReason: 'NO_WIDTH',
+    ).toMatchObject({ noStockReason: 'NO_THICKNESS' });
+    expect(productFloorCost(profile({ widthMm: null, pieceWeightKg: null }))).toMatchObject({
+      noStockReason: 'NO_WIDTH',
     });
   });
 
@@ -359,6 +366,56 @@ describe('computePriceFloors con STRIP_SKU', () => {
       expect(stripSkuNoFloorReason('NO_COST')).toBe('NO_COMPATIBLE_STRIPS');
     });
 
+    it('saldo con cantidad pero costo cero no cuenta como costo: cae a los flejes', async () => {
+      const { tx } = fakeTx([{ id: 's1', qty: '100', avgCost: '5' }], '10.0000', [
+        { itemId: 'perfil-1', qty: '10', avgCost: '0' },
+      ]);
+      expect((await computePriceFloors(tx, [candidate()], '0.05')).get('Línea 1')?.costPen).toBe(
+        '10.0000',
+      );
+    });
+
+    it('perfil sin peso en el SKU: con saldo usa su kardex; sin saldo (aunque quede costo viejo), sin piso', async () => {
+      const incomplete = productFloorCost(profile({ pieceWeightKg: null }));
+      if (!('cost' in incomplete)) throw new Error('el perfil incompleto debe dar costo de saldo');
+      const withStock = fakeTx([{ id: 's1', qty: '100', avgCost: '5' }], '10.0000', [
+        { itemId: 'perfil-1', qty: '10', avgCost: '3.11' },
+      ]);
+      expect(
+        (
+          await computePriceFloors(withStock.tx, [candidate({ cost: incomplete.cost })], '0.05')
+        ).get('Línea 1')?.costPen,
+      ).toBe('3.1100');
+      expect(withStock.coilFindMany).not.toHaveBeenCalled();
+
+      const empty = fakeTx([{ id: 's1', qty: '100', avgCost: '5' }], '10.0000', [
+        { itemId: 'perfil-1', qty: '0', avgCost: '3.11' },
+      ]);
+      const outcome = (
+        await computePriceFloorOutcomes(empty.tx, [candidate({ cost: incomplete.cost })], '0.05')
+      ).get('Línea 1');
+      expect(outcome).toEqual({ missing: 'NO_COST' });
+      expect(missingFloorReason(incomplete, 'NO_COST')).toBe('NO_PIECE_WEIGHT');
+    });
+
+    it('una sola lectura de saldos de producto por lote, con perfiles y productos mezclados', async () => {
+      const { tx } = fakeTx([{ id: 's1', qty: '100', avgCost: '5' }], '10.0000', [
+        { itemId: 'perfil-1', qty: '10', avgCost: '3.11' },
+      ]);
+      await computePriceFloors(
+        tx,
+        [candidate({ at: 'A' }), candidate({ at: 'B', cost: { kind: 'PRODUCT', productId: 'x' } })],
+        '0.05',
+      );
+      const productReads = (
+        tx.inventoryBalance.findMany as unknown as jest.Mock<
+          unknown,
+          [{ where: { itemType: InventoryItemType } }]
+        >
+      ).mock.calls.filter(([args]) => args.where.itemType === InventoryItemType.PRODUCT);
+      expect(productReads).toHaveLength(1);
+    });
+
     it('en un mismo lote, el perfil con saldo usa su kardex y el otro sus flejes', async () => {
       const otherCost = productFloorCost(profile({ id: 'perfil-2' }));
       if (!('cost' in otherCost)) throw new Error('el SKU de prueba debe dar costo');
@@ -465,13 +522,24 @@ describe('CatalogService.priceFloor y el marcador «sin piso» (D-342/D-344)', (
     service = moduleRef.get(CatalogService);
   });
 
-  it('perfil sin espesor: sin piso y dice por qué, sin tocar flejes ni saldos', async () => {
+  it('perfil sin espesor y sin saldo: sin piso y dice por qué, sin tocar flejes', async () => {
     prisma.product.findUnique.mockResolvedValue(productRow({ thicknessMm: null }));
     await expect(service.priceFloor('perfil-1')).resolves.toEqual({
       minPricePen: null,
       priceUnitLabel: null,
       noFloorReason: 'NO_THICKNESS',
     });
+    expect(prisma.coil.findMany).not.toHaveBeenCalled();
+  });
+
+  it('D-713: perfil sin peso pero con saldo: el piso sale del costo de su saldo', async () => {
+    prisma.product.findUnique.mockResolvedValue(productRow({ pieceWeightKg: null }));
+    prisma.inventoryBalance.findMany.mockResolvedValue([
+      { itemId: 'perfil-1', qty: D('100'), avgCost: D('3.11') },
+    ]);
+    const floor = await service.priceFloor('perfil-1');
+    // 3.11 ÷ 0.90 = 3.4556 sin IGV → con IGV, el mínimo tipeable 4.08.
+    expect(floor).toEqual({ minPricePen: '4.08', priceUnitLabel: 'und', noFloorReason: null });
     expect(prisma.coil.findMany).not.toHaveBeenCalled();
   });
 

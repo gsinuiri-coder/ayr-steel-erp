@@ -3086,7 +3086,7 @@ hoy y el de los cierres de mes no cambian, y las bobinas anuladas siguen a la vi
 **Primero una.** La anulación con fecha atrasada se probó con una sola bobina, y se revisó su reversa antes de anular
 las otras 17: si la API la hubiera rechazado, ninguna otra se habría tocado.
 
-## dw-03 — inventario inicial de perfiles de Drywall, parte 1: código (D-712)
+## dw-03 — inventario inicial de perfiles de Drywall y precio mínimo desde el stock (D-712, D-713)
 
 **Por qué por `--kind products` y no una herramienta nueva (D-712).** El perfil terminado es stock fungible por
 unidades, como el UPVC y la reventa de D-207: no tiene invariantes propias que copiar más allá de `record()`. Lo que
@@ -3095,12 +3095,25 @@ cambia es la pregunta de alcance: «¿se compra o se fabrica?» la sigue respond
 pieza —, que es lo que la planta usa para volver a fabricarlo (D-344). El catálogo de hoy ya exige esos cuatro datos al
 crear un perfil; la regla del importador protege a los SKU viejos y nombra el dato que falta. Las piezas van enteras.
 
-**Por qué los flejes quedaron en espera.** El dueño los condicionó a confirmar que hay flejes ya cortados en almacén y
-a dar sus kg y costo. El diseño quedó en `docs/handoff/dw-03.md` para retomarlo sin releer: fleje por `CoilsService.create`
+**Por qué los flejes no se construyeron.** El dueño confirmó el 24/10 que no hay flejes ya cortados en almacén. El
+diseño queda sin implementar en `docs/handoff/dw-03.md`, por si alguna vez hace falta: fleje por `CoilsService.create`
 con `kind STRIP`, nacido abierto con su evento de nacimiento, costo de entrada corregible solo sin madre, partido ni
 corte, y código de origen comparado contra todas las bobinas y flejes (las tres respuestas ratificadas el 24/10).
 
-**Lo que dejó el mapeo de producción (solo lectura).** Los siete perfiles existen, son NIU, fabricados, sin kardex y
-con la ficha completa, pero con espesor 0.45 en el catálogo (el dueño dice 0.43). Uno de los rieles tiene dos SKU
-candidatos, y el esquinero de reventa es un SKU comprado cuyo nombre habla de cajas. Los tres puntos son del dueño antes
-del dry-run de la parte 2; el detalle está en `local-data/drywall/`, fuera del repo.
+**Lo que dejó el mapeo de producción (solo lectura) y cómo lo resolvió el dueño.** Los siete perfiles existen, son NIU,
+fabricados, sin kardex y con la ficha completa, con espesor 0.45 en el catálogo. El dueño confirmó que el stock es de
+0.45: el catálogo no se cambia, y los SKU de 0.43 los crea él cuando produzca con las bobinas de 0.43. De los dos SKU
+candidatos de uno de los rieles, eligió el de 0.45. El esquinero de reventa se carga por cajas: su unidad es la caja (lo
+dice su nombre y lo confirman sus cotizaciones, con un valor por unidad que solo cuadra con una caja).
+
+**D-713 · precio mínimo del perfil desde el costo de su stock.** Hasta dw-03 el piso de un perfil salía siempre de los
+flejes compatibles (D-342/D-344), porque un perfil que nadie produjo no tiene costo propio. Con la carga inicial aparece
+el caso contrario: un perfil con stock y sin flejes de su espesor y ancho, que quedaba sin piso y se podía vender a
+cualquier precio. El dueño decidió que, si el perfil tiene saldo, el mínimo salga del costo promedio de ese saldo; sin
+saldo, se mantiene la cuenta por flejes. Se implementó en un solo lugar, `addStripSkuCosts` de
+`apps/api/src/sales/price-floor.ts`, que lee primero el saldo propio de los perfiles del lote (una consulta más por lote,
+no por perfil) y solo busca flejes para los que no tienen saldo. Como todos los caminos que calculan el piso pasan por
+`productFloorCost` y `computePriceFloorOutcomes`, la regla llega a todos sin tocarlos uno por uno. La excepción era
+`check:price-floor`, que leía el saldo a secas para cualquier SKU (con un perfil sin saldo usaba un costo viejo y con
+cantidad cero); ahora usa las mismas funciones de dominio. Un perfil al que le falta espesor, ancho o peso sigue sin piso
+aunque tenga saldo: el catálogo y el importador exigen esos datos, así que no puede tener stock nuevo sin ellos.

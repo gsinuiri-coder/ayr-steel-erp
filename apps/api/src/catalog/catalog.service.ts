@@ -43,7 +43,7 @@ import {
   isDrywallProfile,
   productFloorCost,
   staticNoFloorReason,
-  stripSkuNoFloorReason,
+  missingFloorReason,
 } from '../sales/price-floor-cost';
 import {
   PRICE_FLOOR_UNUSED_TOLERANCE_MM,
@@ -680,10 +680,9 @@ export class CatalogService {
     return {
       minPricePen: null,
       priceUnitLabel: null,
-      noFloorReason:
-        floorCost.cost.kind === 'STRIP_SKU' && outcome !== undefined
-          ? stripSkuNoFloorReason(outcome.missing)
-          : null,
+      // D-713: el perfil sin espesor, ancho o peso lo costea su saldo; sin saldo, se dice qué le
+      // falta al SKU.
+      noFloorReason: outcome !== undefined ? missingFloorReason(floorCost, outcome.missing) : null,
     };
   }
 

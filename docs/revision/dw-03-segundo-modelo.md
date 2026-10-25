@@ -101,3 +101,81 @@ UPVC/Reventa.
 La autorrevisión (lista de riesgos, no pase cruzado) agregó: el comando de ejemplo del README sin `--operation-date`
 (corregido: la sección explica la fecha y la carga real va con `--operation-date 2026-08-01`) y que un perfil con kardex
 tumba todo el archivo (hoy ninguno de los siete tiene kardex en producción; se vuelve a mirar antes de la carga).
+
+## D-713 (commit 325bc525)
+
+Revisión de segundo modelo, contexto limpio, solo lectura. Alcance: piso del perfil de Drywall desde el costo de su saldo
+(`price-floor.ts`, `price-floor-cost.ts`, `price-floor-report.ts`, specs) y los llamadores de `productFloorCost`
+(`sales-lines.ts`, `sales-orders.service.ts`, `catalog.service.ts`, `price-list-import.service.ts`).
+
+Lo que está bien: la decisión vive en un solo lugar (`addStripSkuCosts`), que alimentan todos los llamadores por
+`computePriceFloors`/`computePriceFloorOutcomes`; todo en `Decimal`; el costo no viaja al vendedor (el mensaje de
+`assertPriceFloor` no cambió); la clave de costo con `productId` no rompe el agrupado de flejes (se agrupa por `stripKey`);
+una sola consulta extra de saldos por lote (no por perfil); el guion `check:price-floor` ahora usa las funciones de dominio.
+
+### P0
+
+Ninguno.
+
+### P1
+
+**P1-1. Un perfil con saldo pero con el SKU incompleto sigue sin piso: la regla se salta antes de mirar el kardex.**
+`price-floor-cost.ts:62-68` (`productFloorCost`) devuelve `noFloorReason` (`NO_THICKNESS`, `NO_WIDTH`, `NO_PIECE_WEIGHT`)
+**antes** de que nadie lea el saldo, y todos los llamadores descartan el candidato cuando no hay `cost`:
+`sales-lines.ts:678-680`, `sales-orders.service.ts:4051-4064` (panel de stock; además rotula `NO_PIECE_WEIGHT`),
+`catalog.service.ts:648-651` (`priceFloor(id)`), `catalog.service.ts:717` (card «lista bajo piso»),
+`price-list-import.service.ts:176` y `price-floor-report.ts` (`sinCosto`). Escenario: perfil de Drywall `MANUFACTURED` cargado
+como saldo inicial (D-712) sin `pieceWeightKg` (la carga solo exige SKU, unidades y costo) → tiene saldo y costo promedio, pero
+cotización, pedido y mostrador lo venden a cualquier precio, y el panel dice «sin peso» aunque el costo exista. D-713 dice que
+con saldo manda el kardex y los flejes solo aplican sin saldo; la dependencia del SKU (espesor, ancho, peso) es solo del
+cálculo por flejes. Arreglo sugerido: para un perfil de Drywall, construir siempre un candidato que pueda caer a
+`PRODUCT` (por ejemplo `STRIP_SKU` con la especificación de fleje opcional), de modo que `addStripSkuCosts` resuelva primero
+el saldo y solo use el SKU completo para el respaldo por flejes; el motivo estático (`NO_*`) se reporta solo si tampoco hay
+saldo. Prueba que falta: perfil con saldo > 0 y `pieceWeightKg = null` debe dar piso del kardex en panel, `priceFloor`,
+`resolveSalesLines` y el reporte.
+
+### P2
+
+**P2-1. Doble criterio de «tiene saldo» entre perfil y resto de productos.** `price-floor.ts:469-474` exige `qty > 0` y
+`avgCost > 0`; la rama `PRODUCT` de `unitCosts` (`price-floor.ts:~380-390`) toma `avgCost` sin mirar `qty`. Un perfil con
+saldo en cero y costo viejo cae a flejes (intención de D-713, bien), pero un perfil `PURCHASED` o de otra línea con saldo en cero
+conserva su costo viejo como piso. No es un defecto de este commit, pero la regla escrita en el docstring («con saldo»)
+sugiere uniformidad; conviene dejar escrito en D-713 que la excepción es solo de Drywall fabricado, o unificar.
+
+**P2-2. Saldo negativo con costo positivo.** El caso queda cubierto por el test («qty -3» sin flejes → `NO_COST`), pero no
+está el caso `qty > 0` con `avgCost = 0` (carga con costo cero, que el importador no necesariamente rechaza): cae a flejes sin
+aviso. Es coherente con la regla, pero sin prueba.
+
+### P3
+
+**P3-1. Cobertura E2E solo del camino feliz y del rechazo en cotización.** `inventario-inicial-perfiles-dw03.spec.ts` prueba
+sin saldo, con saldo y rechazo en cotización; no hay caso en pedido ni mostrador, ni vendedor (que el mensaje no traiga costo
+con el costo ahora más fácil de acertar). Las rutas comparten `assertPriceFloor`, riesgo bajo.
+
+**P3-2. Una consulta más por lote con perfiles.** `addStripSkuCosts` agrega un `findMany` de saldos `PRODUCT` aunque la rama
+`PRODUCT` de `unitCosts` ya consultó los suyos en el mismo lote (el panel de stock mezcla ambos). No hay presupuesto de
+consultas que lo cubra; se puede fusionar con la consulta de `unitCosts` si el panel lo nota.
+
+**P3-3. Comentario desordenado.** `price-floor-cost.ts:13-16` quedó con una línea larga (>100 columnas) en el docstring;
+`pnpm format:check` lo marcará si no se pasó Prettier.
+
+## Veredicto D-713
+
+**P1-1 se corrige antes del deploy** (o el dueño lo acepta por escrito: afecta solo perfiles con saldo y SKU incompleto). Sin
+P0. El resto es registro.
+
+## Respuesta del autor (D-713)
+
+- **P1-1, corregido.** El perfil al que le falta espesor, ancho o peso ahora da un costo `PROFILE_STOCK`: su piso sale del
+  saldo propio si lo tiene (cantidad y costo positivos) y, si no, queda sin piso con el motivo del SKU
+  (`noStockReason`, `missingFloorReason`). Pruebas nuevas: unidad de `computePriceFloors` y `CatalogService.priceFloor`
+  con un perfil sin peso y con saldo.
+- **P2 (saldo con costo cero), cubierto:** cae a flejes y tiene prueba. La asimetría con `PRODUCT` (que toma el promedio
+  aunque el saldo esté en cero) quedó comentada como a propósito.
+- **Consulta extra (P3 aquí, P2 en la autorrevisión), corregido:** el saldo propio del perfil se lee en la misma
+  consulta de saldos `PRODUCT` de `unitCosts`, con prueba de una sola lectura por lote mixto. La prueba de presupuesto
+  del card sigue en verde.
+- **Queda como límite conocido:** el marcador estático del catálogo (`staticNoFloorReason`, «Sin espesor en el SKU: sin
+  piso») no mira saldos, así que un perfil incompleto **con** saldo lo seguiría mostrando aunque la cotización ya le
+  aplique el piso del kardex. Hoy no hay ninguno: el catálogo y el importador exigen los tres datos y los 8 perfiles de
+  producción los tienen.

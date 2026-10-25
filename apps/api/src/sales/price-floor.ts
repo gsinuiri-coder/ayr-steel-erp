@@ -66,6 +66,12 @@ export type PriceFloorCost =
    * D-713 (dw-03): **si el perfil tiene saldo en el kardex, manda el costo promedio de ese saldo**
    * (como un `PRODUCT`); los flejes compatibles solo se usan cuando no tiene saldo.
    */
+  /**
+   * D-713: un perfil de drywall al que le falta espesor, ancho o peso en el SKU. No se puede
+   * costear por flejes, pero si tiene saldo su piso sale del kardex. A diferencia de `PRODUCT`,
+   * solo cuenta un saldo con cantidad positiva: sin saldo no hay piso, con el motivo del SKU.
+   */
+  | { kind: 'PROFILE_STOCK'; productId: string }
   | {
       kind: 'STRIP_SKU';
       productId: string;
@@ -336,6 +342,8 @@ function costKey(cost: PriceFloorCost): string {
       return `C|${cost.coilId}`;
     case 'RAW_MATERIAL':
       return `R|${cost.spec.businessLineId}|${cost.spec.colorId ?? '-'}|${cost.spec.thicknessMm}|${cost.kgPerUnit.toFixed(6)}`;
+    case 'PROFILE_STOCK':
+      return `PS|${cost.productId}`;
     // D-713: el producto entra en la clave porque su propio saldo puede mandar sobre los flejes.
     case 'STRIP_SKU':
       return `S|${cost.productId}|${stripKey(cost)}|${cost.kgPerUnit.toFixed(6)}`;
@@ -380,18 +388,44 @@ async function unitCosts(
 ): Promise<Map<string, Decimal>> {
   const out = new Map<string, Decimal>();
 
+  // D-713: los perfiles de drywall (`STRIP_SKU`, `PROFILE_STOCK`) leen su saldo propio en la
+  // misma consulta que los `PRODUCT`: una lectura de saldos de producto por lote, no dos.
   const productIds = candidates.flatMap((c) =>
     c.cost.kind === 'PRODUCT' ? [c.cost.productId] : [],
   );
+  // D-713: los perfiles de drywall (`STRIP_SKU`, `PROFILE_STOCK`) leen su saldo propio en la
+  // misma consulta que los `PRODUCT`: una lectura de saldos de producto por lote, no dos.
+  const profileIds = new Set(
+    candidates.flatMap((c) =>
+      c.cost.kind === 'STRIP_SKU' || c.cost.kind === 'PROFILE_STOCK' ? [c.cost.productId] : [],
+    ),
+  );
   const coilIds = candidates.flatMap((c) => (c.cost.kind === 'COIL' ? [c.cost.coilId] : []));
 
-  if (productIds.length > 0) {
+  // D-713: costo del saldo propio de cada perfil **con saldo**: cantidad y costo positivos.
+  const ownStockCost = new Map<string, Decimal>();
+  if (productIds.length > 0 || profileIds.size > 0) {
     const balances = await tx.inventoryBalance.findMany({
-      where: { itemType: InventoryItemType.PRODUCT, itemId: { in: [...new Set(productIds)] } },
-      select: { itemId: true, avgCost: true },
+      where: {
+        itemType: InventoryItemType.PRODUCT,
+        itemId: { in: [...new Set([...productIds, ...profileIds])] },
+      },
+      select: { itemId: true, avgCost: true, ...(profileIds.size > 0 ? { qty: true } : {}) },
     });
     for (const balance of balances) {
-      out.set(`P|${balance.itemId}`, toDecimal(balance.avgCost.toString()));
+      const avgCost = toDecimal(balance.avgCost.toString());
+      // `PRODUCT` toma el promedio aunque el saldo esté en cero, como desde D-163; el perfil de
+      // drywall no (D-713): sin saldo, su costo sale de los flejes. Asimetría a propósito.
+      out.set(`P|${balance.itemId}`, avgCost);
+      const qty = 'qty' in balance ? balance.qty : undefined;
+      if (
+        profileIds.has(balance.itemId) &&
+        qty !== undefined &&
+        toDecimal(qty.toString()).gt(0) &&
+        avgCost.gt(0)
+      ) {
+        ownStockCost.set(balance.itemId, avgCost);
+      }
     }
   }
   if (coilIds.length > 0) {
@@ -438,7 +472,7 @@ async function unitCosts(
     }
   }
 
-  await addStripSkuCosts(tx, candidates, out);
+  await addStripSkuCosts(tx, candidates, ownStockCost, out);
   return out;
 }
 
@@ -448,33 +482,29 @@ async function unitCosts(
  * reparte en memoria por línea + espesor + ancho. El filtro es `drywallStripWhere`, el mismo que
  * usa `/planta`: el piso y la producción no pueden buscar flejes distintos.
  *
- * D-713: antes de mirar flejes, el saldo propio de cada perfil. Con cantidad y costo positivos,
+ * D-713: antes de mirar flejes, el saldo propio de cada perfil (`ownCostById`, que lee `unitCosts`
+ * en la misma consulta que los `PRODUCT`). Con cantidad y costo positivos,
  * su costo es el promedio de ese saldo y el perfil no consulta flejes; sin saldo, sigue la cuenta
  * por flejes de D-342/D-344.
  */
 async function addStripSkuCosts(
   tx: Prisma.TransactionClient,
   candidates: PriceFloorCandidate[],
+  ownCostById: Map<string, Decimal>,
   out: Map<string, Decimal>,
 ): Promise<void> {
   const all = candidates.flatMap((c) =>
     c.cost.kind === 'STRIP_SKU' ? [{ key: costKey(c.cost), cost: c.cost }] : [],
   );
-  if (all.length === 0) return;
+  const stockOnly = candidates.flatMap((c) =>
+    c.cost.kind === 'PROFILE_STOCK' ? [{ key: costKey(c.cost), productId: c.cost.productId }] : [],
+  );
+  if (all.length === 0 && stockOnly.length === 0) return;
 
-  const ownBalances = await tx.inventoryBalance.findMany({
-    where: {
-      itemType: InventoryItemType.PRODUCT,
-      itemId: { in: [...new Set(all.map((r) => r.cost.productId))] },
-    },
-    select: { itemId: true, qty: true, avgCost: true },
-  });
-  const ownCostById = new Map<string, Decimal>();
-  for (const balance of ownBalances) {
-    const avgCost = toDecimal(balance.avgCost.toString());
-    if (toDecimal(balance.qty.toString()).gt(0) && avgCost.gt(0)) {
-      ownCostById.set(balance.itemId, avgCost);
-    }
+  // Sin saldo propio, un perfil sin espesor, ancho o peso queda sin costo (y sin piso).
+  for (const { key, productId } of stockOnly) {
+    const own = ownCostById.get(productId);
+    if (own !== undefined) out.set(key, own);
   }
   const skus = all.filter(({ key, cost }) => {
     const own = ownCostById.get(cost.productId);
