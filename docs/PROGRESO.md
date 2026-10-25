@@ -2,35 +2,49 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-24 — dw-03: carga inicial de perfiles de Drywall, parte 1: código (D-712)
+## 2026-10-24 — dw-03: perfiles de Drywall cargados y precio mínimo desde el stock (D-712, D-713; PR #252)
 
-Sin migración, sin `--execute` y sin SQL contra producción. Sin merge ni carga: la parte 2 va con el OK del dueño.
+Sin migración y sin SQL contra producción. Hubo un solo `--execute --confirm-production`, con el OK del dueño por nombre
+(D-460) para ese archivo. API `00153-bx6` (git-sha `72a62deb`), merge `dc743e8f`.
 
-- **D-712:** extiende D-206 (condición 4) a la carga única del stock inicial de Drywall de agosto.
-- **M4 (solo lectura contra producción):** seis de los siete perfiles tienen SKU único. Uno de los rieles tiene dos
-  candidatos, así que su fila queda sin SKU. El esquinero de reventa también tiene SKU. Los siete perfiles figuran con
-  espesor 0.45 en el catálogo y el dueño dice 0.43. Informe y borrador del archivo en `local-data/drywall/`, fuera del
-  repo.
-- **M2:** `--kind products` acepta perfiles de Drywall fabricados en `NIU`. Exige espesor, ancho del fleje, largo y peso
-  por pieza, y piezas enteras. Las coberturas fabricadas y el Drywall comprado siguen rechazados.
-- **M3:** unitaria, db-spec, E2E (perfil inicial → pedido con stock) y la plantilla
-  `docs/plantillas/inventario-inicial-perfiles-drywall-ejemplo.csv` con datos inventados.
-- **M1 (flejes) en espera:** falta que el dueño confirme que hay flejes cortados y dé sus kg y costo. El diseño está en
-  `docs/handoff/dw-03.md`.
-- **Pruebas:** API unitarias 3929 passed / 2 skipped; E2E completa con builds de producción 630 passed / 10 failed / 2
-  skipped. Los 10 rojos son de infraestructura local: 8 por el PSE apagado, 1 por R2 apagado y el XML de fase2a.
-  Ninguno toca la carga inicial.
-- **Pendiente del dueño:**
-  - el espesor de los perfiles;
-  - elegir el SKU del riel;
-  - si el esquinero va por caja o por pieza;
-  - si hay flejes para M1;
-  - el OK por nombre para la parte 2.
+- **D-712:** extiende D-206 (condición 4) a la carga única del stock inicial de Drywall de agosto. Los perfiles de
+  Drywall fabricados entran por `--kind products`: unidades `NIU`, ficha completa (espesor, ancho del fleje, largo, peso
+  por pieza) y piezas enteras.
+- **Respuestas del dueño:**
+  - el stock es de 0.45 y el catálogo no se cambia;
+  - el riel es el SKU de 0.45;
+  - el esquinero de Reventa va por cajas (verificado con sus cotizaciones);
+  - no hay flejes cortados, así que **M1 no se construyó** y su diseño queda sin implementar en `docs/handoff/dw-03.md`.
+- **D-713:** el precio mínimo de un perfil sale del costo promedio de su saldo cuando tiene saldo. Sin saldo, sale de los
+  flejes compatibles. Sin ninguno de los dos, no tiene piso, como antes. Vale en cotización, pedido, mostrador, panel de
+  stock, card «lista bajo piso» y `check:price-floor`. Antes del merge (solo lectura) no cambiaba el mínimo de ningún
+  perfil de producción, porque ninguno tenía saldo.
+- **Carga:**
+  - Fecha 01/08/2026: 7 perfiles y el esquinero, 8 filas OK.
+  - Respaldo `respaldo-pre-dw03-20261024` (`br-orange-feather-ae5cuanr`). Para hacer lugar se borró
+    `respaldo-pre-cc56c2-20261016` (regla 18; `docs/ENTORNOS.md`).
+  - Después: el valorizado de Drywall suma las bobinas más los perfiles, exacto al archivo. Reventa sube exactamente lo
+    del esquinero.
+  - Los perfiles muestran el mínimo desde su costo cargado.
+  - Sin negativos, sin recosteos pendientes y `check:balances` igual que tras dw-02 (las 2 diferencias de céntimos
+    ajenas). `smoke:prod` en verde antes y después.
+  - Cifras e informe en `local-data/drywall/INFORME-dw03.md`, fuera del repo.
+- **Pruebas:**
+  - API unitarias: 3937 passed / 2 skipped.
+  - E2E completa local (parte 1): 630 passed / 10 failed (infraestructura local: PSE, R2, XML de fase2a).
+  - E2E de piso y carga tras D-713: 16/16.
+  - CI del PR en verde (un rojo de `reportes-por-linea-cc24`, ajeno al cambio, pasó al relanzar el job).
+- **Revisiones:** autorrevisión y segundo modelo sobre D-713. El P1 (perfil incompleto con saldo) se corrigió antes del
+  deploy, igual que la consulta extra. Falta la revisión del dueño.
+- **Observación fuera de alcance:** el margen mínimo de Reventa está en 0,0001 %, así que el mínimo del esquinero es casi
+  su costo más IGV.
 
 **Registro de riesgo (kardex/datos):**
 
 - D-712: `imports/initial-inventory-product-import.service.ts` (`productScopeError`, alcance de la carga inicial por
   `record()` `IN`/`IMPORT`).
+- D-713: `sales/price-floor.ts` (`unitCosts`, `addStripSkuCosts`, `PROFILE_STOCK`) y `sales/price-floor-cost.ts`
+  (`productFloorCost`, `missingFloorReason`).
 
 ## 2026-10-24 — dw-02: espesor de las bobinas de Drywall de dw-01, 0.45 → 0.43 (D-711)
 

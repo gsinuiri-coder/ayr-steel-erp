@@ -119,22 +119,26 @@ y rescates.
 Ninguna se borra sin OK del dueño por nombre (`AGENTS.md` §3.3). Antes de crear una rama que deje 10 de 10, mirar
 la lista y, si con la nueva se pasa de 10, proponer al dueño cuáles borrar.
 
-| Rama                           | id                                | Qué es                                          | Se conserva                                                              |
-| ------------------------------ | --------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------ |
-| `production`                   | `br-steep-night-ae8n7t1k`         | datos reales                                    | siempre                                                                  |
-| `dev`                          | `br-wandering-butterfly-aehckak7` | sintéticos                                      | siempre                                                                  |
-| `ci`                           | `br-misty-band-ae9s41t7`          | migraciones + smoke de la CI                    | siempre                                                                  |
-| `demo`                         | `br-solitary-smoke-aegbos8k`      | UAT (copia de production)                       | siempre                                                                  |
-| `respaldo-pre-v4-20260915`     | `br-sweet-resonance-aegd7jdg`     | respaldo del día D                              | siempre                                                                  |
-| `respaldo-pre-cc56c2-20261016` | `br-bitter-water-aesm4ies`        | respaldo antes de la corrección C2 (cc56)       | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
-| `respaldo-pre-cc58-20261019`   | `br-spring-hill-aetbkbg9`         | respaldo antes de la migración de cc58          | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
-| `respaldo-pre-cc61-20261020`   | `br-shy-snow-aeuauyf9`            | respaldo antes del vencimiento de cc61          | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
-| `respaldo-pre-dw01-20261024`   | `br-fragrant-truth-aeh2i9i7`      | respaldo antes de la carga de Drywall (dw-01)   | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
-| `respaldo-pre-dw02-20261024`   | `br-cold-flower-aebx48jp`         | respaldo antes de la recarga de Drywall (dw-02) | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| Rama                         | id                                | Qué es                                          | Se conserva                                                              |
+| ---------------------------- | --------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------ |
+| `production`                 | `br-steep-night-ae8n7t1k`         | datos reales                                    | siempre                                                                  |
+| `dev`                        | `br-wandering-butterfly-aehckak7` | sintéticos                                      | siempre                                                                  |
+| `ci`                         | `br-misty-band-ae9s41t7`          | migraciones + smoke de la CI                    | siempre                                                                  |
+| `demo`                       | `br-solitary-smoke-aegbos8k`      | UAT (copia de production)                       | siempre                                                                  |
+| `respaldo-pre-v4-20260915`   | `br-sweet-resonance-aegd7jdg`     | respaldo del día D                              | siempre                                                                  |
+| `respaldo-pre-cc58-20261019` | `br-spring-hill-aetbkbg9`         | respaldo antes de la migración de cc58          | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-cc61-20261020` | `br-shy-snow-aeuauyf9`            | respaldo antes del vencimiento de cc61          | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-dw01-20261024` | `br-fragrant-truth-aeh2i9i7`      | respaldo antes de la carga de Drywall (dw-01)   | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-dw02-20261024` | `br-cold-flower-aebx48jp`         | respaldo antes de la recarga de Drywall (dw-02) | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
+| `respaldo-pre-dw03-20261024` | `br-orange-feather-ae5cuanr`      | respaldo antes de la carga de perfiles (dw-03)  | siempre que sea uno de los dos respaldos post-día-D más recientes (§3.3) |
 
-**10 de 10 desde el 2026-10-24 (dw-02).** La próxima rama nueva exige antes borrar un respaldo por la regla 18 (hoy el más
-viejo que la cubre es `respaldo-pre-cc56c2-20261016`; los dos más recientes son `respaldo-pre-dw01-20261024` y
-`respaldo-pre-dw02-20261024`).
+**10 de 10 desde el 2026-10-24 (dw-03).** La próxima rama nueva exige antes borrar un respaldo por la regla 18 (hoy el más
+viejo que la cubre es `respaldo-pre-cc58-20261019`; los dos más recientes son `respaldo-pre-dw02-20261024` y
+`respaldo-pre-dw03-20261024`).
+
+**Borrada el 2026-10-24 por el agente (regla 18, dw-03)**, antes de crear `respaldo-pre-dw03-20261024`
+(`br-orange-feather-ae5cuanr`) para la carga de perfiles de Drywall: `respaldo-pre-cc56c2-20261016` (`br-bitter-water-aesm4ies`),
+sin ramas hijas, id verificado contra el nombre.
 
 **Borrada el 2026-10-24 por el agente (regla 18, dw-02)**, antes de crear `respaldo-pre-dw02-20261024`
 (`br-cold-flower-aebx48jp`) para la recarga de Drywall: `respaldo-pre-cc53b-20261014` (`br-hidden-sound-ae4ue3jd`),
