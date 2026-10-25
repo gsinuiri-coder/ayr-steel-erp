@@ -62,9 +62,13 @@ export type PriceFloorCost =
    * y de la orden de producción). Es la misma cuenta por kilo del agregado de una cobertura, con
    * otra manera de encontrar el material. Desde D-344 el espesor y el ancho son del SKU, no de
    * una receta.
+   *
+   * D-713 (dw-03): **si el perfil tiene saldo en el kardex, manda el costo promedio de ese saldo**
+   * (como un `PRODUCT`); los flejes compatibles solo se usan cuando no tiene saldo.
    */
   | {
       kind: 'STRIP_SKU';
+      productId: string;
       businessLineId: string;
       thicknessMm: string;
       widthMm: string;
@@ -332,8 +336,9 @@ function costKey(cost: PriceFloorCost): string {
       return `C|${cost.coilId}`;
     case 'RAW_MATERIAL':
       return `R|${cost.spec.businessLineId}|${cost.spec.colorId ?? '-'}|${cost.spec.thicknessMm}|${cost.kgPerUnit.toFixed(6)}`;
+    // D-713: el producto entra en la clave porque su propio saldo puede mandar sobre los flejes.
     case 'STRIP_SKU':
-      return `S|${stripKey(cost)}|${cost.kgPerUnit.toFixed(6)}`;
+      return `S|${cost.productId}|${stripKey(cost)}|${cost.kgPerUnit.toFixed(6)}`;
   }
 }
 
@@ -442,15 +447,41 @@ async function unitCosts(
  * compatibles con **algún** SKU del lote y una para sus saldos, no una por perfil; después se
  * reparte en memoria por línea + espesor + ancho. El filtro es `drywallStripWhere`, el mismo que
  * usa `/planta`: el piso y la producción no pueden buscar flejes distintos.
+ *
+ * D-713: antes de mirar flejes, el saldo propio de cada perfil. Con cantidad y costo positivos,
+ * su costo es el promedio de ese saldo y el perfil no consulta flejes; sin saldo, sigue la cuenta
+ * por flejes de D-342/D-344.
  */
 async function addStripSkuCosts(
   tx: Prisma.TransactionClient,
   candidates: PriceFloorCandidate[],
   out: Map<string, Decimal>,
 ): Promise<void> {
-  const skus = candidates.flatMap((c) =>
+  const all = candidates.flatMap((c) =>
     c.cost.kind === 'STRIP_SKU' ? [{ key: costKey(c.cost), cost: c.cost }] : [],
   );
+  if (all.length === 0) return;
+
+  const ownBalances = await tx.inventoryBalance.findMany({
+    where: {
+      itemType: InventoryItemType.PRODUCT,
+      itemId: { in: [...new Set(all.map((r) => r.cost.productId))] },
+    },
+    select: { itemId: true, qty: true, avgCost: true },
+  });
+  const ownCostById = new Map<string, Decimal>();
+  for (const balance of ownBalances) {
+    const avgCost = toDecimal(balance.avgCost.toString());
+    if (toDecimal(balance.qty.toString()).gt(0) && avgCost.gt(0)) {
+      ownCostById.set(balance.itemId, avgCost);
+    }
+  }
+  const skus = all.filter(({ key, cost }) => {
+    const own = ownCostById.get(cost.productId);
+    if (own === undefined) return true;
+    out.set(key, own);
+    return false;
+  });
   if (skus.length === 0) return;
 
   const distinct = new Map(skus.map((r) => [stripKey(r.cost), r.cost]));

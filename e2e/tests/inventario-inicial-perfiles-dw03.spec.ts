@@ -3,12 +3,21 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { expect, test, type APIRequestContext } from '@playwright/test';
-import { adminApi, postJson } from '../helpers/api';
-import { balanceOf, createCatalogProduct, LINE, movementsOf } from '../helpers/production';
+import { minAllowedValue } from '@ayr/shared';
+import { adminApi, getJson, postJson } from '../helpers/api';
+import {
+  balanceOf,
+  createCatalogProduct,
+  LINE,
+  movementsOf,
+  postExpectingError,
+  today,
+} from '../helpers/production';
 import {
   createCustomer,
   createQuotationWithLines,
   purgeSalesTrail,
+  stockPanel,
   type SalesOrderDto,
 } from '../helpers/sales';
 
@@ -78,6 +87,23 @@ test.describe('dw-03 — carga inicial de perfiles de Drywall (D-712)', () => {
     await api.dispose();
   });
 
+  const floorOf = (productId: string) =>
+    getJson<{
+      minPricePen: string | null;
+      priceUnitLabel: string | null;
+      noFloorReason: string | null;
+    }>(api, `/api/catalog/${productId}/price-floor`);
+
+  async function minMarginPct(lineCode: string): Promise<string> {
+    const settings = await getJson<{ businessLineCode: string; minMarginPct: string }[]>(
+      api,
+      '/api/pricing',
+    );
+    const setting = settings.find((s) => s.businessLineCode === lineCode);
+    expect(setting, `La línea ${lineCode} no tiene márgenes configurados`).toBeDefined();
+    return setting!.minMarginPct;
+  }
+
   test('un perfil cargado como saldo inicial se vende por pedido contra ese stock (D-598)', async () => {
     const profile = await createCatalogProduct(api, {
       lineCode: LINE,
@@ -96,6 +122,13 @@ test.describe('dw-03 — carga inicial de perfiles de Drywall (D-712)', () => {
     const csvPath = writeCsv([`${profile.sku},100,3.1100,PEN,,,2026-08-01`]);
 
     try {
+      // D-713: sin saldo y sin flejes de su ancho, el perfil no tiene piso (como hasta hoy).
+      await expect(floorOf(profile.id)).resolves.toEqual({
+        minPricePen: null,
+        priceUnitLabel: null,
+        noFloorReason: 'NO_COMPATIBLE_STRIPS',
+      });
+
       const dry = runCli(csvPath);
       expect(dry.status, dry.stdout).toBe(0);
       expect(dry.stdout).toContain('Dry-run limpio');
@@ -110,6 +143,23 @@ test.describe('dw-03 — carga inicial de perfiles de Drywall (D-712)', () => {
       const opening = (await movementsOf(api, 'PRODUCT', profile.id)).find((m) => m.type === 'IN');
       expect(opening?.refType).toBe('IMPORT');
       expect(opening?.notes).toContain('Saldo inicial de inventario');
+
+      // D-713: con saldo, el piso sale del costo cargado: 3.11 ÷ (1 − margen mínimo), sin IGV.
+      const margin = await minMarginPct(LINE);
+      const panel = await stockPanel(api, { businessLine: LINE, productIds: [profile.id] });
+      const row = panel.products.find((p) => p.productId === profile.id);
+      expect(row?.minValuePen).toBe(minAllowedValue('3.1100', margin));
+      const floor = await floorOf(profile.id);
+      expect(floor.noFloorReason).toBeNull();
+      expect(floor.minPricePen).toBe(row?.minPricePen);
+      // Un precio por debajo de ese mínimo se rechaza; el de abajo (6.00) queda por encima.
+      const low = await postExpectingError(api, '/api/sales/quotations', {
+        customerId: customer.id,
+        issueDate: today(),
+        items: [{ productId: profile.id, qty: '1.000', unitPricePen: '0.50' }],
+      });
+      expect(low.status).toBe(400);
+      expect(low.message).toMatch(/precio mínimo/);
 
       // D-598: con stock, la cotización del perfil confirma y reserva el propio producto, sin OP.
       const quotation = await createQuotationWithLines(api, {

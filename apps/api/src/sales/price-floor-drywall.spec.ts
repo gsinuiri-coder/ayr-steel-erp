@@ -4,6 +4,7 @@ import {
   CoilKind,
   CoilStatus,
   FinishKind,
+  InventoryItemType,
   Prisma,
   ProductSource,
 } from '@prisma/client';
@@ -53,6 +54,7 @@ describe('productFloorCost: de dónde sale el costo del piso', () => {
     expect(r).toEqual({
       cost: {
         kind: 'STRIP_SKU',
+        productId: 'perfil-1',
         businessLineId: BL,
         thicknessMm: '0.45',
         widthMm: '120.00',
@@ -144,7 +146,18 @@ describe('computePriceFloors con STRIP_SKU', () => {
    * otro ancho o de un acabado que no es galvanizado queda fuera por la misma razón por la que
    * quedaría fuera de la base.
    */
-  function fakeTx(strips: Strip[], minMarginPct: string | null = '10.0000') {
+  /** D-713: el saldo propio de un perfil (ítem `PRODUCT`), aparte de los flejes. */
+  interface OwnBalance {
+    itemId: string;
+    qty: string;
+    avgCost: string;
+  }
+
+  function fakeTx(
+    strips: Strip[],
+    minMarginPct: string | null = '10.0000',
+    own: OwnBalance[] = [],
+  ) {
     const coilFindMany = jest.fn().mockImplementation((args: { where: { OR: StripWhere[] } }) =>
       Promise.resolve(
         strips
@@ -183,14 +196,22 @@ describe('computePriceFloors con STRIP_SKU', () => {
       },
       coil: { findMany: coilFindMany },
       inventoryBalance: {
-        findMany: jest.fn().mockImplementation((args: { where: { itemId: { in: string[] } } }) => {
-          const ids = new Set(args.where.itemId.in);
-          return Promise.resolve(
-            strips
-              .filter((s) => ids.has(s.id))
-              .map((s) => ({ itemId: s.id, qty: D(s.qty), avgCost: D(s.avgCost) })),
-          );
-        }),
+        findMany: jest
+          .fn()
+          .mockImplementation(
+            (args: { where: { itemType: InventoryItemType; itemId: { in: string[] } } }) => {
+              const ids = new Set(args.where.itemId.in);
+              const rows: { itemId: string; qty: string; avgCost: string }[] =
+                args.where.itemType === InventoryItemType.PRODUCT
+                  ? own
+                  : strips.map((s) => ({ itemId: s.id, qty: s.qty, avgCost: s.avgCost }));
+              return Promise.resolve(
+                rows
+                  .filter((r) => ids.has(r.itemId))
+                  .map((r) => ({ itemId: r.itemId, qty: D(r.qty), avgCost: D(r.avgCost) })),
+              );
+            },
+          ),
       },
     };
     return { tx: tx as unknown as Prisma.TransactionClient, coilFindMany };
@@ -307,6 +328,52 @@ describe('computePriceFloors con STRIP_SKU', () => {
     expect(floors.get('B')?.costPen).toBe('15.0000');
     // Una sola consulta de flejes para todo el lote, no una por perfil.
     expect(coilFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  describe('D-713: el saldo propio del perfil manda sobre los flejes', () => {
+    it('con saldo en el kardex, el costo es el promedio de ese saldo y no se consultan flejes', async () => {
+      const { tx, coilFindMany } = fakeTx([{ id: 's1', qty: '100', avgCost: '5' }], '10.0000', [
+        { itemId: 'perfil-1', qty: '5460', avgCost: '3.11' },
+      ]);
+      const floor = (await computePriceFloors(tx, [candidate()], '0.05')).get('Línea 1');
+      expect(floor?.costPen).toBe('3.1100');
+      // La fórmula de siempre: 3.11 ÷ (1 − 0.10) = 3.4556 sin IGV.
+      expect(floor?.minValuePen).toBe('3.4556');
+      expect(coilFindMany).not.toHaveBeenCalled();
+    });
+
+    it('sin saldo (cantidad cero, aunque quede un costo viejo), el costo sale de los flejes', async () => {
+      const { tx, coilFindMany } = fakeTx([{ id: 's1', qty: '100', avgCost: '5' }], '10.0000', [
+        { itemId: 'perfil-1', qty: '0', avgCost: '3.11' },
+      ]);
+      expect((await computePriceFloors(tx, [candidate()], '0.05')).get('Línea 1')?.costPen).toBe(
+        '10.0000',
+      );
+      expect(coilFindMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('sin saldo propio y sin flejes, sigue como hoy: sin costo, sin piso, «sin flejes compatibles»', async () => {
+      const { tx } = fakeTx([], '10.0000', [{ itemId: 'perfil-1', qty: '-3', avgCost: '3.11' }]);
+      const outcome = (await computePriceFloorOutcomes(tx, [candidate()], '0.05')).get('Línea 1');
+      expect(outcome).toEqual({ missing: 'NO_COST' });
+      expect(stripSkuNoFloorReason('NO_COST')).toBe('NO_COMPATIBLE_STRIPS');
+    });
+
+    it('en un mismo lote, el perfil con saldo usa su kardex y el otro sus flejes', async () => {
+      const otherCost = productFloorCost(profile({ id: 'perfil-2' }));
+      if (!('cost' in otherCost)) throw new Error('el SKU de prueba debe dar costo');
+      const { tx, coilFindMany } = fakeTx([{ id: 's1', qty: '100', avgCost: '5' }], '10.0000', [
+        { itemId: 'perfil-1', qty: '10', avgCost: '3.11' },
+      ]);
+      const floors = await computePriceFloors(
+        tx,
+        [candidate({ at: 'A' }), candidate({ at: 'B', cost: otherCost.cost })],
+        '0.05',
+      );
+      expect(floors.get('A')?.costPen).toBe('3.1100');
+      expect(floors.get('B')?.costPen).toBe('10.0000');
+      expect(coilFindMany).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('sin candidatos STRIP_SKU no consulta flejes (las coberturas y el kardex no pagan nada nuevo)', async () => {

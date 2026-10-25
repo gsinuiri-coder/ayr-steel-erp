@@ -10,11 +10,13 @@ import type { PriceFloorCost } from './price-floor';
  *
  * - Un producto cualquiera (trading, perfil comprado, plancha): el costo promedio de su saldo en
  *   el kardex, como siempre (D-163).
- * - **Un perfil de drywall fabricado**: el kardex no sirve —un perfil que nadie produjo todavía
- *   no tiene saldo, y el que sí lo tiene arrastra un costo histórico— así que el costo sale de su
- *   **SKU**: kilos de la pieza × costo por kilo ponderado de los flejes galvanizados de su
+ * - **Un perfil de drywall fabricado sin saldo**: un perfil que nadie produjo todavía no tiene
+ *   costo en el kardex, así que el costo sale de su **SKU**: kilos de la pieza × costo por kilo ponderado de los flejes galvanizados de su
  *   espesor y su ancho (`STRIP_SKU`, misma cuenta por kilo que el agregado de una cobertura).
  *   Desde D-344 no hay receta: el espesor y el ancho del fleje son datos del SKU.
+ *   **D-713 (dw-03):** si el perfil sí tiene saldo en el kardex (fabricado o de la carga inicial),
+ *   manda el costo promedio de ese saldo; los flejes quedan para el perfil sin saldo. Lo decide
+ *   `computePriceFloors` al leer saldos: aquí solo se arma el costo `STRIP_SKU` con el producto.
  *
  * Lo que decide «esto es un perfil de drywall» es la línea de negocio y el origen del SKU, no un
  * subtipo.
@@ -67,6 +69,7 @@ export function productFloorCost(product: FloorCostProduct): ProductFloorCost {
   return {
     cost: {
       kind: 'STRIP_SKU',
+      productId: product.id,
       businessLineId: product.businessLineId,
       thicknessMm: strip.thicknessMm,
       widthMm: strip.widthMm,
