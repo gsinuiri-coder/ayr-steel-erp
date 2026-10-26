@@ -3117,3 +3117,52 @@ no por perfil) y solo busca flejes para los que no tienen saldo. Como todos los 
 `check:price-floor`, que leía el saldo a secas para cualquier SKU (con un perfil sin saldo usaba un costo viejo y con
 cantidad cero); ahora usa las mismas funciones de dominio. Un perfil al que le falta espesor, ancho o peso sigue sin piso
 aunque tenga saldo: el catálogo y el importador exigen esos datos, así que no puede tener stock nuevo sin ellos.
+
+## cc67 — notas de crédito aparte en Ventas y margen (D-720)
+
+**De dónde sale.** En la reunión del 14/10 el cliente pidió ver las notas de crédito por separado en Ventas y margen.
+Hasta cc67, la NC se restaba dentro de las filas del mes de la NC (D-647) y no se veía como cifra propia. El resto de
+los pendientes de esa reunión ya lo habían resuelto cc52 y cc54. La reposición de material defectuoso quedó fuera de
+esta pieza, por decisión del dueño.
+
+**La comprobación previa (M0, local, `seed:escenarios`).** Antes de tocar el reporte se reprodujeron cuatro casos con
+la versión de producción. Los cuatro cumplieron D-646, D-647, D-654 y D-663.
+
+- **NC 07 por 0,3 m de una cobertura a medida.** Nace la DEV-. Reingresa como producto terminado con la fecha de la NC
+  y al costo de la salida. El margen % del pedido no cambia.
+- **NC 04.** Se reparte entre las líneas en proporción y no mueve inventario.
+- **NC 03.** Va con importe 0 y la línea muestra la descripción corregida.
+- **NC de un mes posterior.** El mes del comprobante no cambia.
+- **Observación.** Quien mira solo la bobina no ve la devolución: lo devuelto es producto terminado y se encuentra por
+  el pedido.
+
+**Por qué las netas no se recalculan.** La regla de oro era que netas, costo y margen dieran exactamente lo de hoy. Un
+segundo cálculo, aunque fuera «equivalente», es justo lo que se separa con el tiempo; el reporte ya lo sufrió en cc23
+y cc28, cuando dos decisiones paralelas sobre qué filas cuentan se desalinearon. Por eso:
+
+- las netas **son** los `totals`;
+- la parte de NC se acumula dentro del mismo recorrido por pedido que decide qué entra a los totales, con las mismas
+  funciones (`docSalesInView`, `docNoCostInView`, `viewCostRows`);
+- brutas = netas − NC.
+
+Se midió además contra el código anterior en local: cinco rangos, seis pestañas y con y sin «A costo» (60 consultas).
+Las filas, los totales y los totales por línea salieron idénticos byte a byte.
+
+**Las dos preguntas de la revisión (decididas por el dueño el 2026-10-26).**
+
+1. **NC 01 sin DEV-.** Pasa en la anulación del mostrador o con un despacho revertido a mano antes de cc54. La reversa
+   del despacho quedaba atada a la factura que anula, así que la factura salía en brutas con costo cero y margen del
+   100 %. Decisión: si esa NC está en el periodo, la reversa del despacho de su pedido cuenta en «notas de crédito». La
+   consulta de costos ahora devuelve la reversa en su propia fila, y la suma por pedido sigue igual.
+2. **NC 02 con su reemplazo.** Brutas suma los dos comprobantes y la NC resta uno. Decisión: brutas queda literal (los
+   comprobantes emitidos) y el modal lo aclara en la NC 02.
+
+**El margen % solo en netas.** Con las brutas literales, su margen % puede salir inflado (NC 02) y no dice nada útil.
+El dueño decidió mostrar el % solo en la fila de netas, en la web y en el Excel. Brutas y NC van en soles.
+
+**Lo que queda anotado.**
+
+- La marca «mes anterior» compara el mes de calendario de la NC con el de su comprobante, como pide el brief; no lo
+  compara con el rango.
+- Una NC de un pedido fuera de los totales se lista con su venta completa, aunque a los totales solo aporta su venta
+  de Servicios. El modal y el Excel lo dicen.
