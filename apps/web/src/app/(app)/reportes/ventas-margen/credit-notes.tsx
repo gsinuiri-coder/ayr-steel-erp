@@ -45,24 +45,26 @@ export function CreditNotesSummary({
 }) {
   if (data.creditNotes.length === 0) return null;
   const c = data.creditTotals;
+  // Decisión del dueño (cc67): el margen % solo en la fila de netas; brutas y NC, en soles.
+  const pct = c.netMarginPct === null ? '—' : `${c.netMarginPct} %`;
   const rows = [
     {
       key: 'brutas',
       label: 'Ventas brutas',
-      values: [c.grossSalesPen, c.grossCostPen, c.grossMarginPen],
+      values: [c.grossSalesPen, c.grossCostPen, c.grossMarginPen].map((v) => formatAmount(v)),
     },
     {
       key: 'nc',
       label: 'Notas de crédito',
-      values: [c.creditSalesPen, c.creditCostPen, c.creditMarginPen],
+      values: [c.creditSalesPen, c.creditCostPen, c.creditMarginPen].map((v) => formatAmount(v)),
     },
     {
       key: 'netas',
       label: 'Ventas netas',
-      values: [c.netSalesPen, c.netCostPen, c.netMarginPen],
+      values: [...[c.netSalesPen, c.netCostPen, c.netMarginPen].map((v) => formatAmount(v)), pct],
     },
   ];
-  const headers = noCost ? ['Venta (S/)'] : ['Venta (S/)', 'Costo (S/)', 'Margen (S/)'];
+  const headers = noCost ? ['Venta (S/)'] : ['Venta (S/)', 'Costo (S/)', 'Margen (S/)', 'Margen %'];
   return (
     <div
       data-testid="nc-ventas-margen"
@@ -94,9 +96,9 @@ export function CreditNotesSummary({
                 <th scope="row" className="pr-6 text-left font-[inherit]">
                   {r.label}
                 </th>
-                {r.values.slice(0, headers.length).map((v, i) => (
-                  <td key={headers[i]} className="pl-6 text-right tabular-nums">
-                    {formatAmount(v)}
+                {headers.map((h, i) => (
+                  <td key={h} className="pl-6 text-right tabular-nums">
+                    {r.values[i] ?? ''}
                   </td>
                 ))}
               </tr>
@@ -233,6 +235,12 @@ export function CreditNotesDialog({
                   </TableCell>
                   <TableCell className="min-w-40 whitespace-normal">
                     {creditNoteReasonText(n.reason)}
+                    {/* Decisión del dueño (cc67): brutas literales; la NC 02 lo aclara. */}
+                    {n.reason === 'ANULACION_ERROR_RUC' && (
+                      <div className="text-xs text-muted-foreground" data-testid="nc-nota-02">
+                        Se compensa con el comprobante de reemplazo.
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatAmount(n.salesPen)}

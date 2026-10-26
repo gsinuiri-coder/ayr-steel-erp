@@ -425,8 +425,10 @@ export const salesMarginCreditTotalsSchema = z.object({
   grossMarginPen: z.string(),
   creditMarginPen: z.string(),
   netMarginPen: z.string(),
-  /** Margen % de los comprobantes solos; `null` si su base no es positiva. */
-  grossMarginPct: z.string().nullable(),
+  /**
+   * Margen % de las netas (el de `totals`). Decisión del dueño (cc67): el % se muestra solo en la
+   * fila de netas; brutas y notas de crédito van en soles, sin %.
+   */
   netMarginPct: z.string().nullable(),
 });
 export type SalesMarginCreditTotalsDto = z.infer<typeof salesMarginCreditTotalsSchema>;

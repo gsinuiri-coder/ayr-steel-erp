@@ -104,7 +104,6 @@ function noCredit(): SalesMarginDto['creditTotals'] {
     grossMarginPen: '0.0000',
     creditMarginPen: '0.0000',
     netMarginPen: '0.0000',
-    grossMarginPct: null,
     netMarginPct: null,
   };
 }
@@ -297,7 +296,6 @@ describe('reports-xlsx', () => {
         grossMarginPen: '440.0000',
         creditMarginPen: '-40.0000',
         netMarginPen: '400.0000',
-        grossMarginPct: '40.00',
         netMarginPct: '40.00',
       },
     };
@@ -363,7 +361,8 @@ describe('reports-xlsx', () => {
       const net = rows.find((r) => r[0] === 'Ventas netas');
       const gross = rows.find((r) => r[0] === 'Ventas brutas (comprobantes del periodo)');
       const credit = rows.find((r) => r[0] === 'Notas de crédito');
-      expect(gross).toEqual(['Ventas brutas (comprobantes del periodo)', 1100, 660, 440, 40]);
+      // El margen % solo en la fila de netas (decisión del dueño, cc67).
+      expect(gross).toEqual(['Ventas brutas (comprobantes del periodo)', 1100, 660, 440]);
       expect(credit).toEqual(['Notas de crédito', -100, -60, -40]);
       expect(net).toEqual(['Ventas netas', 1000, 600, 400, 40]);
       // En Servicios (sin costo registrado), solo la venta.

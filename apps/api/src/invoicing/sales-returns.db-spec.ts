@@ -538,4 +538,93 @@ describe('cc52: nota de crédito con devolución', () => {
       inTotals.reduce((acc, n) => acc.plus(n.costPen ?? 0), new Prisma.Decimal(0)).toFixed(4),
     ).toBe(c.creditCostPen);
   });
+
+  it('cc67 (D-720): una NC 01 sin DEV-, con el despacho revertido aparte, se lleva la reversa', async () => {
+    // Decisión del dueño (cc67): la factura queda en brutas con su costo real y la NC resta venta
+    // y costo. Una NC 01 registrada a mano hoy devuelve con su DEV- lo despachado (D-656), así que
+    // el caso se arma con la NC antes del despacho (no hay nada que devolver) y el despacho y su
+    // reversa después: la reversa es una fila `SALE` sin comprobante declarado, como la de una
+    // anulación del mostrador o de un despacho revertido a mano antes de cc54.
+    const productId = (
+      await moduleRef.get(CatalogService).create(
+        admin,
+        createProductSchema.parse({
+          businessLineId: tradingLineId,
+          sku: `T-CC67NC-${letters(8)}`,
+          name: 'Producto cc67 NC 01',
+          unit: 'NIU',
+          source: 'PURCHASED',
+        }),
+      )
+    ).id;
+    await buy(productId, '10', '20', PREV(5));
+    const salesOrder = await moduleRef.get(SalesOrdersService).createDirect(
+      admin,
+      createSalesOrderSchema.parse({
+        customerId,
+        issueDate: PREV(10),
+        items: [{ productId, qty: '5', unitPricePen: '50' }],
+      }),
+    );
+    const orderId = salesOrder.id;
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId,
+        salesOrderId: orderId,
+        issueDate: PREV(10),
+        items: salesOrder.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+      }),
+    );
+    const invoice = await invoicing.registerManual(admin, draft.id, {
+      series: 'F952',
+      correlative: (correlative += 1),
+    });
+    const note = await creditNote(invoice.id, 'ANULACION_OPERACION', null, PREV(12));
+    expect(await prisma.salesReturn.count({ where: { creditNoteId: note.id } })).toBe(0);
+    const dispatch = await moduleRef.get(DispatchesService).create(
+      admin,
+      createDispatchSchema.parse({
+        salesOrderId: orderId,
+        dispatchDate: PREV(14),
+        confirmBackdate: true,
+        originAddress: 'Almacén cc67',
+        destinationAddress: 'Cliente cc67',
+        originUbigeo: '150101',
+        destinationUbigeo: '150101',
+        transferMode: 'PICKUP',
+        items: salesOrder.items.map((i) => ({ salesOrderItemId: i.id, qty: i.qty })),
+      }),
+    );
+    await moduleRef
+      .get(DispatchesService)
+      .reverse(
+        admin,
+        dispatch.id,
+        reverseMovementSchema.parse({ reason: 'cc67 revertir despacho' }),
+      );
+
+    const report = await moduleRef
+      .get(SalesMarginService)
+      .salesMargin(salesMarginQuerySchema.parse({ from: PREV_FROM, to: PREV_TO }));
+    const order = orderRow(report, orderId);
+    // El pedido entero: la venta se anula y el costo vuelve con la reversa.
+    expect(order?.salesPen).toBe('0.0000');
+    expect(order?.costPen).toBe('0.0000');
+    const subtotal = (await invoicing.findOne(note.id)).subtotalPen;
+    expect(report.creditNotes.find((n) => n.id === note.id)).toMatchObject({
+      salesPen: `-${subtotal}`,
+      costPen: '-100.0000',
+      marginPen: new Prisma.Decimal(subtotal).negated().plus(100).toFixed(4),
+      inTotals: true,
+    });
+    const c = report.creditTotals;
+    const t = report.totals;
+    expect([c.netSalesPen, c.netCostPen, c.netMarginPen]).toEqual([
+      t.salesPen,
+      t.costPen,
+      t.marginPen,
+    ]);
+  });
 });

@@ -417,7 +417,7 @@ export function salesMarginXlsx(
                 c.grossSalesPen,
                 c.grossCostPen,
                 c.grossMarginPen,
-                c.grossMarginPct,
+                null,
               ],
               ['Notas de crédito', c.creditSalesPen, c.creditCostPen, c.creditMarginPen, null],
               ['Ventas netas', c.netSalesPen, c.netCostPen, c.netMarginPen, c.netMarginPct],

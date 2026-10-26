@@ -73,6 +73,8 @@ interface Seeds {
     line?: string;
     cost: string;
     kind?: 'SALE' | 'RETURN';
+    /** cc67 (D-720): la fila es la reversa de un despacho. */
+    reversal?: boolean;
   }[];
   opMaterial?: { orderId: string; material: string }[];
   salesByLine?: { documentId: string; line: string | null; subtotal: string }[];
@@ -113,6 +115,7 @@ async function buildService(
           business_line_code: c.line ?? 'drywall',
           cost_pen: decimal(c.cost),
           kind: c.kind ?? 'SALE',
+          reversal: c.reversal ?? false,
         })),
       );
     }
@@ -1229,7 +1232,6 @@ describe('SalesMarginService — notas de crédito aparte (cc67, D-720)', () => 
       creditSalesPen: '0.0000',
       grossCostPen: '600.0000',
       creditCostPen: '0.0000',
-      grossMarginPct: '40.00',
       netMarginPct: '40.00',
     });
   });
@@ -1239,5 +1241,72 @@ describe('SalesMarginService — notas de crédito aparte (cc67, D-720)', () => 
     const report = await service.salesMargin(RANGE);
     const dates = report.creditNotes.map((n) => n.issueDate);
     expect(dates).toEqual([...dates].sort());
+  });
+
+  describe('NC 01 sin DEV-: la reversa del despacho va a la NC (decisión del dueño, cc67)', () => {
+    // Factura de 1000 con costo 800 y su NC 01 en el mismo mes; el despacho se revirtió aparte.
+    const annulled = (withReturn: boolean): Seeds => ({
+      documents: [
+        { id: 'f1', subtotal: '1000.0000', issueDate: '2026-09-03' },
+        {
+          id: 'n1',
+          subtotal: '1000.0000',
+          docType: 'NOTA_CREDITO',
+          creditReason: 'ANULACION_OPERACION',
+          issueDate: '2026-09-10',
+          affected: { id: 'f1', number: 'F001-f1', issueDate: '2026-09-03' },
+        },
+      ],
+      salesByLine: [
+        { documentId: 'f1', line: 'drywall', subtotal: '1000.0000' },
+        { documentId: 'n1', line: 'drywall', subtotal: '1000.0000' },
+      ],
+      costs: [
+        { orderId: 'o1', invoiceId: 'f1', cost: '800.0000' },
+        ...(withReturn
+          ? [{ orderId: 'o1', invoiceId: 'n1', cost: '-800.0000', kind: 'RETURN' as const }]
+          : [{ orderId: 'o1', invoiceId: 'f1', cost: '-800.0000', reversal: true }]),
+      ],
+      pending: [{ orderId: 'o1', pending: false }],
+    });
+
+    it('la factura queda en brutas con su costo real y la NC resta venta y costo; netas iguales', async () => {
+      const { service } = await buildService(annulled(false));
+      const report = await service.salesMargin(RANGE);
+      expect(report.totals).toMatchObject({ salesPen: '0.0000', costPen: '0.0000' });
+      expect(report.creditTotals).toMatchObject({
+        grossSalesPen: '1000.0000',
+        grossCostPen: '800.0000',
+        grossMarginPen: '200.0000',
+        creditSalesPen: '-1000.0000',
+        creditCostPen: '-800.0000',
+        creditMarginPen: '-200.0000',
+        netSalesPen: report.totals.salesPen,
+        netCostPen: report.totals.costPen,
+        netMarginPen: report.totals.marginPen,
+      });
+      expect(report.creditNotes[0]).toMatchObject({ costPen: '-800.0000', marginPen: '-200.0000' });
+    });
+
+    it('con su DEV-, la NC se lleva la DEV- y la reversa no entra dos veces', async () => {
+      const { service } = await buildService(annulled(true));
+      const report = await service.salesMargin(RANGE);
+      expect(report.creditTotals).toMatchObject({
+        grossCostPen: '800.0000',
+        creditCostPen: '-800.0000',
+      });
+    });
+
+    it('la reversa de otro comprobante del pedido se queda en brutas', async () => {
+      const seeds = annulled(false);
+      seeds.costs = [
+        { orderId: 'o1', invoiceId: 'f1', cost: '800.0000' },
+        { orderId: 'o1', invoiceId: 'f2', cost: '-300.0000', reversal: true },
+      ];
+      const { service } = await buildService(seeds);
+      const report = await service.salesMargin(RANGE);
+      expect(report.creditTotals.creditCostPen).toBe('0.0000');
+      expect(report.creditTotals.netCostPen).toBe(report.totals.costPen);
+    });
   });
 });

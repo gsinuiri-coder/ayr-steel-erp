@@ -69,7 +69,6 @@ function noCredit(): SalesMarginDto['creditTotals'] {
     grossMarginPen: '0.0000',
     creditMarginPen: '0.0000',
     netMarginPen: '0.0000',
-    grossMarginPct: null,
     netMarginPct: null,
   };
 }

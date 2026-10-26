@@ -85,6 +85,11 @@ export interface CostRow {
    * (`invoice_id` es la NC): cuenta en el periodo de la NC y nunca en el del comprobante.
    */
   kind: 'SALE' | 'RETURN';
+  /**
+   * cc67 (D-720): la fila es la reversa de un despacho (o su recosteo). Solo decide en qué parte
+   * del reparto brutas / NC cae (una NC 01 sin DEV-); los totales la suman igual que siempre.
+   */
+  reversal?: boolean;
 }
 
 interface OpMaterialRow {
@@ -312,7 +317,10 @@ export class SalesMarginService {
             ELSE -m."total_cost"
           END
         ), 0) AS "cost_pen",
-        'SALE' AS "kind"
+        'SALE' AS "kind",
+        -- cc67 (D-720): la reversa del despacho (y su recosteo) va en su propia fila; la suma por
+        -- pedido no cambia. Es lo que deja contarla en una NC 01 sin DEV-.
+        (m."reversal_of_id" IS NOT NULL OR (SELECT t."reversal_of_id" FROM "inventory_movements" t WHERE t."id" = m."recost_of_id") IS NOT NULL) AS "reversal"
       FROM "inventory_movements" m
       JOIN "dispatches" d ON d."id"::text = m."ref_id"
       -- La reversa de un despacho es un movimiento nuevo: el ítem lo tiene el original, así
@@ -325,7 +333,7 @@ export class SalesMarginService {
       WHERE m."ref_type" = 'SALE'
         AND d."sales_order_id" = ANY(${orderIds}::uuid[])
       GROUP BY d."sales_order_id", d."invoice_id", COALESCE(blp."code", blm."code"),
-        di."sales_order_item_id"
+        di."sales_order_item_id", 7
       UNION ALL
       -- cc52 (D-647): el reingreso de una devolución resta costo **en la NC** que la generó; su
       -- reversa (al anular la NC) lo vuelve a sumar. La línea de negocio, la del producto
@@ -338,7 +346,8 @@ export class SalesMarginService {
         COALESCE(SUM(
           CASE m."type" WHEN 'OUT' THEN m."total_cost" ELSE -m."total_cost" END
         ), 0) AS "cost_pen",
-        'RETURN' AS "kind"
+        'RETURN' AS "kind",
+        false AS "reversal"
       FROM "inventory_movements" m
       JOIN "sales_returns" sr ON sr."id"::text = m."ref_id"
       LEFT JOIN "sales_return_items" sri
@@ -727,13 +736,28 @@ export class SalesMarginService {
       // de los totales, su venta y su costo de la pestaña (las filas de costo imputadas a la NC: su
       // DEV- o el costo de OP de su línea); fuera, en «Todas», solo la venta de Servicios que
       // `addNoCostSales` suma igual (D-412), que no tiene costo ni entra al margen.
+      // Decisión del dueño (cc67): una NC 01 sin DEV- del periodo se lleva la reversa del despacho de
+      // su pedido (atada al comprobante que anula, o a ningún comprobante), que de otro modo dejaba
+      // la factura en «brutas» con costo cero. Solo una NC por fila se la lleva; los totales no
+      // cambian, porque son las mismas filas de `viewCostRows`.
+      const reversalNote = viewDocs.find(
+        (d) =>
+          d.doc_type === 'NOTA_CREDITO' &&
+          d.credit_note_reason === 'ANULACION_OPERACION' &&
+          !viewCostRows.some((r) => r.kind === 'RETURN' && r.invoice_id === d.id),
+      );
+      const takenByNote = (r: CostRow, d: DocumentRow): boolean =>
+        r.invoice_id === d.id ||
+        (d === reversalNote &&
+          r.reversal === true &&
+          (r.invoice_id === null || r.invoice_id === d.affected_document_id));
       for (const d of viewDocs) {
         if (d.doc_type !== 'NOTA_CREDITO') continue;
         const ncSales = docSalesInView(d);
         const ncNoCost = docNoCostInView(d);
         const ncCost = inTotals
           ? viewCostRows
-              .filter((r) => r.invoice_id === d.id)
+              .filter((r) => takenByNote(r, d))
               .reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
           : null;
         if (ncCost !== null) {
@@ -843,10 +867,6 @@ export class SalesMarginService {
       grossMarginPen: toFixedString(netMargin.minus(creditMargin), 'MONEY'),
       creditMarginPen: toFixedString(creditMargin, 'MONEY'),
       netMarginPen: toFixedString(netMargin, 'MONEY'),
-      grossMarginPct: marginPct(
-        marginBase.minus(creditSales.minus(creditNoCostSales)),
-        totalCost.minus(creditCost),
-      ),
       netMarginPct: marginPct(marginBase, totalCost),
     };
     // Por fecha de la NC, de la más antigua a la más reciente; a igual fecha, por número con su
