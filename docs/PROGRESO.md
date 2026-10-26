@@ -2,6 +2,48 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-26 — cc67: notas de crédito aparte en Ventas y margen (D-720; PR #254)
+
+Sin migración y sin SQL contra producción. Solo lectura de reportes. API `00154-l74` (git-sha `9e0b35d7`), merge
+`d7c21e6c`.
+
+- **M0 (local, `seed:escenarios`).** Se reprodujeron con la versión de producción la NC 07 de una cobertura a medida, la
+  NC 04, la NC 03 y una NC de un mes posterior. Los cuatro casos cumplen D-646, D-647, D-654 y D-663.
+- **D-720:**
+  - Debajo de la franja, «Ventas brutas», «Notas de crédito» y «Ventas netas», con venta, costo y margen. El margen %
+    aparece solo en netas.
+  - «Ver las N notas de crédito» abre un modal:
+    - el buscar va primero y el orden es por fecha de la NC;
+    - la NC y su comprobante abren su detalle;
+    - las de un comprobante de otro mes llevan «mes anterior»;
+    - la NC 02 lleva la nota del reemplazo.
+  - Sin NC, la franja queda como siempre. Respeta la pestaña de línea, el periodo y los permisos.
+  - El Excel suma las filas en «Totales» y la hoja «Notas de crédito».
+  - Las netas son los `totals` de hoy; brutas = netas − NC. Cuadre contra el código anterior: 60 consultas, 0
+    diferencias.
+  - La NC 01 sin DEV- se lleva la reversa del despacho de su pedido (decisión del dueño).
+- **Pruebas:**
+  - API unitarias: 3950 en verde; web: 360.
+  - db-specs relacionados: 112/112.
+  - E2E completa local: 618 passed / 24 failed / 2 skipped.
+    - 5 de producto (fixture de cc32 sin NC): corregidos; la nueva corrida dio 9/9.
+    - 10 de infraestructura conocida: PSE, R2 y el XML de fase2a.
+    - 9 del arnés local: las CLI con la base fija.
+  - CI del PR: en verde (shards 1/2 y 2/2, drift, seed:escenarios, Neon ci, Sonar).
+- **Revisiones:**
+  - autorrevisión y segundo modelo (`docs/revision/cc67-segundo-modelo.md`) sin P0 ni P1 abiertos;
+  - falta la revisión del dueño.
+- **Espera decisión del dueño:**
+  - ratificar D-720;
+  - la devolución a medida no se ve desde la bobina (se encuentra por el pedido).
+
+**Registro de riesgo (kardex/datos):**
+
+- D-720: `reports/sales-margin.service.ts`.
+  - `costsByOrder`: la columna `reversal`, agrupada por ordinal 7.
+  - `assemble`: `reversalNote`/`takenByNote` y la acumulación de `creditSales`/`creditCost`.
+  - Es solo lectura; si las netas dejaran de dar lo de la franja, mirar ahí primero.
+
 ## 2026-10-24 — dw-03: perfiles de Drywall cargados y precio mínimo desde el stock (D-712, D-713; PR #252)
 
 Sin migración y sin SQL contra producción. Hubo un solo `--execute --confirm-production`, con el OK del dueño por nombre
