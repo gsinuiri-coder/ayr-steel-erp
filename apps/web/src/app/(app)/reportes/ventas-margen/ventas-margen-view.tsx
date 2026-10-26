@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -68,6 +68,7 @@ import { LINK_CLASSNAME, cn, customerSearchHref } from '@/lib/utils';
 import { RoleGate } from '@/components/role-gate';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { CreditNotesDialog, CreditNotesSummary } from './credit-notes';
 import {
   Table,
   TableBody,
@@ -101,6 +102,8 @@ export function VentasMargenView() {
   const atCost = url.aCosto === '1';
   const view = parseSalesMarginView(url.ver);
   const [sort, toggleSort] = useSort<string>();
+  // cc67 (D-720): el modal de las notas de crédito del periodo.
+  const [creditOpen, setCreditOpen] = useState(false);
   const [searchText, setSearchText] = useUrlSearchInput(url.search, (v) => {
     setUrl({ search: v });
   });
@@ -198,8 +201,22 @@ export function VentasMargenView() {
 
       {periodState.error === null && loading && <Skeleton className="h-14 w-full" />}
       {periodState.error === null && data && (
-        <BusyRegion busy={updating}>
+        <BusyRegion busy={updating} className="space-y-2">
           <Figures data={data} line={line} noCost={noCost} included={included} />
+          {/* cc67 (D-720): brutas, NC y netas, solo si hay NC en el periodo. */}
+          <CreditNotesSummary
+            data={data}
+            noCost={noCost}
+            onOpen={() => {
+              setCreditOpen(true);
+            }}
+          />
+          <CreditNotesDialog
+            notes={data.creditNotes}
+            noCost={noCost}
+            open={creditOpen}
+            onOpenChange={setCreditOpen}
+          />
         </BusyRegion>
       )}
 

@@ -92,6 +92,22 @@ const valuation: InventoryValuationDto = {
   },
 };
 
+/** cc67 (D-720): sin notas de crédito, brutas = netas (ver `salesMarginCreditTotalsSchema`). */
+function noCredit(): SalesMarginDto['creditTotals'] {
+  return {
+    grossSalesPen: '0.0000',
+    creditSalesPen: '0.0000',
+    netSalesPen: '0.0000',
+    grossCostPen: '0.0000',
+    creditCostPen: '0.0000',
+    netCostPen: '0.0000',
+    grossMarginPen: '0.0000',
+    creditMarginPen: '0.0000',
+    netMarginPen: '0.0000',
+    netMarginPct: null,
+  };
+}
+
 const margin: SalesMarginDto = {
   from: '2026-09-01',
   to: '2026-09-30',
@@ -155,6 +171,8 @@ const margin: SalesMarginDto = {
       marginPct: '40.00',
     },
   ],
+  creditNotes: [],
+  creditTotals: noCredit(),
   totals: {
     salesPen: '1000.0000',
     noCostSalesPen: '0.0000',
@@ -224,6 +242,137 @@ describe('reports-xlsx', () => {
   });
 
   describe('ventas y margen', () => {
+    // cc67 (D-720): una NC de devolución de un comprobante de agosto, dentro de los totales, y una
+    // de descuento de un pedido fuera de ellos.
+    const withCredit: SalesMarginDto = {
+      ...margin,
+      creditNotes: [
+        {
+          id: '55555555-5555-5555-5555-555555555555',
+          number: 'BC90-00000007',
+          issueDate: '2026-09-05',
+          reason: 'DEVOLUCION_ITEM',
+          affectedDocumentId: '66666666-6666-6666-6666-666666666666',
+          affectedNumber: 'B900-00000001',
+          affectedIssueDate: '2026-08-20',
+          affectedEarlierMonth: true,
+          salesOrderId: '33333333-3333-3333-3333-333333333333',
+          orderCode: 'PED-000012',
+          customerId: '77777777-7777-7777-7777-777777777777',
+          customerName: 'Cliente S.A.',
+          customerDocNumber: '20100000001',
+          salesPen: '-100.0000',
+          costPen: '-60.0000',
+          marginPen: '-40.0000',
+          inTotals: true,
+        },
+        {
+          id: '88888888-8888-8888-8888-888888888888',
+          number: 'BC90-00000008',
+          issueDate: '2026-09-12',
+          reason: 'DESCUENTO_GLOBAL',
+          affectedDocumentId: null,
+          affectedNumber: null,
+          affectedIssueDate: null,
+          affectedEarlierMonth: false,
+          salesOrderId: null,
+          orderCode: null,
+          customerId: '77777777-7777-7777-7777-777777777777',
+          customerName: 'Cliente S.A.',
+          customerDocNumber: '20100000001',
+          salesPen: '-10.0000',
+          costPen: null,
+          marginPen: null,
+          inTotals: false,
+        },
+      ],
+      creditTotals: {
+        grossSalesPen: '1100.0000',
+        creditSalesPen: '-100.0000',
+        netSalesPen: '1000.0000',
+        grossCostPen: '660.0000',
+        creditCostPen: '-60.0000',
+        netCostPen: '600.0000',
+        grossMarginPen: '440.0000',
+        creditMarginPen: '-40.0000',
+        netMarginPen: '400.0000',
+        netMarginPct: '40.00',
+      },
+    };
+
+    it('cc67 (D-720): la hoja «Notas de crédito» lista el detalle y suma la parte de NC de los totales', () => {
+      const { buffer } = salesMarginXlsx(withCredit);
+      const rows = XLSX.utils.sheet_to_json<(string | number | null)[]>(
+        sheetOf(buffer, 'Notas de crédito'),
+        { header: 1 },
+      );
+      expect(rows[0]).toEqual([
+        'Fecha',
+        'Nota de crédito',
+        'Motivo SUNAT',
+        'Comprobante afectado',
+        'Mes del comprobante',
+        'De un mes anterior',
+        'Pedido',
+        'Cliente',
+        'Venta sin IGV (S/)',
+        'Costo (S/)',
+        'Efecto en el margen (S/)',
+        'En los totales',
+      ]);
+      expect(rows[1]).toEqual([
+        '2026-09-05',
+        'BC90-00000007',
+        '07 · Devolución por ítem',
+        'B900-00000001',
+        '2026-08',
+        'Sí',
+        'PED-000012',
+        'Cliente S.A.',
+        -100,
+        -60,
+        -40,
+        'Sí',
+      ]);
+      expect(rows[2]?.[5]).toBe('');
+      expect(rows[2]?.[6]).toBe('Sin pedido');
+      expect(rows[2]?.[11]).toBe('No');
+      expect(rows[3]?.[0]).toBe('Lo que entra a los totales · 2 notas de crédito');
+      // Sin NC en el periodo no hay hoja, como no hay sección en la pantalla.
+      expect(
+        XLSX.read(salesMarginXlsx(margin).buffer, { type: 'buffer' }).SheetNames,
+      ).not.toContain('Notas de crédito');
+      // El total es la parte de NC de los totales, no la suma de las filas: la de fuera no suma.
+      expect(rows[3]?.slice(8, 11)).toEqual([-100, -60, -40]);
+    });
+
+    it('cc67 (D-720): «Totales» trae brutas, notas de crédito y netas solo si hay NC', () => {
+      const labels = (report: SalesMarginDto): unknown[] =>
+        XLSX.utils
+          .sheet_to_json<unknown[]>(sheetOf(salesMarginXlsx(report).buffer, 'Totales'), {
+            header: 1,
+          })
+          .map((r) => r[0]);
+      expect(labels(margin)).not.toContain('Ventas netas');
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(
+        sheetOf(salesMarginXlsx(withCredit).buffer, 'Totales'),
+        { header: 1 },
+      );
+      const net = rows.find((r) => r[0] === 'Ventas netas');
+      const gross = rows.find((r) => r[0] === 'Ventas brutas (comprobantes del periodo)');
+      const credit = rows.find((r) => r[0] === 'Notas de crédito');
+      // El margen % solo en la fila de netas (decisión del dueño, cc67).
+      expect(gross).toEqual(['Ventas brutas (comprobantes del periodo)', 1100, 660, 440]);
+      expect(credit).toEqual(['Notas de crédito', -100, -60, -40]);
+      expect(net).toEqual(['Ventas netas', 1000, 600, 400, 40]);
+      // En Servicios (sin costo registrado), solo la venta.
+      const services = XLSX.utils.sheet_to_json<unknown[]>(
+        sheetOf(salesMarginXlsx(withCredit, 'services').buffer, 'Totales'),
+        { header: 1 },
+      );
+      expect(services.find((r) => r[0] === 'Ventas netas')).toEqual(['Ventas netas', 1000]);
+    });
+
     it('separa lo que suma de lo que no, en hojas distintas', () => {
       const { buffer, filename } = salesMarginXlsx(margin);
       const book = XLSX.read(buffer, { type: 'buffer' });

@@ -4,6 +4,8 @@ import {
   NO_COST_REPORT_LINES,
   COIL_STATUS_LABELS,
   coilGroupLabel,
+  CREDIT_NOTE_REASON_LABELS,
+  CREDIT_NOTE_REASON_SUNAT_CODE,
   FISCAL_DOC_TYPE_LABELS,
   filterBySearch,
   MARGIN_COST_STATUS_LABELS,
@@ -15,6 +17,7 @@ import {
   toDecimal,
   type InventoryValuationDto,
   type InventoryValuationQuery,
+  type SalesMarginCreditNoteDto,
   type SalesMarginDto,
   type SalesMarginOrderDto,
   type SalesMarginQuery,
@@ -400,6 +403,32 @@ export function salesMarginXlsx(
     ['Venta con costo no rastreable', num(report.totals.untraceableSalesPen), null, null, null],
   ];
 
+  // cc67 (D-720): brutas, notas de crédito y netas, como la franja; solo si hay NC en el periodo.
+  const c = report.creditTotals;
+  const creditRows: (string | number | null)[][] =
+    report.creditNotes.length === 0
+      ? []
+      : [
+          [],
+          ...(
+            [
+              [
+                'Ventas brutas (comprobantes del periodo)',
+                c.grossSalesPen,
+                c.grossCostPen,
+                c.grossMarginPen,
+                null,
+              ],
+              ['Notas de crédito', c.creditSalesPen, c.creditCostPen, c.creditMarginPen, null],
+              ['Ventas netas', c.netSalesPen, c.netCostPen, c.netMarginPen, c.netMarginPct],
+            ] as const
+          ).map(([label, sales, cost, margin, pct]) =>
+            noCost
+              ? [label, num(sales), null, null, null]
+              : [label, num(sales), num(cost), num(margin), num(pct)],
+          ),
+        ];
+
   const totals: Sheet = {
     name: 'Totales',
     header: ['Línea', 'Venta sin IGV (S/)', 'Costo (S/)', 'Margen (S/)', 'Margen %'],
@@ -424,6 +453,7 @@ export function salesMarginXlsx(
                   num(report.totals.marginPen),
                   num(report.totals.marginPct),
                 ],
+            ...creditRows,
             ...stats,
           ]
         : [
@@ -443,6 +473,7 @@ export function salesMarginXlsx(
               null,
               null,
             ],
+            ...creditRows,
             ...stats,
             [],
             // Lo que la ayuda de la pantalla explica: la franja no es el pie de «Por pedido».
@@ -490,11 +521,73 @@ export function salesMarginXlsx(
           ],
         };
 
+  // cc67 (D-720): el detalle del modal «Notas de crédito», por fecha, solo si hay NC (como la
+  // pantalla). La fila de total es la parte de NC de los totales («Notas de crédito» de la hoja
+  // «Totales»): una NC de un pedido fuera de los totales se lista sin costo y solo su venta de
+  // Servicios suma (D-412). La búsqueda de la tabla no la recorta.
+  const CREDIT_COLUMNS = [
+    { header: 'Fecha', width: 11 },
+    { header: 'Nota de crédito', width: 16 },
+    { header: 'Motivo SUNAT', width: 34 },
+    { header: 'Comprobante afectado', width: 20 },
+    { header: 'Mes del comprobante', width: 12 },
+    { header: 'De un mes anterior', width: 12 },
+    { header: 'Pedido', width: 14 },
+    { header: 'Cliente', width: 34 },
+    { header: 'Venta sin IGV (S/)', width: 18 },
+    { header: 'Costo (S/)', width: 14, cost: true },
+    { header: 'Efecto en el margen (S/)', width: 16, cost: true },
+    { header: 'En los totales', width: 12 },
+  ];
+  const creditKeep = keepColumns(CREDIT_COLUMNS, noCost, undefined);
+  const creditSheet: Sheet = {
+    name: 'Notas de crédito',
+    header: creditKeep.header,
+    widths: creditKeep.widths,
+    rows: [
+      ...report.creditNotes.map((n) =>
+        creditKeep.pick([
+          n.issueDate,
+          n.number ?? '',
+          creditNoteReasonText(n.reason),
+          n.affectedNumber ?? '',
+          n.affectedIssueDate?.slice(0, 7) ?? '',
+          n.affectedDocumentId === null ? '' : n.affectedEarlierMonth ? 'Sí' : 'No',
+          n.orderCode ?? 'Sin pedido',
+          n.customerName,
+          num(n.salesPen),
+          num(n.costPen),
+          num(n.marginPen),
+          n.inTotals ? 'Sí' : 'No',
+        ]),
+      ),
+      ...(report.creditNotes.length === 0
+        ? []
+        : [
+            creditKeep.pick([
+              `Lo que entra a los totales · ${plural(report.creditNotes.length, 'nota de crédito', 'notas de crédito')}`,
+              '',
+              '',
+              '',
+              '',
+              '',
+              '',
+              '',
+              num(c.creditSalesPen),
+              num(c.creditCostPen),
+              num(c.creditMarginPen),
+              '',
+            ]),
+          ]),
+    ],
+  };
+
   return {
     buffer: build([
       ordersSheet,
       documentsSheet,
       excludedSheet,
+      ...(report.creditNotes.length === 0 ? [] : [creditSheet]),
       ...(byLine ? [byLine] : []),
       totals,
     ]),
@@ -521,6 +614,12 @@ function keepColumns(
     pick: (row: (string | number | null)[]): (string | number | null)[] =>
       keep.map((c) => row[c.i] ?? null),
   };
+}
+
+/** cc67 (D-720): «07 · Devolución por ítem», como el rótulo «Motivo SUNAT» de la pantalla. */
+function creditNoteReasonText(reason: SalesMarginCreditNoteDto['reason']): string {
+  if (reason === null) return '';
+  return `${CREDIT_NOTE_REASON_SUNAT_CODE[reason]} · ${CREDIT_NOTE_REASON_LABELS[reason]}`;
 }
 
 function plural(n: number, one: string, many: string): string {

@@ -115,6 +115,20 @@ function fixture(from: string, to: string): SalesMarginDto {
       untraceableSalesPen: '0.00',
       roundingPen: '0.0000',
     },
+    // cc67 (D-720): sin NC en el periodo, la franja queda como siempre.
+    creditNotes: [],
+    creditTotals: {
+      grossSalesPen: '13768.80',
+      creditSalesPen: '0.00',
+      netSalesPen: '13768.80',
+      grossCostPen: '10555.31',
+      creditCostPen: '0.00',
+      netCostPen: '10555.31',
+      grossMarginPen: '3213.49',
+      creditMarginPen: '0.00',
+      netMarginPen: '3213.49',
+      netMarginPct: '23.34',
+    },
   };
 }
 
