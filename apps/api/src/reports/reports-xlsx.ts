@@ -521,9 +521,10 @@ export function salesMarginXlsx(
           ],
         };
 
-  // cc67 (D-720): el detalle del modal «Notas de crédito», por fecha. La fila de total es la parte de
-  // NC de los totales («Notas de crédito» de la hoja «Totales»); una NC de un pedido fuera de los
-  // totales se lista sin costo y no suma, como en la pantalla. La búsqueda de la tabla no la recorta.
+  // cc67 (D-720): el detalle del modal «Notas de crédito», por fecha, solo si hay NC (como la
+  // pantalla). La fila de total es la parte de NC de los totales («Notas de crédito» de la hoja
+  // «Totales»): una NC de un pedido fuera de los totales se lista sin costo y solo su venta de
+  // Servicios suma (D-412). La búsqueda de la tabla no la recorta.
   const CREDIT_COLUMNS = [
     { header: 'Fecha', width: 11 },
     { header: 'Nota de crédito', width: 16 },
@@ -551,7 +552,7 @@ export function salesMarginXlsx(
           creditNoteReasonText(n.reason),
           n.affectedNumber ?? '',
           n.affectedIssueDate?.slice(0, 7) ?? '',
-          n.affectedEarlierMonth ? 'Sí' : 'No',
+          n.affectedDocumentId === null ? '' : n.affectedEarlierMonth ? 'Sí' : 'No',
           n.orderCode ?? 'Sin pedido',
           n.customerName,
           num(n.salesPen),
@@ -564,7 +565,7 @@ export function salesMarginXlsx(
         ? []
         : [
             creditKeep.pick([
-              `Total en los totales · ${plural(report.creditNotes.length, 'nota de crédito', 'notas de crédito')}`,
+              `Lo que entra a los totales · ${plural(report.creditNotes.length, 'nota de crédito', 'notas de crédito')}`,
               '',
               '',
               '',
@@ -586,7 +587,7 @@ export function salesMarginXlsx(
       ordersSheet,
       documentsSheet,
       excludedSheet,
-      creditSheet,
+      ...(report.creditNotes.length === 0 ? [] : [creditSheet]),
       ...(byLine ? [byLine] : []),
       totals,
     ]),

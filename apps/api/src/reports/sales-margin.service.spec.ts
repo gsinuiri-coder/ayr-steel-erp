@@ -1117,6 +1117,45 @@ describe('SalesMarginService — notas de crédito aparte (cc67, D-720)', () => 
     },
   );
 
+  it.each(LINES)(
+    'la parte de NC es la suma de las filas que entran a los totales, más los Servicios de las excluidas en «Todas» (%s)',
+    async (line) => {
+      // Esto no se cumple por construcción (autorrevisión, P2-3): suma las filas del detalle.
+      const { service } = await buildService(seeds);
+      const report = await service.salesMargin({ ...RANGE, businessLine: line });
+      const inTotals = report.creditNotes.filter((n) => n.inTotals);
+      const sum = (pick: (n: (typeof inTotals)[number]) => string | null): Prisma.Decimal =>
+        inTotals.reduce((acc, n) => acc.plus(d(pick(n) ?? '0')), d('0'));
+      // d5 (fuera de los totales) solo aporta sus Servicios, −10, y solo en «Todas» (D-412).
+      const excludedServices = line === undefined ? d('-10') : d('0');
+      expect(report.creditTotals.creditSalesPen).toBe(
+        sum((n) => n.salesPen)
+          .plus(excludedServices)
+          .toFixed(4),
+      );
+      expect(report.creditTotals.creditCostPen).toBe(sum((n) => n.costPen).toFixed(4));
+      expect(report.creditTotals.creditMarginPen).toBe(sum((n) => n.marginPen).toFixed(4));
+    },
+  );
+
+  it('a igual fecha, las NC van por número con su parte numérica', async () => {
+    const note = (id: string, number: string): DocSeed => ({
+      id,
+      number,
+      orderId: null,
+      orderSeq: null,
+      subtotal: '1.0000',
+      docType: 'NOTA_CREDITO',
+      creditReason: 'DESCUENTO_GLOBAL',
+      issueDate: '2026-09-10',
+    });
+    const { service } = await buildService({
+      documents: [note('n10', 'FC01-10'), note('n9', 'FC01-9')],
+    });
+    const report = await service.salesMargin(RANGE);
+    expect(report.creditNotes.map((n) => n.number)).toEqual(['FC01-9', 'FC01-10']);
+  });
+
   it('«Todas»: la devolución resta venta y costo; el descuento, solo venta; la no comparable, solo Servicios', async () => {
     const { service } = await buildService(seeds);
     const report = await service.salesMargin(RANGE);

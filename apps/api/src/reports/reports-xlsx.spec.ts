@@ -336,8 +336,14 @@ describe('reports-xlsx', () => {
         -40,
         'Sí',
       ]);
+      expect(rows[2]?.[5]).toBe('');
       expect(rows[2]?.[6]).toBe('Sin pedido');
       expect(rows[2]?.[11]).toBe('No');
+      expect(rows[3]?.[0]).toBe('Lo que entra a los totales · 2 notas de crédito');
+      // Sin NC en el periodo no hay hoja, como no hay sección en la pantalla.
+      expect(
+        XLSX.read(salesMarginXlsx(margin).buffer, { type: 'buffer' }).SheetNames,
+      ).not.toContain('Notas de crédito');
       // El total es la parte de NC de los totales, no la suma de las filas: la de fuera no suma.
       expect(rows[3]?.slice(8, 11)).toEqual([-100, -60, -40]);
     });
@@ -376,7 +382,6 @@ describe('reports-xlsx', () => {
         'Por pedido',
         'Comprobantes',
         'Facturación parcial',
-        'Notas de crédito',
         'Por línea',
         'Totales',
       ]);

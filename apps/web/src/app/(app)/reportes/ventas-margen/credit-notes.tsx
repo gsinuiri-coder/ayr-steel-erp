@@ -49,19 +49,16 @@ export function CreditNotesSummary({
     {
       key: 'brutas',
       label: 'Ventas brutas',
-      hint: 'comprobantes del periodo',
       values: [c.grossSalesPen, c.grossCostPen, c.grossMarginPen],
     },
     {
       key: 'nc',
       label: 'Notas de crédito',
-      hint: 'una devolución resta costo; un descuento, no',
       values: [c.creditSalesPen, c.creditCostPen, c.creditMarginPen],
     },
     {
       key: 'netas',
       label: 'Ventas netas',
-      hint: 'las cifras de arriba',
       values: [c.netSalesPen, c.netCostPen, c.netMarginPen],
     },
   ];
@@ -71,39 +68,47 @@ export function CreditNotesSummary({
       data-testid="nc-ventas-margen"
       className="flex flex-wrap items-end justify-between gap-3 rounded-lg px-3 py-2 ring-1 ring-foreground/10"
     >
-      <div
-        role="table"
-        aria-label="Ventas brutas, notas de crédito y ventas netas"
-        className={cn(
-          'grid min-w-0 gap-x-6 gap-y-0.5 text-sm',
-          noCost ? 'grid-cols-[auto_auto]' : 'grid-cols-[auto_repeat(3,auto)]',
-        )}
-      >
-        <div role="row" className="contents text-xs text-muted-foreground">
-          <span role="columnheader" />
-          {headers.map((h) => (
-            <span key={h} role="columnheader" className="text-right">
-              {h}
-            </span>
-          ))}
-        </div>
-        {rows.map((r) => (
-          <div
-            key={r.key}
-            role="row"
-            data-testid={`nc-fila-${r.key}`}
-            className={cn('contents', r.key === 'netas' && 'font-medium')}
-          >
-            <span role="rowheader" title={r.hint}>
-              {r.label}
-            </span>
-            {r.values.slice(0, headers.length).map((v, i) => (
-              <span key={headers[i]} role="cell" className="text-right tabular-nums">
-                {formatAmount(v)}
-              </span>
+      <div className="min-w-0 space-y-1">
+        {/* Una tabla de verdad (autorrevisión, P3-5): tres filas y sus columnas, sin estilos de
+            tabla de datos; no es una segunda tabla principal (D-617). */}
+        <table className="text-sm" aria-describedby="nc-ventas-margen-nota">
+          <thead>
+            <tr className="text-xs text-muted-foreground">
+              <th scope="col" className="pr-6 text-left font-normal">
+                <span className="sr-only">Concepto</span>
+              </th>
+              {headers.map((h) => (
+                <th key={h} scope="col" className="pl-6 text-right font-normal">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.key}
+                data-testid={`nc-fila-${r.key}`}
+                className={cn(r.key === 'netas' && 'font-medium')}
+              >
+                <th scope="row" className="pr-6 text-left font-[inherit]">
+                  {r.label}
+                </th>
+                {r.values.slice(0, headers.length).map((v, i) => (
+                  <td key={headers[i]} className="pl-6 text-right tabular-nums">
+                    {formatAmount(v)}
+                  </td>
+                ))}
+              </tr>
             ))}
-          </div>
-        ))}
+          </tbody>
+        </table>
+        <p id="nc-ventas-margen-nota" className="text-xs text-muted-foreground">
+          Brutas: los comprobantes del periodo. Netas: las cifras de arriba.{' '}
+          {noCost
+            ? 'Cada nota de crédito resta su venta en el mes de su fecha.'
+            : 'Una devolución resta venta y costo; un descuento, solo la venta.'}
+        </p>
       </div>
       <Button type="button" variant="link" size="sm" className="px-0" onClick={onOpen}>
         {creditNotesLinkLabel(data.creditNotes.length)}
@@ -150,7 +155,7 @@ export function CreditNotesDialog({
             {earlier > 0 &&
               ` ${earlier === 1 ? '1 afecta' : `${String(earlier)} afectan`} a un comprobante de un mes anterior.`}
             {outside > 0 &&
-              ' Las marcadas «fuera de los totales» son de pedidos con facturación parcial o costo no rastreable: se listan sin costo y no suman.'}
+              ' Las marcadas «fuera de los totales» son de pedidos con facturación parcial o costo no rastreable: se listan sin costo y, como su pedido, solo suma su venta de Servicios.'}
           </DialogDescription>
         </DialogHeader>
         <ToolbarSearch

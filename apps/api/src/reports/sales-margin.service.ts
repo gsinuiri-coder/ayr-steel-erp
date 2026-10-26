@@ -849,10 +849,12 @@ export class SalesMarginService {
       ),
       netMarginPct: marginPct(marginBase, totalCost),
     };
-    // Por fecha de la NC, de la más antigua a la más reciente (los comprobantes ya vienen así).
+    // Por fecha de la NC, de la más antigua a la más reciente; a igual fecha, por número con su
+    // parte numérica (F001-9 antes que F001-10; autorrevisión, P3-7).
     creditNotes.sort(
       (a, b) =>
-        a.issueDate.localeCompare(b.issueDate) || (a.number ?? '').localeCompare(b.number ?? ''),
+        a.issueDate.localeCompare(b.issueDate) ||
+        (a.number ?? '').localeCompare(b.number ?? '', 'es', { numeric: true }),
     );
 
     return {

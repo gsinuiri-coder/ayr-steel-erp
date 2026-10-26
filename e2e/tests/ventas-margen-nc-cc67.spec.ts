@@ -213,10 +213,12 @@ test.describe('cc67 — notas de crédito aparte en Ventas y margen (D-720)', ()
     await expect(rows.first().getByTestId('nc-mes-anterior')).toHaveCount(0);
     await expect(rows.first()).toContainText('04 · Descuento global');
 
-    // Sin scroll horizontal en el modal.
+    // Sin scroll horizontal en el modal: se mide el contenedor propio de la tabla (el que tiene
+    // `overflow-x-auto`), no el de fuera, que nunca desborda (segundo modelo, P2-1).
     const overflow = await dialog.getByTestId('tabla-notas-credito').evaluate((t) => {
-      const box = t.closest('.overflow-auto');
-      return box === null ? 0 : box.scrollWidth - box.clientWidth;
+      const box = t.closest('[data-slot="table-container"]');
+      if (box === null) throw new Error('La tabla no está en su contenedor');
+      return box.scrollWidth - box.clientWidth;
     });
     expect(overflow).toBeLessThanOrEqual(0);
   });
