@@ -71,6 +71,8 @@ const MARGIN = {
   to: '2026-08-31',
   orders: [],
   totalsByLine: [],
+  creditNotes: [],
+  creditTotals: {},
   totals: {
     roundingPen: '0.0000',
     salesPen: '0.00',

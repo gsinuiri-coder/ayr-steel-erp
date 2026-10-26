@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import {
   businessToday,
   createCreditNoteSchema,
@@ -503,12 +503,39 @@ describe('cc52: nota de crédito con devolución', () => {
     const note = await creditNote(invoiceId, 'DEVOLUCION_ITEM', '2');
     const after = orderRow(await margin.salesMargin(prevQuery), orderId);
     expect(after).toEqual(before);
-    const current = orderRow(
-      await margin.salesMargin(salesMarginQuerySchema.parse({ from: THIS_FROM, to: TODAY })),
-      orderId,
+    const report = await margin.salesMargin(
+      salesMarginQuerySchema.parse({ from: THIS_FROM, to: TODAY }),
     );
+    const current = orderRow(report, orderId);
     expect(current?.costStatus).not.toBe('NO_COMPARABLE');
     expect(current?.costPen).toBe('-40.0000');
-    expect(current?.salesPen).toBe(`-${(await invoicing.findOne(note.id)).subtotalPen}`);
+    const subtotal = (await invoicing.findOne(note.id)).subtotalPen;
+    expect(current?.salesPen).toBe(`-${subtotal}`);
+
+    // cc67 (D-720): la NC aparte, marcada como de un comprobante del mes anterior, y los totales
+    // separados: netas = `totals` y brutas + NC = netas, al céntimo.
+    const row = report.creditNotes.find((n) => n.id === note.id);
+    expect(row).toMatchObject({
+      affectedDocumentId: invoiceId,
+      affectedEarlierMonth: true,
+      reason: 'DEVOLUCION_ITEM',
+      salesPen: `-${subtotal}`,
+      costPen: '-40.0000',
+      inTotals: true,
+    });
+    const c = report.creditTotals;
+    const t = report.totals;
+    expect([c.netSalesPen, c.netCostPen, c.netMarginPen, c.netMarginPct]).toEqual([
+      t.salesPen,
+      t.costPen,
+      t.marginPen,
+      t.marginPct,
+    ]);
+    expect(new Prisma.Decimal(c.grossSalesPen).plus(c.creditSalesPen).toFixed(4)).toBe(t.salesPen);
+    expect(new Prisma.Decimal(c.grossCostPen).plus(c.creditCostPen).toFixed(4)).toBe(t.costPen);
+    const inTotals = report.creditNotes.filter((n) => n.inTotals);
+    expect(
+      inTotals.reduce((acc, n) => acc.plus(n.costPen ?? 0), new Prisma.Decimal(0)).toFixed(4),
+    ).toBe(c.creditCostPen);
   });
 });

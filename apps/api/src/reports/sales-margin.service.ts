@@ -12,6 +12,8 @@ import {
   toDecimal,
   toFixedString,
   type MarginCostStatus,
+  type SalesMarginCreditNoteDto,
+  type SalesMarginCreditTotalsDto,
   type SalesMarginDocumentDto,
   type SalesMarginDto,
   type SalesMarginLineTotalDto,
@@ -54,6 +56,10 @@ interface DocumentRow {
   customer_doc_number: string;
   seller_id: string | null;
   seller_name: string | null;
+  /** cc67 (D-720): el comprobante que acredita una NC, para su detalle. */
+  affected_document_id: string | null;
+  affected_number: string | null;
+  affected_issue_date: Date | null;
 }
 
 interface OutOfRangeRow {
@@ -165,7 +171,10 @@ export class SalesMarginService {
         cu."name" AS "customer_name",
         cu."doc_number" AS "customer_doc_number",
         u."id"    AS "seller_id",
-        u."name"  AS "seller_name"
+        u."name"  AS "seller_name",
+        fd."affected_document_id",
+        afd."number"     AS "affected_number",
+        afd."issue_date" AS "affected_issue_date"
       FROM "fiscal_documents" fd
       JOIN "customers" cu ON cu."id" = fd."customer_id"
       LEFT JOIN "sales_orders" so ON so."id" = fd."sales_order_id"
@@ -562,6 +571,12 @@ export class SalesMarginService {
     let untraceableOrderCount = 0;
     let untraceableSales = ZERO;
     let excludedSales = ZERO;
+    // cc67 (D-720): la parte de los totales que viene de las NC, decidida en el mismo recorrido que
+    // los totales (y con las mismas funciones), para que «netas» sean exactamente `totals`.
+    const creditNotes: SalesMarginCreditNoteDto[] = [];
+    let creditSales = ZERO;
+    let creditNoCostSales = ZERO;
+    let creditCost = ZERO;
 
     // cc23 (D-391): la pestaña de la línea; `undefined` es «Todas», el reporte de siempre.
     const viewLine = query.businessLine;
@@ -708,6 +723,34 @@ export class SalesMarginService {
         documents: documentDtos,
       });
 
+      // cc67 (D-720): las NC de la fila, con lo que cada una aporta a los totales de arriba. Dentro
+      // de los totales, su venta y su costo de la pestaña (las filas de costo imputadas a la NC: su
+      // DEV- o el costo de OP de su línea); fuera, en «Todas», solo la venta de Servicios que
+      // `addNoCostSales` suma igual (D-412), que no tiene costo ni entra al margen.
+      for (const d of viewDocs) {
+        if (d.doc_type !== 'NOTA_CREDITO') continue;
+        const ncSales = docSalesInView(d);
+        const ncNoCost = docNoCostInView(d);
+        const ncCost = inTotals
+          ? viewCostRows
+              .filter((r) => r.invoice_id === d.id)
+              .reduce((acc, r) => acc.plus(toDecimal(r.cost_pen.toString())), ZERO)
+          : null;
+        if (ncCost !== null) {
+          creditSales = creditSales.plus(ncSales);
+          creditNoCostSales = creditNoCostSales.plus(ncNoCost);
+          creditCost = creditCost.plus(ncCost);
+        } else if (viewLine === undefined) {
+          const services = NO_COST_REPORT_LINES.reduce(
+            (acc, l) => acc.plus(lineSales(d, l, salesLinesByDocument)),
+            ZERO,
+          );
+          creditSales = creditSales.plus(services);
+          creditNoCostSales = creditNoCostSales.plus(services);
+        }
+        creditNotes.push(creditNoteDto(d, ncSales, ncNoCost, ncCost));
+      }
+
       if (!inTotals) {
         // D-412: en «Todas», la venta de Servicios de este pedido no depende de su costo y
         // suma igual al total de ventas y a su fila de «Totales por línea». Queda fuera solo
@@ -787,11 +830,38 @@ export class SalesMarginService {
         ? totalSales.minus([...lineTotals.values()].reduce((acc, v) => acc.plus(v.sales), ZERO))
         : ZERO;
 
+    // cc67 (D-720): netas = `totals`; brutas = netas − NC.
+    const creditMargin = creditSales.minus(creditNoCostSales).minus(creditCost);
+    const netMargin = marginBase.minus(totalCost);
+    const creditTotals: SalesMarginCreditTotalsDto = {
+      grossSalesPen: toFixedString(totalSales.minus(creditSales), 'MONEY'),
+      creditSalesPen: toFixedString(creditSales, 'MONEY'),
+      netSalesPen: toFixedString(totalSales, 'MONEY'),
+      grossCostPen: toFixedString(totalCost.minus(creditCost), 'MONEY'),
+      creditCostPen: toFixedString(creditCost, 'MONEY'),
+      netCostPen: toFixedString(totalCost, 'MONEY'),
+      grossMarginPen: toFixedString(netMargin.minus(creditMargin), 'MONEY'),
+      creditMarginPen: toFixedString(creditMargin, 'MONEY'),
+      netMarginPen: toFixedString(netMargin, 'MONEY'),
+      grossMarginPct: marginPct(
+        marginBase.minus(creditSales.minus(creditNoCostSales)),
+        totalCost.minus(creditCost),
+      ),
+      netMarginPct: marginPct(marginBase, totalCost),
+    };
+    // Por fecha de la NC, de la más antigua a la más reciente (los comprobantes ya vienen así).
+    creditNotes.sort(
+      (a, b) =>
+        a.issueDate.localeCompare(b.issueDate) || (a.number ?? '').localeCompare(b.number ?? ''),
+    );
+
     return {
       from: query.from,
       to: query.to,
       orders,
       totalsByLine,
+      creditNotes,
+      creditTotals,
       totals: {
         salesPen: toFixedString(totalSales, 'MONEY'),
         noCostSalesPen: toFixedString(noCostSales, 'MONEY'),
@@ -980,6 +1050,40 @@ function addNoCostSales(
     total = total.plus(sales);
   }
   return total;
+}
+
+/**
+ * cc67 (D-720): la fila del detalle de una NC. `cost` es `null` si su pedido queda fuera de los
+ * totales; ahí tampoco se muestra su efecto en el margen.
+ */
+function creditNoteDto(
+  d: DocumentRow,
+  sales: Decimal,
+  noCost: Decimal,
+  cost: Decimal | null,
+): SalesMarginCreditNoteDto {
+  const issueDate = d.issue_date.toISOString().slice(0, 10);
+  const affectedIssueDate = d.affected_issue_date?.toISOString().slice(0, 10) ?? null;
+  return {
+    id: d.id,
+    number: d.number,
+    issueDate,
+    reason: (d.credit_note_reason as SalesMarginCreditNoteDto['reason']) ?? null,
+    affectedDocumentId: d.affected_document_id,
+    affectedNumber: d.affected_number,
+    affectedIssueDate,
+    affectedEarlierMonth:
+      affectedIssueDate !== null && affectedIssueDate.slice(0, 7) < issueDate.slice(0, 7),
+    salesOrderId: d.sales_order_id,
+    orderCode: d.order_seq === null ? null : salesOrderCode(d.order_seq),
+    customerId: d.customer_id,
+    customerName: d.customer_name,
+    customerDocNumber: d.customer_doc_number,
+    salesPen: toFixedString(sales, 'MONEY'),
+    costPen: cost === null ? null : toFixedString(cost, 'MONEY'),
+    marginPen: cost === null ? null : toFixedString(sales.minus(noCost).minus(cost), 'MONEY'),
+    inTotals: cost !== null,
+  };
 }
 
 /** Sin IGV y con signo: una nota de crédito resta. */

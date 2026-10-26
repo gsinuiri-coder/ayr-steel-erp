@@ -57,6 +57,22 @@ function order(over: Partial<SalesMarginDto['orders'][number]>): SalesMarginDto[
   };
 }
 
+/** cc67 (D-720): sin notas de crédito, brutas = netas (ver `salesMarginCreditTotalsSchema`). */
+function noCredit(): SalesMarginDto['creditTotals'] {
+  return {
+    grossSalesPen: '0.0000',
+    creditSalesPen: '0.0000',
+    netSalesPen: '0.0000',
+    grossCostPen: '0.0000',
+    creditCostPen: '0.0000',
+    netCostPen: '0.0000',
+    grossMarginPen: '0.0000',
+    creditMarginPen: '0.0000',
+    netMarginPen: '0.0000',
+    grossMarginPct: null,
+    netMarginPct: null,
+  };
+}
 // Un pedido en los totales (dos comprobantes y una nota de crédito) y otro fuera por su costo.
 const SALES_CURRENT: SalesMarginDto = {
   from: '2026-10-01',
@@ -86,6 +102,8 @@ const SALES_CURRENT: SalesMarginDto = {
       marginPct: '33.33',
     },
   ],
+  creditNotes: [],
+  creditTotals: noCredit(),
   totals: {
     salesPen: '900.0000',
     noCostSalesPen: '0.0000',

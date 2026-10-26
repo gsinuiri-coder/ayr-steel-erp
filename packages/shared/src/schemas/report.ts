@@ -3,6 +3,7 @@ import {
   BUSINESS_LINES,
   COIL_KINDS,
   COIL_STATUSES,
+  CREDIT_NOTE_REASONS,
   FISCAL_DOCUMENT_ORIGINS,
   FISCAL_DOCUMENT_STATUSES,
   FISCAL_DOC_TYPES,
@@ -377,11 +378,67 @@ export const salesMarginLineTotalSchema = z.object({
 });
 export type SalesMarginLineTotalDto = z.infer<typeof salesMarginLineTotalSchema>;
 
+/**
+ * cc67 (D-720): una nota de crédito del periodo, para el detalle de «Notas de crédito». Los montos
+ * vienen con el signo con que la NC entra al reporte (venta y costo en negativo; el costo de una NC
+ * de descuento es cero) y son los de la pestaña que se ve.
+ */
+export const salesMarginCreditNoteSchema = z.object({
+  id: z.string().uuid(),
+  number: z.string().nullable(),
+  issueDate: z.string(),
+  /** El motivo SUNAT (catálogo 09). `null` en una NC antigua sin motivo. */
+  reason: z.enum(CREDIT_NOTE_REASONS).nullable(),
+  affectedDocumentId: z.string().uuid().nullable(),
+  affectedNumber: z.string().nullable(),
+  affectedIssueDate: z.string().nullable(),
+  /** El comprobante afectado es de un mes anterior al de la NC. */
+  affectedEarlierMonth: z.boolean(),
+  salesOrderId: z.string().uuid().nullable(),
+  orderCode: z.string().nullable(),
+  customerId: z.string().uuid(),
+  customerName: z.string(),
+  customerDocNumber: z.string(),
+  salesPen: z.string(),
+  /** `null` si su pedido queda fuera de los totales (no comparable o no rastreable). */
+  costPen: z.string().nullable(),
+  /** Lo que la NC le suma al margen (negativo): venta con costo registrado menos costo. */
+  marginPen: z.string().nullable(),
+  /** Falso si su pedido queda fuera de los totales, como `salesMarginOrderSchema.inTotals`. */
+  inTotals: z.boolean(),
+});
+export type SalesMarginCreditNoteDto = z.infer<typeof salesMarginCreditNoteSchema>;
+
+/**
+ * cc67 (D-720): los totales separados en comprobantes («brutas») y notas de crédito. Las «netas»
+ * son exactamente `totals` de siempre: `net = gross + credit`, con `credit` en negativo. La parte
+ * de NC es la que ya entraba a `totals`: la de los pedidos dentro de los totales y, en «Todas», la
+ * venta de Servicios de los que quedan fuera (D-412).
+ */
+export const salesMarginCreditTotalsSchema = z.object({
+  grossSalesPen: z.string(),
+  creditSalesPen: z.string(),
+  netSalesPen: z.string(),
+  grossCostPen: z.string(),
+  creditCostPen: z.string(),
+  netCostPen: z.string(),
+  grossMarginPen: z.string(),
+  creditMarginPen: z.string(),
+  netMarginPen: z.string(),
+  /** Margen % de los comprobantes solos; `null` si su base no es positiva. */
+  grossMarginPct: z.string().nullable(),
+  netMarginPct: z.string().nullable(),
+});
+export type SalesMarginCreditTotalsDto = z.infer<typeof salesMarginCreditTotalsSchema>;
+
 export const salesMarginSchema = z.object({
   from: z.string(),
   to: z.string(),
   orders: z.array(salesMarginOrderSchema),
   totalsByLine: z.array(salesMarginLineTotalSchema),
+  /** cc67 (D-720): las NC del periodo (en la pestaña de una línea, las que la tocan), por fecha. */
+  creditNotes: z.array(salesMarginCreditNoteSchema),
+  creditTotals: salesMarginCreditTotalsSchema,
   totals: z.object({
     /** Toda la venta de los totales, Servicios incluida (D-409). */
     salesPen: z.string(),

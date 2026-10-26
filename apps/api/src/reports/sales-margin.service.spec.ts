@@ -39,6 +39,8 @@ interface DocSeed {
   customer?: string;
   seller?: string | null;
   creditReason?: string | null;
+  /** cc67 (D-720): el comprobante que acredita la NC. */
+  affected?: { id: string; number: string; issueDate: string };
 }
 
 function docRow(seed: DocSeed): Record<string, unknown> {
@@ -55,6 +57,10 @@ function docRow(seed: DocSeed): Record<string, unknown> {
     order_seq: seed.orderSeq === undefined ? 1 : seed.orderSeq,
     customer_name: seed.customer ?? 'Cliente S.A.',
     seller_name: seed.seller ?? 'Vendedor Uno',
+    affected_document_id: seed.affected?.id ?? null,
+    affected_number: seed.affected?.number ?? null,
+    affected_issue_date:
+      seed.affected === undefined ? null : new Date(`${seed.affected.issueDate}T00:00:00.000Z`),
   };
 }
 
@@ -1002,5 +1008,197 @@ describe('SalesMarginService — margen sin Servicios (cc24, D-409)', () => {
     // Servicios no aporta margen: el de «Todas» es la suma del de las líneas con costo.
     const withCost = all.totalsByLine.filter((t) => t.businessLine !== 'services');
     expect(sum(withCost.map((t) => t.marginPen))).toBe(all.totals.marginPen);
+  });
+});
+
+describe('SalesMarginService — notas de crédito aparte (cc67, D-720)', () => {
+  const LINES = [
+    undefined,
+    'drywall',
+    'metallic-roofing',
+    'roofing',
+    'services',
+    'trading',
+  ] as const;
+  const d = (v: string): Prisma.Decimal => new Prisma.Decimal(v);
+
+  // o1: factura de setiembre y su NC de devolución del mismo mes (la DEV- resta 60 de costo).
+  // o2: NC de descuento de setiembre sobre una factura de agosto (fuera del rango).
+  // o3: no comparable, con Servicios: su NC solo aporta la venta de Servicios (D-412).
+  // d6: NC sin pedido, de una línea escrita a mano («Sin línea»).
+  const seeds: Seeds = {
+    documents: [
+      { id: 'd1', orderId: 'o1', orderSeq: 1, subtotal: '1000.0000', issueDate: '2026-09-03' },
+      {
+        id: 'd2',
+        orderId: 'o1',
+        orderSeq: 1,
+        subtotal: '100.0000',
+        docType: 'NOTA_CREDITO',
+        creditReason: 'DEVOLUCION_ITEM',
+        issueDate: '2026-09-20',
+        affected: { id: 'd1', number: 'F001-d1', issueDate: '2026-09-03' },
+      },
+      {
+        id: 'd3',
+        orderId: 'o2',
+        orderSeq: 2,
+        subtotal: '50.0000',
+        docType: 'NOTA_CREDITO',
+        creditReason: 'DESCUENTO_GLOBAL',
+        issueDate: '2026-09-05',
+        affected: { id: 'd0', number: 'F001-d0', issueDate: '2026-08-28' },
+      },
+      { id: 'd4', orderId: 'o3', orderSeq: 3, subtotal: '330.0000', issueDate: '2026-09-10' },
+      {
+        id: 'd5',
+        orderId: 'o3',
+        orderSeq: 3,
+        subtotal: '40.0000',
+        docType: 'NOTA_CREDITO',
+        creditReason: 'DESCUENTO_ITEM',
+        issueDate: '2026-09-12',
+        affected: { id: 'd4', number: 'F001-d4', issueDate: '2026-09-10' },
+      },
+      {
+        id: 'd6',
+        orderId: null,
+        orderSeq: null,
+        subtotal: '20.0000',
+        docType: 'NOTA_CREDITO',
+        creditReason: 'DESCUENTO_GLOBAL',
+        issueDate: '2026-09-01',
+      },
+    ],
+    salesByLine: [
+      { documentId: 'd1', line: 'drywall', subtotal: '1000.0000' },
+      { documentId: 'd2', line: 'drywall', subtotal: '100.0000' },
+      { documentId: 'd3', line: 'drywall', subtotal: '50.0000' },
+      { documentId: 'd4', line: 'metallic-roofing', subtotal: '300.0000' },
+      { documentId: 'd4', line: 'services', subtotal: '30.0000' },
+      { documentId: 'd5', line: 'metallic-roofing', subtotal: '30.0000' },
+      { documentId: 'd5', line: 'services', subtotal: '10.0000' },
+      { documentId: 'd6', line: null, subtotal: '20.0000' },
+    ],
+    costs: [
+      { orderId: 'o1', invoiceId: 'd1', line: 'drywall', cost: '600.0000' },
+      { orderId: 'o1', invoiceId: 'd2', line: 'drywall', cost: '-60.0000', kind: 'RETURN' },
+      // El costo de la factura de agosto de o2 no cuenta en setiembre.
+      { orderId: 'o2', invoiceId: 'd0', line: 'drywall', cost: '400.0000' },
+      { orderId: 'o3', invoiceId: null, line: 'metallic-roofing', cost: '900.0000' },
+    ],
+    outside: [
+      { orderId: 'o2', count: 1 },
+      { orderId: 'o3', count: 1 },
+    ],
+    pending: [
+      { orderId: 'o1', pending: false },
+      { orderId: 'o2', pending: false },
+      { orderId: 'o3', pending: false },
+    ],
+  };
+
+  it.each(LINES)(
+    'las netas son exactamente los totales y brutas + NC = netas (%s)',
+    async (line) => {
+      const { service } = await buildService(seeds);
+      const report = await service.salesMargin({ ...RANGE, businessLine: line });
+      const c = report.creditTotals;
+      const t = report.totals;
+      expect([c.netSalesPen, c.netCostPen, c.netMarginPen, c.netMarginPct]).toEqual([
+        t.salesPen,
+        t.costPen,
+        t.marginPen,
+        t.marginPct,
+      ]);
+      expect(d(c.grossSalesPen).plus(d(c.creditSalesPen)).toFixed(4)).toBe(t.salesPen);
+      expect(d(c.grossCostPen).plus(d(c.creditCostPen)).toFixed(4)).toBe(t.costPen);
+      expect(d(c.grossMarginPen).plus(d(c.creditMarginPen)).toFixed(4)).toBe(t.marginPen);
+    },
+  );
+
+  it('«Todas»: la devolución resta venta y costo; el descuento, solo venta; la no comparable, solo Servicios', async () => {
+    const { service } = await buildService(seeds);
+    const report = await service.salesMargin(RANGE);
+    // −100 (d2) −50 (d3) −20 (d6) y, de d5 (fuera de los totales), solo los −10 de Servicios.
+    expect(report.creditTotals).toMatchObject({
+      creditSalesPen: '-180.0000',
+      creditCostPen: '-60.0000',
+      // Margen: −100 + 60 (d2) −50 (d3); d6 y los Servicios de d5 no tienen costo registrado.
+      creditMarginPen: '-90.0000',
+    });
+    expect(report.creditNotes.map((n) => [n.number, n.salesPen, n.costPen, n.marginPen])).toEqual([
+      ['F001-d6', '-20.0000', '0.0000', '0.0000'],
+      ['F001-d3', '-50.0000', '0.0000', '-50.0000'],
+      ['F001-d5', '-40.0000', null, null],
+      ['F001-d2', '-100.0000', '-60.0000', '-40.0000'],
+    ]);
+  });
+
+  it('cada NC trae su comprobante afectado, su motivo, y marca el de un mes anterior', async () => {
+    const { service } = await buildService(seeds);
+    const report = await service.salesMargin(RANGE);
+    const byNumber = new Map(report.creditNotes.map((n) => [n.number, n]));
+    expect(byNumber.get('F001-d3')).toMatchObject({
+      reason: 'DESCUENTO_GLOBAL',
+      affectedDocumentId: 'd0',
+      affectedNumber: 'F001-d0',
+      affectedIssueDate: '2026-08-28',
+      affectedEarlierMonth: true,
+      orderCode: 'PED-000002',
+      inTotals: true,
+    });
+    expect(byNumber.get('F001-d2')).toMatchObject({
+      affectedEarlierMonth: false,
+      issueDate: '2026-09-20',
+    });
+    expect(byNumber.get('F001-d5')?.inTotals).toBe(false);
+    expect(byNumber.get('F001-d6')).toMatchObject({
+      affectedDocumentId: null,
+      affectedEarlierMonth: false,
+      salesOrderId: null,
+      orderCode: null,
+    });
+  });
+
+  it('en la pestaña de una línea, solo las NC que la tocan y con su porción', async () => {
+    const { service } = await buildService(seeds);
+    const roofing = await service.salesMargin({ ...RANGE, businessLine: 'metallic-roofing' });
+    // o3 no es comparable: su NC se lista sin costo y no aporta a los totales de la pestaña.
+    expect(roofing.creditNotes.map((n) => [n.number, n.salesPen, n.inTotals])).toEqual([
+      ['F001-d5', '-30.0000', false],
+    ]);
+    expect(roofing.creditTotals.creditSalesPen).toBe('0.0000');
+    const services = await service.salesMargin({ ...RANGE, businessLine: 'services' });
+    // D-412: en Servicios la venta suma siempre; sin costo registrado, sin efecto en el margen.
+    expect(services.creditNotes.map((n) => [n.number, n.salesPen, n.marginPen])).toEqual([
+      ['F001-d5', '-10.0000', '0.0000'],
+    ]);
+    expect(services.creditTotals.creditSalesPen).toBe('-10.0000');
+  });
+
+  it('sin NC en el periodo, la lista viene vacía y brutas = netas', async () => {
+    const { service } = await buildService({
+      documents: [{ id: 'd1', subtotal: '1000.0000' }],
+      costs: [{ orderId: 'o1', invoiceId: 'd1', cost: '600.0000' }],
+      pending: [{ orderId: 'o1', pending: false }],
+    });
+    const report = await service.salesMargin(RANGE);
+    expect(report.creditNotes).toEqual([]);
+    expect(report.creditTotals).toMatchObject({
+      grossSalesPen: '1000.0000',
+      creditSalesPen: '0.0000',
+      grossCostPen: '600.0000',
+      creditCostPen: '0.0000',
+      grossMarginPct: '40.00',
+      netMarginPct: '40.00',
+    });
+  });
+
+  it('las NC van por fecha, de la más antigua a la más reciente', async () => {
+    const { service } = await buildService(seeds);
+    const report = await service.salesMargin(RANGE);
+    const dates = report.creditNotes.map((n) => n.issueDate);
+    expect(dates).toEqual([...dates].sort());
   });
 });
