@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { adminApi, createUser } from '../helpers/api';
-import { loginAndSetPassword, openSidebarGroup } from '../helpers/ui';
+import { loginAndSetPassword, openSidebarGroup, selectOption } from '../helpers/ui';
 
 const isProduction = !!process.env.E2E_BASE_URL;
 /**
@@ -72,7 +72,7 @@ test.describe('Fase 1 — maestros, catálogo, importación, márgenes', () => {
       const dialog = page.getByRole('dialog');
       await dialog.getByLabel('SKU').fill(sku);
       await dialog.getByLabel('Nombre').fill('Producto E2E');
-      await dialog.getByLabel('Unidad').fill('unidad');
+      await selectOption(page, dialog.getByLabel('Unidad'), 'Unidad (NIU)');
       // D-118 (Fase 7e, B) y D-344: espesor y ancho del fleje, y largo y peso de la pieza, son
       // obligatorios en Drywall — sin esto el API responde 400 y el diálogo se queda abierto.
       await dialog.getByLabel('Espesor del fleje (mm)').fill('0.45');

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { adminApi, createUser, getJson } from '../helpers/api';
-import { loginAndSetPassword, openSidebarGroup } from '../helpers/ui';
+import { loginAndSetPassword, openSidebarGroup, selectOption } from '../helpers/ui';
 import {
   createCatalogProduct,
   deactivateTrail,
@@ -48,7 +48,7 @@ test.describe('D-344 — drywall sin receta', () => {
 
     await dialog.getByLabel('SKU').fill(sku);
     await dialog.getByLabel('Nombre').fill('Perfil E2E D-344');
-    await dialog.getByLabel('Unidad').fill('NIU');
+    await selectOption(page, dialog.getByLabel('Unidad'), 'Unidad (NIU)');
 
     // Marcadores como los de PERFILH / PERFILU: ancho 1.00 mm y 1.000 kg.
     await dialog.getByLabel('Espesor del fleje (mm)').fill('0.45');
@@ -96,7 +96,7 @@ test.describe('D-344 — drywall sin receta', () => {
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('SKU').fill(`E2E-D344${String(Date.now()).slice(-6)}`);
     await dialog.getByLabel('Nombre').fill('Perfil E2E sin espesor');
-    await dialog.getByLabel('Unidad').fill('NIU');
+    await selectOption(page, dialog.getByLabel('Unidad'), 'Unidad (NIU)');
     await dialog.getByLabel('Ancho del fleje — desarrollo (mm)').fill('115.00');
     await dialog.getByLabel('Largo de la pieza (mm)').fill('3000.00');
     await dialog.getByLabel('Peso de la pieza (kg)').fill('1.220');

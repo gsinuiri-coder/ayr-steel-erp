@@ -30,6 +30,8 @@ import {
   type ProductListPriceChangeDto,
   type UpdateProductInput,
   COIL_SKU_PREFIX,
+  isCatalogUnit,
+  UNITS,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -348,6 +350,13 @@ export class CatalogService {
           `${before.sku} es el producto de venta de ${String(open.length)} bobina(s) con saldo (${shown}${open.length > 3 ? '…' : ''}): ciérralas o véndelas antes de desactivarlo`,
         );
       }
+    }
+
+    // cc68 (D-723): la unidad es de la lista cerrada. Un producto con una unidad anterior a la lista
+    // se puede seguir editando sin tocarla; cambiarla exige una de la lista.
+    if (input.unit !== undefined && input.unit !== before.unit && !isCatalogUnit(input.unit)) {
+      const message = `«${input.unit}» no es una unidad de la lista (${UNITS.join(', ')})`;
+      throw new BadRequestException({ statusCode: 400, message, errors: { unit: [message] } });
     }
 
     // D-127: corregir el subtipo **obliga** a mover la unidad (son el mismo hecho).
