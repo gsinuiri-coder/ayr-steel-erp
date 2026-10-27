@@ -3167,7 +3167,7 @@ El dueño decidió mostrar el % solo en la fila de netas, en la web y en el Exce
 - Una NC de un pedido fuera de los totales se lista con su venta completa, aunque a los totales solo aporta su venta
   de Servicios. El modal y el Excel lo dicen.
 
-## cc68 — anular el inventario inicial de Drywall, ESQ30 por caja y la unidad como lista cerrada (D-721..D-726)
+## cc68 — anular el inventario inicial de Drywall, ESQ30 por caja y la unidad como lista cerrada (D-721..D-727)
 
 **De dónde sale.** El cliente dice que los inventarios iniciales de Drywall de dw-01, dw-02 y dw-03 están mal y no
 van. El dueño decidió anularlos sin reemplazo (D-721): las 18 bobinas DW43, los 7 perfiles y ESQ30. Si llegan cifras
@@ -3237,6 +3237,22 @@ decidió pasar todas las unidades a la tabla vigente, con un solo mapa en `@ayr/
 **El paquete del deploy (D-726).** `.gcloudignore` no excluía `local-data/` y en cc67 hubo que sacar la carpeta a mano
 antes de desplegar. Ahora la excluye. Además, `deploy:api` le pregunta a gcloud qué subiría y aborta si aparece
 `local-data/` o un `.env*`, o si el listado no trae el Dockerfile.
+
+**La ejecución en producción (26 y 27/10).** Con los OK del dueño por nombre y solo por acciones de dominio:
+
+- respaldo `respaldo-pre-cc68-20261026`;
+- las 18 bobinas anuladas al 01/08, primero una sola;
+- la reversa del lote de dw-03: dry-run y después `--execute`, 8 entradas por S/ 97 719,55;
+- ESQ30 a BX y las 5 unidades corregidas.
+
+El valorizado bajó exactamente S/ 412 674,35. Quedó en S/ 385 360,17, no en S/ 385 317,43: la diferencia de S/ 42,74
+es una devolución real que el cliente grabó el 26/10 (una NC 07 de Coberturas metálicas). No viene de cc68.
+
+**Las cotizaciones y el céntimo (D-727).** Se editaron de a una, comparando antes y después todo menos la unidad. En la
+quinta, COT 49, cambió también la cabecera en S/ 0,001: la importación había guardado el IGV de cabecera como suma de los
+IGV de línea con 4 decimales, y la edición lo recalcula al céntimo (D-377). La sesión paró. El dueño la dio por buena
+y mandó seguir con el mismo control. Las otras 8 de ESQ30, y COT 27 y 134 de CONFORMADO (a TNE), cambiaron solo la
+unidad. Los PDFs dicen «caja» y «t».
 
 **Lo que queda anotado para otra pieza.**
 
