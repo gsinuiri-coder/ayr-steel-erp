@@ -169,6 +169,7 @@ function build(o: Options = {}) {
           qty: D('3'),
           reserveQty: D('3'),
           totalCost: D('60'),
+          operationDate: TODAY,
           stock: {
             itemType: 'PRODUCT',
             itemId: 'p-1',
@@ -503,9 +504,21 @@ describe('InvoicingService.previewCreditNote — «Qué va a pasar» (cc54)', ()
         unit: 'NIU',
         costPen: '60.0000',
         dispatch: 'DES-000001',
+        entryDate: TODAY,
+        afterCreditNote: false,
       },
     ]);
     expect(preview.warnings.some((w) => w.includes('no salió del almacén'))).toBe(true);
+  });
+
+  it('cc69 (D-728): lo que sale de un despacho posterior a la NC entra en la fecha del despacho', async () => {
+    const { service } = build();
+    const preview = await service.previewCreditNote(
+      ADMIN,
+      'f-1',
+      draft({ reason: 'ANULACION_OPERACION', issueDate: addDays(TODAY, -2) }),
+    );
+    expect(preview.stock[0]).toMatchObject({ entryDate: TODAY, afterCreditNote: true });
   });
 
   it('sobre un electrónico no promete devolución; una rebaja sobre boleta avisa la observación', async () => {

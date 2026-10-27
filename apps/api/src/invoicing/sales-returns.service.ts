@@ -21,6 +21,7 @@ import {
   returnsStock,
   salesOrderCode,
   salesReturnCode,
+  toDateOnly,
   toDecimal,
   toFixedString,
   type SalesReturnDto,
@@ -30,6 +31,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  NothingDispatchedError,
   planReturnAllocation,
   type DispatchLineStock,
   type ReturnAllocation,
@@ -41,9 +43,10 @@ import {
  *
  * Se crea al **registrar** la NC (cuando queda aceptada), nunca en el borrador: un borrador se
  * descarta. Reingresa cada línea al kardex por la puerta de la regla dura 8
- * (`InventoryService.record`, IN, `SALES_RETURN`), con la fecha de la NC y **al costo con que salió**
- * esa mercadería: el del movimiento de su despacho, del más reciente hacia atrás, nunca más de lo
- * despachado menos lo ya devuelto. No vuelve a reservar ni cambia el estado del pedido: la venta
+ * (`InventoryService.record`, IN, `SALES_RETURN`), con la fecha de la NC (cc69, D-728: o la de su
+ * despacho, si es posterior a la NC) y **al costo con que salió** esa mercadería: el del movimiento
+ * de su despacho, primero los anteriores a la NC (del más reciente hacia atrás) y después los
+ * posteriores, nunca más de lo despachado menos lo ya devuelto. No vuelve a reservar ni cambia el estado del pedido: la venta
  * de esa cantidad se deshizo (D-646). Una bobina se devuelve entera, vuelve con su peso y, si
  * estaba terminada, se reabre. Un producto a medida reingresa como producto terminado sobrante,
  * sin pedido (ningún otro pedido lo toma; desde cc65, D-697, el mostrador lo vende).
@@ -181,6 +184,14 @@ export class SalesReturnsService {
       tx,
       lines.flatMap((l) => (l.orderItemId === null ? [] : [l.orderItemId])),
     );
+    // cc69 (D-728, opción B): si el comprobante acreditado declara despachos en cualquiera de las
+    // líneas, la devolución sale solo de los suyos; si no declara ninguno, del pedido.
+    const affected = options.affectedInvoiceId ?? null;
+    const planOptions: ReturnPlanOptions = {
+      ...options,
+      affectedDeclaresDispatches:
+        affected !== null && [...stock.values()].flat().some((s) => s.invoiceId === affected),
+    };
     // Dos líneas de la NC sobre la misma línea de pedido consumen del mismo despachado.
     type Used = Map<string, { qty: Decimal; reserveQty: Decimal; cost: Decimal }>;
     const used = new Map<string, Used>();
@@ -211,7 +222,7 @@ export class SalesReturnsService {
       });
       let plan: ReturnAllocation[];
       try {
-        plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available, options);
+        plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available, planOptions);
       } catch (err) {
         throw await this.explainWithoutKardex(tx, line.orderItemId, err);
       }
@@ -249,6 +260,12 @@ export class SalesReturnsService {
     });
     const qty = toDecimal(withoutKardex._sum.qty?.toString() ?? '0');
     if (qty.lte(0)) return err;
+    // cc69: si no hay nada con salida en el kardex, la causa es la entrega previa, no «no salió nada».
+    if (err instanceof NothingDispatchedError) {
+      return new BadRequestException(
+        `${err.at}: lo despachado (${qty.toFixed(3)}) se entregó antes del inventario inicial y no tiene salida en el kardex: no vuelve al almacén por la nota de crédito. Para acreditar solo el importe, usa «Rebajar el precio».`,
+      );
+    }
     return new BadRequestException(
       `${err.message} De esta línea, ${qty.toFixed(3)} se entregó antes del inventario inicial y no tiene salida en el kardex: esa parte no vuelve al almacén por la nota de crédito. Para acreditar solo el importe, usa «Rebajar el precio».`,
     );
@@ -356,11 +373,16 @@ export class SalesReturnsService {
       );
     }
 
+    // cc69 (D-728): la DEV- lleva la fecha de su parte más tardía (la de la NC si ninguna sale de un
+    // despacho posterior); cada línea, la de su movimiento.
+    const returnDate = plans
+      .flat()
+      .reduce((latest, a) => (a.operationDate > latest ? a.operationDate : latest), operationDate);
     const created = await tx.salesReturn.create({
       data: {
         creditNoteId: note.id,
         salesOrderId,
-        operationDate: note.issueDate,
+        operationDate: toDateOnly(returnDate),
         createdById: actor.id,
       },
       select: { id: true, seq: true },
@@ -370,66 +392,75 @@ export class SalesReturnsService {
       where: { id: salesOrderId },
       select: { seq: true },
     });
-    let lineNumber = 0;
-    const lines: Record<string, string | number>[] = [];
-    const coilIds: string[] = [];
-    for (const [index, plan] of plans.entries()) {
+    // Las partes en el orden de la NC (el número de línea de la DEV-).
+    const parts = plans.flatMap((plan, index) => {
       const noteItem = note.items[index];
-      if (noteItem === undefined) continue;
-      for (const a of plan) {
-        lineNumber += 1;
-        const movement = await this.inventory.record(tx, {
-          businessLineId: a.stock.businessLineId,
+      return noteItem === undefined ? [] : plan.map((a) => ({ noteItem, a }));
+    });
+    // cc69 (D-728): se graban de la fecha más tardía a la más temprana. Una parte que entra antes
+    // recostea hacia adelante (D-649) un despacho posterior del mismo ítem; si la parte que sale de
+    // ese despacho ya está grabada (con su enlace), el recosteo la corrige con él (regla RETURN).
+    // Al revés, quedaría con el costo leído antes del recosteo.
+    const writeOrder = parts
+      .map((part, i) => ({ ...part, lineNumber: i + 1 }))
+      .sort(
+        (x, y) => y.a.operationDate.localeCompare(x.a.operationDate) || x.lineNumber - y.lineNumber,
+      );
+    const coilIds: string[] = [];
+    for (const { noteItem, a, lineNumber } of writeOrder) {
+      const movement = await this.inventory.record(tx, {
+        businessLineId: a.stock.businessLineId,
+        itemType: a.stock.itemType,
+        itemId: a.stock.itemId,
+        type: 'IN',
+        qty: toFixedString(a.reserveQty, 'KG'),
+        unit: a.stock.unit,
+        unitCost: toFixedString(a.unitCost, 'MONEY'),
+        totalCost: toFixedString(a.totalCost, 'MONEY'),
+        refType: 'SALES_RETURN',
+        refId: created.id,
+        notes:
+          `Devolución ${code} de la NC ${note.number ?? ''} (despacho ${a.stock.dispatchCode})`.slice(
+            0,
+            240,
+          ),
+        actorId: actor.id,
+        // cc69 (D-728): la fecha de la NC, o la del despacho si es posterior a la NC.
+        operationDate: a.operationDate,
+        // La fecha es el propósito: el acuse de orden va implícito (D-645).
+        confirmBackdate: true,
+      });
+      if (movement === null) {
+        throw new BadRequestException(
+          `Línea ${String(noteItem.lineNumber)}: la línea de negocio no lleva inventario`,
+        );
+      }
+      await tx.salesReturnItem.create({
+        data: {
+          salesReturnId: created.id,
+          lineNumber,
+          creditNoteItemId: noteItem.id,
+          dispatchItemId: a.stock.dispatchItemId,
           itemType: a.stock.itemType,
           itemId: a.stock.itemId,
-          type: 'IN',
-          qty: toFixedString(a.reserveQty, 'KG'),
-          unit: a.stock.unit,
-          unitCost: toFixedString(a.unitCost, 'MONEY'),
-          totalCost: toFixedString(a.totalCost, 'MONEY'),
-          refType: 'SALES_RETURN',
-          refId: created.id,
-          notes:
-            `Devolución ${code} de la NC ${note.number ?? ''} (despacho ${a.stock.dispatchCode})`.slice(
-              0,
-              240,
-            ),
-          actorId: actor.id,
-          operationDate,
-          // La fecha de la NC es el propósito: el acuse de orden va implícito (D-645).
-          confirmBackdate: true,
-        });
-        if (movement === null) {
-          throw new BadRequestException(
-            `Línea ${String(noteItem.lineNumber)}: la línea de negocio no lleva inventario`,
-          );
-        }
-        await tx.salesReturnItem.create({
-          data: {
-            salesReturnId: created.id,
-            lineNumber,
-            creditNoteItemId: noteItem.id,
-            dispatchItemId: a.stock.dispatchItemId,
-            itemType: a.stock.itemType,
-            itemId: a.stock.itemId,
-            qty: toFixedString(a.qty, 'KG'),
-            reserveQty: toFixedString(a.reserveQty, 'KG'),
-            unitCost: toFixedString(a.unitCost, 'MONEY'),
-            totalCost: toFixedString(a.totalCost, 'MONEY'),
-            movementId: movement.id,
-          },
-        });
-        if (a.stock.itemType === InventoryItemType.COIL) coilIds.push(a.stock.itemId);
-        lines.push({
-          line: noteItem.lineNumber,
-          dispatch: a.stock.dispatchCode,
           qty: toFixedString(a.qty, 'KG'),
           reserveQty: toFixedString(a.reserveQty, 'KG'),
           unitCost: toFixedString(a.unitCost, 'MONEY'),
           totalCost: toFixedString(a.totalCost, 'MONEY'),
-        });
-      }
+          movementId: movement.id,
+        },
+      });
+      if (a.stock.itemType === InventoryItemType.COIL) coilIds.push(a.stock.itemId);
     }
+    const lines: Record<string, string | number>[] = parts.map(({ noteItem, a }) => ({
+      line: noteItem.lineNumber,
+      dispatch: a.stock.dispatchCode,
+      operationDate: a.operationDate,
+      qty: toFixedString(a.qty, 'KG'),
+      reserveQty: toFixedString(a.reserveQty, 'KG'),
+      unitCost: toFixedString(a.unitCost, 'MONEY'),
+      totalCost: toFixedString(a.totalCost, 'MONEY'),
+    }));
     const reopened = await this.reopenReturnedCoils(tx, actor, coilIds, code);
 
     const detail = {
@@ -439,7 +470,8 @@ export class SalesReturnsService {
       creditNote: note.number,
       affects: note.affectedDocument?.number ?? null,
       salesOrder: salesOrderCode(order.seq),
-      operationDate,
+      operationDate: returnDate,
+      creditNoteDate: operationDate,
       totalCost: toFixedString(
         lines.reduce((acc, l) => acc.plus(String(l.totalCost)), new Decimal(0)),
         'MONEY',
@@ -687,6 +719,7 @@ export class SalesReturnsService {
           select: {
             id: true,
             number: true,
+            issueDate: true,
             creditNoteReason: true,
             affectedDocument: { select: { id: true, number: true } },
           },
@@ -698,14 +731,28 @@ export class SalesReturnsService {
           orderBy: { lineNumber: 'asc' },
           include: {
             creditNoteItem: { select: { lineNumber: true, description: true, unit: true } },
-            dispatchItem: { select: { dispatchId: true, dispatch: { select: { seq: true } } } },
-            movement: { select: { unit: true } },
+            dispatchItem: {
+              select: { dispatchId: true, dispatch: { select: { seq: true, dispatchDate: true } } },
+            },
+            movement: { select: { unit: true, operationDate: true } },
           },
         },
       },
     });
     if (r === null) throw new NotFoundException('Devolución no encontrada');
-    return toSalesReturnDto(r);
+    // cc69 (autorrevisión P2-1): el costo efectivo de cada reingreso, con sus recosteos (D-649), el
+    // mismo que leen Ventas y margen y la valorización.
+    const recosts = await this.prisma.inventoryMovement.groupBy({
+      by: ['recostOfId'],
+      where: { recostOfId: { in: r.items.map((i) => i.movementId) } },
+      _sum: { totalCost: true },
+    });
+    return toSalesReturnDto(
+      r,
+      new Map(
+        recosts.map((g) => [String(g.recostOfId), toDecimal(g._sum.totalCost?.toString() ?? '0')]),
+      ),
+    );
   }
 }
 
@@ -715,6 +762,7 @@ type SalesReturnRow = Prisma.SalesReturnGetPayload<{
       select: {
         id: true;
         number: true;
+        issueDate: true;
         creditNoteReason: true;
         affectedDocument: { select: { id: true; number: true } };
       };
@@ -725,19 +773,30 @@ type SalesReturnRow = Prisma.SalesReturnGetPayload<{
     items: {
       include: {
         creditNoteItem: { select: { lineNumber: true; description: true; unit: true } };
-        dispatchItem: { select: { dispatchId: true; dispatch: { select: { seq: true } } } };
-        movement: { select: { unit: true } };
+        dispatchItem: {
+          select: { dispatchId: true; dispatch: { select: { seq: true; dispatchDate: true } } };
+        };
+        movement: { select: { unit: true; operationDate: true } };
       };
     };
   };
 }>;
 
-export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
+export function toSalesReturnDto(
+  r: SalesReturnRow,
+  /** Lo que suman los recosteos de cada reingreso, por id de movimiento. */
+  recostByMovement: ReadonlyMap<string, Decimal> = new Map(),
+): SalesReturnDto {
+  const effective = (i: SalesReturnRow['items'][number]) =>
+    toDecimal(i.totalCost.toString()).plus(
+      recostByMovement.get(i.movementId.toString()) ?? new Decimal(0),
+    );
   return {
     id: r.id,
     code: salesReturnCode(r.seq),
     status: r.status,
     operationDate: fromDateOnly(r.operationDate),
+    creditNoteDate: fromDateOnly(r.creditNote.issueDate),
     creditNoteId: r.creditNote.id,
     creditNoteNumber: r.creditNote.number,
     creditNoteReason: r.creditNote.creditNoteReason,
@@ -751,7 +810,7 @@ export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
     reversedByName: r.reversedBy?.name ?? null,
     reverseReason: r.reverseReason,
     totalCostPen: toFixedString(
-      r.items.reduce((acc, i) => acc.plus(i.totalCost.toString()), new Decimal(0)),
+      r.items.reduce((acc, i) => acc.plus(effective(i)), new Decimal(0)),
       'MONEY',
     ),
     items: r.items.map((i) => ({
@@ -764,11 +823,15 @@ export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
       itemId: i.itemId,
       reserveQty: i.reserveQty.toFixed(3),
       kardexUnit: i.movement.unit,
-      unitCostPen: i.unitCost.toFixed(4),
-      totalCostPen: i.totalCost.toFixed(4),
+      unitCostPen: i.reserveQty.isZero()
+        ? i.unitCost.toFixed(4)
+        : toFixedString(effective(i).div(i.reserveQty.toString()), 'MONEY'),
+      totalCostPen: toFixedString(effective(i), 'MONEY'),
       dispatchId: i.dispatchItem.dispatchId,
       dispatchCode: dispatchCode(i.dispatchItem.dispatch.seq),
+      dispatchDate: fromDateOnly(i.dispatchItem.dispatch.dispatchDate),
       movementId: i.movementId.toString(),
+      operationDate: fromDateOnly(i.movement.operationDate),
     })),
   };
 }

@@ -324,6 +324,12 @@ describe('PurchasesService.receive — saldos por clave antes del primer ingreso
           { id: 'i3', productId: 'prod-a', unit: 'NIU' },
         ]),
       },
+      product: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'prod-a', sku: 'A', unit: 'NIU' },
+          { id: 'prod-b', sku: 'B', unit: 'NIU' },
+        ]),
+      },
     };
     const svc = Object.create(PurchasesService.prototype) as PurchasesService;
     Object.assign(svc, {
@@ -351,6 +357,57 @@ describe('PurchasesService.receive — saldos por clave antes del primer ingreso
         { businessLineId: 'bl-1', itemType: 'PRODUCT', itemId: 'prod-a', unit: 'NIU' },
       ],
     });
+  });
+});
+
+describe('PurchasesService.receive — cc69 (D-729): la unidad de la línea es la del producto', () => {
+  it('un borrador con otra unidad no entra al kardex', async () => {
+    const record = jest.fn();
+    const lockInOrder = jest.fn();
+    const tx = {
+      purchase: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          id: 'pu-1',
+          status: 'RECEIVED',
+          type: 'FINISHED_GOOD',
+          businessLineId: 'bl-1',
+          currency: 'PEN',
+          exchangeRate: '1.0000',
+        }),
+      },
+      purchaseItem: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'i1', lineNumber: 2, productId: 'esq', unit: 'NIU' }]),
+      },
+      product: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'esq', sku: 'ESQ30', unit: 'BX' }]),
+      },
+    };
+    const svc = Object.create(PurchasesService.prototype) as PurchasesService;
+    Object.assign(svc, {
+      operationDate: { resolve: () => '2026-10-27' },
+      inventory: { lockInOrder, record },
+      prisma: {
+        purchase: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 'pu-1',
+            status: 'DRAFT',
+            type: 'FINISHED_GOOD',
+            businessLineId: 'bl-1',
+            items: [],
+          }),
+        },
+        $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+      },
+    });
+
+    await expect(svc.receive(ACTOR, 'pu-1')).rejects.toThrow(
+      'Línea 2: ESQ30 se lleva en Caja (BX) y la línea dice Unidad (NIU)',
+    );
+    expect(lockInOrder).not.toHaveBeenCalled();
+    expect(record).not.toHaveBeenCalled();
   });
 });
 

@@ -166,6 +166,70 @@ describe('SalesReturnsService (cc52, D-646)', () => {
     expect(targets).toEqual(['sr-1', 'nc-1', 'f-1', 'o-1']);
   });
 
+  it('cc69 (D-728): de un despacho posterior entra en su fecha; graba primero la parte más tardía', async () => {
+    const { service, tx, rawTx, inventory } = setup({
+      note: { ...NOTE, items: [{ ...NOTE.items[0], qty: D('7') }] },
+      dispatchItems: [
+        dispatchItem(),
+        dispatchItem({
+          id: 'di-2',
+          dispatchId: 'd-2',
+          movementId: 11n,
+          dispatch: {
+            seq: 9,
+            dispatchDate: new Date('2026-10-20T00:00:00.000Z'),
+            invoiceId: 'f-1',
+            invoice: { status: 'ACCEPTED', archivedAt: null },
+          },
+        }),
+      ],
+    });
+    rawTx.inventoryMovement.findMany.mockResolvedValue([
+      {
+        id: 10n,
+        unitCost: D('20.0000'),
+        totalCost: D('100.0000'),
+        unit: 'NIU',
+        businessLineId: 'bl-1',
+      },
+      {
+        id: 11n,
+        unitCost: D('30.0000'),
+        totalCost: D('150.0000'),
+        unit: 'NIU',
+        businessLineId: 'bl-1',
+      },
+    ]);
+    await service.createForCreditNoteInTx(tx, ADMIN, 'nc-1', ['d-1', 'd-2']);
+    expect(rawTx.salesReturn.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ operationDate: new Date('2026-10-20T00:00:00.000Z') }),
+      }),
+    );
+    // Primero la parte del despacho posterior (línea 2 de la DEV-), después la de la fecha de la NC.
+    expect(
+      (
+        inventory.record.mock.calls as [
+          unknown,
+          { operationDate: string; qty: string; totalCost: string },
+        ][]
+      ).map(([, m]) => [m.operationDate, m.qty, m.totalCost]),
+    ).toEqual([
+      ['2026-10-20', '2.000', '60.0000'],
+      ['2026-10-14', '5.000', '100.0000'],
+    ]);
+    expect(
+      (
+        rawTx.salesReturnItem.create.mock.calls as [
+          { data: { lineNumber: number; dispatchItemId: string } },
+        ][]
+      ).map(([arg]) => [arg.data.lineNumber, arg.data.dispatchItemId]),
+    ).toEqual([
+      [2, 'di-2'],
+      [1, 'di-1'],
+    ]);
+  });
+
   it('una bobina terminada que vuelve se reabre', async () => {
     const { service, tx, rawTx, audit } = setup({
       note: { ...NOTE, items: [{ ...NOTE.items[0], qty: D('1') }] },
@@ -197,7 +261,7 @@ describe('SalesReturnsService (cc52, D-646)', () => {
     await expect(
       service.planForLines(tx, [{ lineNumber: 1, orderItemId: 'soi-1', qty: '2' }]),
     ).rejects.toThrow(
-      /hay 0.000 despachado sin devolver.*5.000 se entregó antes del inventario inicial/,
+      'Línea 1: lo despachado (5.000) se entregó antes del inventario inicial y no tiene salida en el kardex',
     );
   });
 
@@ -286,10 +350,11 @@ describe('SalesReturnsService (cc52, D-646)', () => {
       id: 'sr-1',
       seq: 3,
       status: 'ACTIVE',
-      operationDate: new Date('2026-10-14T00:00:00.000Z'),
+      operationDate: new Date('2026-10-20T00:00:00.000Z'),
       creditNote: {
         id: 'nc-1',
         number: 'FC90-1',
+        issueDate: new Date('2026-10-14T00:00:00.000Z'),
         creditNoteReason: 'DEVOLUCION_TOTAL',
         affectedDocument: { id: 'f-1', number: 'F001-1' },
       },
@@ -307,10 +372,13 @@ describe('SalesReturnsService (cc52, D-646)', () => {
           itemType: 'COIL',
           itemId: 'c-1',
           reserveQty: D('500'),
-          movement: { unit: 'KGM' },
+          movement: { unit: 'KGM', operationDate: new Date('2026-10-20T00:00:00.000Z') },
           unitCost: D('4.2'),
           totalCost: D('2100'),
-          dispatchItem: { dispatchId: 'd-1', dispatch: { seq: 7 } },
+          dispatchItem: {
+            dispatchId: 'd-1',
+            dispatch: { seq: 7, dispatchDate: new Date('2026-10-20T00:00:00.000Z') },
+          },
           movementId: 99n,
         },
       ],
@@ -320,8 +388,75 @@ describe('SalesReturnsService (cc52, D-646)', () => {
       salesOrderCode: 'PED-000012',
       totalCostPen: '2100.0000',
       affectedDocumentNumber: 'F001-1',
+      // cc69 (D-728): la DEV- de un despacho posterior a la NC lleva la fecha del despacho.
+      operationDate: '2026-10-20',
+      creditNoteDate: '2026-10-14',
     });
-    expect(dto.items[0]).toMatchObject({ dispatchCode: 'DES-000007', movementId: '99' });
+    expect(dto.items[0]).toMatchObject({
+      dispatchCode: 'DES-000007',
+      movementId: '99',
+      dispatchDate: '2026-10-20',
+      operationDate: '2026-10-20',
+    });
+  });
+
+  it('cc69: el costo de la DEV- es el efectivo, con los recosteos de su reingreso', async () => {
+    const row = {
+      id: 'sr-1',
+      seq: 3,
+      status: 'ACTIVE',
+      operationDate: new Date('2026-10-20T00:00:00.000Z'),
+      creditNote: {
+        id: 'nc-1',
+        number: 'FC90-1',
+        issueDate: new Date('2026-10-14T00:00:00.000Z'),
+        creditNoteReason: 'DEVOLUCION_ITEM',
+        affectedDocument: null,
+      },
+      salesOrder: { id: 'o-1', seq: 12 },
+      createdAt: new Date('2026-10-20T15:00:00.000Z'),
+      createdBy: { name: 'Admin' },
+      reversedAt: null,
+      reversedBy: null,
+      reverseReason: null,
+      items: [
+        {
+          lineNumber: 1,
+          creditNoteItem: { lineNumber: 1, description: 'Producto', unit: 'NIU' },
+          qty: D('2'),
+          itemType: 'PRODUCT',
+          itemId: 'p-1',
+          reserveQty: D('2'),
+          movement: { unit: 'NIU', operationDate: new Date('2026-10-20T00:00:00.000Z') },
+          unitCost: D('30'),
+          totalCost: D('60'),
+          dispatchItem: {
+            dispatchId: 'd-1',
+            dispatch: { seq: 7, dispatchDate: new Date('2026-10-20T00:00:00.000Z') },
+          },
+          movementId: 99n,
+        },
+      ],
+    } as never;
+    // findOne lee los recosteos de cada reingreso y los suma al costo grabado.
+    const groupBy = jest
+      .fn()
+      .mockResolvedValue([{ recostOfId: 99n, _sum: { totalCost: new Prisma.Decimal('-4') } }]);
+    const findUnique = jest.fn().mockResolvedValueOnce(row).mockResolvedValueOnce(null);
+    const reader = new SalesReturnsService(
+      { salesReturn: { findUnique }, inventoryMovement: { groupBy } } as unknown as PrismaService,
+      {} as InventoryService,
+      {} as AuditService,
+    );
+    await expect(reader.findOne('sr-1')).resolves.toMatchObject({ totalCostPen: '56.0000' });
+    expect(groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recostOfId: { in: [99n] } } }),
+    );
+    await expect(reader.findOne('sr-x')).rejects.toThrow(NotFoundException);
+    const dto = toSalesReturnDto(row, new Map([['99', new Decimal('-4')]]));
+    expect(dto.totalCostPen).toBe('56.0000');
+    expect(dto.items[0]).toMatchObject({ unitCostPen: '28.0000', totalCostPen: '56.0000' });
+    expect(toSalesReturnDto(row).totalCostPen).toBe('60.0000');
   });
 });
 

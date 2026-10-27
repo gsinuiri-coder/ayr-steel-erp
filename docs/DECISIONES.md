@@ -3268,3 +3268,79 @@ unidad. Los PDFs dicen «caja» y «t».
   archivos o se les pone retención.
 - La hoja del kardex que no es PEPS sigue tomando la unidad del primer movimiento.
 - En Ventas por material, una caja va a «No trazable» porque no tiene metros. Es correcto, pero conviene saberlo.
+
+## cc69 — NC de devolución con fecha anterior al despacho y unidad en compras (D-728, D-729)
+
+**De dónde sale.** El dueño no podía registrar una NC 07: la fecha del despacho era posterior a la de
+la NC. D-646 devolvía solo de despachos con fecha igual o anterior a la NC, y el rechazo decía «hay
+0.000 despachado sin devolver», como si no hubiera salido nada. Pasa sobre todo con la carga atrasada.
+El 2026-10-27 había en producción 63 comprobantes con un despacho de su pedido posterior a su
+emisión. Todos eran manuales y con salida de kardex, y 62 de otro mes. No había NC en borrador, y los
+rechazos (400) no dejan rastro en la auditoría.
+
+**La regla (D-728).**
+
+- La NC conserva su fecha.
+- La parte que sale de un despacho posterior reingresa el día de ese despacho, siempre al costo con
+  que salió.
+- El reparto (opción B del dueño): **solo los despachos que declara el comprobante acreditado**,
+  primero los de fecha hasta la NC (del más reciente hacia atrás) y después los posteriores (del más
+  cercano a la NC en adelante). Si el comprobante no declara ningún despacho, el pedido con el mismo
+  orden.
+- Por qué: la primera versión ordenaba primero por fecha, y la autorrevisión mostró que así una NC de
+  la segunda factura de un pedido devolvía lo despachado para la primera, justo en el caso que cc69
+  habilita (facturar antes de despachar). La preferencia de la revisión de cc52 no alcanzaba. El
+  db-spec «un pedido de dos facturas» lo fija, y falla si se apaga la regla.
+- «De este pedido» en el rechazo de la 06 y la 07; el aviso lleva el año si la NC y el despacho caen
+  en años distintos; los alias del importador se quedan (decisiones del dueño, 2026-10-27).
+- Una sola DEV- por NC, con la fecha de su parte más tardía. Cada línea guarda la suya en su
+  movimiento, así que no hizo falta migración.
+- Ventas y margen ya imputaba el costo de la devolución a la NC (`credit_note_id`), no a la fecha del
+  movimiento. D-647 se cumple sin tocar el reporte.
+
+**El orden de escritura.** Una NC que devuelve de dos despachos con fechas distintas graba una parte
+temprana (a la fecha de la NC) y otra tardía. La temprana recostea hacia adelante (D-649) el despacho
+posterior del mismo ítem. El plan leyó el costo de ese despacho antes del recosteo, así que la parte
+tardía quedaba con el costo viejo.
+
+Las partes se graban de la más tardía a la más temprana. Así, cuando la temprana recostea, la tardía
+ya existe con su enlace a la salida, y la regla RETURN del recosteo la corrige.
+
+El db-spec «repartida en dos despachos» lo fija: el costo efectivo es 96 y la valorización 252.
+Grabando en el orden inverso da 100, y la prueba falla (se corrió así a propósito).
+
+La DEV- muestra el costo efectivo, con sus recosteos. «Qué va a pasar» y la auditoría del alta
+muestran el de antes del recosteo que dispara la propia NC; es un caso raro y quedó anotado.
+
+**Los 3 representativos.** Se reprodujeron en local (`ayr_local`, por la API, productos DEMO) con las
+mismas fechas y cantidades que tres de los 63:
+
+- un producto facturado el 05/08 y despachado el 15/09;
+- una boleta con un despacho el mismo día y otro el 07/10;
+- una bobina facturada el 24/09 y despachada el 07/10.
+
+En los tres, la vista previa y el registro dejan la NC en su fecha y la mercadería entra el día del
+despacho. La línea despachada antes de la NC entra en la fecha de la NC, y la bobina se reabre.
+Cifras en `local-data/cc69/m1-local.json`, fuera del repo.
+
+**La unidad en compras (D-729).** P2-4 de la autorrevisión de cc68 (cc69 por decisión del dueño). Una
+sola función, `purchaseUnitMismatch`, para cuatro lugares:
+
+- el alta (formulario y XML);
+- el importador (con el alias ya resuelto);
+- «Editar compra»;
+- recibir un borrador guardado antes de la regla.
+
+El formulario fija la unidad en la del producto. En producción había 18 líneas de compra con producto
+y ninguna con otra unidad.
+
+**Bucket de Cloud Build (M3, solo lectura).** El bucket es `run-sources-ayr-steel-erp-us-central1`.
+Tenía 159 zips (750 MiB). De ellos, 99 (663 MiB, del 09/09 al 25/10) llevaban `local-data/` con
+planillas del cliente; ninguno llevaba archivos de entorno. Los posteriores a D-726 están limpios.
+
+La propuesta de borrado y de retención a 30 días espera el OK del dueño por nombre. El informe quedó
+fuera del repo, en `local-data/cc69/M3-INFORME.md`.
+
+**Ratificaciones anotadas en cc69.** El dueño ratificó el 2026-10-27 D-712, D-713 (dw-03), D-720
+(cc67) y D-721..D-727 (cc68). D-697 y D-709 (cc65) las había ratificado el 2026-10-22 y no se habían
+anotado. Las filas de §0.2 lo dicen en su fecha.

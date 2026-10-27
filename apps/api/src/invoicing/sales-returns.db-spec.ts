@@ -24,12 +24,14 @@ import { CustomersService } from '../customers/customers.service';
 import { FinishesService } from '../finishes/finishes.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PurchasesService } from '../purchases/purchases.service';
+import { InventoryValuationService } from '../reports/inventory-valuation.service';
 import { SalesMarginService } from '../reports/sales-margin.service';
 import { SalesOrdersService } from '../sales/sales-orders.service';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { DispatchesService } from './dispatches.service';
 import { FiscalImportService } from './fiscal-import.service';
 import { InvoicingService } from './invoicing.service';
+import { SalesReturnsService } from './sales-returns.service';
 
 /**
  * cc52 (D-645..D-647) — **nota de crédito con devolución, contra una base real.**
@@ -626,5 +628,277 @@ describe('cc52: nota de crédito con devolución', () => {
       t.costPen,
       t.marginPen,
     ]);
+  });
+});
+
+/**
+ * cc69 (D-728) — **la NC conserva su fecha; lo que sale de un despacho posterior reingresa en la
+ * fecha de ese despacho**, al costo con que salió. Ventas y margen sigue en el mes de la NC.
+ */
+describe('cc69 (D-728): NC fechada antes del despacho', () => {
+  async function newProduct(label: string) {
+    return (
+      await moduleRef.get(CatalogService).create(
+        admin,
+        createProductSchema.parse({
+          businessLineId: tradingLineId,
+          sku: `T-CC69-${label}-${letters(6)}`,
+          name: `Producto cc69 ${label}`,
+          unit: 'NIU',
+          source: 'PURCHASED',
+        }),
+      )
+    ).id;
+  }
+
+  async function order(productId: string, qty: string, issueDate: string) {
+    return moduleRef.get(SalesOrdersService).createDirect(
+      admin,
+      createSalesOrderSchema.parse({
+        customerId,
+        issueDate,
+        items: [{ productId, qty, unitPricePen: '50' }],
+      }),
+    );
+  }
+
+  type Order = Awaited<ReturnType<typeof order>>;
+
+  async function dispatch(o: Order, qty: string, date: string) {
+    await moduleRef.get(DispatchesService).create(
+      admin,
+      createDispatchSchema.parse({
+        salesOrderId: o.id,
+        dispatchDate: date,
+        confirmBackdate: true,
+        originAddress: 'Almacén cc69',
+        destinationAddress: 'Cliente cc69',
+        originUbigeo: '150101',
+        destinationUbigeo: '150101',
+        transferMode: 'PICKUP',
+        items: o.items.map((i) => ({ salesOrderItemId: i.id, qty })),
+      }),
+    );
+  }
+
+  async function invoice(o: Order, issueDate: string) {
+    const draft = await invoicing.create(
+      admin,
+      createInvoiceSchema.parse({
+        docType: 'FACTURA',
+        customerId,
+        salesOrderId: o.id,
+        issueDate,
+        items: o.items.map((it) => ({ salesOrderItemId: it.id, qty: it.qty })),
+      }),
+    );
+    return invoicing.registerManual(admin, draft.id, {
+      series: 'F955',
+      correlative: (correlative += 1),
+    });
+  }
+
+  const day = (d: Date | undefined) => d?.toISOString().slice(0, 10);
+
+  async function valuationOf(productId: string) {
+    const report = await moduleRef.get(InventoryValuationService).valuation();
+    return report.products.find((p) => p.itemId === productId);
+  }
+
+  async function marginNote(from: string, to: string, noteId: string) {
+    const report = await moduleRef
+      .get(SalesMarginService)
+      .salesMargin(salesMarginQuerySchema.parse({ from, to }));
+    const c = report.creditTotals;
+    const t = report.totals;
+    // D-720: netas = `totals`, al céntimo.
+    expect([c.netSalesPen, c.netCostPen]).toEqual([t.salesPen, t.costPen]);
+    return report.creditNotes.find((n) => n.id === noteId);
+  }
+
+  it('mismo mes: la NC queda en su fecha y el reingreso entra el día del despacho', async () => {
+    const productId = await newProduct('MES');
+    await buy(productId, '10', '20', PREV(5));
+    const o = await order(productId, '5', PREV(6));
+    const inv = await invoice(o, PREV(7));
+    await dispatch(o, '5', PREV(12));
+    const detail = await invoicing.findOne(inv.id);
+    const preview = await invoicing.previewCreditNote(
+      admin,
+      inv.id,
+      createCreditNoteSchema.parse({
+        reason: 'DEVOLUCION_ITEM',
+        issueDate: PREV(8),
+        items: [{ affectedItemId: detail.items[0]?.id ?? '', qty: '2' }],
+      }),
+    );
+    expect(preview.stock).toEqual([
+      expect.objectContaining({ entryDate: PREV(12), afterCreditNote: true, qty: '2.000' }),
+    ]);
+    const note = await creditNote(inv.id, 'DEVOLUCION_ITEM', '2', PREV(8));
+    const stored = await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: note.id } });
+    expect(day(stored.issueDate)).toBe(PREV(8));
+    const [movement] = await returnMovements(productId);
+    expect(movement?.type).toBe('IN');
+    expect(day(movement?.operationDate)).toBe(PREV(12));
+    expect(movement?.totalCost.toFixed(4)).toBe('40.0000');
+    const ret = await prisma.salesReturn.findUniqueOrThrow({ where: { creditNoteId: note.id } });
+    expect(day(ret.operationDate)).toBe(PREV(12));
+    const dto = await moduleRef.get(SalesReturnsService).findOne(ret.id);
+    expect(dto).toMatchObject({ operationDate: PREV(12), creditNoteDate: PREV(8) });
+    expect(dto.items[0]).toMatchObject({ operationDate: PREV(12), dispatchDate: PREV(12) });
+
+    expect(await marginNote(PREV_FROM, PREV_TO, note.id)).toMatchObject({ costPen: '-40.0000' });
+    expect(await valuationOf(productId)).toMatchObject({ qty: '7.000', totalValuePen: '140.0000' });
+  });
+
+  it('mes anterior: venta y costo bajan en el mes de la NC; el almacén, el día del despacho', async () => {
+    const productId = await newProduct('ANT');
+    await buy(productId, '10', '20', PREV(5));
+    const o = await order(productId, '5', PREV(25));
+    const inv = await invoice(o, PREV(26));
+    await dispatch(o, '5', THIS_FROM);
+    const note = await creditNote(inv.id, 'DEVOLUCION_TOTAL', null, PREV(27));
+    const [movement] = await returnMovements(productId);
+    expect(day(movement?.operationDate)).toBe(THIS_FROM);
+    expect(movement?.totalCost.toFixed(4)).toBe('100.0000');
+    expect(await marginNote(PREV_FROM, PREV_TO, note.id)).toMatchObject({
+      costPen: '-100.0000',
+      inTotals: true,
+    });
+    expect(await marginNote(THIS_FROM, TODAY, note.id)).toBeUndefined();
+    expect(await valuationOf(productId)).toMatchObject({
+      qty: '10.000',
+      totalValuePen: '200.0000',
+    });
+  });
+
+  it('repartida en dos despachos: cada parte con su fecha y el costo de su salida, recosteada', async () => {
+    // 2 u a 20 y 8 u a 30. DES-A (día 5) saca 2 a 20; DES-B (día 15) saca 3 al promedio de ese día.
+    // La NC del día 10 devuelve 4: 2 de DES-A (hasta la NC, el día 10) y 2 de DES-B (el día 15).
+    // La parte del día 10 vuelve a 20 y recostea DES-B: 10 u por 280 → 28; DES-B sale a 84 y su
+    // parte devuelta lo sigue (2/3 de 84 = 56). Grabada antes la parte temprana, quedaría a 60.
+    const productId = await newProduct('DOS');
+    await buy(productId, '2', '20', PREV(3));
+    // El pedido reserva al crearse: la segunda compra se graba antes, con su fecha (día 9).
+    await buy(productId, '8', '30', PREV(9));
+    const o = await order(productId, '5', PREV(4));
+    await dispatch(o, '2', PREV(5));
+    const inv = await invoice(o, PREV(6));
+    await dispatch(o, '3', PREV(15));
+    const note = await creditNote(inv.id, 'DEVOLUCION_ITEM', '4', PREV(10));
+    const ret = await prisma.salesReturn.findUniqueOrThrow({
+      where: { creditNoteId: note.id },
+      include: { items: { orderBy: { lineNumber: 'asc' }, include: { movement: true } } },
+    });
+    expect(day(ret.operationDate)).toBe(PREV(15));
+    expect(ret.items.map((i) => [i.qty.toFixed(3), day(i.movement.operationDate)])).toEqual([
+      ['2.000', PREV(10)],
+      ['2.000', PREV(15)],
+    ]);
+    const recosts = await prisma.inventoryMovement.aggregate({
+      where: { recostOfId: { in: ret.items.map((i) => i.movementId) } },
+      _sum: { totalCost: true },
+    });
+    const effective = ret.items
+      .reduce((acc, i) => acc.plus(i.totalCost), new Prisma.Decimal(0))
+      .plus(recosts._sum.totalCost ?? 0);
+    expect(effective.toFixed(4)).toBe('96.0000');
+    // La DEV- muestra ese mismo costo efectivo (autorrevisión de cc69, P2-1).
+    const dto = await moduleRef.get(SalesReturnsService).findOne(ret.id);
+    expect(dto.totalCostPen).toBe('96.0000');
+    expect(await valuationOf(productId)).toMatchObject({ qty: '9.000', totalValuePen: '252.0000' });
+    expect(await marginNote(PREV_FROM, PREV_TO, note.id)).toMatchObject({ costPen: '-96.0000' });
+  });
+
+  it('anular la NC revierte cada reingreso con la fecha del día en que se anula', async () => {
+    const productId = await newProduct('ANU');
+    await buy(productId, '10', '20', PREV(5));
+    const o = await order(productId, '5', PREV(6));
+    const inv = await invoice(o, PREV(7));
+    await dispatch(o, '5', PREV(12));
+    const note = await creditNote(inv.id, 'DEVOLUCION_ITEM', '2', PREV(8));
+    await fiscalImport.annulExternal(admin, note.id, 'cc69 anular la NC');
+    const moves = await returnMovements(productId);
+    expect(moves.map((m) => [m.type, day(m.operationDate)])).toEqual([
+      ['IN', PREV(12)],
+      ['OUT', TODAY],
+    ]);
+    expect(moves[1]?.reversalOfId).toBe(moves[0]?.id);
+    expect(await valuationOf(productId)).toMatchObject({ qty: '5.000', totalValuePen: '100.0000' });
+  });
+
+  it('la 01 también devuelve lo despachado después de la NC, en la fecha del despacho', async () => {
+    const productId = await newProduct('ANU01');
+    await buy(productId, '10', '20', PREV(5));
+    const o = await order(productId, '5', PREV(6));
+    const inv = await invoice(o, PREV(7));
+    await dispatch(o, '5', PREV(12));
+    const note = await creditNote(inv.id, 'ANULACION_OPERACION', null, PREV(8));
+    const [movement] = await returnMovements(productId);
+    expect([movement?.qty.toFixed(3), day(movement?.operationDate)]).toEqual(['5.000', PREV(12)]);
+    expect(await marginNote(PREV_FROM, PREV_TO, note.id)).toMatchObject({ costPen: '-100.0000' });
+    expect(await valuationOf(productId)).toMatchObject({
+      qty: '10.000',
+      totalValuePen: '200.0000',
+    });
+  });
+
+  it('opción B: un pedido de dos facturas; la NC de la segunda no devuelve lo de la primera', async () => {
+    const productId = await newProduct('DOSF');
+    await buy(productId, '10', '20', PREV(3));
+    const o = await order(productId, '10', PREV(4));
+    const [line] = o.items;
+    if (!line) throw new Error('el pedido no tiene línea');
+    const shipped = async (date: string) => {
+      await dispatch(o, '5', date);
+      return prisma.dispatch.findFirstOrThrow({
+        where: { salesOrderId: o.id, dispatchDate: new Date(`${date}T00:00:00.000Z`) },
+      });
+    };
+    const declared = async (dispatchId: string, issueDate: string) => {
+      const draft = await invoicing.create(
+        admin,
+        createInvoiceSchema.parse({
+          docType: 'FACTURA',
+          customerId,
+          salesOrderId: o.id,
+          issueDate,
+          dispatchId,
+          items: [{ salesOrderItemId: line.id, qty: '5' }],
+        }),
+      );
+      return invoicing.registerManual(admin, draft.id, {
+        series: 'F955',
+        correlative: (correlative += 1),
+      });
+    };
+    // F1 declara el despacho del día 5; F2, el del día 15. La NC de F2 es del día 12: antes de cc69
+    // (y con la preferencia de cc52) salía del despacho de F1, el único anterior a la NC.
+    const first = await shipped(PREV(5));
+    await declared(first.id, PREV(5));
+    const second = await shipped(PREV(15));
+    const f2 = await declared(second.id, PREV(10));
+    const note = await creditNote(f2.id, 'DEVOLUCION_ITEM', '5', PREV(12));
+    const ret = await prisma.salesReturn.findUniqueOrThrow({
+      where: { creditNoteId: note.id },
+      include: { items: { include: { dispatchItem: true, movement: true } } },
+    });
+    expect(
+      ret.items.map((i) => [i.dispatchItem.dispatchId, day(i.movement.operationDate)]),
+    ).toEqual([[second.id, PREV(15)]]);
+  });
+
+  it('sin despacho todavía, lo dice con la causa real', async () => {
+    const productId = await newProduct('SIN');
+    await buy(productId, '10', '20', PREV(5));
+    const o = await order(productId, '5', PREV(6));
+    const inv = await invoice(o, PREV(7));
+    const r = await rejection(creditNote(inv.id, 'DEVOLUCION_ITEM', '2', PREV(8)));
+    expect(r).toEqual({
+      status: 400,
+      message:
+        'Línea 1: no hay nada despachado de este pedido; si la mercadería no salió del almacén, usa «Rebajar el precio».',
+    });
   });
 });

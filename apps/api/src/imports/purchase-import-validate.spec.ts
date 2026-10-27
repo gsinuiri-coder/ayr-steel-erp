@@ -340,14 +340,15 @@ describe('validateDocument — producto terminado: el SKU por la línea de la ca
   });
 
   it.each(['CAJA', 'cja', 'BX'])(
-    'cc68 (D-724): la unidad «%s» del archivo es la caja (BX)',
+    'cc68 (D-724): la unidad «%s» del archivo es la caja (BX); cc69 (D-729): no la de un producto en NIU',
     (u) => {
       const r = validateDocument(
         fg({ lines: [line({ sku: 'clavo1', qty: '4', unit: u })] }),
         ctx(),
       );
-      expect(errors(r)).toEqual([]);
-      expect(r.input?.items[0]?.unit).toBe('BX');
+      expect(errors(r)).toEqual([
+        expect.stringContaining('CLAVO1 se lleva en Unidad (NIU) y la línea dice Caja (BX)'),
+      ]);
     },
   );
 
@@ -740,5 +741,40 @@ describe('validateDocument — número del comprobante (cc33 B8 y ceros)', () =>
       }),
     );
     expect(errors(r)[0]).toMatch(/Ya registrada/);
+  });
+});
+
+describe('validateDocument — cc69 (D-729): la unidad de la línea es la del producto', () => {
+  const BOX = { ...PRODUCT_TRADING, id: 'p-box', sku: 'ESQ30', name: 'Esquinero', unit: 'BX' };
+  const boxes = (unit: string) =>
+    validateDocument(
+      doc({
+        type: 'Producto terminado',
+        businessLine: 'Reventa',
+        lines: [line({ sku: 'ESQ30', qty: '10', unit, unitPrice: '100' })],
+      }),
+      ctx({
+        productsBySku: new Map([['ESQ30', [BOX]]]),
+        productsById: new Map([[BOX.id, BOX]]),
+      }),
+    );
+
+  it('una caja que llega como «UND» se rechaza, con el alias ya resuelto', () => {
+    expect(errors(boxes('UND'))).toEqual([
+      'Fila 2: ESQ30 se lleva en Caja (BX) y la línea dice Unidad (NIU): la unidad de la compra tiene que ser la del producto. Corrige la unidad de la línea (o la del producto, si es la que está mal).',
+    ]);
+  });
+
+  it('«CAJAS», «CJA», «BX» o vacía (la del producto) pasan', () => {
+    for (const unit of ['CAJAS', 'CJA', 'BX', '']) {
+      const r = boxes(unit);
+      expect(errors(r)).toEqual([]);
+      expect(r.input?.items[0]?.unit).toBe('BX');
+    }
+  });
+
+  it('la tonelada y los plurales se leen como su unidad', () => {
+    expect(errors(boxes('TONELADAS'))[0]).toMatch(/la línea dice Tonelada \(TNE\)/);
+    expect(errors(boxes('KILOS'))[0]).toMatch(/la línea dice Kilogramo \(KGM\)/);
   });
 });

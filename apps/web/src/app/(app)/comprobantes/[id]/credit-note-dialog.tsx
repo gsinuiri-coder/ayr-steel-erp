@@ -12,6 +12,7 @@ import {
   CREDIT_NOTE_REASON_INFO,
   CREDIT_NOTE_REASON_LABELS,
   CREDIT_NOTE_REASON_SUNAT_CODE,
+  lateReturnEntryNotice,
   returnsStock,
   toDecimal,
   type CreditNoteGroup,
@@ -340,6 +341,7 @@ export function CreditNoteDialog({
             <WhatWillHappen
               document={d}
               reason={draft.reason}
+              noteDate={draft.issueDate}
               preview={preview.data}
               loading={preview.isFetching}
               error={
@@ -778,16 +780,30 @@ function ReasonFields({
   }
 }
 
+/** cc69 (D-728): un aviso por despacho posterior a la NC, sin repetir. */
+function lateEntries(stock: CreditNotePreviewDto['stock'], noteDate: string): string[] {
+  return [
+    ...new Set(
+      stock
+        .filter((s) => s.afterCreditNote)
+        .map((s) => lateReturnEntryNotice(s.entryDate, s.dispatch, noteDate)),
+    ),
+  ];
+}
+
 /** El recuadro «Qué va a pasar», con lo que calculó el API. */
 function WhatWillHappen({
   document: d,
   reason,
+  noteDate,
   preview,
   loading,
   error,
 }: {
   document: FiscalDocumentDto;
   reason: CreditNoteReason;
+  /** cc69: la fecha de la NC, para el año del aviso de entrada tardía. */
+  noteDate: string;
   preview: CreditNotePreviewDto | undefined;
   loading: boolean;
   error: string | null;
@@ -834,6 +850,16 @@ function WhatWillHappen({
                     : <b>{formatMoney(preview.costPen)}</b>.
                   </>
                 )}
+                {/* cc69 (D-728): lo que sale de un despacho posterior entra en la fecha de ese despacho. */}
+                {lateEntries(preview.stock, noteDate).map((notice) => (
+                  <span
+                    key={notice}
+                    className="mt-1 block text-amber-700 dark:text-amber-400"
+                    data-testid="credit-note-preview-late-entry"
+                  >
+                    {notice}
+                  </span>
+                ))}
               </>
             ),
           )}

@@ -945,7 +945,16 @@ export function PurchaseForm({
                   name={`items.${index}.unit`}
                   render={({ field }) => (
                     <FormFieldCell span={2} label="Unidad">
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      {/* cc69 (D-729): con producto, la unidad es la suya (el API rechaza otra). */}
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        disabled={
+                          isFinishedGood &&
+                          productUnitOf(products.data, form.watch(`items.${index}.productId`)) !==
+                            null
+                        }
+                      >
                         <FormControl>
                           <SelectTrigger className="w-full">
                             <SelectValue />
@@ -1168,6 +1177,15 @@ function computeTotals(
 
 function isDecimalString(value: string | undefined): value is string {
   return !!value && /^\d+(\.\d+)?$/.test(value);
+}
+
+/** cc69 (D-729): la unidad de la lista del producto elegido, o `null` (sin producto o unidad vieja). */
+function productUnitOf(
+  products: readonly { id: string; unit: string }[] | undefined,
+  productId: string | undefined,
+): string | null {
+  const unit = productId ? products?.find((p) => p.id === productId)?.unit : undefined;
+  return unit !== undefined && UNITS.some((u) => u === unit) ? unit : null;
 }
 
 function coerceUnit(unit: string): PurchaseFormValues['items'][number]['unit'] {
