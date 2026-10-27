@@ -166,6 +166,64 @@ describe('SalesReturnsService (cc52, D-646)', () => {
     expect(targets).toEqual(['sr-1', 'nc-1', 'f-1', 'o-1']);
   });
 
+  it('cc69 (D-728): de un despacho posterior entra en su fecha; graba primero la parte más tardía', async () => {
+    const { service, tx, rawTx, inventory } = setup({
+      note: { ...NOTE, items: [{ ...NOTE.items[0], qty: D('7') }] },
+      dispatchItems: [
+        dispatchItem(),
+        dispatchItem({
+          id: 'di-2',
+          dispatchId: 'd-2',
+          movementId: 11n,
+          dispatch: {
+            seq: 9,
+            dispatchDate: new Date('2026-10-20T00:00:00.000Z'),
+            invoiceId: 'f-1',
+            invoice: { status: 'ACCEPTED', archivedAt: null },
+          },
+        }),
+      ],
+    });
+    rawTx.inventoryMovement.findMany.mockResolvedValue([
+      {
+        id: 10n,
+        unitCost: D('20.0000'),
+        totalCost: D('100.0000'),
+        unit: 'NIU',
+        businessLineId: 'bl-1',
+      },
+      {
+        id: 11n,
+        unitCost: D('30.0000'),
+        totalCost: D('150.0000'),
+        unit: 'NIU',
+        businessLineId: 'bl-1',
+      },
+    ]);
+    await service.createForCreditNoteInTx(tx, ADMIN, 'nc-1', ['d-1', 'd-2']);
+    expect(rawTx.salesReturn.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ operationDate: new Date('2026-10-20T00:00:00.000Z') }),
+      }),
+    );
+    // Primero la parte del despacho posterior (línea 2 de la DEV-), después la de la fecha de la NC.
+    expect(
+      inventory.record.mock.calls.map((c) => [c[1].operationDate, c[1].qty, c[1].totalCost]),
+    ).toEqual([
+      ['2026-10-20', '2.000', '60.0000'],
+      ['2026-10-14', '5.000', '100.0000'],
+    ]);
+    expect(
+      rawTx.salesReturnItem.create.mock.calls.map((c) => [
+        c[0].data.lineNumber,
+        c[0].data.dispatchItemId,
+      ]),
+    ).toEqual([
+      [2, 'di-2'],
+      [1, 'di-1'],
+    ]);
+  });
+
   it('una bobina terminada que vuelve se reabre', async () => {
     const { service, tx, rawTx, audit } = setup({
       note: { ...NOTE, items: [{ ...NOTE.items[0], qty: D('1') }] },
@@ -336,7 +394,7 @@ describe('SalesReturnsService (cc52, D-646)', () => {
     });
   });
 
-  it('cc69: el costo de la DEV- es el efectivo, con los recosteos de su reingreso', () => {
+  it('cc69: el costo de la DEV- es el efectivo, con los recosteos de su reingreso', async () => {
     const row = {
       id: 'sr-1',
       seq: 3,
@@ -374,6 +432,21 @@ describe('SalesReturnsService (cc52, D-646)', () => {
         },
       ],
     } as never;
+    // findOne lee los recosteos de cada reingreso y los suma al costo grabado.
+    const groupBy = jest
+      .fn()
+      .mockResolvedValue([{ recostOfId: 99n, _sum: { totalCost: new Prisma.Decimal('-4') } }]);
+    const findUnique = jest.fn().mockResolvedValueOnce(row).mockResolvedValueOnce(null);
+    const reader = new SalesReturnsService(
+      { salesReturn: { findUnique }, inventoryMovement: { groupBy } } as unknown as PrismaService,
+      {} as InventoryService,
+      {} as AuditService,
+    );
+    await expect(reader.findOne('sr-1')).resolves.toMatchObject({ totalCostPen: '56.0000' });
+    expect(groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { recostOfId: { in: [99n] } } }),
+    );
+    await expect(reader.findOne('sr-x')).rejects.toThrow(NotFoundException);
     const dto = toSalesReturnDto(row, new Map([['99', new Decimal('-4')]]));
     expect(dto.totalCostPen).toBe('56.0000');
     expect(dto.items[0]).toMatchObject({ unitCostPen: '28.0000', totalCostPen: '56.0000' });
