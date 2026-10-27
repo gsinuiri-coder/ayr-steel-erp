@@ -335,6 +335,50 @@ describe('SalesReturnsService (cc52, D-646)', () => {
       operationDate: '2026-10-20',
     });
   });
+
+  it('cc69: el costo de la DEV- es el efectivo, con los recosteos de su reingreso', () => {
+    const row = {
+      id: 'sr-1',
+      seq: 3,
+      status: 'ACTIVE',
+      operationDate: new Date('2026-10-20T00:00:00.000Z'),
+      creditNote: {
+        id: 'nc-1',
+        number: 'FC90-1',
+        issueDate: new Date('2026-10-14T00:00:00.000Z'),
+        creditNoteReason: 'DEVOLUCION_ITEM',
+        affectedDocument: null,
+      },
+      salesOrder: { id: 'o-1', seq: 12 },
+      createdAt: new Date('2026-10-20T15:00:00.000Z'),
+      createdBy: { name: 'Admin' },
+      reversedAt: null,
+      reversedBy: null,
+      reverseReason: null,
+      items: [
+        {
+          lineNumber: 1,
+          creditNoteItem: { lineNumber: 1, description: 'Producto', unit: 'NIU' },
+          qty: D('2'),
+          itemType: 'PRODUCT',
+          itemId: 'p-1',
+          reserveQty: D('2'),
+          movement: { unit: 'NIU', operationDate: new Date('2026-10-20T00:00:00.000Z') },
+          unitCost: D('30'),
+          totalCost: D('60'),
+          dispatchItem: {
+            dispatchId: 'd-1',
+            dispatch: { seq: 7, dispatchDate: new Date('2026-10-20T00:00:00.000Z') },
+          },
+          movementId: 99n,
+        },
+      ],
+    } as never;
+    const dto = toSalesReturnDto(row, new Map([['99', new Decimal('-4')]]));
+    expect(dto.totalCostPen).toBe('56.0000');
+    expect(dto.items[0]).toMatchObject({ unitCostPen: '28.0000', totalCostPen: '56.0000' });
+    expect(toSalesReturnDto(row).totalCostPen).toBe('60.0000');
+  });
 });
 
 describe('effectiveOutCost (cc53, D-649)', () => {

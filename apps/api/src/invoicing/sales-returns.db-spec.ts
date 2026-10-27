@@ -804,6 +804,9 @@ describe('cc69 (D-728): NC fechada antes del despacho', () => {
       .reduce((acc, i) => acc.plus(i.totalCost), new Prisma.Decimal(0))
       .plus(recosts._sum.totalCost ?? 0);
     expect(effective.toFixed(4)).toBe('96.0000');
+    // La DEV- muestra ese mismo costo efectivo (autorrevisión de cc69, P2-1).
+    const dto = await moduleRef.get(SalesReturnsService).findOne(ret.id);
+    expect(dto.totalCostPen).toBe('96.0000');
     expect(await valuationOf(productId)).toMatchObject({ qty: '9.000', totalValuePen: '252.0000' });
     expect(await marginNote(PREV_FROM, PREV_TO, note.id)).toMatchObject({ costPen: '-96.0000' });
   });
@@ -823,6 +826,22 @@ describe('cc69 (D-728): NC fechada antes del despacho', () => {
     ]);
     expect(moves[1]?.reversalOfId).toBe(moves[0]?.id);
     expect(await valuationOf(productId)).toMatchObject({ qty: '5.000', totalValuePen: '100.0000' });
+  });
+
+  it('la 01 también devuelve lo despachado después de la NC, en la fecha del despacho', async () => {
+    const productId = await newProduct('ANU01');
+    await buy(productId, '10', '20', PREV(5));
+    const o = await order(productId, '5', PREV(6));
+    const inv = await invoice(o, PREV(7));
+    await dispatch(o, '5', PREV(12));
+    const note = await creditNote(inv.id, 'ANULACION_OPERACION', null, PREV(8));
+    const [movement] = await returnMovements(productId);
+    expect([movement?.qty.toFixed(3), day(movement?.operationDate)]).toEqual(['5.000', PREV(12)]);
+    expect(await marginNote(PREV_FROM, PREV_TO, note.id)).toMatchObject({ costPen: '-100.0000' });
+    expect(await valuationOf(productId)).toMatchObject({
+      qty: '10.000',
+      totalValuePen: '200.0000',
+    });
   });
 
   it('sin despacho todavía, lo dice con la causa real', async () => {

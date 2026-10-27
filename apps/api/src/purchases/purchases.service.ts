@@ -659,6 +659,24 @@ export class PurchasesService {
         // antes del primer ingreso y por clave, no en el orden de las líneas (una compra b, a se
         // cruzaba con un despacho a, b). Las bobinas nacen en esta recepción: no hay que tomarlas.
         if (purchase.type === PurchaseType.FINISHED_GOOD) {
+          // cc69 (D-729, segundo modelo P3-5): un borrador guardado antes de la regla tampoco
+          // entra al kardex en otra unidad que la de su producto.
+          const productIds = items.flatMap((i) => (i.productId === null ? [] : [i.productId]));
+          const products = new Map(
+            (
+              await tx.product.findMany({
+                where: { id: { in: productIds } },
+                select: { id: true, sku: true, unit: true },
+              })
+            ).map((p) => [p.id, p]),
+          );
+          for (const item of items) {
+            const product = item.productId === null ? undefined : products.get(item.productId);
+            const mismatch = product && purchaseUnitMismatch(product.sku, product.unit, item.unit);
+            if (mismatch) {
+              throw new BadRequestException(`Línea ${String(item.lineNumber)}: ${mismatch}`);
+            }
+          }
           await this.inventory.lockInOrder(tx, {
             items: items.flatMap((item) =>
               item.productId === null

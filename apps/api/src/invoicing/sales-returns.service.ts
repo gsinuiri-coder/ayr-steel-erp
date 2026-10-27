@@ -31,6 +31,7 @@ import type { RequestUser } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  NothingDispatchedError,
   planReturnAllocation,
   type DispatchLineStock,
   type ReturnAllocation,
@@ -42,9 +43,10 @@ import {
  *
  * Se crea al **registrar** la NC (cuando queda aceptada), nunca en el borrador: un borrador se
  * descarta. Reingresa cada línea al kardex por la puerta de la regla dura 8
- * (`InventoryService.record`, IN, `SALES_RETURN`), con la fecha de la NC y **al costo con que salió**
- * esa mercadería: el del movimiento de su despacho, del más reciente hacia atrás, nunca más de lo
- * despachado menos lo ya devuelto. No vuelve a reservar ni cambia el estado del pedido: la venta
+ * (`InventoryService.record`, IN, `SALES_RETURN`), con la fecha de la NC (cc69, D-728: o la de su
+ * despacho, si es posterior a la NC) y **al costo con que salió** esa mercadería: el del movimiento
+ * de su despacho, primero los anteriores a la NC (del más reciente hacia atrás) y después los
+ * posteriores, nunca más de lo despachado menos lo ya devuelto. No vuelve a reservar ni cambia el estado del pedido: la venta
  * de esa cantidad se deshizo (D-646). Una bobina se devuelve entera, vuelve con su peso y, si
  * estaba terminada, se reabre. Un producto a medida reingresa como producto terminado sobrante,
  * sin pedido (ningún otro pedido lo toma; desde cc65, D-697, el mostrador lo vende).
@@ -251,10 +253,9 @@ export class SalesReturnsService {
     const qty = toDecimal(withoutKardex._sum.qty?.toString() ?? '0');
     if (qty.lte(0)) return err;
     // cc69: si no hay nada con salida en el kardex, la causa es la entrega previa, no «no salió nada».
-    if (err.message.includes('no hay nada despachado')) {
-      const at = err.message.slice(0, err.message.indexOf(':'));
+    if (err instanceof NothingDispatchedError) {
       return new BadRequestException(
-        `${at}: lo despachado (${qty.toFixed(3)}) se entregó antes del inventario inicial y no tiene salida en el kardex: no vuelve al almacén por la nota de crédito. Para acreditar solo el importe, usa «Rebajar el precio».`,
+        `${err.at}: lo despachado (${qty.toFixed(3)}) se entregó antes del inventario inicial y no tiene salida en el kardex: no vuelve al almacén por la nota de crédito. Para acreditar solo el importe, usa «Rebajar el precio».`,
       );
     }
     return new BadRequestException(
@@ -731,7 +732,19 @@ export class SalesReturnsService {
       },
     });
     if (r === null) throw new NotFoundException('Devolución no encontrada');
-    return toSalesReturnDto(r);
+    // cc69 (autorrevisión P2-1): el costo efectivo de cada reingreso, con sus recosteos (D-649), el
+    // mismo que leen Ventas y margen y la valorización.
+    const recosts = await this.prisma.inventoryMovement.groupBy({
+      by: ['recostOfId'],
+      where: { recostOfId: { in: r.items.map((i) => i.movementId) } },
+      _sum: { totalCost: true },
+    });
+    return toSalesReturnDto(
+      r,
+      new Map(
+        recosts.map((g) => [String(g.recostOfId), toDecimal(g._sum.totalCost?.toString() ?? '0')]),
+      ),
+    );
   }
 }
 
@@ -761,7 +774,15 @@ type SalesReturnRow = Prisma.SalesReturnGetPayload<{
   };
 }>;
 
-export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
+export function toSalesReturnDto(
+  r: SalesReturnRow,
+  /** Lo que suman los recosteos de cada reingreso, por id de movimiento. */
+  recostByMovement: ReadonlyMap<string, Decimal> = new Map(),
+): SalesReturnDto {
+  const effective = (i: SalesReturnRow['items'][number]) =>
+    toDecimal(i.totalCost.toString()).plus(
+      recostByMovement.get(i.movementId.toString()) ?? new Decimal(0),
+    );
   return {
     id: r.id,
     code: salesReturnCode(r.seq),
@@ -781,7 +802,7 @@ export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
     reversedByName: r.reversedBy?.name ?? null,
     reverseReason: r.reverseReason,
     totalCostPen: toFixedString(
-      r.items.reduce((acc, i) => acc.plus(i.totalCost.toString()), new Decimal(0)),
+      r.items.reduce((acc, i) => acc.plus(effective(i)), new Decimal(0)),
       'MONEY',
     ),
     items: r.items.map((i) => ({
@@ -794,8 +815,10 @@ export function toSalesReturnDto(r: SalesReturnRow): SalesReturnDto {
       itemId: i.itemId,
       reserveQty: i.reserveQty.toFixed(3),
       kardexUnit: i.movement.unit,
-      unitCostPen: i.unitCost.toFixed(4),
-      totalCostPen: i.totalCost.toFixed(4),
+      unitCostPen: i.reserveQty.isZero()
+        ? i.unitCost.toFixed(4)
+        : toFixedString(effective(i).div(i.reserveQty.toString()), 'MONEY'),
+      totalCostPen: toFixedString(effective(i), 'MONEY'),
       dispatchId: i.dispatchItem.dispatchId,
       dispatchCode: dispatchCode(i.dispatchItem.dispatch.seq),
       dispatchDate: fromDateOnly(i.dispatchItem.dispatch.dispatchDate),

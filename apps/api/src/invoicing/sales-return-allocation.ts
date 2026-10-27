@@ -47,11 +47,26 @@ export interface ReturnAllocation {
 }
 
 const ZERO = new Decimal(0);
+/**
+ * cc69: el rechazo de una línea sin nada despachado. El servicio lo reconoce para nombrar lo
+ * entregado antes del inventario inicial (sin salida de kardex), en vez de comparar el texto.
+ */
+export class NothingDispatchedError extends BadRequestException {
+  constructor(readonly at: string) {
+    super(
+      `${at}: no hay nada despachado de este comprobante; si la mercadería no salió del almacén, usa «Rebajar el precio».`,
+    );
+  }
+}
 /** La menor cantidad que el kardex registra (3 decimales). */
 const KARDEX_STEP = new Decimal('0.001');
 
 export interface ReturnPlanOptions {
-  /** Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. */
+  /**
+   * Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. cc69
+   * (D-728): dentro de cada grupo; un despacho anterior a la NC va antes que uno posterior aunque
+   * este sea el declarado.
+   */
   affectedInvoiceId?: string | null;
   /**
    * La fecha de la NC. cc69 (D-728): primero los despachos hasta esa fecha; lo que falte, de los
@@ -118,14 +133,10 @@ export function planReturnAllocation(
   if (options.upToAvailable && available.lte(0)) return [];
   const wanted = options.upToAvailable ? Decimal.min(qty, available) : qty;
   // cc69: sin nada disponible, la causa real (no salió nada, o ya se devolvió todo), no «hay 0.000».
-  if (dispatched.lte(0)) {
-    throw new BadRequestException(
-      `${at}: no hay nada despachado de este comprobante; si la mercadería no salió del almacén, usa «Rebajar el precio».`,
-    );
-  }
+  if (dispatched.lte(0)) throw new NothingDispatchedError(at);
   if (available.lte(0)) {
     throw new BadRequestException(
-      `${at}: lo despachado (${dispatched.toFixed(3)}) ya se devolvió entero con otras notas de crédito; no queda nada por devolver.`,
+      `${at}: lo despachado (${dispatched.toFixed(3)}) ya se devolvió entero; no queda nada por devolver.`,
     );
   }
   if (wanted.gt(available)) {

@@ -2228,8 +2228,8 @@ export class InvoicingService {
       // La mitad simétrica: si el que se corrige **es** una nota de crédito, no puede quedar
       // fechada antes del comprobante que acredita. Es la misma incoherencia mirada desde el
       // otro lado, y sin esto la cota de arriba solo cubría una dirección.
-      // cc52 (D-645): la fecha de una NC con devolución es la de su reingreso al kardex: no se
-      // cambia después (se anula la NC, que revierte la devolución, y se registra otra).
+      // cc52 (D-645): la fecha de una NC con devolución es la de su reingreso al kardex (cc69, D-728:
+      // o la de su despacho, si es posterior): no se cambia después (se anula la NC, que revierte la devolución, y se registra otra).
       const salesReturn =
         document.docType === FiscalDocType.NOTA_CREDITO
           ? await tx.salesReturn.findFirst({
