@@ -2,6 +2,49 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-27 — cc68: Drywall inicial anulado, ESQ30 por caja y la unidad como lista cerrada (D-721..D-727; PR #256)
+
+Sin migración y sin SQL contra producción. API `00155-j2j` (git-sha `e8b8c213`), merge `ee436efb`. Para volver atrás la
+API: `00154-l74`.
+
+- **Código (PR #256):**
+  - D-722: reversa de la carga inicial de productos (`--revert`, todo o nada, fecha obligatoria).
+  - D-723: la unidad es una lista cerrada, con el selector en el catálogo; una unidad vieja se valida solo si cambia.
+  - D-724: unidad BX «caja». El producto cambia de unidad solo con el saldo, las reservas y los pedidos vivos en cero.
+    Confirmar una línea en la unidad vieja manda a editar la cotización.
+  - D-725: formato 13.1 con la tabla 6 vigente (BX, KGM, MTR, NIU, TNE, ZZ), un solo mapa en `@ayr/shared`.
+  - D-726: el paquete del deploy no lleva `local-data/` ni `.env*` (`.gcloudignore` y `scripts/upload-guard.mjs`).
+- **Producción (OK del dueño por nombre, solo acciones de dominio):**
+  - respaldo `respaldo-pre-cc68-20261026` (se borró `respaldo-pre-cc58-20261019`, regla 18);
+  - las 18 bobinas DW43 anuladas al 01/08; la reversa del lote de dw-03 (8 entradas, S/ 97 719,55);
+  - ESQ30 a BX; ANTI, SOLD6011 y SOLD7018 a KGM, CAPUROJO a NIU y CONFORMADO a TNE;
+  - las 13 cotizaciones de ESQ30 a BX y COT 27 y 134 a TNE, de a una. COT 49 bajó S/ 0,001 de IGV al quedar al
+    céntimo; la sesión paró y el dueño la dio por buena (D-727).
+  - Valorizado: de S/ 798 034,52 a S/ 385 360,17, una baja exacta de S/ 412 674,35. Drywall y Reventa en 0; cierres de
+    bobinas de Drywall de agosto, setiembre y octubre en 0. Los S/ 42,74 sobre los S/ 385 317,43 del brief son una NC
+    07 real del 26/10.
+  - Sin recosteos pendientes ni negativos; `check:balances` solo con las 2 diferencias conocidas.
+- **Pruebas:**
+  - API unitarias: 3984 en verde / 2 skipped; web: 360; scripts: 110; db-spec de la reversa: 3/3.
+  - E2E completa local: 634 passed / 10 failed (infraestructura conocida: PSE, R2 y el XML de fase2a) / 2 skipped.
+  - CI del PR #256 en verde, también Sonar.
+  - `smoke:prod` en verde antes y después de la ejecución.
+- **Revisiones:**
+  - autorrevisión y segundo modelo (`docs/revision/cc68-segundo-modelo.md`) sin P0 ni P1;
+  - falta la revisión del dueño.
+- **Espera decisión del dueño:** ratificar D-721..D-727 (D-720 sigue pendiente).
+- **Para cc69 (decisión del dueño):** las compras no comparan la unidad de la línea con la del producto; los tarballs
+  viejos con `local-data/` en el bucket de Cloud Build.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-722: `imports/initial-inventory-product-revert.service.ts`. Escribe kardex por `InventoryService.reverse`; si una
+  reversa de carga deja un saldo raro, mirar ahí primero (plan, lock y nuevo plan bajo el lock).
+- D-724: `catalog/catalog.service.ts`, el `update` de la unidad (saldo, reservas y pedidos vivos con
+  `reserveItemType: 'PRODUCT'`).
+- D-724: el confirm de `sales/sales-orders.service.ts` con `confirmUnitChange` (`sales/duplicate-shape.ts`): el pedido
+  copia la unidad de la cotización.
+
 ## 2026-10-26 — cc67: notas de crédito aparte en Ventas y margen (D-720; PR #254)
 
 Sin migración y sin SQL contra producción. Solo lectura de reportes. API `00154-l74` (git-sha `9e0b35d7`), merge
