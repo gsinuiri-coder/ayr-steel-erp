@@ -94,7 +94,7 @@ const PEPS = {
   itemCode: 'BOB-001',
   itemDescription: 'Bobina GALV-0.50',
   existenceType: '03 - MATERIAS PRIMAS',
-  unitCode: '01 - KILOGRAMOS',
+  unitCode: 'KGM - KILOGRAMO',
   peps: {
     opening: EMPTY_BALANCE,
     rows: [],

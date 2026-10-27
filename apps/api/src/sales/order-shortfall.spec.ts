@@ -533,7 +533,7 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       customer: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ isActive: true, name: 'ACME' }),
       },
-      product: { findFirst: jest.fn().mockResolvedValue(null) },
+      product: { findMany: jest.fn().mockResolvedValue([]) },
       salesOrder: {
         create: jest
           .fn()

@@ -7,7 +7,9 @@ import {
   productionOrderCode,
   toDateOnly,
   toDecimal,
+  isCatalogUnit,
   type KardexPepsQuery,
+  UNIT_TABLE_6,
 } from '@ayr/shared';
 import { ENV, type Env } from '../config/env';
 import { PrismaService } from '../prisma/prisma.service';
@@ -40,12 +42,29 @@ export interface KardexPepsReport {
   documents: Map<string, KardexPepsDocument>;
 }
 
-/** Tabla 6 (unidad de medida) desde el catálogo 03 que guarda el kardex. */
-const UNIT_TABLE_6: Record<string, string> = {
-  KGM: '01 - KILOGRAMOS',
-  NIU: '07 - UNIDADES',
-  MTR: '15 - METROS',
-};
+/**
+ * Tabla 6 (unidad de medida) desde el catálogo 03 que guarda el kardex. cc68 (D-725): la tabla
+ * vigente usa los mismos códigos (`UNIT_TABLE_6` de `@ayr/shared`); un código fuera de la lista
+ * sale como «otros», con el código tal cual.
+ */
+export function unitTable6(unit: string): string {
+  return isCatalogUnit(unit) ? UNIT_TABLE_6[unit] : `99 - OTROS (${unit})`;
+}
+
+/**
+ * cc68 (D-725): la unidad del reporte es la de los movimientos del rango (la del último), no la del
+ * primero de la historia: un producto que cambió de unidad (ESQ30, NIU → BX) informa la que tiene
+ * en el periodo. Sin movimientos en el rango, la del último anterior; sin ninguno, la del ítem.
+ */
+export function reportUnit(
+  movements: readonly { unit: string; operationDate: string }[],
+  from: string,
+  itemUnit: string,
+): string {
+  const last = movements.at(-1);
+  const lastInRange = last !== undefined && last.operationDate >= from ? last : undefined;
+  return lastInRange?.unit ?? last?.unit ?? itemUnit;
+}
 
 /** Tabla 10, desde los tipos de comprobante del sistema. `00` = documento interno u otro. */
 const DOC_TABLE_10: Record<string, string> = {
@@ -196,7 +215,11 @@ export class KardexPepsService {
 
     const inRange = own.filter((m) => fromDateOnly(m.operationDate) >= query.from);
     const documents = await this.documentsOf(inRange);
-    const unit = movements[0]?.unit ?? item.unit;
+    const unit = reportUnit(
+      own.map((m) => ({ unit: m.unit, operationDate: fromDateOnly(m.operationDate) })),
+      query.from,
+      item.unit,
+    );
 
     return {
       from: query.from,
@@ -206,7 +229,7 @@ export class KardexPepsService {
       itemCode: item.code,
       itemDescription: item.description,
       existenceType: item.existenceType,
-      unitCode: UNIT_TABLE_6[unit] ?? `99 - OTROS (${unit})`,
+      unitCode: unitTable6(unit),
       peps,
       documents,
     };

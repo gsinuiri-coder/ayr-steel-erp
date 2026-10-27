@@ -164,6 +164,7 @@ import {
 } from './reservation-restore';
 import { liveDocumentsByOrder, orderDocuments } from './order-documents';
 import { orderReturns } from './order-returns';
+import { confirmUnitChange } from './duplicate-shape';
 import { salesOrderOrderBy } from '../common/list-orderings';
 import { assertExportable, exportWindow, pageWindow, type ListWindow } from '../common/list-export';
 import { searchSeqOf } from '../common/search-seq';
@@ -518,17 +519,24 @@ export class SalesOrdersService {
             `El cliente ${customer.name} está desactivado: reactívalo o cotiza a otro cliente`,
           );
         }
-        const inactive = await tx.product.findFirst({
-          where: {
-            id: { in: quotation.items.map((i) => i.productId) },
-            isActive: false,
-          },
-          select: { sku: true },
+        const products = await tx.product.findMany({
+          where: { id: { in: quotation.items.map((i) => i.productId) } },
+          select: { id: true, sku: true, unit: true, isActive: true },
+          orderBy: { sku: 'asc' },
         });
+        const inactive = products.find((p) => !p.isActive);
         if (inactive) {
           throw new BadRequestException(
             `El producto ${inactive.sku} está desactivado desde que se emitió la cotización: crea una nueva`,
           );
+        }
+        // cc68 (D-724): una línea en una unidad que el producto ya no usa no se confirma.
+        const productById = new Map(products.map((p) => [p.id, p]));
+        for (const item of quotation.items) {
+          const product = productById.get(item.productId);
+          const changed =
+            product && confirmUnitChange(item.lineNumber, product.sku, item.unit, product.unit);
+          if (changed) throw new BadRequestException(changed);
         }
 
         // D-134: las coordenadas de materia prima de una línea a medida se **recalculan**
@@ -792,6 +800,7 @@ export class SalesOrdersService {
               select: {
                 sku: true,
                 isActive: true,
+                unit: true,
                 lengthMm: true,
                 businessLine: { select: { inventoryStrategy: true } },
               },
@@ -820,6 +829,14 @@ export class SalesOrdersService {
           `Línea ${String(item.lineNumber)}: el producto ${item.product.sku} está desactivado`,
         );
       }
+      // cc68 (D-724): el mismo rechazo que la confirmación, dicho antes del clic.
+      const changed = confirmUnitChange(
+        item.lineNumber,
+        item.product.sku,
+        item.unit,
+        item.product.unit,
+      );
+      if (changed) blockers.push(changed);
     }
 
     const temporary = await this.prisma.quotationReservation.findFirst({

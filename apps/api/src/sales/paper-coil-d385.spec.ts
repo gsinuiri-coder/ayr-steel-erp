@@ -36,6 +36,8 @@ describe('D-385 — unidad del papel', () => {
     }
     expect(importPaperUnit('KILOGRAMO')).toBe('KGM');
     expect(importPaperUnit('METRO LINEAL')).toBe('MTR');
+    // cc68 (D-724): la caja.
+    for (const u of ['CAJA', 'cja', 'BX']) expect(importPaperUnit(u)).toBe('BX');
     expect(importPaperUnit('')).toBeNull();
     expect(importPaperUnit('QUINTAL')).toBeUndefined();
   });

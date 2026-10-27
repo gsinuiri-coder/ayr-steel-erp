@@ -108,6 +108,14 @@ describe('buildInvoicePayload', () => {
     expect(payload.total).toBe(1180);
   });
 
+  it('cc68 (D-724): la caja viaja con su código BX del catálogo 03', () => {
+    const base = invoiceCommand();
+    const payload = buildInvoicePayload(
+      invoiceCommand({ lines: base.lines.map((l) => ({ ...l, unit: 'BX' })) }),
+    );
+    expect((payload.items as Record<string, unknown>[])[0]?.unidad_de_medida).toBe('BX');
+  });
+
   it('el precio con IGV se calcula en Decimal y no arrastra basura binaria (D-003)', () => {
     // 11.86 × 1.18 en `number` da 13.994799999999998, y el PSE valida la coherencia entre
     // el valor unitario, el precio unitario y los totales: ese residuo es un rechazo con

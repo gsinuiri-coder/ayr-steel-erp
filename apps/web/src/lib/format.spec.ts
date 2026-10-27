@@ -51,6 +51,9 @@ describe('formato de cifras', () => {
     expect(formatUnitQty('89.606', 'KGM')).toBe('89.61 kg');
     expect(formatUnitQty('24.600', 'MTR')).toBe('24.60 m');
     expect(formatUnitQty('10', 'NIU')).toBe('10 und');
+    // cc68 (D-724): la caja se cuenta como las unidades.
+    expect(formatUnitQty('12.000', 'BX')).toBe('12 caja');
+    expect(formatQty('3', 'caja')).toBe('3 caja');
   });
 
   it('formatQtyAsIs conserva la escala para planta y bobina', () => {

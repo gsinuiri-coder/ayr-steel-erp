@@ -14,6 +14,8 @@ const UNIT_SYMBOL: Record<string, string> = {
   MTR: 'm',
   TNE: 't',
   ZZ: '',
+  // cc68 (D-724): la caja; el código BX solo va en los datos.
+  BX: 'caja',
 };
 
 /** Un código desconocido se muestra tal cual. */
