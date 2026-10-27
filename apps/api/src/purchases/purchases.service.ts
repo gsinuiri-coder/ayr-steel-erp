@@ -54,6 +54,7 @@ import {
   normalizePurchaseNumber,
 } from '@ayr/shared';
 import { assertNoLiveDocumentClash } from './purchase-document-clash';
+import { purchaseUnitMismatch } from './purchase-unit';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
 import { KARDEX_TX_OPTIONS, RECOST_TX_OPTIONS } from '../common/transaction-options';
@@ -1802,7 +1803,7 @@ export class PurchasesService {
       ] as string[];
       const products = await db.product.findMany({
         where: { id: { in: productIds }, isActive: true },
-        select: { id: true, businessLineId: true },
+        select: { id: true, businessLineId: true, sku: true, unit: true },
       });
       if (products.length !== productIds.length) {
         throw new BadRequestException('Alguna línea usa un producto inexistente o desactivado');
@@ -1811,6 +1812,15 @@ export class PurchasesService {
         throw new BadRequestException(
           'Todos los productos de la compra deben ser de la línea de negocio elegida',
         );
+      }
+      // cc69 (D-729): cada línea en la unidad de su producto (formulario, XML e importador).
+      const byId = new Map(products.map((p) => [p.id, p]));
+      for (const [index, item] of input.items.entries()) {
+        const product = item.productId ? byId.get(item.productId) : undefined;
+        const mismatch = product && purchaseUnitMismatch(product.sku, product.unit, item.unit);
+        if (mismatch) {
+          throw new BadRequestException(`Línea ${String(index + 1)}: ${mismatch}`);
+        }
       }
     }
     return colorByFinish;

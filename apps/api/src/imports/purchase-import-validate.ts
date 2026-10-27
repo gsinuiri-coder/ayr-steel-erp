@@ -32,6 +32,7 @@ import {
   type PurchaseImportLineInput,
   type Unit,
 } from '@ayr/shared';
+import { purchaseUnitMismatch } from '../purchases/purchase-unit';
 
 /**
  * **Validación de un comprobante del importador de compras (D-351/D-352), sin tocar la base.**
@@ -504,6 +505,12 @@ function validateLine(
   if (header.type === 'FINISHED_GOOD') {
     product = resolveProduct(line, header.businessLine, ctx, error);
     unit = unitOf(line.unit, product?.unit ?? null, error);
+    // cc69 (D-729): con el alias ya resuelto (UND → NIU, CAJA → BX), la del producto.
+    const mismatch =
+      product !== null && unit !== null
+        ? purchaseUnitMismatch(product.sku, product.unit, unit)
+        : null;
+    if (mismatch !== null) error('unit', mismatch);
     if (description === '' && product !== null) description = product.name;
   } else if (header.type === 'COIL') {
     finish = resolveFinish(line, header.businessLine, ctx, error);
@@ -706,13 +713,24 @@ function unitOf(
   const value = (raw === '' ? (fallback ?? '') : raw).toUpperCase();
   const alias: Record<string, string> = {
     KG: 'KGM',
+    KILO: 'KGM',
+    KILOS: 'KGM',
     UND: 'NIU',
+    UNID: 'NIU',
     UNIDAD: 'NIU',
+    UNIDADES: 'NIU',
     M: 'MTR',
     METRO: 'MTR',
+    METROS: 'MTR',
     // cc68 (D-724): la caja (BX ya es la unidad misma).
     CAJA: 'BX',
+    CAJAS: 'BX',
     CJA: 'BX',
+    // cc69 (D-729): la tonelada.
+    TN: 'TNE',
+    TON: 'TNE',
+    TONELADA: 'TNE',
+    TONELADAS: 'TNE',
   };
   const unit = alias[value] ?? value;
   if ((UNITS as readonly string[]).includes(unit)) return unit as Unit;

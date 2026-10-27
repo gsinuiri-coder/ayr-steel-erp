@@ -56,6 +56,7 @@ import {
   type TargetFacts,
 } from './purchase-received-edit';
 import { hasLandedRecost } from './landed-cost-recost';
+import { purchaseUnitMismatch } from './purchase-unit';
 
 type MovementRow = Prisma.InventoryMovementGetPayload<{
   include: { reversals: { select: { id: true } } };
@@ -709,11 +710,10 @@ export class ReceivedPurchaseEditService {
         if (!product.isActive) invalidProducts.set(edit.productId, 'El producto está desactivado');
         else if (product.businessLineId !== purchase.businessLineId) {
           invalidProducts.set(edit.productId, 'El producto es de otra línea de negocio');
-        } else if (lineUnit !== undefined && product.unit !== lineUnit) {
-          invalidProducts.set(
-            edit.productId,
-            `El producto se lleva en ${product.unit} y la línea en ${lineUnit}`,
-          );
+        } else if (lineUnit !== undefined) {
+          // cc69 (D-729): el mismo rechazo que el alta y el importador.
+          const mismatch = purchaseUnitMismatch(product.sku, product.unit, lineUnit);
+          if (mismatch) invalidProducts.set(edit.productId, mismatch);
         }
         if (receiptDate !== null) {
           const later = await tx.inventoryMovement.count({
