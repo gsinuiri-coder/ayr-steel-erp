@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   CREDIT_NOTE_REASON_LABELS,
   CREDIT_NOTE_REASONS,
+  lateReturnEntryNotice,
   Role,
   type CreditNoteReason,
   type SalesReturnDto,
@@ -48,7 +49,8 @@ function itemHref(item: SalesReturnDto['items'][number]): string {
 
 /**
  * cc52 (D-646): el documento de devolución de una NC de devolución. La mercadería reingresó al
- * almacén con la fecha de la nota y al costo con que salió en su despacho. Solo se lee: se
+ * almacén con la fecha de la nota (cc69, D-728: o la de su despacho, si es posterior a la nota) y al
+ * costo con que salió en su despacho. Solo se lee: se
  * revierte anulando la nota de crédito. El costo, solo para el ADMINISTRADOR (el API lo manda
  * en `null` a los demás).
  */
@@ -78,6 +80,14 @@ export function DevolucionDetalleView({ id }: { id: string }) {
 
   const showCost = r.totalCostPen !== null;
   const reason = reasonLabel(r.creditNoteReason);
+  // cc69 (D-728): las partes que entraron después de la fecha de la nota, una vez por despacho.
+  const lateNotices = [
+    ...new Set(
+      r.items
+        .filter((i) => i.operationDate > r.creditNoteDate)
+        .map((i) => lateReturnEntryNotice(i.operationDate, i.dispatchCode)),
+    ),
+  ];
 
   return (
     <RoleGate allow={RETURN_ROLES}>
@@ -120,7 +130,14 @@ export function DevolucionDetalleView({ id }: { id: string }) {
               </Link>
             ),
           },
-          { label: 'Fecha', value: formatDate(r.operationDate), detail: 'La de la nota' },
+          {
+            label: 'Fecha',
+            value: formatDate(r.operationDate),
+            detail:
+              lateNotices.length === 0
+                ? 'La de la nota'
+                : `La nota es del ${formatDate(r.creditNoteDate)}`,
+          },
         ]}
         total={
           showCost && r.totalCostPen !== null
@@ -128,6 +145,18 @@ export function DevolucionDetalleView({ id }: { id: string }) {
             : undefined
         }
       />
+
+      {lateNotices.length > 0 && (
+        <Alert data-testid="sales-return-late-entry">
+          <AlertDescription>
+            {lateNotices.map((notice) => (
+              <span key={notice} className="block">
+                {notice}
+              </span>
+            ))}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {r.status === 'REVERSED' && (
         <Alert>
@@ -153,6 +182,7 @@ export function DevolucionDetalleView({ id }: { id: string }) {
               {showCost && <TableHead className="text-right">Costo unitario</TableHead>}
               {showCost && <TableHead className="text-right">Costo total</TableHead>}
               <TableHead>Despacho</TableHead>
+              <TableHead>Entró al almacén</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -189,6 +219,7 @@ export function DevolucionDetalleView({ id }: { id: string }) {
                     {item.dispatchCode}
                   </Link>
                 </TableCell>
+                <TableCell>{formatDate(item.operationDate)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -197,8 +228,8 @@ export function DevolucionDetalleView({ id }: { id: string }) {
 
       <div className="text-xs text-muted-foreground">
         Registrada por {r.createdByName} el {formatTimestampDate(r.createdAt)}. Reingresó con la
-        fecha de la nota y al costo con que salió en su despacho; se revierte anulando la nota de
-        crédito.
+        fecha de la nota (o la de su despacho, si es posterior) y al costo con que salió en su
+        despacho; se revierte anulando la nota de crédito.
       </div>
     </RoleGate>
   );

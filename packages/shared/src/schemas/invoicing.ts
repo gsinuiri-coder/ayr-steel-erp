@@ -645,6 +645,12 @@ export const creditNotePreviewSchema = z.object({
       /** cc55 (D-664, C-01 de audit-01): el costo de kardex, solo para ADMINISTRADOR; `null` al resto. */
       costPen: z.string().nullable(),
       dispatch: z.string(),
+      /**
+       * cc69 (D-728): el día en que vuelve al almacén; si el despacho es posterior a la NC, la
+       * fecha de ese despacho (y `afterCreditNote`).
+       */
+      entryDate: z.string(),
+      afterCreditNote: z.boolean(),
     }),
   ),
   /** Lo que no vuelve porque no salió (01 sin despacho completo). */
@@ -1725,17 +1731,38 @@ export const salesReturnItemSchema = z.object({
   totalCostPen: z.string().nullable(),
   dispatchId: z.string().uuid(),
   dispatchCode: z.string(),
+  /** cc69 (D-728): la fecha del despacho del que sale. */
+  dispatchDate: z.string(),
   movementId: z.string(),
+  /**
+   * cc69 (D-728): el día en que esta parte volvió al almacén (la de su movimiento): la de la NC o,
+   * si sale de un despacho posterior a la NC, la de ese despacho.
+   */
+  operationDate: z.string(),
 });
 export type SalesReturnItemDto = z.infer<typeof salesReturnItemSchema>;
+
+/**
+ * cc69 (D-728): el aviso de una parte que vuelve al almacén después de la fecha de la NC, porque
+ * sale de un despacho posterior. Lo dicen «Qué va a pasar» y el detalle de la DEV-.
+ */
+export function lateReturnEntryNotice(entryDate: string, dispatchCode: string): string {
+  const [, month, day] = entryDate.split('-');
+  return `La devolución entra al almacén el ${day ?? ''}/${month ?? ''} (fecha del despacho ${dispatchCode}), después de la fecha de la NC.`;
+}
 
 export const salesReturnSchema = z.object({
   id: z.string().uuid(),
   /** `DEV-000001`. */
   code: z.string(),
   status: z.enum(['ACTIVE', 'REVERSED']),
-  /** La fecha de la NC: la de todo lo que la devolución genera. */
+  /**
+   * La fecha de la NC o, cc69 (D-728), la de su parte más tardía si alguna sale de un despacho
+   * posterior a la NC. Cada línea trae la suya.
+   */
   operationDate: z.string(),
+  /** cc69 (D-728): la fecha de la NC (no cambia aunque la devolución entre después). */
+  creditNoteDate: z.string(),
   creditNoteId: z.string().uuid(),
   creditNoteNumber: z.string().nullable(),
   creditNoteReason: z.string().nullable(),

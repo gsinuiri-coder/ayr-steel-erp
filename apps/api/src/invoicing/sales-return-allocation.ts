@@ -39,6 +39,11 @@ export interface ReturnAllocation {
   reserveQty: Decimal;
   unitCost: Decimal;
   totalCost: Decimal;
+  /**
+   * cc69 (D-728): `YYYY-MM-DD` en que la parte vuelve al almacén: la fecha de la NC o, si sale de
+   * un despacho posterior a la NC, la de ese despacho.
+   */
+  operationDate: string;
 }
 
 const ZERO = new Decimal(0);
@@ -48,7 +53,10 @@ const KARDEX_STEP = new Decimal('0.001');
 export interface ReturnPlanOptions {
   /** Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. */
   affectedInvoiceId?: string | null;
-  /** Ninguno posterior a la fecha de la NC (no se devuelve lo que todavía no había salido). */
+  /**
+   * La fecha de la NC. cc69 (D-728): primero los despachos hasta esa fecha; lo que falte, de los
+   * posteriores, que reingresan en la fecha de su despacho.
+   */
   asOf?: string;
   /** cc54 (D-656, 01): devolver hasta lo disponible, sin error si es menos (o nada). */
   upToAvailable?: boolean;
@@ -57,8 +65,10 @@ export interface ReturnPlanOptions {
 }
 
 /**
- * Reparte `qty` (unidad de venta) sobre las líneas de despacho, **de la más reciente hacia atrás**
- * (fecha y correlativo), sin pasar de lo despachado menos lo ya devuelto de cada una.
+ * Reparte `qty` (unidad de venta) sobre las líneas de despacho, sin pasar de lo despachado menos lo
+ * ya devuelto de cada una. Primero las de fecha hasta la NC (`asOf`), **de la más reciente hacia
+ * atrás** (fecha y correlativo); cc69 (D-728): lo que falte, de las posteriores a la NC, **de la más
+ * cercana en adelante**, y esa parte reingresa en la fecha de su despacho.
  *
  * - El costo es el del `OUT` de ese despacho. Si se devuelve todo lo que le quedaba a la línea,
  *   el total es exactamente lo que le queda de valor (sin redondeos acumulados); si no, la parte
@@ -69,10 +79,7 @@ export function planReturnAllocation(
   lineNumber: number,
   qty: Decimal,
   stock: readonly DispatchLineStock[],
-  /**
-   * Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado; y ninguno
-   * posterior a la fecha de la NC (no se devuelve lo que todavía no había salido).
-   */
+  /** Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. */
   options: ReturnPlanOptions = {},
 ): ReturnAllocation[] {
   const at = `Línea ${String(lineNumber)}`;
@@ -80,8 +87,9 @@ export function planReturnAllocation(
     throw new BadRequestException(`${at}: la cantidad a devolver debe ser mayor a cero`);
   const preferred = (s: DispatchLineStock) =>
     options.affectedInvoiceId && s.invoiceId === options.affectedInvoiceId ? 0 : 1;
+  const asOf = options.asOf;
+  const afterNote = (s: DispatchLineStock) => asOf !== undefined && s.dispatchDate > asOf;
   const ordered = stock
-    .filter((s) => options.asOf === undefined || s.dispatchDate <= options.asOf)
     // cc54 (D-656): la anulación (01) solo devuelve lo que salió por ese comprobante o sin
     // comprobante declarado; lo despachado para otro comprobante del pedido es de ese otro.
     .filter(
@@ -90,12 +98,18 @@ export function planReturnAllocation(
         s.invoiceId === null ||
         s.invoiceId === (options.affectedInvoiceId ?? null),
     )
-    .sort(
-      (a, b) =>
+    .sort((a, b) => {
+      const later = Number(afterNote(a)) - Number(afterNote(b));
+      if (later !== 0) return later;
+      // cc69 (D-728): los posteriores a la NC, del más cercano a ella en adelante.
+      const direction = afterNote(a) ? -1 : 1;
+      return (
         preferred(a) - preferred(b) ||
-        b.dispatchDate.localeCompare(a.dispatchDate) ||
-        b.dispatchSeq - a.dispatchSeq,
-    );
+        direction * b.dispatchDate.localeCompare(a.dispatchDate) ||
+        direction * (b.dispatchSeq - a.dispatchSeq)
+      );
+    });
+  const dispatched = ordered.reduce((acc, s) => acc.plus(s.qty), ZERO);
   const available = ordered.reduce(
     (acc, s) => acc.plus(Decimal.max(s.qty.minus(s.returnedQty), ZERO)),
     ZERO,
@@ -103,6 +117,17 @@ export function planReturnAllocation(
   // cc54 (D-656): el 01 devuelve **hasta** lo despachado; lo que no salió no vuelve.
   if (options.upToAvailable && available.lte(0)) return [];
   const wanted = options.upToAvailable ? Decimal.min(qty, available) : qty;
+  // cc69: sin nada disponible, la causa real (no salió nada, o ya se devolvió todo), no «hay 0.000».
+  if (dispatched.lte(0)) {
+    throw new BadRequestException(
+      `${at}: no hay nada despachado de este comprobante; si la mercadería no salió del almacén, usa «Rebajar el precio».`,
+    );
+  }
+  if (available.lte(0)) {
+    throw new BadRequestException(
+      `${at}: lo despachado (${dispatched.toFixed(3)}) ya se devolvió entero con otras notas de crédito; no queda nada por devolver.`,
+    );
+  }
   if (wanted.gt(available)) {
     throw new BadRequestException(
       `${at}: hay ${available.toFixed(3)} despachado sin devolver y se intenta devolver ${wanted.toFixed(3)}. Una devolución no pasa de lo vendido menos lo ya devuelto; si no salió del almacén, usa «Rebajar el precio».`,
@@ -147,6 +172,7 @@ export function planReturnAllocation(
       reserveQty,
       unitCost: totalCost.div(reserveQty).toDecimalPlaces(4),
       totalCost,
+      operationDate: afterNote(s) ? s.dispatchDate : (asOf ?? s.dispatchDate),
     });
     remaining = remaining.minus(take);
   }

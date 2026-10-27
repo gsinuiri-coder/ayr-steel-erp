@@ -1250,6 +1250,8 @@ export class InvoicingService {
           unit: a.stock.unit,
           costPen: showCost ? toFixedString(a.totalCost, 'MONEY') : null,
           dispatch: a.stock.dispatchCode,
+          entryDate: a.operationDate,
+          afterCreditNote: a.operationDate > input.issueDate,
         })),
         notDispatched,
         costPen: showCost

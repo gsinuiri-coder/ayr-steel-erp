@@ -197,7 +197,7 @@ describe('SalesReturnsService (cc52, D-646)', () => {
     await expect(
       service.planForLines(tx, [{ lineNumber: 1, orderItemId: 'soi-1', qty: '2' }]),
     ).rejects.toThrow(
-      /hay 0.000 despachado sin devolver.*5.000 se entregó antes del inventario inicial/,
+      'Línea 1: lo despachado (5.000) se entregó antes del inventario inicial y no tiene salida en el kardex',
     );
   });
 
@@ -286,10 +286,11 @@ describe('SalesReturnsService (cc52, D-646)', () => {
       id: 'sr-1',
       seq: 3,
       status: 'ACTIVE',
-      operationDate: new Date('2026-10-14T00:00:00.000Z'),
+      operationDate: new Date('2026-10-20T00:00:00.000Z'),
       creditNote: {
         id: 'nc-1',
         number: 'FC90-1',
+        issueDate: new Date('2026-10-14T00:00:00.000Z'),
         creditNoteReason: 'DEVOLUCION_TOTAL',
         affectedDocument: { id: 'f-1', number: 'F001-1' },
       },
@@ -307,10 +308,13 @@ describe('SalesReturnsService (cc52, D-646)', () => {
           itemType: 'COIL',
           itemId: 'c-1',
           reserveQty: D('500'),
-          movement: { unit: 'KGM' },
+          movement: { unit: 'KGM', operationDate: new Date('2026-10-20T00:00:00.000Z') },
           unitCost: D('4.2'),
           totalCost: D('2100'),
-          dispatchItem: { dispatchId: 'd-1', dispatch: { seq: 7 } },
+          dispatchItem: {
+            dispatchId: 'd-1',
+            dispatch: { seq: 7, dispatchDate: new Date('2026-10-20T00:00:00.000Z') },
+          },
           movementId: 99n,
         },
       ],
@@ -320,8 +324,16 @@ describe('SalesReturnsService (cc52, D-646)', () => {
       salesOrderCode: 'PED-000012',
       totalCostPen: '2100.0000',
       affectedDocumentNumber: 'F001-1',
+      // cc69 (D-728): la DEV- de un despacho posterior a la NC lleva la fecha del despacho.
+      operationDate: '2026-10-20',
+      creditNoteDate: '2026-10-14',
     });
-    expect(dto.items[0]).toMatchObject({ dispatchCode: 'DES-000007', movementId: '99' });
+    expect(dto.items[0]).toMatchObject({
+      dispatchCode: 'DES-000007',
+      movementId: '99',
+      dispatchDate: '2026-10-20',
+      operationDate: '2026-10-20',
+    });
   });
 });
 

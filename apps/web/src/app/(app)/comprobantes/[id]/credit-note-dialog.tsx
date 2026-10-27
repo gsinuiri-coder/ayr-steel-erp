@@ -12,6 +12,7 @@ import {
   CREDIT_NOTE_REASON_INFO,
   CREDIT_NOTE_REASON_LABELS,
   CREDIT_NOTE_REASON_SUNAT_CODE,
+  lateReturnEntryNotice,
   returnsStock,
   toDecimal,
   type CreditNoteGroup,
@@ -778,6 +779,17 @@ function ReasonFields({
   }
 }
 
+/** cc69 (D-728): un aviso por despacho posterior a la NC, sin repetir. */
+function lateEntries(stock: CreditNotePreviewDto['stock']): string[] {
+  return [
+    ...new Set(
+      stock
+        .filter((s) => s.afterCreditNote)
+        .map((s) => lateReturnEntryNotice(s.entryDate, s.dispatch)),
+    ),
+  ];
+}
+
 /** El recuadro «Qué va a pasar», con lo que calculó el API. */
 function WhatWillHappen({
   document: d,
@@ -834,6 +846,16 @@ function WhatWillHappen({
                     : <b>{formatMoney(preview.costPen)}</b>.
                   </>
                 )}
+                {/* cc69 (D-728): lo que sale de un despacho posterior entra en la fecha de ese despacho. */}
+                {lateEntries(preview.stock).map((notice) => (
+                  <span
+                    key={notice}
+                    className="mt-1 block text-amber-700 dark:text-amber-400"
+                    data-testid="credit-note-preview-late-entry"
+                  >
+                    {notice}
+                  </span>
+                ))}
               </>
             ),
           )}
