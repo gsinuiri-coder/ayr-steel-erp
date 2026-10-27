@@ -358,6 +358,30 @@ export class CatalogService {
       const message = `«${input.unit}» no es una unidad de la lista (${UNITS.join(', ')})`;
       throw new BadRequestException({ statusCode: 400, message, errors: { unit: [message] } });
     }
+    // cc68 (D-724, segundo modelo P2-1): con saldo o reservas, la unidad no cambia. El saldo y
+    // las reservas están contados en la unidad de antes, y el kardex rechazaría cada movimiento
+    // siguiente («ya tiene saldo en NIU: no se puede mover en BX»). Primero se vacía (ESQ30: se
+    // revierte su carga inicial) y después se cambia.
+    if (input.unit !== undefined && input.unit !== before.unit) {
+      const [balances, reservations] = await Promise.all([
+        this.prisma.inventoryBalance.findMany({
+          where: { itemType: 'PRODUCT', itemId: id, NOT: { qty: 0 } },
+          select: { qty: true, unit: true },
+        }),
+        this.prisma.reservation.findMany({
+          where: { itemType: 'PRODUCT', itemId: id, status: 'ACTIVE' },
+          select: { id: true },
+        }),
+      ]);
+      const stock = balances[0];
+      if (stock !== undefined || reservations.length > 0) {
+        const message =
+          stock !== undefined
+            ? `${before.sku} tiene saldo (${stock.qty.toString()} ${stock.unit}): la unidad solo cambia con el saldo en cero`
+            : `${before.sku} tiene ${String(reservations.length)} reserva(s) activa(s): la unidad solo cambia sin reservas`;
+        throw new BadRequestException({ statusCode: 400, message, errors: { unit: [message] } });
+      }
+    }
 
     // D-127: corregir el subtipo **obliga** a mover la unidad (son el mismo hecho).
     const changesRoofingKind =

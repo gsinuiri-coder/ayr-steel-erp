@@ -15,7 +15,7 @@ describe('revertEntryErrors (cc68, D-722)', () => {
 
   it.each([
     [{ alreadyReversed: true }, /ESQ30: esta entrada ya se revirtió/],
-    [{ laterMovements: 2 }, /ESQ30: tiene 2 movimiento\(s\) de kardex posterior/],
+    [{ laterMovements: 2 }, /ESQ30: tiene 2 movimiento\(s\) de kardex además de la carga/],
     [{ activeReservations: 1 }, /ESQ30: tiene 1 reserva\(s\) de pedido activa/],
     [{ activeQuotationReservations: 3 }, /ESQ30: tiene 3 reserva\(s\) temporal/],
   ])('rechaza y nombra el SKU: %o', (facts, message) => {

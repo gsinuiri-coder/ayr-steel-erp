@@ -105,6 +105,10 @@ async function runRevert(app: INestApplicationContext, actor: RequestUser): Prom
   if (!batchFlag || !/^[0-9a-f-]{36}$/i.test(batchFlag)) {
     throw new Error('--revert necesita --batch <id del lote> (un UUID)');
   }
+  // Segundo modelo (P3): sin fecha, la reversa quedaría con la de hoy y una reversa no se edita.
+  if (!operationDate) {
+    throw new Error('--revert necesita --operation-date AAAA-MM-DD (la fecha de la reversa)');
+  }
   console.warn(
     `${execute ? 'Revirtiendo' : 'Simulando (dry-run) la reversa de'} el lote ${batchFlag} (products)…\n`,
   );

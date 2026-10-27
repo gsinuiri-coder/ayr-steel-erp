@@ -11,7 +11,7 @@ export interface RevertEntryFacts {
   sku: string;
   /** La entrada ya tiene su reversa (se revirtió antes). */
   alreadyReversed: boolean;
-  /** Movimientos del mismo producto posteriores a la entrada (fuera de su propia reversa). */
+  /** Otros movimientos del mismo producto además de la entrada (fuera de su propia reversa). */
   laterMovements: number;
   /** Reservas de pedido `ACTIVE` sobre el producto. */
   activeReservations: number;
@@ -24,7 +24,7 @@ export function revertEntryErrors(f: RevertEntryFacts): string[] {
   if (f.alreadyReversed) errors.push(`${f.sku}: esta entrada ya se revirtió`);
   if (f.laterMovements > 0) {
     errors.push(
-      `${f.sku}: tiene ${String(f.laterMovements)} movimiento(s) de kardex posterior(es) a la carga; la reversa solo saca una carga que nadie usó`,
+      `${f.sku}: tiene ${String(f.laterMovements)} movimiento(s) de kardex además de la carga; la reversa solo saca una carga que nadie usó`,
     );
   }
   if (f.activeReservations > 0) {

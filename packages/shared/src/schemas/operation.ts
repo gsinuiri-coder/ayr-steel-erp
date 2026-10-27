@@ -74,7 +74,7 @@ export interface BackdateNegativeStock {
   firstValidDate: string | null;
 }
 
-const SHORT_UNITS: Record<string, string> = { KGM: 'kg', NIU: 'u', MTR: 'm', TNE: 't' };
+const SHORT_UNITS: Record<string, string> = { KGM: 'kg', NIU: 'u', MTR: 'm', TNE: 't', BX: 'caja' };
 
 /** `YYYY-MM-DD` → `DD/MM/YYYY`; cualquier otra cosa, tal cual. */
 export function dayMonthYear(date: string): string {

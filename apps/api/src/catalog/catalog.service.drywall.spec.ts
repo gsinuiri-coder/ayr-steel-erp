@@ -188,6 +188,25 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
       prisma.product.findUnique.mockResolvedValue(stored({ unit: 'und' }));
       await expect(service.update(ACTOR, 'p-1', { unit: 'NIU' })).rejects.toBe(STOP);
     });
+
+    it('con saldo no cambia (segundo modelo, P2-1)', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.inventoryBalance.findMany.mockResolvedValueOnce([
+        { qty: new Decimal('229'), unit: 'NIU' },
+      ]);
+      await expect(service.update(ACTOR, 'p-1', { unit: 'BX' })).rejects.toThrow(
+        /OMEGA045 tiene saldo \(229 NIU\): la unidad solo cambia con el saldo en cero/,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('con reservas activas no cambia', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.reservation.findMany.mockResolvedValueOnce([{ id: 'r-1' }]);
+      await expect(service.update(ACTOR, 'p-1', { unit: 'BX' })).rejects.toThrow(
+        /tiene 1 reserva\(s\) activa\(s\)/,
+      );
+    });
   });
 
   describe('con una orden de producción en curso (antes: «la receta se bloquea»)', () => {

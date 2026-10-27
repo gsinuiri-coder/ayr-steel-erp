@@ -197,7 +197,7 @@ describe('reversa de la carga inicial de productos (D-722)', () => {
     });
     expect(report).toMatchObject({ ok: false, executed: false });
     const usedRow = report.rows.find((r) => r.sku === used.sku);
-    expect(usedRow?.errors.join(' ')).toMatch(/movimiento\(s\) de kardex posterior/);
+    expect(usedRow?.errors.join(' ')).toMatch(/movimiento\(s\) de kardex además de la carga/);
     expect(report.rows.find((r) => r.sku === intact.sku)?.ok).toBe(true);
     expect(await kardexOf(intact.id)).toHaveLength(1);
     expect(await kardexOf(used.id)).toHaveLength(2);
