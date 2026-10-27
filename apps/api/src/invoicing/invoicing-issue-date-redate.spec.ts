@@ -132,3 +132,63 @@ describe('InvoicingService.updateManualIssueDate — despachos a la fecha del co
     expect(audit.log).not.toHaveBeenCalled();
   });
 });
+
+describe('InvoicingService.updateManualIssueDate — cc70 (D-730): NC con devolución vigente', () => {
+  function credit() {
+    const built = build([]);
+    built.tx.fiscalDocument.findUnique.mockResolvedValue({
+      id: 'NC1',
+      docType: 'NOTA_CREDITO',
+      origin: 'MANUAL',
+      status: 'ACCEPTED',
+      issueDate: new Date('2026-10-05T00:00:00.000Z'),
+      dueDate: null,
+      paymentTerms: 'CONTADO',
+      annulledAt: null,
+      archivedAt: null,
+      affectedDocument: { number: 'F001-1', issueDate: new Date('2026-09-25T00:00:00.000Z') },
+      creditNotes: [],
+      payments: [],
+    });
+    built.tx.salesReturn.findFirst.mockResolvedValue({
+      seq: 1,
+      operationDate: new Date('2026-10-05T00:00:00.000Z'),
+    });
+    return built;
+  }
+
+  it('cambia la fecha y deja en la auditoría la devolución, que no se mueve', async () => {
+    const { svc, tx, audit, invoiceDispatch } = credit();
+    await svc.updateManualIssueDate(ADMIN, 'NC1', {
+      issueDate: '2026-09-30',
+      reason: 'fecha del papel',
+    });
+    expect(tx.fiscalDocument.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ issueDate: new Date('2026-09-30T00:00:00.000Z') }),
+      }),
+    );
+    expect(audit.write).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        after: expect.objectContaining({
+          issueDate: '2026-09-30',
+          salesReturn: 'DEV-000001',
+          salesReturnDate: '2026-10-05',
+        }),
+      }),
+    );
+    expect(invoiceDispatch.redateInTx).not.toHaveBeenCalled();
+  });
+
+  it('sigue sin poder quedar antes del comprobante que acredita', async () => {
+    const { svc, tx } = credit();
+    await expect(
+      svc.updateManualIssueDate(ADMIN, 'NC1', {
+        issueDate: '2026-09-20',
+        reason: 'fecha del papel',
+      }),
+    ).rejects.toThrow('no puede quedar fechada antes');
+    expect(tx.fiscalDocument.update).not.toHaveBeenCalled();
+  });
+});

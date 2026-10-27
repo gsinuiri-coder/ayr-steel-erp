@@ -1429,6 +1429,16 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
               </AlertDescription>
             </Alert>
           )}
+          {/* cc70 (D-730): la devolución no se mueve con la nota. */}
+          {d.salesReturn?.status === 'ACTIVE' && (
+            <Alert data-testid="issue-date-sales-return">
+              <AlertDescription>
+                La devolución {d.salesReturn.code} se queda el{' '}
+                {formatDate(d.salesReturn.operationDate).slice(0, 5)}; cambia solo la fecha fiscal
+                de la nota.
+              </AlertDescription>
+            </Alert>
+          )}
           {linkedDispatches.isError && (
             <Alert variant="destructive">
               <AlertDescription>

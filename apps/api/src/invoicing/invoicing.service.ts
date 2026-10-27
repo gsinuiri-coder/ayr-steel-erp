@@ -195,7 +195,7 @@ const documentInclude = {
       dueDate: true,
       createdAt: true,
       // cc52 (D-646): la devolución de cada NC de devolución, para enlazarla.
-      salesReturn: { select: { id: true, seq: true, status: true } },
+      salesReturn: { select: { id: true, seq: true, status: true, operationDate: true } },
     },
   },
 } satisfies Prisma.FiscalDocumentInclude;
@@ -220,7 +220,7 @@ const documentDetailInclude = {
   },
   issueDateChanges: { orderBy: { changedAt: 'desc' } },
   // cc52 (D-646): la devolución que generó esta NC, si es de devolución.
-  salesReturn: { select: { id: true, seq: true, status: true } },
+  salesReturn: { select: { id: true, seq: true, status: true, operationDate: true } },
 } satisfies Prisma.FiscalDocumentInclude;
 
 type DocumentRow = Prisma.FiscalDocumentGetPayload<{ include: typeof documentInclude }>;
@@ -2228,20 +2228,17 @@ export class InvoicingService {
       // La mitad simétrica: si el que se corrige **es** una nota de crédito, no puede quedar
       // fechada antes del comprobante que acredita. Es la misma incoherencia mirada desde el
       // otro lado, y sin esto la cota de arriba solo cubría una dirección.
-      // cc52 (D-645): la fecha de una NC con devolución es la de su reingreso al kardex (cc69, D-728:
-      // o la de su despacho, si es posterior): no se cambia después (se anula la NC, que revierte la devolución, y se registra otra).
+      // cc70 (D-730, modifica D-645): una NC con devolución vigente sí cambia de fecha. La DEV- y sus
+      // movimientos de kardex se quedan con su fecha y su costo (desde D-728 ya podían diferir de la
+      // NC); cambia solo la fecha fiscal. Ventas y margen, CxC y la rentabilidad leen la fecha de la
+      // NC al consultar, así que pasan solos al mes nuevo. La auditoría deja constancia de la DEV-.
       const salesReturn =
         document.docType === FiscalDocType.NOTA_CREDITO
           ? await tx.salesReturn.findFirst({
               where: { creditNoteId: id, status: 'ACTIVE' },
-              select: { seq: true },
+              select: { seq: true, operationDate: true },
             })
           : null;
-      if (salesReturn) {
-        throw new ConflictException(
-          `Esta nota de crédito generó la devolución ${salesReturnCode(salesReturn.seq)}: su fecha no se cambia. Anúlala (revierte la devolución) y registra otra con la fecha correcta.`,
-        );
-      }
       const affected = document.affectedDocument;
       if (affected && input.issueDate < affected.issueDate.toISOString().slice(0, 10)) {
         throw new ConflictException(
@@ -2302,6 +2299,12 @@ export class InvoicingService {
           dueDate: afterDue,
           reason: input.reason,
           ...(atIssueDate.length > 0 ? { redateDispatches: input.redateDispatches } : {}),
+          ...(salesReturn
+            ? {
+                salesReturn: salesReturnCode(salesReturn.seq),
+                salesReturnDate: fromDateOnly(salesReturn.operationDate),
+              }
+            : {}),
         },
       });
       // Después de mover la fecha: el plan del despacho nuevo lee la emisión corregida.
@@ -4703,6 +4706,7 @@ export class InvoicingService {
               id: n.salesReturn.id,
               code: salesReturnCode(n.salesReturn.seq),
               status: n.salesReturn.status,
+              operationDate: fromDateOnly(n.salesReturn.operationDate),
             }
           : null,
       })),
@@ -4712,6 +4716,7 @@ export class InvoicingService {
               id: row.salesReturn.id,
               code: salesReturnCode(row.salesReturn.seq),
               status: row.salesReturn.status,
+              operationDate: fromDateOnly(row.salesReturn.operationDate),
             }
           : null,
       issueDateChanges: ('issueDateChanges' in row ? row.issueDateChanges : []).map((c) => ({

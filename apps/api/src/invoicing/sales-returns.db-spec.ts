@@ -376,16 +376,63 @@ describe('cc52: nota de crédito con devolución', () => {
     expect(r.message).toContain('anterior al comprobante');
   });
 
-  it('una NC con devolución no cambia de fecha después', async () => {
-    const { invoiceId } = await sold();
+  it('cc70 (D-730): una NC con devolución cambia de mes; la DEV- no se mueve y los dos meses cuadran', async () => {
+    const { productId, invoiceId, orderId } = await sold();
     const note = await creditNote(invoiceId, 'DEVOLUCION_ITEM', '1');
-    const r = await rejection(
-      invoicing.updateManualIssueDate(admin, note.id, {
-        issueDate: PREV(25),
-        reason: 'cc52 prueba de fecha',
-      }),
-    );
-    expect(r.status).toBe(409);
+    const ret = await prisma.salesReturn.findUniqueOrThrow({ where: { creditNoteId: note.id } });
+    const [before] = await returnMovements(productId);
+    const margin = moduleRef.get(SalesMarginService);
+    const prev = salesMarginQuerySchema.parse({ from: PREV_FROM, to: PREV_TO });
+    const current = salesMarginQuerySchema.parse({ from: THIS_FROM, to: TODAY });
+    expect((await margin.salesMargin(current)).creditNotes.map((n) => n.id)).toContain(note.id);
+
+    await invoicing.updateManualIssueDate(admin, note.id, {
+      issueDate: PREV(25),
+      reason: 'cc70 la fecha del papel es del mes anterior',
+    });
+
+    // La DEV- y su movimiento siguen igual: misma fecha, mismo costo, sin filas nuevas.
+    const after = await prisma.salesReturn.findUniqueOrThrow({ where: { creditNoteId: note.id } });
+    expect([after.status, after.operationDate.toISOString()]).toEqual([
+      'ACTIVE',
+      ret.operationDate.toISOString(),
+    ]);
+    const moves = await returnMovements(productId);
+    expect(moves).toHaveLength(1);
+    expect([moves[0]?.operationDate.toISOString(), moves[0]?.totalCost.toFixed(4)]).toEqual([
+      before?.operationDate.toISOString(),
+      '20.0000',
+    ]);
+    expect(
+      (await prisma.fiscalDocumentIssueDateChange.findMany({ where: { documentId: note.id } })).map(
+        (c) => c.afterIssueDate.toISOString().slice(0, 10),
+      ),
+    ).toEqual([PREV(25)]);
+
+    // Ventas y margen la lee en su mes nuevo: sale del mes actual y entra al anterior, al céntimo.
+    const subtotal = (await invoicing.findOne(note.id)).subtotalPen;
+    const check = async (query: typeof prev) => {
+      const report = await margin.salesMargin(query);
+      const c = report.creditTotals;
+      const t = report.totals;
+      expect([c.netSalesPen, c.netCostPen]).toEqual([t.salesPen, t.costPen]);
+      expect(new Prisma.Decimal(c.grossSalesPen).plus(c.creditSalesPen).toFixed(4)).toBe(
+        t.salesPen,
+      );
+      expect(new Prisma.Decimal(c.grossCostPen).plus(c.creditCostPen).toFixed(4)).toBe(t.costPen);
+      return report;
+    };
+    const now = await check(current);
+    expect(now.creditNotes.map((n) => n.id)).not.toContain(note.id);
+    expect(orderRow(now, orderId)).toBeUndefined();
+    const earlier = await check(prev);
+    expect(earlier.creditNotes.find((n) => n.id === note.id)).toMatchObject({
+      salesPen: `-${subtotal}`,
+      costPen: '-20.0000',
+      inTotals: true,
+    });
+    // La factura (100 de costo) y la NC (−20) en el mismo pedido y el mismo mes.
+    expect(orderRow(earlier, orderId)?.costPen).toBe('80.0000');
   });
 
   it('anular la NC revierte la devolución con movimientos inversos; si ya se revendió, 409', async () => {
