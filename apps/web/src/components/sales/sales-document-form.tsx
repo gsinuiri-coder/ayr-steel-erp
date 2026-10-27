@@ -1939,8 +1939,8 @@ function LineRow({
           </div>
           <div role="cell" className="min-w-0">
             <QuietDecimalInput
-              quiet={qtyUnit === 'm' || qtyUnit === 'und'}
-              minDecimals={qtyUnit === 'und' ? 0 : 2}
+              quiet={qtyUnit === 'm' || qtyUnit === 'und' || qtyUnit === 'caja'}
+              minDecimals={qtyUnit === 'und' || qtyUnit === 'caja' ? 0 : 2}
               id={lineFieldId(index, 'qty')}
               unit={qtyUnit}
               className="text-right tabular-nums"

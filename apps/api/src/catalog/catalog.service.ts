@@ -363,7 +363,7 @@ export class CatalogService {
     // siguiente («ya tiene saldo en NIU: no se puede mover en BX»). Primero se vacía (ESQ30: se
     // revierte su carga inicial) y después se cambia.
     if (input.unit !== undefined && input.unit !== before.unit) {
-      const [balances, reservations] = await Promise.all([
+      const [balances, reservations, liveLines] = await Promise.all([
         this.prisma.inventoryBalance.findMany({
           where: { itemType: 'PRODUCT', itemId: id, NOT: { qty: 0 } },
           select: { qty: true, unit: true },
@@ -372,13 +372,27 @@ export class CatalogService {
           where: { itemType: 'PRODUCT', itemId: id, status: 'ACTIVE' },
           select: { id: true },
         }),
+        // Autorrevisión P2-1: un pedido vivo despacharía en la unidad de su línea (la de antes),
+        // aunque no tenga reserva (confirmado con faltante).
+        this.prisma.salesOrderItem.findMany({
+          where: {
+            productId: id,
+            salesOrder: { status: { notIn: ['FULFILLED', 'CANCELLED'] } },
+          },
+          select: { id: true },
+        }),
       ]);
       const stock = balances[0];
-      if (stock !== undefined || reservations.length > 0) {
-        const message =
-          stock !== undefined
-            ? `${before.sku} tiene saldo (${stock.qty.toString()} ${stock.unit}): la unidad solo cambia con el saldo en cero`
-            : `${before.sku} tiene ${String(reservations.length)} reserva(s) activa(s): la unidad solo cambia sin reservas`;
+      const blocker =
+        stock !== undefined
+          ? `tiene saldo (${stock.qty.toString()} ${stock.unit}): la unidad solo cambia con el saldo en cero`
+          : reservations.length > 0
+            ? `tiene ${String(reservations.length)} reserva(s) activa(s): la unidad solo cambia sin reservas`
+            : liveLines.length > 0
+              ? `está en ${String(liveLines.length)} línea(s) de pedidos sin terminar: la unidad solo cambia sin pedidos vivos`
+              : null;
+      if (blocker !== null) {
+        const message = `${before.sku} ${blocker}`;
         throw new BadRequestException({ statusCode: 400, message, errors: { unit: [message] } });
       }
     }

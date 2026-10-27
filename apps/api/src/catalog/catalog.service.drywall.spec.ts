@@ -200,6 +200,14 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
+    it('con un pedido sin terminar no cambia (autorrevisión, P2-1)', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.salesOrderItem.findMany.mockResolvedValueOnce([{ id: 'soi-1' }]);
+      await expect(service.update(ACTOR, 'p-1', { unit: 'BX' })).rejects.toThrow(
+        /está en 1 línea\(s\) de pedidos sin terminar/,
+      );
+    });
+
     it('con reservas activas no cambia', async () => {
       prisma.product.findUnique.mockResolvedValue(stored());
       prisma.reservation.findMany.mockResolvedValueOnce([{ id: 'r-1' }]);

@@ -189,11 +189,11 @@ describe('tabla 6 del formato 13.1 (cc68, D-725)', () => {
       { unit: 'NIU', operationDate: '2026-08-01' },
       { unit: 'BX', operationDate: '2026-11-03' },
     ];
-    expect(reportUnit(moves, '2026-11-01', 'BX')).toBe('BX');
+    expect(reportUnit(moves, 'BX')).toBe('BX');
     // Agosto (el rango termina antes del primer movimiento en BX): NIU.
-    expect(reportUnit(moves.slice(0, 2), '2026-08-01', 'BX')).toBe('NIU');
+    expect(reportUnit(moves.slice(0, 2), 'BX')).toBe('NIU');
     // Sin movimientos en el rango, la del último anterior; sin ninguno, la del ítem.
-    expect(reportUnit(moves.slice(0, 2), '2026-10-01', 'BX')).toBe('NIU');
-    expect(reportUnit([], '2026-10-01', 'BX')).toBe('BX');
+    expect(reportUnit(moves.slice(0, 2), 'BX')).toBe('NIU');
+    expect(reportUnit([], 'BX')).toBe('BX');
   });
 });

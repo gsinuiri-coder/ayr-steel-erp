@@ -54,16 +54,12 @@ export function unitTable6(unit: string): string {
 /**
  * cc68 (D-725): la unidad del reporte es la de los movimientos del rango (la del último), no la del
  * primero de la historia: un producto que cambió de unidad (ESQ30, NIU → BX) informa la que tiene
- * en el periodo. Sin movimientos en el rango, la del último anterior; sin ninguno, la del ítem.
+ * en el periodo. Los movimientos llegan hasta el fin del rango, así que el último es el del rango
+ * o, sin movimientos en el rango, el último anterior; sin ninguno, la del ítem. Un rango que cruce
+ * el cambio rotula todo con la unidad nueva (el 13.1 es mensual).
  */
-export function reportUnit(
-  movements: readonly { unit: string; operationDate: string }[],
-  from: string,
-  itemUnit: string,
-): string {
-  const last = movements.at(-1);
-  const lastInRange = last !== undefined && last.operationDate >= from ? last : undefined;
-  return lastInRange?.unit ?? last?.unit ?? itemUnit;
+export function reportUnit(movements: readonly { unit: string }[], itemUnit: string): string {
+  return movements.at(-1)?.unit ?? itemUnit;
 }
 
 /** Tabla 10, desde los tipos de comprobante del sistema. `00` = documento interno u otro. */
@@ -215,11 +211,7 @@ export class KardexPepsService {
 
     const inRange = own.filter((m) => fromDateOnly(m.operationDate) >= query.from);
     const documents = await this.documentsOf(inRange);
-    const unit = reportUnit(
-      own.map((m) => ({ unit: m.unit, operationDate: fromDateOnly(m.operationDate) })),
-      query.from,
-      item.unit,
-    );
+    const unit = reportUnit(own, item.unit);
 
     return {
       from: query.from,

@@ -573,13 +573,6 @@ export function isCatalogUnit(unit: string): unit is Unit {
 }
 
 /**
- * cc68 (D-724): las unidades que se **cuentan** (piezas y cajas), frente a las que se miden (kilos,
- * metros, toneladas). Se muestran sin decimales de más (D-579) y se cargan en enteros donde la
- * pieza es entera.
- */
-export const COUNTED_UNITS: ReadonlySet<string> = new Set<string>([Unit.NIU, Unit.BX]);
-
-/**
  * cc68 (D-725): tabla 6 del PLE (código de la unidad de medida), la vigente del anexo 3 de la
  * R.S. 286-2009/SUNAT según la R.S. 169-2015/SUNAT: códigos alfanuméricos, los mismos del catálogo
  * 03. Reemplaza la numeración vieja («07 - UNIDADES») del formato 13.1. Una entrada por unidad de

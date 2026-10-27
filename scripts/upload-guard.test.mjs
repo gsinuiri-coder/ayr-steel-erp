@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
-import { forbiddenUploadPaths } from './upload-guard.mjs';
+import { forbiddenUploadPaths, missingRequiredPaths } from './upload-guard.mjs';
 
 // cc68 (D-726): el paquete del deploy de la API no lleva local-data/ ni archivos de entorno.
 
@@ -45,4 +45,9 @@ test('.gcloudignore excluye local-data y los archivos de entorno', () => {
   for (const rule of ['local-data', '**/local-data', '.env', '.env.*', '**/.env', '**/.env.*']) {
     assert.ok(lines.includes(rule), `falta «${rule}» en .gcloudignore`);
   }
+});
+
+test('un listado vacío o sin el Dockerfile no prueba nada (autorrevisión P2-3)', () => {
+  assert.deepEqual(missingRequiredPaths([]), ['Dockerfile', 'apps/api/package.json']);
+  assert.deepEqual(missingRequiredPaths(['Dockerfile', 'apps\\api\\package.json']), []);
 });
