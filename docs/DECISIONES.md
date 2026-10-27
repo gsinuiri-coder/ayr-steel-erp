@@ -3166,3 +3166,89 @@ El dueño decidió mostrar el % solo en la fila de netas, en la web y en el Exce
   compara con el rango.
 - Una NC de un pedido fuera de los totales se lista con su venta completa, aunque a los totales solo aporta su venta
   de Servicios. El modal y el Excel lo dicen.
+
+## cc68 — anular el inventario inicial de Drywall, ESQ30 por caja y la unidad como lista cerrada (D-721..D-726)
+
+**De dónde sale.** El cliente dice que los inventarios iniciales de Drywall de dw-01, dw-02 y dw-03 están mal y no
+van. El dueño decidió anularlos sin reemplazo (D-721): las 18 bobinas DW43, los 7 perfiles y ESQ30. Si llegan cifras
+nuevas, se recargan con otra decisión. Además, el cliente pidió vender el esquinero ESQ30 por caja.
+
+**La lectura previa (solo lectura contra producción).** Las 18 bobinas y los 8 productos cumplían todo para
+anularlos:
+
+- un solo movimiento vivo, el ingreso IMPORT del 01/08;
+- sin reservas, corte, OP, hijas ni despachos.
+
+ESQ30 tiene 13 cotizaciones emitidas en NIU, todas importadas (sin vencimiento), con precios de S/ 112 a S/ 125 sin
+IGV, que ya son por caja. No tiene pedidos ni comprobantes. En el catálogo había 5 productos con unidades anteriores a
+la lista:
+
+- KG: ANTI, SOLD6011 y SOLD7018;
+- und: CAPUROJO;
+- TONELADAS: CONFORMADO.
+
+Ninguno tenía kardex. El dueño autorizó corregirlos (KG → KGM, und → NIU, TONELADAS → TNE).
+
+**La cifra de cierre.** El brief pedía volver a S/ 700 272,23, que es el total después de dw-01 y dw-02, con las
+bobinas. Anulando todo se vuelve a S/ 385 317,43, el total previo a dw-01. El dueño corrigió la cifra.
+
+**La reversa de la carga de productos (D-722).** D-206/D-207/D-712 dejaron la carga sin su reversa (regla dura 15).
+Las bobinas ya tenían la suya (anular bobina, RF-21); los productos no. La reversa es la misma herramienta con
+`--revert`: todo o nada, por `InventoryService.reverse` y con la fecha obligatoria. Solo saca una carga que nadie usó:
+cualquier otro movimiento del producto, una reserva de pedido o una reserva temporal la frenan.
+
+**La unidad, lista cerrada (D-723).** El texto libre dejó KG, und y TONELADAS en el catálogo. El selector cierra la
+puerta. La regla para las unidades viejas (validar al editar solo si la unidad cambia) evita que un producto con una
+unidad vieja quede imposible de editar hasta que alguien lo corrija.
+
+**La caja (D-724).** Se verificó en el PDF oficial de SUNAT del catálogo 03 del Anexo 8 (el que enlaza
+orientacion.sunat.gob.pe, UN/ECE rec 20): la fila es «BX — Box». También en la tabla 6 del PLE: «BX — CAJA». Una copia
+quedó fuera del repo, en `local-data/cc68/sunat/`.
+
+- **Cambio de unidad de un producto:** hecho por las revisiones. El saldo, las reservas y los pedidos vivos están
+  contados en la unidad de antes. El kardex rechaza mover en otra unidad un saldo distinto de cero
+  (`InventoryService`), así que cambiar la unidad con stock dejaba el producto sin poder venderse. Por eso solo cambia
+  con todo en cero; ESQ30 primero se vacía con la reversa.
+- **Cotizaciones en la unidad vieja:** conservan su unidad. El pedido copia la unidad de la cotización, así que
+  confirmar una en NIU de un producto en BX movería el kardex en NIU. Confirmar la rechaza y manda a editarla.
+  - El brief decía «edita o duplica». El duplicado ya rechaza una línea cuya unidad cambió (D-348), por eso el mensaje
+    solo dice «edita».
+  - Al editar, la línea toma la unidad de hoy con la misma cantidad y el mismo precio.
+  - COT 27 y 134 (CONFORMADO, emitidas en TONELADAS) quedan en el mismo caso cuando CONFORMADO pase a TNE.
+
+**La tabla 6 del formato 13.1 (D-725).** Para verificar el código de la caja se leyó el anexo 3 vigente de la R.S.
+286-2009/SUNAT, según la R.S. 169-2015/SUNAT (página 9, «TABLA 6: CÓDIGO DE LA UNIDAD DE MEDIDA»). Usa códigos
+alfanuméricos, los mismos del catálogo 03:
+
+- BX CAJA;
+- KGM KILOGRAMO;
+- MTR METRO;
+- NIU UNIDAD (BIENES);
+- TNE TONELADAS;
+- ZZ UNIDAD (SERVICIOS).
+
+El formato 13.1 del ERP imprimía la numeración vieja («01 - KILOGRAMOS», «07 - UNIDADES», «15 - METROS»). El dueño
+decidió pasar todas las unidades a la tabla vigente, con un solo mapa en `@ayr/shared` y su prueba.
+
+- Fuente: `https://www.sunat.gob.pe/legislacion/superin/2015/anexo3-rs169-2015.pdf`. Hay copia fuera del repo.
+- La cabecera tomaba la unidad del primer movimiento de la historia, y ESQ30 habría seguido saliendo en unidades para
+  siempre. Ahora toma la del último movimiento del rango.
+
+**El paquete del deploy (D-726).** `.gcloudignore` no excluía `local-data/` y en cc67 hubo que sacar la carpeta a mano
+antes de desplegar. Ahora la excluye. Además, `deploy:api` le pregunta a gcloud qué subiría y aborta si aparece
+`local-data/` o un `.env*`, o si el listado no trae el Dockerfile.
+
+**Lo que queda anotado para otra pieza.**
+
+- _Compras de ESQ30 en otra unidad_ (autorrevisión, P2-4):
+  - la compra no compara la unidad de la línea con la del producto;
+  - el importador toma la del papel;
+  - una factura de ESQ30 en «UND» entraría en NIU, y con el saldo en cero el kardex lo acepta y queda contado en NIU;
+  - las ventas en BX chocarían después;
+  - solo la edición de una compra recibida lo valida.
+- _Tarballs viejos en el bucket de Cloud Build_ (autorrevisión, P2-2): antes de D-726, los deploys desde el checkout
+  principal subían `local-data/` (planillas con RUC y montos) a `gs://<proyecto>_cloudbuild/source/`. La imagen no los
+  lleva (el Dockerfile copia solo `packages/shared` y `apps/api`). Falta listar el bucket y decidir si se borran esos
+  archivos o se les pone retención.
+- La hoja del kardex que no es PEPS sigue tomando la unidad del primer movimiento.
+- En Ventas por material, una caja va a «No trazable» porque no tiene metros. Es correcto, pero conviene saberlo.

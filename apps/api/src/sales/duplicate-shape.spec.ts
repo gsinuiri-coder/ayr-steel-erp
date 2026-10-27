@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { Role } from '@ayr/shared';
-import { duplicateShapeChange } from './duplicate-shape';
+import { confirmUnitChange, duplicateShapeChange } from './duplicate-shape';
 import { QuotationsService } from './quotations.service';
 import * as salesLines from './sales-lines';
 
@@ -116,5 +116,23 @@ describe('QuotationsService.duplicate — producto que cambió de subtipo (D-348
     );
     expect(salesLines.resolveSalesLines).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('confirmUnitChange (cc68, D-724)', () => {
+  it('la misma unidad se confirma', () => {
+    expect(confirmUnitChange(1, 'ESQ30', 'BX', 'BX')).toBeNull();
+  });
+
+  it('una línea en la unidad vieja no se confirma y dice qué hacer', () => {
+    expect(confirmUnitChange(2, 'ESQ30', 'NIU', 'BX')).toBe(
+      'Línea 2: ESQ30 se cotizó en Unidad (NIU) y hoy se vende en Caja (BX): edita la cotización para pasarla a la unidad de hoy',
+    );
+  });
+
+  it('una unidad anterior a la lista se nombra tal cual', () => {
+    expect(confirmUnitChange(1, 'CONFORMADO', 'TONELADAS', 'TNE')).toMatch(
+      /se cotizó en TONELADAS y hoy se vende en Tonelada \(TNE\)/,
+    );
   });
 });

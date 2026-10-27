@@ -8,6 +8,8 @@ describe('unitSymbol (D-579)', () => {
     expect(unitSymbol('MTR')).toBe('m');
     expect(unitSymbol('TNE')).toBe('t');
     expect(unitSymbol('ZZ')).toBe('');
+    // cc68 (D-724): la caja.
+    expect(unitSymbol('BX')).toBe('caja');
   });
 
   it('un código desconocido se muestra tal cual', () => {

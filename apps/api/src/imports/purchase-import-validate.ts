@@ -710,6 +710,9 @@ function unitOf(
     UNIDAD: 'NIU',
     M: 'MTR',
     METRO: 'MTR',
+    // cc68 (D-724): la caja (BX ya es la unidad misma).
+    CAJA: 'BX',
+    CJA: 'BX',
   };
   const unit = alias[value] ?? value;
   if ((UNITS as readonly string[]).includes(unit)) return unit as Unit;

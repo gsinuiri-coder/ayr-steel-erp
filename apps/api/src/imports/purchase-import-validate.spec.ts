@@ -339,6 +339,18 @@ describe('validateDocument — producto terminado: el SKU por la línea de la ca
     });
   });
 
+  it.each(['CAJA', 'cja', 'BX'])(
+    'cc68 (D-724): la unidad «%s» del archivo es la caja (BX)',
+    (u) => {
+      const r = validateDocument(
+        fg({ lines: [line({ sku: 'clavo1', qty: '4', unit: u })] }),
+        ctx(),
+      );
+      expect(errors(r)).toEqual([]);
+      expect(r.input?.items[0]?.unit).toBe('BX');
+    },
+  );
+
   it('un SKU que solo es de otra línea es error de campo', () => {
     const r = validateDocument(fg({ businessLine: 'Drywall' }), ctx());
     expect(errors(r)[0]).toMatch(/El SKU clavo1 es de otra línea \(trading\)/);

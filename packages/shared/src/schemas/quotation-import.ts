@@ -98,6 +98,10 @@ export const QUOTATION_IMPORT_UNITS: Record<string, string> = {
   MTR: 'MTR',
   KGM: 'KGM',
   NIU: 'NIU',
+  // cc68 (D-724): la caja.
+  CAJA: 'BX',
+  CJA: 'BX',
+  BX: 'BX',
 };
 
 /** D-385: kilos por tonelada. */

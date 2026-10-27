@@ -546,6 +546,11 @@ export const Unit = {
   TNE: 'TNE',
   /** Servicio / no aplica una unidad física. */
   ZZ: 'ZZ',
+  /**
+   * cc68 (D-724): caja, para lo que se vende por caja (el esquinero ESQ30). Catálogo 03 del
+   * Anexo 8 (UN/ECE rec 20, «BX — Box») y tabla 6 del PLE («BX — CAJA»). Se cuenta como `NIU`.
+   */
+  BX: 'BX',
 } as const;
 export type Unit = (typeof Unit)[keyof typeof Unit];
 export const UNITS = Object.values(Unit) as [Unit, ...Unit[]];
@@ -555,6 +560,31 @@ export const UNIT_LABELS: Record<Unit, string> = {
   MTR: 'Metro (MTR)',
   TNE: 'Tonelada (TNE)',
   ZZ: 'Servicio (ZZ)',
+  BX: 'Caja (BX)',
+};
+
+/**
+ * cc68 (D-723): la unidad de un producto es una de la lista cerrada `UNITS`. El catálogo todavía
+ * puede guardar alguna unidad anterior a la lista (texto libre de antes); esta función dice si la
+ * de un producto es de la lista.
+ */
+export function isCatalogUnit(unit: string): unit is Unit {
+  return (UNITS as readonly string[]).includes(unit);
+}
+
+/**
+ * cc68 (D-725): tabla 6 del PLE (código de la unidad de medida), la vigente del anexo 3 de la
+ * R.S. 286-2009/SUNAT según la R.S. 169-2015/SUNAT: códigos alfanuméricos, los mismos del catálogo
+ * 03. Reemplaza la numeración vieja («07 - UNIDADES») del formato 13.1. Una entrada por unidad de
+ * la lista (lo comprueba su prueba).
+ */
+export const UNIT_TABLE_6: Record<Unit, string> = {
+  KGM: 'KGM - KILOGRAMO',
+  NIU: 'NIU - UNIDAD (BIENES)',
+  MTR: 'MTR - METRO',
+  TNE: 'TNE - TONELADAS',
+  ZZ: 'ZZ - UNIDAD (SERVICIOS)',
+  BX: 'BX - CAJA',
 };
 
 // ---------------------------------------------------------------------------

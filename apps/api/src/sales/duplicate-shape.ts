@@ -1,4 +1,10 @@
-import { detailsLengths, isAccessory, type DetailsLengthsProductLike } from '@ayr/shared';
+import {
+  detailsLengths,
+  isAccessory,
+  isCatalogUnit,
+  UNIT_LABELS,
+  type DetailsLengthsProductLike,
+} from '@ayr/shared';
 
 /** Cómo quedó cotizada una línea: lo que un duplicado copia tal cual. */
 export interface QuotedLineShape {
@@ -34,4 +40,24 @@ export function duplicateShapeChange(
     return 'dejó de ser un accesorio y la línea lleva piezas informativas de accesorio';
   }
   return null;
+}
+
+/**
+ * cc68 (D-724): una línea cotizada en una unidad que el producto ya no usa (ESQ30 pasó de NIU a
+ * BX) no se confirma: el pedido copiaría la unidad vieja y el despacho movería el kardex en una
+ * unidad que no es la del saldo. Editar la cotización arma la línea con la unidad de hoy (misma
+ * cantidad y precio); el duplicado no sirve, lo rechaza por la misma razón (D-348).
+ */
+export function confirmUnitChange(
+  lineNumber: number,
+  sku: string,
+  lineUnit: string,
+  productUnit: string,
+): string | null {
+  if (lineUnit === productUnit) return null;
+  return `Línea ${String(lineNumber)}: ${sku} se cotizó en ${unitLabel(lineUnit)} y hoy se vende en ${unitLabel(productUnit)}: edita la cotización para pasarla a la unidad de hoy`;
+}
+
+function unitLabel(unit: string): string {
+  return isCatalogUnit(unit) ? UNIT_LABELS[unit] : unit;
 }

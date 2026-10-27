@@ -78,7 +78,7 @@ describe('KardexSheetService', () => {
       to: '2026-09-30',
       itemCode: 'BOB-1',
       itemDescription: 'Bobina',
-      unitCode: '01 - KILOGRAMOS',
+      unitCode: 'KGM - KILOGRAMO',
       peps: {
         opening: { qty: '0.000', unitCost: '0.0000', total: '0.0000', layers: [] },
         rows: [],

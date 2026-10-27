@@ -13,7 +13,7 @@ function report(): KardexPepsReport {
     itemCode: 'BOB038AZUL',
     itemDescription: 'Bobina azul',
     existenceType: '01 - MERCADERÍAS',
-    unitCode: '01 - KILOGRAMOS',
+    unitCode: 'KGM - KILOGRAMO',
     peps: {
       opening: balance,
       rows: [

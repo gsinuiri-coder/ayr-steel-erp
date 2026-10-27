@@ -32,7 +32,7 @@ const baseInput = {
   businessLineId: 'bl-roofing',
   sku: 'ACCES030ROJO',
   name: 'Accesorio 0.30 rojo',
-  unit: 'MTR',
+  unit: 'MTR' as const,
   source: ProductSource.MANUFACTURED,
   finishId: FINISH_ID,
   colorId: COLOR_ID,

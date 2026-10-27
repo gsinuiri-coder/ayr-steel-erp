@@ -74,6 +74,8 @@ export function formatMoneyOrDash(
  * internos y Excel—. El código SUNAT que viaja al PSE y al XML no cambia: esto es solo la vista.
  */
 export const UNITS_SYMBOL = 'und';
+/** cc68 (D-724): la caja (`BX`) se muestra «caja», contada como las unidades. */
+export const BOXES_SYMBOL = 'caja';
 
 const UNIT_SYMBOL: Record<string, string> = {
   KGM: 'kg',
@@ -81,10 +83,17 @@ const UNIT_SYMBOL: Record<string, string> = {
   MTR: 'm',
   TNE: 't',
   ZZ: '',
+  // cc68 (D-724): la caja; el código BX solo va en los datos.
+  BX: BOXES_SYMBOL,
 };
 
 export function unitSymbol(unit: string): string {
   return UNIT_SYMBOL[unit] ?? unit;
+}
+
+/** cc68 (D-724): los símbolos de lo que se cuenta (piezas y cajas) siguen D-579. */
+function isCountedSymbol(symbol: string | null | undefined): boolean {
+  return symbol === UNITS_SYMBOL || symbol === BOXES_SYMBOL;
 }
 
 /**
@@ -174,7 +183,7 @@ export function formatUnits(value: string | Decimal, unit: string | null = UNITS
 export function formatQty(value: string, unit?: string): string {
   if (unit === 'kg') return formatKg(value);
   if (unit === 'm') return formatMeters(value);
-  if (unit === UNITS_SYMBOL) return formatUnits(value);
+  if (isCountedSymbol(unit)) return formatUnits(value, unit);
   return formatQtyAsIs(value, unit);
 }
 
@@ -185,7 +194,7 @@ export function formatQty(value: string, unit?: string): string {
  * («10 und», nunca «10.000 und»).
  */
 export function formatQtyAsIs(value: string, unit?: string): string {
-  if (unit === UNITS_SYMBOL) return formatUnits(value);
+  if (isCountedSymbol(unit)) return formatUnits(value, unit);
   const [intPart = '0', decPart] = value.split('.');
   const body = decPart ? `${group(intPart)}.${decPart}` : group(intPart);
   return withUnit(body, unit);
@@ -201,7 +210,7 @@ export function formatUnitQty(value: string | Decimal, sunatUnit: string, showUn
   const shown = showUnit ? symbol : null;
   if (symbol === 'kg') return formatKg(value, shown);
   if (symbol === 'm') return formatMeters(value, shown);
-  if (symbol === UNITS_SYMBOL) return formatUnits(value, shown);
+  if (isCountedSymbol(symbol)) return formatUnits(value, shown);
   return formatQtyAsIs(typeof value === 'string' ? value : value.toString(), shown ?? undefined);
 }
 

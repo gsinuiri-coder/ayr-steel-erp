@@ -474,6 +474,33 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
     expect(call.after).not.toHaveProperty('shortfalls');
   });
 
+  it('cc68 (D-724): una línea en una unidad que el producto ya no usa no se confirma', async () => {
+    const tx = makeConfirmTx();
+    tx.product.findMany.mockResolvedValue([
+      { id: 'p-1', sku: 'ESQ30', unit: 'BX', isActive: true },
+    ]);
+    (prisma as { $transaction: unknown }).$transaction = jest.fn(
+      (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    );
+    await expect(service.confirm(ADMIN, 'q-1', {})).rejects.toThrow(
+      'Línea 1: ESQ30 se cotizó en Metro (MTR) y hoy se vende en Caja (BX): edita la cotización para pasarla a la unidad de hoy',
+    );
+    expect(tx.salesOrder.create).not.toHaveBeenCalled();
+  });
+
+  it('un producto desactivado desde la cotización no se confirma', async () => {
+    const tx = makeConfirmTx();
+    tx.product.findMany.mockResolvedValue([
+      { id: 'p-1', sku: 'TECHO', unit: 'MTR', isActive: false },
+    ]);
+    (prisma as { $transaction: unknown }).$transaction = jest.fn(
+      (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+    );
+    await expect(service.confirm(ADMIN, 'q-1', {})).rejects.toThrow(
+      /El producto TECHO está desactivado desde que se emitió la cotización/,
+    );
+  });
+
   /** Transacción mínima para recorrer `confirm` de punta a punta con una línea de materia prima. */
   function makeConfirmTx() {
     const items = [
@@ -533,7 +560,7 @@ describe('D-341 — SalesOrdersService: confirmar con faltante', () => {
       customer: {
         findUniqueOrThrow: jest.fn().mockResolvedValue({ isActive: true, name: 'ACME' }),
       },
-      product: { findFirst: jest.fn().mockResolvedValue(null) },
+      product: { findMany: jest.fn().mockResolvedValue([]) },
       salesOrder: {
         create: jest
           .fn()

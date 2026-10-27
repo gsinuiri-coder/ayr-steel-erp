@@ -3,7 +3,13 @@ import * as XLSX from 'xlsx';
 import type { Env } from '../config/env';
 import type { PrismaService } from '../prisma/prisma.service';
 import { kardexPepsXlsx } from './kardex-peps-xlsx';
-import { KardexPepsService, pepsCorrectedCosts } from './kardex-peps.service';
+import { UNIT_TABLE_6, UNITS } from '@ayr/shared';
+import {
+  KardexPepsService,
+  pepsCorrectedCosts,
+  reportUnit,
+  unitTable6,
+} from './kardex-peps.service';
 
 /**
  * D-279. El cálculo PEPS se prueba en `kardex-peps.spec.ts`; acá, lo que el servicio agrega:
@@ -141,7 +147,7 @@ describe('KardexPepsService', () => {
       operationCode: '01',
     });
     expect(report.existenceType).toBe('03 - MATERIAS PRIMAS');
-    expect(report.unitCode).toBe('01 - KILOGRAMOS');
+    expect(report.unitCode).toBe('KGM - KILOGRAMO');
   });
 
   it('el xlsx sigue el formato 13.1 con montos numéricos', async () => {
@@ -166,5 +172,28 @@ describe('KardexPepsService', () => {
     expect(totals?.[7]).toBe(600);
     expect(totals?.[10]).toBe(1240);
     expect((sheet.N15 as XLSX.CellObject | undefined)?.t).toBe('n');
+  });
+});
+
+describe('tabla 6 del formato 13.1 (cc68, D-725)', () => {
+  it('cada unidad de la lista tiene su código de la tabla 6 vigente (R.S. 169-2015)', () => {
+    for (const unit of UNITS) expect(UNIT_TABLE_6[unit]).toMatch(new RegExp(`^${unit} - `));
+    expect(unitTable6('BX')).toBe('BX - CAJA');
+    expect(unitTable6('NIU')).toBe('NIU - UNIDAD (BIENES)');
+    expect(unitTable6('und')).toBe('99 - OTROS (und)');
+  });
+
+  it('la unidad es la del último movimiento del rango, no la del primero de la historia', () => {
+    const moves = [
+      { unit: 'NIU', operationDate: '2026-08-01' },
+      { unit: 'NIU', operationDate: '2026-08-01' },
+      { unit: 'BX', operationDate: '2026-11-03' },
+    ];
+    expect(reportUnit(moves, 'BX')).toBe('BX');
+    // Agosto (el rango termina antes del primer movimiento en BX): NIU.
+    expect(reportUnit(moves.slice(0, 2), 'BX')).toBe('NIU');
+    // Sin movimientos en el rango, la del último anterior; sin ninguno, la del ítem.
+    expect(reportUnit(moves.slice(0, 2), 'BX')).toBe('NIU');
+    expect(reportUnit([], 'BX')).toBe('BX');
   });
 });

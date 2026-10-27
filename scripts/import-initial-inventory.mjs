@@ -16,6 +16,9 @@
 // completa — dos archivos y dos servicios de dominio distintos, mismo wrapper:
 //   pnpm import:initial-inventory --file "Productos.xlsx" --kind products [--execute]
 //
+// cc68 (D-722): la reversa de un lote de productos (dry-run por defecto, todo o nada):
+//   pnpm import:initial-inventory --kind products --revert --batch <id> --operation-date AAAA-MM-DD [--execute]
+//
 // `production` es una rama válida (D-206 es exactamente para el arranque real), pero `--execute`
 // contra ella exige además `--confirm-production` — sin el flag, aborta con el mensaje de abajo.
 // El dry-run **no** lo pide: solo lee el archivo y valida, nunca toca `coils`/`products`/`inventory_movements`.

@@ -30,6 +30,8 @@ import {
   type ProductListPriceChangeDto,
   type UpdateProductInput,
   COIL_SKU_PREFIX,
+  isCatalogUnit,
+  UNITS,
 } from '@ayr/shared';
 import { AuditService } from '../audit/audit.service';
 import type { RequestUser } from '../auth/auth.types';
@@ -347,6 +349,54 @@ export class CatalogService {
         throw new BadRequestException(
           `${before.sku} es el producto de venta de ${String(open.length)} bobina(s) con saldo (${shown}${open.length > 3 ? '…' : ''}): ciérralas o véndelas antes de desactivarlo`,
         );
+      }
+    }
+
+    // cc68 (D-723): la unidad es de la lista cerrada. Un producto con una unidad anterior a la lista
+    // se puede seguir editando sin tocarla; cambiarla exige una de la lista.
+    if (input.unit !== undefined && input.unit !== before.unit && !isCatalogUnit(input.unit)) {
+      const message = `«${input.unit}» no es una unidad de la lista (${UNITS.join(', ')})`;
+      throw new BadRequestException({ statusCode: 400, message, errors: { unit: [message] } });
+    }
+    // cc68 (D-724, segundo modelo P2-1): con saldo o reservas, la unidad no cambia. El saldo y
+    // las reservas están contados en la unidad de antes, y el kardex rechazaría cada movimiento
+    // siguiente («ya tiene saldo en NIU: no se puede mover en BX»). Primero se vacía (ESQ30: se
+    // revierte su carga inicial) y después se cambia.
+    if (input.unit !== undefined && input.unit !== before.unit) {
+      const [balances, reservations, liveLines] = await Promise.all([
+        this.prisma.inventoryBalance.findMany({
+          where: { itemType: 'PRODUCT', itemId: id, NOT: { qty: 0 } },
+          select: { qty: true, unit: true },
+        }),
+        this.prisma.reservation.findMany({
+          where: { itemType: 'PRODUCT', itemId: id, status: 'ACTIVE' },
+          select: { id: true },
+        }),
+        // Autorrevisión P2-1: un pedido vivo que se despacha **del stock del producto** movería el
+        // kardex en la unidad de su línea (la de antes), aunque no tenga reserva (confirmado con
+        // faltante). Una cobertura a pedido reserva materia prima y D-127 la deja reclasificar
+        // (plancha ↔ a medida) con pedidos vivos: esas líneas no cuentan.
+        this.prisma.salesOrderItem.findMany({
+          where: {
+            productId: id,
+            reserveItemType: 'PRODUCT',
+            salesOrder: { status: { notIn: ['FULFILLED', 'CANCELLED'] } },
+          },
+          select: { id: true },
+        }),
+      ]);
+      const stock = balances[0];
+      const blocker =
+        stock !== undefined
+          ? `tiene saldo (${stock.qty.toString()} ${stock.unit}): la unidad solo cambia con el saldo en cero`
+          : reservations.length > 0
+            ? `tiene ${String(reservations.length)} reserva(s) activa(s): la unidad solo cambia sin reservas`
+            : liveLines.length > 0
+              ? `está en ${String(liveLines.length)} línea(s) de pedidos sin terminar que salen de su stock: la unidad solo cambia sin pedidos vivos`
+              : null;
+      if (blocker !== null) {
+        const message = `${before.sku} ${blocker}`;
+        throw new BadRequestException({ statusCode: 400, message, errors: { unit: [message] } });
       }
     }
 

@@ -10,6 +10,8 @@
  * Uso:
  *   pnpm exec tsx prisma/import-initial-inventory-cli.ts --file <ruta.xlsx|csv>
  *   pnpm exec tsx prisma/import-initial-inventory-cli.ts --file <ruta.xlsx|csv> --execute
+ *   pnpm exec tsx prisma/import-initial-inventory-cli.ts --kind products --revert --batch <id>
+ *     [--operation-date AAAA-MM-DD] [--reason "motivo"] [--execute]   (cc68, D-722)
  *
  * (En la práctica se invoca vía `pnpm import:initial-inventory`, que compila este archivo con
  * `tsc` real — ver `tsconfig.cli.json` — y no con `tsx`: `NestFactory.createApplicationContext`
@@ -24,6 +26,7 @@ import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { INestApplicationContext } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { PrismaClient, Role } from '@prisma/client';
 import { AppModule } from '../src/app.module';
@@ -36,6 +39,10 @@ import {
   InitialInventoryProductImportService,
   type ProductInitialInventoryRowSummary,
 } from '../src/imports/initial-inventory-product-import.service';
+import {
+  InitialInventoryProductRevertService,
+  type RevertRowSummary,
+} from '../src/imports/initial-inventory-product-revert.service';
 
 function argValue(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -54,6 +61,10 @@ if (kindFlag !== 'coils' && kindFlag !== 'products') {
   throw new Error(`--kind tiene que ser "coils" o "products" (recibido: "${kindFlag}").`);
 }
 const kind: 'coils' | 'products' = kindFlag;
+// cc68 (D-722): `--revert --batch <id>` revierte un lote de la carga inicial de productos.
+const revert = process.argv.includes('--revert');
+const batchFlag = argValue('--batch');
+const reasonFlag = argValue('--reason');
 
 function printCoilRow(row: InitialInventoryRowSummary): void {
   const label = `  fila ${String(row.rowNumber)} (${row.externalCode || 'sin código'})`;
@@ -79,8 +90,56 @@ function printProductRow(row: ProductInitialInventoryRowSummary): void {
   for (const err of row.errors) console.error(`      - ${err}`);
 }
 
+function printRevertRow(row: RevertRowSummary): void {
+  const label = `  ${row.sku} (movimiento ${row.movementId}, ${row.qty} ${row.unit}, S/ ${row.totalCost})`;
+  if (row.ok) {
+    console.warn(`${label}: OK${row.reversed ? ' → revertida' : ''}`);
+    return;
+  }
+  console.error(`${label}:`);
+  for (const err of row.errors) console.error(`      - ${err}`);
+}
+
+async function runRevert(app: INestApplicationContext, actor: RequestUser): Promise<void> {
+  if (kind !== 'products') throw new Error('--revert solo existe para --kind products');
+  if (!batchFlag || !/^[0-9a-f-]{36}$/i.test(batchFlag)) {
+    throw new Error('--revert necesita --batch <id del lote> (un UUID)');
+  }
+  // Segundo modelo (P3): sin fecha, la reversa quedaría con la de hoy y una reversa no se edita.
+  if (!operationDate) {
+    throw new Error('--revert necesita --operation-date AAAA-MM-DD (la fecha de la reversa)');
+  }
+  console.warn(
+    `${execute ? 'Revirtiendo' : 'Simulando (dry-run) la reversa de'} el lote ${batchFlag} (products)…\n`,
+  );
+  const report = await app.get(InitialInventoryProductRevertService).revert(actor, {
+    batchId: batchFlag,
+    execute,
+    operationDate,
+    reason: reasonFlag ?? `Reversa de la carga inicial de productos, lote ${batchFlag}`,
+  });
+  for (const row of report.rows) printRevertRow(row);
+  const failed = report.rows.filter((r) => !r.ok).length;
+  console.warn(
+    `\n${String(report.rows.length)} entrada(s) del lote, fecha ${report.operationDate}: ` +
+      `${String(report.rows.length - failed)} ok, ${String(failed)} con error.`,
+  );
+  if (!report.ok) {
+    console.error('\nNo se revirtió nada: hay entradas que no se pueden revertir (arriba).');
+    process.exitCode = 1;
+    return;
+  }
+  if (!execute) {
+    console.warn(
+      '\nDry-run limpio: todas las entradas se pueden revertir. No se escribió nada. Agrega --execute para revertir de verdad.',
+    );
+    return;
+  }
+  console.warn(`\nListo: ${String(report.rows.length)} entrada(s) revertida(s).`);
+}
+
 async function main(): Promise<void> {
-  if (!filePath) {
+  if (!filePath && !revert) {
     throw new Error(
       'Uso: import-initial-inventory-cli.ts --file <ruta.xlsx|csv> [--kind coils|products] ' +
         '[--execute] [--operation-date AAAA-MM-DD] [--actor-email correo]',
@@ -120,6 +179,11 @@ async function main(): Promise<void> {
 
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
   try {
+    if (revert) {
+      await runRevert(app, actor);
+      return;
+    }
+    if (!filePath) throw new Error('Falta --file');
     const buffer = readFileSync(resolve(filePath));
     const fileName = filePath.split(/[\\/]/).pop() ?? 'inventario-inicial';
     const runInput = { fileName, buffer, execute, operationDate, batchId: randomUUID() };

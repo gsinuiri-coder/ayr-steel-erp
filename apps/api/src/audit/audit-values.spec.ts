@@ -65,7 +65,7 @@ const INVENTORY: readonly (readonly [key: string, action: string, values: readon
   ],
   ['docType', 'pos.sale.create', ['FACTURA', 'BOLETA']],
   ['role', 'users.role.change', ['ADMINISTRADOR', 'SUPERVISOR_PLANTA', 'VENDEDOR']],
-  ['unit', 'catalog.update', ['KGM', 'NIU', 'MTR', 'TNE', 'ZZ']],
+  ['unit', 'catalog.update', ['KGM', 'NIU', 'MTR', 'TNE', 'ZZ', 'BX']],
   ['outputUnit', 'production.roofing.report', ['MTR', 'NIU']],
   ['source', 'catalog.create', ['MANUFACTURED', 'PURCHASED']],
   ['roofingKind', 'catalog.update', ['PLANCHA', 'A_MEDIDA', 'ACCESORIO']],

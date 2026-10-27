@@ -28,6 +28,9 @@ import {
   type ProductDto,
   FINISH_FIELD_LABEL,
   finishLabels,
+  isCatalogUnit,
+  UNIT_LABELS,
+  UNITS,
 } from '@ayr/shared';
 import { api, ApiError } from '@/lib/api';
 import { AuditHistoryLink } from '@/components/audit-history-link';
@@ -58,7 +61,7 @@ const CATALOG_QUERY_KEY = ['catalog'] as const;
 const formSchema = z.object({
   sku: z.string().trim().min(1, 'Obligatorio').max(40),
   name: z.string().trim().min(2, 'Mínimo 2 caracteres').max(160),
-  unit: z.string().trim().min(1, 'Escribe la unidad de venta').max(20),
+  unit: z.string().trim().min(1, 'Elige la unidad de venta').max(20),
   source: z.enum(PRODUCT_SOURCES),
   /**
    * D-068: vacío significa "sin precio de lista", que el API guarda como `null`.
@@ -442,10 +445,28 @@ export function ProductDialog({
                   control={form.control}
                   name="unit"
                   render={({ field }) => (
-                    <FormFieldCell span={3} label="Unidad" help="Por ejemplo: kg, unidad, m">
-                      <FormControl>
-                        <Input autoComplete="off" {...field} />
-                      </FormControl>
+                    <FormFieldCell span={3} label="Unidad">
+                      {/* cc68 (D-723): lista cerrada del catálogo 03. Una unidad anterior a la
+                          lista se muestra marcada hasta que alguien elija otra. */}
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="w-full" data-testid="producto-unidad">
+                            <SelectValue placeholder="Elige la unidad" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {field.value !== '' && !isCatalogUnit(field.value) && (
+                            <SelectItem value={field.value}>
+                              {field.value} (fuera de la lista)
+                            </SelectItem>
+                          )}
+                          {UNITS.map((u) => (
+                            <SelectItem key={u} value={u}>
+                              {UNIT_LABELS[u]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </FormFieldCell>
                   )}
                 />

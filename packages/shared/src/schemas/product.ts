@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { decimalStringSchema, MAX_VALUE } from '../decimal';
-import { BUSINESS_LINES, PRODUCT_SOURCES, ROOFING_PRODUCT_KINDS } from '../enums';
+import { BUSINESS_LINES, PRODUCT_SOURCES, ROOFING_PRODUCT_KINDS, UNITS } from '../enums';
 
 /**
  * D-342/D-344: por qué un perfil de drywall **no tiene piso de precio** (D-163). El piso de un
@@ -147,7 +147,15 @@ const nameSchema = z
   .trim()
   .min(2, 'Mínimo 2 caracteres')
   .max(160, 'Máximo 160 caracteres');
-const unitSchema = z
+/**
+ * cc68 (D-723): la unidad es una de la lista cerrada (`UNITS`, catálogo 03), no texto libre. Al
+ * crear, siempre. Al editar, el contrato acepta la unidad que ya tenga el producto —el catálogo
+ * guarda alguna anterior a la lista (`KG`, `und`…)— y `CatalogService.update` exige la lista solo
+ * cuando la unidad cambia.
+ */
+const UNIT_MESSAGE = 'Elige una unidad de la lista';
+const unitSchema = z.enum(UNITS, { errorMap: () => ({ message: UNIT_MESSAGE }) });
+const storedUnitSchema = z
   .string()
   .trim()
   .min(1, 'La unidad es obligatoria')
@@ -233,7 +241,7 @@ export const updateProductSchema = z
      */
     sku: skuSchema,
     name: nameSchema,
-    unit: unitSchema,
+    unit: storedUnitSchema,
     source: z.enum(PRODUCT_SOURCES),
     listPricePen: listPriceSchema,
     colorId: colorIdSchema,

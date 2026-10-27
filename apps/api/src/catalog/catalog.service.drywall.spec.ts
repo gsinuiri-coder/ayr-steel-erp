@@ -28,7 +28,7 @@ const baseInput = {
   businessLineId: BL,
   sku: 'OMEGA045',
   name: 'OMEGA',
-  unit: 'NIU',
+  unit: 'NIU' as const,
   source: ProductSource.MANUFACTURED,
   finishId: null,
   colorId: null,
@@ -164,7 +164,56 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
 
     it('cambiar la unidad u origen ya no lo frena una receta (no existen)', async () => {
       prisma.product.findUnique.mockResolvedValue(stored());
-      await expect(service.update(ACTOR, 'p-1', { unit: 'UND' })).rejects.toBe(STOP);
+      await expect(service.update(ACTOR, 'p-1', { unit: 'BX' })).rejects.toBe(STOP);
+    });
+  });
+
+  describe('la unidad es de la lista cerrada (cc68, D-723)', () => {
+    it('una unidad anterior a la lista se conserva al editar otro campo', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored({ unit: 'und' }));
+      await expect(service.update(ACTOR, 'p-1', { unit: 'und', name: 'OMEGA 2' })).rejects.toBe(
+        STOP,
+      );
+    });
+
+    it('cambiarla a algo fuera de la lista se rechaza y no llega a la transacción', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored({ unit: 'und' }));
+      await expect(service.update(ACTOR, 'p-1', { unit: 'UNIDADES' })).rejects.toThrow(
+        /«UNIDADES» no es una unidad de la lista/,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('cambiarla a una de la lista (und → NIU) pasa', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored({ unit: 'und' }));
+      await expect(service.update(ACTOR, 'p-1', { unit: 'NIU' })).rejects.toBe(STOP);
+    });
+
+    it('con saldo no cambia (segundo modelo, P2-1)', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.inventoryBalance.findMany.mockResolvedValueOnce([
+        { qty: new Decimal('229'), unit: 'NIU' },
+      ]);
+      await expect(service.update(ACTOR, 'p-1', { unit: 'BX' })).rejects.toThrow(
+        /OMEGA045 tiene saldo \(229 NIU\): la unidad solo cambia con el saldo en cero/,
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('con un pedido sin terminar no cambia (autorrevisión, P2-1)', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.salesOrderItem.findMany.mockResolvedValueOnce([{ id: 'soi-1' }]);
+      await expect(service.update(ACTOR, 'p-1', { unit: 'BX' })).rejects.toThrow(
+        /está en 1 línea\(s\) de pedidos sin terminar/,
+      );
+    });
+
+    it('con reservas activas no cambia', async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      prisma.reservation.findMany.mockResolvedValueOnce([{ id: 'r-1' }]);
+      await expect(service.update(ACTOR, 'p-1', { unit: 'BX' })).rejects.toThrow(
+        /tiene 1 reserva\(s\) activa\(s\)/,
+      );
     });
   });
 
@@ -177,7 +226,7 @@ describe('CatalogService — el SKU de drywall (D-344)', () => {
     it.each([
       ['el espesor del fleje', { thicknessMm: '0.60' }],
       ['el ancho del fleje', { widthMm: '120.00' }],
-      ['la unidad', { unit: 'UND' }],
+      ['la unidad', { unit: 'BX' }],
       ['el origen', { source: ProductSource.PURCHASED }],
     ])(
       'no se cambia %s: sus flejes ya se montaron contra el valor de antes',
