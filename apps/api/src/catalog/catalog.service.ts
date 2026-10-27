@@ -372,11 +372,14 @@ export class CatalogService {
           where: { itemType: 'PRODUCT', itemId: id, status: 'ACTIVE' },
           select: { id: true },
         }),
-        // Autorrevisión P2-1: un pedido vivo despacharía en la unidad de su línea (la de antes),
-        // aunque no tenga reserva (confirmado con faltante).
+        // Autorrevisión P2-1: un pedido vivo que se despacha **del stock del producto** movería el
+        // kardex en la unidad de su línea (la de antes), aunque no tenga reserva (confirmado con
+        // faltante). Una cobertura a pedido reserva materia prima y D-127 la deja reclasificar
+        // (plancha ↔ a medida) con pedidos vivos: esas líneas no cuentan.
         this.prisma.salesOrderItem.findMany({
           where: {
             productId: id,
+            reserveItemType: 'PRODUCT',
             salesOrder: { status: { notIn: ['FULFILLED', 'CANCELLED'] } },
           },
           select: { id: true },
@@ -389,7 +392,7 @@ export class CatalogService {
           : reservations.length > 0
             ? `tiene ${String(reservations.length)} reserva(s) activa(s): la unidad solo cambia sin reservas`
             : liveLines.length > 0
-              ? `está en ${String(liveLines.length)} línea(s) de pedidos sin terminar: la unidad solo cambia sin pedidos vivos`
+              ? `está en ${String(liveLines.length)} línea(s) de pedidos sin terminar que salen de su stock: la unidad solo cambia sin pedidos vivos`
               : null;
       if (blocker !== null) {
         const message = `${before.sku} ${blocker}`;
