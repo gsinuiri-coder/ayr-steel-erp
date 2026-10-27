@@ -2,9 +2,10 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-27 — cc69: NC de devolución con fecha anterior al despacho, unidad en compras y bucket de Cloud Build (D-728, D-729; PR #PRNUM)
+## 2026-10-27 — cc69: NC de devolución con fecha anterior al despacho, unidad en compras y bucket de Cloud Build (D-728, D-729; PR #258)
 
-Sin migración y sin SQL contra producción.
+Sin migración y sin SQL contra producción. API `00156-zgn` (git-sha `275ccad6`), merge `2ed2c777`. Para volver atrás
+la API: `00155-j2j`.
 
 - **M0 (local y solo lectura en producción).** El rechazo se reprodujo en local con `seed:escenarios`
   («Línea 1: hay 0.000 despachado sin devolver…»). En producción:
@@ -24,10 +25,15 @@ Sin migración y sin SQL contra producción.
   - Tres de los 63 se reprodujeron en local con sus fechas (cifras en `local-data/cc69/`).
 - **D-729:** la línea de compra va en la unidad del producto (alta, importador, «Editar compra» y al
   recibir). En producción, 0 líneas con otra unidad.
-- **M3 (solo lectura):** `run-sources-ayr-steel-erp-us-central1`:
-  - 159 zips; 99 con `local-data/` (planillas del cliente) y ninguno con archivos de entorno;
-  - el borrado de los 157 anteriores a D-726 y la regla de 30 días, con OK del dueño por nombre,
-    después del despliegue.
+- **M3:** `run-sources-ayr-steel-erp-us-central1`:
+  - lectura: 159 zips; 99 con `local-data/` (planillas del cliente) y ninguno con archivos de entorno;
+  - con OK del dueño por nombre, después del despliegue: borrados los 157 anteriores a D-726 (742 MiB),
+    sin que queden en el borrado suave (se desactivó, se esperó y se volvió a poner en 7 días), y
+    regla de ciclo de vida de 30 días sobre `services/`. Quedan 3 zips limpios (12 MiB): los de las
+    revisiones 00154, 00155 y 00156;
+  - antes se verificó que la revisión vigente y la anterior corren de su imagen (Artifact Registry) y
+    que sus zips no estaban en la lista;
+  - GCS no permite «conservar los 5 más recientes» sin versionado: la regla es solo de 30 días.
 - **Ratificaciones:**
   - D-712, D-713 y D-720..D-727, el 2026-10-27;
   - D-697 y D-709, el 2026-10-22 (no se habían anotado).

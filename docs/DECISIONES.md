@@ -3338,8 +3338,11 @@ y ninguna con otra unidad.
 Tenía 159 zips (750 MiB). De ellos, 99 (663 MiB, del 09/09 al 25/10) llevaban `local-data/` con
 planillas del cliente; ninguno llevaba archivos de entorno. Los posteriores a D-726 están limpios.
 
-La propuesta de borrado y de retención a 30 días espera el OK del dueño por nombre. El informe quedó
-fuera del repo, en `local-data/cc69/M3-INFORME.md`.
+Con OK del dueño por nombre, después del despliegue, se borraron los 157 zips anteriores a D-726. Para que
+no quedaran en el borrado suave (GCS no permite purgarlo antes de tiempo), se desactivó el borrado suave,
+se esperó, se borró y se volvió a poner en 7 días. Además, una regla de ciclo de vida borra los paquetes de
+más de 30 días; «conservar los 5 más recientes» no existe sin versionado. Informe y registro fuera del
+repo, en `local-data/cc69/`.
 
 **Ratificaciones anotadas en cc69.** El dueño ratificó el 2026-10-27 D-712, D-713 (dw-03), D-720
 (cc67) y D-721..D-727 (cc68). D-697 y D-709 (cc65) las había ratificado el 2026-10-22 y no se habían
