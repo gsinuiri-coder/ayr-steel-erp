@@ -2,6 +2,61 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-27 — cc69: NC de devolución con fecha anterior al despacho, unidad en compras y bucket de Cloud Build (D-728, D-729; PR #PRNUM)
+
+Sin migración y sin SQL contra producción.
+
+- **M0 (local y solo lectura en producción).** El rechazo se reprodujo en local con `seed:escenarios`
+  («Línea 1: hay 0.000 despachado sin devolver…»). En producción:
+  - sin NC en borrador, y los rechazos no quedan en la auditoría;
+  - 63 comprobantes con un despacho de su pedido posterior a su emisión, todos manuales y con kardex.
+- **D-728:**
+  - la NC conserva su fecha;
+  - la parte que sale de un despacho posterior reingresa el día de ese despacho, al costo con que
+    salió;
+  - reparto (opción B del dueño): solo los despachos del comprobante acreditado, primero hasta la NC
+    y después los posteriores; si no declara ninguno, el pedido;
+  - una DEV- por NC, con la fecha de su parte más tardía;
+  - las partes se graban de la más tardía a la más temprana, para que el recosteo (D-649) corrija la
+    parte posterior;
+  - la DEV- muestra el costo efectivo; avisos en «Qué va a pasar» y en la DEV-; rechazos con la causa
+    real.
+  - Tres de los 63 se reprodujeron en local con sus fechas (cifras en `local-data/cc69/`).
+- **D-729:** la línea de compra va en la unidad del producto (alta, importador, «Editar compra» y al
+  recibir). En producción, 0 líneas con otra unidad.
+- **M3 (solo lectura):** `run-sources-ayr-steel-erp-us-central1`:
+  - 159 zips; 99 con `local-data/` (planillas del cliente) y ninguno con archivos de entorno;
+  - el borrado de los 157 anteriores a D-726 y la regla de 30 días, con OK del dueño por nombre,
+    después del despliegue.
+- **Ratificaciones:**
+  - D-712, D-713 y D-720..D-727, el 2026-10-27;
+  - D-697 y D-709, el 2026-10-22 (no se habían anotado).
+- **Pruebas:**
+  - API unitarias: 4003+ en verde; web: 360;
+  - db-specs relacionados: 42 de devoluciones y NC (más 79 con `lock-order` antes de la opción B) y 71
+    de compras e importadores;
+  - E2E completa local: 635 passed / 11 failed / 2 skipped:
+    - 10 de infraestructura conocida (PSE ×8, R2 en `fase5a`, el XML de `fase2a`);
+    - `cc48-restos` (menú de descargas del reporte de bobinas, sin relación con cc69): pasó al repetirlo;
+  - los specs de NC y devoluciones, otra vez con la opción B: 25/25 (con `cc48-restos`);
+  - mutaciones: el orden de grabación invertido y la regla B apagada hacen fallar sus db-specs.
+- **Revisiones:**
+  - autorrevisión (`local-data/cc69/autorrevision.md`) y segundo modelo
+    (`docs/revision/cc69-segundo-modelo.md`): sin P0 ni P1;
+  - corregidos los P2 y los P3 de código;
+  - P2-2 resuelto con la opción B;
+  - falta la revisión del dueño.
+- **Espera decisión del dueño:** ratificar D-728 y D-729.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-728: `invoicing/sales-return-allocation.ts` (filtro de la opción B y orden por fecha) y
+  `invoicing/sales-returns.service.ts`:
+  - `createForCreditNoteInTx`: orden de grabación de las partes y fecha de la DEV-;
+  - `findOne`: costo efectivo.
+    Si una devolución entra con un costo distinto al de su salida, mirar ahí primero.
+- D-729: `purchases/purchase-unit.ts` y sus llamadores (alta, `receive`, «Editar compra», importador).
+
 ## 2026-10-27 — cc68: Drywall inicial anulado, ESQ30 por caja y la unidad como lista cerrada (D-721..D-727; PR #256)
 
 Sin migración y sin SQL contra producción. API `00155-j2j` (git-sha `e8b8c213`), merge `ee436efb`. Para volver atrás la
