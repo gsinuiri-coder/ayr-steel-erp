@@ -113,5 +113,13 @@ test.describe('cc70 — fecha de una NC con devolución vigente', () => {
       devBefore.totalCostPen,
     ]);
     expect(devAfter.creditNoteDate).toBe(newDate);
+
+    // El detalle de la DEV- no atribuye a un despacho la diferencia de fechas (segundo modelo, P2-1).
+    await page.goto(`/devoluciones/${devId}`);
+    const [ny, nm, nd] = newDate.split('-');
+    await expect(
+      page.getByText(`La nota es del ${nd ?? ''}/${nm ?? ''}/${ny ?? ''}`),
+    ).toBeVisible();
+    await expect(page.getByTestId('sales-return-late-entry')).toHaveCount(0);
   });
 });

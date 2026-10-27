@@ -179,6 +179,10 @@ describe('InvoicingService.updateManualIssueDate — cc70 (D-730): NC con devolu
       }),
     );
     expect(invoiceDispatch.redateInTx).not.toHaveBeenCalled();
+    // Solo la DEV- vigente de esta nota.
+    expect(tx.salesReturn.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { creditNoteId: 'NC1', status: 'ACTIVE' } }),
+    );
   });
 
   it('sigue sin poder quedar antes del comprobante que acredita', async () => {

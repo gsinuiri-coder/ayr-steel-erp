@@ -3347,3 +3347,22 @@ repo, en `local-data/cc69/`.
 **Ratificaciones anotadas en cc69.** El dueño ratificó el 2026-10-27 D-712, D-713 (dw-03), D-720
 (cc67) y D-721..D-727 (cc68). D-697 y D-709 (cc65) las había ratificado el 2026-10-22 y no se habían
 anotado. Las filas de §0.2 lo dicen en su fecha.
+
+## cc70 — cambiar la fecha de una NC con devolución vigente (D-730)
+
+**De dónde sale.** El dueño quiso corregir la fecha de la NC FFC1-00000075 (NC 07 del 05/10/2026 sobre
+la FFA1-00001455 del 25/09), que tiene la devolución DEV-000001 al 05/10 (1 unidad del despacho
+DES-000064 del 05/10). La corrección rebotaba con «Esta nota de crédito generó la devolución…: su fecha
+no se cambia». Esa regla era de D-645, cuando la DEV- tenía siempre la fecha de la NC y moverla movía el
+kardex. Desde D-728 la DEV- y la NC ya pueden tener fechas distintas, así que el motivo desapareció.
+
+**La regla.** La fecha de la NC se corrige con las cotas de siempre; la DEV- y su kardex no se tocan.
+Mover la DEV- habría sido reversa y reingreso (D-364) y podía chocar con D-652; no hacía falta, porque
+lo que el dueño corrige es la fecha fiscal del papel.
+
+**Lo que se mueve solo.** Ventas y margen imputa la venta y el costo de la devolución a la NC
+(`credit_note_id`) y la ubica por la fecha de la NC al leer; CxC y la rentabilidad del comprobante,
+igual. El db-spec mueve una NC con DEV- al mes anterior: sale del mes actual, entra al anterior con su
+costo (−20) y en los dos meses las netas igualan a los totales y brutas + NC = netas, al céntimo.
+
+**FFC1-00000075 no se tocó**: el dueño la corrige desde la pantalla después del despliegue.

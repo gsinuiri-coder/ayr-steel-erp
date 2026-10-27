@@ -293,6 +293,8 @@ const AUDIT_FIELD_LABELS: Record<string, string> = {
   // cc52 (D-645..D-648): nota de crédito, devolución y salida con fecha atrasada.
   salesReturn: 'Devolución',
   salesReturnId: 'Devolución (id)',
+  // cc70 (D-730): la fecha de la DEV- al corregir la de su nota (no se mueve).
+  salesReturnDate: 'Fecha de la devolución',
   creditNote: 'Nota de crédito',
   creditNoteId: 'Nota de crédito (id)',
   affects: 'Comprobante afectado',

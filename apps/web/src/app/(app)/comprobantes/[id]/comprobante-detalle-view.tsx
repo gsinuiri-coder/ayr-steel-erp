@@ -1434,8 +1434,12 @@ export function ComprobanteDetalleView({ id }: { id: string }) {
             <Alert data-testid="issue-date-sales-return">
               <AlertDescription>
                 La devolución {d.salesReturn.code} se queda el{' '}
-                {formatDate(d.salesReturn.operationDate).slice(0, 5)}; cambia solo la fecha fiscal
-                de la nota.
+                {/* Con el año solo si es de otro año que la nota. */}
+                {formatDate(d.salesReturn.operationDate).slice(
+                  0,
+                  d.salesReturn.operationDate.slice(0, 4) === d.issueDate.slice(0, 4) ? 5 : 10,
+                )}
+                ; cambia solo la fecha fiscal de la nota.
               </AlertDescription>
             </Alert>
           )}

@@ -1839,7 +1839,8 @@ export class InvoicingService {
       dispatches: [...new Set([...returnDispatchIds, ...movedDispatchIds])],
       salesOrders: [document.salesOrderId],
     });
-    // Revisión de cc52 (P2): la fecha de la NC es la del reingreso al kardex; quien la registra
+    // Revisión de cc52 (P2): la fecha de la NC es la del reingreso al kardex (cc69, D-728: o la de su
+    // despacho; cc70, D-730: la de la NC se puede corregir después sin mover la DEV-); quien la registra
     // tiene que poder fechar así (solo ADMINISTRADOR fecha otro día que hoy, D-124/D-133).
     if (returning) this.operationDate.assertIssueDate(actor, fromDateOnly(document.issueDate));
     await this.assertStillAvailable(tx, document);
