@@ -208,16 +208,22 @@ describe('SalesReturnsService (cc52, D-646)', () => {
     );
     // Primero la parte del despacho posterior (línea 2 de la DEV-), después la de la fecha de la NC.
     expect(
-      inventory.record.mock.calls.map((c) => [c[1].operationDate, c[1].qty, c[1].totalCost]),
+      (
+        inventory.record.mock.calls as [
+          unknown,
+          { operationDate: string; qty: string; totalCost: string },
+        ][]
+      ).map(([, m]) => [m.operationDate, m.qty, m.totalCost]),
     ).toEqual([
       ['2026-10-20', '2.000', '60.0000'],
       ['2026-10-14', '5.000', '100.0000'],
     ]);
     expect(
-      rawTx.salesReturnItem.create.mock.calls.map((c) => [
-        c[0].data.lineNumber,
-        c[0].data.dispatchItemId,
-      ]),
+      (
+        rawTx.salesReturnItem.create.mock.calls as [
+          { data: { lineNumber: number; dispatchItemId: string } },
+        ][]
+      ).map(([arg]) => [arg.data.lineNumber, arg.data.dispatchItemId]),
     ).toEqual([
       [2, 'di-2'],
       [1, 'di-1'],
