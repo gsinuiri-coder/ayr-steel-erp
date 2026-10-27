@@ -848,7 +848,8 @@ describe('cc69 (D-728): NC fechada antes del despacho', () => {
     const productId = await newProduct('DOSF');
     await buy(productId, '10', '20', PREV(3));
     const o = await order(productId, '10', PREV(4));
-    const line = o.items[0]!;
+    const [line] = o.items;
+    if (!line) throw new Error('el pedido no tiene línea');
     const shipped = async (date: string) => {
       await dispatch(o, '5', date);
       return prisma.dispatch.findFirstOrThrow({
