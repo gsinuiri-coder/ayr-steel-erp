@@ -16,5 +16,10 @@ playwright-report
 .env
 .env.*
 .env.setup
+**/.env
+**/.env.*
+# cc68 (D-726): datos, logs y capturas locales de cada pieza; nunca van al paquete del deploy.
+local-data
+**/local-data
 .neon
 .vercel

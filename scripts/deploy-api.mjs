@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { API_SERVICE, GCP_REGION, readEnvFile, run } from './lib.mjs';
+import { assertUploadIsClean } from './upload-guard.mjs';
 
 const setup = readEnvFile();
 const project = setup.GCP_PROJECT_ID;
@@ -104,6 +105,9 @@ try {
       .map(([k, v]) => `${k}: "${v}"`)
       .join('\n') + '\n',
   );
+
+  // cc68 (D-726): antes de subir, lo que va al paquete no lleva local-data/ ni archivos de entorno.
+  assertUploadIsClean('.');
 
   // Cloud Build necesita las APIs habilitadas y el proyecto con facturación (ver PROGRESO.md B-01).
   run('gcloud', [
