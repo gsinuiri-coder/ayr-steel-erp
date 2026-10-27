@@ -844,6 +844,50 @@ describe('cc69 (D-728): NC fechada antes del despacho', () => {
     });
   });
 
+  it('opción B: un pedido de dos facturas; la NC de la segunda no devuelve lo de la primera', async () => {
+    const productId = await newProduct('DOSF');
+    await buy(productId, '10', '20', PREV(3));
+    const o = await order(productId, '10', PREV(4));
+    const line = o.items[0]!;
+    const shipped = async (date: string) => {
+      await dispatch(o, '5', date);
+      return prisma.dispatch.findFirstOrThrow({
+        where: { salesOrderId: o.id, dispatchDate: new Date(`${date}T00:00:00.000Z`) },
+      });
+    };
+    const declared = async (dispatchId: string, issueDate: string) => {
+      const draft = await invoicing.create(
+        admin,
+        createInvoiceSchema.parse({
+          docType: 'FACTURA',
+          customerId,
+          salesOrderId: o.id,
+          issueDate,
+          dispatchId,
+          items: [{ salesOrderItemId: line.id, qty: '5' }],
+        }),
+      );
+      return invoicing.registerManual(admin, draft.id, {
+        series: 'F955',
+        correlative: (correlative += 1),
+      });
+    };
+    // F1 declara el despacho del día 5; F2, el del día 15. La NC de F2 es del día 12: antes de cc69
+    // (y con la preferencia de cc52) salía del despacho de F1, el único anterior a la NC.
+    const first = await shipped(PREV(5));
+    await declared(first.id, PREV(5));
+    const second = await shipped(PREV(15));
+    const f2 = await declared(second.id, PREV(10));
+    const note = await creditNote(f2.id, 'DEVOLUCION_ITEM', '5', PREV(12));
+    const ret = await prisma.salesReturn.findUniqueOrThrow({
+      where: { creditNoteId: note.id },
+      include: { items: { include: { dispatchItem: true, movement: true } } },
+    });
+    expect(
+      ret.items.map((i) => [i.dispatchItem.dispatchId, day(i.movement.operationDate)]),
+    ).toEqual([[second.id, PREV(15)]]);
+  });
+
   it('sin despacho todavía, lo dice con la causa real', async () => {
     const productId = await newProduct('SIN');
     await buy(productId, '10', '20', PREV(5));
@@ -853,7 +897,7 @@ describe('cc69 (D-728): NC fechada antes del despacho', () => {
     expect(r).toEqual({
       status: 400,
       message:
-        'Línea 1: no hay nada despachado de este comprobante; si la mercadería no salió del almacén, usa «Rebajar el precio».',
+        'Línea 1: no hay nada despachado de este pedido; si la mercadería no salió del almacén, usa «Rebajar el precio».',
     });
   });
 });

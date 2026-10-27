@@ -52,9 +52,13 @@ const ZERO = new Decimal(0);
  * entregado antes del inventario inicial (sin salida de kardex), en vez de comparar el texto.
  */
 export class NothingDispatchedError extends BadRequestException {
-  constructor(readonly at: string) {
+  constructor(
+    readonly at: string,
+    /** cc69: la 01 mira el comprobante; la 06 y la 07, el pedido (decisión del dueño). */
+    scope: 'comprobante' | 'pedido' = 'comprobante',
+  ) {
     super(
-      `${at}: no hay nada despachado de este comprobante; si la mercadería no salió del almacén, usa «Rebajar el precio».`,
+      `${at}: no hay nada despachado de este ${scope}; si la mercadería no salió del almacén, usa «Rebajar el precio».`,
     );
   }
 }
@@ -63,11 +67,16 @@ const KARDEX_STEP = new Decimal('0.001');
 
 export interface ReturnPlanOptions {
   /**
-   * Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. cc69
-   * (D-728): dentro de cada grupo; un despacho anterior a la NC va antes que uno posterior aunque
-   * este sea el declarado.
+   * El comprobante acreditado. cc69 (D-728, opción B del dueño): si declara despachos (D-205), la
+   * devolución sale **solo** de ellos; si no declara ninguno, del pedido. Reemplaza la preferencia
+   * de la revisión de cc52 (P1), que dejaba pasar a los de otro comprobante.
    */
   affectedInvoiceId?: string | null;
+  /**
+   * Si el comprobante acreditado declara algún despacho, mirando **todas** las líneas de la NC (lo
+   * calcula el servicio). Sin él, se mira solo lo de esta línea.
+   */
+  affectedDeclaresDispatches?: boolean;
   /**
    * La fecha de la NC. cc69 (D-728): primero los despachos hasta esa fecha; lo que falte, de los
    * posteriores, que reingresan en la fecha de su despacho.
@@ -94,32 +103,30 @@ export function planReturnAllocation(
   lineNumber: number,
   qty: Decimal,
   stock: readonly DispatchLineStock[],
-  /** Revisión de cc52 (P1): primero los despachos que declara el comprobante acreditado. */
   options: ReturnPlanOptions = {},
 ): ReturnAllocation[] {
   const at = `Línea ${String(lineNumber)}`;
   if (qty.lte(0))
     throw new BadRequestException(`${at}: la cantidad a devolver debe ser mayor a cero`);
-  const preferred = (s: DispatchLineStock) =>
-    options.affectedInvoiceId && s.invoiceId === options.affectedInvoiceId ? 0 : 1;
+  const affected = options.affectedInvoiceId ?? null;
+  const declares =
+    affected !== null &&
+    (options.affectedDeclaresDispatches ?? stock.some((s) => s.invoiceId === affected));
   const asOf = options.asOf;
   const afterNote = (s: DispatchLineStock) => asOf !== undefined && s.dispatchDate > asOf;
   const ordered = stock
-    // cc54 (D-656): la anulación (01) solo devuelve lo que salió por ese comprobante o sin
-    // comprobante declarado; lo despachado para otro comprobante del pedido es de ese otro.
-    .filter(
-      (s) =>
-        !options.onlyAffected ||
-        s.invoiceId === null ||
-        s.invoiceId === (options.affectedInvoiceId ?? null),
-    )
+    // cc69 (D-728, opción B): con despachos declarados, solo los del comprobante acreditado. Si no
+    // declara ninguno, el pedido; la anulación (01, D-656) solo lo no declarado por otro comprobante.
+    .filter((s) => {
+      if (declares) return s.invoiceId === affected;
+      return !options.onlyAffected || s.invoiceId === null;
+    })
     .sort((a, b) => {
       const later = Number(afterNote(a)) - Number(afterNote(b));
       if (later !== 0) return later;
-      // cc69 (D-728): los posteriores a la NC, del más cercano a ella en adelante.
+      // Hasta la NC, del más reciente hacia atrás; los posteriores, del más cercano en adelante.
       const direction = afterNote(a) ? -1 : 1;
       return (
-        preferred(a) - preferred(b) ||
         direction * b.dispatchDate.localeCompare(a.dispatchDate) ||
         direction * (b.dispatchSeq - a.dispatchSeq)
       );
@@ -133,7 +140,9 @@ export function planReturnAllocation(
   if (options.upToAvailable && available.lte(0)) return [];
   const wanted = options.upToAvailable ? Decimal.min(qty, available) : qty;
   // cc69: sin nada disponible, la causa real (no salió nada, o ya se devolvió todo), no «hay 0.000».
-  if (dispatched.lte(0)) throw new NothingDispatchedError(at);
+  if (dispatched.lte(0)) {
+    throw new NothingDispatchedError(at, options.onlyAffected ? 'comprobante' : 'pedido');
+  }
   if (available.lte(0)) {
     throw new BadRequestException(
       `${at}: lo despachado (${dispatched.toFixed(3)}) ya se devolvió entero; no queda nada por devolver.`,

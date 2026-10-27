@@ -1746,9 +1746,15 @@ export type SalesReturnItemDto = z.infer<typeof salesReturnItemSchema>;
  * cc69 (D-728): el aviso de una parte que vuelve al almacén después de la fecha de la NC, porque
  * sale de un despacho posterior. Lo dicen «Qué va a pasar» y el detalle de la DEV-.
  */
-export function lateReturnEntryNotice(entryDate: string, dispatchCode: string): string {
-  const [, month, day] = entryDate.split('-');
-  return `La devolución entra al almacén el ${day ?? ''}/${month ?? ''} (fecha del despacho ${dispatchCode}), después de la fecha de la NC.`;
+export function lateReturnEntryNotice(
+  entryDate: string,
+  dispatchCode: string,
+  /** La fecha de la NC: si es de otro año que la entrada, el aviso lleva el año (decisión del dueño). */
+  noteDate?: string,
+): string {
+  const [year, month, day] = entryDate.split('-');
+  const withYear = noteDate !== undefined && noteDate.slice(0, 4) !== year ? `/${year ?? ''}` : '';
+  return `La devolución entra al almacén el ${day ?? ''}/${month ?? ''}${withYear} (fecha del despacho ${dispatchCode}), después de la fecha de la NC.`;
 }
 
 export const salesReturnSchema = z.object({

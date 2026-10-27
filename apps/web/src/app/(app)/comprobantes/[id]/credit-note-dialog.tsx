@@ -341,6 +341,7 @@ export function CreditNoteDialog({
             <WhatWillHappen
               document={d}
               reason={draft.reason}
+              noteDate={draft.issueDate}
               preview={preview.data}
               loading={preview.isFetching}
               error={
@@ -780,12 +781,12 @@ function ReasonFields({
 }
 
 /** cc69 (D-728): un aviso por despacho posterior a la NC, sin repetir. */
-function lateEntries(stock: CreditNotePreviewDto['stock']): string[] {
+function lateEntries(stock: CreditNotePreviewDto['stock'], noteDate: string): string[] {
   return [
     ...new Set(
       stock
         .filter((s) => s.afterCreditNote)
-        .map((s) => lateReturnEntryNotice(s.entryDate, s.dispatch)),
+        .map((s) => lateReturnEntryNotice(s.entryDate, s.dispatch, noteDate)),
     ),
   ];
 }
@@ -794,12 +795,15 @@ function lateEntries(stock: CreditNotePreviewDto['stock']): string[] {
 function WhatWillHappen({
   document: d,
   reason,
+  noteDate,
   preview,
   loading,
   error,
 }: {
   document: FiscalDocumentDto;
   reason: CreditNoteReason;
+  /** cc69: la fecha de la NC, para el año del aviso de entrada tardía. */
+  noteDate: string;
   preview: CreditNotePreviewDto | undefined;
   loading: boolean;
   error: string | null;
@@ -847,7 +851,7 @@ function WhatWillHappen({
                   </>
                 )}
                 {/* cc69 (D-728): lo que sale de un despacho posterior entra en la fecha de ese despacho. */}
-                {lateEntries(preview.stock).map((notice) => (
+                {lateEntries(preview.stock, noteDate).map((notice) => (
                   <span
                     key={notice}
                     className="mt-1 block text-amber-700 dark:text-amber-400"

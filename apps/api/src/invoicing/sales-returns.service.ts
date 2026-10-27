@@ -184,6 +184,14 @@ export class SalesReturnsService {
       tx,
       lines.flatMap((l) => (l.orderItemId === null ? [] : [l.orderItemId])),
     );
+    // cc69 (D-728, opción B): si el comprobante acreditado declara despachos en cualquiera de las
+    // líneas, la devolución sale solo de los suyos; si no declara ninguno, del pedido.
+    const affected = options.affectedInvoiceId ?? null;
+    const planOptions: ReturnPlanOptions = {
+      ...options,
+      affectedDeclaresDispatches:
+        affected !== null && [...stock.values()].flat().some((s) => s.invoiceId === affected),
+    };
     // Dos líneas de la NC sobre la misma línea de pedido consumen del mismo despachado.
     type Used = Map<string, { qty: Decimal; reserveQty: Decimal; cost: Decimal }>;
     const used = new Map<string, Used>();
@@ -214,7 +222,7 @@ export class SalesReturnsService {
       });
       let plan: ReturnAllocation[];
       try {
-        plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available, options);
+        plan = planReturnAllocation(line.lineNumber, toDecimal(line.qty), available, planOptions);
       } catch (err) {
         throw await this.explainWithoutKardex(tx, line.orderItemId, err);
       }

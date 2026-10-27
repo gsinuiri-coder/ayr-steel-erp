@@ -103,7 +103,7 @@ describe('planReturnAllocation (cc52, D-646)', () => {
     expect(planReturnAllocation(1, D('1'), [coil])[0]?.reserveQty.toFixed(3)).toBe('2000.000');
   });
 
-  it('primero los despachos del comprobante acreditado hasta la NC; los posteriores, al final', () => {
+  it('cc69 (D-728, opción B): solo los despachos del comprobante acreditado, por fecha', () => {
     const stock3 = [
       stock({ dispatchCode: 'DES-1', dispatchDate: '2026-09-10', invoiceId: 'F1' }),
       stock({ dispatchCode: 'DES-2', dispatchDate: '2026-09-15', dispatchSeq: 2, invoiceId: 'F2' }),
@@ -114,25 +114,54 @@ describe('planReturnAllocation (cc52, D-646)', () => {
     expect(plan.map((p) => [p.stock.dispatchCode, p.operationDate])).toEqual([
       ['DES-1', '2026-09-20'],
     ]);
-    // cc69 (D-728): lo que no alcanza hasta la NC sale del despacho posterior, con su fecha.
+    // Lo que no alcanza hasta la NC sale del posterior del mismo comprobante, con su fecha; DES-2
+    // es de otro comprobante (F2) y no se toca.
     expect(
-      planReturnAllocation(1, D('11'), stock3, opts).map((p) => [
+      planReturnAllocation(1, D('7'), stock3, opts).map((p) => [
         p.stock.dispatchCode,
         p.qty.toFixed(3),
         p.operationDate,
       ]),
     ).toEqual([
       ['DES-1', '5.000', '2026-09-20'],
-      ['DES-2', '5.000', '2026-09-20'],
-      ['DES-3', '1.000', '2026-09-30'],
+      ['DES-3', '2.000', '2026-09-30'],
     ]);
-    expect(() => planReturnAllocation(1, D('16'), stock3, opts)).toThrow(
-      'hay 15.000 despachado sin devolver',
+    expect(() => planReturnAllocation(1, D('11'), stock3, opts)).toThrow(
+      'hay 10.000 despachado sin devolver',
     );
+  });
+
+  it('sin despachos declarados por el comprobante, el pedido con el mismo orden', () => {
+    const undeclared = [
+      stock({ dispatchCode: 'DES-1', dispatchDate: '2026-09-10' }),
+      stock({ dispatchCode: 'DES-2', dispatchDate: '2026-09-30', dispatchSeq: 2, invoiceId: 'F2' }),
+    ];
+    const plan = planReturnAllocation(1, D('7'), undeclared, {
+      affectedInvoiceId: 'F1',
+      asOf: '2026-09-20',
+    });
+    expect(plan.map((p) => [p.stock.dispatchCode, p.qty.toFixed(3)])).toEqual([
+      ['DES-1', '5.000'],
+      ['DES-2', '2.000'],
+    ]);
+    // El servicio lo decide con todas las líneas de la NC: si otra línea declara, esta no cae al pedido.
+    expect(() =>
+      planReturnAllocation(1, D('1'), undeclared, {
+        affectedInvoiceId: 'F1',
+        affectedDeclaresDispatches: true,
+      }),
+    ).toThrow('no hay nada despachado de este pedido');
   });
 });
 
 describe('cc69 (D-728): despachos posteriores a la NC', () => {
+  it('el aviso lleva el año solo si la NC es de otro año', () => {
+    expect(lateReturnEntryNotice('2027-01-05', 'DES-000200', '2026-12-28')).toBe(
+      'La devolución entra al almacén el 05/01/2027 (fecha del despacho DES-000200), después de la fecha de la NC.',
+    );
+    expect(lateReturnEntryNotice('2026-12-30', 'DES-000200', '2026-12-28')).toContain('el 30/12 (');
+  });
+
   it('el aviso dice el día y el despacho', () => {
     expect(lateReturnEntryNotice('2026-10-07', 'DES-000119')).toBe(
       'La devolución entra al almacén el 07/10 (fecha del despacho DES-000119), después de la fecha de la NC.',
@@ -181,7 +210,7 @@ describe('cc69 (D-728): despachos posteriores a la NC', () => {
 
   it('sin nada despachado lo dice, y si ya se devolvió todo, también', () => {
     expect(() => planReturnAllocation(2, D('1'), [], { asOf: '2026-10-01' })).toThrow(
-      'Línea 2: no hay nada despachado de este comprobante; si la mercadería no salió del almacén, usa «Rebajar el precio».',
+      'Línea 2: no hay nada despachado de este pedido; si la mercadería no salió del almacén, usa «Rebajar el precio».',
     );
     expect(() =>
       planReturnAllocation(1, D('1'), [stock({ dispatchCode: 'DES-1', returnedQty: D('5') })]),

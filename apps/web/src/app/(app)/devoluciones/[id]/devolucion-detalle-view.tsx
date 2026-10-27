@@ -85,7 +85,7 @@ export function DevolucionDetalleView({ id }: { id: string }) {
     ...new Set(
       r.items
         .filter((i) => i.operationDate > r.creditNoteDate)
-        .map((i) => lateReturnEntryNotice(i.operationDate, i.dispatchCode)),
+        .map((i) => lateReturnEntryNotice(i.operationDate, i.dispatchCode, r.creditNoteDate)),
     ),
   ];
 
