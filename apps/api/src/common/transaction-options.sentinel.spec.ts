@@ -223,6 +223,12 @@ const BULK_EXCEPTIONS: readonly (readonly [string, string, string])[] = [
   ['imports/quotation-import.service.ts', 'confirm', 'importador de cotizaciones (Excel)'],
   ['imports/initial-inventory-import.service.ts', 'run', 'inventario inicial de bobinas'],
   ['imports/initial-inventory-product-import.service.ts', 'run', 'inventario inicial de productos'],
+  // cc68 (D-722): la reversa de esa carga, del mismo tamaño y con una reversa por línea.
+  [
+    'imports/initial-inventory-product-revert.service.ts',
+    'revert',
+    'reversa del inventario inicial de productos',
+  ],
   ['imports/imported-documents-sweep.service.ts', 'fixDocument', 'barrido de importados'],
   ['catalog/price-list-import.service.ts', 'confirm', 'carga de precios (Excel)'],
   ['catalog/price-list-import.service.ts', 'revert', 'deshacer una carga de precios'],
