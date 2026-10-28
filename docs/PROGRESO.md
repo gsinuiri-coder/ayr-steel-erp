@@ -2,6 +2,43 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
+## 2026-10-27 — cc70: cambiar la fecha de una NC con devolución vigente (D-730; PR #PRNUM)
+
+Sin migración y sin SQL contra producción. DEPLOYLINE
+
+- **Lectura previa (producción):** FFC1-00000075 (NC 07 del 05/10/2026, S/ 60,00, acredita FFA1-00001455 del
+  25/09) con DEV-000001 al 05/10 (1 u, S/ 43,7479, del despacho DES-000064 del 05/10). No se tocó: la corrige el
+  dueño desde la pantalla.
+- **D-730:**
+  - la fecha de una NC manual con DEV- vigente se corrige con las cotas de siempre;
+  - la DEV- y su kardex no se mueven; la auditoría registra la DEV- y su fecha;
+  - el diálogo avisa «La devolución DEV-… se queda el DD/MM; cambia solo la fecha fiscal de la nota»;
+  - el detalle de la DEV- ya no atribuye a un despacho la diferencia con una NC corregida;
+  - modifica D-645 y la frase «la NC no cambia de fecha» de D-728.
+- **Pruebas:**
+  - API unitarias: 4011+ en verde; web: 360;
+  - db-spec de devoluciones: 19/19; el caso nuevo mueve la NC al mes anterior: la DEV- igual y Ventas y
+    margen cuadra al céntimo en los dos meses;
+  - E2E completa local: 636 passed / 11 failed / 2 skipped:
+    - 10 de infraestructura conocida (PSE ×8, R2 en `fase5a`, el XML de `fase2a`);
+    - `fecha-nc-con-dev-cc70`, con el build anterior a la corrección del detalle de la DEV- (el rojo
+      confirmó el defecto);
+  - con el build corregido, `fecha-nc-con-dev-cc70` y los specs de NC: 18/18.
+- **Revisiones:**
+  - autorrevisión (`local-data/cc70/autorrevision.md`) y segundo modelo
+    (`docs/revision/cc70-segundo-modelo.md`): sin P0 ni P1;
+  - el P2 compartido (detalle de la DEV-) corregido;
+  - falta la revisión del dueño.
+- **Para otra pieza:**
+  - una factura corregida después de su NC puede quedar después de la DEV-;
+  - corregir en paralelo la fecha de la factura y la de su NC puede cruzarlas (ya pasaba sin DEV-).
+- **Espera decisión del dueño:** ratificar D-730.
+
+**Registro de riesgo (kardex/datos):**
+
+- D-730: `invoicing/invoicing.service.ts`, `updateManualIssueDate`. Solo escribe la fecha de la NC; si una DEV-
+  cambiara de fecha o de costo al corregir su nota, mirar ahí primero.
+
 ## 2026-10-27 — cc69: NC de devolución con fecha anterior al despacho, unidad en compras y bucket de Cloud Build (D-728, D-729; PR #258)
 
 Sin migración y sin SQL contra producción. API `00156-zgn` (git-sha `275ccad6`), merge `2ed2c777`. Para volver atrás
