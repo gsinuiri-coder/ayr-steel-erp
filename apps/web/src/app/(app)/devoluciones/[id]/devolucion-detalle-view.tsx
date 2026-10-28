@@ -80,11 +80,13 @@ export function DevolucionDetalleView({ id }: { id: string }) {
 
   const showCost = r.totalCostPen !== null;
   const reason = reasonLabel(r.creditNoteReason);
-  // cc69 (D-728): las partes que entraron después de la fecha de la nota, una vez por despacho.
+  // cc69 (D-728): las partes que entraron el día de su despacho, posterior a la fecha de la nota, una
+  // vez por despacho. cc70 (D-730): la fecha de la nota se puede corregir después, así que solo cuenta
+  // la parte que de verdad entró en la fecha de su despacho (no basta con ser posterior a la nota).
   const lateNotices = [
     ...new Set(
       r.items
-        .filter((i) => i.operationDate > r.creditNoteDate)
+        .filter((i) => i.operationDate === i.dispatchDate && i.operationDate > r.creditNoteDate)
         .map((i) => lateReturnEntryNotice(i.operationDate, i.dispatchCode, r.creditNoteDate)),
     ),
   ];
@@ -134,7 +136,7 @@ export function DevolucionDetalleView({ id }: { id: string }) {
             label: 'Fecha',
             value: formatDate(r.operationDate),
             detail:
-              lateNotices.length === 0
+              r.operationDate === r.creditNoteDate
                 ? 'La de la nota'
                 : `La nota es del ${formatDate(r.creditNoteDate)}`,
           },

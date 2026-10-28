@@ -1096,13 +1096,25 @@ export const fiscalDocumentSchema = z.object({
       dueDate: z.string().nullable().optional(),
       /** cc52 (D-646): la devolución que generó, si es una NC de devolución. */
       salesReturn: z
-        .object({ id: z.string().uuid(), code: z.string(), status: z.enum(['ACTIVE', 'REVERSED']) })
+        .object({
+          id: z.string().uuid(),
+          code: z.string(),
+          status: z.enum(['ACTIVE', 'REVERSED']),
+          /** cc70 (D-730): la fecha de la DEV- (no cambia si se corrige la de la NC). */
+          operationDate: z.string(),
+        })
         .nullable(),
     }),
   ),
   /** cc52 (D-646): en una NC de devolución, el documento de devolución que generó. */
   salesReturn: z
-    .object({ id: z.string().uuid(), code: z.string(), status: z.enum(['ACTIVE', 'REVERSED']) })
+    .object({
+      id: z.string().uuid(),
+      code: z.string(),
+      status: z.enum(['ACTIVE', 'REVERSED']),
+      /** cc70 (D-730): la fecha de la DEV- (no cambia si se corrige la de la NC). */
+      operationDate: z.string(),
+    })
     .nullable()
     .optional(),
   /**
