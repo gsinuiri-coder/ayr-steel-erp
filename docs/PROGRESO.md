@@ -2,9 +2,10 @@
 
 > Actualizado por el agente al cerrar cada punto grande. Fases en `ARQUITECTURA.md` Â§3.7.
 
-## 2026-10-27 — cc70: cambiar la fecha de una NC con devolución vigente (D-730; PR #PRNUM)
+## 2026-10-27 — cc70: cambiar la fecha de una NC con devolución vigente (D-730; PR #260)
 
-Sin migración y sin SQL contra producción. DEPLOYLINE
+Sin migración y sin SQL contra producción. API `00157-dlv` (git-sha `dabfa900`), merge `db24ad92`. Para volver atrás
+la API: `00156-zgn`.
 
 - **Lectura previa (producción):** FFC1-00000075 (NC 07 del 05/10/2026, S/ 60,00, acredita FFA1-00001455 del
   25/09) con DEV-000001 al 05/10 (1 u, S/ 43,7479, del despacho DES-000064 del 05/10). No se tocó: la corrige el
